@@ -93,9 +93,10 @@ def test_the_offer_names_the_panes_and_where_they_sat(
 
 
 def test_the_offer_says_which_conversations_come_back(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, existing_conversation
 ) -> None:
     _store(tmp_path)
+    existing_conversation("u")
     body = client.get("/api/agentic-ide/resume").json()
     panes = {t["name"]: t for t in body["terminals"]}
     assert panes["Mika"]["resumable"] is True
@@ -150,10 +151,11 @@ def test_resuming_reopens_the_workspace(client: TestClient, tmp_path: Path) -> N
 
 
 def test_resuming_reports_how_much_actually_came_back(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, existing_conversation
 ) -> None:
     """One pane continues, one reopens empty — and the caller is told."""
     _store(tmp_path)
+    existing_conversation("u")
     body = client.post("/api/agentic-ide/resume").json()
     assert body["resumable_count"] == 1
     assert body["started_fresh"] == 1
@@ -207,3 +209,18 @@ def test_discarding_a_restore_point_is_declared_dangerous() -> None:
         and "DELETE" in getattr(r, "methods", set())
     )
     assert route.openapi_extra == {"x-jarvis-dangerous": True}
+
+
+def test_resuming_counts_conversations_not_handles(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A pane that was never used holds an id pointing at nothing.
+
+    Counting handles would report it as continued, which is the same lie the
+    offer screen exists to prevent — and the one that reached the user as
+    "12 conversations restored" for twelve panes that came back empty.
+    """
+    _store(tmp_path)  # Mika's id is deliberately not backed by a conversation
+    body = client.post("/api/agentic-ide/resume").json()
+    assert body["resumable_count"] == 0
+    assert body["started_fresh"] == 2

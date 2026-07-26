@@ -40,7 +40,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from .agent_sessions import ResumeHandle
+from .agent_sessions import ResumeHandle, has_conversation
 
 # Saves arrive from more than one thread (see `save`), and the last one has to
 # be the one that lands rather than the one that happened to finish its rename
@@ -237,6 +237,13 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
     A pane that never received a prompt, or whose CLI cannot resume, is
     ``available`` but not ``resumable``: it returns with the right name in the
     right place and an empty history. Saying so up front is the whole point.
+
+    ``resumable`` asks the coding CLI's own history whether the conversation is
+    really there, rather than trusting that a handle exists. Holding an id and
+    having a conversation are different things — a pane opened and never given
+    an instruction has the first and not the second — and promising twelve
+    restored conversations that all turn out to be empty is exactly the lie this
+    screen is meant to prevent.
     """
     if snapshot is None:
         return {
@@ -268,7 +275,7 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
                 "column": term.column,
                 "slot": term.slot,
                 "available": agent_available,
-                "resumable": agent_available and term.resume is not None,
+                "resumable": agent_available and has_conversation(term.agent, term.resume),
                 "prompts_sent": term.prompts_sent,
             }
         )

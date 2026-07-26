@@ -62,13 +62,17 @@ async def test_a_fresh_pane_is_launched_with_an_id_it_can_be_found_by(
 
 
 async def test_a_pane_with_a_handle_continues_instead_of_starting_over(
-    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     term = registry.session.find("Mika")
     term.resume = ResumeHandle(
         kind="claude_session", id="known-id", captured_at=1.0
     )
+    existing_conversation("known-id")
 
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
     assert _argv(fake_pty)[-2:] == ("--resume", "known-id")
@@ -76,13 +80,18 @@ async def test_a_pane_with_a_handle_continues_instead_of_starting_over(
 
 
 async def test_reopening_a_pane_keeps_the_same_conversation(
-    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
 ) -> None:
     """The browser-close case: the pane reconnects and picks up where it was."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
     minted = registry.session.find("Mika").resume
     assert minted is not None
+    # The pane was used, so the CLI now has a conversation under that id.
+    existing_conversation(minted.id)
 
     registry.detach("Mika")  # the viewer went away, the agent was stopped
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
@@ -105,14 +114,74 @@ async def test_a_pane_running_a_cli_that_cannot_resume_just_starts(
     assert registry.session.find("Mika").resumed is False
 
 
-# ------------------------------------------------------------- self-healing
-async def test_a_dead_conversation_falls_back_to_a_fresh_agent(
+async def test_a_handle_with_no_conversation_behind_it_starts_fresh(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """A conversation the CLI has pruned must not leave a dead pane behind."""
+    """The failure that took down twelve real panes at once.
+
+    Being handed an id at launch does not create a conversation — the CLI files
+    one only when it has content. So a pane that was opened and never given an
+    instruction holds an id that points at nothing, and asking the CLI to resume
+    it makes it print "no conversation found" and exit. Every one of twelve
+    panes came back dead that way.
+
+    The pointer has to be dereferenced before it is spent.
+    """
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
+    term = registry.session.find("Mika")
+    term.resume = ResumeHandle(
+        kind="claude_session", id="never-written", captured_at=1.0
+    )
+    # Deliberately no conversation on disk.
+
+    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+
+    argv = _argv(fake_pty)
+    assert "--resume" not in argv, "an id pointing at nothing must not be spent"
+    assert "--session-id" in argv, "and the fresh start gets a usable id of its own"
+    term = registry.session.find("Mika")
+    assert term.resumed is False
+    assert term.status == "live", "the pane must come up, not die"
+    assert term.resume is not None and term.resume.id != "never-written"
+
+
+async def test_the_offer_does_not_promise_a_conversation_that_is_not_there(
+    tmp_path: Path,
+) -> None:
+    """What the card would have claimed: twelve conversations, all empty."""
+    snapshot = resume_store.Snapshot(
+        session_id="ide_old",
+        folder=str(tmp_path),
+        saved_at=1.0,
+        terminals=[
+            resume_store.SnapshotTerminal(
+                key="mika",
+                name="Mika",
+                agent="claude",
+                resume=ResumeHandle(
+                    kind="claude_session", id="never-written", captured_at=1.0
+                ),
+            )
+        ],
+    )
+    view = resume_store.offer(snapshot, installed={"claude"})
+    assert view["terminals"][0]["available"] is True  # the pane comes back
+    assert view["terminals"][0]["resumable"] is False  # the conversation does not
+    assert view["resumable_count"] == 0
+
+
+# ------------------------------------------------------------- self-healing
+async def test_a_dead_conversation_falls_back_to_a_fresh_agent(
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
+) -> None:
+    """The backstop: a conversation that looks present but the CLI rejects."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     term = registry.session.find("Mika")
     term.resume = ResumeHandle(kind="claude_session", id="stale", captured_at=1.0)
+    existing_conversation("stale")
 
     exits: list[int] = []
 
@@ -132,12 +201,16 @@ async def test_a_dead_conversation_falls_back_to_a_fresh_agent(
 
 
 async def test_a_clean_exit_after_a_resume_is_not_second_guessed(
-    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
 ) -> None:
     """Quitting an agent on purpose exits 0 — restarting it would be a bug."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     term = registry.session.find("Mika")
     term.resume = ResumeHandle(kind="claude_session", id="fine", captured_at=1.0)
+    existing_conversation("fine")
 
     exits: list[int] = []
 
@@ -152,7 +225,10 @@ async def test_a_clean_exit_after_a_resume_is_not_second_guessed(
 
 
 async def test_closing_a_resumed_pane_does_not_resurrect_it(
-    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
 ) -> None:
     """The trap the self-healing walks into if it is not told about the kill.
 
@@ -166,6 +242,7 @@ async def test_closing_a_resumed_pane_does_not_resurrect_it(
     registry.session.find("Mika").resume = ResumeHandle(
         kind="claude_session", id="fine", captured_at=1.0
     )
+    existing_conversation("fine")
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
     assert registry.session.find("Mika").resumed is True
     spawns_before = len(fake_pty.spawns)
@@ -183,6 +260,7 @@ async def test_a_late_crash_is_reported_as_a_crash(
     fake_pty: FakePtyManager,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    existing_conversation,
 ) -> None:
     """Past the window an exit is just an exit; a restart loop would be worse."""
     monkeypatch.setattr(ide, "RESUME_FAILED_WINDOW_S", 0.0)
@@ -190,6 +268,7 @@ async def test_a_late_crash_is_reported_as_a_crash(
     registry.session.find("Mika").resume = ResumeHandle(
         kind="claude_session", id="fine", captured_at=1.0
     )
+    existing_conversation("fine")
 
     exits: list[int] = []
 
@@ -252,8 +331,12 @@ async def test_restore_starts_nothing_by_itself(
 
 
 async def test_a_restored_pane_continues_its_conversation_when_it_connects(
-    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
 ) -> None:
+    existing_conversation("kai-conv")
     await registry.restore(_snapshot(tmp_path))
     await registry.attach("Kai", 80, 24, _noop, _noop_exit)
     assert _argv(fake_pty)[-2:] == ("--resume", "kai-conv")

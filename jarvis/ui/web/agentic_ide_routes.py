@@ -45,6 +45,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import recents, resume_store
+from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
 from jarvis.agentic_ide.names import default_names
@@ -550,7 +551,17 @@ async def resume_workspace() -> dict:
     except Exception:  # noqa: BLE001 - history must never block reopening
         log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
 
-    resumable = sum(1 for t in session.terminals if t.resume is not None)
+    # Counted by asking the coding CLI's history, not by counting handles a pane
+    # happens to hold: a pane that was opened and never used holds an id that
+    # points at nothing, and reporting it as continued would be the same lie the
+    # offer screen exists to prevent. One thread hop for the whole list, since
+    # each check is a filename lookup.
+    def _count_conversations(panes: list[tuple[str, object]]) -> int:
+        return sum(1 for agent, handle in panes if has_conversation(agent, handle))
+
+    resumable = await asyncio.to_thread(
+        _count_conversations, [(t.agent, t.resume) for t in session.terminals]
+    )
     return {
         "ok": True,
         "session": session.to_dict(),

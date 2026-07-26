@@ -191,7 +191,10 @@ def test_two_threads_saving_at_once_do_not_lose_the_write(tmp_path: Path) -> Non
 
 
 # ------------------------------------------------------------------- offer
-def test_the_offer_reports_what_will_actually_come_back(tmp_path: Path) -> None:
+def test_the_offer_reports_what_will_actually_come_back(
+    tmp_path: Path, existing_conversation
+) -> None:
+    existing_conversation("u-1")
     view = resume_store.offer(_snapshot(str(tmp_path)), installed={"claude"})
     assert view["available"] is True
     assert view["folder_exists"] is True

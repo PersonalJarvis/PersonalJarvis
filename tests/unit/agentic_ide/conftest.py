@@ -48,3 +48,45 @@ def _never_touch_real_agent_configs(monkeypatch: pytest.MonkeyPatch) -> None:
         return []
 
     monkeypatch.setattr(trust, "ensure_trusted", _skip)
+
+
+@pytest.fixture(autouse=True)
+def _agent_history_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Give each test an empty stand-in for the coding CLIs' own histories.
+
+    Resuming asks the CLI whether a conversation really exists, so tests read
+    that history. Pointed at the real one they would inherit whatever the
+    developer happens to have on disk — a test could pass because an unrelated
+    conversation was lying around, or fail on a fresh machine.
+    """
+    home = tmp_path_factory.mktemp("agent-history")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(home / "codex"))
+    return home
+
+
+@pytest.fixture
+def existing_conversation() -> Any:
+    """Create the on-disk conversation a resume handle points at.
+
+    Real files rather than a patched check: the difference between "a handle
+    exists" and "a conversation exists" is the bug this guards, and stubbing the
+    lookup would stub out exactly the thing under test.
+    """
+    from jarvis.agentic_ide import agent_sessions
+
+    def _make(session_id: str, *, agent: str = "claude") -> None:
+        if agent == "claude":
+            folder = agent_sessions._claude_home() / "projects" / "a-project"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+        else:
+            folder = agent_sessions._codex_home() / "sessions" / "2026" / "07" / "26"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"rollout-2026-07-26T00-00-00-{session_id}.jsonl").write_text(
+                "{}\n", encoding="utf-8"
+            )
+
+    return _make

@@ -55,6 +55,7 @@ from .agent_sessions import (
     ResumeHandle,
     can_resume,
     discover,
+    has_conversation,
     launch_extra,
     resume_argv,
 )
@@ -97,11 +98,13 @@ _SUBMIT_RETRY_AFTER_S = 1.0
 _INPUT_MARKERS = ("❯", ">", "›")
 
 # How quickly an agent has to die after a RESUME for the resume itself to be the
-# suspect. A conversation the CLI has since pruned makes it print an error and
-# exit almost immediately; a healthy agent that the user quits normally exits
-# with code 0 and is never second-guessed. Past this window an exit is just an
-# exit, and the pane says so.
-RESUME_FAILED_WINDOW_S = 8.0
+# suspect. A healthy agent the user quits normally exits with code 0 and is
+# never second-guessed, and a deliberate kill is flagged as such — so this only
+# has to be longer than a failing agent takes to fail. That is not instant: a
+# coding CLI loads its plugins and hooks BEFORE reporting a missing
+# conversation, and running SessionEnd hooks on the way out adds more. The
+# first version used 8 s and watched twelve real panes die just past it.
+RESUME_FAILED_WINDOW_S = 45.0
 
 # When to look for the session id of a CLI that cannot be told one (Codex). It
 # writes its rollout file a beat after launching, so asking immediately finds
@@ -753,7 +756,20 @@ class Registry:
             term.error = f"{term.display_name} is not on PATH."
             raise SessionError(term.error)
 
+        # A handle is a pointer, and it has to be dereferenced before it is
+        # spent. Being handed an id at launch does not create a conversation:
+        # a pane that was opened and never given an instruction leaves nothing
+        # behind, and asking the CLI to resume that id makes it print "no
+        # conversation found" and die. Measured on a real workspace — twelve
+        # panes opened, none prompted, twelve dead panes on the way back.
         continuing = resume_argv(term.agent, term.resume)
+        if continuing is not None and not has_conversation(term.agent, term.resume):
+            logger.info(
+                "Agentic IDE: {} has no conversation to continue — starting fresh",
+                term.name,
+            )
+            term.resume = None
+            continuing = None
         if continuing is not None:
             argv = (*argv, *continuing)
             term.resumed = True

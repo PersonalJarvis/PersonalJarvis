@@ -39,7 +39,7 @@ import os
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -110,6 +110,8 @@ class _Adapter:
     # Finds the id afterwards, for CLIs that cannot be told one. The third
     # argument is the set of ids other panes already hold — see `discover`.
     discover: Callable[[str, float, Collection[str]], ResumeHandle | None] | None
+    # Is there actually a conversation behind an id? See `has_conversation`.
+    exists: Callable[[ResumeHandle], bool]
 
 
 def _claude_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
@@ -132,6 +134,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         launch=_claude_launch,
         resume=lambda session_id: ("--resume", session_id),
         discover=None,
+        exists=lambda handle: _claude_conversation_exists(handle),
     ),
     "codex": _Adapter(
         kind="codex_rollout",
@@ -142,6 +145,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         # Late-bound on purpose: the discovery function is defined further down,
         # next to the file-format knowledge it needs.
         discover=lambda cwd, started, taken: _discover_codex(cwd, started, taken),
+        exists=lambda handle: _codex_conversation_exists(handle),
     ),
 }
 
@@ -178,6 +182,38 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     return adapter.resume(handle.id)
 
 
+def has_conversation(agent: str, handle: ResumeHandle | None) -> bool:
+    """Is there actually something behind this handle, or only a reserved id?
+
+    **The distinction this whole module got wrong at first.** Being handed an id
+    at launch does not create a conversation. Claude Code writes a session file
+    only once the conversation HAS content, so a pane that was opened and never
+    given an instruction leaves nothing behind — and resuming that id makes the
+    CLI print "No conversation found" and exit. Measured on a real workspace:
+    twelve panes opened, none prompted, twelve dead panes on the way back.
+
+    So a handle is a pointer that has to be dereferenced before it is spent. The
+    check is a filename lookup keyed on the id, which is a UUID and therefore
+    unique across every project — that keeps it independent of how the CLI
+    happens to name its per-project folders, and it costs a few milliseconds.
+
+    Answers False for an unknown agent and for no handle at all. False always
+    means the same thing to the caller: start fresh, and say so.
+    """
+    if handle is None:
+        return False
+    adapter = _ADAPTERS.get(agent)
+    if adapter is None or adapter.kind != handle.kind:
+        return False
+    try:
+        return adapter.exists(handle)
+    except OSError as exc:
+        # An unreadable history is not a present conversation. Starting fresh is
+        # recoverable; launching into a missing one kills the pane.
+        logger.debug("Agentic IDE: could not check {} history: {}", agent, exc)
+        return False
+
+
 def discover(
     agent: str,
     cwd: str,
@@ -206,6 +242,30 @@ def discover(
     except Exception as exc:  # noqa: BLE001 - discovery is a convenience
         logger.warning("Agentic IDE: {} session discovery failed: {}", agent, exc)
         return None
+
+
+# -------------------------------------------------------------- Claude Code
+def _claude_home() -> Path:
+    raw = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(raw).expanduser() if raw else Path.home() / ".claude"
+
+
+def _claude_conversation_exists(handle: ResumeHandle) -> bool:
+    """True when Claude Code has a transcript filed under this session id.
+
+    Searched by id across all project folders rather than by rebuilding the
+    folder name from the working directory. That name is the CLI's own
+    convention (separators and spaces folded into dashes) and could change
+    without notice, while the id is a UUID and unique everywhere — so this stays
+    correct even if the layout shifts, and on any OS.
+    """
+    session_id = handle.id
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return False
+    projects = _claude_home() / "projects"
+    if not projects.is_dir():
+        return False
+    return next(projects.glob(f"*/{session_id}.jsonl"), None) is not None
 
 
 # --------------------------------------------------------------------- Codex
@@ -314,6 +374,37 @@ def _candidate_files(root: Path, started_at: float) -> list[Path]:
     return keep[:_MAX_CANDIDATES]
 
 
+def _codex_conversation_exists(handle: ResumeHandle) -> bool:
+    """True when Codex still has the rollout file this handle came from.
+
+    The id is in the filename, and ``captured_at`` says roughly when it was
+    written, so only the day folders around that moment are searched — a heavy
+    user has thousands of rollouts and a full sweep would turn opening a pane
+    into a disk crawl. The one-day margin is the same one discovery needs: the
+    folder is named in local time and the record inside is UTC.
+    """
+    session_id = handle.id
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return False
+    sessions = _codex_home() / "sessions"
+    if not sessions.is_dir():
+        return False
+    if handle.captured_at <= 0:
+        # No hint when it was written — one bounded sweep rather than none.
+        return next(sessions.glob(f"*/*/*/rollout-*{session_id}*.jsonl"), None) is not None
+    day = datetime.fromtimestamp(handle.captured_at, tz=UTC).date()
+    for offset in (0, -1, 1):
+        folder = sessions / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}"
+        if offset:
+            shifted = day + timedelta(days=offset)
+            folder = (
+                sessions / f"{shifted.year:04d}" / f"{shifted.month:02d}" / f"{shifted.day:02d}"
+            )
+        if next(folder.glob(f"rollout-*{session_id}*.jsonl"), None) is not None:
+            return True
+    return False
+
+
 def _discover_codex(
     cwd: str, started_at: float, taken: Collection[str] = ()
 ) -> ResumeHandle | None:
@@ -364,6 +455,7 @@ __all__ = [
     "ResumeHandle",
     "can_resume",
     "discover",
+    "has_conversation",
     "launch_extra",
     "resume_argv",
 ]
