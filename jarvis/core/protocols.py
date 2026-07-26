@@ -96,9 +96,18 @@ class BrainRequest:
     # internal reasoning for THIS call — used by small deterministic
     # structured-output calls (Computer-Use actions/judges) where thinking
     # would eat the whole ``max_tokens`` budget and truncate the visible
-    # reply. ``None`` keeps the provider default; providers without a
-    # reasoning knob ignore the field (capability hint, never a hard switch).
-    reasoning_effort: Literal["none"] | None = None
+    # reply. The graded levels serve callers whose OUTPUT is the product: the
+    # Agentic IDE's prompt composer passes "medium" because turning a spoken
+    # sentence plus a set of file outlines into a briefed task is judgement
+    # work, and "none" is what once made it a mere rephraser.
+    # ``None`` keeps the provider default; providers without a reasoning knob
+    # ignore the field (capability hint, never a hard switch).
+    #
+    # The graded levels were added 2026-07-26: the composer had been passing
+    # "medium" into a field declared to accept only "none" since it was
+    # written, which survived only because nothing validates this. An
+    # annotation that is wrong is worse than none — the next caller trusts it.
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
