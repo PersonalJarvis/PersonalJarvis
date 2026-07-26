@@ -279,7 +279,9 @@ _CONTEXT_HEADER = (
     "with the question. Use a note only if it directly helps answer what was "
     "actually asked. If it does not, ignore it completely and do not mention "
     "it, allude to it, or work it into the answer. Never volunteer a personal "
-    "detail the question did not ask for."
+    "detail the question did not ask for. If a note already answers the "
+    "question, answer directly from it — do not call a knowledge-search tool "
+    "to re-find the same fact; search only for what these notes do not cover."
 )
 
 

@@ -176,5 +176,15 @@ def test_framed_block_tells_the_model_it_may_be_irrelevant() -> None:
     assert "may have nothing to do" in lowered
 
 
+def test_framed_block_forbids_redundant_knowledge_tool_calls() -> None:
+    """The other half of the contract: when a note already answers, the
+    model must not burn tool rounds re-finding the same fact (live trace
+    2026-07-26: a dentist question spent ~10 rounds with the answer already
+    injected)."""
+    lowered = frame_context_block(["**Dentist**: 15 April, 14:00"]).lower()
+    assert "do not call a knowledge-search tool" in lowered
+    assert "answer directly" in lowered
+
+
 def test_framing_an_empty_list_yields_nothing_to_append() -> None:
     assert frame_context_block([]) == ""
