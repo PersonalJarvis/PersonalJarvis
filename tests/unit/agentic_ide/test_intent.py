@@ -139,3 +139,92 @@ def test_instruction_drops_the_addressing_when_there_is_real_work_left() -> None
     assert found is not None
     assert "Alex" not in found.instruction
     assert "Wake-Word-Erkennung" in found.instruction
+
+
+# --------------------------------------------------------------------------- #
+# Addressing SEVERAL terminals at once                                         #
+# --------------------------------------------------------------------------- #
+# Second live failure (voice session 2026-07-26 09:18): "Kannst du bitte Iris
+# und Bruno beide in Deep Dive geben ..." reached Iris only, and the spoken
+# readback then claimed both had been briefed. The detector returned the first
+# match and stopped, so Bruno was never a candidate — a structural ceiling, not
+# a matching accident. These guards pin the plural shape.
+
+MULTI_NAMES = ["Iris", "Bruno", "Casey"]
+
+# The verbatim transcript from the live failure.
+LIVE_MULTI_FAILURE = (
+    "Kannst du bitte Iris und Bruno beide in Deep Dive geben, dass sie "  # i18n-allow: fixture
+    "unsere komplette Codebase analysieren sollen und gucken, was genau "  # i18n-allow: fixture
+    "passiert und was wir genau machen muessen, um was zu verbessern"  # i18n-allow: fixture
+)
+# One order for both panes: only the first name carries the addressing shape.
+ORDER_BOTH = (
+    "Sag Iris und Bruno, sie sollen die Tests laufen lassen"  # i18n-allow: fixture
+)
+# Two orders in one sentence: each name carries its own directive.
+ORDER_EACH = (
+    "Iris soll die Tests reparieren und Bruno soll das UI pruefen"  # i18n-allow: fixture
+)
+QUESTION_BOTH = "Was machen Iris und Bruno?"  # i18n-allow: fixture
+
+
+def test_live_multi_failure_addresses_both_terminals() -> None:
+    """The exact 2026-07-26 utterance must belong to Iris AND Bruno."""
+    found = intent.detect_all(LIVE_MULTI_FAILURE, names=MULTI_NAMES)
+    assert [item.terminal for item in found] == ["Iris", "Bruno"]
+    assert all(item.kind == intent.KIND_PROMPT for item in found)
+
+
+def test_coordinated_names_share_the_instruction() -> None:
+    """Only the first name carries the addressing shape; both are addressed."""
+    found = intent.detect_all(ORDER_BOTH, names=MULTI_NAMES)
+    assert [item.terminal for item in found] == ["Iris", "Bruno"]
+    for item in found:
+        assert "Tests" in item.instruction
+
+
+def test_each_name_may_carry_its_own_directive() -> None:
+    """Two separate assignments in one sentence stay two assignments."""
+    found = intent.detect_all(ORDER_EACH, names=MULTI_NAMES)
+    assert [item.terminal for item in found] == ["Iris", "Bruno"]
+
+
+def test_an_unmentioned_pane_is_never_pulled_in() -> None:
+    """Casey is running but not named — the fan-out must not touch it."""
+    found = intent.detect_all(ORDER_BOTH, names=MULTI_NAMES)
+    assert "Casey" not in [item.terminal for item in found]
+
+
+def test_a_question_about_two_panes_stays_a_read() -> None:
+    """Asking about two agents must not type the question into either."""
+    found = intent.detect_all(QUESTION_BOTH, names=MULTI_NAMES)
+    assert [item.terminal for item in found] == ["Iris", "Bruno"]
+    assert all(item.kind == intent.KIND_REPORT for item in found)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Sagt allen, sie sollen die Tests laufen lassen",  # i18n-allow: fixture
+        "Tell everyone to run the tests",
+        "Alle sollen die Codebase analysieren",  # i18n-allow: fixture
+    ],
+)
+def test_addressing_everyone_reaches_every_running_pane(utterance: str) -> None:
+    """"Tell everyone ..." is the natural way to brief a whole fleet."""
+    found = intent.detect_all(utterance, names=MULTI_NAMES)
+    assert [item.terminal for item in found] == MULTI_NAMES
+    assert all(item.kind == intent.KIND_PROMPT for item in found)
+
+
+def test_detect_still_returns_the_first_match_for_existing_callers() -> None:
+    """``detect`` keeps its singular contract — owns_turn and the gates rely on it."""
+    found = intent.detect(LIVE_MULTI_FAILURE, names=MULTI_NAMES)
+    assert found is not None
+    assert found.terminal == "Iris"
+
+
+def test_an_unrelated_turn_addresses_nobody() -> None:
+    weather = "Wie ist das Wetter heute?"  # i18n-allow: fixture
+    assert intent.detect_all(weather, names=MULTI_NAMES) == []

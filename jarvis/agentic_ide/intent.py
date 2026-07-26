@@ -54,9 +54,13 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"\btell\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:dile|d[ií]gale|dile\s+a)\b[^.!?]{{0,40}}?\b{name}\b",
     # "Mika soll …" / "lass Kai …" / "Nova should …" / "let Aria …"
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:soll|sollte|kann|k[oö]nnte)\b",
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:should|can|could|please)\b",
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:deber[ií]a|puede|podr[ií]a)\b",
+    # Plural forms carry their weight: the moment two panes are addressed the
+    # user says "Iris und Bruno sollen …", and a singular-only verb list made
+    # the second addressee depend on the weaker last-resort path.
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:soll|sollen|sollte|sollten|kann|"  # i18n-allow: input vocab
+    r"k[oö]nnen|k[oö]nnte|k[oö]nnten|m[uü]ssen|muss)\b",  # i18n-allow: input vocab
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:should|can|could|please|must)\b",
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:deber[ií]an?|pueden?|podr[ií]an?)\b",
     r"\b(?:lass|l[aä]sst)\b[^.!?]{{0,20}}?\b{name}\b",
     r"\blet\b[^.!?]{{0,20}}?\b{name}\b",
     # "schick(e) das an Kai" / "gib Mika …" / "frag Nova …" / "beauftrage Kai …"
@@ -75,16 +79,25 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
 # covered per language: German and Spanish put the verb before the name ("was
 # macht Mika"), English after it ("what is Mika doing").
 _REPORT_TEMPLATES: tuple[str, ...] = (
-    r"\bwas\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?\b(?:macht|tut|treibt|arbeitet)\b",
-    r"\bwas\b[^.!?]{{0,20}}?\b(?:macht|tut|treibt|arbeitet)\b[^.!?]{{0,20}}?\b{name}\b",
+    r"\bwas\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?"
+    r"\b(?:macht|machen|tut|tun|treibt|treiben|arbeitet|arbeiten)\b",
+    r"\bwas\b[^.!?]{{0,20}}?"
+    r"\b(?:macht|machen|tut|tun|treibt|treiben|arbeitet|arbeiten)\b"
+    r"[^.!?]{{0,20}}?\b{name}\b",
     r"\b(?:what|how)\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?\b(?:doing|up\s+to|going|at)\b",
-    r"\b(?:qu[eé]|c[oó]mo)\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?\b(?:hace|haciendo|va)\b",
-    r"\b(?:qu[eé]|c[oó]mo)\b[^.!?]{{0,20}}?\b(?:hace|haciendo|va)\b[^.!?]{{0,20}}?\b{name}\b",
+    r"\b(?:qu[eé]|c[oó]mo)\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?"
+    r"\b(?:hacen?|haciendo|van?)\b",
+    r"\b(?:qu[eé]|c[oó]mo)\b[^.!?]{{0,20}}?\b(?:hacen?|haciendo|van?)\b"
+    r"[^.!?]{{0,20}}?\b{name}\b",
     r"\b{name}\b[^.!?]{{0,20}}?\b(?:status|fortschritt|progress|estado)\b",
     r"\b(?:status|fortschritt|progress|estado)\b[^.!?]{{0,20}}?\b{name}\b",
-    # "ist Kai fertig / stuck / hängt Mika?"
-    r"\b(?:ist|is|est[aá])\b\s+{name}\b",
-    r"\b(?:h[aä]ngt|steckt|stuck|fertig|done|listo)\b[^.!?]{{0,20}}?\b{name}\b",
+    # Is it done / is it stuck. Plural included, because two addressed panes
+    # get asked about together:
+    # "ist Kai fertig?" / "sind Iris und Bruno fertig?"  # i18n-allow: input vocab
+    r"\b(?:ist|sind|is|are|est[aá]|est[aá]n)\b\s+{name}\b",  # i18n-allow: input vocab
+    r"\b(?:h[aä]ngt|h[aä]ngen|steckt|stecken"  # i18n-allow: input vocab
+    r"|stuck|fertig|done|listos?)\b"  # i18n-allow: input vocab
+    r"[^.!?]{{0,20}}?\b{name}\b",
 )
 
 # Leading conversational filler that carries no instruction for the agent
@@ -161,8 +174,18 @@ def _compile(templates: tuple[str, ...], names: list[str]) -> list[tuple[str, re
     return out
 
 
-def _strip_addressing(text: str, name: str) -> str:
-    """The utterance with the addressing preamble and the call-sign removed."""
+#: Routing prepositions that may sit directly in front of a call-sign and are
+#: part of the addressing, not of the work ("schick das AN Kai").
+_ADDRESS_PREPOSITION = r"(?:an|to|a|bei|in|[uü]ber|via)"  # i18n-allow: input vocab
+
+
+def _strip_addressing(text: str, *names: str) -> str:
+    """The utterance with the addressing preamble and the call-signs removed.
+
+    Takes every addressee at once: with a fan-out the remaining names are part
+    of the address list, not part of the work, and leaving them in would have
+    the composer brief Iris about Bruno.
+    """
     cleaned = re.sub(
         r"\b(?:sag|sage|sagst|tell|dile|d[ií]gale|schick|schicke|send|gib|give|"
         r"frag|frage|ask|lass|let|beauftrage?|assign|env[ií]a|manda)\b\s*",
@@ -170,12 +193,13 @@ def _strip_addressing(text: str, name: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(
-        rf"\b(?:an|to|a|bei|in|[uü]ber|via)?\s*{re.escape(name)}\b\s*[,:]?\s*",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
+    for name in names:
+        cleaned = re.sub(
+            rf"\b{_ADDRESS_PREPOSITION}?\s*{re.escape(name)}\b\s*[,:]?\s*",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
     # "…, dass er/sie …" / "…, that it should …" — the subordinating conjunction
     # left over once the addressee is gone.
     cleaned = re.sub(
@@ -188,49 +212,192 @@ def _strip_addressing(text: str, name: str) -> str:
     return " ".join(cleaned.split())
 
 
-def detect(user_text: str, *, names: list[str] | None = None) -> TerminalIntent | None:
-    """The terminal this turn is about, or ``None``.
+# Everything that may stand between two call-signs for them to count as ONE
+# address list. Deliberately tiny: an enumeration ("Iris und Bruno") is a
+# fan-out, whereas two names each carrying their own directive are two separate
+# assignments and are found on their own. Anything else is not an enumeration.
+# The alternative conjunction ("oder" / "or") is left out on purpose — offering
+# a choice between two panes is not an address list.
+_COORDINATION_RE = re.compile(
+    r"^[\s,]*(?:und|and|sowie|plus|y|&|\+)?[\s,]*$",
+    re.IGNORECASE,
+)
 
-    ``names`` is injectable so tests (and callers that already hold the session)
-    do not need the process-wide registry.
+# Addressing the WHOLE workspace at once ("sag allen …", "tell everyone …").
+# Each shape needs the collective word in an ADDRESSING position — after a
+# handing-over verb, or opening the sentence in front of a modal. A bare "alle"
+# is far too common in ordinary work talk ("mach alle Tests") to be an address.
+_EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b(?:sag|sage|sagt|sagst|gib|frag|frage|schick|schicke|beauftrage?)\b"
+        r"[\s,]*\b(?:allen|alle)\b",
+        r"\b(?:tell|ask|give|assign|send)\b[\s,]*"
+        r"\b(?:everyone|everybody|them\s+all|all\s+of\s+them)\b",
+        r"^(?:und\s+)?\b(?:alle|allen)\b[^.!?]{0,20}?"  # i18n-allow: input vocab
+        r"\b(?:soll|sollen|m[uü]ssen|k[oö]nnen)\b",  # i18n-allow: input vocab
+        r"^(?:and\s+)?\b(?:everyone|everybody|all\s+of\s+them)\b[^.!?]{0,20}?"
+        r"\b(?:should|must|please|can)\b",
+        r"\b(?:diles?|preg[uú]nta)\b[\s,]*\b(?:a\s+)?todos\b",
+        r"^\b(?:todos|todas)\b[^.!?]{0,20}?\b(?:deben|deber[ií]an)\b",
+    )
+)
+
+# A word made only of letters — the unit ``names.resolve`` scores a call-sign
+# against. Digits and underscores can never be part of a spoken name.
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _mentions(text: str, candidates: list[str]) -> list[tuple[int, int, str]]:
+    """Every call-sign the utterance names, as ``(start, end, name)`` in order.
+
+    Resolution is delegated to ``names.resolve`` word by word, so the phonetic
+    tolerance is exactly the one the singular path already ships — a second
+    matching rule here would be free to drift away from it.
+    """
+    seen: set[str] = set()
+    out: list[tuple[int, int, str]] = []
+    for match in _WORD_RE.finditer(text):
+        hit = resolve(match.group(0), candidates)
+        if hit is None or hit in seen:
+            continue
+        seen.add(hit)
+        out.append((match.start(), match.end(), hit))
+    return out
+
+
+def _coordinated_group(
+    mentions: list[tuple[int, int, str]], text: str, anchors: set[str]
+) -> set[str]:
+    """``anchors`` plus every call-sign enumerated next to one of them.
+
+    "Sag Iris und Bruno, sie sollen …" carries the addressing shape on Iris
+    alone; Bruno is addressed by standing in the same list. Walking neighbours
+    transitively covers "Iris, Bruno und Casey" without a list-length special
+    case.
+    """
+    group = set(anchors)
+    changed = True
+    while changed:
+        changed = False
+        for (_, prev_end, prev_name), (next_start, _, next_name) in zip(
+            mentions, mentions[1:], strict=False
+        ):
+            if not _COORDINATION_RE.match(text[prev_end:next_start]):
+                continue
+            if prev_name in group and next_name not in group:
+                group.add(next_name)
+                changed = True
+            elif next_name in group and prev_name not in group:
+                group.add(prev_name)
+                changed = True
+    return group
+
+
+def detect_all(
+    user_text: str, *, names: list[str] | None = None
+) -> list[TerminalIntent]:
+    """Every terminal this turn addresses, in the order the utterance names them.
+
+    Live failure this exists for (voice session 2026-07-26 09:18): "kannst du
+    bitte Iris und Bruno beide in Deep Dive geben …" reached Iris only. The
+    detector returned on its first match, so a second addressee was not merely
+    missed — it could not be represented. Reporting was worse than the miss:
+    the readback named one pane, the provider re-used both names from the
+    question, and the user was told two agents were working when one was.
+
+    A call-sign joins the result in one of three ways, in falling confidence:
+
+    1. it carries an addressing shape itself ("tell Bruno to …") — its own
+       assignment;
+    2. it is enumerated beside such a name ("Iris und Bruno") — it shares the
+       instruction;
+    3. nobody carries a shape, but the utterance names panes and reads as an
+       instruction — the singular path's last resort, widened to every name
+       mentioned, because "Iris und Bruno … analysieren" addresses both by
+       exactly the same evidence.
+
+    Collective address ("sag allen …") returns every running pane.
     """
     text = (user_text or "").strip()
     if len(text) < 3:
-        return None
+        return []
     candidates = _running_names() if names is None else list(names)
     if not candidates:
-        return None
+        return []
 
     # A report question is checked first: "what is Kai doing?" also matches the
     # looser "ist Kai …" directive shape, and answering it as a prompt would type
     # the question into the agent.
-    for name, pattern in _compile(_REPORT_TEMPLATES, candidates):
-        if pattern.search(text):
-            return TerminalIntent(
-                terminal=name, kind=KIND_REPORT, instruction="", utterance=text
-            )
+    report_anchors = {
+        name
+        for name, pattern in _compile(_REPORT_TEMPLATES, candidates)
+        if pattern.search(text)
+    }
+    prompt_anchors = {
+        name
+        for name, pattern in _compile(_DIRECTIVE_TEMPLATES, candidates)
+        if pattern.search(text)
+    }
+    mentions = _mentions(text, candidates)
 
-    for name, pattern in _compile(_DIRECTIVE_TEMPLATES, candidates):
-        if pattern.search(text):
-            return TerminalIntent(
+    if any(pattern.search(text) for pattern in _EVERYONE_TEMPLATES):
+        kind = KIND_REPORT if report_anchors and not prompt_anchors else KIND_PROMPT
+        return [
+            TerminalIntent(
                 terminal=name,
-                kind=KIND_PROMPT,
-                instruction=_useful_instruction(text, name),
+                kind=kind,
+                instruction="" if kind == KIND_REPORT
+                else _useful_instruction(text, name),
                 utterance=text,
             )
+            for name in candidates
+        ]
 
-    # Last resort: the utterance names a terminal (possibly garbled) and reads as
-    # an instruction. ``names.resolve`` does the phonetic work; requiring a verb
-    # keeps a passing mention ("Kai is a nice name") from being addressed.
-    matched = resolve(text, candidates)
-    if matched is not None and _looks_like_instruction(text):
-        return TerminalIntent(
-            terminal=matched,
-            kind=KIND_PROMPT,
-            instruction=_useful_instruction(text, matched),
-            utterance=text,
+    if report_anchors:
+        kind = KIND_REPORT
+        anchors = report_anchors
+    elif prompt_anchors:
+        kind = KIND_PROMPT
+        anchors = prompt_anchors
+    elif mentions and _looks_like_instruction(text):
+        # Last resort: the utterance names terminals (possibly garbled) and reads
+        # as an instruction. Requiring a verb keeps a passing mention ("Kai is a
+        # nice name") from being addressed.
+        kind = KIND_PROMPT
+        anchors = {name for _, _, name in mentions}
+    else:
+        return []
+
+    addressed = _coordinated_group(mentions, text, anchors)
+    ordered = [name for _, _, name in mentions if name in addressed]
+    # An anchor matched by a template but never located as a word (a garbled
+    # transcript the templates still caught) keeps its place at the end.
+    ordered += [name for name in anchors if name not in ordered]
+
+    shared = "" if kind == KIND_REPORT else _useful_instruction(text, *ordered)
+    return [
+        TerminalIntent(
+            terminal=name, kind=kind, instruction=shared, utterance=text
         )
-    return None
+        for name in ordered
+    ]
+
+
+def detect(user_text: str, *, names: list[str] | None = None) -> TerminalIntent | None:
+    """The terminal this turn is about, or ``None``.
+
+    The singular view of ``detect_all`` — the first addressee. Kept because the
+    precedence gates (``owns_turn``, ``detect_spawn``, ``spawn_gate``) only ever
+    ask *whether* the workspace owns this turn, and one answer is cheaper to
+    reason about than a list. Both derive from one detector so they cannot drift
+    into disagreeing about an utterance.
+
+    ``names`` is injectable so tests (and callers that already hold the session)
+    do not need the process-wide registry.
+    """
+    found = detect_all(user_text, names=names)
+    return found[0] if found else None
 
 
 # Below this, stripping has eaten the task rather than the addressing — "schick
@@ -239,9 +406,9 @@ def detect(user_text: str, *, names: list[str] | None = None) -> TerminalIntent 
 _MIN_INSTRUCTION_CHARS = 12
 
 
-def _useful_instruction(text: str, name: str) -> str:
+def _useful_instruction(text: str, *names: str) -> str:
     """The stripped instruction, or the whole utterance when stripping over-ate."""
-    stripped = _strip_addressing(text, name)
+    stripped = _strip_addressing(text, *names)
     return stripped if len(stripped) >= _MIN_INSTRUCTION_CHARS else text
 
 
@@ -441,6 +608,7 @@ __all__ = [
     "SpawnTerminalsRequest",
     "TerminalIntent",
     "detect",
+    "detect_all",
     "detect_spawn",
     "owns_turn",
 ]
