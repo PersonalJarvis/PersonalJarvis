@@ -165,6 +165,11 @@ def ranking_settings(cfg: Any) -> dict[str, float]:
             0.0, _float_setting(cfg, "recency_half_life_days", 180.0)
         ),
         "rerank_min_score": max(0.0, _float_setting(cfg, "rerank_min_score", 4.0)),
+        # Hard wall-clock bound on the WHOLE rerank stage (all provider
+        # attempts together). Without it, a chain of dead/hung providers can
+        # burn its per-attempt timeout once per family — minutes, not the
+        # design's sub-second budget. 0 disables the bound.
+        "rerank_timeout_s": max(0.0, _float_setting(cfg, "rerank_timeout_s", 10.0)),
     }
 
 
@@ -662,8 +667,19 @@ async def _maybe_rerank(cfg: Any, query: str, ranked: list[SearchResult]) -> lis
         return ranked
     pool = ranked[:RERANK_POOL]
     documents = [_rerank_document(hit) for hit in pool]
+    timeout_s = ranking_settings(cfg)["rerank_timeout_s"]
     try:
-        pairs = await reranker.rerank(query, documents, top_k=len(documents))
+        grading = reranker.rerank(query, documents, top_k=len(documents))
+        if timeout_s > 0:
+            pairs = await asyncio.wait_for(grading, timeout=timeout_s)
+        else:
+            pairs = await grading
+    except TimeoutError:
+        log.warning(
+            "rerank stage exceeded its %.1f s budget — keeping the fusion order",
+            timeout_s,
+        )
+        return ranked
     except rerank_mod.RerankError as exc:
         log.warning("rerank failed (%s) — keeping the fusion order", exc)
         return ranked

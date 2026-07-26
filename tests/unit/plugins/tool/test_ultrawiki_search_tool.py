@@ -34,8 +34,10 @@ class _FakeService:
         self._error = error
         self.calls: list[dict[str, Any]] = []
 
-    async def search(self, query: str, *, k: int, area_id: str | None) -> list[Any]:
-        self.calls.append({"query": query, "k": k, "area_id": area_id})
+    async def search(
+        self, query: str, *, k: int, area_id: str | None, rerank: bool = True
+    ) -> list[Any]:
+        self.calls.append({"query": query, "k": k, "area_id": area_id, "rerank": rerank})
         if self._error is not None:
             raise self._error
         return self._hits
@@ -97,7 +99,18 @@ async def test_hits_render_with_citation_and_legs() -> None:
     assert "Project Phoenix" in result.output
     assert "uw://item/1" in result.output  # citation permalink
     assert "keyword" in result.output  # matched_by legs stay visible
-    assert service.calls == [{"query": "phoenix", "k": 3, "area_id": "work"}]
+    assert service.calls == [
+        {"query": "phoenix", "k": 3, "area_id": "work", "rerank": False}
+    ]
+
+
+async def test_tool_searches_llm_free() -> None:
+    """doc 03 'primitive tools': the consumer is a model and judges relevance
+    itself — the tool must never pay a second model call to pre-grade."""
+    service = _FakeService(hits=[_Hit()])
+    tool = _tool(service, enabled=True)
+    await tool.execute({"query": "phoenix"}, ctx=None)
+    assert service.calls[0]["rerank"] is False
 
 
 async def test_k_is_clamped_to_schema_bounds() -> None:

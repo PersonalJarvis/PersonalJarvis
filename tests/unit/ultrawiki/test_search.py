@@ -545,6 +545,7 @@ def test_search_status_reports_the_live_ranking_knobs():
             rrf_vector_weight=0.5,
             recency_half_life_days=30,
             rerank_min_score=6,
+            rerank_timeout_s=8,
         )
     )
 
@@ -553,6 +554,7 @@ def test_search_status_reports_the_live_ranking_knobs():
         "vector_weight": 0.5,
         "recency_half_life_days": 30.0,
         "rerank_min_score": 6.0,
+        "rerank_timeout_s": 8.0,
     }
 
 
@@ -816,6 +818,32 @@ async def test_ungraded_hits_pass_the_floor_visibly_rather_than_silently(
     assert len(results) == 3
     assert all(hit.rerank_score is None for hit in results)
     assert any("rerank failed" in rec.message for rec in caplog.records)
+
+
+async def test_rerank_stage_budget_bust_keeps_the_fusion_order(
+    store, monkeypatch, caplog
+):
+    """The 45s-per-provider trap: a hung rerank chain must never hold the
+    search hostage — the stage has ONE wall-clock budget, then fusion order
+    stands."""
+    import asyncio
+
+    id_0, id_1, id_2 = await seed_three_ranked_items(store)
+
+    class HungReranker(FakeReranker):
+        async def rerank(self, query, documents, top_k):
+            await asyncio.sleep(5.0)
+            return [(2, 9.0)]
+
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: HungReranker())
+    cfg = make_cfg(rerank_provider="voyage", rerank_timeout_s=0.05)
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.ultrawiki.search"):
+        results = await hybrid_search(store, cfg, "alpha")
+
+    assert [hit.item_id for hit in results] == [id_0, id_1, id_2]  # fusion order
+    assert all(hit.rerank_score is None for hit in results)
+    assert any("exceeded its" in rec.message for rec in caplog.records)
 
 
 async def test_voice_path_can_skip_the_rerank_stage(store, monkeypatch):

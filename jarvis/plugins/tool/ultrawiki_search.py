@@ -153,9 +153,12 @@ class UltraWikiSearchTool:
             )
 
         try:
-            hits = await service.search(query, k=k, area_id=area)
+            # rerank=False by design (doc 03 "primitive tools"): this tool's
+            # consumer IS a model and judges relevance itself — paying a
+            # second model call to pre-grade for it is pure added latency.
+            hits = await service.search(query, k=k, area_id=area, rerank=False)
         except Exception as exc:  # noqa: BLE001 — surface honestly, never crash the turn
-            log.warning("ultrawiki-search failed for %r: %s", query, exc)
+            log.warning("ultrawiki-search failed: %s", exc)
             return ToolResult(
                 success=False,
                 output="",
@@ -179,7 +182,8 @@ class UltraWikiSearchTool:
         output = "\n".join(lines)
         if len(output) > _MAX_OUTPUT_CHARS:
             output = output[:_MAX_OUTPUT_CHARS].rstrip() + "…"
-        log.info("ultrawiki-search: %d hit(s) for %r", len(hits), query)
+        # Hit count only — what the user asks their own memory stays out of logs.
+        log.info("ultrawiki-search: %d hit(s)", len(hits))
         return ToolResult(success=True, output=output)
 
 
