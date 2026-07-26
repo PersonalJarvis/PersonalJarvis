@@ -21,10 +21,18 @@ from jarvis.agentic_ide.agent_sessions import ResumeHandle
 
 
 def _snapshot(folder: str) -> resume_store.Snapshot:
-    return resume_store.Snapshot(
+    return _snapshot_of(_workspace(folder))
+
+
+def _snapshot_of(*workspaces: resume_store.SnapshotWorkspace) -> resume_store.Snapshot:
+    return resume_store.Snapshot(saved_at=100.0, workspaces=list(workspaces))
+
+
+def _workspace(folder: str) -> resume_store.SnapshotWorkspace:
+    return resume_store.SnapshotWorkspace(
         session_id="ide_test",
         folder=folder,
-        saved_at=100.0,
+        name="Release review",
         terminals=[
             resume_store.SnapshotTerminal(
                 key="alex",
@@ -32,9 +40,7 @@ def _snapshot(folder: str) -> resume_store.Snapshot:
                 agent="claude",
                 column=0,
                 slot=0,
-                resume=ResumeHandle(
-                    kind="claude_session", id="u-1", captured_at=1.0
-                ),
+                resume=ResumeHandle(kind="claude_session", id="u-1", captured_at=1.0),
                 prompts_sent=3,
             ),
             resume_store.SnapshotTerminal(
@@ -49,12 +55,13 @@ def test_a_saved_snapshot_comes_back_intact(tmp_path: Path) -> None:
     resume_store.save(_snapshot(str(tmp_path)))
     loaded = resume_store.load()
     assert loaded is not None
-    assert [t.name for t in loaded.terminals] == ["Alex", "Blake"]
-    assert [(t.column, t.slot) for t in loaded.terminals] == [(0, 0), (1, 0)]
-    assert [t.agent for t in loaded.terminals] == ["claude", "codex"]
-    assert loaded.terminals[0].resume is not None
-    assert loaded.terminals[0].resume.id == "u-1"
-    assert loaded.terminals[1].resume is None
+    assert [t.name for t in loaded.workspaces[0].terminals] == ["Alex", "Blake"]
+    assert [(t.column, t.slot) for t in loaded.workspaces[0].terminals] == [(0, 0), (1, 0)]
+    assert [t.agent for t in loaded.workspaces[0].terminals] == ["claude", "codex"]
+    assert loaded.workspaces[0].terminals[0].resume is not None
+    assert loaded.workspaces[0].terminals[0].resume.id == "u-1"
+    assert loaded.workspaces[0].terminals[1].resume is None
+    assert loaded.workspaces[0].name == "Release review"
 
 
 def test_nothing_saved_means_nothing_to_resume() -> None:
@@ -73,10 +80,67 @@ def test_a_snapshot_from_a_future_version_is_ignored(tmp_path: Path) -> None:
     resume_store.save(_snapshot(str(tmp_path)))
     path = resume_store._store_path()
     path.write_text(
-        path.read_text(encoding="utf-8").replace('"version": 1', '"version": 99'),
+        path.read_text(encoding="utf-8").replace('"version": 2', '"version": 99'),
         encoding="utf-8",
     )
     assert resume_store.load() is None
+
+
+def test_a_snapshot_from_the_one_workspace_era_still_resumes(tmp_path: Path) -> None:
+    """An upgrade must not cost the restore point on the very restart that needs it.
+
+    Version 1 was written when only one workspace could be open, with its folder
+    and panes at the top level. It is lifted into a single workspace rather than
+    discarded.
+    """
+    import json
+
+    legacy = {
+        "version": 1,
+        "session_id": "ide_old",
+        "folder": str(tmp_path),
+        "saved_at": 42.0,
+        "terminals": [{"key": "alex", "name": "Alex", "agent": "claude", "column": 0, "slot": 0}],
+    }
+    target = resume_store._store_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = resume_store.load()
+    assert loaded is not None
+    assert len(loaded.workspaces) == 1
+    assert loaded.workspaces[0].folder == str(tmp_path)
+    assert [t.name for t in loaded.workspaces[0].terminals] == ["Alex"]
+    assert loaded.saved_at == 42.0
+
+
+def test_every_open_workspace_is_remembered(tmp_path: Path) -> None:
+    """Somebody with four folders open had four — one is not an answer."""
+    first, second = tmp_path / "one", tmp_path / "two"
+    first.mkdir()
+    second.mkdir()
+    resume_store.save(_snapshot_of(_workspace(str(first)), _workspace(str(second))))
+
+    loaded = resume_store.load()
+    assert loaded is not None
+    assert [w.folder for w in loaded.workspaces] == [str(first), str(second)]
+    assert loaded.terminal_count == 4
+
+
+def test_the_offer_reports_each_workspace_separately(tmp_path: Path) -> None:
+    alive, gone = tmp_path / "alive", tmp_path / "deleted"
+    alive.mkdir()
+    view = resume_store.offer(
+        _snapshot_of(_workspace(str(alive)), _workspace(str(gone))),
+        installed={"claude", "codex"},
+    )
+    # One can come back, one cannot — and the whole offer is still usable.
+    assert view["available"] is True
+    assert view["workspace_count"] == 2
+    assert view["terminal_count"] == 4
+    assert view["workspaces"][0]["available"] is True
+    assert view["workspaces"][1]["available"] is False
+    assert view["workspaces"][1]["folder_exists"] is False
 
 
 def test_a_pane_without_a_name_is_dropped_not_fatal(tmp_path: Path) -> None:
@@ -88,25 +152,18 @@ def test_a_pane_without_a_name_is_dropped_not_fatal(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     loaded = resume_store.load()
-    assert loaded is not None and [t.name for t in loaded.terminals] == ["Alex"]
+    assert loaded is not None and [t.name for t in loaded.workspaces[0].terminals] == ["Alex"]
 
 
 def test_a_snapshot_without_terminals_is_not_an_offer(tmp_path: Path) -> None:
-    empty = resume_store.Snapshot(
-        session_id="ide_x", folder=str(tmp_path), saved_at=1.0, terminals=[]
-    )
-    resume_store.save(empty)
+    resume_store.save(resume_store.Snapshot(saved_at=1.0, workspaces=[]))
     assert resume_store.load() is None
 
 
 def test_saving_an_empty_workspace_withdraws_the_old_offer(tmp_path: Path) -> None:
     """Closing the last pane must not leave yesterday's workspace on offer."""
     resume_store.save(_snapshot(str(tmp_path)))
-    resume_store.save(
-        resume_store.Snapshot(
-            session_id="ide_x", folder=str(tmp_path), saved_at=2.0, terminals=[]
-        )
-    )
+    resume_store.save(resume_store.Snapshot(saved_at=2.0, workspaces=[]))
     assert resume_store.load() is None
 
 
@@ -130,13 +187,12 @@ def test_a_failed_write_leaves_the_previous_snapshot_readable(
 
     monkeypatch.setattr(resume_store.os, "replace", _fail)
     resume_store.save(
-        resume_store.Snapshot(
-            session_id="ide_other",
-            folder=str(tmp_path),
-            saved_at=999.0,
-            terminals=[
-                resume_store.SnapshotTerminal(key="x", name="X", agent="claude")
-            ],
+        _snapshot_of(
+            resume_store.SnapshotWorkspace(
+                session_id="ide_other",
+                folder=str(tmp_path),
+                terminals=[resume_store.SnapshotTerminal(key="x", name="X", agent="claude")],
+            )
         )
     )
     assert target.read_text(encoding="utf-8") == before
@@ -164,12 +220,18 @@ def test_two_threads_saving_at_once_do_not_lose_the_write(tmp_path: Path) -> Non
             for _ in range(10):
                 resume_store.save(
                     resume_store.Snapshot(
-                        session_id=f"ide_{index}",
-                        folder=str(tmp_path),
                         saved_at=float(index),
-                        terminals=[
-                            resume_store.SnapshotTerminal(
-                                key=f"t{index}", name=f"T{index}", agent="claude"
+                        workspaces=[
+                            resume_store.SnapshotWorkspace(
+                                session_id=f"ide_{index}",
+                                folder=str(tmp_path),
+                                terminals=[
+                                    resume_store.SnapshotTerminal(
+                                        key=f"t{index}",
+                                        name=f"T{index}",
+                                        agent="claude",
+                                    )
+                                ],
                             )
                         ],
                     )
@@ -186,7 +248,7 @@ def test_two_threads_saving_at_once_do_not_lose_the_write(tmp_path: Path) -> Non
     assert errors == []
     # Whoever won, the file is a COMPLETE snapshot and not a torn one.
     loaded = resume_store.load()
-    assert loaded is not None and len(loaded.terminals) == 1
+    assert loaded is not None and len(loaded.workspaces[0].terminals) == 1
     assert list(resume_store._store_path().parent.glob("*.tmp-*")) == []
 
 
@@ -197,9 +259,10 @@ def test_the_offer_reports_what_will_actually_come_back(
     existing_conversation("u-1")
     view = resume_store.offer(_snapshot(str(tmp_path)), installed={"claude"})
     assert view["available"] is True
-    assert view["folder_exists"] is True
-    assert view["folder_name"] == tmp_path.name
-    panes = {p["name"]: p for p in view["terminals"]}
+    space = view["workspaces"][0]
+    assert space["folder_exists"] is True
+    assert space["folder_name"] == tmp_path.name
+    panes = {p["name"]: p for p in space["terminals"]}
     # Alex has a handle and its CLI is here -> the conversation comes back.
     assert panes["Alex"]["resumable"] is True
     assert panes["Alex"]["available"] is True
@@ -212,26 +275,26 @@ def test_the_offer_reports_what_will_actually_come_back(
 
 def test_the_offer_keeps_the_grid_coordinates(tmp_path: Path) -> None:
     view = resume_store.offer(_snapshot(str(tmp_path)), installed={"claude", "codex"})
-    assert [(p["column"], p["slot"]) for p in view["terminals"]] == [(0, 0), (1, 0)]
+    panes = view["workspaces"][0]["terminals"]
+    assert [(p["column"], p["slot"]) for p in panes] == [(0, 0), (1, 0)]
 
 
 def test_a_vanished_folder_is_reported_not_raised(tmp_path: Path) -> None:
-    view = resume_store.offer(
-        _snapshot(str(tmp_path / "deleted")), installed={"claude", "codex"}
-    )
+    view = resume_store.offer(_snapshot(str(tmp_path / "deleted")), installed={"claude", "codex"})
     assert view["available"] is False
-    assert view["folder_exists"] is False
+    assert view["workspaces"][0]["folder_exists"] is False
 
 
 def test_a_machine_without_any_coding_cli_is_told_so(tmp_path: Path) -> None:
     """A fresh install elsewhere: never a crash, never a false promise."""
     view = resume_store.offer(_snapshot(str(tmp_path)), installed=set())
     assert view["available"] is False
-    assert all(p["available"] is False for p in view["terminals"])
+    panes = view["workspaces"][0]["terminals"]
+    assert all(p["available"] is False for p in panes)
     assert view["resumable_count"] == 0
 
 
 def test_no_snapshot_yields_an_empty_offer() -> None:
     view = resume_store.offer(None, installed={"claude"})
     assert view["available"] is False
-    assert view["terminals"] == []
+    assert view["workspaces"] == []

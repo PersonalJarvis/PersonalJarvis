@@ -1,10 +1,9 @@
-"""The one workspace an Agentic-IDE user can get back.
+"""What an Agentic-IDE user can get back after everything went away.
 
-``Registry`` holds the open workspace in process memory, which means it lasts
-exactly as long as the process does. Close the browser and every agent is
-stopped on purpose; restart the app and even the arrangement is gone. This
-module is the thin layer that makes that recoverable: a small JSON file naming
-the folder, every pane's call-sign, which coding CLI ran in it, where it sat in
+``Registry`` holds its workspaces in process memory, which means they last
+exactly as long as the process does. This module is the thin layer that makes
+that recoverable: a small JSON file naming every workspace that was open, each
+pane's call-sign, which coding CLI ran in it, on which account, where it sat in
 the grid, and the handle that points back at its conversation.
 
 Same shape and the same discipline as ``recents.py``, which already proved the
@@ -21,10 +20,12 @@ Two rules worth stating outright:
   against the machine as it is NOW, so the user is told which panes will really
   come back *before* clicking, instead of finding out by asking a resumed agent
   a follow-up question and getting a blank stare.
-* **Closing a workspace deliberately withdraws it.** The offer is meant for the
-  cases nobody chose — a closed window, a restarted app, a reboot. Re-offering
-  something the user shut down on purpose is the kind of prompt people learn to
-  dismiss without reading, which would cost the offer its meaning.
+* **Closing does NOT withdraw the offer.** An earlier version cleared the
+  snapshot when the last workspace was closed, reasoning that re-proposing
+  something somebody just shut down is noise. That was wrong, and the maintainer
+  said so plainly: closing for the day and picking the same folders up tomorrow
+  is the main thing this is FOR. The only thing that discards a restore point is
+  the user asking for it ("Start fresh" / ``DELETE /resume``).
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ _WRITE_LOCK = threading.Lock()
 # Bumped whenever the stored shape changes incompatibly. An unknown version
 # reads as "nothing to resume": half-understanding a newer build's file would
 # reopen a workspace with pieces missing, which is worse than offering nothing.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -127,28 +128,26 @@ def _account_home(agent: str, account_id: str | None) -> Path | None:
 
 
 @dataclass(slots=True)
-class Snapshot:
-    """A workspace as it stood, ready to be offered back."""
+class SnapshotWorkspace:
+    """One remembered workspace: a folder and the panes that were in it."""
 
     session_id: str
     folder: str
-    saved_at: float
+    # Custom tab label. Empty for snapshots written before renaming existed.
+    name: str = ""
     terminals: list[SnapshotTerminal] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": SCHEMA_VERSION,
             "session_id": self.session_id,
             "folder": self.folder,
-            "saved_at": self.saved_at,
+            "name": self.name,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
     @staticmethod
-    def from_dict(data: Any) -> Snapshot | None:
+    def from_dict(data: Any) -> SnapshotWorkspace | None:
         if not isinstance(data, dict):
-            return None
-        if _as_int(data.get("version")) != SCHEMA_VERSION:
             return None
         folder = str(data.get("folder") or "").strip()
         if not folder:
@@ -164,16 +163,82 @@ class Snapshot:
         if not terminals:
             # A workspace with no panes is not an offer, it is an empty screen.
             return None
+        return SnapshotWorkspace(
+            session_id=str(data.get("session_id") or ""),
+            folder=folder,
+            name=str(data.get("name") or "").strip(),
+            terminals=terminals,
+        )
+
+
+@dataclass(slots=True)
+class Snapshot:
+    """Everything that was open, ready to be offered back.
+
+    All workspaces, not just whichever was on screen. The question this answers
+    is "give me back what I had", and somebody running four folders side by side
+    had four — handing back one and silently dropping three is the same kind of
+    lie as promising a conversation that is not there.
+
+    Restoring them all costs nothing on its own: a restored workspace starts no
+    agent. Panes only launch when a pane connects, and only the workspace on
+    screen has panes mounted, so five workspaces in the bar are five folders
+    waiting, not five folders' worth of coding agents.
+    """
+
+    saved_at: float
+    workspaces: list[SnapshotWorkspace] = field(default_factory=list)
+
+    @property
+    def terminal_count(self) -> int:
+        return sum(len(w.terminals) for w in self.workspaces)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": SCHEMA_VERSION,
+            "saved_at": self.saved_at,
+            "workspaces": [w.to_dict() for w in self.workspaces],
+        }
+
+    @staticmethod
+    def from_dict(data: Any) -> Snapshot | None:
+        if not isinstance(data, dict):
+            return None
+        version = _as_int(data.get("version"))
+        if version == 1:
+            # Written before workspaces could be held open side by side: one
+            # workspace, its fields at the top level. Lifted rather than
+            # discarded, so an upgrade does not cost somebody their restore
+            # point on the one restart where they would most want it.
+            data = {
+                "version": SCHEMA_VERSION,
+                "saved_at": data.get("saved_at"),
+                "workspaces": [
+                    {
+                        "session_id": data.get("session_id"),
+                        "folder": data.get("folder"),
+                        "terminals": data.get("terminals"),
+                    }
+                ],
+            }
+        elif version != SCHEMA_VERSION:
+            return None
+
+        raw = data.get("workspaces")
+        workspaces = [
+            parsed
+            for parsed in (
+                SnapshotWorkspace.from_dict(item) for item in (raw if isinstance(raw, list) else [])
+            )
+            if parsed is not None
+        ]
+        if not workspaces:
+            return None
         try:
             saved_at = float(data.get("saved_at") or 0.0)
         except (TypeError, ValueError):
             saved_at = 0.0
-        return Snapshot(
-            session_id=str(data.get("session_id") or ""),
-            folder=folder,
-            saved_at=saved_at,
-            terminals=terminals,
-        )
+        return Snapshot(saved_at=saved_at, workspaces=workspaces)
 
 
 def _as_int(value: Any) -> int:
@@ -205,7 +270,7 @@ def save(snapshot: Snapshot) -> None:
     conversation id this feature exists to keep. So each write gets its own temp
     name, and the lock keeps the last writer's file the one that lands.
     """
-    if not snapshot.terminals:
+    if not snapshot.workspaces:
         # Nothing to come back to. Clearing beats storing an empty offer that
         # would render as a card with no panes in it.
         clear()
@@ -279,50 +344,62 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
     if snapshot is None:
         return {
             "available": False,
-            "folder": "",
-            "folder_name": "",
-            "folder_exists": False,
             "saved_at": 0.0,
-            "session_id": "",
+            "workspace_count": 0,
+            "terminal_count": 0,
             "resumable_count": 0,
-            "terminals": [],
+            "workspaces": [],
         }
 
-    try:
-        folder_exists = Path(snapshot.folder).expanduser().is_dir()
-    except OSError:
-        folder_exists = False
-
     display = _display_names()
-    panes: list[dict[str, Any]] = []
-    for term in snapshot.terminals:
-        agent_available = term.agent in installed
-        panes.append(
+    workspaces: list[dict[str, Any]] = []
+    for space in snapshot.workspaces:
+        try:
+            folder_exists = Path(space.folder).expanduser().is_dir()
+        except OSError:
+            folder_exists = False
+
+        panes: list[dict[str, Any]] = []
+        for term in space.terminals:
+            agent_available = term.agent in installed
+            panes.append(
+                {
+                    "key": term.key,
+                    "name": term.name,
+                    "agent": term.agent,
+                    "display_name": display.get(term.agent, term.agent),
+                    "column": term.column,
+                    "slot": term.slot,
+                    "available": agent_available,
+                    "resumable": agent_available
+                    and has_conversation(
+                        term.agent,
+                        term.resume,
+                        _account_home(term.agent, term.account),
+                    ),
+                    "prompts_sent": term.prompts_sent,
+                }
+            )
+
+        workspaces.append(
             {
-                "key": term.key,
-                "name": term.name,
-                "agent": term.agent,
-                "display_name": display.get(term.agent, term.agent),
-                "column": term.column,
-                "slot": term.slot,
-                "available": agent_available,
-                "resumable": agent_available
-                and has_conversation(
-                    term.agent, term.resume, _account_home(term.agent, term.account)
-                ),
-                "prompts_sent": term.prompts_sent,
+                "session_id": space.session_id,
+                "folder": space.folder,
+                "folder_name": Path(space.folder).name or space.folder,
+                "folder_exists": folder_exists,
+                "available": folder_exists and any(p["available"] for p in panes),
+                "resumable_count": sum(1 for p in panes if p["resumable"]),
+                "terminals": panes,
             }
         )
 
     return {
-        "available": folder_exists and any(p["available"] for p in panes),
-        "folder": snapshot.folder,
-        "folder_name": Path(snapshot.folder).name or snapshot.folder,
-        "folder_exists": folder_exists,
+        "available": any(w["available"] for w in workspaces),
         "saved_at": snapshot.saved_at,
-        "session_id": snapshot.session_id,
-        "resumable_count": sum(1 for p in panes if p["resumable"]),
-        "terminals": panes,
+        "workspace_count": len(workspaces),
+        "terminal_count": sum(len(w["terminals"]) for w in workspaces),
+        "resumable_count": sum(w["resumable_count"] for w in workspaces),
+        "workspaces": workspaces,
     }
 
 
@@ -341,20 +418,16 @@ def _display_names() -> dict[str, str]:
         return {}
 
 
-def snapshot_now(*, session_id: str, folder: str, terminals: list[SnapshotTerminal]) -> Snapshot:
-    """A snapshot stamped with the current time."""
-    return Snapshot(
-        session_id=session_id,
-        folder=folder,
-        saved_at=time.time(),
-        terminals=terminals,
-    )
+def snapshot_now(workspaces: list[SnapshotWorkspace]) -> Snapshot:
+    """A snapshot of every open workspace, stamped with the current time."""
+    return Snapshot(saved_at=time.time(), workspaces=list(workspaces))
 
 
 __all__ = [
     "SCHEMA_VERSION",
     "Snapshot",
     "SnapshotTerminal",
+    "SnapshotWorkspace",
     "clear",
     "load",
     "offer",

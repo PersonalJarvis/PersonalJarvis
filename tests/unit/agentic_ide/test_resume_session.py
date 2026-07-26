@@ -26,9 +26,7 @@ def fake_pty() -> FakePtyManager:
 
 
 @pytest.fixture
-def registry(
-    fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch
-) -> ide.Registry:
+def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> ide.Registry:
     monkeypatch.setattr(ide, "agent_argv", lambda name: (f"/usr/bin/{name}",))
     return ide.Registry(pty_manager=fake_pty)
 
@@ -69,9 +67,7 @@ async def test_a_pane_with_a_handle_continues_instead_of_starting_over(
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     term = registry.session.find("Alex")
-    term.resume = ResumeHandle(
-        kind="claude_session", id="known-id", captured_at=1.0
-    )
+    term.resume = ResumeHandle(kind="claude_session", id="known-id", captured_at=1.0)
     existing_conversation("known-id")
 
     await registry.attach("Alex", 80, 24, _noop, _noop_exit)
@@ -151,9 +147,7 @@ async def test_a_handle_with_no_conversation_behind_it_starts_fresh(
     """
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     term = registry.session.find("Alex")
-    term.resume = ResumeHandle(
-        kind="claude_session", id="never-written", captured_at=1.0
-    )
+    term.resume = ResumeHandle(kind="claude_session", id="never-written", captured_at=1.0)
     # Deliberately no conversation on disk.
 
     await registry.attach("Alex", 80, 24, _noop, _noop_exit)
@@ -172,23 +166,28 @@ async def test_the_offer_does_not_promise_a_conversation_that_is_not_there(
 ) -> None:
     """What the card would have claimed: twelve conversations, all empty."""
     snapshot = resume_store.Snapshot(
-        session_id="ide_old",
-        folder=str(tmp_path),
         saved_at=1.0,
-        terminals=[
-            resume_store.SnapshotTerminal(
-                key="alex",
-                name="Alex",
-                agent="claude",
-                resume=ResumeHandle(
-                    kind="claude_session", id="never-written", captured_at=1.0
-                ),
+        workspaces=[
+            resume_store.SnapshotWorkspace(
+                session_id="ide_old",
+                folder=str(tmp_path),
+                terminals=[
+                    resume_store.SnapshotTerminal(
+                        key="alex",
+                        name="Alex",
+                        agent="claude",
+                        resume=ResumeHandle(
+                            kind="claude_session", id="never-written", captured_at=1.0
+                        ),
+                    )
+                ],
             )
         ],
     )
     view = resume_store.offer(snapshot, installed={"claude"})
-    assert view["terminals"][0]["available"] is True  # the pane comes back
-    assert view["terminals"][0]["resumable"] is False  # the conversation does not
+    panes = view["workspaces"][0]["terminals"]
+    assert panes[0]["available"] is True  # the pane comes back
+    assert panes[0]["resumable"] is False  # the conversation does not
     assert view["resumable_count"] == 0
 
 
@@ -329,11 +328,18 @@ async def test_a_late_crash_is_reported_as_a_crash(
 
 
 # ------------------------------------------------------------------ restore
-def _snapshot(folder: Path) -> resume_store.Snapshot:
+def _snapshot(*folders: Path) -> resume_store.Snapshot:
+    """A restore point holding one workspace per folder."""
     return resume_store.Snapshot(
+        saved_at=1.0,
+        workspaces=[_workspace(f) for f in folders],
+    )
+
+
+def _workspace(folder: Path) -> resume_store.SnapshotWorkspace:
+    return resume_store.SnapshotWorkspace(
         session_id="ide_old",
         folder=str(folder),
-        saved_at=1.0,
         terminals=[
             resume_store.SnapshotTerminal(
                 key="dana",
@@ -341,9 +347,7 @@ def _snapshot(folder: Path) -> resume_store.Snapshot:
                 agent="claude",
                 column=1,
                 slot=1,
-                resume=ResumeHandle(
-                    kind="claude_session", id="dana-conv", captured_at=1.0
-                ),
+                resume=ResumeHandle(kind="claude_session", id="dana-conv", captured_at=1.0),
                 prompts_sent=2,
             ),
             resume_store.SnapshotTerminal(
@@ -356,7 +360,7 @@ def _snapshot(folder: Path) -> resume_store.Snapshot:
 async def test_restore_rebuilds_titles_agents_and_positions(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    restored = await registry.restore(_snapshot(tmp_path))
+    restored = (await registry.restore(_snapshot(tmp_path))).sessions[0]
 
     # Reading order, not snapshot order: left to right, top to bottom.
     assert [t.name for t in restored.terminals] == ["Alex", "Dana"]
@@ -371,7 +375,7 @@ async def test_restore_starts_nothing_by_itself(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     """The grid attaches its panes as it always does — one spawn path only."""
-    restored = await registry.restore(_snapshot(tmp_path))
+    restored = (await registry.restore(_snapshot(tmp_path))).sessions[0]
     assert all(t.status == "pending" for t in restored.terminals)
     assert fake_pty.spawns == []
 
@@ -400,34 +404,25 @@ async def test_restore_refuses_a_folder_that_is_gone(
         await registry.restore(_snapshot(tmp_path / "deleted"))
 
 
-async def test_restore_refuses_an_empty_workspace(
-    registry: ide.Registry, tmp_path: Path
-) -> None:
-    empty = resume_store.Snapshot(
-        session_id="ide_old", folder=str(tmp_path), saved_at=1.0, terminals=[]
-    )
+async def test_restore_refuses_an_empty_workspace(registry: ide.Registry, tmp_path: Path) -> None:
+    empty = resume_store.Snapshot(saved_at=1.0, workspaces=[])
     with pytest.raises(ide.SessionError):
         await registry.restore(empty)
 
 
-async def test_restoring_a_folder_that_is_still_open_switches_to_it(
+async def test_restoring_a_folder_that_is_still_open_adds_the_remembered_workspace(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """A stale offer must not trade a running workspace for a restarted one.
-
-    The offer describes a folder; if that folder is open right now, the honest
-    outcome is to show it. Reopening would kill agents that are working to
-    replace them with agents that have to be resumed.
-    """
+    """Two remembered pane groups may intentionally share one folder."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Old"}])
     await registry.attach("Old", 80, 24, _noop, _noop_exit)
     live = registry.session.find("Old").pty_id
 
-    restored = await registry.restore(_snapshot(tmp_path))
+    restored = (await registry.restore(_snapshot(tmp_path))).sessions[0]
 
     assert live not in fake_pty.closed, "the running agent must survive"
-    assert [t.name for t in restored.terminals] == ["Old"]
-    assert len(registry.sessions) == 1
+    assert [t.name for t in restored.terminals] == ["Alex", "Dana"]
+    assert len(registry.sessions) == 2
 
 
 async def test_restoring_another_folder_opens_it_beside_the_running_one(
@@ -453,8 +448,8 @@ async def test_opening_a_workspace_makes_it_resumable(
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     saved = resume_store.load()
     assert saved is not None
-    assert [t.name for t in saved.terminals] == ["Alex"]
-    assert saved.folder == str(tmp_path)
+    assert [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
+    assert saved.workspaces[0].folder == str(tmp_path)
 
 
 async def test_the_conversation_id_reaches_the_snapshot(
@@ -465,8 +460,8 @@ async def test_the_conversation_id_reaches_the_snapshot(
     await registry.attach("Alex", 80, 24, _noop, _noop_exit)
 
     saved = resume_store.load()
-    assert saved is not None and saved.terminals[0].resume is not None
-    assert saved.terminals[0].resume.id == registry.session.find("Alex").resume.id
+    assert saved is not None and saved.workspaces[0].terminals[0].resume is not None
+    assert saved.workspaces[0].terminals[0].resume.id == registry.session.find("Alex").resume.id
 
 
 async def test_splitting_and_closing_keep_the_offer_current(
@@ -475,32 +470,75 @@ async def test_splitting_and_closing_keep_the_offer_current(
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     await registry.add_terminal(anchor="Alex", direction="right", name="Blake")
     saved = resume_store.load()
-    assert saved is not None and [t.name for t in saved.terminals] == ["Alex", "Blake"]
+    assert saved is not None and [t.name for t in saved.workspaces[0].terminals] == [
+        "Alex",
+        "Blake",
+    ]
 
     await registry.close_terminal("Blake")
     saved = resume_store.load()
-    assert saved is not None and [t.name for t in saved.terminals] == ["Alex"]
+    assert saved is not None and [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
 
 
-async def test_closing_the_workspace_deliberately_withdraws_the_offer(
+async def test_closing_the_workspace_keeps_it_resumable(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """An explicit close means "I am done" — re-offering it would be noise."""
+    """Closing for the day and picking it up tomorrow is the point of this.
+
+    An earlier version withdrew the offer on an explicit close, reasoning that
+    re-proposing something somebody just shut down is noise. The maintainer
+    reported the opposite: they close the workspace, come back, and want it back.
+    Only asking to start fresh discards a restore point.
+    """
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     assert resume_store.load() is not None
 
     await registry.end()
+
+    saved = resume_store.load()
+    assert saved is not None, "closing must not erase what the user wants back"
+    assert saved.workspaces[0].folder == str(tmp_path)
+    assert [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
+
+
+async def test_closing_every_workspace_still_keeps_them_resumable(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """Shutting everything down for the evening is the main case, not an edge."""
+    first, second = tmp_path / "one", tmp_path / "two"
+    first.mkdir()
+    second.mkdir()
+    await registry.start(str(first), [{"agent": "claude", "name": "Alex"}])
+    await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
+
+    assert await registry.close_all() == 2
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert {w.folder for w in saved.workspaces} == {str(first), str(second)}
+
+
+async def test_only_starting_fresh_discards_the_restore_point(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
+    await registry.end()
+    assert resume_store.load() is not None
+
+    assert resume_store.clear() is True
     assert resume_store.load() is None
 
 
-async def test_the_offer_follows_the_workspace_on_screen(
+async def test_every_open_workspace_is_remembered_front_one_first(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """The restore point answers "what was I working in", so it tracks the front.
+    """All of them, and the one on screen leads.
 
-    With several workspaces open it is the one being LOOKED at that comes back
-    after a restart — restoring all of them would relaunch a folder's worth of
-    coding agents per tab without being asked.
+    An earlier version stored only the front workspace, on the reasoning that
+    restoring all would relaunch a folder's worth of agents per tab. Restoring
+    starts nothing, so the reasoning was wrong on both counts — and somebody
+    with two folders open wants two back. Order still matters: the front one is
+    first so it is the one on screen again afterwards.
     """
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -510,11 +548,13 @@ async def test_the_offer_follows_the_workspace_on_screen(
     await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
 
     saved = resume_store.load()
-    assert saved is not None and saved.folder == str(second)
+    assert saved is not None
+    assert [w.folder for w in saved.workspaces] == [str(second), str(first)]
 
     await registry.activate(one.id)
     saved = resume_store.load()
-    assert saved is not None and saved.folder == str(first)
+    assert saved is not None
+    assert [w.folder for w in saved.workspaces] == [str(first), str(second)]
 
 
 async def test_closing_one_of_two_leaves_the_survivor_resumable(
@@ -531,7 +571,10 @@ async def test_closing_one_of_two_leaves_the_survivor_resumable(
     await registry.end(two.id)
 
     saved = resume_store.load()
-    assert saved is not None and saved.folder == str(first)
+    assert saved is not None
+    # The closed one is no longer open, so it is no longer remembered as open —
+    # the survivor is, and it is the one on screen.
+    assert [w.folder for w in saved.workspaces] == [str(first)]
     assert registry.active_id == one.id
 
 
@@ -542,9 +585,7 @@ async def test_a_broken_snapshot_write_never_breaks_the_workspace(
         raise OSError("disk full")
 
     monkeypatch.setattr(resume_store, "save", _boom)
-    workspace = await registry.start(
-        str(tmp_path), [{"agent": "claude", "name": "Alex"}]
-    )
+    workspace = await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     assert [t.name for t in workspace.terminals] == ["Alex"]
 
 
@@ -565,7 +606,7 @@ async def test_a_cli_that_cannot_be_told_its_id_gets_looked_up(
     await asyncio.sleep(0.05)
     assert registry.session.find("Cody").resume == found
     saved = resume_store.load()
-    assert saved is not None and saved.terminals[0].resume == found
+    assert saved is not None and saved.workspaces[0].terminals[0].resume == found
 
 
 async def test_a_lookup_offers_the_ids_other_panes_already_hold(

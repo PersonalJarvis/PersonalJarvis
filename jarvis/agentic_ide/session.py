@@ -48,6 +48,7 @@ there: ``cmd.exe`` drops inherited environment variables longer than 8,191
 characters, so an npm batch shim cannot find Node when the app has a large
 PATH. Other batch shims use a one-shot ``cmd /c`` (so rule 1 above still holds).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -373,10 +374,10 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
 
-    key: str            # url-safe key, e.g. "mika"
-    name: str           # spoken call-sign, e.g. "Mika"
-    agent: str          # "claude" | "codex"
-    display_name: str   # "Claude Code"
+    key: str  # url-safe key, e.g. "mika"
+    name: str  # spoken call-sign, e.g. "Mika"
+    agent: str  # "claude" | "codex"
+    display_name: str  # "Claude Code"
     index: int
     # Where the pane sits in the grid, on TWO axes: the workspace is a
     # left-to-right list of columns, and each column is a top-to-bottom stack.
@@ -494,6 +495,10 @@ class Session:
 
     id: str
     folder: str
+    # The tab label is workspace identity, not project identity. Several
+    # workspaces may intentionally point at the same folder, so the folder's
+    # basename alone cannot distinguish them.
+    name: str
     profile: ProjectProfile
     terminals: list[Terminal]
     created_at: float
@@ -528,6 +533,7 @@ class Session:
         return {
             "id": self.id,
             "folder": self.folder,
+            "name": self.name,
             "project": self.profile.to_dict(),
             "created_at": self.created_at,
             "focus_mode": self.focus_mode,
@@ -545,7 +551,7 @@ class Session:
         return {
             "id": self.id,
             "folder": self.folder,
-            "name": self.profile.name or Path(self.folder).name or self.folder,
+            "name": self.name,
             "branch": self.profile.branch,
             "terminals": len(self.terminals),
             "live_terminals": live,
@@ -554,6 +560,24 @@ class Session:
             "last_active_at": self.last_active_at,
             "active": active,
         }
+
+
+@dataclass(slots=True)
+class RestoreResult:
+    """What taking a restore point actually brought back.
+
+    ``skipped`` carries a reason per workspace that could not come back (folder
+    deleted, workspace limit reached). Reported rather than swallowed: a resume
+    that quietly returns three of five workspaces looks like a bug to the person
+    who had five.
+    """
+
+    sessions: list[Session]
+    skipped: list[tuple[str, str]]
+
+    @property
+    def terminal_count(self) -> int:
+        return sum(len(s.terminals) for s in self.sessions)
 
 
 class SessionError(RuntimeError):
@@ -627,19 +651,16 @@ class Registry:
         return self._pty
 
     # -------------------------------------------------------------- session
-    async def start(
-        self, folder: str, requested: list[dict[str, Any]]
-    ) -> Session:
+    async def start(self, folder: str, requested: list[dict[str, Any]]) -> Session:
         """Open ``folder`` as a NEW workspace with one terminal per request entry.
 
         ``requested`` entries look like ``{"agent": "claude", "name": "Mika"}``;
         the name is optional and filled from the call-sign pool.
 
         Opening ADDS a workspace and brings it to the front; whatever was open
-        stays open with its agents running. A folder that already has a
-        workspace is brought to the front instead of opened twice — two sets of
-        coding agents editing the same tree is almost always a misclick, and the
-        one that is already there has the running conversations.
+        stays open with its agents running. The same folder may be opened more
+        than once deliberately: each workspace is a separate set of panes and
+        conversations, with a distinct tab name.
         """
         async with self._lock:
             if not requested:
@@ -661,16 +682,6 @@ class Registry:
             except OSError as exc:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 
-            existing = self._find_by_folder(root)
-            if existing is not None:
-                self._focus_locked(existing)
-                await self._persist()
-                logger.info(
-                    "Agentic IDE: {} is already open — brought it to the front",
-                    root,
-                )
-                return existing
-
             if len(self._sessions) >= MAX_WORKSPACES:
                 raise SessionError(
                     f"{MAX_WORKSPACES} workspaces are already open — close one "
@@ -682,11 +693,7 @@ class Registry:
                 raise SessionError(f"Unknown agent(s): {', '.join(sorted(unknown))}")
 
             missing = sorted(
-                {
-                    str(r.get("agent"))
-                    for r in requested
-                    if agent_argv(str(r.get("agent"))) is None
-                }
+                {str(r.get("agent")) for r in requested if agent_argv(str(r.get("agent"))) is None}
             )
             if missing:
                 pretty = ", ".join(AGENT_DISPLAY.get(m, m) for m in missing)
@@ -771,12 +778,29 @@ class Registry:
             for term in session.terminals
         }
 
+    def _available_workspace_name(self, wanted: str) -> str:
+        """Return a human-readable tab name that is unique in the bar."""
+        base = wanted.strip() or "Workspace"
+        used = {session.name.casefold() for session in self._sessions.values()}
+        if base.casefold() not in used:
+            return base
+        suffix = 2
+        while f"{base} {suffix}".casefold() in used:
+            suffix += 1
+        return f"{base} {suffix}"
+
     def _focus_locked(self, session: Session) -> None:
         """Bring ``session`` to the front. Caller holds the lock."""
         self._active = session.id
         session.last_active_at = time.time()
 
-    async def _open_locked(self, root: Path, terminals: list[Terminal]) -> Session:
+    async def _open_locked(
+        self,
+        root: Path,
+        terminals: list[Terminal],
+        *,
+        name: str | None = None,
+    ) -> Session:
         """Turn a prepared list of panes into a NEW open workspace, at the front.
 
         Shared by ``start`` and ``restore`` on purpose. Everything a workspace
@@ -792,15 +816,14 @@ class Registry:
         try:
             from jarvis.workspace.trust import ensure_trusted
 
-            await asyncio.to_thread(
-                ensure_trusted, root, sorted({t.agent for t in terminals})
-            )
+            await asyncio.to_thread(ensure_trusted, root, sorted({t.agent for t in terminals}))
         except Exception as exc:  # noqa: BLE001 - trust is a convenience
             logger.warning("Agentic IDE: pre-trust failed: {}", exc)
 
         session = Session(
             id=f"ide_{uuid4().hex[:12]}",
             folder=str(root),
+            name=self._available_workspace_name(name or profile.name or root.name or str(root)),
             profile=profile,
             terminals=terminals,
             created_at=time.time(),
@@ -821,87 +844,109 @@ class Registry:
         await self._persist()
         return session
 
-    async def restore(self, snapshot: resume_store.Snapshot) -> Session:
-        """Reopen the workspace a snapshot describes, without starting anything.
+    async def restore(self, snapshot: resume_store.Snapshot) -> RestoreResult:
+        """Reopen EVERY workspace a snapshot describes, starting nothing.
 
         The panes come back with their call-signs, their coding CLIs, their grid
         coordinates and their resume handles — and in ``pending``, because
-        spawning is not this method's job. The grid attaches its panes the way
-        it always does, and ``attach`` spends the handles. That keeps ONE place
+        spawning is not this method's job. The grid attaches its panes the way it
+        always does, and ``attach`` spends the handles. That keeps ONE place
         where an agent is started; a second spawn path here would drift from it
-        the first time either changed.
+        the first time either changed. It is also why restoring several
+        workspaces is cheap: none of them launches anything until a pane
+        connects, and only the workspace on screen has panes mounted.
 
-        A pane whose CLI is no longer installed is still restored. It shows up
-        as an error the moment it tries to connect, which is a far better
-        outcome than silently dropping a terminal the user expects to see.
+        All of them rather than the front one, because "resume all sessions" is
+        what was asked for and somebody with four folders open had four.
+
+        A workspace that cannot come back does not stop the others: a deleted
+        folder is reported, an already-open folder is left running (reopening it
+        would kill live agents to replace them with restarted ones), and the
+        workspace limit stops the rest with a reason. What could not be restored
+        comes back in ``skipped`` so the caller can say so out loud instead of
+        quietly returning less than it promised.
+
+        A pane whose CLI is no longer installed IS restored. It shows up as an
+        error the moment it tries to connect, which is a far better outcome than
+        silently dropping a terminal the user expects to see.
         """
         async with self._lock:
-            if not snapshot.terminals:
-                raise SessionError("That workspace has no terminals to reopen.")
+            if not snapshot.workspaces:
+                raise SessionError("There is nothing in that restore point.")
 
-            root = Path(snapshot.folder).expanduser()  # noqa: ASYNC240
-            try:
-                if not await asyncio.to_thread(root.is_dir):
-                    raise SessionError(
-                        f"{root} is no longer on this machine — that workspace "
-                        "cannot be reopened."
-                    )
-            except OSError as exc:
-                raise SessionError(f"Cannot open {root}: {exc}") from exc
+            restored: list[Session] = []
+            skipped: list[tuple[str, str]] = []
+            for space in snapshot.workspaces:
+                try:
+                    session = await self._restore_one_locked(space)
+                except SessionError as exc:
+                    skipped.append((space.folder, str(exc)))
+                    continue
+                if session is not None:
+                    restored.append(session)
 
-            existing = self._find_by_folder(root)
-            if existing is not None:
-                # It never went away — the offer was stale. Showing it is the
-                # honest outcome; reopening would kill the running agents to
-                # replace them with restarted ones.
-                self._focus_locked(existing)
-                await self._persist()
-                return existing
+            if not restored and skipped:
+                # Nothing at all came back: that is a failure the caller must be
+                # able to report as one, not a success with an empty list.
+                raise SessionError(skipped[0][1])
 
-            if len(self._sessions) >= MAX_WORKSPACES:
-                raise SessionError(
-                    f"{MAX_WORKSPACES} workspaces are already open — close one "
-                    "before reopening this."
-                )
-
-            terminals = [
-                Terminal(
-                    key=entry.key or normalize(entry.name) or f"t{index}",
-                    name=entry.name,
-                    agent=entry.agent,
-                    display_name=AGENT_DISPLAY.get(entry.agent, entry.agent),
-                    index=index,
-                    column=entry.column,
-                    slot=entry.slot,
-                    resume=entry.resume,
-                    prompts_sent=entry.prompts_sent,
-                    # The remembered account, re-validated: a pane must come back
-                    # on the subscription whose history holds its conversation,
-                    # and an account deleted in the meantime falls back to the
-                    # active one rather than failing the reopen.
-                    account=resolve_account(entry.agent, entry.account),
-                )
-                for index, entry in enumerate(snapshot.terminals)
-            ]
-            # A snapshot remembers the call-signs it had when it was the only
-            # workspace. Another one may hold them now, and two panes answering
-            # to one name would make every spoken instruction ambiguous — so a
-            # collision is renamed here. Only the label moves; the resume handle
-            # underneath it is what continues the conversation.
-            self._dedupe_names(terminals)
-            session = await self._open_locked(root, terminals)
-            # Pack the grid: a snapshot can carry gaps if it was written between
-            # a close and its renumbering, and a gap renders as a blank stripe.
-            self._renumber(session)
+            # The first workspace in the snapshot was the one on screen.
+            if restored:
+                self._focus_locked(restored[0])
             await self._persist()
             logger.info(
-                "Agentic IDE session resumed: {} terminals in {} ({} with a "
-                "conversation to continue)",
-                len(terminals),
-                root,
-                sum(1 for t in terminals if t.resume is not None),
+                "Agentic IDE resumed {} workspace(s), {} terminal(s); {} skipped",
+                len(restored),
+                sum(len(s.terminals) for s in restored),
+                len(skipped),
             )
-            return session
+            return RestoreResult(sessions=restored, skipped=skipped)
+
+    async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
+        """Reopen one remembered workspace. Caller holds the lock."""
+        root = Path(space.folder).expanduser()  # noqa: ASYNC240
+        try:
+            if not await asyncio.to_thread(root.is_dir):
+                raise SessionError(
+                    f"{root} is no longer on this machine — that workspace cannot be reopened."
+                )
+        except OSError as exc:
+            raise SessionError(f"Cannot open {root}: {exc}") from exc
+
+        if len(self._sessions) >= MAX_WORKSPACES:
+            raise SessionError(
+                f"{MAX_WORKSPACES} workspaces are already open — close one before reopening this."
+            )
+
+        terminals = [
+            Terminal(
+                key=entry.key or normalize(entry.name) or f"t{index}",
+                name=entry.name,
+                agent=entry.agent,
+                display_name=AGENT_DISPLAY.get(entry.agent, entry.agent),
+                index=index,
+                column=entry.column,
+                slot=entry.slot,
+                resume=entry.resume,
+                prompts_sent=entry.prompts_sent,
+                # The remembered account, re-validated: a pane must come back
+                # on the subscription whose history holds its conversation,
+                # and an account deleted in the meantime falls back to the
+                # active one rather than failing the reopen.
+                account=resolve_account(entry.agent, entry.account),
+            )
+            for index, entry in enumerate(space.terminals)
+        ]
+        # A snapshot remembers the call-signs each workspace had. Another one may
+        # hold them now, and two panes answering to one name would make every
+        # spoken instruction ambiguous — so a collision is renamed here. Only the
+        # label moves; the resume handle underneath it continues the conversation.
+        self._dedupe_names(terminals)
+        session = await self._open_locked(root, terminals, name=space.name or None)
+        # Pack the grid: a snapshot can carry gaps if it was written between a
+        # close and its renumbering, and a gap renders as a blank stripe.
+        self._renumber(session)
+        return session
 
     def _dedupe_names(self, terminals: list[Terminal]) -> None:
         """Rename any call-sign already spoken for by another open workspace."""
@@ -944,55 +989,86 @@ class Registry:
             logger.info("Agentic IDE: switched to {}", session.folder)
             return session
 
+    async def rename(self, workspace_id: str, name: str) -> Session:
+        """Rename one workspace tab without changing its folder or agents."""
+        cleaned = " ".join(name.split()).strip()
+        if not cleaned:
+            raise SessionError("Give the workspace a name.")
+        if len(cleaned) > 80:
+            raise SessionError("Workspace names can be at most 80 characters.")
+        async with self._lock:
+            session = self._sessions.get(workspace_id)
+            if session is None:
+                raise SessionError("That workspace is not open any more.")
+            if any(
+                other.id != workspace_id and other.name.casefold() == cleaned.casefold()
+                for other in self._sessions.values()
+            ):
+                raise SessionError("Another workspace already uses that name.")
+            session.name = cleaned
+            await self._persist()
+            return session
+
     async def end(self, workspace_id: str | None = None) -> bool:
         """Close one workspace and stop every agent in it.
 
         Without an id this closes the workspace on screen, which is what the
         toolbar's Close button and the existing CLI/API callers mean. Returns
         False when there was nothing to close.
+
+        Closing does NOT withdraw the restore point. Closing for the day and
+        picking the same folders up tomorrow is the main thing resuming is FOR,
+        so the snapshot written while these workspaces were open stays exactly
+        as it is. Only the user asking to start fresh discards it.
         """
         async with self._lock:
             target = workspace_id if workspace_id is not None else self._active
             if target is None or target not in self._sessions:
-                if not self._sessions:
-                    await self._forget()
                 return False
             await self._close_locked(target)
-            if not self._sessions:
-                # That was the last one. Withdraw the restore point too:
-                # re-offering a workspace somebody deliberately shut down is
-                # the kind of prompt people learn to dismiss without reading.
-                # With others still open, ``_close_locked`` has already
-                # re-pointed the snapshot at whichever took the front.
-                await self._forget()
             return True
 
     async def close_all(self) -> int:
-        """Close every open workspace. Returns how many were closed."""
+        """Close every open workspace. Returns how many were closed.
+
+        The restore point survives — see ``end``.
+        """
         async with self._lock:
             count = len(self._sessions)
             for workspace_id in list(self._sessions):
                 await self._close_locked(workspace_id)
-            if count:
-                await self._forget()
             return count
 
     # ------------------------------------------------------------- snapshot
     def snapshot(self) -> resume_store.Snapshot | None:
-        """The FRONT workspace in the form the resume store keeps it, or None.
+        """EVERY open workspace, in the form the resume store keeps it.
 
-        One workspace, not all of them: the restore point answers "what was I
-        working in when this stopped?", and that is the one that was on screen.
-        Bringing back every open workspace after a restart would mean relaunching
-        a folder's worth of coding agents per tab without being asked.
+        All of them, front one first. An earlier version remembered only the
+        workspace on screen, on the reasoning that bringing back all of them
+        would relaunch a folder's worth of coding agents per tab unasked. Both
+        halves of that were wrong: the user asked for everything back, and
+        restoring costs nothing — ``restore`` starts no agent, and only the
+        workspace on screen has panes mounted. Five workspaces in the bar are
+        five folders waiting, not five folders' worth of running agents.
+
+        Returns None only when nothing is open at all, which leaves whatever was
+        stored before untouched — closing the last workspace must not erase the
+        thing the user wants back tomorrow.
         """
-        session = self.session
-        if session is None:
+        if not self._sessions:
             return None
+        front = self._active
+        ordered = sorted(self._sessions.values(), key=lambda s: s.id != front)
         return resume_store.snapshot_now(
-            session_id=session.id,
-            folder=session.folder,
-            terminals=[t.to_snapshot() for t in session.terminals],
+            [
+                resume_store.SnapshotWorkspace(
+                    session_id=session.id,
+                    folder=session.folder,
+                    name=session.name,
+                    terminals=[t.to_snapshot() for t in session.terminals],
+                )
+                for session in ordered
+            ]
         )
 
     async def _persist(self) -> None:
@@ -1053,12 +1129,15 @@ class Registry:
         # Drop THIS folder's codebase index. A blanket reset would take the
         # other open workspaces' indexes with it and silently cost them their
         # `@file` suggestions.
-        try:
-            from . import file_index
+        # Workspaces may share a folder. Its index remains useful until the last
+        # workspace using that folder closes.
+        if self._find_by_folder(Path(session.folder)) is None:
+            try:
+                from . import file_index
 
-            file_index.forget_index(session.folder)
-        except Exception:  # noqa: BLE001, S110 - best-effort teardown
-            pass
+                file_index.forget_index(session.folder)
+            except Exception:  # noqa: BLE001, S110 - best-effort teardown
+                pass
 
         if self._active == workspace_id:
             # Hand the front to the most recently used survivor rather than to
@@ -1080,18 +1159,14 @@ class Registry:
         session = self.session
         if session is None:
             if enabled:
-                raise SessionError(
-                    "No Agentic-IDE session is running — open one first."
-                )
+                raise SessionError("No Agentic-IDE session is running — open one first.")
             return False
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
         return session.focus_mode
 
     # ------------------------------------------------------------------ pty
-    def _locate(
-        self, key: str, workspace_id: str | None
-    ) -> tuple[Session, Terminal] | None:
+    def _locate(self, key: str, workspace_id: str | None) -> tuple[Session, Terminal] | None:
         """One pane and the workspace holding it, by call-sign.
 
         ``workspace_id`` addresses a specific workspace — which every PTY-level
@@ -1189,9 +1264,7 @@ class Registry:
         # for a conversation that is right there.
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not has_conversation(
-            term.agent, term.resume, home
-        ):
+        if continuing is not None and not has_conversation(term.agent, term.resume, home):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
                 term.name,
@@ -1244,13 +1317,7 @@ class Registry:
             # agent normally exits 0, and a pane we killed ourselves reports a
             # failure exit that looks identical to a crash — restarting either
             # of those would be its own bug.
-            if (
-                term.resumed
-                and not term.stopping
-                and not recovered
-                and died_young
-                and code != 0
-            ):
+            if term.resumed and not term.stopping and not recovered and died_young and code != 0:
                 recovered = True
                 logger.warning(
                     "Agentic IDE: {} could not continue its previous "
@@ -1270,9 +1337,7 @@ class Registry:
                         workspace_id=session.id,
                     )
                 except SessionError as exc:
-                    logger.warning(
-                        "Agentic IDE: {} could not be restarted: {}", term.name, exc
-                    )
+                    logger.warning("Agentic IDE: {} could not be restarted: {}", term.name, exc)
                 else:
                     # The pane is alive again; telling the viewer it exited
                     # would flash a dead pane for no reason.
@@ -1337,9 +1402,7 @@ class Registry:
                     if term.resume is not None:
                         return
                     taken = {
-                        other.resume.id
-                        for other in session.terminals
-                        if other.resume is not None
+                        other.resume.id for other in session.terminals if other.resume is not None
                     }
                     found = await asyncio.to_thread(
                         discover,
@@ -1352,9 +1415,7 @@ class Registry:
                     if found is None:
                         continue
                     term.resume = found
-                    logger.debug(
-                        "Agentic IDE: {} is conversation {}", term.name, found.id
-                    )
+                    logger.debug("Agentic IDE: {} is conversation {}", term.name, found.id)
                     await self._persist()
                     return
             except asyncio.CancelledError:
@@ -1376,9 +1437,7 @@ class Registry:
             return False
         return self._manager().write(term.pty_id, data)
 
-    def resize(
-        self, key: str, cols: int, rows: int, workspace_id: str | None = None
-    ) -> bool:
+    def resize(self, key: str, cols: int, rows: int, workspace_id: str | None = None) -> bool:
         found = self._locate(key, workspace_id)
         if found is None:
             return False
@@ -1647,8 +1706,7 @@ class Registry:
         _session, term = found
         if term.status != "live" or not term.pty_id:
             raise SessionError(
-                f"{term.name} is not running right now "
-                f"(status: {term.status}) — nothing was sent."
+                f"{term.name} is not running right now (status: {term.status}) — nothing was sent."
             )
         payload = sanitize_prompt(text, keep_newlines=True)
         if not payload:
@@ -1660,8 +1718,7 @@ class Registry:
         submitted = await self._write_and_confirm(term, payload, manager, multiline)
         if not submitted and multiline:
             logger.warning(
-                "Agentic IDE: {} did not accept a multi-line prompt — "
-                "re-sending it on one line",
+                "Agentic IDE: {} did not accept a multi-line prompt — re-sending it on one line",
                 term.name,
             )
             payload = sanitize_prompt(payload)
@@ -1701,9 +1758,7 @@ class Registry:
         manager.write(term.pty_id or "", "\r")
         return await self._confirm_submitted(term, payload, manager)
 
-    async def _confirm_submitted(
-        self, term: Terminal, payload: str, manager: PtyManager
-    ) -> bool:
+    async def _confirm_submitted(self, term: Terminal, payload: str, manager: PtyManager) -> bool:
         """True once ``payload`` has left the terminal's input line.
 
         The input line lives at the bottom of the screen, just above the status
@@ -1775,17 +1830,11 @@ class Registry:
         """The 'no such pane' error, naming every pane that DOES exist."""
         if not self._sessions:
             return SessionError("No Agentic-IDE session is running.")
-        known = ", ".join(
-            term.name for s in self._sessions.values() for term in s.terminals
-        )
-        return SessionError(
-            f"No terminal called {wanted!r}. Running: {known or 'none'}."
-        )
+        known = ", ".join(term.name for s in self._sessions.values() for term in s.terminals)
+        return SessionError(f"No terminal called {wanted!r}. Running: {known or 'none'}.")
 
 
-def terminals_added_event(
-    session: Session, created: list[Terminal], *, source_layer: str
-) -> Any:
+def terminals_added_event(session: Session, created: list[Terminal], *, source_layer: str) -> Any:
     """The bus event announcing new panes to every connected client.
 
     A free function rather than a registry call, because the registry has no bus:
