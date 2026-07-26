@@ -73,7 +73,13 @@ AGENT_BINARIES: dict[str, str] = {"claude": "claude", "codex": "codex"}
 AGENT_DISPLAY: dict[str, str] = {"claude": "Claude Code", "codex": "Codex"}
 
 MAX_TERMINALS = 12
-MAX_PROMPT_CHARS = 4000
+# Transport ceiling for one injected prompt. Raised from 4000 once composed
+# prompts became structured briefs that describe the code they point at:
+# measured live at 2865-3713 characters, so 4000 meant the cap - not the
+# writer - was deciding where a brief ended. Bracketed paste delivers the whole
+# block in one write, so length costs nothing on this channel; the real limit
+# is the pane's readability.
+MAX_PROMPT_CHARS = 6000
 # Delay between the prompt text and the Enter keystroke. Agent TUIs debounce
 # fast bursts as a paste; ~120 ms is past every debounce window measured while
 # still feeling instant.
