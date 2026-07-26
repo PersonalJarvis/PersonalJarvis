@@ -583,6 +583,61 @@ async def test_term_document_frequency_forgets_tombstoned_items(store):
     assert (await store.term_document_frequency(["chiron"]))["chiron"] == 1
 
 
+async def test_search_reads_run_on_the_pooled_readers(store):
+    """File-backed stores serve the search legs from read-only pool
+    connections; the writer connection stays free for writes."""
+    await add_source(store)
+    await seed_indexed(store, [make_item(1, body="alpha content")])
+
+    hits = await store.keyword_search("alpha")
+
+    assert hits
+    assert store._read_conns, "expected a populated read-only pool"
+
+
+async def test_reader_pool_failure_degrades_to_the_writer(store, monkeypatch):
+    """No pool, no problem: correctness never depends on read-only
+    connections being available (in-memory paths, exotic filesystems)."""
+
+    async def _boom():
+        raise RuntimeError("read-only connections unavailable")
+
+    monkeypatch.setattr(store, "_open_readers", _boom)
+    await add_source(store)
+    await seed_indexed(store, [make_item(1, body="alpha content")])
+
+    hits = await store.keyword_search("alpha")
+
+    assert hits
+    assert store._readers_unavailable is True
+    assert store._read_conns == []
+
+
+async def test_concurrent_search_legs_share_the_pool(store):
+    import asyncio
+
+    await add_source(store)
+    await seed_indexed(store, [make_item(1, body="alpha content")])
+
+    first, second = await asyncio.gather(
+        store.keyword_search("alpha"), store.keyword_search("content")
+    )
+
+    assert first and second
+    assert len(store._read_conns) == store._READ_POOL_SIZE
+
+
+async def test_pooled_reads_see_committed_writes_immediately(store):
+    await add_source(store)
+    await seed_indexed(store, [make_item(1, body="alpha content")])
+    assert await store.keyword_search("alpha")  # pool is live now
+
+    await seed_indexed(store, [make_item(2, body="fresh alpha news")])
+
+    hits = await store.keyword_search("fresh")
+    assert [hit.item_id for hit in hits], "a reader must see the committed write"
+
+
 async def test_live_item_count_cache_survives_reads_and_clears_on_writes(store):
     """count(*) is asked on every search; it is cached between committed
     writes and must never serve a stale answer after one."""

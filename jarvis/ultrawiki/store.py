@@ -41,11 +41,12 @@ import logging
 import re
 import struct
 from collections.abc import AsyncIterator, Iterable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiosqlite
 
@@ -395,6 +396,16 @@ class UltraStore:
         # costs ~20 ms on a real store while the answer only moves when a
         # write commits.
         self._live_count_cache: int | None = None
+        # Read-only connection pool for the search legs. One aiosqlite
+        # connection = one worker thread, so concurrent legs sharing the
+        # writer connection serialize completely (measured 0.99 overlap on a
+        # live store); WAL gives each pooled reader a consistent snapshot
+        # without ever blocking the writer.
+        self._read_conns: list[aiosqlite.Connection] = []
+        self._read_rr = 0
+        self._readers_unavailable = False
+        self._reader_vec_loaded: set[int] = set()
+        self._pool_lock = asyncio.Lock()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -439,6 +450,12 @@ class UltraStore:
 
     async def close(self) -> None:
         async with self._lock:
+            for reader in self._read_conns:
+                with suppress(Exception):
+                    await reader.close()
+            self._read_conns = []
+            self._reader_vec_loaded.clear()
+            self._readers_unavailable = False
             if self._conn is not None:
                 await self._conn.close()
                 self._conn = None
@@ -452,6 +469,63 @@ class UltraStore:
             await self.open()
         assert self._conn is not None
         return self._conn
+
+    #: Two pooled readers cover the concurrent search legs (keyword ‖ vector)
+    #: without spawning a thread per query.
+    _READ_POOL_SIZE = 2
+
+    async def _read_conn(self) -> aiosqlite.Connection:
+        """A pooled read-only connection for the search legs.
+
+        The writer connection stays the only one that ever runs DDL,
+        migrations, or writes (its ``executescript`` in :meth:`open` happens
+        first, so the file and schema exist before any reader opens). Every
+        failure to build the pool degrades honestly to the writer connection
+        — correctness never depends on the pool existing.
+        """
+        writer = await self._ensure_open()
+        if self._readers_unavailable:
+            return writer
+        if not self._read_conns:
+            async with self._pool_lock:
+                if not self._read_conns and not self._readers_unavailable:
+                    try:
+                        self._read_conns = await self._open_readers()
+                    except Exception:
+                        # In-memory paths, exotic filesystems, sandboxed
+                        # read-only mounts: reads stay on the writer.
+                        log.info(
+                            "read-only connection pool unavailable — search "
+                            "legs share the writer connection",
+                            exc_info=True,
+                        )
+                        self._readers_unavailable = True
+                        return writer
+        if not self._read_conns:
+            return writer
+        self._read_rr = (self._read_rr + 1) % len(self._read_conns)
+        return self._read_conns[self._read_rr]
+
+    async def _open_readers(self) -> list[aiosqlite.Connection]:
+        posix = self._db_path.resolve().as_posix()
+        if not posix.startswith("/"):
+            posix = "/" + posix  # Windows drive paths become /C:/…
+        # RFC 3986: the path must be percent-encoded (a literal space in an
+        # install path would otherwise corrupt the URI).
+        uri = f"file:{quote(posix, safe='/:')}?mode=ro"
+        readers: list[aiosqlite.Connection] = []
+        try:
+            for _ in range(self._READ_POOL_SIZE):
+                conn = await aiosqlite.connect(uri, uri=True, isolation_level=None)
+                conn.row_factory = aiosqlite.Row
+                await conn.execute("PRAGMA busy_timeout = 5000")
+                readers.append(conn)
+        except BaseException:
+            for conn in readers:
+                with suppress(Exception):
+                    await conn.close()
+            raise
+        return readers
 
     @asynccontextmanager
     async def _txn(self) -> AsyncIterator[aiosqlite.Connection]:
@@ -1428,6 +1502,33 @@ class UltraStore:
         self._vec_state = (True, "")
         return self._vec_state
 
+    async def _vec_ready_conn(self, conn: aiosqlite.Connection) -> aiosqlite.Connection:
+        """Make *conn* KNN-capable, or fall back to the writer connection.
+
+        The sqlite-vec extension loads per CONNECTION while the readiness
+        verdict is cached per STORE — a pooled reader that skipped this
+        step would run the KNN query against a connection without ``vec0``
+        and fail (the audit's flagged trap).
+        """
+        if conn is self._conn:
+            return conn  # the writer carries the extension via _ensure_vec
+        if id(conn) in self._reader_vec_loaded:
+            return conn
+        try:
+            vec_mod = _import_sqlite_vec()
+            await conn.enable_load_extension(True)
+            await conn.load_extension(vec_mod.loadable_path())
+            await conn.enable_load_extension(False)
+        except Exception:  # noqa: BLE001 — degrade to the writer, never fail the leg
+            log.debug(
+                "sqlite-vec unavailable on a pooled reader — KNN uses the "
+                "writer connection",
+                exc_info=True,
+            )
+            return await self._ensure_open()
+        self._reader_vec_loaded.add(id(conn))
+        return conn
+
     async def vector_status(self) -> tuple[bool, str]:
         """Honest capability report for the vector leg."""
         return await self._ensure_vec(None)
@@ -1476,7 +1577,7 @@ class UltraStore:
         match_expr = _fts_match_expr(query)
         if not match_expr:
             return []
-        conn = await self._ensure_open()
+        conn = await self._read_conn()
         sql = (
             "SELECT uw_fts.rowid AS fts_rowid, uw_fts.item_id AS item_id,"
             " i.source_id AS source_id, i.title AS title,"
@@ -1544,7 +1645,7 @@ class UltraStore:
                 f"query vector has {len(query_vector)} components but the "
                 f"store's embedding space is pinned to dim={self._vec_dim}"
             )
-        conn = await self._ensure_open()
+        conn = await self._vec_ready_conn(await self._read_conn())
         fetch_k = min(max(int(k) * 4, int(k) + 8), 200)
         knn_rows = await self._fetchall(
             conn,
@@ -1608,7 +1709,7 @@ class UltraStore:
         """
         if self._live_count_cache is not None:
             return self._live_count_cache
-        conn = await self._ensure_open()
+        conn = await self._read_conn()
         row = await self._fetchone(
             conn, "SELECT count(*) AS n FROM uw_items WHERE deleted_at IS NULL", ()
         )
@@ -1632,7 +1733,7 @@ class UltraStore:
         Unindexable tokens report 0, which the caller reads as "maximally
         rare" only after the count is compared against the corpus size.
         """
-        conn = await self._ensure_open()
+        conn = await self._read_conn()
         frequencies: dict[str, int] = {}
         for term in dict.fromkeys(terms):
             match_expr = _fts_match_expr(term)
@@ -1658,7 +1759,7 @@ class UltraStore:
         """
         if limit <= 0:
             return []
-        conn = await self._ensure_open()
+        conn = await self._read_conn()
         anchor = await self._fetchone(
             conn,
             "SELECT thread_key, timestamp_utc FROM uw_items WHERE id = ?",
