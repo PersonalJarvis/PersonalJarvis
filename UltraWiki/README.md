@@ -77,6 +77,7 @@ D-5). The switch is **role-based, never destructive** (D-9):
 | [`04-configuration-and-ui.md`](04-configuration-and-ui.md) | The settings section, activation wizard, provider slots, UI surfaces |
 | [`05-identity-areas-privacy.md`](05-identity-areas-privacy.md) | Entity resolution, the confirmation queue, areas, privacy and deletion |
 | [`06-roadmap.md`](06-roadmap.md) | Build phases with hard gates |
+| [`07-visual-projection.md`](07-visual-projection.md) | The readable face: topic/moment pages, the entity graph, and the generated Obsidian vault |
 
 ## Prior art
 
