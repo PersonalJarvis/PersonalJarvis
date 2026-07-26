@@ -25,7 +25,10 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { sizeChanged } from "@/lib/wikiGraph";
 import { corpusSpan, nodeRadius, recencyTint } from "@/lib/entityGraph";
-import { fetchExploreGraph } from "@/lib/ultrawikiExploreApi";
+import {
+  fetchExploreEntity,
+  fetchExploreGraph,
+} from "@/lib/ultrawikiExploreApi";
 
 export interface EntityGraphProps {
   minMentions: number;
@@ -130,6 +133,28 @@ export function EntityGraph({
 
   const shown = graphData.nodes.length;
   const total = query.data?.total_entities ?? 0;
+
+  // Fullscreen covers the panel that normally answers a click, so the map has
+  // to answer for itself. The label comes from the node already in hand, which
+  // is what makes the click feel instant; the counts and neighbours arrive
+  // when the request does. Same query key as ExplorePanel's detail view, so
+  // the two share one cached answer rather than each fetching their own.
+  const selectedNode = useMemo(
+    () => graphData.nodes.find((node) => node.id === selectedKey) ?? null,
+    [graphData, selectedKey],
+  );
+  const detailQuery = useQuery({
+    queryKey: ["ultrawiki", "explore", "entity", selectedKey],
+    queryFn: () => fetchExploreEntity(selectedKey as string),
+    enabled: isExpanded && selectedKey !== null,
+    staleTime: 30_000,
+  });
+  const detail =
+    detailQuery.data?.entity.key === selectedKey ? detailQuery.data.entity : null;
+  // A topic can be selected from the list while the mention floor keeps it off
+  // the map, so fall back to what the request brought rather than showing
+  // nothing at all.
+  const selection = selectedNode ?? detail;
 
   return (
     <div
@@ -270,6 +295,60 @@ export function EntityGraph({
               }
             }}
           />
+        )}
+
+        {isExpanded && selection && (
+          <div
+            data-testid="explore-graph-selection"
+            className="absolute bottom-3 left-3 max-w-xs rounded-lg border border-border bg-background/90 px-3 py-2 shadow-lg backdrop-blur-sm"
+          >
+            <p className="text-sm text-foreground">{selection.label}</p>
+            <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
+              {t("ultrawiki.explore.mentions_long").replace(
+                "{0}",
+                String(selection.mentions),
+              )}
+              {detail?.first_seen && (
+                <>
+                  {" · "}
+                  {t("ultrawiki.explore.period")
+                    .replace("{0}", detail.first_seen.slice(0, 10))
+                    .replace("{1}", detail.last_seen.slice(0, 10))}
+                </>
+              )}
+            </p>
+
+            {detail && (
+              <div className="mt-2">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {t("ultrawiki.explore.neighbors")}
+                </p>
+                {detail.neighbors.length === 0 ? (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {t("ultrawiki.explore.no_neighbors")}
+                  </p>
+                ) : (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {detail.neighbors.slice(0, 8).map((neighbor) => (
+                      <button
+                        key={neighbor.key}
+                        type="button"
+                        data-testid={`explore-graph-neighbor-${neighbor.key}`}
+                        onClick={() => onSelect(neighbor.key)}
+                        title={t("ultrawiki.explore.shared").replace(
+                          "{0}",
+                          String(neighbor.shared),
+                        )}
+                        className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                      >
+                        {neighbor.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

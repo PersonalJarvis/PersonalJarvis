@@ -101,11 +101,28 @@ const PAYLOAD = {
   reason: "ok",
 };
 
+/** One entity page, as the detail endpoint answers it. */
+const DETAIL = {
+  ok: true,
+  entity: {
+    key: "bora bora",
+    label: "Bora Bora",
+    mentions: 20,
+    first_seen: "2026-06-30T10:00:00Z",
+    last_seen: "2026-07-08T10:00:00Z",
+    neighbors: [{ key: "tahiti", label: "Tahiti", shared: 7 }],
+  },
+  moments: [],
+  total: 0,
+  corpus: { sources: 1, items: 40, distilled: 30 },
+};
+
 function installFetch(body: unknown = PAYLOAD) {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn(async (url: unknown) => ({
     ok: true,
     status: 200,
-    json: async () => body,
+    json: async () =>
+      String(url).includes("/entities/") ? DETAIL : (body as unknown),
   }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -233,6 +250,41 @@ it("shows how much of the corpus is on screen", async () => {
   // rather than for the element.
   await waitFor(() => expect(caption.textContent).toContain("947"));
   expect(caption.textContent).toContain("2");
+});
+
+it("says what you picked while the map covers the detail view", async () => {
+  // Fullscreen lies on top of the panel that normally answers a click, so a
+  // hit had nothing to show for itself but a hairline ring around the dot —
+  // indistinguishable from a click that missed. The map has to answer for
+  // itself while it owns the screen.
+  installFetch();
+  const onSelect = vi.fn();
+  const view = renderGraph({ selectedKey: "bora bora", onSelect });
+
+  expect(screen.queryByTestId("explore-graph-selection")).toBeNull();
+
+  fireEvent.click(screen.getByTestId("explore-graph-expand-toggle"));
+
+  const card = await screen.findByTestId("explore-graph-selection");
+  expect(card.textContent).toContain("Bora Bora");
+  await waitFor(() => expect(card.textContent).toContain("20"));
+
+  // Neighbours are the way through the map, so they have to stay reachable
+  // from the fullscreen card too.
+  fireEvent.click(await screen.findByTestId("explore-graph-neighbor-tahiti"));
+  expect(onSelect).toHaveBeenCalledWith("tahiti");
+
+  view.unmount();
+});
+
+it("keeps the fullscreen card out of the way when the panel is visible", async () => {
+  installFetch();
+  renderGraph({ selectedKey: "bora bora" });
+
+  await waitFor(() => expect(forceGraphProps.length).toBeGreaterThan(0));
+  // Not expanded: ExplorePanel's own detail view is on screen, so a second
+  // copy of the same facts would just be noise.
+  expect(screen.queryByTestId("explore-graph-selection")).toBeNull();
 });
 
 it("expands across the app and restores with Escape", async () => {
