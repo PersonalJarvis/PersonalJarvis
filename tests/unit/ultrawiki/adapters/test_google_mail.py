@@ -10,6 +10,8 @@ downloaded, and failure messages a user can act on that never carry the token.
 from __future__ import annotations
 
 import base64
+import io
+import zipfile
 from datetime import UTC, datetime
 from typing import Any
 
@@ -109,14 +111,31 @@ def _transport(
     *,
     listing: list[list[dict[str, Any]]],
     messages: dict[str, dict[str, Any]],
+    attachments: dict[str, bytes] | None = None,
     seen: list[httpx.Request] | None = None,
 ) -> httpx.MockTransport:
-    """A fake Gmail: a paged newest-first id listing plus per-id full fetches."""
+    """A fake Gmail: a paged newest-first id listing plus per-id full fetches.
+
+    ``attachments`` maps an attachment id to its RAW bytes; an id that is
+    absent answers 404, which is the "deleted between listing and fetch" case
+    every walk has to survive.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
         path = request.url.path
+        if "/attachments/" in path:
+            raw = (attachments or {}).get(path.rsplit("/", 1)[1])
+            if raw is None:
+                return httpx.Response(404)
+            return httpx.Response(
+                200,
+                json={
+                    "data": base64.urlsafe_b64encode(raw).decode().rstrip("="),
+                    "size": len(raw),
+                },
+            )
         if path == "/gmail/v1/users/me/messages":
             index = int(request.url.params.get("pageToken") or 0)
             page = listing[index] if index < len(listing) else []
@@ -201,17 +220,79 @@ async def test_a_message_with_no_decodable_part_falls_back_to_the_snippet():
     assert "the short preview" in items[0].body
 
 
-async def test_attachments_are_counted_never_downloaded():
+def _docx(text: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            f"<w:document xmlns:w='x'><w:body><w:p><w:r><w:t>{text}"
+            "</w:t></w:r></w:p></w:body></w:document>",
+        )
+    return buffer.getvalue()
+
+
+async def test_the_message_names_its_attachments():
+    """A count is unsearchable. The name is how a person looks for the thing."""
     message = _message("m1", "2026-03-01T10:00:00", attachments=2)
+    items = await _collect(
+        _transport(
+            listing=[[message]],
+            messages={"m1": message},
+            attachments={"att-0": _docx("first"), "att-1": _docx("second")},
+        )
+    )
+    assert "Attachments: report-0.pdf, report-1.pdf" in items[0].body
+    assert items[0].metadata["attachments"] == 2
+
+
+async def test_a_readable_attachment_becomes_its_own_item():
+    """Where the invoice actually lives. A mail body says "see attached", so a
+    memory that stops at the body knows only that something was attached."""
+    message = _message("m1", "2026-03-01T10:00:00", attachments=1)
+    message["payload"]["parts"][-1]["filename"] = "Invoice 2026-03.docx"
+    items = await _collect(
+        _transport(
+            listing=[[message]],
+            messages={"m1": message},
+            attachments={"att-0": _docx("Amount due: 1200 EUR")},
+        )
+    )
+    assert [item.external_id for item in items] == ["m1", "m1#att-1"]
+    child = items[1]
+    assert child.title == "Invoice 2026-03.docx"
+    assert "Amount due: 1200 EUR" in child.body
+    # It stays attached to the conversation it arrived in.
+    assert child.thread_key == items[0].thread_key
+    assert child.timestamp_utc == items[0].timestamp_utc
+    assert child.metadata["parent_external_id"] == "m1"
+
+
+async def test_a_photo_attachment_never_costs_a_request():
+    """No OCR ships here, so fetching an image would spend a request per
+    message to import nothing."""
+    message = _message("m1", "2026-03-01T10:00:00", attachments=1)
+    part = message["payload"]["parts"][-1]
+    part["filename"] = "signature.png"
+    part["mimeType"] = "image/png"
     seen: list[httpx.Request] = []
     items = await _collect(
         _transport(listing=[[message]], messages={"m1": message}, seen=seen)
     )
-    body = items[0].body
-    assert "[2 attachment(s) not imported" in body
-    assert items[0].metadata["attachments"] == 2
-    # No request beyond the listing and the message fetch: binaries never move.
-    assert all("attachment" not in request.url.path for request in seen)
+    assert [item.external_id for item in items] == ["m1"]
+    assert all("/attachments/" not in request.url.path for request in seen)
+    # It is still NAMED in the message, so nothing is hidden.
+    assert "signature.png" in items[0].body
+
+
+async def test_an_attachment_that_cannot_be_fetched_does_not_sink_the_sync():
+    """One file deleted between listing and fetch must cost that file only —
+    and it still becomes an item saying so."""
+    message = _message("m1", "2026-03-01T10:00:00", attachments=1)
+    items = await _collect(
+        _transport(listing=[[message]], messages={"m1": message}, attachments={})
+    )
+    assert [item.external_id for item in items] == ["m1", "m1#att-1"]
+    assert items[1].metadata["content_missing"] is True
 
 
 async def test_listing_pages_are_walked_to_the_end():

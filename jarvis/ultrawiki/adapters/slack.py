@@ -59,10 +59,17 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import Any
 
 import httpx
 
+from jarvis.ultrawiki.extract import (
+    DOCUMENT_EXTENSIONS,
+    MAX_DOCUMENT_BYTES,
+    TEXT_EXTENSIONS,
+    extract_text,
+)
 from jarvis.ultrawiki.types import ConnectorContext, RawItem
 
 log = logging.getLogger(__name__)
@@ -465,11 +472,126 @@ def _author_of(message: dict[str, Any], names: dict[str, str]) -> str:
     return str(message.get("username") or profile.get("name") or "app")
 
 
+def _file_name(file_info: dict[str, Any]) -> str:
+    """What a person would call this upload."""
+    return str(
+        file_info.get("name") or file_info.get("title") or "attachment"
+    ).strip()
+
+
+def _readable_files(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """The uploads in one message whose text is worth fetching.
+
+    A picture or a video is filtered out here, before any request: no OCR
+    ships in this adapter, so downloading one would cost a request per
+    message and import nothing.
+    """
+    found: list[dict[str, Any]] = []
+    for file_info in message.get("files") or []:
+        if not isinstance(file_info, dict):
+            continue
+        if not str(file_info.get("url_private_download") or "").strip():
+            continue
+        name = _file_name(file_info)
+        suffix = PurePosixPath(name).suffix.lower()
+        mime = str(file_info.get("mimetype") or "").lower()
+        if (
+            suffix in DOCUMENT_EXTENSIONS
+            or suffix in TEXT_EXTENSIONS
+            or mime.startswith("text/")
+        ):
+            found.append(file_info)
+    return found
+
+
+async def _file_item(
+    client: httpx.AsyncClient,
+    token: str,
+    channel_id: str,
+    label: str,
+    message: dict[str, Any],
+    file_info: dict[str, Any],
+    names: dict[str, str],
+    team_url: str,
+) -> RawItem | None:
+    """One shared file as its own item, tied to the message that shared it.
+
+    Shared documents are where a channel's actual decisions live: the deck,
+    the spec, the spreadsheet. Recording only that "a file was shared" makes
+    the memory able to say a document exists and nothing about what it says.
+    """
+    name = _file_name(file_info)
+    file_id = str(file_info.get("id") or "").strip()
+    ts = str(message.get("ts") or "")
+    if not file_id or not ts:
+        return None
+
+    reason = ""
+    text = ""
+    try:
+        size = int(file_info.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > MAX_DOCUMENT_BYTES:
+        reason = (
+            f"the file is {size // (1024 * 1024)} MB, above the "
+            f"{MAX_DOCUMENT_BYTES // (1024 * 1024)} MB import limit"
+        )
+    else:
+        url = str(file_info.get("url_private_download") or "")
+        try:
+            response = await client.get(
+                url, headers=_headers(token), follow_redirects=True
+            )
+        except httpx.HTTPError:
+            # One unreachable upload is not the sync's problem to die of.
+            reason = "the download could not be reached"
+        else:
+            if response.status_code >= 400:
+                reason = f"the download failed (HTTP {response.status_code})"
+            else:
+                result = extract_text(
+                    response.content,
+                    filename=name,
+                    mime=str(file_info.get("mimetype") or ""),
+                )
+                if result.ok:
+                    text = result.text
+                else:
+                    reason = result.reason or "no text could be read from this file"
+
+    author = _author_of(message, names)
+    header = f"{label} · file shared by {author} · {name}"
+    body = _cap_body(
+        "\n\n".join([header, text or f"[no text imported: {reason}]"]).strip()
+    )
+    return RawItem(
+        external_id=f"{channel_id}:{ts}#file-{file_id}",
+        title=name,
+        body=body,
+        permalink=str(file_info.get("permalink") or "")
+        or _permalink(team_url, channel_id, ts),
+        timestamp_utc=_ts_to_iso(ts),
+        thread_key=channel_id,
+        author_raw=author,
+        metadata={
+            "mtime_ns": _to_ns(ts),
+            "channel": channel_id,
+            "channel_label": label,
+            "kind": "file",
+            "file_id": file_id,
+            "filename": name,
+            **({"content_missing": True, "content_missing_reason": reason} if reason else {}),
+        },
+    )
+
+
 def _line(message: dict[str, Any], names: dict[str, str]) -> str:
     """One ``author: text`` line; empty when the message carries no words.
 
-    Files become ``[file: <name>]`` markers — the name is memory, the bytes
-    are not (and never will be pulled).
+    Files become ``[file: <name>]`` markers in the conversation. The bytes of
+    a readable one are pulled separately, into an item of its own, so the
+    transcript stays a transcript.
     """
     parts: list[str] = []
     text = _clean_text(str(message.get("text") or ""), names)
@@ -612,6 +734,7 @@ async def _conversation_items(
             by_day.setdefault(day, []).append(message)
 
     items: list[RawItem] = []
+    shared: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for thread_ts in sorted(thread_parents, key=float):
         messages = await _thread_messages(client, token, channel_id, thread_ts)
         if not messages:
@@ -620,10 +743,28 @@ async def _conversation_items(
         item = _thread_item(channel_id, label, messages, names, team_url)
         if item is not None:
             items.append(item)
+        shared.extend(
+            (message, file_info)
+            for message in messages
+            for file_info in _readable_files(message)
+        )
     for day in sorted(by_day):
         day_item = _day_item(channel_id, label, day, by_day[day], names, team_url)
         if day_item is not None:
             items.append(day_item)
+        shared.extend(
+            (message, file_info)
+            for message in by_day[day]
+            for file_info in _readable_files(message)
+        )
+    # Downloads happen after the conversation is assembled, so a slow or dead
+    # file server delays the uploads only — never the transcript itself.
+    for message, file_info in shared:
+        file_item = await _file_item(
+            client, token, channel_id, label, message, file_info, names, team_url
+        )
+        if file_item is not None:
+            items.append(file_item)
     items.sort(key=lambda item: (item.timestamp_utc, item.external_id))
     return items
 

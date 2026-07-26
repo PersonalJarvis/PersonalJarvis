@@ -37,6 +37,7 @@ __all__ = [
     "cap_body",
     "cursor_cutoff",
     "decode_base64url",
+    "decode_base64url_bytes",
     "google_get",
     "google_get_json",
     "google_token",
@@ -289,13 +290,22 @@ def strip_html(markup: str) -> str:
     return _BLANK_RE.sub("\n\n", "\n".join(lines)).strip()
 
 
-def decode_base64url(data: str) -> str:
-    """Gmail's base64url body data → text; empty string on junk, never a crash."""
+def decode_base64url_bytes(data: str) -> bytes:
+    """Gmail's base64url payload → raw bytes; empty on junk, never a crash.
+
+    Attachments must stop here rather than at :func:`decode_base64url`: a PDF
+    or a Word file decoded as UTF-8 comes out as replacement characters, and
+    what the extractor needs is the bytes exactly as they were sent.
+    """
     if not data:
-        return ""
+        return b""
     padded = data + "=" * (-len(data) % 4)
     try:
-        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        return base64.urlsafe_b64decode(padded.encode("ascii"))
     except (ValueError, binascii.Error):
-        return ""
-    return raw.decode("utf-8", errors="replace")
+        return b""
+
+
+def decode_base64url(data: str) -> str:
+    """Gmail's base64url body data → text; empty string on junk, never a crash."""
+    return decode_base64url_bytes(data).decode("utf-8", errors="replace")

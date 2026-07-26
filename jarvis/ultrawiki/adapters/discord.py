@@ -36,10 +36,17 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Any
 
 import httpx
 
+from jarvis.ultrawiki.extract import (
+    DOCUMENT_EXTENSIONS,
+    MAX_DOCUMENT_BYTES,
+    TEXT_EXTENSIONS,
+    extract_text,
+)
 from jarvis.ultrawiki.types import ConnectorContext, RawItem
 
 log = logging.getLogger(__name__)
@@ -406,9 +413,111 @@ def _message_text(message: dict[str, Any]) -> str:
             continue
         name = str(attachment.get("filename") or "").strip()
         if name:
-            # By name only — binaries never enter the knowledge base.
+            # By name in the transcript; a readable one is pulled separately
+            # into an item of its own, so the conversation stays a conversation.
             parts.append(f"[attachment: {name}]")
     return " ".join(parts)
+
+
+def _readable_attachments(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """The attachments of one message whose text is worth fetching.
+
+    Filtered by name and type BEFORE any request: a meme-heavy channel must
+    not cost one download per image to import nothing (no OCR ships here).
+    """
+    found: list[dict[str, Any]] = []
+    for attachment in message.get("attachments") or []:
+        if not isinstance(attachment, dict) or not attachment.get("url"):
+            continue
+        name = str(attachment.get("filename") or "").strip()
+        suffix = PurePosixPath(name).suffix.lower()
+        mime = str(attachment.get("content_type") or "").lower()
+        if (
+            suffix in DOCUMENT_EXTENSIONS
+            or suffix in TEXT_EXTENSIONS
+            or mime.startswith("text/")
+        ):
+            found.append(attachment)
+    return found
+
+
+async def _attachment_item(
+    client: httpx.AsyncClient,
+    guild: dict[str, Any],
+    channel: dict[str, Any],
+    message: dict[str, Any],
+    attachment: dict[str, Any],
+) -> RawItem | None:
+    """One posted file as its own item, tied to the channel it was posted in."""
+    guild_id = str(guild.get("id") or "")
+    channel_id = str(channel.get("id") or "")
+    message_id = str(message.get("id") or "")
+    attachment_id = str(attachment.get("id") or "")
+    name = str(attachment.get("filename") or "").strip()
+    if not message_id or not attachment_id or not name:
+        return None
+
+    reason = ""
+    text = ""
+    try:
+        size = int(attachment.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > MAX_DOCUMENT_BYTES:
+        reason = (
+            f"the file is {size // (1024 * 1024)} MB, above the "
+            f"{MAX_DOCUMENT_BYTES // (1024 * 1024)} MB import limit"
+        )
+    else:
+        # The CDN link carries its own signature; sending the bot token to a
+        # host that is not the API would leak the credential for no gain.
+        try:
+            response = await client.get(
+                str(attachment.get("url") or ""), follow_redirects=True
+            )
+        except httpx.HTTPError:
+            reason = "the download could not be reached"
+        else:
+            if response.status_code >= 400:
+                reason = f"the download failed (HTTP {response.status_code})"
+            else:
+                result = extract_text(
+                    response.content,
+                    filename=name,
+                    mime=str(attachment.get("content_type") or ""),
+                )
+                if result.ok:
+                    text = result.text
+                else:
+                    reason = result.reason or "no text could be read from this file"
+
+    guild_name = str(guild.get("name") or "").strip() or f"server {guild_id}"
+    channel_name = str(channel.get("name") or "").strip() or f"channel {channel_id}"
+    author = _author_of(message)
+    header = f"{guild_name} · #{channel_name} · file posted by {author} · {name}"
+    body = f"{header}\n\n{text or f'[no text imported: {reason}]'}"
+    return RawItem(
+        external_id=f"discord:{guild_id}:{channel_id}:{message_id}#att-{attachment_id}",
+        title=name,
+        body=body[:_MAX_BODY_CHARS],
+        permalink=(
+            f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+        ),
+        timestamp_utc=_iso_z(str(message.get("timestamp") or "")),
+        thread_key=f"{guild_id}/{channel_id}",
+        author_raw=author,
+        metadata={
+            "mtime_ns": _to_ns(str(message.get("timestamp") or "")),
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "guild_name": guild_name,
+            "channel_name": channel_name,
+            "kind": "attachment",
+            "filename": name,
+            "parent_message_id": message_id,
+            **({"content_missing": True, "content_missing_reason": reason} if reason else {}),
+        },
+    )
 
 
 def _chunk_item(
@@ -542,6 +651,16 @@ async def discord_pull_adapter(
                 for item in _day_items(guild, channel, messages):
                     yielded += 1
                     yield item
+                # After the transcript, never instead of it: a dead CDN link
+                # must cost that one file and nothing else.
+                for message in messages:
+                    for attachment in _readable_attachments(message):
+                        item = await _attachment_item(
+                            client, guild, channel, message, attachment
+                        )
+                        if item is not None:
+                            yielded += 1
+                            yield item
 
     log.info(
         "Discord adapter: yielded %d item(s) for %s (%s)",

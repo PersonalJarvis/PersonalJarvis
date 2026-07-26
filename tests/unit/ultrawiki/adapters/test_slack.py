@@ -9,7 +9,9 @@ failure messages a user can act on that never carry the token.
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +20,10 @@ import pytest
 
 from jarvis.ultrawiki.adapters import slack as sl
 from jarvis.ultrawiki.types import ConnectorContext
+
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +92,7 @@ def _transport(
     missing_scope_types: frozenset[str] = frozenset(),
     history_errors: dict[str, str] | None = None,
     rate_limit_first_history: int = 0,
+    uploads: dict[str, bytes] | None = None,
     seen: list[httpx.Request] | None = None,
 ) -> httpx.MockTransport:
     """A fake Slack workspace: dispatches by Web API method path."""
@@ -127,6 +134,11 @@ def _transport(
         if path == "/api/conversations.replies":
             key = (params.get("channel") or "", params.get("ts") or "")
             return _json({"ok": True, "messages": (replies or {}).get(key, [])})
+        if path.startswith("/files/"):
+            raw = (uploads or {}).get(path.rsplit("/", 1)[1])
+            if raw is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=raw)
         return _json({"ok": False, "error": "unknown_method"})
 
     return httpx.MockTransport(handler)
@@ -383,6 +395,84 @@ async def test_a_dm_is_labelled_as_a_conversation_with_its_person():
     assert len(items) == 1
     assert "DM with @Alice" in items[0].body
     assert items[0].thread_key == "D1"
+
+
+def _docx(text: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            f"<w:document xmlns:w='x'><w:body><w:p><w:r><w:t>{text}"
+            "</w:t></w:r></w:p></w:body></w:document>",
+        )
+    return buffer.getvalue()
+
+
+def _upload(file_id: str, name: str, mimetype: str, size: int = 500) -> dict[str, Any]:
+    return {
+        "id": file_id,
+        "name": name,
+        "title": name,
+        "mimetype": mimetype,
+        "size": size,
+        "url_private_download": f"https://files.slack.com/files/{file_id}",
+        "permalink": f"https://acme.slack.com/files/{file_id}",
+    }
+
+
+async def test_a_shared_document_becomes_its_own_item():
+    """Shared files are where a channel's decisions live — the deck, the spec.
+    Recording only that "a file was shared" leaves the memory able to say a
+    document exists and nothing about what it says."""
+    upload = _upload("F1", "Roadmap.docx", _DOCX_MIME)
+    message = _msg("2026-03-01T10:00:00", text="here you go", files=[upload])
+    items = await _collect(
+        _transport(
+            channels={"public_channel": [_channel()]},
+            history={"C1": [[message]]},
+            uploads={"F1": _docx("Ship the importer in April")},
+        )
+    )
+    file_items = [item for item in items if item.metadata.get("kind") == "file"]
+    assert len(file_items) == 1
+    assert file_items[0].external_id.endswith("#file-F1")
+    assert "Ship the importer in April" in file_items[0].body
+    assert file_items[0].thread_key == "C1"
+    # The transcript still mentions it, so the conversation stays readable.
+    day = next(item for item in items if item.metadata.get("kind") == "day")
+    assert "[file: Roadmap.docx]" in day.body
+
+
+async def test_a_shared_photo_is_never_downloaded():
+    """No OCR ships here; one request per image would buy nothing."""
+    upload = _upload("F2", "team.png", "image/png")
+    message = _msg("2026-03-01T10:00:00", text="look", files=[upload])
+    seen: list[httpx.Request] = []
+    items = await _collect(
+        _transport(
+            channels={"public_channel": [_channel()]},
+            history={"C1": [[message]]},
+            seen=seen,
+        )
+    )
+    assert not [item for item in items if item.metadata.get("kind") == "file"]
+    assert all("/files/" not in request.url.path for request in seen)
+
+
+async def test_an_unreachable_upload_does_not_sink_the_conversation():
+    """The transcript must survive a dead file server; the file says why."""
+    upload = _upload("F3", "notes.docx", _DOCX_MIME)
+    message = _msg("2026-03-01T10:00:00", text="attached", files=[upload])
+    items = await _collect(
+        _transport(
+            channels={"public_channel": [_channel()]},
+            history={"C1": [[message]]},
+            uploads={},
+        )
+    )
+    assert any(item.metadata.get("kind") == "day" for item in items)
+    file_item = next(item for item in items if item.metadata.get("kind") == "file")
+    assert file_item.metadata["content_missing"] is True
 
 
 def test_the_integration_id_matches_the_catalog_and_the_bridge():

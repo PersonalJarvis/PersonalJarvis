@@ -79,6 +79,7 @@ def _transport(
     guilds: list[dict[str, Any]] | None = None,
     guild_channels: list[dict[str, Any]] | None = None,
     forbidden: set[str] = frozenset(),
+    uploads: dict[str, bytes] | None = None,
     seen: list[httpx.Request] | None = None,
     ratelimit_first: int = 0,
 ) -> httpx.MockTransport:
@@ -89,6 +90,11 @@ def _transport(
         if seen is not None:
             seen.append(request)
         path = request.url.path
+        if request.url.host == "cdn.discordapp.com":
+            raw = (uploads or {}).get(path.rsplit("/", 1)[1])
+            if raw is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=raw)
         if path == "/api/v10/users/@me/guilds":
             if request.url.params.get("after"):
                 return httpx.Response(200, json=[])
@@ -303,6 +309,55 @@ async def test_an_unconnected_plugin_refuses_before_any_request(monkeypatch):
     )
     with pytest.raises(dc.DiscordAdapterError, match="not connected"):
         await _collect(transport=_transport({}))
+
+
+def _attachment(
+    attachment_id: str, filename: str, content_type: str, size: int = 400
+) -> dict[str, Any]:
+    return {
+        "id": attachment_id,
+        "filename": filename,
+        "content_type": content_type,
+        "size": size,
+        "url": f"https://cdn.discordapp.com/attachments/{attachment_id}",
+    }
+
+
+async def test_a_posted_document_becomes_its_own_item():
+    """A posted spec is the substance of the conversation around it."""
+    message = _message("2026-03-01T10:00:00Z", "here is the spec")
+    message["attachments"] = [_attachment("A1", "spec.md", "text/markdown")]
+    items = await _collect(
+        transport=_transport(
+            {"222": [message]},
+            uploads={"A1": b"# Spec\n\nThe importer reads everything."},
+        )
+    )
+    files = [item for item in items if item.metadata.get("kind") == "attachment"]
+    assert len(files) == 1
+    assert "The importer reads everything." in files[0].body
+    assert files[0].external_id.endswith("#att-A1")
+    # The transcript still names it.
+    assert "[attachment: spec.md]" in items[0].body
+
+
+async def test_a_posted_image_is_never_downloaded():
+    """A meme-heavy channel must not cost one download per picture."""
+    message = _message("2026-03-01T10:00:00Z", "look")
+    message["attachments"] = [_attachment("A2", "cat.png", "image/png")]
+    seen: list[httpx.Request] = []
+    items = await _collect(transport=_transport({"222": [message]}, seen=seen))
+    assert not [item for item in items if item.metadata.get("kind") == "attachment"]
+    assert all(request.url.host != "cdn.discordapp.com" for request in seen)
+
+
+async def test_a_dead_link_costs_that_file_only():
+    message = _message("2026-03-01T10:00:00Z", "attached")
+    message["attachments"] = [_attachment("A3", "notes.md", "text/markdown")]
+    items = await _collect(transport=_transport({"222": [message]}, uploads={}))
+    # The day chunk survived; the file says why it is empty.
+    assert len(items) == 2
+    assert items[1].metadata["content_missing"] is True
 
 
 def test_the_integration_id_matches_the_curated_roster():
