@@ -13,6 +13,7 @@ import { ThinkingTrace, ThoughtTraceDisclosure } from "@/components/ThinkingTrac
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useResizablePane } from "@/hooks/useResizablePane";
+import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import {
   ChatsApiError,
@@ -42,7 +43,7 @@ export function ChatsView() {
   // bounds keep it from collapsing or swallowing the chat column.
   const listPane = useResizablePane({
     storageKey: "chats.listWidth.v1",
-    defaultWidth: 260,
+    defaultSize: 260,
     min: 200,
     max: 560,
   });
@@ -119,7 +120,7 @@ export function ChatsView() {
   return (
     <div className="flex h-full min-h-0">
       <ConversationList
-        width={listPane.width}
+        width={listPane.size}
         conversations={conversations}
         activeId={activeThreadId}
         onOpen={openConversation}
@@ -130,7 +131,9 @@ export function ChatsView() {
       <PaneResizer
         onPointerDown={listPane.startResize}
         onDoubleClick={listPane.reset}
+        onNudge={listPane.nudge}
         active={listPane.isResizing}
+        title={t("chats_view.resize_hint")}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -253,43 +256,6 @@ function ConversationList({
         </ScrollArea>
       )}
     </aside>
-  );
-}
-
-/**
- * Vertical drag handle between the history list and the chat column.
- *
- * The visible seam is a 1px line (matching the old ``border-r``), but the hit
- * target is a wider 6px column so the grip is easy to catch. It lights up gold
- * on hover and while dragging. ``role="separator"`` keeps it accessible.
- */
-function PaneResizer({
-  onPointerDown,
-  onDoubleClick,
-  active,
-}: {
-  onPointerDown: (e: React.PointerEvent) => void;
-  onDoubleClick: () => void;
-  active: boolean;
-}) {
-  const t = useT();
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      title={t("chats_view.resize_hint")}
-      onPointerDown={onPointerDown}
-      onDoubleClick={onDoubleClick}
-      className="group relative z-10 flex w-1.5 shrink-0 cursor-col-resize touch-none select-none items-stretch"
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors",
-          active ? "bg-primary" : "bg-border group-hover:bg-primary/60",
-        )}
-      />
-    </div>
   );
 }
 
