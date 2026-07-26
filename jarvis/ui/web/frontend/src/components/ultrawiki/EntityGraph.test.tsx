@@ -43,6 +43,39 @@ vi.mock("react-force-graph-2d", async () => {
   };
 });
 
+/** A canvas that remembers nothing but the circles it was asked to draw. */
+function fakeCanvas(): { ctx: CanvasRenderingContext2D; radii: number[] } {
+  const radii: number[] = [];
+  const ctx = {
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 0,
+    font: "",
+    textAlign: "left",
+    textBaseline: "top",
+    beginPath: () => {},
+    arc: (_x: number, _y: number, radius: number) => {
+      radii.push(radius);
+    },
+    fill: () => {},
+    stroke: () => {},
+    fillText: () => {},
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, radii };
+}
+
+type NodePaint = (
+  node: Record<string, unknown>,
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+) => void;
+type PointerPaint = (
+  node: Record<string, unknown>,
+  colour: string,
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+) => void;
+
 const PAYLOAD = {
   ok: true,
   nodes: [
@@ -134,6 +167,40 @@ it("reports the topic behind a clicked node", async () => {
   handler({ id: "tahiti" });
 
   expect(onSelect).toHaveBeenCalledWith("tahiti");
+});
+
+it("takes a click anywhere on the dot, not just in its core", async () => {
+  // The regression this pins: the renderer derives its hit area from
+  // `nodeVal` (radius = sqrt(val) * nodeRelSize), never from the circle
+  // nodeCanvasObject actually draws. Left to itself the fattest topic
+  // answered only within sqrt(12) of its 12 units — 8 % of the target the
+  // user aims at — so most clicks landed on nothing. The hit area has to be
+  // painted by hand, and it may never be smaller than what is on screen.
+  installFetch();
+  renderGraph();
+
+  await waitFor(() => expect(forceGraphProps.length).toBeGreaterThan(0));
+  const props = forceGraphProps.at(-1) as Record<string, unknown>;
+  const graphData = props.graphData as {
+    nodes: Array<{ id: string; radius: number; colour: string }>;
+  };
+  // The biggest node is where the mismatch hurts most, so measure that one.
+  const biggest = graphData.nodes.reduce((peak, node) =>
+    node.radius > peak.radius ? node : peak,
+  );
+  const node = { ...biggest, x: 0, y: 0 } as unknown as Record<string, unknown>;
+
+  const drawn = fakeCanvas();
+  (props.nodeCanvasObject as NodePaint)(node, drawn.ctx, 1);
+
+  const target = fakeCanvas();
+  const paintHitArea = props.nodePointerAreaPaint as PointerPaint | undefined;
+  expect(typeof paintHitArea).toBe("function");
+  paintHitArea!(node, "#010203", target.ctx, 1);
+
+  expect(Math.max(...target.radii)).toBeGreaterThanOrEqual(
+    Math.max(...drawn.radii),
+  );
 });
 
 it("moves the floor when the slider moves", async () => {

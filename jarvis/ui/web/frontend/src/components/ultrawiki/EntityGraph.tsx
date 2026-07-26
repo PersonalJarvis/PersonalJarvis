@@ -53,6 +53,16 @@ interface RenderEdge {
 /** Floors the slider offers — 1 is always reachable, so nothing is hidden for good. */
 const FLOORS = [1, 2, 3, 5, 8] as const;
 
+/**
+ * Slack around a node's hit area, in graph units.
+ *
+ * A topic is a small target on a crowded map and the pointer is never exactly
+ * where the eye is. A rim slightly wider than the dot costs nothing — the
+ * nodes it could steal from are further away than this — and it is the
+ * difference between "I clicked it" and "I clicked next to it".
+ */
+const POINTER_PAD = 2;
+
 export function EntityGraph({
   minMentions,
   onMinMentionsChange,
@@ -216,6 +226,22 @@ export function EntityGraph({
             }
             onNodeClick={(node) => {
               if (node?.id !== undefined) onSelect(String(node.id));
+            }}
+            // Which pixels belong to which node is decided on a second,
+            // invisible canvas the renderer paints in per-node id colours and
+            // then samples under the pointer. It does NOT know what
+            // nodeCanvasObject drew there: left alone it stamps its own circle
+            // of sqrt(nodeVal) * nodeRelSize, so a dot drawn at radius 12
+            // answered only within 3.5 — barely 8 % of the area a user aims
+            // at, and clicking the biggest topics did nothing at all. Painting
+            // the hit area ourselves is what keeps the target and the drawing
+            // the same shape.
+            nodePointerAreaPaint={(node, colour, ctx) => {
+              if (node.x === undefined || node.y === undefined) return;
+              ctx.fillStyle = colour;
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, node.radius + POINTER_PAD, 0, 2 * Math.PI);
+              ctx.fill();
             }}
             nodeCanvasObjectMode={() => "after"}
             nodeCanvasObject={(node, ctx, scale) => {
