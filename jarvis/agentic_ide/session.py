@@ -612,6 +612,9 @@ class Registry:
         # without a real pseudo-terminal (and without a coding agent installed).
         self._pty: PtyManager | None = pty_manager
         self._lock = asyncio.Lock()
+        # Held across reading the state AND writing it — see `_persist` for the
+        # interleaving that otherwise loses a freshly discovered conversation id.
+        self._persist_lock = asyncio.Lock()
 
     # ---------------------------------------------------------------- state
     @property
@@ -885,23 +888,30 @@ class Registry:
 
             restored: list[Session] = []
             skipped: list[tuple[str, str]] = []
+            was_on_screen: Session | None = None
             for space in snapshot.workspaces:
                 try:
                     session = await self._restore_one_locked(space)
                 except SessionError as exc:
                     skipped.append((space.folder, str(exc)))
                     continue
-                if session is not None:
-                    restored.append(session)
+                if session is None:
+                    continue
+                restored.append(session)
+                if space.session_id and space.session_id == snapshot.active_session_id:
+                    was_on_screen = session
 
             if not restored and skipped:
                 # Nothing at all came back: that is a failure the caller must be
                 # able to report as one, not a success with an empty list.
                 raise SessionError(skipped[0][1])
 
-            # The first workspace in the snapshot was the one on screen.
+            # Back to the tab that was being worked in, not simply the leftmost
+            # one. Falls back to the first when the snapshot predates recording
+            # it, or when that workspace was one of the ones that could not come
+            # back.
             if restored:
-                self._focus_locked(restored[0])
+                self._focus_locked(was_on_screen or restored[0])
             await self._persist()
             logger.info(
                 "Agentic IDE resumed {} workspace(s), {} terminal(s); {} skipped",
@@ -1066,8 +1076,10 @@ class Registry:
         """
         if not self._sessions:
             return None
-        front = self._active
-        ordered = sorted(self._sessions.values(), key=lambda s: s.id != front)
+        # TAB ORDER, not front-first. The bar has to come back arranged the way
+        # it was left, and the tab somebody was working in is not necessarily the
+        # leftmost one — so which was on screen is recorded separately instead of
+        # being implied by position.
         return resume_store.snapshot_now(
             [
                 resume_store.SnapshotWorkspace(
@@ -1076,8 +1088,9 @@ class Registry:
                     name=session.name,
                     terminals=[t.to_snapshot() for t in session.terminals],
                 )
-                for session in ordered
-            ]
+                for session in self._sessions.values()
+            ],
+            active_session_id=self._active or "",
         )
 
     async def _persist(self) -> None:
@@ -1086,14 +1099,23 @@ class Registry:
         Best-effort and off the event loop. A resume point is a convenience;
         failing to write one must never break the workspace that is running
         perfectly well right now.
+
+        **Reading the state and writing it are one indivisible step.** Without
+        that they interleave, and the interleaving loses exactly the valuable
+        part: a pane connecting collects the state and then hands it to a thread,
+        and if the background lookup finds a Codex conversation id in that gap and
+        writes it, the older collected state lands afterwards and erases it.
+        Serialising build-and-write means a later save always reads a state newer
+        than the one the previous save stored.
         """
-        snapshot = self.snapshot()
-        if snapshot is None:
-            return
-        try:
-            await asyncio.to_thread(resume_store.save, snapshot)
-        except Exception as exc:  # noqa: BLE001 - the workspace comes first
-            logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
+        async with self._persist_lock:
+            snapshot = self.snapshot()
+            if snapshot is None:
+                return
+            try:
+                await asyncio.to_thread(resume_store.save, snapshot)
+            except Exception as exc:  # noqa: BLE001 - the workspace comes first
+                logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
 
     async def _forget(self) -> None:
         """Withdraw the resume offer, best-effort."""

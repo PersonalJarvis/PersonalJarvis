@@ -545,21 +545,63 @@ async def test_closing_workspaces_one_by_one_keeps_all_of_them_on_offer(
     assert {w.folder for w in saved.workspaces} == {str(f) for f in folders}
 
 
-async def test_opening_something_new_refreshes_what_is_on_offer(
+async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """The other side of that coin: the offer must not accumulate forever."""
-    old, new = tmp_path / "old", tmp_path / "new"
-    old.mkdir()
-    new.mkdir()
-    await registry.start(str(old), [{"agent": "claude", "name": "Alex"}])
+    """The reported loss, in miniature.
+
+    Work twelve panes in one folder, close them, then open a single pane
+    somewhere to check one thing — and the twelve used to be gone for good,
+    because a save replaced the file outright. A save UPDATES: the folder that is
+    open now overwrites its own record, every other remembered folder is left
+    alone.
+    """
+    big, quick = tmp_path / "big", tmp_path / "quick"
+    big.mkdir()
+    quick.mkdir()
+    await registry.start(
+        str(big), [{"agent": "claude"} for _ in range(12)]
+    )
     await registry.end()
 
-    await registry.start(str(new), [{"agent": "claude", "name": "Blake"}])
+    await registry.start(str(quick), [{"agent": "claude", "name": "Solo"}])
 
     saved = resume_store.load()
     assert saved is not None
-    assert [w.folder for w in saved.workspaces] == [str(new)]
+    folders = {w.folder: len(w.terminals) for w in saved.workspaces}
+    assert folders == {str(quick): 1, str(big): 12}
+
+
+async def test_reopening_the_same_folder_replaces_its_own_record(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """The newest arrangement of a folder is the truth about that folder."""
+    await registry.start(str(tmp_path), [{"agent": "claude"} for _ in range(5)])
+    await registry.end()
+
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Solo"}])
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert [len(w.terminals) for w in saved.workspaces] == [1]
+
+
+async def test_the_remembered_list_stays_bounded(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """A restore point is a screen, not an archive."""
+    for index in range(resume_store.MAX_REMEMBERED_WORKSPACES + 4):
+        folder = tmp_path / f"repo{index}"
+        folder.mkdir()
+        await registry.start(str(folder), [{"agent": "claude"}])
+        await registry.end()
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert len(saved.workspaces) == resume_store.MAX_REMEMBERED_WORKSPACES
+    # The newest survive; the oldest fall off.
+    assert any("repo13" in w.folder for w in saved.workspaces)
+    assert not any(w.folder.endswith("repo0") for w in saved.workspaces)
 
 
 async def test_only_starting_fresh_discards_the_restore_point(
@@ -573,32 +615,36 @@ async def test_only_starting_fresh_discards_the_restore_point(
     assert resume_store.load() is None
 
 
-async def test_every_open_workspace_is_remembered_front_one_first(
+async def test_every_open_workspace_is_remembered_in_tab_order(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """All of them, and the one on screen leads.
+    """All of them, arranged as the bar was, with the working tab named.
 
     An earlier version stored only the front workspace, on the reasoning that
     restoring all would relaunch a folder's worth of agents per tab. Restoring
-    starts nothing, so the reasoning was wrong on both counts — and somebody
-    with two folders open wants two back. Order still matters: the front one is
-    first so it is the one on screen again afterwards.
+    starts nothing, so that was wrong on both counts — and somebody with two
+    folders open wants two back. The order is the BAR's, because that is the
+    arrangement that has to come back; which tab was being worked in is recorded
+    separately rather than implied by position.
     """
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
     one = await registry.start(str(first), [{"agent": "claude", "name": "Alex"}])
-    await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
+    two = await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
 
     saved = resume_store.load()
     assert saved is not None
-    assert [w.folder for w in saved.workspaces] == [str(second), str(first)]
+    assert [w.folder for w in saved.workspaces] == [str(first), str(second)]
+    assert saved.active_session_id == two.id
 
+    # Working in the other tab must not renumber the bar.
     await registry.activate(one.id)
     saved = resume_store.load()
     assert saved is not None
     assert [w.folder for w in saved.workspaces] == [str(first), str(second)]
+    assert saved.active_session_id == one.id
 
 
 async def test_closing_one_of_two_leaves_both_on_offer(
@@ -715,3 +761,34 @@ async def test_closing_one_workspace_leaves_the_others_lookups_alone(
 
     assert not close_me.lookups
     assert keep.lookups, "the surviving workspace must keep looking"
+
+
+async def test_a_discovered_conversation_id_is_not_overwritten_by_an_older_save(
+    registry: ide.Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The race that silently cost a Codex pane its conversation.
+
+    Saving reads the state and then writes it. A pane connecting starts that,
+    and the background lookup that finds a Codex conversation id can land its own
+    save in the gap — after which the connecting pane's older reading lands on
+    top and erases the id. It only ever showed up under a shuffled test order,
+    which is exactly how a race announces itself.
+
+    Build-and-write is one step now, so whatever is written last was read last.
+    """
+    monkeypatch.setattr(ide, "DISCOVERY_DELAYS_S", (0.0,))
+    found = ResumeHandle(kind="codex_rollout", id="found-it", captured_at=2.0)
+    monkeypatch.setattr(ide, "discover", lambda *_args, **_kw: found)
+
+    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    # Attach and the lookup both persist; the order they finish in must not
+    # decide whether the id survives.
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+
+    assert registry.session.find("Cody").resume == found
+    saved = resume_store.load()
+    assert saved is not None
+    stored = saved.workspaces[0].terminals[0].resume
+    assert stored == found, "the discovered id must survive every other save"

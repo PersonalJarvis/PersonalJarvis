@@ -136,12 +136,17 @@ class SnapshotWorkspace:
     # Custom tab label. Empty for snapshots written before renaming existed.
     name: str = ""
     terminals: list[SnapshotTerminal] = field(default_factory=list)
+    # When this workspace was last recorded. Its own stamp rather than the
+    # file's, because the file holds workspaces that closed at different times
+    # and the merge in `save` has to know which record is the newer one.
+    saved_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
             "folder": self.folder,
             "name": self.name,
+            "saved_at": self.saved_at,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
@@ -163,11 +168,16 @@ class SnapshotWorkspace:
         if not terminals:
             # A workspace with no panes is not an offer, it is an empty screen.
             return None
+        try:
+            saved_at = float(data.get("saved_at") or 0.0)
+        except (TypeError, ValueError):
+            saved_at = 0.0
         return SnapshotWorkspace(
             session_id=str(data.get("session_id") or ""),
             folder=folder,
             name=str(data.get("name") or "").strip(),
             terminals=terminals,
+            saved_at=saved_at,
         )
 
 
@@ -188,6 +198,11 @@ class Snapshot:
 
     saved_at: float
     workspaces: list[SnapshotWorkspace] = field(default_factory=list)
+    # Which workspace was on screen, by its id at the time. Recorded rather than
+    # implied by position, because the list is in TAB order — the bar must come
+    # back in the arrangement it had, and the tab you were working in is not
+    # necessarily the first one.
+    active_session_id: str = ""
 
     @property
     def terminal_count(self) -> int:
@@ -197,6 +212,7 @@ class Snapshot:
         return {
             "version": SCHEMA_VERSION,
             "saved_at": self.saved_at,
+            "active_session_id": self.active_session_id,
             "workspaces": [w.to_dict() for w in self.workspaces],
         }
 
@@ -238,7 +254,11 @@ class Snapshot:
             saved_at = float(data.get("saved_at") or 0.0)
         except (TypeError, ValueError):
             saved_at = 0.0
-        return Snapshot(saved_at=saved_at, workspaces=workspaces)
+        return Snapshot(
+            saved_at=saved_at,
+            workspaces=workspaces,
+            active_session_id=str(data.get("active_session_id") or ""),
+        )
 
 
 def _as_int(value: Any) -> int:
@@ -276,6 +296,7 @@ def save(snapshot: Snapshot) -> None:
         clear()
         return
     target = _store_path()
+    snapshot = _merged_with_stored(snapshot)
     tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
     with _WRITE_LOCK:
         try:
@@ -289,6 +310,73 @@ def save(snapshot: Snapshot) -> None:
                 tmp.unlink(missing_ok=True)
             except OSError:  # noqa: S110 - cleanup is best-effort
                 pass
+
+
+# How many workspaces one restore point may remember. Above the number that can
+# be open at once, so folders you closed earlier survive alongside what is open
+# now — and bounded, so the offer stays a screen rather than an archive.
+MAX_REMEMBERED_WORKSPACES = 10
+
+
+def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
+    """Fold the live workspaces into what is already remembered, keyed by folder.
+
+    **The failure this exists for.** A save used to replace the file outright, so
+    the restore point only ever held what happened to be open at that moment.
+    Work twelve panes in one folder, close them, then open a single pane
+    somewhere to check one thing — and the twelve were gone for good, with no way
+    to notice until the offer came back holding one pane. Reported as "it only
+    resumed one".
+
+    So a save UPDATES rather than replaces: a folder that is open now overwrites
+    its own record (the newest arrangement of that folder is the truth), and
+    every other remembered folder is left exactly as it was. Only the user
+    asking to start fresh throws any of it away.
+
+    Ordered newest-first and trimmed, so the file cannot grow without limit and
+    the offer leads with what was most recently worked in.
+    """
+    stamped = [
+        w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces
+    ]
+    live_folders = {_folder_key(w.folder) for w in stamped}
+    try:
+        stored = load()
+    except Exception:  # noqa: BLE001 - a broken file must not block the write
+        stored = None
+    kept = (
+        [w for w in stored.workspaces if _folder_key(w.folder) not in live_folders]
+        if stored is not None
+        else []
+    )
+    # The open ones keep the bar's order — that arrangement is what comes back.
+    # Folders remembered from earlier follow, most recently used first, and the
+    # trim falls on the oldest of those rather than on anything open now.
+    kept.sort(key=lambda w: w.saved_at, reverse=True)
+    merged = [*stamped, *kept][:MAX_REMEMBERED_WORKSPACES]
+    return Snapshot(
+        saved_at=snapshot.saved_at,
+        workspaces=merged,
+        active_session_id=snapshot.active_session_id,
+    )
+
+
+def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
+    return SnapshotWorkspace(
+        session_id=workspace.session_id,
+        folder=workspace.folder,
+        name=workspace.name,
+        terminals=workspace.terminals,
+        saved_at=when,
+    )
+
+
+def _folder_key(folder: str) -> str:
+    """Comparable form of a folder path — the same one twice must not be two."""
+    try:
+        return os.path.normcase(str(Path(folder).expanduser().resolve()))
+    except OSError:
+        return os.path.normcase(folder)
 
 
 def load() -> Snapshot | None:
@@ -418,12 +506,20 @@ def _display_names() -> dict[str, str]:
         return {}
 
 
-def snapshot_now(workspaces: list[SnapshotWorkspace]) -> Snapshot:
+def snapshot_now(
+    workspaces: list[SnapshotWorkspace], *, active_session_id: str = ""
+) -> Snapshot:
     """A snapshot of every open workspace, stamped with the current time."""
-    return Snapshot(saved_at=time.time(), workspaces=list(workspaces))
+    now = time.time()
+    return Snapshot(
+        saved_at=now,
+        workspaces=[_restamp(w, now) for w in workspaces],
+        active_session_id=active_session_id,
+    )
 
 
 __all__ = [
+    "MAX_REMEMBERED_WORKSPACES",
     "SCHEMA_VERSION",
     "Snapshot",
     "SnapshotTerminal",
