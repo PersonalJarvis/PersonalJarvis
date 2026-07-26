@@ -168,6 +168,41 @@ size and item counts are bounded like every other connector.
 
 ---
 
+---
+
+## What shipped, and what is honestly still open (2026-07-26)
+
+**Shipped and tested:** the extractor coverage (A1), every reader routed
+through it (A2), the frugal enrichment lane (A3), the platform guide (B) and
+the generic custom source (C). Two defects surfaced on the way and were fixed:
+`_decode` tried UTF-16 without a byte order mark, turning ordinary
+Windows-encoded notes into CJK-looking noise; and an office archive missing its
+manifest part was discarded whole though every slide was present.
+
+One finding was larger than a defect: **connector metadata never reached the
+store.** There was no column for it, so the source format, a file's
+modification time and a chat's participants were dropped on every import since
+the store was written. Added additively; existing databases migrate in place.
+
+**Open, deliberately:**
+
+* **Local speech recognition cannot transcribe an imported file.** Only the
+  cloud providers gained `transcribe_container`; `faster-whisper` did not,
+  because the always-on wake loop holds a native inference engine and sharing
+  one is the AP-24 hang. A second instance would need its own lifecycle work.
+* **The Gemini and OpenRouter speech plugins** send audio as inline base64
+  rather than multipart, so they need their own small `transcribe_container`.
+* **No UI yet** for the platform guide or the custom source. Both are complete
+  as REST routes, which makes them CLI commands automatically (charter §5).
+* **A photo inside a `.tar` cannot be described.** A tar entry cannot be
+  reopened without decompressing the whole stream again, so those items say so
+  rather than waiting in a queue forever. Importing the same export as a `.zip`
+  removes the limitation.
+* **`.enex` (Evernote) and `.pst` (Outlook)** are named in the guide as
+  unreadable rather than silently failing.
+* **Watched-folder mode** for the custom source was dropped as redundant: the
+  local-folder source already watches a folder and now reads every format.
+
 ## Definition of done (charter §3, all four paths)
 
 1. **One arbitrary key** — a user whose only credential is for some other

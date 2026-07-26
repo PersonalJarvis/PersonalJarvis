@@ -89,7 +89,9 @@ CONNECTOR_STATUSES: tuple[ConnectorStatus, ...] = ("available", "adapter_pending
 #: connector has no vendor and must never borrow one; the frontend maps these
 #: to its own icons. Kept as a closed set so a typo cannot silently become a
 #: missing logo.
-NEUTRAL_BRANDS: tuple[str, ...] = ("vault", "folder", "chat", "wiki", "archive")
+NEUTRAL_BRANDS: tuple[str, ...] = (
+    "vault", "folder", "chat", "wiki", "archive", "link"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +184,18 @@ BUILTIN_CONNECTORS: tuple[UltraWikiConnectorSpec, ...] = (
         status="available",
         label_key="ultrawiki.sources.connector_export_import",
         description_key="ultrawiki.connectors.export_import",
+    ),
+    # The escape hatch: everything the roster will never name. A service with
+    # no adapter and no export button had no route at all, and there will
+    # always be one — a niche app, a regional network, a company's own tool.
+    UltraWikiConnectorSpec(
+        id="custom-source",
+        kind="builtin",
+        label="Custom source",
+        brand="link",
+        status="available",
+        label_key="ultrawiki.sources.connector_custom_source",
+        description_key="ultrawiki.connectors.custom_source",
     ),
 )
 

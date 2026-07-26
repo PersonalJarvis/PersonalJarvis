@@ -83,6 +83,7 @@ export const ULTRAWIKI_NEUTRAL_BRANDS = [
   "chat",
   "wiki",
   "archive",
+  "link",
 ] as const;
 export type UltraWikiNeutralBrand =
   (typeof ULTRAWIKI_NEUTRAL_BRANDS)[number];

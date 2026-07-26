@@ -2941,6 +2941,7 @@
       "connector_conversations": "Conversaciones con {name}",
       "connector_normal_wiki": "Wiki integrado",
       "connector_export_import": "Archivo de exportación",
+      "connector_custom_source": "Fuente propia",
       "connector_plugin_bridge": "Integración conectada (plugins / MCP)",
       "approve_import": "Aprobar e importar todo",
       "import_started": "Importación iniciada: se está copiando todo lo que contiene esta fuente.",
@@ -3150,7 +3151,8 @@
       "airtable": "Registros de tus bases y tablas.",
       "discord": "Mensajes de los servidores y canales que sigues.",
       "telegram": "Mensajes de tus chats y canales.",
-      "export_import": "Cualquier exportación que ya tengas: Takeout, chats de WhatsApp, archivos de correo, PDF."
+      "export_import": "Cualquier exportación que ya tengas: Takeout, chats de WhatsApp, archivos de correo, PDF.",
+      "custom_source": "Cualquier servicio con dirección propia: una API web o un feed RSS al que apuntes esto."
     },
     "export": {
       "path_label": "Archivo o carpeta de exportación",
