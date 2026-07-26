@@ -154,7 +154,20 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   error: { dot: "bg-destructive", pulse: false },
 };
 
-export function Sidebar() {
+export interface SidebarProps {
+  /**
+   * Rendered width in px. Owned by the app shell, because the seam that changes
+   * it lives BETWEEN the sidebar and the main area — see `PaneResizer`. Left
+   * optional so the sidebar still renders standalone (tests, storybook-style
+   * one-offs) at its designed width.
+   */
+  width?: number;
+}
+
+/** Width the sidebar was designed at, and the one a double-click restores. */
+export const SIDEBAR_DEFAULT_WIDTH = 280;
+
+export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
@@ -242,7 +255,12 @@ export function Sidebar() {
   const [logoRetry, setLogoRetry] = useState(0);
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
+    // No right border: the draggable seam beside it draws that line now, and
+    // two 1px lines three pixels apart read as a rendering fault.
+    <aside
+      style={{ width }}
+      className="flex h-full shrink-0 flex-col bg-card/40 backdrop-blur"
+    >
       <div className="border-b border-border px-4 py-4">
         <div className="flex items-center gap-3">
           {/* The original Personal Jarvis logo — the ghost mascot. A snapshot

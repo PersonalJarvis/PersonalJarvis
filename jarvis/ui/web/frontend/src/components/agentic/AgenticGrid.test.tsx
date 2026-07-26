@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // jsdom has no layout observer. The grid only needs the callback in a real
@@ -606,5 +606,83 @@ describe("the prompt bar composes before it sends", () => {
     await waitFor(() =>
       expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
     );
+  });
+});
+
+/*
+ * The seam between the terminals and the prompt bar.
+ *
+ * jsdom reports every element as 0×0, so the measured ceiling falls back to the
+ * designed height — which is why these tests exercise the directions that do
+ * not need a taller window: collapsing the bar, reopening it, and remembering
+ * the choice. Growing it is verified live in the browser.
+ */
+describe("prompt bar seam", () => {
+  const HEIGHT_KEY = "jarvis.agenticIde.composerHeight.v1";
+
+  afterEach(() => window.localStorage.clear());
+
+  /** Drag the seam from `fromY` to `toY`, start to finish. */
+  function dragSeam(fromY: number, toY: number) {
+    const seam = screen.getByTestId("pane-resizer-horizontal");
+    fireEvent.pointerDown(seam, { clientY: fromY });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientY: toY }));
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+  }
+
+  it("puts a draggable seam above the prompt bar", () => {
+    renderGrid();
+    const seam = screen.getByTestId("pane-resizer-horizontal");
+    expect(seam.getAttribute("role")).toBe("separator");
+    expect(seam.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("dragging the seam to the bottom collapses the bar to a strip", () => {
+    renderGrid();
+    expect(screen.getByTestId("agentic-composer")).toBeTruthy();
+
+    dragSeam(700, 1400);
+
+    expect(screen.queryByTestId("agentic-composer")).toBeNull();
+    expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
+    // The collapsed strip is a strip, not a disappearance: the way back has to
+    // stay on screen, or the workspace loses its input box for good.
+    expect(screen.getByTestId("agentic-composer-reopen")).toBeTruthy();
+    expect(screen.getByTestId("pane-resizer-horizontal")).toBeTruthy();
+  });
+
+  it("the reopen button brings the prompt bar back at its designed height", () => {
+    window.localStorage.setItem(HEIGHT_KEY, "34");
+    renderGrid();
+    expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("agentic-composer-reopen"));
+
+    const composer = screen.getByTestId("agentic-composer");
+    expect(composer.style.height).toBe("176px");
+    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+  });
+
+  it("remembers a collapsed bar across a remount", () => {
+    renderGrid();
+    dragSeam(700, 1400);
+    expect(window.localStorage.getItem(HEIGHT_KEY)).toBe("34");
+
+    cleanup();
+    renderGrid();
+    expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
+  });
+
+  it("double-clicking the seam restores the designed height", () => {
+    window.localStorage.setItem(HEIGHT_KEY, "34");
+    renderGrid();
+
+    fireEvent.doubleClick(screen.getByTestId("pane-resizer-horizontal"));
+
+    expect(screen.getByTestId("agentic-composer").style.height).toBe("176px");
   });
 });

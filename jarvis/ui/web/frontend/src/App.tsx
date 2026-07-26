@@ -2,7 +2,9 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "@/components/layout/Sidebar";
+import { PaneResizer } from "@/components/layout/PaneResizer";
+import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
 import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
@@ -19,6 +21,22 @@ export default function App() {
   useVoiceStatus();
   useAssistantNameSeed();
 
+  /*
+   * The sidebar is draggable, app-wide.
+   *
+   * It matters most in the Agentic IDE — every pixel taken from the nav is a
+   * pixel of agent output — but the seam belongs to the shell rather than to
+   * one view: a width that snapped back the moment you left the IDE would be a
+   * different bug. The bounds keep the nav labels legible at one end and stop
+   * it from eating the workspace at the other; a double-click restores 280 px.
+   */
+  const sidebar = useResizablePane({
+    storageKey: "jarvis.sidebar.width.v1",
+    defaultSize: SIDEBAR_DEFAULT_WIDTH,
+    min: 200,
+    max: 520,
+  });
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
@@ -27,7 +45,16 @@ export default function App() {
         aria-hidden
       />
 
-      <Sidebar />
+      <Sidebar width={sidebar.size} />
+
+      <PaneResizer
+        orientation="vertical"
+        onPointerDown={sidebar.startResize}
+        onDoubleClick={sidebar.reset}
+        onNudge={sidebar.nudge}
+        active={sidebar.isResizing}
+        title="Drag to resize the sidebar — double-click to reset"
+      />
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* App-wide macOS permission alert — topmost so a missing grant is

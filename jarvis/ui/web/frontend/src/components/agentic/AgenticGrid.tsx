@@ -14,6 +14,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowUp,
   Brain,
+  ChevronUp,
   FolderGit2,
   Minus,
   Moon,
@@ -24,6 +25,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useThemeValue } from "@/hooks/useTheme";
+import { useResizablePane } from "@/hooks/useResizablePane";
+import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore } from "@/store/events";
 import {
   AgenticTerminal,
@@ -60,6 +63,34 @@ interface AgenticGridProps {
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+
+/*
+ * How tall the prompt bar is — dragged by its top edge, and remembered.
+ *
+ * The split between "watch the agents" and "write to them" is not the same for
+ * everyone or even for the same person an hour later: dictating a long brief
+ * wants a tall input, watching eight agents build wants none of it. So the seam
+ * is draggable rather than a value someone guessed once.
+ *
+ * Pulled all the way down the bar COLLAPSES to a thin strip instead of
+ * vanishing. A control that can be dragged out of existence has no way back —
+ * the strip keeps both the seam and a one-click reopen on screen.
+ */
+const COMPOSER_DEFAULT_PX = 176;
+/** Height of the collapsed strip: its reopen button and nothing else. */
+const COMPOSER_COLLAPSED_PX = 34;
+/** Below this dragged height the bar snaps shut rather than half-showing. */
+const COMPOSER_COLLAPSE_AT_PX = 96;
+/** Below this it is too short for the "you can also say this out loud" note. */
+const COMPOSER_HINT_AT_PX = 190;
+/**
+ * Room the toolbar and a still-usable grid keep for themselves.
+ *
+ * Without it a tall prompt bar plus a short window squeezes the grid to zero,
+ * every pane measures 0×0, and the panes' fit logic refuses to resize a
+ * terminal to no columns — the workspace would look frozen rather than small.
+ */
+const GRID_RESERVED_PX = 200;
 
 /*
  * Terminal appearance and text size are remembered, and the appearance follows
@@ -186,6 +217,50 @@ export function AgenticGrid({
     return () => observer.disconnect();
   }, []);
 
+  /*
+   * The prompt bar's height, and the ceiling it may not cross.
+   *
+   * The ceiling is measured rather than guessed: on a 1440-tall window a 520 px
+   * prompt bar is comfortable, on a 700-tall laptop the same value leaves the
+   * panes unreadable. So the frame reports its height and the bar may take
+   * everything except what the toolbar and a minimum grid need.
+   */
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
+  useEffect(() => {
+    const node = frameRef.current;
+    if (!node) return;
+    setFrameHeight(node.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height ?? node.clientHeight;
+      setFrameHeight(Math.round(height));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const composerMax = Math.max(
+    COMPOSER_COLLAPSED_PX,
+    (frameHeight || COMPOSER_DEFAULT_PX + GRID_RESERVED_PX) - GRID_RESERVED_PX,
+  );
+  const composer = useResizablePane({
+    storageKey: "jarvis.agenticIde.composerHeight.v1",
+    defaultSize: COMPOSER_DEFAULT_PX,
+    min: COMPOSER_COLLAPSED_PX,
+    max: composerMax,
+    axis: "y",
+    // The grip is the bar's TOP edge: dragging up must make the bar taller.
+    handle: "start",
+  });
+  // Clamped again on render, because the window can shrink under a height that
+  // was legal when it was stored — the remembered value stays untouched, so a
+  // maximised window gets the tall prompt bar back.
+  const requestedComposer = Math.min(composer.size, composerMax);
+  const composerCollapsed = requestedComposer < COMPOSER_COLLAPSE_AT_PX;
+  const composerHeight = composerCollapsed
+    ? COMPOSER_COLLAPSED_PX
+    : requestedComposer;
+
   const perBand = useMemo(() => workspaceBandCapacityFor(gridWidth), [gridWidth]);
   const grid = useMemo(
     () => paneGrid(session.terminals, perBand),
@@ -294,7 +369,7 @@ export function AgenticGrid({
   );
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div ref={frameRef} className="relative flex h-full flex-col">
       {/* ---------------------------------------------------------- toolbar */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -502,85 +577,131 @@ export function AgenticGrid({
         />
       )}
 
-      {/* -------------------------------------------------------- prompt bar */}
-      <div className="border-t border-border px-4 py-3">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            Send to
+      {/* ------------------------------------------------- prompt bar + seam */}
+      {/*
+        The seam replaces the bar's top border, so there is exactly one line
+        there — and that line is the control. Double-click restores 176 px.
+      */}
+      <PaneResizer
+        orientation="horizontal"
+        onPointerDown={composer.startResize}
+        onDoubleClick={composer.reset}
+        onNudge={composer.nudge}
+        active={composer.isResizing}
+        title="Drag to resize the prompt bar — double-click to reset, drag all the way down to collapse"
+      />
+
+      {composerCollapsed ? (
+        <div
+          data-testid="agentic-composer-collapsed"
+          style={{ height: COMPOSER_COLLAPSED_PX }}
+          className="flex shrink-0 items-center justify-between px-4"
+        >
+          <span className="truncate text-[11px] text-muted-foreground">
+            Prompt bar hidden — {target || "no terminal"} still receives what you
+            say out loud.
           </span>
-          {session.terminals.map((term) => {
-            const state = statuses[term.name];
-            return (
-              <button
-                key={term.key}
-                type="button"
-                onClick={() => setTarget(term.name)}
-                aria-pressed={target === term.name}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors",
-                  target === term.name
-                    ? "border-primary/60 bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:border-primary/40",
-                )}
-              >
-                <span className="font-medium">{term.name}</span>
-                <PaneStatusPill status={state?.status ?? "connecting"} detail={state?.detail} />
-              </button>
-            );
-          })}
-        </div>
-        {preview && (
-          <div className="mb-2">
-            <PromptPreview
-              terminal={target}
-              composed={preview.composed}
-              files={preview.files}
-              composedBy={preview.composed_by}
-              onSend={() => void deliver(preview.composed)}
-              onSendVerbatim={() => void deliver(previewSource)}
-              onCancel={() => {
-                // Give the user their own words back rather than dropping them.
-                setPrompt(previewSource);
-                setPreview(null);
-                setPreviewSource("");
-              }}
-            />
-          </div>
-        )}
-        <div className="flex items-end gap-2">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={2}
-            placeholder={
-              target
-                ? `Type an instruction for ${target} — Enter sends, Shift+Enter adds a line`
-                : "Pick a terminal first"
-            }
-            className="max-h-32 min-h-[52px] flex-1 resize-y rounded-lg border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:border-primary/50"
-          />
           <button
             type="button"
-            className="btn-primary h-[52px] shrink-0"
-            disabled={sending || !prompt.trim() || !target}
-            onClick={() => void send()}
+            data-testid="agentic-composer-reopen"
+            onClick={composer.reset}
+            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <ArrowUp className="h-4 w-4" />
-            {sending ? "Preparing…" : "Send"}
+            <ChevronUp className="h-3.5 w-3.5" />
+            Show prompt bar
           </button>
         </div>
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Anything you can type here, you can also say out loud — for example
-          “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
-          {session.terminals[0]?.name ?? "Mika"} to run the tests”.
-        </p>
-      </div>
+      ) : (
+        <div
+          data-testid="agentic-composer"
+          style={{ height: composerHeight }}
+          className="flex shrink-0 flex-col overflow-hidden px-4 py-3"
+        >
+          <div className="mb-2 flex max-h-24 shrink-0 flex-wrap items-center gap-2 overflow-y-auto scrollbar-jarvis">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Send to
+            </span>
+            {session.terminals.map((term) => {
+              const state = statuses[term.name];
+              return (
+                <button
+                  key={term.key}
+                  type="button"
+                  onClick={() => setTarget(term.name)}
+                  aria-pressed={target === term.name}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                    target === term.name
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40",
+                  )}
+                >
+                  <span className="font-medium">{term.name}</span>
+                  <PaneStatusPill status={state?.status ?? "connecting"} detail={state?.detail} />
+                </button>
+              );
+            })}
+          </div>
+          {preview && (
+            <div className="mb-2 shrink-0 overflow-y-auto scrollbar-jarvis">
+              <PromptPreview
+                terminal={target}
+                composed={preview.composed}
+                files={preview.files}
+                composedBy={preview.composed_by}
+                onSend={() => void deliver(preview.composed)}
+                onSendVerbatim={() => void deliver(previewSource)}
+                onCancel={() => {
+                  // Give the user their own words back rather than dropping them.
+                  setPrompt(previewSource);
+                  setPreview(null);
+                  setPreviewSource("");
+                }}
+              />
+            </div>
+          )}
+          {/*
+            The input takes whatever the seam left over, which is the point of
+            dragging it: pull the bar up and you get a real writing surface, not a
+            two-line box with empty space under it. Its own resize grip is gone —
+            two ways to change one height fight each other.
+          */}
+          <div className="flex min-h-0 flex-1 items-end gap-2">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={
+                target
+                  ? `Type an instruction for ${target} — Enter sends, Shift+Enter adds a line`
+                  : "Pick a terminal first"
+              }
+              className="h-full min-h-[44px] flex-1 resize-none rounded-lg border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:border-primary/50"
+            />
+            <button
+              type="button"
+              className="btn-primary h-[52px] shrink-0"
+              disabled={sending || !prompt.trim() || !target}
+              onClick={() => void send()}
+            >
+              <ArrowUp className="h-4 w-4" />
+              {sending ? "Preparing…" : "Send"}
+            </button>
+          </div>
+          {composerHeight >= COMPOSER_HINT_AT_PX && (
+            <p className="mt-2 shrink-0 text-[11px] text-muted-foreground">
+              Anything you can type here, you can also say out loud — for example
+              “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
+              {session.terminals[0]?.name ?? "Mika"} to run the tests”.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
