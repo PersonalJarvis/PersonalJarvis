@@ -1,8 +1,9 @@
 /**
- * "Resume all sessions" — the offer to reopen the workspace that was last open.
+ * "Resume all sessions" — the offer to reopen everything that was open before.
  *
- * Shown at the top of the wizard whenever a previous workspace can be brought
- * back: after the browser was closed, after the app restarted, after a reboot.
+ * Shown at the top of the wizard whenever previous workspaces can be brought
+ * back: after the browser was closed, after the workspaces were closed for the
+ * day, after the app restarted, after a reboot.
  *
  * ## Why a card and not a dialog
  *
@@ -12,18 +13,21 @@
  * something worth reading. A card is just as visible, stays out of the way, and
  * costs nothing to ignore.
  *
- * ## Why every pane is listed individually
+ * ## Why every workspace and every pane is listed
  *
  * Because "resumed" is not one answer. A pane can come back with its whole
  * conversation, or with nothing but its call-sign — and the two look identical
  * on screen until you ask the agent a follow-up question and get a blank stare.
- * So each pane says which of the two it will be BEFORE the click, and a pane
- * whose coding CLI is no longer installed says that too, instead of failing
- * quietly a second after the workspace opens.
+ * A whole workspace can be unreachable because its folder was moved. So each
+ * one says which of those it is BEFORE the click, rather than after.
+ *
+ * With many panes the list is summarised instead of printed in full: a hundred
+ * chips is not information, it is wallpaper. The call-signs of the first few are
+ * what someone recognises their workspace by; the rest are a count.
  */
-import { AlertCircle, RotateCcw, Terminal } from "lucide-react";
+import { AlertCircle, FolderGit2, RotateCcw, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ResumeOffer } from "@/lib/agenticIdeApi";
+import type { ResumeOffer, ResumeWorkspaceOffer } from "@/lib/agenticIdeApi";
 
 interface ResumeCardProps {
   offer: ResumeOffer;
@@ -31,6 +35,9 @@ interface ResumeCardProps {
   onResume: () => void;
   onDismiss: () => void;
 }
+
+/** Call-signs printed in full before the rest becomes "+N more". */
+const NAMES_SHOWN = 8;
 
 /**
  * "2 hours ago" for a POSIX timestamp.
@@ -51,20 +58,90 @@ export function savedAgo(seconds: number, now: number = Date.now()): string {
 
 /** One line of plain language for what the button will actually do. */
 export function resumeSummary(offer: ResumeOffer): string {
-  const total = offer.terminals.length;
-  const panes = `${total} terminal${total === 1 ? "" : "s"}`;
-  if (!offer.folder_exists) return "That folder is no longer on this machine.";
+  const spaces = offer.workspace_count;
+  const panes = offer.terminal_count;
+  const where = spaces === 1 ? "1 folder" : `${spaces} folders`;
+  const what = `${panes} terminal${panes === 1 ? "" : "s"}`;
   if (!offer.available) {
-    return "None of these terminals can run here — their coding CLIs are not installed.";
+    const anyFolder = offer.workspaces.some((w) => w.folder_exists);
+    return anyFolder
+      ? "None of these terminals can run here — their coding CLIs are not installed."
+      : "Those folders are no longer on this machine.";
   }
   const kept = offer.resumable_count;
   if (kept === 0) {
-    return `${panes} come back with their names and places; none of their conversations could be kept.`;
+    return `${where}, ${what} — names and places come back; none of their conversations could be kept.`;
   }
-  if (kept === total) {
-    return `${panes}, each continuing the conversation it was having.`;
+  if (kept === panes) {
+    return `${where}, ${what}, each continuing the conversation it was having.`;
   }
-  return `${panes} — ${kept} continue their conversation, the rest start fresh.`;
+  return `${where}, ${what} — ${kept} continue their conversation, the rest start fresh.`;
+}
+
+function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
+  const shown = space.terminals.slice(0, NAMES_SHOWN);
+  const hidden = space.terminals.length - shown.length;
+  const fresh = space.terminals.length - space.resumable_count;
+  return (
+    <li
+      data-testid={`resume-workspace-${space.folder_name}`}
+      className={cn(
+        "rounded-lg border p-3",
+        space.available
+          ? "border-border bg-card/60"
+          : "border-amber-500/40 bg-amber-500/10",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <FolderGit2 className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-primary" />
+        <span className="font-medium text-foreground">{space.folder_name}</span>
+        <span className="text-xs text-muted-foreground">
+          {space.terminals.length} terminal{space.terminals.length === 1 ? "" : "s"}
+          {space.resumable_count > 0 && ` · ${space.resumable_count} continuing`}
+          {fresh > 0 && ` · ${fresh} starting fresh`}
+        </span>
+      </div>
+      <code className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+        {space.folder}
+      </code>
+      {!space.folder_exists && (
+        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-200">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          That folder was moved or deleted, so this one cannot come back.
+        </p>
+      )}
+      <ul className="mt-2 flex flex-wrap gap-1.5">
+        {shown.map((pane) => (
+          <li
+            key={pane.key}
+            data-testid={`resume-pane-${pane.key}`}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
+              pane.available
+                ? "border-border/70 text-muted-foreground"
+                : "border-amber-500/40 text-amber-200",
+            )}
+          >
+            <Terminal className="h-3 w-3 shrink-0 text-primary" />
+            <span className="font-medium text-foreground">{pane.name}</span>
+            {!pane.available ? (
+              <span>not installed here</span>
+            ) : (
+              !pane.resumable && <span>· starts fresh</span>
+            )}
+          </li>
+        ))}
+        {hidden > 0 && (
+          <li
+            data-testid={`resume-more-${space.folder_name}`}
+            className="flex items-center rounded-md px-2 py-1 text-[11px] text-muted-foreground"
+          >
+            +{hidden} more
+          </li>
+        )}
+      </ul>
+    </li>
+  );
 }
 
 export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps) {
@@ -84,49 +161,18 @@ export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps
             Resume all sessions
           </h3>
           <p className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">{offer.folder_name}</span>
-            {when && <span> · last open {when}</span>}
+            Pick up where you left off{when && <span> · last open {when}</span>}
           </p>
-          <code className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-            {offer.folder}
-          </code>
         </div>
       </div>
 
-      <ul className="mt-4 flex flex-wrap gap-2">
-        {offer.terminals.map((pane) => (
-          <li
-            key={pane.key}
-            data-testid={`resume-pane-${pane.key}`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs",
-              pane.available
-                ? "border-border bg-card/60"
-                : "border-amber-500/40 bg-amber-500/10",
-            )}
-          >
-            <Terminal className="h-3.5 w-3.5 shrink-0 text-primary" />
-            <span className="font-medium text-foreground">{pane.name}</span>
-            <span className="text-muted-foreground">{pane.display_name}</span>
-            {!pane.available ? (
-              <span className="text-amber-200">not installed here</span>
-            ) : (
-              !pane.resumable && (
-                <span className="text-muted-foreground">· starts fresh</span>
-              )
-            )}
-          </li>
+      <ul className="mt-4 space-y-2">
+        {offer.workspaces.map((space) => (
+          <WorkspaceRow key={space.folder} space={space} />
         ))}
       </ul>
 
       <p className="mt-3 text-xs text-muted-foreground">{resumeSummary(offer)}</p>
-
-      {!offer.folder_exists && (
-        <p className="mt-2 flex items-start gap-2 text-xs text-amber-200">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          The folder was moved or deleted, so there is nothing left to reopen.
-        </p>
-      )}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button
@@ -135,7 +181,7 @@ export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps
           className="btn-ghost"
           disabled={busy}
           onClick={onDismiss}
-          title="Forget this workspace and start from the wizard"
+          title="Forget these workspaces and start from the wizard"
         >
           Start fresh
         </button>

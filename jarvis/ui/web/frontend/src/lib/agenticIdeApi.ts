@@ -164,23 +164,38 @@ export interface ResumeTerminalOffer {
   prompts_sent: number;
 }
 
-export interface ResumeOffer {
-  available: boolean;
+export interface ResumeWorkspaceOffer {
+  session_id: string;
   folder: string;
   folder_name: string;
   folder_exists: boolean;
-  saved_at: number;
-  session_id: string;
+  /** False when the folder is gone or none of its coding CLIs are installed. */
+  available: boolean;
+  /** How many of its panes bring their conversation back. */
   resumable_count: number;
   terminals: ResumeTerminalOffer[];
 }
 
+export interface ResumeOffer {
+  available: boolean;
+  saved_at: number;
+  workspace_count: number;
+  terminal_count: number;
+  resumable_count: number;
+  workspaces: ResumeWorkspaceOffer[];
+}
+
 export interface ResumeResult {
-  session: SessionState;
+  /** The whole workspace state after reopening — bar included. */
+  state: IdeState;
+  workspace_count: number;
+  terminal_count: number;
   /** Panes that continued their conversation. */
   resumable_count: number;
   /** Panes that came back with the right name and an empty history. */
   started_fresh: number;
+  /** Workspaces that could not come back, with a reason each. */
+  skipped: { folder: string; detail: string }[];
 }
 
 export interface TerminalPlan {
@@ -219,9 +234,14 @@ export function fetchFolders(path?: string | null): Promise<FoldersResponse> {
   return getJson<FoldersResponse>(`/api/agentic-ide/folders${query}`);
 }
 
-export function searchFolders(query: string, limit = 40): Promise<SearchResponse> {
+export function searchFolders(
+  query: string,
+  limit = 40,
+): Promise<SearchResponse> {
   const qs = new URLSearchParams({ q: query, limit: String(limit) });
-  return getJson<SearchResponse>(`/api/agentic-ide/folders/search?${qs.toString()}`);
+  return getJson<SearchResponse>(
+    `/api/agentic-ide/folders/search?${qs.toString()}`,
+  );
 }
 
 export function fetchRecents(): Promise<RecentsResponse> {
@@ -266,7 +286,9 @@ export function fetchNativePickerSupport(): Promise<NativePickerSupport> {
  * The request stays open for as long as the window does — that is the point,
  * not a hang. Cancelling comes back as `cancelled`, never as an error.
  */
-export async function openNativePicker(start?: string | null): Promise<NativePickResult> {
+export async function openNativePicker(
+  start?: string | null,
+): Promise<NativePickResult> {
   const res = await fetch("/api/agentic-ide/folders/native", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -319,7 +341,9 @@ export async function startIdeSession(
   const body = (await res.json()) as { session: SessionState; state: IdeState };
   // `state` is authoritative; `session` alone is kept as the fallback for a
   // backend that predates the workspace bar.
-  return body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session };
+  return (
+    body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session }
+  );
 }
 
 /** Shape a pre-workspace-bar backend does not send. */
@@ -365,6 +389,24 @@ export async function activateWorkspace(id: string | null): Promise<IdeState> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
   });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  return body.state;
+}
+
+/** Rename one workspace tab without touching its folder or running agents. */
+export async function renameWorkspace(
+  id: string,
+  name: string,
+): Promise<IdeState> {
+  const res = await fetch(
+    `/api/agentic-ide/workspaces/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    },
+  );
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
   return body.state;
@@ -427,7 +469,8 @@ export async function addTerminal(payload: {
   });
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
-  if (!body.state.session) throw new Error("The workspace closed while adding a terminal.");
+  if (!body.state.session)
+    throw new Error("The workspace closed while adding a terminal.");
   return body.state.session;
 }
 
@@ -475,7 +518,12 @@ export interface AttachResult {
  */
 export async function attachToTerminal(
   name: string,
-  payload: { files?: File[]; paths?: string[]; note?: string; submit?: boolean },
+  payload: {
+    files?: File[];
+    paths?: string[];
+    note?: string;
+    submit?: boolean;
+  },
 ): Promise<AttachResult> {
   const form = new FormData();
   for (const file of payload.files ?? []) form.append("files", file, file.name);

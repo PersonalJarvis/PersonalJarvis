@@ -60,6 +60,9 @@ export const MAX_PANES_PER_BAND = 10;
  */
 export const MIN_PANE_WIDTH_PX = 380;
 
+/** Horizontal padding of the rendered grid (`p-3`: 12 px on each side). */
+export const GRID_HORIZONTAL_PADDING_PX = 24;
+
 /**
  * How many columns fit in ``widthPx`` without starving them.
  *
@@ -73,6 +76,19 @@ export function bandCapacityFor(
   if (!Number.isFinite(widthPx) || widthPx <= 0) return MAX_PANES_PER_BAND;
   const fits = Math.floor(widthPx / Math.max(1, minPaneWidth));
   return Math.max(1, Math.min(MAX_PANES_PER_BAND, fits));
+}
+
+/**
+ * Columns that fit inside the grid's content box.
+ *
+ * `clientWidth` includes padding while CSS grid tracks occupy the content box.
+ * Keeping this subtraction here gives the running grid and wizard preview the
+ * exact same answer at width thresholds.
+ */
+export function workspaceBandCapacityFor(containerWidthPx: number): number {
+  return bandCapacityFor(
+    Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX),
+  );
 }
 
 /**
@@ -91,6 +107,45 @@ export interface Positioned {
   column: number;
   /** Position within that column, top to bottom. */
   slot: number;
+}
+
+/**
+ * The panes a wizard-opened workspace of ``count`` terminals starts with.
+ *
+ * One row of columns — `column = index`, `slot = 0` — which is literally what
+ * the backend writes when it opens a session from the wizard
+ * (`agentic_ide/session.py`: "A wizard-opened workspace is one row of columns").
+ *
+ * It exists so the preview cannot describe a workspace the backend would never
+ * build. The old preview took a shortcut and fed the raw terminal COUNT into
+ * `paneColumns`, which happens to agree here only because every terminal gets
+ * its own column at the start. Feed `paneGrid` the same panes the grid will
+ * receive and the preview stops being a second opinion.
+ */
+export function wizardPanes(count: number): Positioned[] {
+  return Array.from({ length: Math.max(0, Math.trunc(count)) }, (_, index) => ({
+    column: index,
+    slot: 0,
+  }));
+}
+
+/**
+ * Width at which ``count`` wizard-opened terminals would fit on ONE line.
+ *
+ * The preview promises an arrangement that depends on a number the user is not
+ * thinking about — how wide the window happens to be right now. Pick 8 in a
+ * 1050 px window and the honest answer is "2 across, 4 down"; maximise the same
+ * window and it becomes "4 across, 2 down". Reporting only the first reads as a
+ * broken promise the moment the second one happens, which is exactly what was
+ * reported on 2026-07-26.
+ *
+ * So the preview also says what a wider window would buy. Returns null when the
+ * count is already on one line, or when it never can be (past
+ * `MAX_PANES_PER_BAND` no width is enough — the wrap is the point).
+ */
+export function widthForOneBand(count: number): number | null {
+  if (count <= 1 || count > MAX_PANES_PER_BAND) return null;
+  return count * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
 }
 
 /** Where one pane sits in the CSS grid. All values are 1-based, as CSS wants. */

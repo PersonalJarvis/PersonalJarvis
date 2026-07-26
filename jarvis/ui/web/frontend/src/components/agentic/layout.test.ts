@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PANES_PER_BAND, paneColumns, paneGrid, paneLines } from "./layout";
+import {
+  MAX_PANES_PER_BAND,
+  paneColumns,
+  paneGrid,
+  paneLines,
+  workspaceBandCapacityFor,
+} from "./layout";
+
+describe("workspaceBandCapacityFor", () => {
+  it("uses the grid content width on both sides of the four-column threshold", () => {
+    expect(workspaceBandCapacityFor(1543)).toBe(3);
+    expect(workspaceBandCapacityFor(1544)).toBe(4);
+  });
+
+  it("uses the grid content width on both sides of the six-column threshold", () => {
+    expect(workspaceBandCapacityFor(2303)).toBe(5);
+    expect(workspaceBandCapacityFor(2304)).toBe(6);
+  });
+});
 
 describe("paneColumns", () => {
   it("keeps a small workspace on one line", () => {

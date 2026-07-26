@@ -21,7 +21,7 @@
  * one control in this bar that stops work — every other one is reversible.
  */
 import { useState } from "react";
-import { FolderGit2, Plus, X } from "lucide-react";
+import { Check, FolderGit2, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WorkspaceCard } from "@/lib/agenticIdeApi";
 
@@ -34,6 +34,7 @@ interface WorkspaceBarProps {
   maxWorkspaces: number;
   onSelect: (id: string) => void;
   onAdd: () => void;
+  onRename: (id: string, name: string) => Promise<boolean>;
   onClose: (id: string) => void;
   /** Disable every control while a switch or a close is in flight. */
   busy?: boolean;
@@ -46,13 +47,30 @@ export function WorkspaceBar({
   maxWorkspaces,
   onSelect,
   onAdd,
+  onRename,
   onClose,
   busy = false,
 }: WorkspaceBarProps) {
   // Which tab has its close button armed. One at a time, and cleared on every
   // other interaction, so an armed X can never be clicked by accident later.
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   const full = workspaces.length >= maxWorkspaces;
+
+  const beginRename = (workspace: WorkspaceCard) => {
+    setConfirming(null);
+    setEditing(workspace.id);
+    setDraft(workspace.name);
+  };
+
+  const commitRename = async (workspace: WorkspaceCard) => {
+    const name = draft.trim();
+    if (!name) return;
+    if (name === workspace.name || (await onRename(workspace.id, name))) {
+      setEditing(null);
+    }
+  };
 
   // Nothing open and nothing to add to: the wizard IS the screen, and an empty
   // bar above it would be furniture.
@@ -68,6 +86,7 @@ export function WorkspaceBar({
       {workspaces.map((workspace) => {
         const selected = !addingNew && workspace.id === activeId;
         const armed = confirming === workspace.id;
+        const renaming = editing === workspace.id;
         return (
           <div
             key={workspace.id}
@@ -78,41 +97,99 @@ export function WorkspaceBar({
                 : "border-transparent hover:border-border hover:bg-muted/40",
             )}
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              disabled={busy}
-              data-testid={`workspace-tab-${workspace.id}`}
-              title={workspace.folder}
-              onClick={() => {
-                setConfirming(null);
-                if (!selected) onSelect(workspace.id);
-              }}
-              className="flex min-w-0 items-center gap-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <FolderGit2
-                className={cn(
-                  "h-3.5 w-3.5 shrink-0",
-                  selected ? "text-primary" : "text-muted-foreground",
-                )}
-              />
-              <span
-                className={cn(
-                  "max-w-[14rem] truncate text-sm font-medium",
-                  selected ? "text-primary" : "text-foreground",
-                )}
+            {renaming ? (
+              <form
+                className="flex items-center gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void commitRename(workspace);
+                }}
               >
-                {workspace.name}
-              </span>
-              <PaneCount workspace={workspace} selected={selected} />
-            </button>
+                <input
+                  autoFocus
+                  value={draft}
+                  maxLength={80}
+                  disabled={busy}
+                  aria-label={`Rename ${workspace.name}`}
+                  data-testid={`workspace-rename-input-${workspace.id}`}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setEditing(null);
+                  }}
+                  className="w-40 rounded border border-primary/40 bg-background px-2 py-0.5 text-sm outline-none focus:border-primary disabled:opacity-60"
+                />
+                <button
+                  type="submit"
+                  disabled={busy || !draft.trim()}
+                  aria-label={`Save name for ${workspace.name}`}
+                  data-testid={`workspace-rename-save-${workspace.id}`}
+                  className="flex h-6 w-6 items-center justify-center rounded text-primary hover:bg-primary/15 disabled:opacity-40"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label="Cancel rename"
+                  onClick={() => setEditing(null)}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  disabled={busy}
+                  data-testid={`workspace-tab-${workspace.id}`}
+                  title={workspace.folder}
+                  onClick={() => {
+                    setConfirming(null);
+                    if (!selected) onSelect(workspace.id);
+                  }}
+                  className="flex min-w-0 items-center gap-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <FolderGit2
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      selected ? "text-primary" : "text-muted-foreground",
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "max-w-[14rem] truncate text-sm font-medium",
+                      selected ? "text-primary" : "text-foreground",
+                    )}
+                  >
+                    {workspace.name}
+                  </span>
+                  <PaneCount workspace={workspace} selected={selected} />
+                </button>
 
-            {armed ? (
+                <button
+                  type="button"
+                  aria-label={`Rename ${workspace.name}`}
+                  title={`Rename ${workspace.name}`}
+                  disabled={busy}
+                  data-testid={`workspace-rename-${workspace.id}`}
+                  onClick={() => beginRename(workspace)}
+                  className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/tab:opacity-100 disabled:opacity-40"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </>
+            )}
+
+            {!renaming && armed ? (
               <span className="flex items-center gap-1">
                 <button
                   type="button"
                   disabled={busy}
+                  aria-label={`Confirm closing ${workspace.name}`}
                   data-testid={`workspace-close-confirm-${workspace.id}`}
                   onClick={() => {
                     setConfirming(null);
@@ -120,7 +197,7 @@ export function WorkspaceBar({
                   }}
                   className="rounded bg-destructive/20 px-2 py-0.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/30 disabled:opacity-50"
                 >
-                  Stop {workspace.live_terminals || workspace.terminals}
+                  Close &amp; stop {workspace.live_terminals || workspace.terminals}
                 </button>
                 <button
                   type="button"
@@ -131,7 +208,7 @@ export function WorkspaceBar({
                   Keep
                 </button>
               </span>
-            ) : (
+            ) : !renaming ? (
               <button
                 type="button"
                 aria-label={`Close ${workspace.name}`}
@@ -148,7 +225,7 @@ export function WorkspaceBar({
               >
                 <X className="h-3 w-3" />
               </button>
-            )}
+            ) : null}
           </div>
         );
       })}
