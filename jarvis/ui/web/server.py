@@ -342,6 +342,7 @@ class WebServer:
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
+        from .ultrawiki_explore_routes import router as ultrawiki_explore_router
         from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
@@ -469,6 +470,9 @@ class WebServer:
         # while it is None the routes answer 503 (search answers 409 whenever
         # the mode switch is off).
         app.include_router(ultrawiki_router)
+        # The readable Explore surface over the same store — separate module,
+        # same prefix and tag (see ultrawiki_explore_routes for why).
+        app.include_router(ultrawiki_explore_router)
         # ConnectionManager singleton for the global event stream. Attached
         # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()

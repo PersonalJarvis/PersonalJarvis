@@ -22,6 +22,7 @@ __all__ = [
     "ItemState",
     "DocType",
     "ConsentState",
+    "ExploreReason",
     "IncrementalMode",
     "AuthKind",
     "RawItem",
@@ -76,6 +77,28 @@ class ConsentState(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REVOKED = "revoked"
+
+
+class ExploreReason(StrEnum):
+    """Why the Explore view has nothing to show — or that it has.
+
+    "The knowledge base looks empty" has FOUR different causes and the user
+    cannot tell them apart by looking: no source configured, a source that
+    never imported, imported items nothing has distilled yet, or distilled
+    items that named no entity. A previous forensic found exactly one of them
+    (consent granted but never fetched) undiagnosed for days behind a blank
+    screen, so the server names the cause instead of leaving the surface to
+    guess from counts.
+
+    Five-layer discipline (AP-4 / BUG-008): this is the CANONICAL list. The
+    TypeScript union in ``lib/ultrawikiApi.ts`` is parity-tested against it.
+    """
+
+    OK = "ok"
+    NO_SOURCES = "no_sources"
+    NOTHING_IMPORTED = "nothing_imported"
+    NOTHING_DISTILLED = "nothing_distilled"
+    NO_ENTITIES = "no_entities"
 
 
 class IncrementalMode(StrEnum):
