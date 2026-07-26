@@ -1,13 +1,15 @@
-"""Dropbox pull adapter — the text files in the connected Dropbox.
+"""Dropbox pull adapter — the readable files in the connected Dropbox.
 
 Of everything a Dropbox holds, this pulls the part that belongs in a *memory*:
-the text-like files — notes, documents, exports, configs — matched by the same
-extension-allowlist philosophy the local-folder connector uses (a curated
-default set, overridable per source via ``config["extensions"]``). Binaries
-are skipped honestly, by extension, before a single byte is downloaded: this
-adapter ships no OCR and no PDF/Office extraction, and pretending a JPEG is a
-memory would only pollute search. Dropbox Paper docs and other entries the API
-marks non-downloadable are excluded by the listing itself.
+the files with text inside — notes, exports, configs, and the documents a
+Dropbox is actually full of (PDF, Word, Excel, PowerPoint, OpenDocument,
+EPUB, RTF), read through the shared extraction service. Matching follows the
+same extension-allowlist philosophy the local-folder connector uses (a curated
+default set, overridable per source via ``config["extensions"]``). True blobs
+— pictures, video, archives — are skipped honestly, by extension, before a
+single byte is downloaded: this adapter ships no OCR, and pretending a JPEG is
+a memory would only pollute search. Dropbox Paper docs and other entries the
+API marks non-downloadable are excluded by the listing itself.
 
 Scope, stated plainly:
 
@@ -15,10 +17,13 @@ Scope, stated plainly:
   ``recursive=true`` plus ``list_folder/continue`` cursor paging, so team
   folders and deep trees are all reached. Only the extension allowlist and the
   size caps narrow what is *imported*.
-* **Size caps:** files whose listed size exceeds 2 MiB are skipped with a log
-  line (the local-folder connector's limit); a downloaded body is cut at 1 MiB
-  with a visible truncation marker. A knowledge base wants the text, not a
-  bulk mirror.
+* **Size caps:** a text file above 2 MiB (the local-folder connector's limit)
+  and a document above ``MAX_DOCUMENT_BYTES`` are not downloaded; a downloaded
+  text body is cut at 1 MiB with a visible truncation marker. Documents are
+  never cut — half a container parses as nothing — so for them the ceiling
+  refuses instead. **A file over any ceiling still becomes an item** carrying
+  the reason: silence is indistinguishable from a missing file, and one of
+  those two is a bug.
 * **Incremental is client-side.** Dropbox's ``list_folder`` has no
   modified-since filter, and its own delta cursor (``list_folder/continue``
   across runs) is an opaque string that cannot ride the sync runner's NUMERIC
@@ -51,11 +56,17 @@ from urllib.parse import quote
 
 import httpx
 
+from jarvis.ultrawiki.extract import (
+    DOCUMENT_EXTENSIONS,
+    MAX_DOCUMENT_BYTES,
+    extract_text,
+)
 from jarvis.ultrawiki.types import ConnectorContext, RawItem
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "INCLUDED_EXTENSIONS",
     "INTEGRATION_ID",
     "TEXT_EXTENSIONS",
     "DropboxAdapterError",
@@ -115,6 +126,18 @@ TEXT_EXTENSIONS: tuple[str, ...] = (
     ".htm",
     ".xml",
 )
+
+#: What a walk actually looks at: the text shapes above PLUS every document
+#: the extraction service can read. The two are separated because they are
+#: fetched differently — a text file may be cut, a container may not.
+INCLUDED_EXTENSIONS: tuple[str, ...] = TEXT_EXTENSIONS + tuple(
+    sorted(DOCUMENT_EXTENSIONS)
+)
+
+
+def _is_document(path: str) -> bool:
+    """True when this name belongs to the extractor rather than a UTF-8 read."""
+    return PurePosixPath(path).suffix.lower() in DOCUMENT_EXTENSIONS
 
 
 class DropboxAdapterError(RuntimeError):
@@ -223,14 +246,14 @@ def _extensions(ctx: ConnectorContext) -> tuple[str, ...]:
     """
     raw = ctx.config.get("extensions")
     if not raw:
-        return TEXT_EXTENSIONS
+        return INCLUDED_EXTENSIONS
     normalized: list[str] = []
     for entry in raw:
         text = str(entry).strip().lower()
         if not text:
             continue
         normalized.append(text if text.startswith(".") else f".{text}")
-    return tuple(normalized) or TEXT_EXTENSIONS
+    return tuple(normalized) or INCLUDED_EXTENSIONS
 
 
 async def _list_text_files(
@@ -283,10 +306,15 @@ async def _list_text_files(
     return entries
 
 
-async def _download_text(
+async def _download_body(
     client: httpx.AsyncClient, token: str, path_lower: str
-) -> str | None:
-    """One file body as capped text; ``None`` skips the file, auth aborts.
+) -> tuple[str, str] | None:
+    """``(text, missing_reason)`` for one file; ``None`` skips it, auth aborts.
+
+    A document (PDF, Word, deck, …) is handed to the shared extraction service
+    instead of being decoded as UTF-8 — decoding a container produced a body of
+    replacement characters, which is why these files were excluded outright
+    and a Dropbox full of PDFs imported as the handful of notes beside them.
 
     A single vanished or unreadable file (deleted between list and download,
     a 409 path error) must not sink the other thousand — but a rejected token
@@ -305,10 +333,16 @@ async def _download_text(
         )
         return None
     raw = response.content
+    name = PurePosixPath(path_lower).name
+    if _is_document(path_lower):
+        result = extract_text(raw, filename=name)
+        if result.ok:
+            return (result.text, "")
+        return ("", result.reason or "no text could be read from this file")
     text = raw[:_MAX_BODY_BYTES].decode("utf-8", errors="replace")
     if len(raw) > _MAX_BODY_BYTES:
         text += _TRUNCATION_MARKER
-    return text
+    return (text, "")
 
 
 def _to_ns(iso: str) -> int:
@@ -354,8 +388,15 @@ def _preview_url(path_display: str) -> str:
     return f"{base}?preview={quote(parts[-1])}"
 
 
-def item_from_entry(entry: dict[str, Any], body: str) -> RawItem | None:
-    """One listed file plus its downloaded body as a ``RawItem``."""
+def item_from_entry(
+    entry: dict[str, Any], body: str, *, content_missing_reason: str = ""
+) -> RawItem | None:
+    """One listed file plus its downloaded body as a ``RawItem``.
+
+    ``content_missing_reason`` produces the item anyway, marked and explained:
+    a scanned contract or an oversized archive stays findable by name, folder
+    and date rather than disappearing without a trace.
+    """
     path_lower = str(entry.get("path_lower") or "")
     if not path_lower:
         return None
@@ -363,6 +404,8 @@ def item_from_entry(entry: dict[str, Any], body: str) -> RawItem | None:
     modified = str(entry.get("server_modified") or entry.get("client_modified") or "")
     name = PurePosixPath(path_display)
     parent = path_lower.rsplit("/", 1)[0] or "/"
+    if not body and content_missing_reason:
+        body = f"File: {name.name}\n[no text imported: {content_missing_reason}]"
     return RawItem(
         external_id=path_lower,
         title=name.stem or name.name,
@@ -377,6 +420,14 @@ def item_from_entry(entry: dict[str, Any], body: str) -> RawItem | None:
             "size_bytes": int(entry.get("size") or 0),
             "path_display": path_display,
             "rev": str(entry.get("rev") or ""),
+            **(
+                {
+                    "content_missing": True,
+                    "content_missing_reason": content_missing_reason,
+                }
+                if content_missing_reason
+                else {}
+            ),
         },
     )
 
@@ -413,18 +464,32 @@ async def dropbox_pull_adapter(
                 if _to_ns(modified) <= min_mtime_ns:
                     continue  # unchanged since the cursor — never downloaded
             size = int(entry.get("size") or 0)
-            if size > _MAX_DOWNLOAD_BYTES:
-                log.info(
-                    "dropbox adapter: skipping %s (%d bytes exceeds the %d-byte limit)",
-                    path_lower,
-                    size,
-                    _MAX_DOWNLOAD_BYTES,
+            ceiling = (
+                MAX_DOCUMENT_BYTES if _is_document(path_lower) else _MAX_DOWNLOAD_BYTES
+            )
+            if size > ceiling:
+                # Still an item. A file that vanishes from the knowledge base
+                # because it was large reads exactly like a file that was never
+                # there — and the second is a bug, so both must be visible.
+                oversized = item_from_entry(
+                    entry,
+                    "",
+                    content_missing_reason=(
+                        f"the file is {size // (1024 * 1024)} MB, above the "
+                        f"{ceiling // (1024 * 1024)} MB import limit"
+                    ),
                 )
+                if oversized is not None:
+                    yielded += 1
+                    yield oversized
                 continue
-            body = await _download_text(client, token, path_lower)
-            if body is None:
+            fetched = await _download_body(client, token, path_lower)
+            if fetched is None:
                 continue
-            item = item_from_entry(entry, body)
+            body, missing_reason = fetched
+            item = item_from_entry(
+                entry, body, content_missing_reason=missing_reason
+            )
             if item is not None:
                 yielded += 1
                 yield item

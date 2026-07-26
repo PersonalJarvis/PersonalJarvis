@@ -48,6 +48,7 @@ from jarvis.ultrawiki.extract import (
     detect_kind,
     extract_text,
 )
+from jarvis.ultrawiki.extract import MAX_DOCUMENT_BYTES as _MAX_DOCUMENT_BYTES
 from jarvis.ultrawiki.media import MediaRef
 from jarvis.ultrawiki.types import (
     AuthKind,
@@ -209,8 +210,10 @@ _LARGE_DOCUMENT_KINDS: frozenset[str] = frozenset(
 )
 
 #: Absolute ceiling for anything read as a whole document, media excluded.
-#: Far above the text limit, far below what could exhaust a small VPS.
-MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
+#: Far above the text limit, far below what could exhaust a small VPS. Owned
+#: by the extraction service so a folder walk and a cloud adapter cannot drift
+#: apart on the same question; re-exported here for the callers that had it.
+MAX_DOCUMENT_BYTES = _MAX_DOCUMENT_BYTES
 
 #: Files stat'ed + read per worker-thread hop. Filesystem I/O must never run
 #: on the event loop (it also serves voice and chat), but one hop per file

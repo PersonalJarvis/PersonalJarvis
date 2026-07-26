@@ -58,6 +58,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "DOCUMENT_EXTENSIONS",
     "ExtractResult",
+    "MAX_DOCUMENT_BYTES",
     "MEDIA_EXTENSIONS",
     "MEDIA_KINDS",
     "TEXT_EXTENSIONS",
@@ -73,6 +74,14 @@ _SNIFF_BYTES = 8192
 #: the chunker handles length, so this is not a content cap. 64 MB of TEXT is
 #: about 30 000 pages; beyond it the file is a database, not a document.
 _MAX_TEXT_CHARS = 64 * 1024 * 1024
+
+#: Ceiling for reading a file WHOLE, shared by every walker and adapter so the
+#: policy has one home. It rejects rather than truncates, and that is the
+#: point: a container format cannot be cut. Half a ZIP has no central
+#: directory and half a PDF has no cross-reference table — both read as
+#: nothing at all, so a range-limited download would turn a large document
+#: into a silent empty item instead of an honest oversized one.
+MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 #: Leading magic → kind. Order matters: ZIP-based office formats share the
 #: `PK` signature and are separated afterwards by their inner layout.

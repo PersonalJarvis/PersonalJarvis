@@ -2,14 +2,17 @@
 
 What makes this reader trustworthy rather than merely functional: Google-native
 documents exported to text, text-shaped files downloaded with a source-side
-byte bound, binaries skipped honestly instead of swallowed, a deterministic
-oldest-modified-first walk so the checkpoint convention holds, per-file
-degradation instead of all-or-nothing failure, and refusals that never carry
-the token.
+byte bound, uploaded documents (PDF, Word, …) read through the shared
+extractor rather than thrown away, true blobs skipped honestly instead of
+swallowed, a deterministic oldest-modified-first walk so the checkpoint
+convention holds, per-file degradation instead of all-or-nothing failure, and
+refusals that never carry the token.
 """
 
 from __future__ import annotations
 
+import io
+import zipfile
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,6 +52,26 @@ def _ctx() -> ConnectorContext:
 _DOC = "application/vnd.google-apps.document"
 _SHEET = "application/vnd.google-apps.spreadsheet"
 _FOLDER = "application/vnd.google-apps.folder"
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+#: The inside of a Word file: paragraphs of runs of text.
+_WORD_XML = (
+    "<w:document xmlns:w='x'><w:body>"
+    "<w:p><w:r><w:t>The parties agree as follows.</w:t></w:r></w:p>"
+    "<w:p><w:r><w:t>Payment is due within 30 days.</w:t></w:r></w:p>"
+    "</w:body></w:document>"
+)
+
+
+def _zip(members: dict[str, str | bytes]) -> bytes:
+    """A real office archive, built in memory — the shape a Drive download has."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, payload in members.items():
+            archive.writestr(name, payload)
+    return buffer.getvalue()
 
 
 def _file(
@@ -84,9 +107,14 @@ def _transport(
     contents: dict[str, str] | None = None,
     export_status: dict[str, int] | None = None,
     download_status: dict[str, int] | None = None,
+    blobs: dict[str, bytes] | None = None,
     seen: list[httpx.Request] | None = None,
 ) -> httpx.MockTransport:
-    """A fake Drive API: a paged listing plus per-file export/download."""
+    """A fake Drive API: a paged listing plus per-file export/download.
+
+    ``blobs`` serves the binary documents (a real PDF, a real DOCX) that only
+    exist as bytes — the shape a Range-bounded text download cannot represent.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
@@ -110,6 +138,8 @@ def _transport(
             status = (download_status or {}).get(file_id, 200)
             if status not in (200, 206):
                 return httpx.Response(status)
+            if blobs and file_id in blobs:
+                return httpx.Response(status, content=blobs[file_id])
             return httpx.Response(status, text=(contents or {}).get(file_id, ""))
         return httpx.Response(404)
 
@@ -165,26 +195,107 @@ async def test_a_spreadsheet_exports_as_csv_and_a_text_file_downloads_bounded():
     assert download_call.headers.get("Range") == f"bytes=0-{g.BODY_CAP - 1}"
 
 
-async def test_binaries_folders_and_shortcuts_are_skipped_honestly():
+async def test_blobs_folders_and_shortcuts_are_skipped_honestly():
+    """Only what genuinely has no text inside is skipped.
+
+    A picture, a video and a plain archive have nothing to read; a folder is
+    structure. These cost NOTHING — the walk must not even request them.
+    """
     listing = [
         [
             _file("f1", "photo.png", "image/png"),
             _file("f2", "archive.zip", "application/zip"),
             _file("f3", "Projects", _FOLDER),
-            _file("f4", "scan.pdf", "application/pdf"),
-            _file("f5", "notes.txt", "text/plain"),
+            _file("f4", "notes.txt", "text/plain"),
         ]
     ]
     seen: list[httpx.Request] = []
     items = await _collect(
-        _transport(listing=listing, contents={"f5": "readable"}, seen=seen)
+        _transport(listing=listing, contents={"f4": "readable"}, seen=seen)
     )
-    # Only the text file becomes an item; nothing binary was even requested.
-    assert [item.external_id for item in items] == ["f5"]
+    assert [item.external_id for item in items] == ["f4"]
     fetched = {
         r.url.path.rsplit("/", 1)[1] for r in seen if r.url.params.get("alt") == "media"
     }
-    assert fetched == {"f5"}
+    assert fetched == {"f4"}
+
+
+async def test_uploaded_documents_are_read_not_skipped():
+    """The regression this reader existed with: Drive exports only its OWN
+    formats, so every uploaded PDF, Word file and deck left as "no text form"
+    — the contract, the invoice, the deck someone mailed you. They are the
+    bulk of a real Drive, and they were the part that never arrived."""
+    docx = _zip({"word/document.xml": _WORD_XML})
+    listing = [
+        [
+            _file("f1", "Contract.docx", _DOCX_MIME, size=len(docx)),
+            _file("f2", "notes.txt", "text/plain"),
+        ]
+    ]
+    items = await _collect(
+        _transport(listing=listing, blobs={"f1": docx}, contents={"f2": "hello"})
+    )
+    assert [item.external_id for item in items] == ["f1", "f2"]
+    assert "The parties agree as follows." in items[0].body
+    assert not items[0].metadata.get("content_missing")
+
+
+async def test_a_document_is_recognised_by_its_name_when_the_type_lies():
+    """An upload's MIME is only as good as whatever produced it: scanners and
+    sync clients routinely say ``application/octet-stream``. Judging by type
+    alone threw the document away."""
+    docx = _zip({"word/document.xml": _WORD_XML})
+    mislabelled = _file("f1", "Contract.docx", "application/octet-stream", size=len(docx))
+    items = await _collect(_transport(listing=[[mislabelled]], blobs={"f1": docx}))
+    assert "The parties agree as follows." in items[0].body
+
+
+async def test_a_document_is_fetched_WHOLE_never_range_bounded():
+    """A container cannot be cut: half a ZIP has no central directory and half
+    a PDF has no cross-reference table. A Range header here would turn every
+    large document into a silently empty item."""
+    docx = _zip({"word/document.xml": _WORD_XML})
+    seen: list[httpx.Request] = []
+    await _collect(
+        _transport(
+            listing=[[_file("f1", "Contract.docx", _DOCX_MIME, size=len(docx))]],
+            blobs={"f1": docx},
+            seen=seen,
+        )
+    )
+    download = next(r for r in seen if r.url.params.get("alt") == "media")
+    assert "Range" not in download.headers
+
+
+async def test_a_document_with_no_readable_text_is_still_imported():
+    """A scanned PDF holds no text a parser can reach. Dropping it would make
+    the file invisible; importing it with the reason keeps it findable by
+    name, owner and date and says plainly what is missing."""
+    scan = b"%PDF-1.4\nnothing extractable here\n%%EOF"
+    items = await _collect(
+        _transport(
+            listing=[[_file("f1", "scan.pdf", "application/pdf", size=len(scan))]],
+            blobs={"f1": scan},
+        )
+    )
+    assert len(items) == 1
+    assert items[0].title == "scan.pdf"
+    assert items[0].metadata["content_missing"] is True
+    assert items[0].metadata["content_missing_reason"]
+    assert "no text imported" in items[0].body
+
+
+async def test_an_oversized_document_is_refused_with_a_sentence_not_fetched():
+    """Above the ceiling the file is refused rather than truncated — and the
+    refusal must happen BEFORE the download, or the ceiling protects nothing."""
+    huge = _file(
+        "f1", "archive.pdf", "application/pdf", size=gd.MAX_DOCUMENT_BYTES + 1
+    )
+    seen: list[httpx.Request] = []
+    items = await _collect(_transport(listing=[[huge]], seen=seen))
+    assert items[0].metadata["content_missing"] is True
+    assert "import limit" in items[0].metadata["content_missing_reason"]
+    assert not [r for r in seen if r.url.params.get("alt") == "media"]
 
 
 async def test_listing_pages_are_walked_to_the_end():
@@ -269,7 +380,8 @@ async def test_a_failed_export_degrades_to_metadata_with_an_honest_note():
     )
     # One stubborn file must never sink the whole walk.
     assert [item.external_id for item in items] == ["f1", "f2"]
-    assert "[content could not be exported (HTTP 403)" in items[0].body
+    assert "the export failed (HTTP 403)" in items[0].body
+    assert items[0].metadata["content_missing"] is True
     assert "still imported" in items[1].body
 
 

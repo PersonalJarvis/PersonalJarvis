@@ -10,7 +10,9 @@ that never carry the token.
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from typing import Any
 
 import httpx
@@ -71,10 +73,13 @@ def _file(
 
 def _transport(
     pages: list[list[dict[str, Any]]],
-    contents: dict[str, str],
+    contents: dict[str, str | bytes],
     *,
     seen: list[httpx.Request] | None = None,
 ) -> httpx.MockTransport:
+    """A fake Dropbox. ``contents`` accepts bytes for real binary documents —
+    the shape a PDF or a Word file actually arrives in."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
@@ -85,6 +90,8 @@ def _transport(
             if body is None:
                 # The file vanished between list and download.
                 return httpx.Response(409, json={"error_summary": "path/not_found/.."})
+            if isinstance(body, bytes):
+                return httpx.Response(200, content=body)
             return httpx.Response(200, content=body.encode())
         if path == "/2/files/list_folder":
             index = 0
@@ -139,16 +146,59 @@ async def test_a_text_file_becomes_a_linkable_dated_item():
     assert item.metadata["rev"] == "0123456789abcdef"
 
 
-async def test_binaries_are_never_downloaded():
+async def test_blobs_are_never_downloaded_but_documents_are():
     """The skip happens by extension BEFORE any byte moves — a photo library
-    must not cost one request per photo just to be rejected."""
+    must not cost one request per photo just to be rejected.
+
+    A PDF is not in that category, and treating it as one is what made
+    "import my Dropbox" quietly mean "import the notes lying beside the
+    documents".
+    """
     seen: list[httpx.Request] = []
     pages = [[_file("/photo.jpg"), _file("/report.pdf"), _file("/notes.md")]]
     items = await _collect(
-        transport=_transport(pages, {"/notes.md": "text"}, seen=seen)
+        transport=_transport(
+            pages,
+            {"/notes.md": "text", "/report.pdf": "%PDF-1.4 not readable"},
+            seen=seen,
+        )
     )
-    assert [item.external_id for item in items] == ["/notes.md"]
-    assert _downloaded_paths(seen) == ["/notes.md"]
+    assert [item.external_id for item in items] == ["/notes.md", "/report.pdf"]
+    assert _downloaded_paths(seen) == ["/notes.md", "/report.pdf"]
+    # The picture never moved a byte.
+    assert "/photo.jpg" not in _downloaded_paths(seen)
+
+
+async def test_a_word_document_is_imported_with_its_text():
+    """The point of the whole change: a container is not decoded as UTF-8 (that
+    produced a body of replacement characters, which is why these files were
+    excluded), it is handed to the extractor."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            "<w:document xmlns:w='x'><w:body><w:p><w:r><w:t>"
+            "The quarterly ledger reconciliation"
+            "</w:t></w:r></w:p></w:body></w:document>",
+        )
+    docx = buffer.getvalue()
+    pages = [[_file("/ledger.docx", size=len(docx))]]
+    items = await _collect(transport=_transport(pages, {"/ledger.docx": docx}))
+    assert len(items) == 1
+    assert "The quarterly ledger reconciliation" in items[0].body
+    assert not items[0].metadata.get("content_missing")
+
+
+async def test_a_document_with_no_readable_text_is_still_imported():
+    """A scanned PDF is still a document that exists. It stays findable by
+    name, folder and date, and says plainly what is missing."""
+    pages = [[_file("/scan.pdf", size=40)]]
+    items = await _collect(
+        transport=_transport(pages, {"/scan.pdf": b"%PDF-1.4\nno text\n%%EOF"})
+    )
+    assert len(items) == 1
+    assert items[0].metadata["content_missing"] is True
+    assert "no text imported" in items[0].body
 
 
 async def test_folders_deleted_and_non_downloadable_entries_are_ignored():
@@ -217,7 +267,12 @@ async def test_a_numeric_cursor_skips_unchanged_files_before_download():
     assert _downloaded_paths(seen) == ["/new.md"]
 
 
-async def test_oversized_files_are_skipped_and_long_bodies_truncated():
+async def test_oversized_files_say_so_instead_of_vanishing():
+    """A file above the ceiling is not downloaded — but it IS recorded.
+
+    Dropping it silently makes "too big to read" look exactly like "never
+    existed", and only one of those two is the truth.
+    """
     seen: list[httpx.Request] = []
     pages = [
         [
@@ -227,10 +282,12 @@ async def test_oversized_files_are_skipped_and_long_bodies_truncated():
     ]
     contents = {"/long.md": "x" * (dbx._MAX_BODY_BYTES + 100_000)}
     items = await _collect(transport=_transport(pages, contents, seen=seen))
-    assert [item.external_id for item in items] == ["/long.md"]
-    # The oversized file never cost a download.
+    assert [item.external_id for item in items] == ["/huge.md", "/long.md"]
+    # The oversized file still never cost a download.
     assert _downloaded_paths(seen) == ["/long.md"]
-    body = items[0].body
+    assert items[0].metadata["content_missing"] is True
+    assert "import limit" in items[0].metadata["content_missing_reason"]
+    body = items[1].body
     assert body.endswith(dbx._TRUNCATION_MARKER)
     assert len(body) == dbx._MAX_BODY_BYTES + len(dbx._TRUNCATION_MARKER)
 
