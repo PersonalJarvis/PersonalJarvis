@@ -325,6 +325,75 @@ class TestLocalFolderNoiseDirectories:
         assert {"AppData", "Library"} <= LocalFolderConnector.SKIP_DIR_NAMES
 
 
+class TestLocalFolderExcludes:
+    """A built-in noise list cannot know what THIS folder is cluttered with.
+
+    A measured real Desktop was 84% one folder holding ~50 working copies of
+    the same project - importable text by every rule, worthless as knowledge,
+    and 300k files nobody would notice were wrong until the bill arrived.
+    Naming them is the user's call, so the source carries its own list.
+    """
+
+    async def test_an_excluded_folder_is_not_walked(self, tmp_path: Path):
+        (tmp_path / "keep.md").write_text("keep", encoding="utf-8")
+        clutter = tmp_path / "ship-release-work"
+        clutter.mkdir()
+        (clutter / "copy.md").write_text("drop", encoding="utf-8")
+
+        ctx = _ctx({"root": str(tmp_path), "exclude": ["ship-release-work"]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+
+        assert [item.external_id for item in items] == ["keep.md"]
+
+    async def test_excludes_apply_at_every_depth(self, tmp_path: Path):
+        nested = tmp_path / "projects" / "alpha" / "build-output"
+        nested.mkdir(parents=True)
+        (nested / "generated.md").write_text("drop", encoding="utf-8")
+        (tmp_path / "projects" / "notes.md").write_text("keep", encoding="utf-8")
+
+        ctx = _ctx({"root": str(tmp_path), "exclude": ["build-output"]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+
+        assert [item.external_id for item in items] == ["projects/notes.md"]
+
+    async def test_excludes_add_to_the_built_in_noise_list(self, tmp_path: Path):
+        """Naming one folder must not switch the sensible defaults off."""
+        (tmp_path / "keep.md").write_text("keep", encoding="utf-8")
+        for noisy in ("node_modules", "mine"):
+            folder = tmp_path / noisy
+            folder.mkdir()
+            (folder / "junk.md").write_text("drop", encoding="utf-8")
+
+        ctx = _ctx({"root": str(tmp_path), "exclude": ["mine"]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+
+        assert [item.external_id for item in items] == ["keep.md"]
+
+    async def test_a_blank_or_missing_exclude_list_changes_nothing(
+        self, tmp_path: Path
+    ):
+        (tmp_path / "keep.md").write_text("keep", encoding="utf-8")
+        ctx = _ctx({"root": str(tmp_path), "exclude": ["", "   "]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+        assert [item.external_id for item in items] == ["keep.md"]
+
+    async def test_exclusion_is_case_blind_on_every_platform(self, tmp_path: Path):
+        """Windows and macOS folder names are case-insensitive; Linux is not.
+
+        A list typed on one machine has to keep working on the next, so the
+        match is case-blind everywhere rather than following the host.
+        """
+        clutter = tmp_path / "Ship-Release-Work"
+        clutter.mkdir()
+        (clutter / "copy.md").write_text("drop", encoding="utf-8")
+        (tmp_path / "keep.md").write_text("keep", encoding="utf-8")
+
+        ctx = _ctx({"root": str(tmp_path), "exclude": ["ship-release-work"]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+
+        assert [item.external_id for item in items] == ["keep.md"]
+
+
 class TestLocalFolderFileTypes:
     """"Import my whole Desktop" means documents and code, not just notes.
 

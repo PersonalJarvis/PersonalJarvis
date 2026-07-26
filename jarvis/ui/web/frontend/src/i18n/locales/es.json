@@ -2922,6 +2922,8 @@
       "label_label": "Nombre",
       "path_label": "Ruta de la carpeta",
       "path_hint": "La carpeta se lee en este equipo; no se extrae nada antes de aprobar y sincronizar.",
+      "exclude_label": "Carpetas que omitir (opcional)",
+      "exclude_hint": "Nombres de carpeta separados por comas, p. ej. archivo, copias. Las carpetas de dependencias y caché siempre se omiten.",
       "areas_label": "Áreas",
       "no_areas": "Se usa el área por defecto hasta que crees más.",
       "bridge_label": "Integración conectada",

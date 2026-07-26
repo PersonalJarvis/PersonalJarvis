@@ -472,6 +472,111 @@ describe("SourcesPanel — bridge sources carry a real identity", () => {
   });
 });
 
+describe("SourcesPanel — folders to skip", () => {
+  function installFolderPickerMock(created: unknown[]) {
+    return installFetchMock({
+      "/api/ultrawiki/areas": () => ({ areas: [], total: 0 }),
+      "/api/ultrawiki/connectors": () => ({
+        connectors: [
+          {
+            id: "local-folder",
+            kind: "builtin",
+            label: "Local folder",
+            label_key: "ultrawiki.sources.connector_local_folder",
+            brand: "folder",
+            status: "available",
+            description_key: "ultrawiki.connectors.local_folder",
+            connector: "local-folder",
+            integration_id: "",
+          },
+        ],
+        total: 1,
+        builtin: 1,
+        bridge: 0,
+      }),
+      "/api/ultrawiki/bridge/candidates": () => ({
+        candidates: [],
+        total: 0,
+        connected: 0,
+      }),
+      "/api/ultrawiki/sources": (init) => {
+        created.push(JSON.parse(String(init?.body ?? "{}")));
+        return { id: "src-folder" };
+      },
+    });
+  }
+
+  async function pickTheFolderTile() {
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-local-folder")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("uw-picker-local-folder"));
+  }
+
+  it("sends the skip list as its own config key", async () => {
+    const created: unknown[] = [];
+    installFolderPickerMock(created);
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    await pickTheFolderTile();
+    fireEvent.change(screen.getByTestId("ultrawiki-path-input"), {
+      target: { value: "/home/someone/Desktop" },
+    });
+    fireEvent.change(screen.getByTestId("ultrawiki-exclude-input"), {
+      target: { value: "ship-release-work, backups" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-create-source"));
+
+    await waitFor(() => {
+      expect(created).toHaveLength(1);
+    });
+    expect(created[0]).toMatchObject({
+      connector: "local-folder",
+      config: {
+        root: "/home/someone/Desktop",
+        exclude: ["ship-release-work", "backups"],
+      },
+    });
+  });
+
+  it("stores no skip list when the field is left alone", async () => {
+    const created: unknown[] = [];
+    installFolderPickerMock(created);
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    await pickTheFolderTile();
+    fireEvent.change(screen.getByTestId("ultrawiki-path-input"), {
+      target: { value: "/home/someone/Desktop" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-create-source"));
+
+    await waitFor(() => {
+      expect(created).toHaveLength(1);
+    });
+    // An empty field must not write an empty key the backend then has to
+    // interpret — absent means "use the built-in noise list only".
+    const body = created[0] as { config: Record<string, unknown> };
+    expect("exclude" in body.config).toBe(false);
+  });
+
+  it("is offered for a folder source but not for a dropped export", async () => {
+    installFolderPickerMock([]);
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-local-folder")).toBeDefined();
+    });
+    // Nothing before a type is picked: the field belongs to the folder flow.
+    expect(screen.queryByTestId("ultrawiki-exclude-input")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("uw-picker-local-folder"));
+
+    expect(screen.getByTestId("ultrawiki-exclude-input")).toBeDefined();
+  });
+});
+
 describe("SourcesPanel — the dropped-export add flow", () => {
   function installExportPickerMock(
     created: unknown[],

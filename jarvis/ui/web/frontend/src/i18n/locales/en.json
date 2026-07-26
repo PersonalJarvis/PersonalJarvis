@@ -2923,6 +2923,8 @@
       "label_label": "Name",
       "path_label": "Folder path",
       "path_hint": "The folder is read on this machine; nothing is pulled before you approve and sync.",
+      "exclude_label": "Folders to skip (optional)",
+      "exclude_hint": "Comma-separated folder names, e.g. archive, backups. Dependency and cache folders are always skipped.",
       "areas_label": "Areas",
       "no_areas": "The default area is used until you create more.",
       "bridge_label": "Connected integration",

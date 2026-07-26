@@ -2937,6 +2937,8 @@
       "label_label": "Name",
       "path_label": "Ordnerpfad",
       "path_hint": "Der Ordner wird auf diesem Gerät gelesen; vor Freigabe und Synchronisierung wird nichts abgerufen.",
+      "exclude_label": "Ordner überspringen (optional)",
+      "exclude_hint": "Ordnernamen mit Komma getrennt, z. B. Archiv, Backups. Abhängigkeits- und Cache-Ordner werden immer übersprungen.",
       "areas_label": "Bereiche",
       "no_areas": "Bis du weitere anlegst, wird der Standardbereich verwendet.",
       "bridge_label": "Verbundene Integration",

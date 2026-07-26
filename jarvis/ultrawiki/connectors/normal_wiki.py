@@ -77,7 +77,15 @@ class NormalWikiConnector(LocalFolderConnector):
     def _extensions(self, ctx: ConnectorContext) -> tuple[str, ...]:
         return self.DEFAULT_EXTENSIONS
 
-    def _sorted_files(self, root: Path, extensions: tuple[str, ...]) -> list[Path]:
+    def _sorted_files(
+        self,
+        root: Path,
+        extensions: tuple[str, ...],
+        skip_dirs: frozenset[str] | None = None,
+    ) -> list[Path]:
+        # skip_dirs is accepted for the base-class contract and deliberately
+        # unused: this walk visits only the four page-kind directories, so
+        # there is no unrelated tree a user could need to exclude.
         matches: list[Path] = []
         for kind in self.PAGE_KINDS:
             sub = root / kind

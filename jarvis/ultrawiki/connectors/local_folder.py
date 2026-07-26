@@ -281,7 +281,9 @@ class LocalFolderConnector:
         if root is None:
             return
         extensions = self._extensions(ctx)
-        paths = await asyncio.to_thread(self._sorted_files, root, extensions)
+        paths = await asyncio.to_thread(
+            self._sorted_files, root, extensions, self._skip_dirs(ctx)
+        )
         pending = [
             path
             for path in paths
@@ -299,7 +301,9 @@ class LocalFolderConnector:
             return
         threshold = parse_mtime_cursor(cursor, connector_id=self.id)
         extensions = self._extensions(ctx)
-        paths = await asyncio.to_thread(self._sorted_files, root, extensions)
+        paths = await asyncio.to_thread(
+            self._sorted_files, root, extensions, self._skip_dirs(ctx)
+        )
         for batch in _batched(paths, READ_BATCH):
             items = await asyncio.to_thread(
                 self._items_for_paths, root, batch, min_mtime_ns=threshold
@@ -369,7 +373,27 @@ class LocalFolderConnector:
             normalized.append(text if text.startswith(".") else f".{text}")
         return tuple(normalized) or self.DEFAULT_EXTENSIONS
 
-    def _sorted_files(self, root: Path, extensions: tuple[str, ...]) -> list[Path]:
+    def _skip_dirs(self, ctx: ConnectorContext) -> frozenset[str]:
+        """Folder names not walked: the built-in noise list PLUS the user's.
+
+        Lower-cased for matching, because a list typed on Windows or macOS
+        (case-insensitive filesystems) has to keep working when the same
+        config is opened on Linux. Additive by design — naming one folder must
+        never switch the sensible defaults off.
+        """
+        names = {name.lower() for name in self.SKIP_DIR_NAMES}
+        for entry in ctx.config.get("exclude") or ():
+            text = str(entry).strip().lower()
+            if text:
+                names.add(text)
+        return frozenset(names)
+
+    def _sorted_files(
+        self,
+        root: Path,
+        extensions: tuple[str, ...],
+        skip_dirs: frozenset[str] | None = None,
+    ) -> list[Path]:
         """All matching files under ``root``, sorted by ``external_id``.
 
         The sort key is deliberately :meth:`_external_id_for`, not the raw
@@ -377,14 +401,20 @@ class LocalFolderConnector:
         resuming can only be correct while walk order and checkpoint order are
         the same string ordering.
 
-        Hidden directories and files (dot-prefixed) plus :attr:`SKIP_DIR_NAMES`
-        are excluded. Symlinked directories are not followed. Blocking — call
-        it through ``asyncio.to_thread``.
+        Hidden directories and files (dot-prefixed) plus ``skip_dirs`` (which
+        defaults to :attr:`SKIP_DIR_NAMES`) are excluded. Symlinked
+        directories are not followed. Blocking — call it through
+        ``asyncio.to_thread``.
         """
+        skip = (
+            skip_dirs
+            if skip_dirs is not None
+            else frozenset(name.lower() for name in self.SKIP_DIR_NAMES)
+        )
         matches: list[tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(
-                d for d in dirnames if not d.startswith(".") and d not in self.SKIP_DIR_NAMES
+                d for d in dirnames if not d.startswith(".") and d.lower() not in skip
             )
             base = Path(dirpath)
             for name in filenames:

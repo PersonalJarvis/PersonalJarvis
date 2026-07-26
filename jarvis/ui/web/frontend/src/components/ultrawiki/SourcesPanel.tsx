@@ -485,6 +485,7 @@ function AddSourceForm({
   const [option, setOption] = useState<ConnectorOption | null>(null);
   const [label, setLabel] = useState("");
   const [rootPath, setRootPath] = useState("");
+  const [excludes, setExcludes] = useState("");
   const [exportPath, setExportPath] = useState("");
   const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -518,6 +519,16 @@ function AddSourceForm({
     setError("");
     const config: Record<string, unknown> = {};
     if (needsPath && rootPath.trim()) config.root = rootPath.trim();
+    if (needsPath) {
+      // A folder the user actually picks is often mostly clutter (build
+      // output, working copies). Sent only when non-empty so an untouched
+      // field stores nothing at all.
+      const skip = excludes
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+      if (skip.length > 0) config.exclude = skip;
+    }
     if (isExport && exportPath.trim()) config.path = exportPath.trim();
     if (option.connector === BRIDGE_CONNECTOR && option.integrationId) {
       config.integration_id = option.integrationId;
@@ -603,6 +614,25 @@ function AddSourceForm({
           />
           <span className="mt-1 block text-[11px] text-muted-foreground">
             {t("ultrawiki.sources.path_hint")}
+          </span>
+        </label>
+      )}
+
+      {needsPath && (
+        <label className="block">
+          <span className="mb-1.5 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <FolderOpen className="h-3 w-3" aria-hidden />
+            {t("ultrawiki.sources.exclude_label")}
+          </span>
+          <input
+            type="text"
+            value={excludes}
+            onChange={(e) => setExcludes(e.target.value)}
+            className={inputCls}
+            data-testid="ultrawiki-exclude-input"
+          />
+          <span className="mt-1 block text-[11px] text-muted-foreground">
+            {t("ultrawiki.sources.exclude_hint")}
           </span>
         </label>
       )}
