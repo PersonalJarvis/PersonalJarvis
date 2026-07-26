@@ -183,6 +183,7 @@ async def hybrid_search(
     rerank: bool = True,
     enforce_floor: bool = False,
     expand_context: bool = True,
+    vector_timeout_s: float | None = None,
     timings: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Fused keyword + vector search over an UltraWiki store.
@@ -203,6 +204,14 @@ async def hybrid_search(
     grade is unavailable the caller gets results with ``rerank_score=None`` and
     must apply its own deterministic gate (``jarvis.brain.wiki_relevance``).
 
+    ``vector_timeout_s`` (optional) bounds ONLY the vector leg: when it
+    cannot deliver inside the budget (a slow or cold embedding provider,
+    usually), the search proceeds on the keyword leg instead of holding the
+    whole answer hostage. This is what lets a caller with a hard overall
+    budget — the context injector, the voice path — still get keyword
+    results when the network is having a day. ``None``/``0`` leaves the leg
+    unbounded (explicit surfaces).
+
     ``timings`` (optional) is filled with the wall-clock cost of every stage
     that ran, in milliseconds (``keyword_ms``, ``vector_ms`` with its
     ``vector_embed_ms`` / ``vector_ann_ms`` split, ``signals_ms``,
@@ -215,9 +224,12 @@ async def hybrid_search(
         return []
     sink: dict[str, float] = timings if timings is not None else {}
     started = time.perf_counter()
+    vector_coro = _vector_leg(store, cfg, query, area_id=area_id, timings=sink)
+    if vector_timeout_s and vector_timeout_s > 0:
+        vector_coro = _bounded_vector_leg(vector_coro, vector_timeout_s)
     keyword_hits, vector_hits, signals = await asyncio.gather(
         _timed("keyword_ms", store.keyword_search(query, k=LEG_POOL, area_id=area_id), sink),
-        _timed("vector_ms", _vector_leg(store, cfg, query, area_id=area_id, timings=sink), sink),
+        _timed("vector_ms", vector_coro, sink),
         _timed("signals_ms", _term_signals(store, query), sink),
     )
     fused = _fuse(keyword_hits, vector_hits, cfg=cfg, signals=signals)
@@ -251,6 +263,7 @@ async def search(
     rerank: bool = True,
     enforce_floor: bool = False,
     expand_context: bool = True,
+    vector_timeout_s: float | None = None,
     timings: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Keyword-argument facade over :func:`hybrid_search`.
@@ -267,6 +280,7 @@ async def search(
         rerank=rerank,
         enforce_floor=enforce_floor,
         expand_context=expand_context,
+        vector_timeout_s=vector_timeout_s,
         timings=timings,
     )
 
@@ -384,6 +398,21 @@ def _remember_query_vector(key: tuple[str, str, str], vector: list[float]) -> No
     _QUERY_VECTOR_CACHE[key] = vector
     while len(_QUERY_VECTOR_CACHE) > _QUERY_VECTOR_CACHE_MAX:
         del _QUERY_VECTOR_CACHE[next(iter(_QUERY_VECTOR_CACHE))]
+
+
+async def _bounded_vector_leg(
+    leg: Any, timeout_s: float
+) -> list[SearchResult]:
+    """Race the vector leg against its budget; a bust degrades to no vector
+    hits (keyword answers alone) instead of stalling the whole search."""
+    try:
+        return await asyncio.wait_for(leg, timeout=timeout_s)
+    except TimeoutError:
+        log.info(
+            "vector leg exceeded its %.0f ms budget — continuing keyword-only",
+            timeout_s * 1000.0,
+        )
+        return []
 
 
 async def _vector_leg(

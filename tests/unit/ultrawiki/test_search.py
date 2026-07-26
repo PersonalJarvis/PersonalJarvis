@@ -987,6 +987,54 @@ async def test_fast_search_stays_quiet_at_info_level(store, caplog):
 
 
 # ---------------------------------------------------------------------------
+# Vector-leg budget
+# ---------------------------------------------------------------------------
+
+
+async def test_slow_vector_leg_degrades_to_keyword_within_budget(
+    store, monkeypatch, caplog
+):
+    """A cold or throttled embedding provider must cost the caller its
+    vector hits, never its whole answer — the injector's hard overall budget
+    depends on this."""
+    import asyncio
+
+    class SlowEmbedding(FakeEmbedding):
+        async def embed(self, texts, *, model):
+            await asyncio.sleep(5.0)
+            return await super().embed(texts, model=model)
+
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    register_fake_embedding(monkeypatch, SlowEmbedding())
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    with caplog.at_level(logging.INFO, logger="jarvis.ultrawiki.search"):
+        results = await hybrid_search(
+            store, cfg, "alpha", vector_timeout_s=0.05
+        )
+
+    assert results  # keyword leg still answered
+    assert all(hit.matched_by == ("keyword",) for hit in results)
+    assert any("continuing keyword-only" in rec.message for rec in caplog.records)
+
+
+async def test_unset_vector_budget_leaves_the_leg_unbounded(store, monkeypatch):
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    fake = FakeEmbedding()
+    register_fake_embedding(monkeypatch, fake)
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    results = await hybrid_search(store, cfg, "alpha", vector_timeout_s=0)
+
+    assert results
+    assert len(fake.calls) == 1  # the leg ran normally
+
+
+# ---------------------------------------------------------------------------
 # Query-embedding cache
 # ---------------------------------------------------------------------------
 
