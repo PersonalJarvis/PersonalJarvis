@@ -167,3 +167,25 @@ it("shows how much of the corpus is on screen", async () => {
   await waitFor(() => expect(caption.textContent).toContain("947"));
   expect(caption.textContent).toContain("2");
 });
+
+it("expands across the app and restores with Escape", async () => {
+  installFetch();
+  renderGraph();
+
+  const graph = screen.getByTestId("explore-entity-graph");
+  const toggle = screen.getByTestId("explore-graph-expand-toggle");
+  expect(graph.getAttribute("data-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-controls")).toBe("explore-entity-graph");
+
+  fireEvent.click(toggle);
+
+  expect(graph.getAttribute("data-expanded")).toBe("true");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(graph.className).toContain("fixed");
+
+  fireEvent.keyDown(window, { key: "Escape" });
+
+  expect(graph.getAttribute("data-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+});

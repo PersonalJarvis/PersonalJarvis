@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Maximize2, Minimize2 } from "lucide-react";
 import ForceGraph2D from "react-force-graph-2d";
 import type {
   ForceGraphMethods,
@@ -21,6 +22,7 @@ import type {
 } from "react-force-graph-2d";
 
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { sizeChanged } from "@/lib/wikiGraph";
 import { corpusSpan, nodeRadius, recencyTint } from "@/lib/entityGraph";
 import { fetchExploreGraph } from "@/lib/ultrawikiExploreApi";
@@ -64,6 +66,7 @@ export function EntityGraph({
     | undefined
   >(undefined);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const query = useQuery({
     queryKey: ["ultrawiki", "explore", "graph", minMentions],
@@ -85,6 +88,15 @@ export function EntityGraph({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    const restoreOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsExpanded(false);
+    };
+    window.addEventListener("keydown", restoreOnEscape);
+    return () => window.removeEventListener("keydown", restoreOnEscape);
+  }, [isExpanded]);
 
   const graphData = useMemo(() => {
     const nodes = query.data?.nodes ?? [];
@@ -110,7 +122,15 @@ export function EntityGraph({
   const total = query.data?.total_entities ?? 0;
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      id="explore-entity-graph"
+      data-testid="explore-entity-graph"
+      data-expanded={isExpanded ? "true" : "false"}
+      className={cn(
+        "flex h-full flex-col bg-background",
+        isExpanded && "fixed inset-0 z-[100]",
+      )}
+    >
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-1.5">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
           {t("ultrawiki.explore.graph_title")}
@@ -144,6 +164,30 @@ export function EntityGraph({
             )}
             className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
           />
+          <button
+            type="button"
+            data-testid="explore-graph-expand-toggle"
+            onClick={() => setIsExpanded((expanded) => !expanded)}
+            aria-controls="explore-entity-graph"
+            aria-expanded={isExpanded}
+            aria-label={t(
+              isExpanded
+                ? "wiki_graph.restore_view_title"
+                : "wiki_graph.expand_view_title",
+            )}
+            title={t(
+              isExpanded
+                ? "wiki_graph.restore_view_title"
+                : "wiki_graph.expand_view_title",
+            )}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-background/70 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          >
+            {isExpanded ? (
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+            )}
+          </button>
         </div>
       </div>
 
