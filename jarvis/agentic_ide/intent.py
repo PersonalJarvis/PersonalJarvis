@@ -647,6 +647,56 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     return tuple(out)
 
 
+#: The plural coding-agent noun, when the user does not say "terminal".
+_AGENT_NOUN_RE = re.compile(
+    r"\b(?:agents|agenten|agentes)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: Wording that unambiguously asks for a BACKGROUND worker. Checked first and
+#: absolute: the whole reason the terminal noun is mandatory is that stealing a
+#: genuine mission request is invisible to the user.
+_BACKGROUND_RE = re.compile(
+    r"\b(?:hintergrund|background|worker\w*|mission\w*|"  # i18n-allow: input vocab
+    r"sub-?agent\w*|subagent\w*|delegier\w*|delegate\w*|"  # i18n-allow: input vocab
+    r"segundo\s+plano|trabajador\w*)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+
+def _is_agent_fleet(text: str, names: list[str] | None) -> bool:
+    """True for a fleet request that says "agents" instead of "terminals".
+
+    The mandatory pane noun is what makes claiming a turn safe, and it stays
+    mandatory for everything but this one narrow shape. The maintainer's own
+    phrasing for a fleet does not contain it (2026-07-26): "can you spawn five
+    deep-dive agents that analyse X, and divide it across different areas" —
+    which opened nothing at all, because the sentence names no terminal and the
+    background path does not divide work across panes either.
+
+    All four conditions must hold, and each one removes a way of being wrong:
+
+    1. a workspace is OPEN — with nowhere to put them, a fleet request really is
+       the background path's;
+    2. the wording is not explicitly about a background worker;
+    3. SEVERAL agents are asked for — one agent on one job is exactly what a
+       mission worker is;
+    4. the sentence carries fleet semantics: divide the work between them, or
+       name the coding CLI to run. A background mission is never described as
+       "split across five agents by area".
+    """
+    running = _running_names() if names is None else list(names)
+    if not running:
+        return False
+    if _BACKGROUND_RE.search(text):
+        return False
+    if _AGENT_NOUN_RE.search(text) is None:
+        return False
+    if _spoken_count(text) < 2:
+        return False
+    return wants_split(text) or _AGENT_RE.search(text) is not None
+
+
 def detect_spawn(
     user_text: str, *, names: list[str] | None = None
 ) -> SpawnTerminalsRequest | None:
@@ -661,7 +711,7 @@ def detect_spawn(
     text = (user_text or "").strip()
     if len(text) < 6:
         return None
-    if _PANE_NOUN_RE.search(text) is None:
+    if _PANE_NOUN_RE.search(text) is None and not _is_agent_fleet(text, names):
         return None
     if _QUESTION_OPENER_RE.search(text) is not None:
         return None

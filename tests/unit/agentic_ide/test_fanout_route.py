@@ -168,10 +168,10 @@ async def test_without_split_every_terminal_gets_the_same_brief(
     assert prompts[0] == prompts[1]
 
 
-async def test_the_route_can_open_the_fleet_it_needs(
+async def test_the_route_opens_the_fleet_it_needs(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
-    """ "Five Codex agents on this" with two panes open must open three more."""
+    """ "Four Codex agents on this" with two panes open must open four more."""
     await _live_workspace(registry, tmp_path, 2)
 
     body = client.post(
@@ -182,9 +182,37 @@ async def test_the_route_can_open_the_fleet_it_needs(
     assert registry.session is not None
     assert len(registry.session.terminals) == 6
     assert [t.agent for t in registry.session.terminals[2:]] == ["codex"] * 4
-    # Only the NEW panes are briefed: the two that were already working on
-    # something else must not be interrupted by a fleet request.
+    # Only the NEW panes are addressed: the two already working on something
+    # else must not be interrupted by a fleet request.
+    assert len(body["opened"]) == 4
     assert len(body["delivered"]) + len(body["undelivered"]) == 4
+
+
+async def test_a_freshly_opened_pane_is_reported_as_not_yet_running(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """KNOWN LIMIT, pinned so it cannot be mistaken for success.
+
+    A pane's agent process starts when the workspace VIEW mounts it, not when
+    the registry entry is created — so panes opened by this call are still
+    ``pending`` microseconds later and nothing can be typed into them yet.
+
+    The route reports that truthfully rather than claiming a briefed fleet, and
+    that honesty is what this test pins. What it does NOT yet do is wait for
+    the panes to come up and brief them once they have; until it does,
+    spawn+brief in one call opens the fleet and briefs nobody. Delivering after
+    the panes go live is the remaining piece of this feature.
+    """
+    await _live_workspace(registry, tmp_path, 1)
+
+    body = client.post(
+        "/api/agentic-ide/fanout",
+        json={"instruction": "analyse it", "spawn": [{"count": 2, "agent": "codex"}]},
+    ).json()
+
+    assert body["ok"] is False
+    assert len(body["undelivered"]) == 2
+    assert {d["reason_code"] for d in body["undelivered"]} == {"not_running"}
 
 
 async def test_a_mixed_fleet_opens_both_kinds(

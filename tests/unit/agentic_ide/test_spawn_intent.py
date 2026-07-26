@@ -203,6 +203,74 @@ def test_the_total_is_capped_at_the_workspace_maximum() -> None:
     assert sum(g.count for g in found.groups) == found.count
 
 
+# --------------------------------------------------------------------------- #
+# "Spawn five deep-dive AGENTS" — no terminal noun, but still the workspace    #
+# --------------------------------------------------------------------------- #
+# The mandatory terminal noun makes claiming a turn safe, and it is why asking
+# for "an agent" still reaches the background worker. But the maintainer's own
+# phrasing for a fleet does not contain it (2026-07-26): "can you spawn five
+# deep-dive agents that analyse X, and divide it across different areas"
+# opened nothing at all.
+#
+# The narrow opening: a workspace is OPEN, several AGENTS are asked for, and the
+# sentence asks for the work to be DIVIDED between them or names a coding CLI.
+# A background mission is one worker on one job — nobody says "split it across
+# five background agents by area". Explicit background wording still wins, so
+# every existing guard below keeps holding.
+
+FLEET_REQUEST = (
+    "Kannst du bitte fünf Deep Dive Agents spawnen, welche unsere Codebase "  # i18n-allow: fixture
+    "analysieren, und teile das auf verschiedene Aufgabenbereiche auf"  # i18n-allow: fixture
+)
+
+
+def test_an_agent_fleet_with_a_split_belongs_to_the_open_workspace() -> None:
+    found = intent.detect_spawn(FLEET_REQUEST, names=NAMES)
+    assert found is not None
+    assert found.count == 5
+    assert intent.owns_turn(FLEET_REQUEST, names=NAMES) is True
+
+
+def test_an_agent_fleet_naming_a_coding_cli_also_counts() -> None:
+    found = intent.detect_spawn("Spawn three Codex agents on this", names=NAMES)
+    assert found is not None
+    assert found.count == 3
+    assert found.agent == "codex"
+
+
+def test_without_an_open_workspace_an_agent_fleet_stays_a_mission() -> None:
+    """No panes to put them in: this is the background path's request."""
+    assert intent.detect_spawn(FLEET_REQUEST, names=[]) is None
+    assert intent.owns_turn(FLEET_REQUEST, names=[]) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Spawne fünf Agenten im Hintergrund, die das aufteilen",  # i18n-allow: fixture
+        "Start five background agents and split the work between them",
+        "Delegiere das an fünf Worker und teile es auf Bereiche auf",  # i18n-allow: fixture
+        "Spawn five subagents and divide the areas between them",
+    ],
+)
+def test_explicit_background_wording_always_wins(utterance: str) -> None:
+    """Saying "background" is unambiguous and must never be stolen."""
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+def test_a_single_agent_without_a_terminal_noun_is_still_a_mission() -> None:
+    """One agent on one job is what the background worker is for."""
+    one_agent = "Spawne einen Agenten der das analysiert"  # i18n-allow: fixture
+    assert intent.detect_spawn("Spawn an agent to review this", names=NAMES) is None
+    assert intent.detect_spawn(one_agent, names=NAMES) is None
+
+
+def test_an_agent_fleet_without_a_split_or_a_cli_stays_a_mission() -> None:
+    """Plural alone is not enough — the fleet semantics have to be spelled out."""
+    assert intent.detect_spawn("Spawn five agents on this", names=NAMES) is None
+
+
 def test_an_addressed_terminal_still_wins_over_the_spawn_grammar() -> None:
     """Telling a named pane to open a terminal is a prompt FOR that pane.
 
