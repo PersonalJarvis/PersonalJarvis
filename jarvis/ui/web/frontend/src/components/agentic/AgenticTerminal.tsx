@@ -72,6 +72,9 @@ import {
 } from "./paneDrop";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
+import { robustPaste } from "@/lib/clipboard";
+import { installPasteBridge } from "./terminalPaste";
+import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -89,6 +92,15 @@ export type SplitDirection = "right" | "down";
 interface AgenticTerminalProps {
   /** Terminal call-sign — also the WS path segment. */
   name: string;
+  /**
+   * Which workspace this pane belongs to.
+   *
+   * Sent with the socket so the backend can pin it: several workspaces can be
+   * open, the front one changes while sockets are alive, and a keystroke must
+   * reach the pane it was typed into rather than whichever workspace happens to
+   * be showing when it arrives.
+   */
+  workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
   appearance: TerminalAppearance;
@@ -116,7 +128,7 @@ interface AgenticTerminalProps {
   onClose?: () => void;
   /** Disable the split buttons — the workspace is at its terminal limit. */
   splitDisabled?: boolean;
-  /** A dropped or pasted file could not be attached — the grid surfaces it. */
+  /** A drop or a paste could not be completed — the grid surfaces it. */
   onAttachError?: (message: string) => void;
   /** Called when the user asks a dead pane to start a fresh agent. */
   onRestart?: () => void;
@@ -132,16 +144,9 @@ interface AgenticTerminalProps {
   restartToken?: number;
 }
 
-function socketUrl(name: string, cols: number, rows: number): string {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const query = new URLSearchParams({ cols: String(cols), rows: String(rows) });
-  return `${proto}://${window.location.host}/api/agentic-ide/pty/${encodeURIComponent(
-    name,
-  )}?${query.toString()}`;
-}
-
 export function AgenticTerminal({
   name,
+  workspaceId,
   displayName,
   appearance,
   fontSize,
@@ -170,8 +175,10 @@ export function AgenticTerminal({
   const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
+  const onAttachErrorRef = useRef(onAttachError);
   const initialRef = useRef({ appearance, fontSize });
   onStatusRef.current = onStatus;
+  onAttachErrorRef.current = onAttachError;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -245,6 +252,17 @@ export function AgenticTerminal({
       paste: (text) => term.paste(text),
       focus: () => term.focus(),
     });
+    // Make Ctrl+V / Cmd+V paste. Left to itself xterm reads the chord as the
+    // terminal control code ^V and CANCELS the keystroke, so the browser never
+    // runs its own paste and nothing arrives at all — see ./terminalPaste.
+    const disposePasteBridge = installPasteBridge(term, container, {
+      readClipboard: robustPaste,
+      isMac: /mac|iphone|ipad/i.test(navigator.userAgent),
+      onUnavailable: () =>
+        onAttachErrorRef.current?.(
+          "Could not read the clipboard on this machine.",
+        ),
+    });
     try {
       fit.fit();
     } catch {
@@ -257,9 +275,13 @@ export function AgenticTerminal({
       onStatusRef.current?.(status, detail);
     };
 
-    let ws: WebSocket | null = null;
+    let socket: PaneSocket | null = null;
     let disposed = false;
-    let everLive = false;
+    // Only the first attempt of a run of trouble is printed into the pane, plus
+    // the verdict if it ends badly. A reconnect that succeeds redraws the screen
+    // from the server's replay buffer anyway, so narrating every retry would
+    // scroll the agent's own output away for nothing.
+    let troublePrinted = false;
 
     const sendResize = () => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
@@ -273,79 +295,62 @@ export function AgenticTerminal({
         return;
       }
       if (term.cols < 2 || term.rows < 2) return;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
-      }
+      socket?.send({ t: "r", cols: term.cols, rows: term.rows });
     };
     resizeRef.current = sendResize;
 
-    ws = new WebSocket(socketUrl(name, term.cols || 80, term.rows || 24));
-    ws.onopen = () => {
-      report("connecting");
-      // The spawn used a best-effort size (the mount-time fit usually runs
-      // before the grid cell is measured), and resizes sent while the socket
-      // was connecting were dropped — without this the agent's full-screen TUI
-      // keeps drawing at the wrong width and looks clipped.
-      sendResize();
-      requestAnimationFrame(sendResize);
-    };
-    ws.onmessage = (ev) => {
-      let msg: {
-        t?: string;
-        d?: string;
-        code?: number;
-        message?: string;
-        /** On "ready": did this pane continue its previous conversation? */
-        resumed?: boolean;
-      };
-      try {
-        msg = JSON.parse(ev.data as string);
-      } catch {
-        return;
-      }
-      if (msg.t === "o") term.write(msg.d ?? "");
-      else if (msg.t === "ready") {
-        everLive = true;
-        // Say whether this pane picked up where it left off. A continued agent
-        // and one that started empty look identical on screen until the moment
-        // somebody asks the empty one a follow-up question — so the pane itself
-        // carries the answer rather than leaving it to be discovered.
-        report(
-          "live",
-          msg.resumed
-            ? "continued its previous conversation"
-            : "started a new conversation",
-        );
-        term.focus();
-      } else if (msg.t === "exit") {
-        report("exited", `exit code ${msg.code ?? "?"}`);
-        term.write(
-          `\r\n\x1b[33m[${displayName} exited — code ${msg.code ?? "?"}]\x1b[0m\r\n`,
-        );
-      } else if (msg.t === "error") {
-        report("error", msg.message ?? "terminal error");
-      }
-    };
-    ws.onerror = () => report("error", "Could not reach the terminal.");
-    ws.onclose = (ev) => {
-      if (everLive) {
-        report("exited");
-      } else if (!disposed) {
-        report(
-          "error",
-          ev.code === 4401
-            ? "Terminal authorization failed — reopen the pane to retry."
-            : ev.code === 4404
-              ? "This terminal is no longer part of the open workspace."
-              : `Terminal connection closed (code ${ev.code || "?"}).`,
-        );
-      }
-    };
+    socket = openPaneSocket(
+      { name, workspaceId, cols: term.cols || 80, rows: term.rows || 24 },
+      {
+        onOpen: () => {
+          report("connecting");
+          // The spawn used a best-effort size (the mount-time fit usually runs
+          // before the grid cell is measured), and resizes sent while the socket
+          // was connecting were dropped — without this the agent's full-screen
+          // TUI keeps drawing at the wrong width and looks clipped.
+          sendResize();
+          requestAnimationFrame(sendResize);
+        },
+        onOutput: (text) => term.write(text),
+        onReady: ({ resumed, reattached }) => {
+          troublePrinted = false;
+          // Say which of THREE things happened. They look identical on screen and
+          // only differ when it matters: an agent that never stopped still holds
+          // everything, a resumed one re-read its history, and a fresh one will
+          // give a blank stare to the first follow-up question.
+          report(
+            "live",
+            reattached
+              ? "still running — picked up where you left it"
+              : resumed
+                ? "continued its previous conversation"
+                : "started a new conversation",
+          );
+          term.focus();
+        },
+        onExit: (code) => {
+          report("exited", `exit code ${code}`);
+          term.write(
+            `\r\n\x1b[33m[${displayName} exited — code ${code}]\x1b[0m\r\n`,
+          );
+        },
+        onTrouble: (message, retrying) => {
+          if (disposed) return;
+          // A scheduled retry means the pane is not dead yet. Calling it "error"
+          // there is what left a whole grid painted red over a backend that was
+          // merely restarting.
+          report(retrying ? "connecting" : "error", message);
+          if (retrying && troublePrinted) return;
+          troublePrinted = true;
+          term.write(
+            `\r\n\x1b[${retrying ? "33" : "31"}m[${message}]\x1b[0m\r\n`,
+          );
+        },
+      },
+    );
 
     term.onData((data) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ t: "i", d: data }));
-      }
+      socket?.send({ t: "i", d: data });
     });
 
     // The mount-time fit measured whatever font was loaded at that moment. If
@@ -388,8 +393,9 @@ export function AgenticTerminal({
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       window.removeEventListener("resize", scheduleResize);
       ro.disconnect();
+      disposePasteBridge();
       try {
-        ws?.close();
+        socket?.close();
       } catch {
         /* ignore */
       }
@@ -460,8 +466,14 @@ export function AgenticTerminal({
     [name, onAttachError],
   );
 
-  // Clipboard images only — text paste stays with xterm, which already does it
-  // right, and intercepting it would break ordinary copy-paste into the agent.
+  // Clipboard images only — pasted TEXT belongs to xterm, which turns it into a
+  // proper bracketed paste the agent's prompt box understands.
+  //
+  // Registered in the CAPTURE phase, and that is load-bearing rather than a
+  // style choice: xterm's own paste handler calls `stopPropagation()`, so a
+  // listener sitting on this container in the normal bubbling phase is never
+  // reached at all and pasting a screenshot silently did nothing. Capture
+  // travels down to the target, so it gets there first.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -473,8 +485,8 @@ export function AgenticTerminal({
       event.preventDefault();
       void attach({ paths: [], files: images });
     };
-    container.addEventListener("paste", onPaste);
-    return () => container.removeEventListener("paste", onPaste);
+    container.addEventListener("paste", onPaste, true);
+    return () => container.removeEventListener("paste", onPaste, true);
   }, [attach, name]);
 
   const chrome = PANE_CHROME[appearance];
