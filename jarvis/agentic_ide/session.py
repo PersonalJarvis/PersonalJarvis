@@ -282,6 +282,12 @@ class Terminal:
     slot: int = 0
     status: Status = "pending"
     pty_id: str | None = None
+    # Set just before this pane's agent is killed on purpose (viewer gone, pane
+    # closed, workspace closed). A killed process reports a failure exit exactly
+    # like a crashed one, so without this the resume self-healing in `attach`
+    # would helpfully restart an agent somebody had just stopped — and it would
+    # then run on unwatched, which is the whole thing the kill prevents.
+    stopping: bool = False
     exit_code: int | None = None
     error: str = ""
     started_at: float | None = None
@@ -670,6 +676,8 @@ class Registry:
         if forget:
             await self._forget()
         manager = self._pty
+        for term in session.terminals:
+            term.stopping = True  # deliberate kills, not crashed resumes
         if manager is not None:
             for term in session.terminals:
                 if term.pty_id:
@@ -757,6 +765,8 @@ class Registry:
                 term.resume = minted
 
         term.transcript.resize(cols, rows)
+        # This pane is wanted again, so the last deliberate kill is history.
+        term.stopping = False
         # Monotonic: a wall clock can jump (NTP, a laptop waking up) and would
         # then mis-measure how long the agent survived.
         spawned_at = time.monotonic()
@@ -772,9 +782,16 @@ class Registry:
             term.pty_id = None
             died_young = time.monotonic() - spawned_at < RESUME_FAILED_WINDOW_S
             # Only a FAILED early exit is blamed on the resume. Quitting an
-            # agent normally exits 0, and restarting a pane the user just closed
-            # would be its own bug.
-            if term.resumed and not recovered and died_young and code != 0:
+            # agent normally exits 0, and a pane we killed ourselves reports a
+            # failure exit that looks identical to a crash — restarting either
+            # of those would be its own bug.
+            if (
+                term.resumed
+                and not term.stopping
+                and not recovered
+                and died_young
+                and code != 0
+            ):
                 recovered = True
                 logger.warning(
                     "Agentic IDE: {} could not continue its previous "
@@ -898,6 +915,10 @@ class Registry:
         term = session.find(key)
         if term is None or not term.pty_id:
             return
+        # Announce the kill before making it, or the exit it causes reads as a
+        # crashed resume and the pane gets helpfully restarted behind the back
+        # of the person who just closed it.
+        term.stopping = True
         self._manager().close(term.pty_id)
         term.pty_id = None
         if term.status == "live":
@@ -1052,6 +1073,7 @@ class Registry:
                 known = ", ".join(t.name for t in session.terminals) or "none"
                 raise SessionError(f"No terminal called {wanted!r}. Running: {known}.")
 
+            term.stopping = True  # a deliberate kill, not a crashed resume
             if term.pty_id and self._pty is not None:
                 try:
                     self._pty.close(term.pty_id)

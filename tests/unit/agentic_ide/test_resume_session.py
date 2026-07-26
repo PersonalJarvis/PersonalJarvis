@@ -151,6 +151,33 @@ async def test_a_clean_exit_after_a_resume_is_not_second_guessed(
     assert registry.session.find("Mika").status == "exited"
 
 
+async def test_closing_a_resumed_pane_does_not_resurrect_it(
+    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """The trap the self-healing walks into if it is not told about the kill.
+
+    Stopping a pane kills its agent, and a killed process reports a failure exit
+    that looks exactly like a crashed resume. Without knowing the kill was
+    deliberate, the recovery would restart an agent the user had just closed —
+    and it would then run on with nobody watching, which is precisely what
+    stopping it prevents.
+    """
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
+    registry.session.find("Mika").resume = ResumeHandle(
+        kind="claude_session", id="fine", captured_at=1.0
+    )
+    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+    assert registry.session.find("Mika").resumed is True
+    spawns_before = len(fake_pty.spawns)
+
+    # The browser tab closed a second after the pane came back.
+    registry.detach("Mika")
+    await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
+
+    assert len(fake_pty.spawns) == spawns_before, "the agent must stay stopped"
+    assert registry.session.find("Mika").status == "exited"
+
+
 async def test_a_late_crash_is_reported_as_a_crash(
     registry: ide.Registry,
     fake_pty: FakePtyManager,
