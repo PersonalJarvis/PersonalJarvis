@@ -3437,6 +3437,17 @@ class DesktopApp:
         from jarvis.core.win32_dpi import ensure_dpi_awareness
 
         ensure_dpi_awareness()
+        # Ask the embedded browser to keep a built accessibility tree. Chromium
+        # otherwise builds it in response to the first query and answers that
+        # query from the unbuilt one, so every dictation app, text expander and
+        # password-manager auto-type saw a window with no fields in it. Must
+        # happen before the WebView exists — the flag is read when the browser
+        # process starts. Costs nothing at boot: it sets one variable.
+        from jarvis.platform.webview_accessibility import (
+            enable_webview_accessibility_tree,
+        )
+
+        enable_webview_accessibility_tree()
         import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
