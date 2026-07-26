@@ -1988,6 +1988,60 @@ async def create_area(body: CreateAreaBody, request: Request) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# The platform export guide
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/platforms",
+    summary="Where each platform keeps its own export, and what comes out",
+)
+async def list_platform_exports(
+    category: str = Query("", description="Limit to one category"),
+    q: str = Query("", description="Free-text search over names and descriptions"),
+) -> dict[str, Any]:
+    """How to get your data OUT of services we ship no connector for.
+
+    Every route named here is the platform's own export feature, available
+    worldwide — this is deliberately not built on any one jurisdiction's right
+    to data portability (charter §3). Nothing is fetched or executed: the
+    answer is a catalog the caller reads, and the export it leads to is then
+    dropped on the export-file source like any other archive.
+    """
+    from jarvis.ultrawiki import platform_guide  # noqa: PLC0415 — lazy (AP-26)
+
+    if q.strip():
+        entries = platform_guide.search_platforms(q)
+    else:
+        entries = platform_guide.list_platforms(category)
+    return {
+        "platforms": [platform_guide.as_dict(entry) for entry in entries],
+        "total": len(entries),
+        "categories": list(platform_guide.CATEGORIES),
+    }
+
+
+@router.get(
+    "/platforms/{platform_id}",
+    summary="Read one platform's export instructions",
+)
+async def get_platform_export(platform_id: str) -> dict[str, Any]:
+    """One catalog entry in full."""
+    from jarvis.ultrawiki import platform_guide  # noqa: PLC0415 — lazy (AP-26)
+
+    entry = platform_guide.get_platform(platform_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No export guide for {platform_id!r}. "
+                "GET /api/ultrawiki/platforms lists every platform covered."
+            ),
+        )
+    return platform_guide.as_dict(entry)
+
+
+# ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 
