@@ -183,6 +183,87 @@ async def test_a_single_addressed_pane_keeps_the_singular_reply(
     assert not _sent_to(registry, second)
 
 
+def _prompt_of(registry: Registry, name: str) -> str:
+    assert registry.session is not None
+    term = registry.session.find(name)
+    assert term is not None
+    return term.last_prompt or ""
+
+
+async def test_a_split_request_gives_each_pane_its_own_brief(
+    manager: BrainManager,
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The maintainer's actual ask: divide the deep dive across the fleet.
+
+    The planner is left unreachable on purpose, so this also proves the feature
+    works for a downloader with no quality-tier key at all (§3) — the
+    deterministic directory split has to carry it.
+    """
+    from jarvis.agentic_ide import work_split
+
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    for sub in ("jarvis", "docs", "tests"):
+        (tmp_path / sub).mkdir()
+    await _open(registry, tmp_path, 2)
+    first, second = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(
+        f"Tell {first} and {second} to analyse the codebase and "
+        "split the work between you"
+    )
+
+    assert reply is not None
+    assert _sent_to(registry, first)
+    assert _sent_to(registry, second)
+    # Different briefs, not the same sentence twice.
+    assert _prompt_of(registry, first) != _prompt_of(registry, second)
+
+
+async def test_without_a_split_request_both_panes_get_the_same_brief(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """"Both of you run the tests" is ONE order, not a division of labour."""
+    await _open(registry, tmp_path, 2)
+    first, second = _names(registry)
+
+    await manager._run_agentic_ide_fast_path(
+        f"Tell {first} and {second} to run the test suite"
+    )
+
+    # The fake composer echoes the instruction, so identical instructions mean
+    # identical prompts apart from the pane's own name.
+    one = _prompt_of(registry, first).replace(first, "X")
+    two = _prompt_of(registry, second).replace(second, "X")
+    assert one == two
+
+
+async def test_a_split_is_never_planned_for_a_single_pane(
+    manager: BrainManager,
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One agent cannot divide work with anyone — planning would be pure latency."""
+    from jarvis.agentic_ide import work_split
+
+    async def explode(*_a: object, **_kw: object) -> object:
+        raise AssertionError("no split may be planned for one pane")
+
+    monkeypatch.setattr(work_split, "split", explode)
+    await _open(registry, tmp_path, 2)
+    first, _second = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(
+        f"Tell {first} to analyse the codebase and split the work between areas"
+    )
+
+    assert reply is not None
+    assert _sent_to(registry, first)
+
+
 async def test_nobody_reachable_is_never_reported_as_sent(
     manager: BrainManager, registry: Registry, tmp_path: Path
 ) -> None:

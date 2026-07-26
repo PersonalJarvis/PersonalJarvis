@@ -580,6 +580,73 @@ def _spoken_count(text: str) -> int:
     return 1
 
 
+#: A count followed by an agent name — "5 Codex", "drei neue Claude Code",
+#: "tres terminales de Codex". The filler between them covers the words people
+#: actually put there: the pane noun itself (Spanish and English both say
+#: "three terminals of Codex" as often as "three Codex terminals") plus the
+#: usual qualifiers. Bounded at two words so the count and the agent cannot
+#: drift into different clauses of the sentence.
+_COUNT_AGENT_RE = re.compile(
+    r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
+    r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|additional|de|del|"  # i18n-allow: input vocab
+    r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
+    r"(?P<agent>claude(?:\s+code)?|codex)\b",
+    re.IGNORECASE,
+)
+
+
+def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
+    """The fleet the utterance describes, group by group.
+
+    Returns an empty tuple when no count/agent pair is spelled out, which is the
+    common single-group case ("three more terminals") and stays with the flat
+    count/agent fields.
+
+    Groups naming the SAME agent are merged: "two Codex and two more Codex" is
+    four Codex panes, and two groups would open them in two batches for no
+    reason.
+    """
+    from .session import MAX_TERMINALS
+
+    found: list[SpawnGroup] = []
+    for match in _COUNT_AGENT_RE.finditer(text):
+        raw = match.group("count").casefold()
+        if raw.isdigit():
+            count = int(raw)
+        else:
+            cleaned = "".join(ch for ch in raw if ch.isalpha())
+            if cleaned not in _NUMBER_WORDS:
+                continue
+            count = _NUMBER_WORDS[cleaned]
+        agent = (
+            "codex" if match.group("agent").casefold().startswith("codex") else "claude"
+        )
+        found.append(SpawnGroup(count=max(1, count), agent=agent))
+
+    if len(found) < 2:
+        # One pair is the plain single-agent request; the flat fields already
+        # describe it and going through groups would only duplicate the parse.
+        return ()
+
+    merged: dict[str, int] = {}
+    for group in found:
+        key = group.agent or ""
+        merged[key] = merged.get(key, 0) + group.count
+
+    # Clamp the TOTAL, not each group: the workspace maximum is a property of
+    # the workspace. Trimming from the back keeps the groups the user named
+    # first intact rather than shrinking all of them into uselessness.
+    out: list[SpawnGroup] = []
+    remaining = MAX_TERMINALS
+    for agent, count in merged.items():
+        if remaining <= 0:
+            break
+        take = min(count, remaining)
+        remaining -= take
+        out.append(SpawnGroup(count=take, agent=agent or None))
+    return tuple(out)
+
+
 def detect_spawn(
     user_text: str, *, names: list[str] | None = None
 ) -> SpawnTerminalsRequest | None:
@@ -603,12 +670,25 @@ def detect_spawn(
     if detect(text, names=names) is not None:
         return None
 
+    groups = _spoken_groups(text)
+    if groups:
+        return SpawnTerminalsRequest(
+            count=sum(g.count for g in groups),
+            agent=groups[0].agent,
+            utterance=text,
+            groups=groups,
+        )
+
     agent_match = _AGENT_RE.search(text)
     agent: str | None = None
     if agent_match is not None:
         agent = "codex" if agent_match.group(1).lower().startswith("codex") else "claude"
+    count = _spoken_count(text)
     return SpawnTerminalsRequest(
-        count=_spoken_count(text), agent=agent, utterance=text
+        count=count,
+        agent=agent,
+        utterance=text,
+        groups=(SpawnGroup(count=count, agent=agent),),
     )
 
 
@@ -711,6 +791,7 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
 __all__ = [
     "KIND_PROMPT",
     "KIND_REPORT",
+    "SpawnGroup",
     "SpawnTerminalsRequest",
     "TerminalIntent",
     "detect",

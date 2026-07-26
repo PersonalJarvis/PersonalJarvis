@@ -228,3 +228,45 @@ def test_detect_still_returns_the_first_match_for_existing_callers() -> None:
 def test_an_unrelated_turn_addresses_nobody() -> None:
     weather = "Wie ist das Wetter heute?"  # i18n-allow: fixture
     assert intent.detect_all(weather, names=MULTI_NAMES) == []
+
+
+# --------------------------------------------------------------------------- #
+# "…and split the work between you"                                            #
+# --------------------------------------------------------------------------- #
+# Addressing several panes does not by itself mean dividing the task: "both of
+# you run the tests" is one order for two agents, and splitting it would be
+# wrong. Only an explicit request to divide the work turns a fan-out into a
+# planned split, because planning costs a provider call and produces DIFFERENT
+# instructions per agent.
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Teilt euch die Analyse auf verschiedene Bereiche auf",  # i18n-allow: fixture
+        "Teile den Deep Dive in Aufgabenbereiche auf",  # i18n-allow: fixture
+        "Split the analysis across areas",
+        "Divide the work between you",
+        "Each of you takes a different part",
+        "Jeder von euch nimmt einen anderen Teil",  # i18n-allow: fixture
+        "Reparte el trabajo entre vosotros",
+    ],
+)
+def test_a_request_to_divide_the_work_is_recognised(utterance: str) -> None:
+    assert intent.wants_split(utterance) is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Sag Iris und Bruno, sie sollen die Tests laufen lassen",  # i18n-allow: fixture
+        "Both of you run the test suite",
+        "Analyse the codebase",
+        # "aufteilen" about the CODE, not about the agents: splitting a file is
+        # ordinary refactoring work and must not trigger a fleet plan.
+        "Teile die grosse Datei in kleinere Module auf",  # i18n-allow: fixture
+        "Split the module into two files",
+    ],
+)
+def test_ordinary_orders_are_not_split_requests(utterance: str) -> None:
+    assert intent.wants_split(utterance) is False

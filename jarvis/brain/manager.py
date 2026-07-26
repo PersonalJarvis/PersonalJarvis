@@ -5939,17 +5939,31 @@ class BrainManager:
                 if not entries:
                     return action_phrase("ide_terminals_nowhere", out_lang)
                 recent = entries[0]
-                agent = request.agent or _recent_agent(recent)
-                session = await registry.start(
-                    recent.path,
-                    [{"agent": agent} for _ in range(request.count)],
-                )
+                fallback_agent = request.agent or _recent_agent(recent)
+                # One spec per pane, group by group: "5 Codex and 3 Claude Code
+                # terminals" is a mixed fleet, and collapsing it to one agent
+                # opened five of the first kind and silently dropped the rest
+                # (maintainer report 2026-07-26).
+                specs = [
+                    {"agent": group.agent or fallback_agent}
+                    for group in request.groups
+                    for _ in range(group.count)
+                ]
+                session = await registry.start(recent.path, specs)
                 created = list(session.terminals)
                 folder_label = recent.name
             else:
-                created, _capped = await registry.add_terminals(
-                    request.count, agent=request.agent
-                )
+                created = []
+                for group in request.groups:
+                    opened, _capped = await registry.add_terminals(
+                        group.count, agent=group.agent
+                    )
+                    created.extend(opened)
+                    if _capped:
+                        # The workspace filled up mid-fleet. Stop rather than
+                        # asking for the next group and getting the same
+                        # refusal — the readback already reports the shortfall.
+                        break
         except SessionError as exc:
             # A full workspace, a missing CLI, an unreadable folder: every one of
             # these already carries a user-facing English sentence, and speaking

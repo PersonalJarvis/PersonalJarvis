@@ -115,6 +115,29 @@ async def test_a_spoken_request_opens_panes_and_names_them(
     assert bus.published[1].section == "agentic-ide"
 
 
+async def test_a_mixed_fleet_opens_both_kinds_of_agent(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    """The maintainer's ask: "5 Codex and 3 Claudes in one task" (2026-07-26).
+
+    The detector used to read the first number and the first agent, so this
+    sentence opened five Codex panes and dropped the three Claude ones without
+    telling anyone.
+    """
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1, agent="claude")
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path(
+        "Open 5 Codex terminals and 3 Claude Code terminals"
+    )
+
+    assert reply is not None
+    assert registry.session is not None
+    opened = [t.agent for t in registry.session.terminals[1:]]
+    assert opened.count("codex") == 5
+    assert opened.count("claude") == 3
+
+
 async def test_a_named_agent_is_honoured_over_the_inherited_one(
     manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
 ) -> None:

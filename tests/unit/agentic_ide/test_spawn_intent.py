@@ -131,6 +131,78 @@ def test_workspace_owns_a_terminal_spawn_even_though_it_names_the_vehicle() -> N
     assert intent.owns_turn("Spawne einen Agenten", names=NAMES) is False  # i18n-allow: spoken input under test
 
 
+# --------------------------------------------------------------------------- #
+# Mixed fleets: "five Codex and three Claude Code terminals"                   #
+# --------------------------------------------------------------------------- #
+# The maintainer's ask on 2026-07-26: "you have to be able to manage 5 Codex and
+# 3 Claudes in one task". The detector read the FIRST number and the FIRST agent
+# it saw, so that sentence opened five Codex panes and silently dropped the
+# three Claude ones — a partial execution nobody was told about.
+
+
+def test_a_mixed_fleet_keeps_both_groups() -> None:
+    found = intent.detect_spawn(
+        "Mach mir 5 Codex Terminals und 3 Claude Code Terminals auf",  # i18n-allow: fixture
+        names=NAMES,
+    )
+    assert found is not None
+    assert [(g.count, g.agent) for g in found.groups] == [(5, "codex"), (3, "claude")]
+    # The flat fields stay meaningful: total panes, first group's agent.
+    assert found.count == 8
+
+
+def test_a_mixed_fleet_works_in_english_and_spanish() -> None:
+    english = intent.detect_spawn(
+        "Open two Codex terminals and four Claude Code terminals", names=NAMES
+    )
+    assert english is not None
+    assert [(g.count, g.agent) for g in english.groups] == [(2, "codex"), (4, "claude")]
+
+    spanish = intent.detect_spawn(
+        "Abre tres terminales de Codex y dos de Claude", names=NAMES
+    )
+    assert spanish is not None
+    assert [(g.count, g.agent) for g in spanish.groups] == [(3, "codex"), (2, "claude")]
+
+
+def test_a_single_agent_request_is_still_one_group() -> None:
+    found = intent.detect_spawn(
+        "Spawne fünf neue Claude Code Terminals", names=NAMES  # i18n-allow: spoken input under test
+    )
+    assert found is not None
+    assert [(g.count, g.agent) for g in found.groups] == [(5, "claude")]
+    assert found.count == 5
+    assert found.agent == "claude"
+
+
+def test_an_unnamed_agent_stays_unnamed_so_the_panes_inherit() -> None:
+    """"Three more terminals" must not be turned into a Claude request."""
+    found = intent.detect_spawn("Open three more terminals", names=NAMES)
+    assert found is not None
+    assert [(g.count, g.agent) for g in found.groups] == [(3, None)]
+    assert found.agent is None
+
+
+def test_the_same_agent_named_twice_is_merged() -> None:
+    """"Two Codex and two more Codex" is four Codex panes, not two groups."""
+    found = intent.detect_spawn(
+        "Open two Codex terminals and two more Codex terminals", names=NAMES
+    )
+    assert found is not None
+    assert [(g.count, g.agent) for g in found.groups] == [(4, "codex")]
+    assert found.count == 4
+
+
+def test_the_total_is_capped_at_the_workspace_maximum() -> None:
+    found = intent.detect_spawn(
+        f"Open {MAX_TERMINALS} Codex terminals and 5 Claude Code terminals",
+        names=NAMES,
+    )
+    assert found is not None
+    assert found.count <= MAX_TERMINALS
+    assert sum(g.count for g in found.groups) == found.count
+
+
 def test_an_addressed_terminal_still_wins_over_the_spawn_grammar() -> None:
     """Telling a named pane to open a terminal is a prompt FOR that pane.
 
