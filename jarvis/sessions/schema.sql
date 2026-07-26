@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     id                 TEXT PRIMARY KEY,         -- session_id (UUIDv4 string)
     started_ms         INTEGER NOT NULL,         -- wake timestamp
     ended_ms           INTEGER,                  -- NULL while the session is active
-    hangup_reason      TEXT,                     -- voice_pattern|hotkey|client_stop|ws_closed|realtime_fallback|idle_timeout|turn_complete|shutdown|error
+    hangup_reason      TEXT,                     -- voice_pattern|hotkey|client_stop|ws_closed|realtime_fallback|desktop_fallback|idle_timeout|turn_complete|shutdown|error
     turn_count         INTEGER NOT NULL DEFAULT 0,
     total_cost_usd     REAL NOT NULL DEFAULT 0.0,
     total_tokens_in    INTEGER NOT NULL DEFAULT 0,

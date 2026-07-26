@@ -1991,6 +1991,7 @@
     "hangup_client_stop": "Gestoppt",
     "hangup_ws_closed": "Browser geschlossen",
     "hangup_realtime_fallback": "Auf klassischen Modus gewechselt",
+    "hangup_desktop_fallback": "Auf klassischen Modus gewechselt",
     "hangup_idle_timeout": "Timeout",
     "hangup_shutdown": "Shutdown"
   },

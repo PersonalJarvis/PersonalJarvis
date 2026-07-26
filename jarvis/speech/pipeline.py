@@ -79,6 +79,7 @@ from jarvis.plugins.wake.openwakeword_provider import (
     OpenWakeWordProvider,
 )
 from jarvis.sessions.constants import (
+    HANGUP_DESKTOP_FALLBACK,
     HANGUP_ERROR,
     HANGUP_HOTKEY,
     HANGUP_IDLE_TIMEOUT,
@@ -6627,7 +6628,11 @@ class SpeechPipeline:
         preroll: deque[bytes] = deque()
         preroll_bytes = 0
         wait_tasks: set[asyncio.Task[Any]] = set()
-        reason = "desktop_fallback"
+        # Default: this session ends by handing the SAME call to the classic
+        # pipeline. Every genuine hangup path below overwrites it. The marker
+        # keeps ``RealtimeVoiceSession.end`` from announcing a session end that
+        # never happened — the pipeline's own teardown owns that.
+        reason = HANGUP_DESKTOP_FALLBACK
         session: Any | None = None
         microphone_task: asyncio.Task[Any] | None = None
         try:

@@ -44,6 +44,7 @@ from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
+    HANGUP_DESKTOP_FALLBACK,
     HANGUP_VOICE_PATTERN,
     SPOKEN_KIND_PROGRESS,
     SPOKEN_KIND_REPLY,
@@ -5348,8 +5349,32 @@ class RealtimeVoiceSession:
         # the second event with the same session_id as a natural no-op, and
         # the redundancy keeps the wiki completeness sweep alive even when
         # one layer misses its teardown.
-        if self._bus is not None and (
-            self._surface != "browser" or self._browser_session_started
+        #
+        # ONE exception: a desktop engine handover is not an end at all. When
+        # no realtime provider can open a session (or the duplex stream dies
+        # before a turn is committed), the classic pipeline picks the SAME call
+        # up under the SAME session_id and publishes the one real end when it
+        # actually finishes. Announcing an end here told every subscriber that
+        # tracks session boundaries the call was over: the orb bridge armed its
+        # post-hangup latch and dropped every later LISTENING/THINKING/SPEAKING
+        # of the live call as a stray, so the JarvisBar froze mid-call until the
+        # next wake word, and the recorder closed the row with turns=0 (live
+        # 2026-07-26 — both providers out of credit, so EVERY session fell back
+        # and the bar was dead for the whole conversation). The browser keeps
+        # its fallback end: nothing else would ever close its row.
+        handover_to_classic = (
+            reason == HANGUP_DESKTOP_FALLBACK and self._surface != "browser"
+        )
+        if handover_to_classic:
+            log.info(
+                "realtime[%s] handing this call to the classic pipeline — "
+                "no session end published (the pipeline owns it).",
+                self.session_id,
+            )
+        if (
+            self._bus is not None
+            and not handover_to_classic
+            and (self._surface != "browser" or self._browser_session_started)
         ):
             try:
                 from jarvis.core.events import VoiceSessionEnded

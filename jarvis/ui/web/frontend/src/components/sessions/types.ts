@@ -13,6 +13,7 @@ export const KNOWN_HANGUP_REASONS = [
   "client_stop",
   "ws_closed",
   "realtime_fallback",
+  "desktop_fallback",
   "idle_timeout",
   "shutdown",
   "error",

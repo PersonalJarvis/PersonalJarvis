@@ -1991,6 +1991,7 @@
     "hangup_client_stop": "Detenido",
     "hangup_ws_closed": "Navegador cerrado",
     "hangup_realtime_fallback": "Cambio al modo clásico",
+    "hangup_desktop_fallback": "Cambio al modo clásico",
     "hangup_idle_timeout": "Tiempo de espera",
     "hangup_shutdown": "Apagado"
   },

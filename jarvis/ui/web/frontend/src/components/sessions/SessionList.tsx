@@ -151,6 +151,8 @@ function hangupLabel(reason: string): string {
       return translate("session_list.hangup_ws_closed");
     case "realtime_fallback":
       return translate("session_list.hangup_realtime_fallback");
+    case "desktop_fallback":
+      return translate("session_list.hangup_desktop_fallback");
     case "idle_timeout":
       return translate("session_list.hangup_idle_timeout");
     case "shutdown":

@@ -37,6 +37,7 @@ KNOWN_HANGUP_REASONS: frozenset[str] = frozenset(
         "client_stop",  # browser client explicitly stopped microphone audio
         "ws_closed",  # browser voice WebSocket closed
         "realtime_fallback",  # browser switched to the classic voice pipeline
+        "desktop_fallback",  # legacy rows: desktop handover to classic voice
         "idle_timeout",  # auto-hangup after inactivity
         "shutdown",  # app shutdown ends the running session
         "error",  # pipeline crash
