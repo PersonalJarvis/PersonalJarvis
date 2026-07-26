@@ -10,6 +10,7 @@ Driven through the route functions against a real ``Registry`` (with a fake PTY
 pool), so a change that satisfies the registry but forgets the route — or the
 other way round — still fails here.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -235,7 +236,7 @@ async def test_state_carries_the_bar_and_the_front_workspace_together(
     assert state["max_workspaces"] == session_mod.MAX_WORKSPACES
 
 
-async def test_opening_a_folder_that_is_already_open_switches_to_it(
+async def test_opening_the_same_folder_adds_a_distinct_tab(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     first = await _open(registry, tmp_path / "alpha")
@@ -245,7 +246,32 @@ async def test_opening_a_folder_that_is_already_open_switches_to_it(
 
     again = await _open(registry, tmp_path / "alpha")
 
-    assert again["session"]["id"] == first["session"]["id"]
+    assert again["session"]["id"] != first["session"]["id"]
     assert pane.pty_id not in fake_pty.closed, "the running agent must survive"
-    assert len(again["state"]["workspaces"]) == 2, "no duplicate tab"
-    assert again["state"]["active_id"] == first["session"]["id"]
+    assert len(again["state"]["workspaces"]) == 3
+    assert [space["name"] for space in again["state"]["workspaces"]] == [
+        "alpha",
+        "beta",
+        "alpha 2",
+    ]
+    assert again["state"]["active_id"] == again["session"]["id"]
+
+
+async def test_renaming_a_workspace_changes_only_its_tab(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    opened = await _open(registry, tmp_path / "alpha")
+    workspace_id = opened["session"]["id"]
+    pane = registry.session.terminals[0]
+    await registry.attach(pane.name, 80, 24, _noop, _noop_exit)
+    pty_id = pane.pty_id
+
+    result = await routes.rename_workspace(
+        workspace_id,
+        routes.RenameWorkspaceRequest(name="Backend review"),
+    )
+
+    assert result["workspace"]["name"] == "Backend review"
+    assert result["state"]["workspaces"][0]["name"] == "Backend review"
+    assert registry.session.folder == str(tmp_path / "alpha")
+    assert pty_id not in fake_pty.closed

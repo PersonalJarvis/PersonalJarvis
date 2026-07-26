@@ -5,6 +5,7 @@ channel into a running process that voice can reach, so the contract "text plus
 Enter, never a control character" has to be pinned — otherwise a spoken sentence
 could interrupt, kill, or drive the keyboard shortcuts of a coding agent.
 """
+
 from __future__ import annotations
 
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.agentic_ide import recents
+from jarvis.agentic_ide import recents, resume_store
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import Registry, SessionError, sanitize_prompt
 from tests.fakes.fake_pty_manager import FakePtyManager
@@ -154,24 +155,40 @@ async def test_missing_agent_binary_is_reported_in_plain_language(
         await registry.start(str(tmp_path), [{"agent": "claude"}])
 
 
-async def test_opening_the_same_folder_again_switches_to_it(
+async def test_opening_the_same_folder_again_creates_another_workspace(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """A folder that is already open is brought forward, not opened twice.
-
-    Two sets of coding agents editing one tree is almost always a misclick, and
-    the workspace that is already there holds the running conversations — so
-    reopening must not stop them to start a second set.
-    """
+    """A workspace is a pane group, so one folder can back several of them."""
     first = await _open(registry, tmp_path, [{"agent": "claude"}])
     await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
 
     again = await _open(registry, tmp_path, [{"agent": "codex"}])
 
-    assert again.id == first.id, "the same folder must not open a second workspace"
+    assert again.id != first.id
     assert live_id not in fake_pty.closed, "the running agent must survive"
-    assert len(registry.sessions) == 1
+    assert len(registry.sessions) == 2
+    assert [space.name for space in registry.sessions] == [
+        tmp_path.name,
+        f"{tmp_path.name} 2",
+    ]
+
+
+async def test_workspace_names_are_validated_and_persisted(
+    registry: Registry, tmp_path: Path
+) -> None:
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    renamed = await registry.rename(session.id, "  API   review  ")
+
+    assert renamed.name == "API review"
+    assert registry.workspaces()[0]["name"] == "API review"
+    saved = resume_store.load()
+    assert saved is not None
+    assert saved.workspaces[0].name == "API review"
+
+    with pytest.raises(SessionError, match="Give the workspace a name"):
+        await registry.rename(session.id, "   ")
 
 
 async def test_a_second_folder_opens_beside_the_first(
