@@ -154,14 +154,141 @@ async def test_missing_agent_binary_is_reported_in_plain_language(
         await registry.start(str(tmp_path), [{"agent": "claude"}])
 
 
-async def test_starting_again_closes_the_previous_session(
+async def test_opening_the_same_folder_again_switches_to_it(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    await _open(registry, tmp_path, [{"agent": "claude"}])
+    """A folder that is already open is brought forward, not opened twice.
+
+    Two sets of coding agents editing one tree is almost always a misclick, and
+    the workspace that is already there holds the running conversations — so
+    reopening must not stop them to start a second set.
+    """
+    first = await _open(registry, tmp_path, [{"agent": "claude"}])
     await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
-    await _open(registry, tmp_path, [{"agent": "codex"}])
-    assert live_id in fake_pty.closed, "the old PTY must not survive a restart"
+
+    again = await _open(registry, tmp_path, [{"agent": "codex"}])
+
+    assert again.id == first.id, "the same folder must not open a second workspace"
+    assert live_id not in fake_pty.closed, "the running agent must survive"
+    assert len(registry.sessions) == 1
+
+
+async def test_a_second_folder_opens_beside_the_first(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Opening another folder ADDS a workspace; the first keeps its agents."""
+    other = tmp_path / "second"
+    other.mkdir()
+    first = await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
+    live_id = registry.session.terminals[0].pty_id
+
+    second = await _open(registry, other, [{"agent": "claude"}])
+
+    assert second.id != first.id
+    assert live_id not in fake_pty.closed, "the first workspace must keep running"
+    assert [s.id for s in registry.sessions] == [first.id, second.id]
+    assert registry.active_id == second.id, "the new workspace comes to the front"
+
+
+async def test_call_signs_do_not_repeat_across_workspaces(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A name addresses exactly one pane, however many workspaces are open.
+
+    "Tell Mika to run the tests" has to be an instruction, not a question about
+    which tab was meant.
+    """
+    other = tmp_path / "second"
+    other.mkdir()
+    first = await _open(registry, tmp_path, [{"agent": "claude"}, {"agent": "claude"}])
+    second = await _open(registry, other, [{"agent": "claude"}])
+
+    names = [t.name for t in first.terminals] + [t.name for t in second.terminals]
+    assert len(set(names)) == len(names), f"call-signs collided: {names}"
+
+
+async def test_switching_workspaces_leaves_every_agent_running(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """The whole point of several workspaces: looking away is not closing."""
+    other = tmp_path / "second"
+    other.mkdir()
+    first = await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach(first.terminals[0].name, 80, 24, _noop_output, _noop_exit)
+    first_pty = first.terminals[0].pty_id
+
+    second = await _open(registry, other, [{"agent": "claude"}])
+    await registry.attach(second.terminals[0].name, 80, 24, _noop_output, _noop_exit)
+    # The pane of the workspace that went to the back lets go of its viewer.
+    registry.detach(first.terminals[0].key, first.id)
+
+    assert first_pty not in fake_pty.closed, "a backgrounded agent must keep running"
+    assert first.terminals[0].pty_id == first_pty
+    assert first.terminals[0].status == "live"
+
+
+async def test_coming_back_rejoins_the_running_agent_and_replays_its_screen(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Re-attaching must not respawn — and must not come back to a blank pane."""
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    original_pty = term.pty_id
+    spawns_before = len(fake_pty.spawns)
+
+    # The agent prints while nobody is watching.
+    await fake_pty.emit(original_pty, "\x1b[32mbuilding…\x1b[0m")
+    registry.detach(term.key, session.id)
+
+    seen: list[str] = []
+
+    async def _capture(text: str) -> None:
+        seen.append(text)
+
+    back = await registry.attach(term.name, 100, 30, _capture, _noop_exit)
+
+    assert back.pty_id == original_pty, "the same agent process must be re-joined"
+    assert len(fake_pty.spawns) == spawns_before, "nothing may be respawned"
+    assert back.reattached is True
+    assert "building…" in "".join(seen), "the screen must come back with the pane"
+
+
+async def test_closing_a_workspace_stops_only_its_own_agents(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    other = tmp_path / "second"
+    other.mkdir()
+    first = await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach(first.terminals[0].name, 80, 24, _noop_output, _noop_exit)
+    first_pty = first.terminals[0].pty_id
+
+    second = await _open(registry, other, [{"agent": "claude"}])
+    await registry.attach(second.terminals[0].name, 80, 24, _noop_output, _noop_exit)
+    second_pty = second.terminals[0].pty_id
+
+    await registry.end(second.id)
+
+    assert second_pty in fake_pty.closed, "closing must stop that workspace's agents"
+    assert first_pty not in fake_pty.closed, "and only that workspace's"
+    assert [s.id for s in registry.sessions] == [first.id]
+    assert registry.active_id == first.id, "the survivor takes the front"
+
+
+async def test_the_workspace_cap_is_refused_in_plain_language(
+    registry: Registry, tmp_path: Path
+) -> None:
+    for index in range(session_mod.MAX_WORKSPACES):
+        folder = tmp_path / f"ws{index}"
+        folder.mkdir()
+        await _open(registry, folder, [{"agent": "claude"}])
+
+    one_too_many = tmp_path / "overflow"
+    one_too_many.mkdir()
+    with pytest.raises(SessionError, match="already open"):
+        await _open(registry, one_too_many, [{"agent": "claude"}])
 
 
 # --------------------------------------------------------------------- attach

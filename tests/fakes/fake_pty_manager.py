@@ -33,6 +33,9 @@ class FakePtyManager:
     spawn_error: str | None = None
     _live: set[str] = field(default_factory=set)
     _counter: int = 0
+    # Callbacks per live terminal, so a test can make an agent SPEAK (see
+    # ``emit``) rather than only observe what was typed at it.
+    _callbacks: dict[str, tuple[Any, Any]] = field(default_factory=dict)
 
     async def spawn(
         self,
@@ -60,6 +63,7 @@ class FakePtyManager:
             }
         )
         self._live.add(terminal_id)
+        self._callbacks[terminal_id] = (on_output, on_closed)
         return FakePtySession(terminal_id=terminal_id, shell_id=shell_id)
 
     def write(self, terminal_id: str, data: str) -> bool:
@@ -76,6 +80,7 @@ class FakePtyManager:
 
     def close(self, terminal_id: str) -> bool:
         self.closed.append(terminal_id)
+        self._callbacks.pop(terminal_id, None)
         return self._live.discard(terminal_id) is None and True
 
     def has(self, terminal_id: str) -> bool:
@@ -90,6 +95,26 @@ class FakePtyManager:
     def typed(self) -> list[str]:
         """Everything written, in order (handy for asserting one prompt)."""
         return [data for _tid, data in self.writes]
+
+    async def emit(self, terminal_id: str | None, text: str) -> None:
+        """Make the agent in this terminal print ``text``.
+
+        The real reader thread calls the registry's output callback; this is the
+        same call, so everything downstream of it — transcript, replay buffer,
+        the viewer — is exercised exactly as it is in production.
+        """
+        callbacks = self._callbacks.get(terminal_id or "")
+        if callbacks is None:
+            raise AssertionError(f"no live terminal {terminal_id!r} to emit from")
+        await callbacks[0](terminal_id, text)
+
+    async def die(self, terminal_id: str | None, code: int = 1) -> None:
+        """Make the agent in this terminal exit with ``code``."""
+        callbacks = self._callbacks.pop(terminal_id or "", None)
+        if callbacks is None:
+            raise AssertionError(f"no live terminal {terminal_id!r} to kill")
+        self._live.discard(terminal_id or "")
+        await callbacks[1](terminal_id, code)
 
 
 __all__ = ["FakePtyManager", "FakePtySession"]

@@ -29,6 +29,12 @@ async def test_open_route_remembers_the_user_selected_folder(
             assert len(terminals) == 3
             return session
 
+        def state(self) -> dict:
+            # Opening answers with the workspace bar too, so the client that
+            # just added a workspace does not need a second round-trip to
+            # discover it is there.
+            return {"active": True, "workspaces": [], "active_id": "ide_fake"}
+
     remembered: list[tuple[str, int, dict[str, int]]] = []
     monkeypatch.setattr(routes, "get_registry", lambda: FakeRegistry())
     monkeypatch.setattr(

@@ -6,11 +6,16 @@ routes, so a pane's behaviour and a spoken command can never drift apart.
 
 Endpoints (prefix ``/api/agentic-ide``):
 
-* ``GET    /state``                      → current session (or none) + limits
+* ``GET    /state``                      → front workspace + every open one + limits
 * ``GET    /agents``                     → Claude Code / Codex install status
 * ``GET    /folders``                    → browse folders (no path = start points)
-* ``POST   /session``                    → open a workspace (folder + terminals)
-* ``DELETE /session``                    → close it and stop every agent
+* ``GET    /folders/native``             → can this machine show the OS folder window?
+* ``POST   /folders/native``             → open it and return what was picked
+* ``GET    /workspaces``                 → every open workspace, in tab order
+* ``PUT    /workspaces/active``          → bring one to the front (null = wizard)
+* ``DELETE /workspaces/{workspace_id}``  → close that one and stop its agents
+* ``POST   /session``                    → open ANOTHER workspace (folder + terminals)
+* ``DELETE /session``                    → close the front one and stop every agent
 * ``GET    /resume``                     → the last workspace, offered back
 * ``POST   /resume``                     → reopen it (same panes, same places)
 * ``DELETE /resume``                     → forget it and start fresh
@@ -44,7 +49,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import recents, resume_store
+from jarvis.agentic_ide import native_picker, recents, resume_store
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
@@ -53,17 +58,21 @@ from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
     MAX_PROMPT_CHARS,
     MAX_TERMINALS,
+    MAX_WORKSPACES,
     SessionError,
     agent_argv,
     get_registry,
     terminals_added_event,
 )
 
-from .surface_security import credentials_valid
+from .surface_security import credentials_valid, is_loopback_request
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
+
+# One system folder window at a time — see ``open_native_picker``.
+_native_picker_lock = asyncio.Lock()
 
 
 # --------------------------------------------------------------------------- #
@@ -126,6 +135,42 @@ class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
     )
+
+
+class ActivateWorkspaceRequest(BaseModel):
+    """Which workspace should be on screen."""
+
+    id: str | None = Field(
+        default=None,
+        description=(
+            "Workspace to bring to the front. Null means no workspace is shown "
+            "— what the UI is in while the wizard opens an additional one. "
+            "Nothing is closed either way."
+        ),
+    )
+
+
+class WorkspaceCard(BaseModel):
+    """One open workspace, as the workspace bar shows it."""
+
+    id: str
+    folder: str
+    name: str
+    branch: str | None = None
+    terminals: int
+    live_terminals: int = Field(
+        description="Panes whose agent is running right now, not just placed."
+    )
+    focus_mode: bool
+    created_at: float
+    last_active_at: float
+    active: bool
+
+
+class WorkspacesResponse(BaseModel):
+    workspaces: list[WorkspaceCard]
+    active_id: str | None = None
+    max_workspaces: int
 
 
 class PromptRequest(BaseModel):
@@ -198,6 +243,33 @@ class RecentItem(BaseModel):
 class RecentsResponse(BaseModel):
     device_name: str
     recents: list[RecentItem]
+
+
+class NativePickerSupport(BaseModel):
+    available: bool = Field(
+        description="Whether this machine can show the operating system's folder window."
+    )
+    backend: str | None = Field(
+        default=None, description="Which program would draw it (powershell, osascript, zenity, …)."
+    )
+    reason: str | None = Field(
+        default=None, description="Plain-language explanation when it is not available."
+    )
+
+
+class NativePickRequest(BaseModel):
+    start: str | None = Field(
+        default=None,
+        description="Folder the window should open at; ignored when it no longer exists.",
+    )
+
+
+class NativePickResponse(BaseModel):
+    path: str | None = Field(default=None, description="The chosen folder, if one was chosen.")
+    cancelled: bool = Field(
+        default=False, description="True when the user closed the window without choosing."
+    )
+    error: str | None = Field(default=None, description="Why no folder came back.")
 
 
 class ResolveRequest(BaseModel):
@@ -338,6 +410,73 @@ async def search(q: str, limit: int = 40) -> SearchResponse:
     )
 
 
+@router.get(
+    "/folders/native",
+    response_model=NativePickerSupport,
+    summary="Can this machine show the system folder window?",
+)
+async def native_picker_support(request: Request) -> NativePickerSupport:
+    """Whether ``POST /folders/native`` would actually put a window on a screen.
+
+    Asked before the button is offered, because a button that cannot work is
+    worse than no button. Two independent conditions, and the caller is told
+    which one failed:
+
+    * the machine has a desktop session and a program that can draw a dialog,
+    * the request came from this machine — the window opens where the SERVER
+      runs, so from another device it would appear on a screen nobody is
+      looking at and quietly wait there.
+    """
+    if not is_loopback_request(request.scope):
+        return NativePickerSupport(
+            available=False,
+            reason=(
+                "The folder window would open on the computer running Jarvis, not on "
+                "this one. Browse or paste a path instead."
+            ),
+        )
+    probe = await asyncio.to_thread(native_picker.support)
+    return NativePickerSupport(
+        available=probe.available, backend=probe.backend, reason=probe.reason
+    )
+
+
+@router.post(
+    "/folders/native",
+    response_model=NativePickResponse,
+    summary="Open the system folder window",
+)
+async def open_native_picker(request: Request, req: NativePickRequest) -> NativePickResponse:
+    """Show the operating system's own folder dialog and return what was picked.
+
+    Cancelling is a normal outcome, not an error — the response says
+    ``cancelled`` and the wizard simply keeps whatever was selected before.
+
+    Only one window at a time: the dialog is modal to the person, not to the
+    process, so a second request while one is open would stack invisible windows
+    on the desktop and leave the user clicking through dialogs they never asked
+    for. The second caller is told to finish the first one (409).
+    """
+    if not is_loopback_request(request.scope):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "The folder window can only be opened from the computer running Jarvis. "
+                "Browse to the folder or paste its path instead."
+            ),
+        )
+    if _native_picker_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="A folder window is already open — finish that one first.",
+        )
+    async with _native_picker_lock:
+        result = await asyncio.to_thread(native_picker.choose_folder, start=req.start)
+    return NativePickResponse(
+        path=result.path, cancelled=result.cancelled, error=result.error
+    )
+
+
 @router.get("/recents", response_model=RecentsResponse, summary="Recently opened workspaces")
 async def get_recents() -> RecentsResponse:
     """Workspaces opened before, newest first, with their previous layout."""
@@ -428,9 +567,59 @@ def _unwrap_file_uri(value: str) -> str:
     return path
 
 
+@router.get(
+    "/workspaces",
+    response_model=WorkspacesResponse,
+    summary="Open Agentic-IDE workspaces",
+)
+async def get_workspaces() -> WorkspacesResponse:
+    """Every open workspace, in tab order, with the front one marked.
+
+    Several can be open at once — a workspace is a folder plus its running
+    coding agents, and switching between them neither stops nor restarts
+    anything. This is the list the workspace bar renders; the full contents of
+    the front one come from ``GET /state``.
+    """
+    registry = get_registry()
+    return WorkspacesResponse(
+        workspaces=[WorkspaceCard(**card) for card in registry.workspaces()],
+        active_id=registry.active_id,
+        max_workspaces=MAX_WORKSPACES,
+    )
+
+
+@router.put("/workspaces/active", summary="Switch to another workspace")
+async def activate_workspace(req: ActivateWorkspaceRequest) -> dict:
+    """Bring one workspace to the front, or clear the front entirely.
+
+    Nothing starts, stops or restarts: the agents in every open workspace keep
+    working, and the one that comes forward reconnects its panes to the
+    processes that were running all along.
+
+    ``id: null`` means "show no workspace" — the state the UI is in while the
+    wizard opens an ADDITIONAL one. It is not a close, and the workspaces stay
+    in the bar.
+
+    ``404`` when that workspace is not open (any more).
+    """
+    try:
+        session = await get_registry().activate(req.id)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "active_id": session.id if session else None,
+        "state": get_registry().state(),
+    }
+
+
 @router.post("/session", summary="Open an Agentic-IDE workspace")
 async def start_session(req: StartSessionRequest) -> dict:
-    """Open ``folder`` with one named terminal per requested agent.
+    """Open ``folder`` as another workspace, with one terminal per request entry.
+
+    Whatever is already open STAYS open with its agents running — this adds a
+    workspace and brings it to the front. Opening a folder that already has one
+    switches to it instead of starting a second set of agents on the same tree.
 
     The recent-folder history is updated here, at the user-facing open action,
     rather than inside ``Registry.start``. Internal callers (especially unit
@@ -456,7 +645,7 @@ async def start_session(req: StartSessionRequest) -> dict:
         )
     except Exception:  # noqa: BLE001 - history must never block opening a folder
         log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
-    return {"ok": True, "session": session.to_dict()}
+    return {"ok": True, "session": session.to_dict(), "state": get_registry().state()}
 
 
 @router.delete(
@@ -465,9 +654,36 @@ async def start_session(req: StartSessionRequest) -> dict:
     openapi_extra={"x-jarvis-dangerous": True},
 )
 async def end_session() -> dict:
-    """Close the workspace and stop every agent running in it."""
+    """Close the workspace on screen and stop every agent running in it.
+
+    Other open workspaces are untouched; the most recently used of them takes
+    the front. Use ``DELETE /workspaces/{workspace_id}`` to close a specific
+    one instead of whichever is showing.
+    """
     closed = await get_registry().end()
-    return {"ok": True, "closed": closed}
+    return {"ok": True, "closed": closed, "state": get_registry().state()}
+
+
+@router.delete(
+    "/workspaces/{workspace_id}",
+    summary="Close one Agentic-IDE workspace",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def close_workspace(workspace_id: str) -> dict:
+    """Close the workspace with this id and stop every agent inside it.
+
+    The only action that stops an agent on the user's behalf. Switching away
+    from a workspace, reloading the page or closing the browser do NOT — an
+    agent runs until its workspace is closed, which is what makes the panes
+    still be there (still working) when you come back.
+
+    ``404`` when no workspace has that id.
+    """
+    registry = get_registry()
+    if registry.get(workspace_id) is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    await registry.end(workspace_id)
+    return {"ok": True, "closed": workspace_id, "state": registry.state()}
 
 
 async def _installed_agents() -> set[str]:
@@ -719,17 +935,22 @@ async def terminal_attach(
     from jarvis.agentic_ide import drops
 
     registry = get_registry()
-    session = registry.session
-    if session is None:
-        raise HTTPException(
-            status_code=409, detail="No Agentic-IDE session is running."
-        )
-    term = session.find(name)
-    if term is None:
-        known = ", ".join(t.name for t in session.terminals) or "none"
+    # Resolved across every open workspace, not just the front one: call-signs
+    # are unique across them, and a file dropped on a pane belongs to THAT
+    # pane's folder — which is also where a copied file has to land.
+    found = registry.find_terminal(name)
+    if found is None:
+        if not registry.sessions:
+            raise HTTPException(
+                status_code=409, detail="No Agentic-IDE session is running."
+            )
+        known = ", ".join(
+            t.name for s in registry.sessions for t in s.terminals
+        ) or "none"
         raise HTTPException(
             status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
         )
+    session, term = found
 
     references: list[str] = []
     stored_names: list[str] = []
@@ -832,8 +1053,7 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
     can show it for approval first.
     """
     registry = get_registry()
-    session = registry.session
-    if session is None:
+    if not registry.sessions:
         raise HTTPException(
             status_code=409, detail="No Agentic-IDE session is running."
         )
@@ -844,13 +1064,20 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
     if req.compose:
         from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
 
-        term_for_compose = session.find(name)
-        if term_for_compose is None:
-            known = ", ".join(t.name for t in session.terminals) or "none"
+        # The pane decides which workspace composes the prompt. Composition
+        # reads the codebase to attach `@file` references, and taking those
+        # from the front workspace while sending to a pane in another one would
+        # point the agent at files that are not in its tree.
+        found = registry.find_terminal(name)
+        if found is None:
+            known = ", ".join(
+                t.name for s in registry.sessions for t in s.terminals
+            ) or "none"
             raise HTTPException(
                 status_code=404,
                 detail=f"No terminal called {name!r}. Running: {known}.",
             )
+        session, term_for_compose = found
         result = await compose_prompt(
             req.prompt,
             session=session,
@@ -913,6 +1140,13 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     Wire protocol (JSON both ways) — client: ``{t:"i",d}`` input,
     ``{t:"r",cols,rows}`` resize; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
     ``{t:"exit",code}``, ``{t:"error",message}``.
+
+    The optional ``workspace`` query parameter names the workspace this pane
+    belongs to. It matters because several can be open and the front one changes
+    while sockets are alive: without it a keystroke arriving mid-switch would be
+    resolved against whichever workspace happens to be showing, and could land
+    in a pane in a different folder. Omitted, the front workspace answers (the
+    single-workspace case, and what older clients send).
     """
     await ws.accept()
     if not credentials_valid(ws.scope):
@@ -922,6 +1156,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     qp = ws.query_params
     cols = _safe_int(qp.get("cols"), 80)
     rows = _safe_int(qp.get("rows"), 24)
+    workspace_id = (qp.get("workspace") or "").strip() or None
 
     registry = get_registry()
     send_lock = asyncio.Lock()
@@ -940,8 +1175,18 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             except Exception:  # noqa: BLE001, S110 - viewer gone
                 pass
 
+    # Pin the workspace ONCE, before anything is attached. A client that sent no
+    # id means "the one showing right now", and that has to be resolved here
+    # rather than on every later message: the front workspace can change while
+    # this socket is open, and a keystroke must keep going to the pane it was
+    # typed into.
+    pinned = registry.get(workspace_id)
+    pane_workspace = pinned.id if pinned is not None else None
+
     try:
-        term = await registry.attach(name, cols, rows, on_output, on_exit)
+        term = await registry.attach(
+            name, cols, rows, on_output, on_exit, workspace_id=pane_workspace
+        )
     except SessionError as exc:
         await ws.send_json({"t": "error", "message": str(exc)})
         await ws.close(code=4404, reason="attach failed")
@@ -955,6 +1200,11 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             # Did this pane pick up its previous conversation, or start empty?
             # The pane looks identical either way, so it has to be told.
             "resumed": term.resumed,
+            # Or did nothing restart at all? A pane that re-joined an agent that
+            # never stopped is a third state, and the most common one once
+            # workspaces are switched between — saying "started a new
+            # conversation" there would be plainly false.
+            "reattached": term.reattached,
         }
     )
 
@@ -972,18 +1222,20 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 continue
             kind = msg.get("t")
             if kind == "i":
-                registry.write(term.key, str(msg.get("d", "")))
+                registry.write(term.key, str(msg.get("d", "")), pane_workspace)
             elif kind == "r":
                 registry.resize(
                     term.key,
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
+                    pane_workspace,
                 )
     finally:
-        # The viewer closed the pane: stop the agent with it. Leaving an
-        # orphaned agent running with nobody watching would burn tokens
-        # invisibly, which is worse than having to restart the pane.
-        registry.detach(term.key)
+        # The viewer went away — switched tab, reloaded, closed the browser.
+        # None of those mean "stop working", so the agent keeps running and
+        # only the viewer is released; the next viewer re-joins it. What stops
+        # an agent is closing its workspace (DELETE /workspaces/{id}).
+        registry.detach(term.key, pane_workspace)
 
 
 def _safe_int(value: object, default: int) -> int:

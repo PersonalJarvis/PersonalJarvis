@@ -85,7 +85,7 @@ async def test_reopening_a_pane_keeps_the_same_conversation(
     tmp_path: Path,
     existing_conversation,
 ) -> None:
-    """The browser-close case: the pane reconnects and picks up where it was."""
+    """After the agent really died, the pane comes back with its conversation."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
     minted = registry.session.find("Mika").resume
@@ -93,11 +93,33 @@ async def test_reopening_a_pane_keeps_the_same_conversation(
     # The pane was used, so the CLI now has a conversation under that id.
     existing_conversation(minted.id)
 
-    registry.detach("Mika")  # the viewer went away, the agent was stopped
+    # The agent is gone — quit from inside, machine restarted, process killed.
+    # THAT is what makes the next attach a restart rather than a re-join.
+    await fake_pty.die(registry.session.find("Mika").pty_id, 0)
     await registry.attach("Mika", 80, 24, _noop, _noop_exit)
 
     assert _argv(fake_pty)[-2:] == ("--resume", minted.id)
     assert registry.session.find("Mika").resumed is True
+
+
+async def test_letting_go_of_a_pane_does_not_stop_its_agent(
+    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A viewer leaving is not an instruction to stop working.
+
+    Panes are released constantly — switching workspace, reloading the page,
+    walking over to the chat view. An agent runs until its WORKSPACE is closed,
+    so none of those may cost the work in progress.
+    """
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
+    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+    pty_id = registry.session.find("Mika").pty_id
+
+    registry.detach("Mika")
+
+    assert pty_id not in fake_pty.closed, "the agent must still be running"
+    assert registry.session.find("Mika").status == "live"
+    assert registry.session.find("Mika").pty_id == pty_id
 
 
 async def test_a_pane_running_a_cli_that_cannot_resume_just_starts(
@@ -232,11 +254,11 @@ async def test_closing_a_resumed_pane_does_not_resurrect_it(
 ) -> None:
     """The trap the self-healing walks into if it is not told about the kill.
 
-    Stopping a pane kills its agent, and a killed process reports a failure exit
+    Closing a pane kills its agent, and a killed process reports a failure exit
     that looks exactly like a crashed resume. Without knowing the kill was
     deliberate, the recovery would restart an agent the user had just closed —
     and it would then run on with nobody watching, which is precisely what
-    stopping it prevents.
+    closing it prevents.
     """
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
     registry.session.find("Mika").resume = ResumeHandle(
@@ -247,12 +269,36 @@ async def test_closing_a_resumed_pane_does_not_resurrect_it(
     assert registry.session.find("Mika").resumed is True
     spawns_before = len(fake_pty.spawns)
 
-    # The browser tab closed a second after the pane came back.
-    registry.detach("Mika")
+    # The user closed the pane a second after it came back, and the kill is
+    # reported by the PTY as a failure exit.
+    await registry.close_terminal("Mika")
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
 
     assert len(fake_pty.spawns) == spawns_before, "the agent must stay stopped"
-    assert registry.session.find("Mika").status == "exited"
+    assert registry.session.find("Mika") is None, "and its pane must be gone"
+
+
+async def test_closing_the_workspace_does_not_resurrect_a_resumed_pane(
+    registry: ide.Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation,
+) -> None:
+    """Same trap, reached by closing the whole workspace instead of one pane."""
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Mika"}])
+    registry.session.find("Mika").resume = ResumeHandle(
+        kind="claude_session", id="fine", captured_at=1.0
+    )
+    existing_conversation("fine")
+    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+    term = registry.session.find("Mika")
+    spawns_before = len(fake_pty.spawns)
+
+    await registry.end()
+    await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
+
+    assert len(fake_pty.spawns) == spawns_before, "the agent must stay stopped"
+    assert term.status != "live"
 
 
 async def test_a_late_crash_is_reported_as_a_crash(
@@ -364,16 +410,40 @@ async def test_restore_refuses_an_empty_workspace(
         await registry.restore(empty)
 
 
-async def test_restore_replaces_a_running_workspace_cleanly(
+async def test_restoring_a_folder_that_is_still_open_switches_to_it(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
+    """A stale offer must not trade a running workspace for a restarted one.
+
+    The offer describes a folder; if that folder is open right now, the honest
+    outcome is to show it. Reopening would kill agents that are working to
+    replace them with agents that have to be resumed.
+    """
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Old"}])
     await registry.attach("Old", 80, 24, _noop, _noop_exit)
     live = registry.session.find("Old").pty_id
 
-    await registry.restore(_snapshot(tmp_path))
-    assert live in fake_pty.closed, "the previous workspace's agent must be stopped"
+    restored = await registry.restore(_snapshot(tmp_path))
+
+    assert live not in fake_pty.closed, "the running agent must survive"
+    assert [t.name for t in restored.terminals] == ["Old"]
+    assert len(registry.sessions) == 1
+
+
+async def test_restoring_another_folder_opens_it_beside_the_running_one(
+    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Old"}])
+    await registry.attach("Old", 80, 24, _noop, _noop_exit)
+    live = registry.session.find("Old").pty_id
+
+    await registry.restore(_snapshot(other))
+
+    assert live not in fake_pty.closed, "the first workspace must keep running"
     assert [t.name for t in registry.session.terminals] == ["Mika", "Kai"]
+    assert len(registry.sessions) == 2
 
 
 # ---------------------------------------------------------------- snapshots
@@ -423,19 +493,46 @@ async def test_closing_the_workspace_deliberately_withdraws_the_offer(
     assert resume_store.load() is None
 
 
-async def test_opening_another_workspace_does_not_leave_a_gap(
+async def test_the_offer_follows_the_workspace_on_screen(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """Replacing a workspace must always leave SOMETHING resumable behind."""
+    """The restore point answers "what was I working in", so it tracks the front.
+
+    With several workspaces open it is the one being LOOKED at that comes back
+    after a restart — restoring all of them would relaunch a folder's worth of
+    coding agents per tab without being asked.
+    """
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    await registry.start(str(first), [{"agent": "claude", "name": "Mika"}])
+    one = await registry.start(str(first), [{"agent": "claude", "name": "Mika"}])
     await registry.start(str(second), [{"agent": "claude", "name": "Nova"}])
 
     saved = resume_store.load()
     assert saved is not None and saved.folder == str(second)
+
+    await registry.activate(one.id)
+    saved = resume_store.load()
+    assert saved is not None and saved.folder == str(first)
+
+
+async def test_closing_one_of_two_leaves_the_survivor_resumable(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """Closing must never leave a restore point pointing at nothing."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    one = await registry.start(str(first), [{"agent": "claude", "name": "Mika"}])
+    two = await registry.start(str(second), [{"agent": "claude", "name": "Nova"}])
+
+    await registry.end(two.id)
+
+    saved = resume_store.load()
+    assert saved is not None and saved.folder == str(first)
+    assert registry.active_id == one.id
 
 
 async def test_a_broken_snapshot_write_never_breaks_the_workspace(
@@ -500,9 +597,33 @@ async def test_closing_the_workspace_stops_pending_lookups(
 ) -> None:
     """A lookup outliving its workspace would write a snapshot for a ghost."""
     monkeypatch.setattr(ide, "DISCOVERY_DELAYS_S", (5.0,))
-    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    session = await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
     await registry.attach("Cody", 80, 24, _noop, _noop_exit)
-    assert registry._lookups
+    assert session.lookups
 
     await registry.end()
-    assert not registry._lookups
+    assert not session.lookups
+
+
+async def test_closing_one_workspace_leaves_the_others_lookups_alone(
+    registry: ide.Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lookups belong to a workspace, not to the process.
+
+    A shared set would mean closing one tab cancels the pending conversation-id
+    discovery of every other one — and those panes would silently lose the only
+    thing that lets them be resumed later.
+    """
+    monkeypatch.setattr(ide, "DISCOVERY_DELAYS_S", (5.0,))
+    other = tmp_path / "second"
+    other.mkdir()
+    keep = await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    close_me = await registry.start(str(other), [{"agent": "codex"}])
+    await registry.attach(close_me.terminals[0].name, 80, 24, _noop, _noop_exit)
+    assert keep.lookups and close_me.lookups
+
+    await registry.end(close_me.id)
+
+    assert not close_me.lookups
+    assert keep.lookups, "the surviving workspace must keep looking"

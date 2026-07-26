@@ -262,8 +262,11 @@ def build_index(root: str | Path) -> FileIndex:
     return index
 
 
-# One cached index per folder. Small on purpose: a session opens one workspace,
-# and holding a stale index for every folder ever browsed would be a slow leak.
+# One cached index per folder. Keyed rather than global because several
+# workspaces can be open at once, and each one's `@file` suggestions must come
+# from ITS tree — a shared slot would hand the agent in one workspace the file
+# list of another. Small on purpose: entries are dropped when their workspace
+# closes, so this never grows into a stale index of every folder ever browsed.
 _CACHE: dict[str, FileIndex] = {}
 _BUILDING: set[str] = set()
 _LOCK = threading.Lock()
@@ -301,8 +304,22 @@ def prime_index(root: str | Path) -> None:
     threading.Thread(target=_run, name="agentic-ide-file-index", daemon=True).start()
 
 
+def forget_index(root: str | Path) -> None:
+    """Drop the cached index for ONE folder — its workspace just closed.
+
+    Per-folder rather than a blanket reset, because closing one workspace must
+    leave the others' suggestions intact. A build still in flight is left to
+    finish and re-populate the cache; it is a few kilobytes of index for a
+    folder nobody is looking at, and interrupting a worker thread to save that
+    is the worse trade.
+    """
+    key = str(Path(root).expanduser())
+    with _LOCK:
+        _CACHE.pop(key, None)
+
+
 def reset_cache() -> None:
-    """Drop every cached index — tests, and when a workspace closes."""
+    """Drop EVERY cached index — tests, and when the last workspace closes."""
     with _LOCK:
         _CACHE.clear()
         _BUILDING.clear()
@@ -312,6 +329,7 @@ __all__ = [
     "FileIndex",
     "build_index",
     "cached_index",
+    "forget_index",
     "prime_index",
     "reset_cache",
     "tokenize",
