@@ -1353,6 +1353,10 @@ def _phase2_full_brain(
                 # fallback only (see _resolve_wiki_vault_root).
                 vault_path = _resolve_wiki_vault_root(config)
                 search = VaultSearch(vault_path)
+                from jarvis.brain.wiki_context import (  # noqa: PLC0415 — sibling import, kept local like the class import above
+                    DEFAULT_ULTRA_LATENCY_BUDGET_MS,
+                )
+
                 manager._wiki_injector = WikiContextInjector(
                     search=search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
@@ -1362,6 +1366,13 @@ def _phase2_full_brain(
                     min_coverage=float(getattr(wiki_cfg, "min_coverage", 0.5)),
                     min_relative_score=float(
                         getattr(wiki_cfg, "min_relative_score", 0.35)
+                    ),
+                    ultra_latency_budget_ms=int(
+                        getattr(
+                            wiki_cfg,
+                            "ultra_latency_budget_ms",
+                            DEFAULT_ULTRA_LATENCY_BUDGET_MS,
+                        )
                     ),
                 )
                 log.info(

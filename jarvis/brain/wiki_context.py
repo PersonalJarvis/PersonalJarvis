@@ -150,7 +150,13 @@ _TOKEN_RE = re.compile(r"[^\w\s]|\s+", re.UNICODE)
 #: store query (plus a possible query embedding) rather than the vault's grep;
 #: design doc 03 allots <= 150 ms to the fan-out inside a <= 900 ms
 #: to-first-spoken-token budget, and this stays in that order of magnitude.
-DEFAULT_ULTRA_LATENCY_BUDGET_MS = 250
+#: 400 (was 250) after the 2026-07-26 19:45 live trace: the legs finished at
+#: 209 ms but event-loop pressure from a background sync burned the remainder
+#: and the whole context was dropped at exactly 250 — a busted budget costs a
+#: multi-second tool round trip, so a modest allowance for load is the
+#: cheaper side of that trade. Configurable via
+#: ``[wiki_integration].ultra_latency_budget_ms``.
+DEFAULT_ULTRA_LATENCY_BUDGET_MS = 400
 
 #: How many UltraWiki candidates the gates get to judge. Small on purpose: the
 #: block is capped at ``max_chars`` anyway and every extra candidate is one more
