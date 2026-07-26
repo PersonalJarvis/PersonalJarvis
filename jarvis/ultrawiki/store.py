@@ -279,6 +279,60 @@ _ITEM_LIST_COLUMNS = (
 )
 
 
+def _metadata_json(item: RawItem) -> str:
+    """A ``RawItem``'s metadata as storable JSON; ``"{}"`` for anything odd.
+
+    Never raises: a connector may attach whatever it likes, and one
+    unserialisable value must cost that item its metadata rather than the
+    whole batch its transaction.
+    """
+    metadata = getattr(item, "metadata", None)
+    if not isinstance(metadata, dict) or not metadata:
+        return "{}"
+    try:
+        return json.dumps(metadata, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        log.debug("UltraStore: metadata of %s is not serialisable", item.external_id)
+        return "{}"
+
+
+def _parse_metadata(row: Any) -> dict[str, Any]:
+    """One row's stored metadata. Empty for a row written before the column."""
+    try:
+        raw = row["metadata_json"]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _media_pending_only(
+    rows: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep only rows whose metadata really flags a pending enrichment.
+
+    The SQL narrows with a substring match, which is the same on every
+    backend but also matches an item that merely records ``enrich_pending``
+    as ``false``. The exact decision therefore happens here, on the parsed
+    metadata, where a serializer's spacing cannot change the answer.
+    """
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("enrich_pending") is True:
+            kept.append(row)
+            if len(kept) >= max(1, int(limit)):
+                break
+    return kept
+
+
 def _item_filter_sql(
     *,
     source_id: str | None,
@@ -318,6 +372,11 @@ _UNSET: Any = object()
 #: columns are read from ``PRAGMA table_info`` first — the pattern of
 #: ``jarvis/missions/event_store.py``.
 _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # Connectors have always attached metadata to a RawItem — the source
+    # format, a file's modification time, a chat's participants — and it was
+    # dropped on the way into the store, silently. Nothing depended on it
+    # until media items had to carry the reference back to their own bytes.
+    ("uw_items", "metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
     ("uw_sources", "last_notice", "TEXT"),
     ("uw_sync_state", "last_outcome_at", "TEXT"),
     ("uw_sync_state", "last_outcome_status", "TEXT"),
@@ -787,8 +846,8 @@ class UltraStore:
                         "INSERT INTO uw_items"
                         " (source_id, external_id, thread_key, author_raw, title,"
                         "  body_raw, permalink, timestamp_utc, areas_json,"
-                        "  content_hash, state, created_at, updated_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "  content_hash, state, metadata_json, created_at, updated_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             source_id,
                             item.external_id,
@@ -801,6 +860,7 @@ class UltraStore:
                             areas_json,
                             identity,
                             ItemState.CAPTURED.value,
+                            _metadata_json(item),
                             now,
                             now,
                         ),
@@ -816,8 +876,9 @@ class UltraStore:
                         "UPDATE uw_items SET thread_key = ?, author_raw = ?,"
                         " title = ?, body_raw = ?, permalink = ?,"
                         " timestamp_utc = ?, areas_json = ?, content_hash = ?,"
-                        " state = ?, attempt_count = 0, next_retry_at = NULL,"
-                        " last_error = NULL, deleted_at = NULL, updated_at = ?"
+                        " state = ?, metadata_json = ?, attempt_count = 0,"
+                        " next_retry_at = NULL, last_error = NULL,"
+                        " deleted_at = NULL, updated_at = ?"
                         " WHERE id = ?",
                         (
                             item.thread_key,
@@ -829,6 +890,7 @@ class UltraStore:
                             areas_json,
                             identity,
                             ItemState.CAPTURED.value,
+                            _metadata_json(item),
                             now,
                             row["id"],
                         ),
@@ -887,6 +949,7 @@ class UltraStore:
             "areas": json.loads(row["areas_json"] or "[]"),
             "content_hash": row["content_hash"],
             "state": row["state"],
+            "metadata": _parse_metadata(row),
             "attempt_count": row["attempt_count"],
             "next_retry_at": row["next_retry_at"],
             "last_error": row["last_error"],
@@ -976,6 +1039,47 @@ class UltraStore:
             [*params, max(0, int(limit)), max(0, int(offset))],
         )
         return [dict(row) for row in rows], total
+
+    async def set_item_metadata(self, item_id: int, metadata: dict[str, Any]) -> None:
+        """Replace one item's metadata WITHOUT touching its content or state.
+
+        The narrow path a side lane needs to record an outcome. It cannot go
+        through :meth:`upsert_items`: unchanged content leaves the row
+        completely untouched by design (the zero-new-work guarantee), so a
+        failure note written that way would be silently discarded and the same
+        file would be retried forever with nothing to show for it.
+
+        Content, hash, state and retry bookkeeping are deliberately untouched
+        — this records what was learned ABOUT an item, never what it says.
+        """
+        async with self._txn() as conn:
+            await conn.execute(
+                "UPDATE uw_items SET metadata_json = ? WHERE id = ?",
+                (json.dumps(metadata or {}, ensure_ascii=False, default=str), int(item_id)),
+            )
+
+    async def pending_media_items(self, *, limit: int = 8) -> list[dict[str, Any]]:
+        """Media items still waiting to be described or transcribed.
+
+        Deliberately NOT a new pipeline state (AP-4): a fifth value crossing
+        Python, SQL, Pydantic, TypeScript and the UI is the drift class this
+        repo has paid for four times, and enrichment is a SIDE lane rather
+        than a step every item takes. The flag lives in the item's metadata
+        and the SQL narrows on it with a plain ``LIKE`` — no JSON operator, so
+        this one query is identical on both backends — with the exact decision
+        made in Python, where a serializer's spacing cannot change the answer.
+
+        Oldest first: a backlog should drain in the order it built up.
+        """
+        conn = await self._ensure_open()
+        rows = await self._fetchall(
+            conn,
+            "SELECT * FROM uw_items"
+            " WHERE deleted_at IS NULL AND metadata_json LIKE '%enrich_pending%'"
+            " ORDER BY id ASC LIMIT ?",
+            (max(1, int(limit)) * 4,),
+        )
+        return _media_pending_only([self._item_row_to_dict(row) for row in rows], limit)
 
     async def claim_batch(
         self,
@@ -2062,6 +2166,7 @@ class PostgresStore:
             " content_hash TEXT NOT NULL,"
             " state TEXT NOT NULL DEFAULT 'captured'"
             f" CHECK (state IN ({states})),"
+            " metadata_json TEXT NOT NULL DEFAULT '{}',"
             " attempt_count INTEGER NOT NULL DEFAULT 0,"
             " next_retry_at TEXT, last_error TEXT, deleted_at TEXT,"
             " created_at TEXT NOT NULL, updated_at TEXT NOT NULL,"
@@ -2378,9 +2483,9 @@ class PostgresStore:
                         "INSERT INTO uw_items"
                         " (source_id, external_id, thread_key, author_raw, title,"
                         "  body_raw, permalink, timestamp_utc, areas_json,"
-                        "  content_hash, state, created_at, updated_at)"
+                        "  content_hash, state, metadata_json, created_at, updated_at)"
                         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                        " %s, %s)",
+                        " %s, %s, %s)",
                         (
                             source_id,
                             item.external_id,
@@ -2393,6 +2498,7 @@ class PostgresStore:
                             areas_json,
                             identity,
                             ItemState.CAPTURED.value,
+                            _metadata_json(item),
                             now,
                             now,
                         ),
@@ -2406,8 +2512,9 @@ class PostgresStore:
                         "UPDATE uw_items SET thread_key = %s, author_raw = %s,"
                         " title = %s, body_raw = %s, permalink = %s,"
                         " timestamp_utc = %s, areas_json = %s, content_hash = %s,"
-                        " state = %s, attempt_count = 0, next_retry_at = NULL,"
-                        " last_error = NULL, deleted_at = NULL, updated_at = %s"
+                        " state = %s, metadata_json = %s, attempt_count = 0,"
+                        " next_retry_at = NULL, last_error = NULL,"
+                        " deleted_at = NULL, updated_at = %s"
                         " WHERE id = %s",
                         (
                             item.thread_key,
@@ -2419,6 +2526,7 @@ class PostgresStore:
                             areas_json,
                             identity,
                             ItemState.CAPTURED.value,
+                            _metadata_json(item),
                             now,
                             row["id"],
                         ),
@@ -2460,6 +2568,7 @@ class PostgresStore:
             "areas": json.loads(row["areas_json"] or "[]"),
             "content_hash": row["content_hash"],
             "state": row["state"],
+            "metadata": _parse_metadata(row),
             "attempt_count": row["attempt_count"],
             "next_retry_at": row["next_retry_at"],
             "last_error": row["last_error"],
@@ -2536,6 +2645,34 @@ class PostgresStore:
             [*params, max(0, int(limit)), max(0, int(offset))],
         )
         return [dict(row) for row in rows], total
+
+    async def set_item_metadata(self, item_id: int, metadata: dict[str, Any]) -> None:
+        """Replace one item's metadata without touching its content or state.
+
+        Mirrors the SQLite implementation (see its docstring for why a side
+        lane cannot record an outcome through ``upsert_items``).
+        """
+        async with self._txn() as conn:
+            await conn.execute(
+                "UPDATE uw_items SET metadata_json = %s WHERE id = %s",
+                (json.dumps(metadata or {}, ensure_ascii=False, default=str), int(item_id)),
+            )
+
+    async def pending_media_items(self, *, limit: int = 8) -> list[dict[str, Any]]:
+        """Media items still waiting to be described or transcribed.
+
+        Mirrors the SQLite implementation exactly (see its docstring for why
+        this is a metadata flag rather than a fifth pipeline state).
+        """
+        conn = await self._ensure_open()
+        rows = await self._fetchall(
+            conn,
+            "SELECT * FROM uw_items"
+            " WHERE deleted_at IS NULL AND metadata_json LIKE '%%enrich_pending%%'"
+            " ORDER BY id ASC LIMIT %s",
+            (max(1, int(limit)) * 4,),
+        )
+        return _media_pending_only([self._item_row_to_dict(row) for row in rows], limit)
 
     async def claim_batch(
         self,

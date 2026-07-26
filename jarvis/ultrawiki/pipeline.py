@@ -57,7 +57,9 @@ __all__ = [
     "KEYWORD_BATCH",
     "EMBED_BATCH",
     "DISTILL_BATCH",
+    "MEDIA_BATCH",
     "MAX_EMBED_CHARS",
+    "MAX_MEDIA_BYTES",
     "IDLE_SLEEP_S",
     "BUSY_SLEEP_S",
     "PipelineWorker",
@@ -67,6 +69,17 @@ __all__ = [
 KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
+
+#: Media enrichment claims ONE item per pass, and only when every other stage
+#: found nothing to do. Describing a picture costs a model call, and a photo
+#: library is tens of thousands of them — so this lane is deliberately the
+#: slowest thing in the system rather than something that races the import it
+#: is supposed to follow.
+MEDIA_BATCH = 1
+
+#: Bytes of one media file read for enrichment. Above this the providers would
+#: refuse the upload anyway, and reading it would only cost memory.
+MAX_MEDIA_BYTES = 24 * 1024 * 1024
 
 #: Character budget per embedded TEXT — now per passage, not per item.
 #:
@@ -207,6 +220,12 @@ class PipelineWorker:
         attempted += await self._keyword_pass()
         attempted += await self._embed_pass()
         attempted += await self._distill_pass()
+        # Media enrichment runs only in the gaps. It is the one stage that can
+        # be skipped forever without anything breaking, so by default it never
+        # takes a turn away from a stage that cannot. "eager" opts out of that
+        # deference; it does not raise the batch size.
+        if not attempted or self._media_mode() == "eager":
+            attempted += await self._media_pass()
         return attempted
 
     # -- shared helpers ------------------------------------------------------
@@ -695,3 +714,186 @@ class PipelineWorker:
                 int(item["id"]), ItemState.DISTILLED, **self._claim_guard(item)
             )
         )
+
+    # -- media enrichment ----------------------------------------------------
+
+    async def _media_pass(self) -> int:
+        """Describe one picture, or transcribe one recording. Frugal by design.
+
+        This lane is the only one that may achieve nothing forever: an install
+        with no vision-capable provider keeps its photos findable by filename,
+        folder and capture date, and drains the backlog the day one appears.
+        So every failure here is recorded on the item and the loop moves on —
+        nothing retries in a tight circle, and nothing blocks.
+        """
+        mode = self._media_mode()
+        if mode == "off":
+            return 0
+        pending = await self._pending_media(MEDIA_BATCH)
+        if not pending:
+            self._clear_stage_pause("media")
+            return 0
+        worked = 0
+        for item in pending:
+            try:
+                await self._enrich_one(item)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — one file never stops the lane
+                log.warning(
+                    "UltraWiki media enrichment failed for item %s: %s",
+                    item.get("id"),
+                    exc,
+                )
+                await self._record_media_outcome(
+                    item, text="", reason=f"enrichment failed ({type(exc).__name__})"
+                )
+            worked += 1
+        return worked
+
+    def _media_mode(self) -> str:
+        """``frugal`` (default), ``eager`` or ``off``, from the config."""
+        ultrawiki = getattr(self._cfg, "ultrawiki", None)
+        raw = str(getattr(ultrawiki, "media_enrich", "") or "").strip().lower()
+        return raw if raw in ("off", "frugal", "eager") else "frugal"
+
+    async def _pending_media(self, limit: int) -> list[dict[str, Any]]:
+        """Media items awaiting enrichment; empty when the store predates it."""
+        fetch = getattr(self._store, "pending_media_items", None)
+        if not callable(fetch):
+            return []
+        try:
+            return await fetch(limit=limit)
+        except Exception:  # noqa: BLE001 — a query failure pauses the lane, nothing else
+            log.debug("UltraWiki: media backlog query failed", exc_info=True)
+            return []
+
+    async def _enrich_one(self, item: dict[str, Any]) -> None:
+        from jarvis.ultrawiki import media as media_mod  # noqa: PLC0415 — lazy (AP-26)
+        from jarvis.ultrawiki import media_enrich  # noqa: PLC0415 — lazy (AP-26)
+
+        metadata = dict(item.get("metadata") or {})
+        kind = str(metadata.get("media_kind") or "")
+        reference = media_mod.ref_from_metadata(metadata)
+        if reference is None:
+            await self._record_media_outcome(
+                item,
+                text="",
+                reason="this item carries no reference back to the original file",
+                retryable=False,
+            )
+            return
+
+        data = await asyncio.to_thread(_read_media_bytes, media_mod, reference)
+        if data is None:
+            await self._record_media_outcome(
+                item,
+                text="",
+                reason="the original file is no longer where it was imported from",
+                retryable=False,
+            )
+            return
+
+        filename = reference.display_name
+        if kind == "image":
+            result = await media_enrich.describe_image(
+                data, filename=filename, cfg=self._cfg
+            )
+        elif kind in ("audio", "video"):
+            result = await media_enrich.transcribe_recording(
+                data, filename=filename, cfg=self._cfg
+            )
+        else:
+            await self._record_media_outcome(
+                item,
+                text="",
+                reason=f"nothing here knows how to read a {kind or 'file'} of this kind",
+                retryable=False,
+            )
+            return
+
+        if not result.ok:
+            self._note_stage_pause("media", result.reason)
+            await self._record_media_outcome(
+                item, text="", reason=result.reason, retryable=result.retryable
+            )
+            return
+        self._clear_stage_pause("media")
+        await self._record_media_outcome(
+            item, text=result.text, reason="", provider=result.provider, kind=kind
+        )
+
+    async def _record_media_outcome(
+        self,
+        item: dict[str, Any],
+        *,
+        text: str,
+        reason: str,
+        retryable: bool = True,
+        provider: str = "",
+        kind: str = "",
+    ) -> None:
+        """Write the outcome back, through the ordinary upsert path.
+
+        Success APPENDS to the body rather than replacing it: the file facts
+        underneath (name, folder, capture date, camera, place) are what makes
+        the item findable by time and place, and a description does not
+        supersede them. The changed body changes the content hash, which is
+        what puts the item back at ``captured`` so the normal ladder embeds
+        and distils the new text — no separate re-indexing path to maintain.
+
+        A failure leaves the body untouched and only records why. ``retryable``
+        false clears the pending flag so a permanently unreadable file stops
+        being picked up; true leaves it set, and the next capable provider
+        drains it.
+        """
+        from jarvis.ultrawiki.types import RawItem  # noqa: PLC0415 — lazy
+
+        metadata = dict(item.get("metadata") or {})
+        body = str(item.get("body_raw") or "")
+        if not text:
+            # A failure changes nothing about the content, and unchanged
+            # content makes ``upsert_items`` leave the row completely untouched
+            # (its zero-new-work guarantee) — so the note has to be written
+            # through the narrow metadata path or it would vanish, and the same
+            # file would be retried forever with nothing to show for it.
+            metadata["enrich_error"] = reason
+            if not retryable:
+                metadata["enrich_pending"] = False
+            await self._store.set_item_metadata(int(item["id"]), metadata)
+            return
+
+        metadata["enrich_pending"] = False
+        metadata["enriched_by"] = provider
+        metadata.pop("enrich_error", None)
+        label = "Transcript" if kind in ("audio", "video") else "Description"
+        body = f"{body}\n\n{label}: {text}".strip()
+
+        await self._store.upsert_items(
+            str(item.get("source_id") or ""),
+            [
+                RawItem(
+                    external_id=str(item.get("external_id") or ""),
+                    body=body,
+                    permalink=str(item.get("permalink") or ""),
+                    timestamp_utc=str(item.get("timestamp_utc") or ""),
+                    title=str(item.get("title") or ""),
+                    thread_key=str(item.get("thread_key") or ""),
+                    author_raw=str(item.get("author_raw") or ""),
+                    metadata=metadata,
+                )
+            ],
+        )
+
+
+def _read_media_bytes(media_mod: Any, reference: Any) -> bytes | None:
+    """Read one media file's bytes in a worker thread. Blocking; never raises."""
+    stream = media_mod.open_media(reference)
+    if stream is None:
+        return None
+    try:
+        with stream:
+            return stream.read(MAX_MEDIA_BYTES)
+    except (OSError, RuntimeError, ValueError):
+        log.debug("UltraWiki: media file could not be read", exc_info=True)
+        return None

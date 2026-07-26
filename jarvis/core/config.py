@@ -2168,6 +2168,20 @@ class UltraWikiConfig(BaseModel):
     rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
     ollama_endpoint: str = "http://localhost:11434"
 
+    # How hard the background lane works at turning pictures into words and
+    # recordings into transcripts:
+    #   "frugal" (default) - one item at a time, and only while every other
+    #                        stage is idle. A photo library is tens of
+    #                        thousands of model calls, so this must never race
+    #                        the import it follows.
+    #   "eager"            - same lane, still one at a time, but it also runs
+    #                        while other stages have work.
+    #   "off"              - nothing is described or transcribed. Photos stay
+    #                        findable by filename, folder and capture date.
+    # Nothing here is a hard requirement: an install with no vision-capable
+    # provider simply keeps its backlog until one appears.
+    media_enrich: str = "frugal"
+
     # Where the readable Markdown projection is written (the Obsidian vault).
     # Empty = "wiki/ultrawiki-vault" under the data dir — beside the normal
     # wiki's own vault and never inside it: UltraWiki writes to its own files,

@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS uw_items (
     state         TEXT NOT NULL DEFAULT 'captured'
                   CHECK (state IN ('captured', 'keyword_indexed', 'embedded',
                                    'distilled', 'failed')),
+    -- Whatever the connector attached to the RawItem: the source format, a
+    -- file's modification time, a photo's capture date and camera, and the
+    -- reference an enrichment run needs to reopen a media file's bytes.
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
     last_error    TEXT,

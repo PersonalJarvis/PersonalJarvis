@@ -179,13 +179,41 @@ class GroqWhisperAPI:
             self._client = httpx.AsyncClient(timeout=self._timeout_s)
         return self._client
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
+    async def transcribe_container(
+        self, data: bytes, *, filename: str = "recording", language: str | None = None
+    ) -> Transcript:
+        """Transcribe an ENCODED audio file (m4a, opus, mp3, mp4, wav, ...).
+
+        The optional capability the UltraWiki enrichment stage looks for. The
+        live microphone path delivers raw PCM, which everything else here
+        wraps in a WAV container; an imported voice note is already encoded and
+        this endpoint takes those formats directly. Passing the container
+        through untouched is deliberate — re-wrapping it would corrupt it.
+        """
+        if not data:
+            return Transcript(text="", language="unknown", confidence=0.0)
+        if language and language != "auto":
+            previous = self._language
+            self._language = language
+            try:
+                return await self._post_transcription(data, filename=filename)
+            finally:
+                self._language = previous
+        return await self._post_transcription(data, filename=filename)
+
+    async def _post_transcription(
+        self, wav_bytes: bytes, *, filename: str = "audio.wav"
+    ) -> Transcript:
         if not self._api_key:
             raise RuntimeError(
                 "GROQ_API_KEY missing; provide api_key=... or set the env var."
             )
 
-        files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+        # The NAME carries the container format to the service, so an imported
+        # `.opus` must not be announced as `audio.wav`.
+        upload_name = _upload_name(filename)
+        mime = "audio/wav" if upload_name.endswith(".wav") else "application/octet-stream"
+        files = {"file": (upload_name, wav_bytes, mime)}
         data: dict[str, str] = {
             "model": self._model,
             "response_format": "verbose_json",
@@ -227,6 +255,21 @@ def _read_keyring_secret(service: str, username: str) -> str:
         return val or ""
     except Exception:  # noqa: BLE001
         return ""
+
+
+#: Container extensions these transcription APIs accept. A name outside the
+#: list is uploaded as `.wav`, which is what the live path always sends.
+_ACCEPTED_UPLOAD_SUFFIXES: frozenset[str] = frozenset(
+    {".wav", ".mp3", ".mp4", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".webm", ".mpga", ".mpeg"}
+)
+
+
+def _upload_name(filename: str) -> str:
+    """A safe multipart filename that still carries the real extension."""
+    from pathlib import PurePosixPath  # noqa: PLC0415 — tiny, local
+
+    suffix = PurePosixPath(str(filename or "")).suffix.lower()
+    return f"audio{suffix}" if suffix in _ACCEPTED_UPLOAD_SUFFIXES else "audio.wav"
 
 
 def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:

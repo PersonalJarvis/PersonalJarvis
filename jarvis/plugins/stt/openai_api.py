@@ -190,6 +190,32 @@ class OpenAIWhisperAPI:
                 self._language = previous
         return await self._post_transcription(wav_bytes)
 
+    async def transcribe_container(
+        self, data: bytes, *, filename: str = "recording", language: str | None = None
+    ) -> Transcript:
+        """Transcribe an ENCODED audio file (m4a, opus, mp3, mp4, wav, ...).
+
+        The optional capability the UltraWiki enrichment stage looks for. The
+        live microphone path delivers raw PCM, which is why everything else
+        here wraps PCM in a WAV container — but an imported voice note arrives
+        already encoded, and this endpoint accepts those formats directly.
+        Decoding them locally would mean shipping a media stack to every
+        install, including headless servers that have no other use for one.
+
+        The container is passed through untouched: the service identifies the
+        format itself, and re-wrapping it would be the one way to corrupt it.
+        """
+        if not data:
+            return Transcript(text="", language="unknown", confidence=0.0)
+        if language and language != "auto":
+            previous = self._language
+            self._language = language
+            try:
+                return await self._post_transcription(data, filename=filename)
+            finally:
+                self._language = previous
+        return await self._post_transcription(data, filename=filename)
+
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
 
@@ -261,9 +287,16 @@ class OpenAIWhisperAPI:
         self._endpoint_url = base.rstrip("/") + "/audio/transcriptions"
         return self._endpoint_url
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
+    async def _post_transcription(
+        self, wav_bytes: bytes, *, filename: str = "audio.wav"
+    ) -> Transcript:
         url = self._ensure_endpoint()
-        files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+        # The NAME is how the service identifies the container, so an imported
+        # `.opus` must not be announced as `audio.wav`. The content type stays
+        # generic: the extension is the signal these APIs actually read.
+        upload_name = _upload_name(filename)
+        mime = "audio/wav" if upload_name.endswith(".wav") else "application/octet-stream"
+        files = {"file": (upload_name, wav_bytes, mime)}
         data: dict[str, str] = {
             "model": self._model,
             "response_format": "verbose_json",
@@ -294,6 +327,21 @@ class OpenAIWhisperAPI:
 # ----------------------------------------------------------------------
 # Helpers (module-private)
 # ----------------------------------------------------------------------
+
+#: Container extensions these transcription APIs accept. A name outside the
+#: list is uploaded as `.wav`, which is what the live path always sends.
+_ACCEPTED_UPLOAD_SUFFIXES: frozenset[str] = frozenset(
+    {".wav", ".mp3", ".mp4", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".webm", ".mpga", ".mpeg"}
+)
+
+
+def _upload_name(filename: str) -> str:
+    """A safe multipart filename that still carries the real extension."""
+    from pathlib import PurePosixPath  # noqa: PLC0415 — tiny, local
+
+    suffix = PurePosixPath(str(filename or "")).suffix.lower()
+    return f"audio{suffix}" if suffix in _ACCEPTED_UPLOAD_SUFFIXES else "audio.wav"
+
 
 def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
     """Wrap int16 little-endian PCM in a minimal WAV header (in memory)."""
