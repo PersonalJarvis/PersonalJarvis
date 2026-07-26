@@ -390,6 +390,11 @@ class UltraStore:
         self._vec_ext_loaded = False
         self._vec_state: tuple[bool, str] | None = None
         self._vec_dim: int | None = None
+        # Live-item count, cached until the next committed write. The count
+        # is the IDF denominator queried on every search; a full count(*)
+        # costs ~20 ms on a real store while the answer only moves when a
+        # write commits.
+        self._live_count_cache: int | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -440,6 +445,7 @@ class UltraStore:
             self._vec_ext_loaded = False
             self._vec_state = None
             self._vec_dim = None
+            self._live_count_cache = None
 
     async def _ensure_open(self) -> aiosqlite.Connection:
         if self._conn is None:
@@ -459,6 +465,10 @@ class UltraStore:
                 raise
             else:
                 await conn.execute("COMMIT")
+                # Every write path runs through here; deliberately coarse —
+                # an unnecessary refresh costs one count(*), a stale count
+                # would silently skew the IDF signal.
+                self._live_count_cache = None
 
     @staticmethod
     async def _fetchall(
@@ -1336,6 +1346,11 @@ class UltraStore:
         instance without re-embedding anything.
         """
         if dim is None:
+            # Cheap path first: every vector_search lands here. The pinned
+            # space can only change through reset_vectors(), which clears
+            # this cache — so a cached verdict needs no meta lookups.
+            if self._vec_state is not None and self._vec_dim is not None:
+                return self._vec_state
             _, dim = await self._pinned_space()
         if dim is None:
             return (
@@ -1401,10 +1416,13 @@ class UltraStore:
                 "SELECT document_id, vector FROM uw_embeddings"
                 " WHERE document_id NOT IN (SELECT rowid FROM uw_vec)",
             )
-            for row in missing:
-                await conn.execute(
+            if missing:
+                # One batch, not one round trip per row: the first search
+                # after boot can find thousands of vectors to backfill, and
+                # this runs under the store lock.
+                await conn.executemany(
                     "INSERT OR REPLACE INTO uw_vec (rowid, embedding) VALUES (?, ?)",
-                    (row["document_id"], row["vector"]),
+                    [(row["document_id"], row["vector"]) for row in missing],
                 )
         self._vec_dim = dim
         self._vec_state = (True, "")
@@ -1447,15 +1465,21 @@ class UltraStore:
     async def keyword_search(
         self, query: str, k: int = 10, *, area_id: str | None = None
     ) -> list[SearchResult]:
-        """FTS5 keyword leg over live items; bm25 normalized to [0, 1]."""
+        """FTS5 keyword leg over live items; bm25 normalized to [0, 1].
+
+        Two phases on purpose: ``snippet()`` re-tokenizes the document body
+        and dominated this leg's cost when computed for EVERY matching row
+        (an OR query with a stopword matches half the corpus). Phase one
+        ranks with bm25 alone — index statistics, no body access — and phase
+        two renders snippets for the ``k`` winners only.
+        """
         match_expr = _fts_match_expr(query)
         if not match_expr:
             return []
         conn = await self._ensure_open()
         sql = (
-            "SELECT uw_fts.item_id AS item_id, i.source_id AS source_id,"
-            " i.title AS title,"
-            " snippet(uw_fts, 2, '', '', '…', 32) AS snip,"
+            "SELECT uw_fts.rowid AS fts_rowid, uw_fts.item_id AS item_id,"
+            " i.source_id AS source_id, i.title AS title,"
             " i.permalink AS permalink, i.timestamp_utc AS timestamp_utc,"
             " bm25(uw_fts, 0.0, 3.0, 1.0) AS raw_score"
             " FROM uw_fts JOIN uw_items i ON i.id = uw_fts.item_id"
@@ -1471,12 +1495,24 @@ class UltraStore:
         sql += " ORDER BY raw_score LIMIT ?"
         params.append(int(k))
         rows = await self._fetchall(conn, sql, params)
+        if not rows:
+            return []
+        winner_rowids = [int(row["fts_rowid"]) for row in rows]
+        snippet_rows = await self._fetchall(
+            conn,
+            "SELECT rowid AS fts_rowid,"
+            " snippet(uw_fts, 2, '', '', '…', 32) AS snip"
+            " FROM uw_fts WHERE uw_fts MATCH ?"  # noqa: S608 — placeholder marks only
+            f" AND rowid IN ({_placeholders(len(winner_rowids))})",
+            [match_expr, *winner_rowids],
+        )
+        snippets = {int(row["fts_rowid"]): row["snip"] for row in snippet_rows}
         return [
             SearchResult(
                 item_id=int(row["item_id"]),
                 source_id=row["source_id"],
                 title=row["title"],
-                snippet=row["snip"] or "",
+                snippet=snippets.get(int(row["fts_rowid"])) or "",
                 permalink=row["permalink"],
                 timestamp_utc=row["timestamp_utc"],
                 score=round(_normalize_bm25(row["raw_score"]), 4),
@@ -1565,20 +1601,36 @@ class UltraStore:
     # -- ranking signals -----------------------------------------------------
 
     async def live_item_count(self) -> int:
-        """Live (non-deleted) item count — the ``N`` of the IDF formula."""
+        """Live (non-deleted) item count — the ``N`` of the IDF formula.
+
+        Cached until the next committed write (see :meth:`_txn`): the count
+        is asked on every search and only moves when a write commits.
+        """
+        if self._live_count_cache is not None:
+            return self._live_count_cache
         conn = await self._ensure_open()
         row = await self._fetchone(
             conn, "SELECT count(*) AS n FROM uw_items WHERE deleted_at IS NULL", ()
         )
-        return int(row["n"]) if row else 0
+        count = int(row["n"]) if row else 0
+        self._live_count_cache = count
+        return count
 
     async def term_document_frequency(self, terms: Sequence[str]) -> dict[str, int]:
         """In how many live items does each term occur? (the ``df`` of IDF)
 
-        One indexed FTS count per distinct term — queries carry a handful of
-        terms, so this stays cheap. Unindexable tokens report 0, which the
-        caller reads as "maximally rare" only after the count is compared
-        against the corpus size.
+        One FTS-index-only count per distinct term — deliberately WITHOUT a
+        join onto ``uw_items``. The join is redundant: tombstoning purges an
+        item's FTS row in the same transaction (:meth:`_purge_derived`), so
+        ``uw_fts`` only ever holds live items — while the join forced a row
+        lookup per posting and made this probe ~450x more expensive (328 ms
+        -> 0.7 ms measured on a 15k-item store). Do not re-add it; if the
+        purge-on-tombstone invariant ever changes, ``df`` merely drifts high
+        for a while, and the term-rarity factor is floored so it can never
+        drop a candidate.
+
+        Unindexable tokens report 0, which the caller reads as "maximally
+        rare" only after the count is compared against the corpus size.
         """
         conn = await self._ensure_open()
         frequencies: dict[str, int] = {}
@@ -1589,9 +1641,7 @@ class UltraStore:
                 continue
             row = await self._fetchone(
                 conn,
-                "SELECT count(*) AS n FROM uw_fts"
-                " JOIN uw_items i ON i.id = uw_fts.item_id"
-                " WHERE uw_fts MATCH ? AND i.deleted_at IS NULL",
+                "SELECT count(*) AS n FROM uw_fts WHERE uw_fts MATCH ?",
                 (match_expr,),
             )
             frequencies[term] = int(row["n"]) if row else 0

@@ -564,6 +564,41 @@ async def test_term_document_frequency_tolerates_punctuation_only_tokens(store):
     assert await store.term_document_frequency(["!!!", ""]) == {"!!!": 0, "": 0}
 
 
+async def test_term_document_frequency_forgets_tombstoned_items(store):
+    """The probe counts the FTS index alone (no uw_items join — 450x
+    cheaper); it stays correct because tombstoning purges the FTS row in
+    the same transaction."""
+    await add_source(store)
+    await seed_indexed(
+        store,
+        [
+            make_item(1, body="bugatti chiron", title=""),
+            make_item(2, body="a note about the chiron", title=""),
+        ],
+    )
+    assert (await store.term_document_frequency(["chiron"]))["chiron"] == 2
+
+    await store.upsert_items("src1", [make_item(2, deleted=True)])
+
+    assert (await store.term_document_frequency(["chiron"]))["chiron"] == 1
+
+
+async def test_live_item_count_cache_survives_reads_and_clears_on_writes(store):
+    """count(*) is asked on every search; it is cached between committed
+    writes and must never serve a stale answer after one."""
+    await add_source(store)
+    await seed_indexed(store, [make_item(1), make_item(2)])
+
+    assert await store.live_item_count() == 2
+    assert await store.live_item_count() == 2  # cached read, same answer
+
+    await store.upsert_items("src1", [make_item(3)])
+    assert await store.live_item_count() == 3
+
+    await store.upsert_items("src1", [make_item(1, deleted=True)])
+    assert await store.live_item_count() == 2
+
+
 async def test_neighbors_for_returns_the_surrounding_thread_messages(store):
     await add_source(store)
     thread = [
