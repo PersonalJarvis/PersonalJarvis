@@ -29,12 +29,15 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-# Bounds. Three files is what a spoken instruction realistically points at,
-# and the character budgets keep the composer's own context well clear of the
-# point where a provider would start truncating.
-MAX_SKELETON_FILES = 3
-MAX_CHARS_PER_FILE = 6_000
-MAX_CHARS_TOTAL = 20_000
+# Bounds. Raised from 3/6k/20k after the first live compositions came back at
+# a third of the allowed prompt length: the writer can only describe what it
+# was shown, so a thin outline budget caps prompt depth no matter how the
+# instructions are worded. Five files covers a feature's surface rather than
+# just its entry point, and the budgets still leave a frontier model's context
+# far from the point where a provider would truncate.
+MAX_SKELETON_FILES = 5
+MAX_CHARS_PER_FILE = 9_000
+MAX_CHARS_TOTAL = 34_000
 
 # Never read more than this off disk before outlining — a "source file" in an
 # arbitrary folder can be a 200 MB generated blob.

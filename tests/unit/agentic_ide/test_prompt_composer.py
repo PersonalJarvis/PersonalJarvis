@@ -121,8 +121,10 @@ async def test_invented_file_references_are_stripped(
 
     async def _hallucinate(**_kwargs: object) -> str:
         return (
-            "Review the wake word detection. "
-            "@jarvis/plugins/wake/vosk_kws_provider.py @jarvis/does/not/exist.py"
+            "## Task\nReview the wake word detection.\n\n"
+            "## Key files\n"
+            "- `@jarvis/plugins/wake/vosk_kws_provider.py` - the provider\n"
+            "- `@jarvis/does/not/exist.py` - invented by the model"
         )
 
     monkeypatch.setattr(prompt_composer, "_llm_compose", _hallucinate)

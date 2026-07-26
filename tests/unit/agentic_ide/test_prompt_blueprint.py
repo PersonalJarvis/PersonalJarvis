@@ -14,7 +14,10 @@ import pytest
 
 from jarvis.agentic_ide.prompt_blueprint import (
     MAX_BODY_CHARS,
+    TARGET_MAX_CHARS,
+    TARGET_MIN_CHARS,
     ends_on_reference,
+    looks_truncated,
     render_fallback,
     system_prompt,
     user_block,
@@ -51,23 +54,33 @@ def test_every_kind_demands_the_markdown_skeleton(kind):
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
-def test_every_kind_forbids_a_verification_ritual(kind):
-    """Opus 5 and Fable 5 both over-verify when a prompt tells them to verify."""
-    lowered = system_prompt(kind).lower()
-    assert "do not ask the agent to verify" in lowered
+def test_every_kind_bans_the_two_leak_prone_subjects_outright(kind):
+    """Verification and reasoning must not appear at all — in EITHER direction.
+
+    The first version said "do not ask the agent to verify", and a live
+    composition dutifully wrote "Do not narrate your internal reasoning or
+    double-check your own work" INTO the finished prompt: the rule leaked
+    instead of being followed. Banning the subject rather than one direction of
+    it is what closes that.
+    """
+    text = system_prompt(kind)
+    assert "must not appear in the prompt AT ALL" in text
+    assert "not as a requirement and not as a prohibition" in text.replace("\n", " ")
+    assert "Write neither." in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
-def test_every_kind_forbids_asking_the_agent_to_narrate_its_reasoning(kind):
-    """A reasoning-echo instruction can trigger a refusal on Fable 5."""
-    lowered = system_prompt(kind).lower()
-    assert "internal reasoning" in lowered
-    assert "do not ask the agent to narrate" in lowered
+def test_every_kind_names_the_leak_as_a_defect(kind):
+    """Showing the exact leaked line is what makes the rule recognisable."""
+    assert "being LEAKED instead of followed" in system_prompt(kind)
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
 def test_every_kind_forbids_inventing_requirements(kind):
-    assert "invent nothing" in system_prompt(kind).lower()
+    """Still the hard rule — it just no longer suppresses description with it."""
+    text = system_prompt(kind)
+    assert "INVENTING is forbidden" in text
+    assert "the user did not state and the workspace does not establish" in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
@@ -209,5 +222,73 @@ def test_ends_on_reference_detects_the_failure_shape():
     assert not ends_on_reference("")
 
 
-def test_body_bound_is_three_thousand():
-    assert MAX_BODY_CHARS == 3000
+def test_the_target_length_sits_inside_the_hard_ceiling():
+    """The ceiling says what is allowed; the target says what is good.
+
+    Stating only the ceiling produced 549/865/904-character prompts against a
+    3000 budget — a model reads "under N" as "be brief".
+    """
+    assert TARGET_MIN_CHARS < TARGET_MAX_CHARS < MAX_BODY_CHARS
+
+
+@pytest.mark.parametrize("kind", _ALL_KINDS)
+def test_every_kind_states_the_target_length_not_only_the_ceiling(kind):
+    text = system_prompt(kind)
+    assert str(TARGET_MIN_CHARS) in text
+    assert str(TARGET_MAX_CHARS) in text
+    assert "Be thorough" in text
+
+
+@pytest.mark.parametrize("kind", _ALL_KINDS)
+def test_every_kind_separates_describing_from_inventing(kind):
+    """The anti-invention rule was suppressing legitimate description too."""
+    text = system_prompt(kind)
+    assert "DESCRIBING is not INVENTING" in text
+    assert "INVENTING is forbidden" in text
+    assert "DESCRIBING is wanted" in text
+
+
+@pytest.mark.parametrize("kind", _ALL_KINDS)
+def test_every_kind_offers_the_current_behaviour_section(kind):
+    """Describing today's code is what saves the agent a discovery round."""
+    assert "## How it works today" in system_prompt(kind)
+
+
+def test_no_kind_tells_the_writer_to_keep_it_short():
+    """Brevity instructions are what produced the thin prompts."""
+    for kind in _ALL_KINDS:
+        assert "Keep it short" not in system_prompt(kind)
+
+
+# ------------------------------------------------------ truncation guard
+def test_a_brief_that_stops_mid_sentence_is_recognised():
+    """Measured live: an investigation brief ended on "...to find" and was
+    handed over as finished. Half a brief reads as a whole one."""
+    assert looks_truncated("## Task\nTrace the path through the pipeline to find")
+
+
+def test_a_finished_brief_is_not_flagged():
+    assert not looks_truncated("## Task\nReview the ranking pipeline.")
+    assert not looks_truncated("## Task\nDo it.\n\n## Key files\n- `@a.py` - here")
+    assert not looks_truncated("## Task\nCheck this:")
+
+
+def test_a_list_item_without_a_full_stop_is_not_truncation():
+    """The common shape of a finished Key files section — must not fire."""
+    assert not looks_truncated("## Task\nDo it.\n\n## Key files\n- `@a.py` - ranking")
+    assert not looks_truncated("## Task\nDo it.\n\n## Done when\n- The tests pass")
+
+
+def test_a_heading_left_dangling_is_not_treated_as_damage():
+    """Structural lines carry no punctuation by nature; only prose is judged."""
+    assert not looks_truncated("## Task\nDo it.\n\n## Scope")
+
+
+def test_unformatted_prose_that_finishes_properly_is_accepted():
+    """Formatting is the blueprint's job to demand, not this guard's to police."""
+    assert not looks_truncated("Review the ranking pipeline and report back.")
+
+
+def test_empty_output_counts_as_truncated():
+    assert looks_truncated("")
+    assert looks_truncated("   ")
