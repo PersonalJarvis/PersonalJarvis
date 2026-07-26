@@ -103,6 +103,12 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
+  /**
+   * Which subscription this pane runs on ("Work seat"), when that is worth
+   * saying. Undefined for everyone with a single login — the header must not
+   * grow a badge that answers a question the user does not have.
+   */
+  accountLabel?: string | null;
   appearance: TerminalAppearance;
   fontSize: number;
   /** Highlight this pane as the prompt target. */
@@ -148,6 +154,7 @@ export function AgenticTerminal({
   name,
   workspaceId,
   displayName,
+  accountLabel,
   appearance,
   fontSize,
   focused = false,
@@ -535,6 +542,7 @@ export function AgenticTerminal({
         onRestart={onRestart}
         name={name}
         displayName={displayName}
+        accountLabel={accountLabel}
         appearance={appearance}
         focused={focused}
         maximized={maximized}
@@ -571,6 +579,7 @@ export function AgenticTerminal({
 function PaneHeader({
   name,
   displayName,
+  accountLabel,
   appearance,
   focused,
   maximized,
@@ -584,6 +593,7 @@ function PaneHeader({
 }: {
   name: string;
   displayName: string;
+  accountLabel?: string | null;
   appearance: TerminalAppearance;
   focused: boolean;
   maximized: boolean;
@@ -638,6 +648,23 @@ function PaneHeader({
         >
           {displayName}
         </span>
+        {/* Which of several subscriptions this pane is spending. Only rendered
+            when the user actually has more than one, so the header stays quiet
+            for everybody else — but with two seats open side by side, knowing
+            which pane bills which plan is the whole point. */}
+        {accountLabel && (
+          <span
+            className="truncate rounded-full px-1.5 text-[10px] tracking-wide"
+            style={{
+              color: light ? "#6b6b73" : "#9a9aa5",
+              backgroundColor: light ? "#00000010" : "#ffffff12",
+            }}
+            title={`Running on ${accountLabel}`}
+            data-testid={`pane-account-${name}`}
+          >
+            {accountLabel}
+          </span>
+        )}
       </div>
 
       {/* Pane actions. Kept quiet until the pane is hovered or focused, so a

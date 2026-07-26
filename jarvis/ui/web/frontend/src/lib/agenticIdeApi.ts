@@ -95,6 +95,10 @@ export interface TerminalState {
   prompts_sent: number;
   last_prompt: string;
   lines_captured: number;
+  /** Which subscription this pane runs on (see agentAccountsApi). */
+  account?: string | null;
+  /** Its display name, so the pane header can show it without a second lookup. */
+  account_label?: string | null;
 }
 
 export interface SessionState {
@@ -182,6 +186,8 @@ export interface ResumeResult {
 export interface TerminalPlan {
   agent: string;
   name?: string;
+  /** Which registered subscription to open on; omitted uses the active one. */
+  account?: string;
 }
 
 async function detail(res: Response): Promise<string> {
@@ -411,6 +417,8 @@ export async function addTerminal(payload: {
   direction?: "right" | "down";
   agent?: string;
   name?: string;
+  /** Subscription for the new pane; omitted inherits the anchor's. */
+  account?: string;
 }): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/terminals", {
     method: "POST",

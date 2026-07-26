@@ -26,21 +26,23 @@ import {
   FolderOpen,
   Loader2,
   Mic,
-  Minus,
-  Plus,
   Rocket,
   Sparkles,
   Terminal,
+  Users,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { AgenticGrid } from "@/components/agentic/AgenticGrid";
+import { TerminalCountStep } from "@/components/agentic/TerminalCountStep";
 import {
-  paneColumns,
-  workspaceBandCapacityFor,
-} from "@/components/agentic/layout";
+  type AgentAccount,
+  type AgentAccountsResponse,
+  fetchAgentAccounts,
+  groupFor,
+} from "@/lib/agentAccountsApi";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { ResumeCard } from "@/components/agentic/ResumeCard";
 import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
@@ -68,11 +70,14 @@ type Step = 0 | 1 | 2 | 3;
 interface PlannedTerminal {
   agent: string;
   name: string;
+  /**
+   * Which subscription of `agent` this pane opens on, or undefined for the
+   * active one. Per pane rather than per workspace on purpose: that is what
+   * lets two seats of the same plan run side by side in one folder — which is
+   * the entire reason for holding two.
+   */
+  account?: string;
 }
-
-// Common layouts stay one click away. Less common counts belong in the custom
-// selector instead of widening this row with a card for every possible value.
-const COUNT_CHOICES = [1, 2, 3, 4, 6, 8] as const;
 
 /**
  * Terminal plan for ``count`` panes, preserving whatever the user already chose
@@ -129,8 +134,11 @@ export function AgenticIdeView() {
   const [step, setStep] = useState<Step>(0);
   const [folder, setFolder] = useState<string | null>(null);
   const [count, setCount] = useState(2);
-  const [customCountSelected, setCustomCountSelected] = useState(false);
   const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
+  // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
+  // a failed load costs the picker, never the wizard: with none loaded every
+  // pane simply opens on the active account, exactly as before.
+  const [accounts, setAccounts] = useState<AgentAccountsResponse | null>(null);
   // The workspace that was open when the window last closed, if it can come
   // back. Null both when there is nothing to offer and after the user has
   // answered the offer either way.
@@ -181,6 +189,24 @@ export function AgenticIdeView() {
     void refresh();
   }, [refresh]);
 
+  // Loaded once, and deliberately NOT part of `refresh`: the wizard must open
+  // even when this fails. Without it every pane opens on the active account,
+  // which is exactly what happened before the switcher existed.
+  useEffect(() => {
+    fetchAgentAccounts()
+      .then(setAccounts)
+      .catch(() => setAccounts(null));
+  }, []);
+
+  /** The registered subscriptions of one CLI, for the wizard's per-pane picker. */
+  const accountsFor = useCallback(
+    (platform: string): AgentAccount[] =>
+      platform === "claude" || platform === "codex"
+        ? groupFor(accounts, platform)?.accounts ?? []
+        : [],
+    [accounts],
+  );
+
   /*
    * Panes can appear without this view asking for them.
    *
@@ -216,7 +242,7 @@ export function AgenticIdeView() {
 
   /*
    * How wide the workspace will be — measured here, in the wizard, because the
-   * preview dots must promise the arrangement the grid will actually produce.
+   * preview must show the arrangement the grid will actually produce.
    *
    * The grid decides its band width from its own width (a pane below
    * MIN_PANE_WIDTH_PX is unreadable), so a preview computing columns from the
@@ -224,6 +250,10 @@ export function AgenticIdeView() {
    * "12 → 6 above, 6 below" while the grid, in the same window, produced three
    * columns and four rows. The wizard shell sits in the same slot the grid will
    * occupy, so measuring it here answers the same question.
+   *
+   * This is the width the preview then NAMES rather than silently assumes — see
+   * TerminalCountStep. Measuring it right only makes the preview correct for the
+   * window it was shown in; saying so is what makes it correct after a maximise.
    */
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [shellWidth, setShellWidth] = useState(0);
@@ -239,13 +269,6 @@ export function AgenticIdeView() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [session]);
-
-  // The grid pads itself by 12 px on each side; without that the preview would
-  // promise one column more than fits at the boundary.
-  const previewPerBand = useMemo(
-    () => workspaceBandCapacityFor(shellWidth),
-    [shellWidth],
-  );
 
   useEffect(() => {
     if (!session || session.focus_mode || optedOutRef.current) return;
@@ -287,9 +310,8 @@ export function AgenticIdeView() {
     [agents],
   );
 
-  const chooseCount = (n: number, custom = false) => {
+  const chooseCount = (n: number) => {
     const next = Math.max(1, Math.min(maxTerminals, Math.trunc(n)));
-    setCustomCountSelected(custom);
     setCount(next);
     setPlanned((prev) => buildPlan(next, prev, defaultAgent, suggested));
   };
@@ -301,7 +323,6 @@ export function AgenticIdeView() {
   }) => {
     const total = Math.max(1, Math.min(recent.terminals, maxTerminals));
     setCount(total);
-    setCustomCountSelected(!COUNT_CHOICES.some((choice) => choice === total));
     const entries = Object.entries(recent.agents ?? {}).filter(([, n]) => n > 0);
     if (entries.length === 0) {
       setPlanned(buildPlan(total, [], defaultAgent, suggested));
@@ -630,109 +651,15 @@ export function AgenticIdeView() {
           {step === 1 && (
             <Section
               title="How many terminals?"
-              hint="Each terminal runs its own agent. The dots show how they will sit — side by side, wrapping onto a second line once there are too many to stay readable."
+              hint="Each terminal runs its own agent. Below is the workspace you are about to open — the panes sit exactly like that."
             >
-              <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-                {COUNT_CHOICES.filter((n) => n <= maxTerminals).map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    aria-pressed={!customCountSelected && count === n}
-                    onClick={() => chooseCount(n)}
-                    className={cn(
-                      "flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border p-3 transition-colors",
-                      !customCountSelected && count === n
-                        ? "border-primary/50 bg-primary/5"
-                        : "border-border bg-card/60 hover:border-primary/30",
-                    )}
-                  >
-                    <DotGrid
-                      n={n}
-                      perBand={previewPerBand}
-                      active={!customCountSelected && count === n}
-                    />
-                    <span
-                      className={cn(
-                        "text-sm font-semibold",
-                        !customCountSelected && count === n
-                          ? "text-primary"
-                          : "text-foreground",
-                      )}
-                    >
-                      {n}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div
-                className={cn(
-                  "flex flex-wrap items-center gap-4 rounded-xl border bg-card/60 p-4 transition-colors",
-                  customCountSelected
-                    ? "border-primary/50 bg-primary/5"
-                    : "border-border hover:border-primary/30",
-                )}
-              >
-                <button
-                  type="button"
-                  aria-pressed={customCountSelected}
-                  onClick={() => chooseCount(count, true)}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-background/60">
-                    <DotGrid
-                      n={count}
-                      perBand={previewPerBand}
-                      active={customCountSelected}
-                      testId="custom-terminal-preview"
-                    />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold">Custom Terminals</span>
-                    <span className="block text-xs text-muted-foreground">
-                      Choose any number from 1 to {maxTerminals}.
-                    </span>
-                  </span>
-                </button>
-
-                <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-background/60 p-1">
-                  <button
-                    type="button"
-                    aria-label="Use one fewer terminal"
-                    disabled={count <= 1}
-                    onClick={() => chooseCount(count - 1, true)}
-                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <input
-                    type="number"
-                    min={1}
-                    max={maxTerminals}
-                    value={count}
-                    aria-label="Custom terminal count"
-                    onFocus={() => chooseCount(count, true)}
-                    onChange={(event) =>
-                      chooseCount(
-                        Number.isFinite(event.currentTarget.valueAsNumber)
-                          ? event.currentTarget.valueAsNumber
-                          : 1,
-                        true,
-                      )
-                    }
-                    className="h-8 w-14 rounded-md border border-border bg-background text-center font-mono text-sm font-semibold outline-none focus:border-primary/60"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Use one more terminal"
-                    disabled={count >= maxTerminals}
-                    onClick={() => chooseCount(count + 1, true)}
-                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+              <TerminalCountStep
+                count={count}
+                max={maxTerminals}
+                names={suggested}
+                workspaceWidthPx={shellWidth}
+                onChange={chooseCount}
+              />
             </Section>
           )}
 
@@ -772,13 +699,27 @@ export function AgenticIdeView() {
                           onSelect={() =>
                             setPlanned((prev) =>
                               prev.map((p, i) =>
-                                i === index ? { ...p, agent: agent.name } : p,
+                                i === index
+                                  ? // The account belongs to the OLD CLI — an id
+                                    // from one CLI means nothing to the other.
+                                    { ...p, agent: agent.name, account: undefined }
+                                  : p,
                               ),
                             )
                           }
                         />
                       ))}
                     </div>
+                    <AccountChoice
+                      platform={pane.agent}
+                      accounts={accountsFor(pane.agent)}
+                      value={pane.account}
+                      onSelect={(id) =>
+                        setPlanned((prev) =>
+                          prev.map((p, i) => (i === index ? { ...p, account: id } : p)),
+                        )
+                      }
+                    />
                   </li>
                 ))}
               </ul>
@@ -1050,46 +991,44 @@ function AgentChoice({
 }
 
 /**
- * The arrangement ``n`` terminals will actually open in.
+ * Which of several subscriptions of one CLI this pane opens on.
  *
- * Both numbers behind this come from the grid itself: `perBand` is what fits in
- * the measured width, and `paneColumns` is the function the grid lays itself out
- * with. The preview used to have its own formula (three per line), so choosing 4
- * previewed 3 above and 1 below and then opened 4 side by side; then it dropped
- * the width and promised 6 + 6 where a narrow window gave three columns and four
- * rows. A preview is only worth showing while it cannot disagree with the real
- * thing, and that means sharing every input, not just the function.
+ * Renders NOTHING when the user has only the one login, which is almost
+ * everybody — the wizard must not grow a control that answers a question the
+ * user does not have. It appears the moment a second seat is registered, and
+ * then it is per pane, so one folder can hold panes on both plans at once.
  */
-function DotGrid({
-  n,
-  perBand,
-  active,
-  testId,
+function AccountChoice({
+  platform,
+  accounts,
+  value,
+  onSelect,
 }: {
-  n: number;
-  perBand: number;
-  active: boolean;
-  testId?: string;
+  platform: string;
+  accounts: AgentAccount[];
+  value: string | undefined;
+  onSelect: (id: string | undefined) => void;
 }) {
-  const cols = Math.max(1, paneColumns(n, perBand));
-  const tight = cols > 6;
+  if (accounts.length < 2) return null;
   return (
-    <div
-      data-testid={testId}
-      className={cn("grid", tight ? "gap-0.5" : "gap-1")}
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-    >
-      {Array.from({ length: n }).map((_, i) => (
-        <span
-          key={i}
-          className={cn(
-            "rounded-[3px]",
-            tight ? "h-1.5 w-1.5" : "h-2 w-2",
-            active ? "bg-primary" : "bg-muted-foreground/40",
-          )}
-        />
-      ))}
-    </div>
+    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Users className="h-3.5 w-3.5 shrink-0" />
+      <span className="sr-only">Subscription for this terminal</span>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onSelect(e.target.value || undefined)}
+        aria-label={`Subscription for the ${platform} terminal`}
+        className="rounded-lg border border-border bg-background/60 px-2 py-1.5 text-xs outline-none focus:border-primary/50"
+      >
+        <option value="">Active account</option>
+        {accounts.map((account) => (
+          <option key={account.id} value={account.id}>
+            {account.label}
+            {account.connected ? "" : " (not signed in)"}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

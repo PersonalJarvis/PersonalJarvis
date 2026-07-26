@@ -3221,5 +3221,21 @@
     "sign_in": "Anmelden",
     "rename": "Umbenennen",
     "remove": "Entfernen"
+  },
+  "agent_accounts": {
+    "title": "Deine Abos",
+    "hint": "mehrere Logins pro CLI",
+    "description": "Du hast mehr als ein Abo für dasselbe Coding-CLI? Trag hier jedes ein und wechsle, ohne dich abzumelden — jeder Login bleibt parallel gültig. Der Haken markiert das Konto, mit dem NEUE Terminals starten; bereits laufende Terminals behalten das Konto, mit dem sie gestartet wurden.",
+    "accounts": "eingetragen",
+    "loading": "Wird geladen…",
+    "add": "Konto hinzufügen",
+    "add_confirm": "Hinzufügen",
+    "cancel": "Abbrechen",
+    "name_placeholder": "Name, z. B. Arbeitskonto",
+    "use_account": "Für neue Terminals verwenden",
+    "in_use": "aktiv",
+    "sign_in": "Anmelden",
+    "rename": "Umbenennen",
+    "remove": "Entfernen"
   }
 }

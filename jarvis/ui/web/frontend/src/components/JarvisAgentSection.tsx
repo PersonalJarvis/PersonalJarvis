@@ -22,6 +22,7 @@ import {
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -304,6 +305,13 @@ export function JarvisAgentSection({
           ))}
         </div>
       </div>
+
+      {/* Below the two columns rather than inside one: this is a second axis.
+          The cards above answer "which provider powers the agent"; this answers
+          "which of YOUR seats on that provider", and a card holding two Claude
+          Max logins does not belong in a column of one-login-per-provider
+          cards. */}
+      <AgentAccountsPanel />
     </section>
   );
 }

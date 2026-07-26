@@ -3222,5 +3222,21 @@
     "sign_in": "Sign in",
     "rename": "Rename",
     "remove": "Remove"
+  },
+  "agent_accounts": {
+    "title": "Your subscriptions",
+    "hint": "several logins per CLI",
+    "description": "Hold more than one plan for the same coding CLI? Register each one here and switch without signing out — every login stays valid side by side. The tick marks the account NEW terminals open on; terminals that are already running keep the account they were started with.",
+    "accounts": "registered",
+    "loading": "Loading…",
+    "add": "Add account",
+    "add_confirm": "Add",
+    "cancel": "Cancel",
+    "name_placeholder": "Name, e.g. Work seat",
+    "use_account": "Use for new terminals",
+    "in_use": "in use",
+    "sign_in": "Sign in",
+    "rename": "Rename",
+    "remove": "Remove"
   }
 }

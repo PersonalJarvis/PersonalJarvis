@@ -209,25 +209,22 @@ async def test_a_pane_looks_for_its_conversation_in_its_own_account(
     assert has_conversation("claude", handle, tmp_path / "elsewhere") is False
 
 
-async def test_a_resumed_workspace_comes_back_on_the_same_accounts(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_remembered_pane_carries_its_account_through_the_store() -> None:
+    """Deliberately at the pane level, not the snapshot wrapper's.
+
+    What has to survive is the pane's account: the wrapper around it has
+    changed shape before and will again, while "this pane ran on that seat" is
+    the fact the reopen depends on.
+    """
     from jarvis.agentic_ide import resume_store
 
     second = agent_accounts.create_account("codex", "Second plan")
-    snapshot = resume_store.Snapshot(
-        session_id="s1",
-        folder=str(tmp_path),
-        saved_at=0.0,
-        terminals=[
-            resume_store.SnapshotTerminal(
-                key="alex", name="Alex", agent="codex", account=second.id
-            )
-        ],
+    pane = resume_store.SnapshotTerminal(
+        key="alex", name="Alex", agent="codex", account=second.id
     )
-    restored = resume_store.Snapshot.from_dict(snapshot.to_dict())
+    restored = resume_store.SnapshotTerminal.from_dict(pane.to_dict())
     assert restored is not None
-    assert restored.terminals[0].account == second.id
+    assert restored.account == second.id
 
 
 async def test_an_older_snapshot_without_an_account_still_reopens() -> None:

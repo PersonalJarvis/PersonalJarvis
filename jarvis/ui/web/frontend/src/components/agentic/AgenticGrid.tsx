@@ -36,7 +36,7 @@ import {
   type SplitDirection,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
-import { paneGrid, workspaceBandCapacityFor } from "./layout";
+import { bandCapacityFor, GRID_HORIZONTAL_PADDING_PX, paneGrid } from "./layout";
 import { PromptPreview } from "./PromptPreview";
 import {
   addTerminal,
@@ -201,14 +201,33 @@ export function AgenticGrid({
   // How many panes may share one band is a question about WIDTH, not a constant:
   // eight side by side leave ~18 characters each and the agent's output becomes
   // unreadable. So the grid measures itself and wraps once panes would starve.
+  /*
+   * CONTENT width — the box the grid tracks actually occupy, padding excluded.
+   *
+   * Which of the two widths this is matters, and getting it wrong was a real
+   * defect. `contentRect.width` already excludes this element's 12 px of padding
+   * a side, but the value was then passed to `workspaceBandCapacityFor`, which
+   * subtracts that same padding AGAIN — so the grid laid itself out 24 px
+   * narrower than it is. The wizard preview measures an UNPADDED element, where
+   * that helper is right, so the two flipped to a new column count at different
+   * window widths and the preview appeared to lie. The seed value made it worse:
+   * it came from `clientWidth`, which INCLUDES padding, so the grid could
+   * silently re-column itself on the first resize after opening.
+   *
+   * Now both sides state which width they hold: this one is already content, so
+   * it calls `bandCapacityFor` directly; the wizard subtracts the padding the
+   * grid will have via `workspaceBandCapacityFor`.
+   */
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
-    setGridWidth(node.clientWidth);
+    setGridWidth(Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX));
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? node.clientWidth;
+      const width =
+        entries[0]?.contentRect.width ??
+        Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
       // Round to a step so a one-pixel drift cannot churn the layout (and with
       // it every pane's resize) on window animations.
       setGridWidth(Math.round(width / 16) * 16);
@@ -261,7 +280,7 @@ export function AgenticGrid({
     ? COMPOSER_COLLAPSED_PX
     : requestedComposer;
 
-  const perBand = useMemo(() => workspaceBandCapacityFor(gridWidth), [gridWidth]);
+  const perBand = useMemo(() => bandCapacityFor(gridWidth), [gridWidth]);
   const grid = useMemo(
     () => paneGrid(session.terminals, perBand),
     [session.terminals, perBand],
@@ -529,6 +548,15 @@ export function AgenticGrid({
                 name={term.name}
                 workspaceId={session.id}
                 displayName={term.display_name}
+                // Only the panes that are NOT on the default login carry a
+                // badge. Labelling every pane "Default Claude Code login" would
+                // be noise for the many; labelling the odd one out is the whole
+                // signal for the few running two seats at once.
+                accountLabel={
+                  term.account && !term.account.endsWith(":default")
+                    ? term.account_label
+                    : null
+                }
                 appearance={appearance}
                 fontSize={fontSize}
                 focused={target === term.name}
