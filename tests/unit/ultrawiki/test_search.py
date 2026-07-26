@@ -956,3 +956,78 @@ async def test_fast_search_stays_quiet_at_info_level(store, caplog):
         await hybrid_search(store, make_cfg(), "alpha")
 
     assert not any("hybrid search took" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Query-embedding cache
+# ---------------------------------------------------------------------------
+
+
+async def test_repeated_query_embeds_only_once(store, monkeypatch):
+    """The injector and the search tool run the SAME query within one turn;
+    the second run must not pay the embedding round trip again."""
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    fake = FakeEmbedding()
+    register_fake_embedding(monkeypatch, fake)
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    await hybrid_search(store, cfg, "alpha content")
+    await hybrid_search(store, cfg, "  Alpha   CONTENT ")  # same after normalizing
+
+    assert len(fake.calls) == 1
+
+
+async def test_cache_is_scoped_by_model_and_query(store, monkeypatch):
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    fake = FakeEmbedding()
+    register_fake_embedding(monkeypatch, fake)
+
+    await hybrid_search(
+        store, make_cfg(embedding_provider="fake", embedding_model="model-a"), "alpha"
+    )
+    await hybrid_search(
+        store, make_cfg(embedding_provider="fake", embedding_model="model-b"), "alpha"
+    )
+    await hybrid_search(
+        store, make_cfg(embedding_provider="fake", embedding_model="model-a"), "beta"
+    )
+
+    assert len(fake.calls) == 3  # no cross-model or cross-query reuse
+
+
+async def test_failed_embeddings_are_never_cached(store, monkeypatch):
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    fake = FakeEmbedding(error=EmbeddingError("fake: HTTP 500"))
+    register_fake_embedding(monkeypatch, fake)
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    await hybrid_search(store, cfg, "alpha")
+    await hybrid_search(store, cfg, "alpha")
+
+    assert len(fake.calls) == 2  # a failure is retried, not remembered
+
+
+async def test_cache_eviction_keeps_the_size_bounded(store, monkeypatch):
+    import jarvis.ultrawiki.search as search_mod
+
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    fake = FakeEmbedding()
+    register_fake_embedding(monkeypatch, fake)
+    monkeypatch.setattr(search_mod, "_QUERY_VECTOR_CACHE_MAX", 2)
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    for query in ("one", "two", "three"):
+        await hybrid_search(store, cfg, query)
+
+    assert len(search_mod._QUERY_VECTOR_CACHE) == 2
+    # "one" was evicted (oldest); asking again re-embeds.
+    await hybrid_search(store, cfg, "one")
+    assert len(fake.calls) == 4

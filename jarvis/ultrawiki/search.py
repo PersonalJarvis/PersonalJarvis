@@ -351,6 +351,36 @@ def _configured_model(ultrawiki: Any, provider: str, defaults: dict[str, str]) -
     return model or defaults.get(provider, "")
 
 
+#: In-process LRU of query-text embeddings, keyed by (provider, model,
+#: whitespace-normalized lowercased query). Embedding the query is usually the
+#: only network round trip on the read path, and the SAME query text is
+#: embedded repeatedly — the context injector and the search tool both run it
+#: within one turn, and users re-ask questions. In-memory only, deliberately:
+#: persisting query texts (or vectors keyed by them) to disk would write a
+#: trace of what the user asked their memory, which the log-privacy rule above
+#: exists to prevent.
+_QUERY_VECTOR_CACHE: dict[tuple[str, str, str], list[float]] = {}
+_QUERY_VECTOR_CACHE_MAX = 256
+
+
+def _query_cache_key(provider: str, model: str, query: str) -> tuple[str, str, str]:
+    return (provider, model, " ".join(query.split()).lower())
+
+
+def _cached_query_vector(key: tuple[str, str, str]) -> list[float] | None:
+    vector = _QUERY_VECTOR_CACHE.get(key)
+    if vector is not None:
+        # Refresh LRU position (dicts iterate in insertion order).
+        _QUERY_VECTOR_CACHE[key] = _QUERY_VECTOR_CACHE.pop(key)
+    return vector
+
+
+def _remember_query_vector(key: tuple[str, str, str], vector: list[float]) -> None:
+    _QUERY_VECTOR_CACHE[key] = vector
+    while len(_QUERY_VECTOR_CACHE) > _QUERY_VECTOR_CACHE_MAX:
+        del _QUERY_VECTOR_CACHE[next(iter(_QUERY_VECTOR_CACHE))]
+
+
 async def _vector_leg(
     store: Any,
     cfg: Any,
@@ -386,25 +416,32 @@ async def _vector_leg(
         log.warning("vector leg skipped: unknown embedding provider %r", provider)
         return []
     model = _configured_model(ultrawiki, provider, DEFAULT_MODELS)
-    try:
-        vectors = await _timed(
-            "vector_embed_ms", factory(cfg).embed([query], model=model), sink
-        )
-    except EmbeddingError as exc:
-        log.info("vector leg skipped: %s", exc)
-        return []
-    except Exception:  # noqa: BLE001 — degrade to keyword-only, never fail the search
-        log.warning(
-            "vector leg skipped: query embedding raised unexpectedly",
-            exc_info=True,
-        )
-        return []
-    if not vectors or not vectors[0]:
-        log.info("vector leg skipped: %s returned no query vector", provider)
-        return []
+    cache_key = _query_cache_key(provider, model, query)
+    query_vector = _cached_query_vector(cache_key)
+    if query_vector is None:
+        try:
+            vectors = await _timed(
+                "vector_embed_ms", factory(cfg).embed([query], model=model), sink
+            )
+        except EmbeddingError as exc:
+            log.info("vector leg skipped: %s", exc)
+            return []
+        except Exception:  # noqa: BLE001 — degrade to keyword-only, never fail the search
+            log.warning(
+                "vector leg skipped: query embedding raised unexpectedly",
+                exc_info=True,
+            )
+            return []
+        if not vectors or not vectors[0]:
+            log.info("vector leg skipped: %s returned no query vector", provider)
+            return []
+        query_vector = list(vectors[0])
+        _remember_query_vector(cache_key, query_vector)
+    else:
+        log.debug("query vector served from the in-process cache")
     results, reason = await _timed(
         "vector_ann_ms",
-        store.vector_search(vectors[0], k=LEG_POOL, area_id=area_id),
+        store.vector_search(query_vector, k=LEG_POOL, area_id=area_id),
         sink,
     )
     if reason:
