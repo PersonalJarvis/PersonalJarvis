@@ -132,7 +132,12 @@ export function ExplorePanel({
   const action = EMPTY_ACTION[reason];
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col" data-testid="explore-panel">
+    // h-full, not flex-1: the tab body this renders into is itself a
+    // scrolling container, and inside one of those `flex-1` imposes no
+    // ceiling — the panel grew to 46 000 px on a real corpus, pushing the
+    // vault strip somewhere no one would ever scroll to. Taking the parent's
+    // height instead is what makes the inner lists scroll on their own.
+    <div className="flex h-full min-h-0 flex-col" data-testid="explore-panel">
       {reason !== "ok" && (
         <div
           data-testid="explore-empty"
