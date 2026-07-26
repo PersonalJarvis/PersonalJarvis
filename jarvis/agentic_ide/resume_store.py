@@ -187,9 +187,7 @@ def save(snapshot: Snapshot) -> None:
             tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
             os.replace(tmp, target)
         except OSError as exc:
-            logger.warning(
-                "Agentic IDE: could not persist the resume snapshot: {}", exc
-            )
+            logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
             # Never leave a half-written temp file behind to be found later.
             try:
                 tmp.unlink(missing_ok=True)
