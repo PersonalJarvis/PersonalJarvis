@@ -171,6 +171,13 @@ dependencies = [
     # clean, and search degrades honestly to FTS-only where the extension cannot
     # load. No Windows ARM64 wheel upstream — same guard marker as vosk (AP-23).
     "sqlite-vec>=0.1.9; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    # UltraWiki export-import connector (standards-based universal ingestion,
+    # UltraWiki/02): pypdf extracts text from PDF exports, icalendar parses the
+    # RFC 5545 ICS calendars every provider exports. Both pure-Python universal
+    # wheels; lazy-imported in jarvis/ultrawiki/connectors/export_import.py with
+    # honest per-file degradation when absent (mail/zip/csv ride the stdlib).
+    "pypdf>=5.1",
+    "icalendar>=6.0",
     # Phase F1 — Telegram channel bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
 ]

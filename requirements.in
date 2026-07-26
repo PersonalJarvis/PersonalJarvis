@@ -167,4 +167,7 @@ tomlkit>=0.12
 aiosqlite>=0.21
 # UltraWiki vector search (loadable SQLite extension, lazy-imported; no win-arm64 wheel)
 sqlite-vec>=0.1.9; sys_platform != 'win32' or platform_machine != 'ARM64'
+# UltraWiki export-import parsers (PDF text + RFC 5545 ICS; pure-Python, lazy-imported)
+pypdf>=5.1
+icalendar>=6.0
 python-telegram-bot>=22,<23
