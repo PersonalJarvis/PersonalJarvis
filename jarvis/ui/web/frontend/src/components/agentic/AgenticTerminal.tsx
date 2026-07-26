@@ -71,6 +71,7 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
+import { attachTerminalBridge } from "@/lib/editActions";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -235,6 +236,15 @@ export function AgenticTerminal({
     }
     termRef.current = term;
     fitRef.current = fit;
+    // Let the app-wide right-click menu reach this terminal. It cannot use the
+    // browser selection here — the canvas renderer above paints the text, so
+    // there is no selectable DOM to read — and it must paste through xterm so
+    // the sequence is bracketed rather than typed key by key.
+    attachTerminalBridge(container, {
+      getSelection: () => term.getSelection(),
+      paste: (text) => term.paste(text),
+      focus: () => term.focus(),
+    });
     try {
       fit.fit();
     } catch {
