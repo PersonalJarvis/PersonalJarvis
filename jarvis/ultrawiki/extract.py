@@ -57,6 +57,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "ExtractResult",
+    "MEDIA_KINDS",
     "TEXT_EXTENSIONS",
     "detect_kind",
     "extract_text",
@@ -103,6 +104,57 @@ _ZIP_MARKERS: tuple[tuple[str, str], ...] = (
     ("META-INF/container.xml", "epub"),
 )
 
+#: Kinds that hold meaning no text extractor can reach, but a model can.
+#: The enrichment stage reads exactly these; everything else it ignores.
+MEDIA_KINDS: frozenset[str] = frozenset({"image", "audio", "video"})
+
+#: ISO-BMFF brand (bytes 8..12 after an `ftyp` box) → kind. One container
+#: family holds an iPhone photo, a voice memo and a video, and the extension
+#: routinely disagrees with all three — an iPhone photo shared through a chat
+#: arrives as `.jpg` holding HEIC, and a WhatsApp voice note is `.opus` inside
+#: an Ogg stream. The brand is the only honest answer.
+_FTYP_BRANDS: tuple[tuple[bytes, str], ...] = (
+    (b"heic", "image"), (b"heix", "image"), (b"heim", "image"),
+    (b"heis", "image"), (b"hevc", "image"), (b"mif1", "image"),
+    (b"msf1", "image"), (b"avif", "image"), (b"avis", "image"),
+    (b"M4A ", "audio"), (b"M4B ", "audio"), (b"M4P ", "audio"),
+    (b"qt  ", "video"), (b"M4V ", "video"), (b"M4VP", "video"),
+    (b"isom", "video"), (b"iso2", "video"), (b"iso4", "video"),
+    (b"iso5", "video"), (b"iso6", "video"), (b"mp41", "video"),
+    (b"mp42", "video"), (b"mp4v", "video"), (b"avc1", "video"),
+    (b"3gp4", "video"), (b"3gp5", "video"), (b"3g2a", "video"),
+)
+
+#: RIFF sub-format (bytes 8..12) → kind.
+_RIFF_FORMS: tuple[tuple[bytes, str], ...] = (
+    (b"WEBP", "image"),
+    (b"WAVE", "audio"),
+    (b"AVI ", "video"),
+)
+
+#: Leading magic for media families that need no container inspection.
+_MEDIA_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"II*\x00", "image"),          # TIFF, little-endian
+    (b"MM\x00*", "image"),          # TIFF, big-endian
+    (b"\x1aE\xdf\xa3", "video"),    # Matroska / WebM
+    (b"FLV\x01", "video"),          # Flash video
+    (b"\xff\xfb", "audio"),         # MPEG-1 layer 3, no ID3 tag
+    (b"\xff\xf3", "audio"),
+    (b"\xff\xf2", "audio"),
+    (b"\xff\xf1", "audio"),         # AAC (ADTS)
+    (b"MAC \x00", "audio"),         # Monkey's Audio
+    (b"wvpk", "audio"),             # WavPack
+)
+
+#: A tar header carries its magic at offset 257, not at the start — the one
+#: format in this module that cannot be identified from a leading prefix.
+_TAR_MAGIC_OFFSET = 257
+_TAR_MAGICS: tuple[bytes, ...] = (b"ustar\x0000", b"ustar  \x00", b"ustar\x00")
+
+#: Suffixes that mark a gzip stream as a COMPRESSED TAR rather than a single
+#: gzipped file. Google Takeout's default download is exactly this.
+_TGZ_SUFFIXES: tuple[str, ...] = (".tgz", ".tar.gz", ".taz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
+
 #: Extensions whose contents are text even when they look unfamiliar. Not an
 #: allowlist that decides what gets imported — a hint for the sniffer. Anything
 #: that decodes cleanly is treated as text regardless of its name.
@@ -130,13 +182,40 @@ TEXT_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-#: Files whose NAME says binary regardless of what decodes.
+#: Extension → media kind, consulted only when the content was inconclusive.
+#: A file the sniffer could not place is still worth calling a photo when it
+#: is named like one: a truncated download, an unusual camera profile or a
+#: RAW format nobody ships magic for is exactly the picture a person cares
+#: about most.
+_MEDIA_EXTENSIONS: dict[str, str] = {
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".jpe": "image",
+    ".gif": "image", ".bmp": "image", ".webp": "image", ".tiff": "image",
+    ".tif": "image", ".heic": "image", ".heif": "image", ".avif": "image",
+    ".psd": "image", ".ico": "image",
+    # Camera RAW: one per major vendor, because a photographer's archive is
+    # otherwise entirely invisible to a memory system.
+    ".raw": "image", ".dng": "image", ".cr2": "image", ".cr3": "image",
+    ".nef": "image", ".arw": "image", ".orf": "image", ".rw2": "image",
+    ".raf": "image", ".srw": "image", ".pef": "image",
+    ".mp3": "audio", ".wav": "audio", ".flac": "audio", ".ogg": "audio",
+    ".oga": "audio", ".opus": "audio", ".m4a": "audio", ".m4b": "audio",
+    ".aac": "audio", ".wma": "audio", ".aiff": "audio", ".aif": "audio",
+    ".amr": "audio", ".3ga": "audio", ".caf": "audio", ".wv": "audio",
+    ".mp4": "video", ".mov": "video", ".avi": "video", ".mkv": "video",
+    ".webm": "video", ".wmv": "video", ".flv": "video", ".m4v": "video",
+    ".mpg": "video", ".mpeg": "video", ".3gp": "video", ".3g2": "video",
+    ".mts": "video", ".m2ts": "video", ".ogv": "video",
+    # `.ts` is deliberately absent: it is TypeScript far more often than it is
+    # an MPEG transport stream, and calling a source file a video would drop it
+    # from a developer's own knowledge base.
+}
+
+#: Files whose NAME says binary regardless of what decodes. Media extensions
+#: are deliberately NOT here any more — they resolve to their media kind
+#: above, which is what makes a photo library importable at all.
 _BINARY_EXTENSIONS: frozenset[str] = frozenset(
     {
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif",
-        ".ico", ".svgz", ".psd", ".ai", ".heic", ".avif",
-        ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma",
-        ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".flv",
+        ".svgz", ".ai",
         ".zip", ".gz", ".bz2", ".xz", ".7z", ".rar", ".tar", ".tgz", ".jar",
         ".exe", ".dll", ".so", ".dylib", ".bin", ".dat", ".db", ".sqlite",
         ".woff", ".woff2", ".ttf", ".otf", ".eot",
@@ -175,7 +254,20 @@ class ExtractResult:
         extract it" (no pypdf, a corrupt archive) — only the second is worth
         retrying later.
         """
-        return not self.ok and self.kind not in ("image", "audio", "video", "empty")
+        return not self.ok and self.kind not in MEDIA_KINDS and self.kind != "empty"
+
+    @property
+    def media_kind(self) -> str:
+        """``image`` / ``audio`` / ``video`` when this file carries meaning a
+        model could read; ``""`` for everything else.
+
+        The third outcome the original two could not express. A photo is
+        neither "extracted" nor "we failed to extract it" — it is *not text,
+        and never will be*, while still being one of the most memory-dense
+        things a person owns. Naming that case is what lets a later stage
+        describe the picture instead of the file being quietly worthless.
+        """
+        return self.kind if self.kind in MEDIA_KINDS else ""
 
 
 def _read(data: bytes | Path) -> bytes:
@@ -247,6 +339,60 @@ def _zip_kind(data: bytes | Path) -> str:
     return "archive"
 
 
+def _container_kind(head: bytes) -> str:
+    """Media kind of an ISO-BMFF or RIFF container, or ``""``.
+
+    Both families put a four-byte form marker at offset 8, and both are used
+    for pictures, sound and film alike — so the outer magic alone says nothing
+    useful. `.heic` from an iPhone and `.mp4` from the same phone differ only
+    here.
+    """
+    if len(head) >= 12:
+        if head[4:8] == b"ftyp":
+            brand = head[8:12]
+            for marker, kind in _FTYP_BRANDS:
+                if brand == marker:
+                    return kind
+            # An unlisted brand is still an ISO-BMFF file, and those are
+            # overwhelmingly video. Better a video we transcribe than a
+            # "binary" we drop.
+            return "video"
+        if head[:4] == b"RIFF":
+            form = head[8:12]
+            for marker, kind in _RIFF_FORMS:
+                if form == marker:
+                    return kind
+    return ""
+
+
+def _is_tar(data: bytes | Path) -> bool:
+    """Whether these bytes are an uncompressed tar (magic lives at offset 257)."""
+    header = b""
+    if isinstance(data, Path):
+        try:
+            with data.open("rb") as handle:
+                header = handle.read(_TAR_MAGIC_OFFSET + 8)
+        except OSError:
+            return False
+    else:
+        header = bytes(data[: _TAR_MAGIC_OFFSET + 8])
+    if len(header) < _TAR_MAGIC_OFFSET + 5:
+        return False
+    tail = header[_TAR_MAGIC_OFFSET:]
+    return any(tail.startswith(magic) for magic in _TAR_MAGICS)
+
+
+def _looks_like_tarball(filename: str) -> bool:
+    """Whether a compressed stream's NAME says it wraps a tar archive.
+
+    Compression carries no record of what it compressed, so the name is the
+    only evidence available without decompressing — and `.tar.gz` is a double
+    suffix `Path.suffix` alone does not see.
+    """
+    lowered = Path(filename).name.lower()
+    return any(lowered.endswith(suffix) for suffix in _TGZ_SUFFIXES)
+
+
 def detect_kind(data: bytes | Path, filename: str = "", mime: str = "") -> str:
     """The file's real format — content first, name second, mime last.
 
@@ -256,13 +402,29 @@ def detect_kind(data: bytes | Path, filename: str = "", mime: str = "") -> str:
     head = _head(data)
     if not head:
         return "empty"
+
+    # Containers before flat magic: `RIFF` and `ftyp` files would otherwise
+    # fall through to the extension, which is where HEIC photos got lost.
+    container = _container_kind(head)
+    if container:
+        return container
+    for magic, kind in _MEDIA_MAGIC:
+        if head.startswith(magic):
+            return kind
     for magic, kind in _MAGIC:
         if head.startswith(magic):
+            if kind == "gzip" and _looks_like_tarball(filename):
+                return "tar"
             return kind
     if head.startswith(b"PK\x03\x04"):
         return _zip_kind(data)
+    if _is_tar(data):
+        return "tar"
 
     suffix = Path(filename).suffix.lower() if filename else ""
+    media = _MEDIA_EXTENSIONS.get(suffix, "")
+    if media:
+        return media
     if suffix in _BINARY_EXTENSIONS:
         return "binary"
     lowered = (mime or "").lower()
@@ -611,12 +773,16 @@ def _from_json(data: bytes | Path) -> ExtractResult:
 
 
 _NO_TEXT_REASONS: dict[str, str] = {
-    "image": "an image holds no text — reading it needs OCR, which this build does not do",
-    "audio": "an audio file holds no text — reading it needs transcription",
-    "video": "a video holds no text — reading it needs transcription",
+    # The three media reasons describe a PENDING state, not a dead end: the
+    # item is stored and findable by name, date and folder immediately, and
+    # the enrichment stage fills in what the file actually shows or says.
+    "image": "a picture carries no text; it is queued to be described",
+    "audio": "a recording carries no text; it is queued to be transcribed",
+    "video": "a video carries no text; it is queued to be transcribed",
     "empty": "the file is empty",
     "binary": "this is a binary file with no readable text",
     "archive": "an archive holds files rather than text — import it as an export instead",
+    "tar": "a tar archive holds files rather than text — import it as an export instead",
     "gzip": "a compressed file holds other files rather than text",
     "legacy_office": (
         "this is a pre-2007 Office file (.doc/.xls/.ppt); re-saving it in the "
@@ -664,6 +830,7 @@ def extract_text(
             return _from_text(data)
         return ExtractResult(
             kind=kind,
+            meta=_media_meta(data, kind),
             reason=_NO_TEXT_REASONS.get(kind, "this format is not readable as text"),
         )
     except Exception as exc:  # noqa: BLE001 — one bad file never fails a whole sync
@@ -671,3 +838,30 @@ def extract_text(
         return ExtractResult(
             kind=kind, reason=f"the file could not be read ({type(exc).__name__})"
         )
+
+
+def _media_meta(data: bytes | Path, kind: str) -> dict[str, Any]:
+    """What a media file states about itself — capture time, camera, GPS.
+
+    Read here rather than in the enrichment stage on purpose: this is what
+    makes a photo findable by *when and where* the moment it lands, months
+    before any model gets around to describing it. It also costs nothing —
+    the bytes are already open.
+    """
+    if kind not in MEDIA_KINDS:
+        return {}
+    try:
+        from jarvis.ultrawiki.media import (  # noqa: PLC0415 — lazy (AP-26)
+            EXIF_SCAN_BYTES,
+            media_metadata,
+        )
+
+        if isinstance(data, Path):
+            with data.open("rb") as handle:
+                head = handle.read(EXIF_SCAN_BYTES)
+        else:
+            head = bytes(data[:EXIF_SCAN_BYTES])
+        return media_metadata(head, kind)
+    except Exception:  # noqa: BLE001 — metadata is a bonus, never a failure
+        log.debug("extract: media metadata unavailable", exc_info=True)
+        return {}

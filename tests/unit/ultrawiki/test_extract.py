@@ -40,6 +40,93 @@ def test_a_file_with_no_extension_is_identified_by_content():
     assert detect_kind(b"\x89PNG\r\n\x1a\nrest") == "image"
 
 
+# ---------------------------------------------------------------------------
+# Media detection — the formats a phone actually produces
+# ---------------------------------------------------------------------------
+
+
+def _ftyp(brand: bytes) -> bytes:
+    """A minimal ISO base-media header carrying one brand."""
+    return b"\x00\x00\x00\x18ftyp" + brand + b"\x00\x00\x02\x00" + brand
+
+
+def _riff(form: bytes) -> bytes:
+    return b"RIFF" + b"\x00\x00\x01\x00" + form + b"rest"
+
+
+def test_an_iphone_photo_is_an_image_not_a_binary():
+    """HEIC and MP4 share a container; only the brand tells them apart.
+
+    Before this, an iPhone photo library imported as a folder of "binary
+    files" — the single largest pile of memories most people own, invisible.
+    """
+    assert detect_kind(_ftyp(b"heic"), filename="IMG_4821.HEIC") == "image"
+    assert detect_kind(_ftyp(b"mif1"), filename="IMG_4821.heic") == "image"
+    assert detect_kind(_ftyp(b"avif"), filename="shot.avif") == "image"
+
+
+def test_the_same_container_holding_video_or_sound_is_not_called_an_image():
+    assert detect_kind(_ftyp(b"isom"), filename="clip.mp4") == "video"
+    assert detect_kind(_ftyp(b"qt  "), filename="clip.mov") == "video"
+    assert detect_kind(_ftyp(b"M4A "), filename="memo.m4a") == "audio"
+
+
+def test_an_unlisted_iso_brand_degrades_to_video_rather_than_binary():
+    """Better a transcript attempt than a silently dropped file."""
+    assert detect_kind(_ftyp(b"zzzz"), filename="clip.mp4") == "video"
+
+
+def test_riff_containers_are_split_by_their_form():
+    assert detect_kind(_riff(b"WEBP"), filename="pic.webp") == "image"
+    assert detect_kind(_riff(b"WAVE"), filename="note.wav") == "audio"
+    assert detect_kind(_riff(b"AVI "), filename="old.avi") == "video"
+
+
+def test_a_whatsapp_voice_note_is_audio():
+    """`.opus` inside an Ogg stream — the format every voice message uses."""
+    assert detect_kind(b"OggS\x00\x02rest", filename="PTT-20240612-WA0003.opus") == "audio"
+
+
+def test_a_camera_raw_file_is_an_image_by_name():
+    """No magic ships for every vendor's RAW, and a photographer's archive is
+    entirely made of them."""
+    assert detect_kind(b"\x00\x01\x02\x03unknown-binary", filename="DSC_0042.NEF") == "image"
+    assert detect_kind(b"\x00\x01\x02\x03unknown-binary", filename="P1000123.RW2") == "image"
+
+
+def test_a_typescript_file_is_not_a_video():
+    """`.ts` is a transport stream and a source file; in a knowledge base it is
+    overwhelmingly the second, and calling it video would drop it."""
+    assert detect_kind(b"export const x = 1;\n", filename="app.ts") == "text"
+
+
+# ---------------------------------------------------------------------------
+# tar — the half of Google Takeout that used to be refused
+# ---------------------------------------------------------------------------
+
+
+def _tar_header() -> bytes:
+    """A tar block whose magic sits at offset 257, where tar keeps it."""
+    return b"name.txt".ljust(257, b"\x00") + b"ustar\x0000" + b"\x00" * 200
+
+
+def test_an_uncompressed_tar_is_recognised_by_its_offset_magic():
+    assert detect_kind(_tar_header(), filename="archive.tar") == "tar"
+    # ...and without any name at all, because the magic is conclusive.
+    assert detect_kind(_tar_header()) == "tar"
+
+
+def test_a_takeout_tgz_is_a_tar_not_an_opaque_gzip():
+    """Compression records nothing about what it compressed, so the double
+    suffix is the only evidence — and it is the download Takeout offers by
+    default."""
+    gzip_head = b"\x1f\x8b\x08\x00rest"
+    assert detect_kind(gzip_head, filename="takeout-20240101.tgz") == "tar"
+    assert detect_kind(gzip_head, filename="takeout-20240101.tar.gz") == "tar"
+    # A plain gzipped single file is still just gzip.
+    assert detect_kind(gzip_head, filename="notes.txt.gz") == "gzip"
+
+
 def test_office_formats_are_separated_by_their_inner_layout():
     """They all start with the same ZIP signature."""
     assert detect_kind(_zip({"word/document.xml": "<w:p/>"})) == "docx"
@@ -243,12 +330,19 @@ def test_a_windows_encoded_file_is_text_not_binary():
 
 
 def test_an_image_reports_no_text_and_is_NOT_marked_retryable():
-    """Nothing to extract is different from could not extract."""
+    """Nothing to extract is different from could not extract.
+
+    ``content_missing`` false is the load-bearing assertion: it keeps the
+    picture out of the text-extraction retry queue. It is NOT a statement that
+    the file is worthless — ``media_kind`` is what routes it to enrichment
+    instead, and the two flags must never collapse into one.
+    """
     result = extract_text(b"\x89PNG\r\n\x1a\nrest", filename="photo.png")
     assert not result.ok
     assert result.kind == "image"
-    assert "OCR" in result.reason
+    assert result.reason
     assert result.content_missing is False
+    assert result.media_kind == "image"
 
 
 def test_a_corrupt_office_file_IS_marked_retryable():
