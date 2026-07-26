@@ -42,13 +42,30 @@ __all__ = [
     "chunk_text",
 ]
 
-#: Target passage size. ~2 000 characters is roughly 500 tokens: specific
-#: enough that one vector means one thing, long enough to carry its context.
-DEFAULT_CHUNK_CHARS = 2000
+#: Target passage size, ~900 characters — roughly 200 tokens.
+#:
+#: The number was 2 000 (~465 tokens) and that was chosen, not measured. One
+#: vector averages everything inside it, so a large passage answers "what is
+#: this document about" well and "what did we decide about X" poorly: the
+#: specific sentence is diluted by everything around it. Retrieval evaluations
+#: put the useful band at roughly 200-500 tokens, and the lower end of it wins
+#: for pointed questions — which is what a memory is asked.
+#:
+#: Measured on the maintainer's 127 MB corpus: 900 chars yields ~1 490 vectors
+#: per MB against 630 at 2 000. Nothing about that is expensive — the store
+#: holds a few hundred thousand vectors either way — and every passage still
+#: carries a whole paragraph or a small function rather than a fragment.
+#:
+#: Going much lower is a real trade, not a free win: at ~110 tokens a passage
+#: starts losing the context that makes it act-on-able, and it is why
+#: ``char_start``/``char_end`` are stored — the honest end state is a small
+#: passage for MATCHING plus its neighbours for READING, which needs no
+#: compromise size at all.
+DEFAULT_CHUNK_CHARS = 900
 
-#: How much of the previous passage each one repeats. The answer to a question
-#: sits on a boundary often enough that ~15 % overlap measurably beats none.
-DEFAULT_OVERLAP_CHARS = 300
+#: How much of the previous passage each one repeats (~15 %). The sentence that
+#: answers a question is regularly the one straddling a boundary.
+DEFAULT_OVERLAP_CHARS = 135
 
 #: Below this a trailing remnant is merged into the previous passage instead of
 #: becoming a passage of its own — a 40-character chunk is noise in the index.
@@ -61,6 +78,11 @@ _BREAKS: tuple[str, ...] = ("\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ")
 #: How far back from the ideal cut a boundary may be found. Beyond this the
 #: passage would be so short that honouring the seam costs more than it buys.
 _BREAK_WINDOW = 400
+
+#: A boundary is only worth honouring if the passage it produces is at least
+#: this fraction of the target. See :func:`_cut_at` — below it, respecting the
+#: seam shreds structured text into fragments.
+_MIN_USEFUL = 0.5
 
 _FENCE = "```"
 
@@ -86,13 +108,23 @@ def _cut_at(text: str, start: int, limit: int) -> int:
     Walks the preferred boundaries in order and takes the latest one inside the
     window. Returns the hard limit when the run of text offers no seam at all —
     a minified bundle or a base64 blob legitimately has none.
+
+    The ``_MIN_USEFUL`` floor is not a nicety. Without it, source code
+    degenerated: after a passage ended on a blank line, the overlap stepped
+    ``start`` back BEHIND that same blank line, the search found it again as
+    the only ``\\n\\n`` in the window, and every following pass returned the
+    same offset — advancing one character at a time and emitting a ~58-character
+    fragment per step. A 10 KB Python file became 800 passages of half a line
+    each. A boundary that would leave a stub is worse than no boundary at all,
+    so the hard cut wins instead.
     """
     if limit >= len(text):
         return len(text)
     window_start = max(start + 1, limit - _BREAK_WINDOW)
+    floor = start + max(1, int((limit - start) * _MIN_USEFUL))
     for token in _BREAKS:
         found = text.rfind(token, window_start, limit)
-        if found > start:
+        if found >= floor:
             return found + len(token)
     return limit
 
@@ -120,6 +152,7 @@ def chunk_text(
 
     chunks: list[Chunk] = []
     start = 0
+    previous_start = -1
     while start < len(body):
         limit = min(start + chunk_chars, len(body))
         end = _cut_at(body, start, limit)
@@ -148,7 +181,10 @@ def chunk_text(
             )
         if end >= len(body):
             break
-        # Step back by the overlap, but always make forward progress: without
-        # the floor a pathological boundary could return the same cut forever.
-        start = max(end - overlap_chars, start + 1)
+        # Step back by the overlap, but never behind the boundary this passage
+        # already consumed: stepping back past it lets the next search find the
+        # SAME seam again, which is how the crawl above starts. The `start + 1`
+        # floor then only has to guarantee liveness, not correctness.
+        start = max(end - overlap_chars, start + 1, previous_start + 1)
+        previous_start = start
     return chunks

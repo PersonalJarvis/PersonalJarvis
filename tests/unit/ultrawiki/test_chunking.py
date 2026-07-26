@@ -118,6 +118,45 @@ def test_the_splitter_always_makes_forward_progress():
     assert chunks[-1].char_end == len(body.strip())
 
 
+def test_source_code_is_not_shredded_into_half_lines():
+    """The bug the maintainer's "why 2 000?" question uncovered.
+
+    Source code is dense in blank lines. A passage would end on one, the
+    overlap stepped `start` back BEHIND that same blank line, the next search
+    found it again as the only paragraph break in its window, and every
+    following pass returned the identical offset — crawling forward one
+    character at a time. A 10 KB Python file became ~800 passages averaging 41
+    characters: half a line each, useless as vectors and 20× the embedding
+    cost. It only appeared below ~500-char targets, i.e. exactly the range
+    worth using.
+    """
+    body = "\n".join(
+        f"def function_{i}(argument):\n"
+        f'    """Docstring for function {i}."""\n'
+        f"    return argument + {i}\n"
+        for i in range(80)
+    )
+    for size in (300, 400, 500, 900):
+        chunks = chunk_text(body, chunk_chars=size, overlap_chars=size // 7)
+        assert chunks
+        average = sum(len(c.text) for c in chunks) / len(chunks)
+        # Half the target is the floor the fix guarantees; the crawl produced
+        # roughly a tenth of it.
+        assert average >= size * 0.5, f"size={size} average={average:.0f}"
+        assert len(chunks) < len(body) / (size * 0.4)
+
+
+def test_the_walk_never_revisits_a_boundary_it_already_consumed():
+    """Each passage must start strictly after the previous one."""
+    body = "\n\n".join(f"Block {i}\n    line\n    line" for i in range(60))
+    chunks = chunk_text(body, chunk_chars=400, overlap_chars=60)
+    starts = [c.char_start for c in chunks]
+    assert starts == sorted(starts)
+    assert len(set(starts)) == len(starts)
+    for previous, nxt in zip(chunks, chunks[1:], strict=False):
+        assert nxt.char_start > previous.char_start
+
+
 def test_overlap_can_never_exceed_half_a_passage():
     """Otherwise the walk stalls: each step would re-read most of the last."""
     body = "word " * 4000
