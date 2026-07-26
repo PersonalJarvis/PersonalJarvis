@@ -1,20 +1,24 @@
 /**
  * Folder picker for step 1 of the Agentic-IDE wizard.
  *
- * A native folder dialog was not an option: the desktop app is a web UI, so a
- * native picker would exist on one OS and be missing on the others — and on a
- * headless server there is no dialog at all. This browses over REST, which
- * behaves identically on Windows, macOS, Linux and a remote box.
+ * Five ways to arrive at a folder, because people arrive differently:
  *
- * Four ways to arrive at a folder, because people arrive differently:
- *
- * 1. **Recents** — the workspaces opened before, with their previous layout.
+ * 1. **The system folder window** — Explorer on Windows, Finder on macOS, the
+ *    desktop's own dialog on Linux. The one people already know. Offered only
+ *    when the backend confirms this machine can actually show it (see below).
+ * 2. **Recents** — the workspaces opened before, with their previous layout.
  *    One click and the wizard already knows how many terminals to open.
- * 2. **Search** — type a name, get matches from anywhere under home and the
+ * 3. **Search** — type a name, get matches from anywhere under home and the
  *    usual code directories. Faster than clicking down five levels.
- * 3. **Browsing** — the list, projects and repositories sorted first.
- * 4. **Drag and drop** — drop a folder (or a file inside it) anywhere on the
+ * 4. **Browsing** — the list, projects and repositories sorted first.
+ * 5. **Typing a path** — with completion, the way `cd` works in a terminal.
+ * 6. **Drag and drop** — drop a folder (or a file inside it) anywhere on the
  *    panel. See `extractDropPayload` for why this needs a backend round-trip.
+ *
+ * The in-page browser is not a fallback for the system window, it is the floor:
+ * the system window opens on the machine the BACKEND runs on, so it is useless
+ * over a network and absent on a headless server. Everything here therefore
+ * works without it, and the button appears only where it can deliver.
  *
  * The start view is labelled with the machine's own name rather than the account
  * folder: "Administrator" says nothing about which computer you are looking at,
@@ -37,11 +41,14 @@ import {
 import { cn } from "@/lib/utils";
 import {
   fetchFolders,
+  fetchNativePickerSupport,
   fetchRecents,
   forgetRecent,
+  openNativePicker,
   resolveDroppedFolder,
   searchFolders,
   type FolderItem,
+  type NativePickerSupport,
   type RecentWorkspace,
 } from "@/lib/agenticIdeApi";
 
@@ -121,6 +128,10 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
   const [dropChoices, setDropChoices] = useState<FolderItem[]>([]);
   const dragDepth = useRef(0);
 
+  const [nativePicker, setNativePicker] = useState<NativePickerSupport | null>(null);
+  const [nativeOpen, setNativeOpen] = useState(false);
+  const [nativeNote, setNativeNote] = useState<string | null>(null);
+
   const load = useCallback(async (target: string | null) => {
     setLoading(true);
     setError(null);
@@ -148,7 +159,43 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
       .catch(() => {
         /* no recents yet — the section just stays hidden */
       });
+    void fetchNativePickerSupport()
+      .then(setNativePicker)
+      .catch(() => {
+        // An older backend has no such route. Treat that as "not available"
+        // rather than showing a button that would 404 on click.
+        setNativePicker({ available: false });
+      });
   }, [load]);
+
+  /**
+   * Hand over to the operating system's own folder window.
+   *
+   * The request stays open for as long as the window does — a person deciding
+   * where their project lives is not a slow response — so the button reports
+   * that a window is waiting for them. Without it a dialog that opened behind
+   * the app window looks exactly like a button that did nothing.
+   */
+  const browseNatively = () => {
+    if (nativeOpen) return;
+    setNativeOpen(true);
+    setNativeNote(null);
+    void openNativePicker(selected ?? path)
+      .then((res) => {
+        if (res.path) {
+          onSelect(res.path);
+          setQuery("");
+          setSearchHits(null);
+          void load(res.path);
+        } else if (res.error) {
+          setNativeNote(res.error);
+        }
+        // A cancelled dialog says nothing: the user closed it on purpose and
+        // whatever was selected before is still selected.
+      })
+      .catch((e) => setNativeNote((e as Error).message))
+      .finally(() => setNativeOpen(false));
+  };
 
   // Server-side search once the query is long enough; shorter input just filters
   // the folder list already on screen, which feels instant.
@@ -339,6 +386,23 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
             </button>
           )}
         </div>
+        {nativePicker?.available && (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={browseNatively}
+            disabled={nativeOpen}
+            data-testid="native-browse"
+            title="Open the folder window this computer normally uses"
+          >
+            {nativeOpen ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FolderOpen className="h-4 w-4" />
+            )}
+            {nativeOpen ? "Waiting for the window…" : "Browse…"}
+          </button>
+        )}
         <button
           type="button"
           className="btn-ghost"
@@ -363,6 +427,21 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
           )}
         </button>
       </div>
+
+      {/* The window can still end up behind the app despite being opened
+          topmost — a user who does not know it is there just sees a button
+          that hung. Saying so costs one line and saves the confusion. */}
+      {nativeOpen && (
+        <p className="text-xs text-primary" role="status">
+          A folder window is open — pick a folder there. If you cannot see it,
+          check behind this window or on your taskbar.
+        </p>
+      )}
+      {nativeNote && !nativeOpen && (
+        <p className="text-xs text-muted-foreground" role="alert">
+          {nativeNote}
+        </p>
+      )}
 
       {/* ---------------------------------------------------------- breadcrumb */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -469,7 +548,7 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
       )}
 
       {/* ----------------------------------------------------------- raw path */}
-      <PathInput onUse={usePath} />
+      <PathInput base={path} onUse={usePath} />
 
       {selected && (
         <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
@@ -484,28 +563,185 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
   );
 }
 
-function PathInput({ onUse }: { onUse: (value: string) => void }) {
+/** Where the typed text stops being a folder and starts being what to match. */
+export function splitTypedPath(value: string): { dir: string; leaf: string } {
+  const cut = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  if (cut < 0) return { dir: "", leaf: value };
+  return { dir: value.slice(0, cut + 1), leaf: value.slice(cut + 1) };
+}
+
+/**
+ * The separator this machine uses, read off a real path instead of guessed.
+ *
+ * A web page cannot know whether the backend is Windows or not, and guessing
+ * from `navigator` would describe the wrong computer entirely when the UI is
+ * open on a different one. Every path the backend hands out already contains
+ * the answer.
+ */
+export function separatorOf(fullPath: string): string {
+  return fullPath.includes("\\") ? "\\" : "/";
+}
+
+export function joinPath(base: string, name: string): string {
+  const sep = separatorOf(base);
+  return base.endsWith(sep) ? `${base}${name}` : `${base}${sep}${name}`;
+}
+
+/**
+ * A path field that completes as you type, the way `cd` does in a terminal.
+ *
+ * Typing a bare name completes against the folder currently on screen, so
+ * `cd`-style navigation works without ever writing an absolute path; Tab takes
+ * the highlighted suggestion and appends a separator so the next segment can be
+ * typed straight away. Arrow keys move through the list, Enter opens what is
+ * highlighted — or, with nothing highlighted, whatever was typed.
+ *
+ * Completion is deliberately a plain folder listing rather than the name search
+ * above it: `cd` shows what is in THIS folder, and a field that answered with
+ * matches from across the disk would be a different tool wearing the same shape.
+ */
+function PathInput({ base, onUse }: { base: string | null; onUse: (value: string) => void }) {
   const [value, setValue] = useState("");
+  const [options, setOptions] = useState<FolderItem[]>([]);
+  const [active, setActive] = useState(-1);
+  const [open, setOpen] = useState(false);
+
+  const { dir, leaf } = splitTypedPath(value);
+  // An empty `dir` means a bare name was typed: complete inside the folder the
+  // list is showing, which is what makes `cd projects` work.
+  const lookupDir = dir || base || "";
+
+  useEffect(() => {
+    if (!value.trim() && !base) {
+      setOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      fetchFolders(lookupDir || null)
+        .then((res) => {
+          if (cancelled) return;
+          const needle = leaf.toLowerCase();
+          setOptions(
+            res.entries.filter((e) => !needle || e.name.toLowerCase().startsWith(needle)),
+          );
+          setActive(-1);
+        })
+        .catch(() => {
+          if (!cancelled) setOptions([]);
+        });
+    }, 160);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [lookupDir, leaf, value, base]);
+
+  /** Take a suggestion and leave the cursor ready for the next segment. */
+  const complete = (item: FolderItem) => {
+    setValue(`${item.path}${separatorOf(item.path)}`);
+    setActive(-1);
+    setOpen(true);
+  };
+
+  const submit = () => {
+    if (active >= 0 && options[active]) {
+      onUse(options[active].path);
+    } else if (value.trim()) {
+      // A bare name is relative to what is on screen, exactly as typed.
+      const typed = value.trim();
+      const absolute = dir || !base ? typed : joinPath(base, typed);
+      onUse(absolute);
+    }
+    setOpen(false);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Tab" && options.length > 0) {
+      e.preventDefault();
+      complete(options[active >= 0 ? active : 0]);
+      return;
+    }
+    if (e.key === "ArrowDown" && options.length > 0) {
+      e.preventDefault();
+      setOpen(true);
+      setActive((prev) => (prev + 1) % options.length);
+      return;
+    }
+    if (e.key === "ArrowUp" && options.length > 0) {
+      e.preventDefault();
+      setOpen(true);
+      setActive((prev) => (prev <= 0 ? options.length - 1 : prev - 1));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
+      return;
+    }
+    if (e.key === "Escape") setOpen(false);
+  };
+
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && value.trim()) onUse(value);
-        }}
-        placeholder="…or paste a full folder path"
-        className="min-w-0 flex-1 rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
-        spellCheck={false}
-      />
-      <button
-        type="button"
-        className="btn-ghost"
-        disabled={!value.trim()}
-        onClick={() => onUse(value)}
-      >
-        Use this path
-      </button>
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <input
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setOpen(true);
+            }}
+            onKeyDown={onKeyDown}
+            onFocus={() => setOpen(true)}
+            // Closing on blur is delayed: a click on a suggestion blurs the
+            // input first, and an immediate close would remove the element
+            // under the pointer before the click lands on it.
+            onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+            placeholder="…or type a path — Tab completes, like cd"
+            aria-label="Folder path"
+            data-testid="folder-path-input"
+            className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
+            spellCheck={false}
+            autoComplete="off"
+          />
+          {open && options.length > 0 && (
+            <ul
+              data-testid="path-suggestions"
+              className="absolute bottom-full z-20 mb-1 max-h-48 w-full overflow-y-auto scrollbar-jarvis rounded-lg border border-border bg-card shadow-lg"
+            >
+              {options.slice(0, 40).map((item, index) => (
+                <li key={item.path}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => complete(item)}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs",
+                      index === active ? "bg-primary/15" : "hover:bg-background/60",
+                    )}
+                  >
+                    {item.is_repo ? (
+                      <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    ) : (
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="truncate font-mono">{item.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={!value.trim()}
+          onClick={submit}
+        >
+          Use this path
+        </button>
+      </div>
     </div>
   );
 }

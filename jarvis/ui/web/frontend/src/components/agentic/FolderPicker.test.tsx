@@ -7,9 +7,17 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   fetchRecents: vi.fn(),
   forgetRecent: vi.fn(),
   resolveDroppedFolder: vi.fn(),
+  fetchNativePickerSupport: vi.fn(),
+  openNativePicker: vi.fn(),
 }));
 
-import { FolderPicker, extractDropPayload } from "./FolderPicker";
+import {
+  FolderPicker,
+  extractDropPayload,
+  joinPath,
+  separatorOf,
+  splitTypedPath,
+} from "./FolderPicker";
 import * as api from "@/lib/agenticIdeApi";
 
 const LISTING = {
@@ -33,6 +41,10 @@ beforeEach(() => {
     entries: [],
     truncated: false,
   });
+  // The default is "this machine cannot show a folder window", which is what a
+  // headless install and a remote browser both report — so every existing test
+  // keeps asserting against the path that must work everywhere.
+  vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({ available: false });
 });
 
 afterEach(() => {
@@ -220,5 +232,161 @@ describe("FolderPicker", () => {
 
     expect(await screen.findByText(/carried no folder/i)).toBeTruthy();
     expect(api.resolveDroppedFolder).not.toHaveBeenCalled();
+  });
+});
+
+describe("the system folder window", () => {
+  it("is not offered where the machine cannot show one", async () => {
+    // The default from the shared setup: a headless server, or a browser on a
+    // different machine than the backend. Offering a button that cannot work
+    // is worse than not offering one.
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    await screen.findByText("webshop");
+    expect(screen.queryByTestId("native-browse")).toBeNull();
+  });
+
+  it("hands the chosen folder straight to the wizard", async () => {
+    vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({
+      available: true,
+      backend: "powershell",
+    });
+    vi.mocked(api.openNativePicker).mockResolvedValue({ path: "C:\\work\\shop" });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+
+    fireEvent.click(await screen.findByTestId("native-browse"));
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("C:\\work\\shop"));
+    // And the in-page browser follows it there, so both views agree.
+    expect(api.fetchFolders).toHaveBeenCalledWith("C:\\work\\shop");
+  });
+
+  it("says a window is waiting, because it can open behind the app", async () => {
+    vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({ available: true });
+    let release: (value: { path: string }) => void = () => {};
+    vi.mocked(api.openNativePicker).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+
+    fireEvent.click(await screen.findByTestId("native-browse"));
+
+    expect(await screen.findByText(/folder window is open/i)).toBeTruthy();
+    release({ path: "/home/ruben/webshop" });
+  });
+
+  it("changes nothing when the window is closed without choosing", async () => {
+    vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({ available: true });
+    vi.mocked(api.openNativePicker).mockResolvedValue({ cancelled: true });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected="/already/here" onSelect={onSelect} />);
+
+    fireEvent.click(await screen.findByTestId("native-browse"));
+
+    await waitFor(() => expect(api.openNativePicker).toHaveBeenCalled());
+    expect(onSelect).not.toHaveBeenCalled();
+    // Cancelling is a decision, not a failure — nothing is reported.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("opens the window at the folder already in view", async () => {
+    vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({ available: true });
+    vi.mocked(api.openNativePicker).mockResolvedValue({ cancelled: true });
+    render(<FolderPicker selected="/home/ruben/webshop" onSelect={vi.fn()} />);
+
+    fireEvent.click(await screen.findByTestId("native-browse"));
+
+    await waitFor(() =>
+      expect(api.openNativePicker).toHaveBeenCalledWith("/home/ruben/webshop"),
+    );
+  });
+});
+
+describe("typing a path", () => {
+  it("splits what was typed into a folder and what to match", () => {
+    expect(splitTypedPath("/home/ruben/web")).toEqual({
+      dir: "/home/ruben/",
+      leaf: "web",
+    });
+    expect(splitTypedPath("C:\\work\\sh")).toEqual({ dir: "C:\\work\\", leaf: "sh" });
+    // A bare name has no folder part — that is what makes `cd notes` work.
+    expect(splitTypedPath("notes")).toEqual({ dir: "", leaf: "notes" });
+  });
+
+  it("reads the separator off a real path instead of guessing", () => {
+    // The UI may well be open on a different machine than the backend, so
+    // asking the browser which OS this is would answer about the wrong one.
+    expect(separatorOf("C:\\work\\shop")).toBe("\\");
+    expect(separatorOf("/home/ruben")).toBe("/");
+    expect(joinPath("C:\\work", "shop")).toBe("C:\\work\\shop");
+    expect(joinPath("/home/ruben/", "webshop")).toBe("/home/ruben/webshop");
+  });
+
+  it("completes against the folder on screen, the way cd does", async () => {
+    vi.mocked(api.fetchFolders).mockResolvedValue({
+      ...LISTING,
+      path: "/home/ruben",
+      parent: "/home",
+    });
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    await screen.findByText("webshop");
+
+    fireEvent.change(screen.getByTestId("folder-path-input"), {
+      target: { value: "web" },
+    });
+
+    const list = await screen.findByTestId("path-suggestions");
+    await waitFor(() => expect(list.textContent).toContain("webshop"));
+    // Only what matches: `notes` does not start with "web".
+    expect(list.textContent).not.toContain("notes");
+  });
+
+  it("Tab completes and leaves the next segment ready to type", async () => {
+    vi.mocked(api.fetchFolders).mockResolvedValue({
+      ...LISTING,
+      path: "/home/ruben",
+      parent: "/home",
+    });
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    await screen.findByText("webshop");
+
+    const input = screen.getByTestId("folder-path-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "web" } });
+    await screen.findByTestId("path-suggestions");
+    fireEvent.keyDown(input, { key: "Tab" });
+
+    // The trailing separator is the point: typing continues into the folder.
+    await waitFor(() => expect(input.value).toBe("/home/ruben/webshop/"));
+  });
+
+  it("treats a bare name as relative to the folder on screen", async () => {
+    vi.mocked(api.fetchFolders).mockResolvedValue({
+      ...LISTING,
+      path: "/home/ruben",
+      parent: "/home",
+    });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    const input = screen.getByTestId("folder-path-input");
+    fireEvent.change(input, { target: { value: "notes" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/home/ruben/notes"));
+  });
+
+  it("uses a full path exactly as typed", async () => {
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    const input = screen.getByTestId("folder-path-input");
+    fireEvent.change(input, { target: { value: "/srv/deploy" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/srv/deploy"));
   });
 });
