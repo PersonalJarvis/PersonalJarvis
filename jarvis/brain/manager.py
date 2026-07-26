@@ -5720,6 +5720,27 @@ class BrainManager:
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
 
+    def _agentic_ide_owns_turn(self, user_text: str) -> bool:
+        """True when this turn belongs to the open coding workspace.
+
+        Asked by the deterministic gates that would otherwise consume the turn
+        first — today the desktop/Computer-Use gate. The answer comes from
+        ``intent.owns_turn``, the one precedence rule the force-spawn guard and
+        the spawn gate already share, so a fourth opinion cannot appear here.
+
+        Cost is a regex sweep over the in-memory session, no IO and no LLM
+        (AP-9 / AP-11), so it is safe to ask on every turn of the voice hot
+        path. Any fault answers "no": the workspace is an optional surface and
+        must never be able to divert a turn away from the path that would
+        otherwise have served it.
+        """
+        try:
+            from jarvis.agentic_ide.intent import owns_turn
+
+            return owns_turn(user_text)
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return False
+
     async def _run_agentic_ide_fast_path(
         self,
         user_text: str,
@@ -5795,6 +5816,35 @@ class BrainManager:
         if found.kind == ide_intent.KIND_REPORT:
             return None
 
+        names = [item.terminal for item in addressed]
+
+        # Two agents told to "split the work between you" must get DIFFERENT
+        # briefs — the same sentence twice is two agents racing on one file.
+        # Only an explicit request plans a split: it costs a provider call, and
+        # "both of you run the tests" is one order for two agents.
+        assignments: dict[str, str] | None = None
+        if len(names) > 1 and ide_intent.wants_split(user_text):
+            try:
+                from jarvis.agentic_ide import work_split as ide_split
+
+                plan = await ide_split.split(
+                    found.instruction or user_text,
+                    session=session,
+                    count=len(names),
+                )
+                assignments = {
+                    name: item.task
+                    for name, item in zip(names, plan.assignments, strict=False)
+                }
+                log.info(
+                    "Agentic IDE fan-out: work split %s across %d panes (%s)",
+                    plan.split_by, len(assignments),
+                    ", ".join(a.area for a in plan.assignments),
+                )
+            except Exception:  # noqa: BLE001 - an unplanned fleet still works
+                log.warning("Agentic IDE work split failed", exc_info=True)
+                assignments = None
+
         # No brain is pinned for the composer on purpose. An earlier version
         # handed it this turn's FAST router model to save 4-5 s, but that
         # optimised the wrong axis: the prompt is what the coding agent then
@@ -5805,9 +5855,10 @@ class BrainManager:
         try:
             result = await ide_fanout.deliver(
                 session=session,
-                terminals=[item.terminal for item in addressed],
+                terminals=names,
                 utterance=user_text,
                 instruction=found.instruction,
+                assignments=assignments,
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)

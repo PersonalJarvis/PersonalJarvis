@@ -248,17 +248,23 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
-def _mentions(text: str, candidates: list[str]) -> list[tuple[int, int, str]]:
+def _mentions(
+    text: str, candidates: list[str], *, fuzzy: bool = True
+) -> list[tuple[int, int, str]]:
     """Every call-sign the utterance names, as ``(start, end, name)`` in order.
 
     Resolution is delegated to ``names.resolve`` word by word, so the phonetic
     tolerance is exactly the one the singular path already ships — a second
     matching rule here would be free to drift away from it.
+
+    ``fuzzy=False`` keeps only names the utterance states exactly (or in a
+    spelling that folds to the same sound). See the last-resort branch of
+    ``detect_all`` for why that distinction has to exist.
     """
     seen: set[str] = set()
     out: list[tuple[int, int, str]] = []
     for match in _WORD_RE.finditer(text):
-        hit = resolve(match.group(0), candidates)
+        hit = resolve(match.group(0), candidates, fuzzy=fuzzy)
         if hit is None or hit in seen:
             continue
         seen.add(hit)
@@ -361,11 +367,26 @@ def detect_all(
         kind = KIND_PROMPT
         anchors = prompt_anchors
     elif mentions and _looks_like_instruction(text):
-        # Last resort: the utterance names terminals (possibly garbled) and reads
-        # as an instruction. Requiring a verb keeps a passing mention ("Kai is a
+        # Last resort: the utterance names terminals and reads as an
+        # instruction. Requiring a verb keeps a passing mention ("Alex is a
         # nice name") from being addressed.
+        #
+        # This is the ONLY branch where the call-sign is the whole case: no
+        # "tell X to …", no "X should …" — just a name and a verb. That makes
+        # it the branch a merely SIMILAR word can win, and the names are short
+        # enough for ordinary speech to score close: measured against the
+        # shipping pool "unten" reaches "Hunter" and "dann" reaches "Dana"; the
+        # live 2026-07-26 session had "keine" reaching "Kai" and briefing a  # i18n-allow: quoted transcript tokens
+        # second agent nobody had named. So here — and only here — the name has
+        # to be exact (or fold to the same sound, which is what carries a
+        # garbled transcript). An addressing shape, being independent evidence,
+        # still admits a fuzzy call-sign in the branches above.
+        certain = _mentions(text, candidates, fuzzy=False)
+        if not certain:
+            return []
+        mentions = certain
         kind = KIND_PROMPT
-        anchors = {name for _, _, name in mentions}
+        anchors = {name for _, _, name in certain}
     else:
         return []
 
@@ -509,17 +530,36 @@ _AGENT_RE = re.compile(r"\b(claude(?:\s+code)?|codex)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
+class SpawnGroup:
+    """One "N of agent X" part of a spawn request."""
+
+    count: int
+    agent: str | None
+    """``"claude"`` / ``"codex"``, or ``None`` to inherit the last pane's."""
+
+
+@dataclass(frozen=True, slots=True)
 class SpawnTerminalsRequest:
     """A spoken request to open more panes in the coding workspace."""
 
     count: int
-    """How many panes to open, already clamped to a sane range."""
+    """TOTAL panes to open across all groups, clamped to the workspace maximum."""
 
     agent: str | None
-    """``"claude"`` / ``"codex"``, or ``None`` to inherit the last pane's."""
+    """The first group's agent. Kept flat for the single-agent callers that
+    predate mixed fleets; a mixed request is only fully described by
+    ``groups``."""
 
     utterance: str
     """The original utterance, unmodified."""
+
+    groups: tuple[SpawnGroup, ...] = ()
+    """The requested fleet, in the order the user said it.
+
+    "5 Codex and 3 Claude Code terminals" is TWO groups. Reading only the first
+    number and the first agent — which is what this detector used to do —
+    opened five Codex panes and dropped the three Claude ones without telling
+    anyone (maintainer report 2026-07-26)."""
 
 
 def _spoken_count(text: str) -> int:
@@ -572,6 +612,72 @@ def detect_spawn(
     )
 
 
+# --------------------------------------------------------------------------- #
+# "…and split the work between you"                                            #
+# --------------------------------------------------------------------------- #
+# Addressing several panes does not by itself mean dividing the task. "Both of
+# you run the tests" is ONE order for two agents; planning a split there would
+# spend a provider call to invent two different jobs the user never asked for.
+# So a split is only ever an EXPLICIT request.
+#
+# The trap this detector is shaped around: "aufteilen" / "split" is also
+# ordinary coding work ("split the module into two files"). A verb alone is
+# therefore not enough — the sentence must also say WHO the work is divided
+# between, or into WHAT KIND of parts. Both of those distinguish dividing a
+# task across agents from dividing a file into modules.
+
+_DIVIDE_VERB_RE = re.compile(
+    r"\b(?:teil\w*|aufteil\w*|verteil\w*|split|splits|divide|divides|"
+    r"distribute|reparte|repartan|repartir|dividan|divid[ií]d)\b",
+    re.IGNORECASE,
+)
+
+#: Who the work is divided between — the agents themselves.
+_DIVIDE_RECIPIENT_RE = re.compile(
+    r"\b(?:unter\s+euch|untereinander|euch|between\s+you|among\s+"
+    r"you(?:rselves)?|entre\s+(?:vosotros|ustedes))\b",
+    re.IGNORECASE,
+)
+
+#: What kind of parts the work is divided INTO. Deliberately about subject
+#: areas, never about code units ("modules", "files", "functions") — dividing
+#: those is the work itself, not a plan for the fleet.
+_DIVIDE_AREA_RE = re.compile(
+    r"\b(?:aufgabenbereich\w*|bereich\w*|themen\w*|themengebiet\w*|"
+    r"schwerpunkt\w*|areas?|topics?|domains?|workstreams?|"
+    r"[aá]reas?|temas?)\b",
+    re.IGNORECASE,
+)
+
+#: "each of you takes a different part" — the same request without a verb.
+_DIVIDE_EACH_RE = re.compile(
+    r"\b(?:jede[rn]?\s+von\s+euch|jede[rn]?\s+einzelne|each\s+of\s+you|"
+    r"each\s+one|cada\s+uno)\b[^.!?]{0,40}?"
+    r"\b(?:ander\w*|different|separate|own|distinto\w*|diferente\w*|propio)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_split(user_text: str) -> bool:
+    """True when the user asked for the work to be DIVIDED across the agents.
+
+    Not a question about how many panes are addressed — that is ``detect_all``.
+    This answers the separate question of whether they should all do the same
+    thing or different things, which is the difference between one composed
+    prompt reused N times and a planned division of labour (``work_split``).
+    """
+    text = (user_text or "").strip()
+    if len(text) < 6:
+        return False
+    if _DIVIDE_EACH_RE.search(text):
+        return True
+    if not _DIVIDE_VERB_RE.search(text):
+        return False
+    return bool(
+        _DIVIDE_RECIPIENT_RE.search(text) or _DIVIDE_AREA_RE.search(text)
+    )
+
+
 def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
     """True when the open workspace should handle this turn instead of a spawn.
 
@@ -611,4 +717,5 @@ __all__ = [
     "detect_all",
     "detect_spawn",
     "owns_turn",
+    "wants_split",
 ]

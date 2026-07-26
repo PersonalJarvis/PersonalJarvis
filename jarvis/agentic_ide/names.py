@@ -128,12 +128,28 @@ def phonetic_key(name: str) -> str:
     return "".join(squeezed)
 
 
-def resolve(spoken: str, candidates: list[str]) -> str | None:
+def resolve(
+    spoken: str, candidates: list[str], *, fuzzy: bool = True
+) -> str | None:
     """Best-matching call-sign for ``spoken``, or ``None`` below the floor.
 
     ``spoken`` may be a whole utterance ("what is mika up to?") — every word is
     tried, longest first, so a name embedded in a sentence is found without the
     caller having to pre-extract it.
+
+    Two strengths of match, and callers pick by what a wrong answer costs them:
+
+    * **exact** — the word IS the name, or folds to the same sound ("Micah" →
+      "Mika"). Certain enough to act on with no other evidence.
+    * **fuzzy** (``fuzzy=True``, the default) — the word merely SCORES close
+      enough. That is what rescues a transcript the phonetic folding does not
+      cover, and it is also how ordinary speech collides with the pool: measured
+      against the shipping names, "unten" reaches "Hunter" and "dann" reaches
+      "Dana"; the live 2026-07-26 session had "keine" reaching "Kai"  # i18n-allow: quoted transcript tokens
+      (everyday words of the spoken language, quoted as measurement data).
+      Below the floor those are indistinguishable from a garbled call-sign, so
+      a caller that would ACT on the answer alone passes ``fuzzy=False`` and
+      accepts an exact match only.
     """
     if not spoken or not candidates:
         return None
@@ -154,6 +170,8 @@ def resolve(spoken: str, candidates: list[str]) -> str | None:
         for key, original in keys.items():
             if folded and folded == phonetic_key(key):
                 return original
+            if not fuzzy:
+                continue
             # Score the raw spelling AND the folded one; the better of the two
             # decides, so an odd transcript has two chances to be recognised.
             score = max(
