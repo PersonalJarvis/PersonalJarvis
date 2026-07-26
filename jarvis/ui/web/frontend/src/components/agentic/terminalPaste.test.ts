@@ -163,6 +163,28 @@ describe("pasting into a terminal pane", () => {
     expect(term.pasted).toEqual([]);
   });
 
+  /**
+   * How every dictation tool inserts text: put it on the clipboard, send
+   * Ctrl+V, then put the user's previous clipboard back. Reading the clipboard
+   * only after the wait would sometimes land after that restore and paste the
+   * text the user had copied earlier instead of what they just said.
+   */
+  it("pastes what was dictated, not what the tool restored afterwards", async () => {
+    const term = fakeTerminal();
+    let clipboard = "the dictated sentence";
+    dispose = installPasteBridge(term, container, {
+      readClipboard: async () => clipboard,
+      isMac: false,
+      fallbackDelayMs: DELAY,
+    });
+
+    term.press({ key: "v", ctrlKey: true });
+    clipboard = "whatever the user had copied before"; // the tool puts it back
+    await vi.advanceTimersByTimeAsync(DELAY);
+
+    expect(term.pasted).toEqual(["the dictated sentence"]);
+  });
+
   it("says so when no path could read the clipboard", async () => {
     const term = fakeTerminal();
     const onUnavailable = vi.fn();
