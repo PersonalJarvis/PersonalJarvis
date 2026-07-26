@@ -332,9 +332,16 @@ class WikiContextInjector:
         # Run search with a strict latency budget
         ultra = ultra_service is not None
         budget_ms = self._ultra_latency_budget_ms if ultra else self._latency_budget_ms
+        stage_timings: dict[str, float] = {}
         try:
             hits = await asyncio.wait_for(
-                _run_ultra_search(ultra_service, query, self._ultra_k)
+                _run_ultra_search(
+                    ultra_service,
+                    query,
+                    self._ultra_k,
+                    budget_s=budget_ms / 1000.0,
+                    timings=stage_timings,
+                )
                 if ultra
                 else _run_search(self._search, query),
                 timeout=budget_ms / 1000.0,
@@ -342,10 +349,11 @@ class WikiContextInjector:
         except TimeoutError:
             log.warning(
                 "WikiContextInjector timed out after %dms (budget=%dms, "
-                "source=%s) — skipping wiki context for this turn",
+                "source=%s, stages=%s) — skipping wiki context for this turn",
                 int((time.monotonic() - t0) * 1000),
                 budget_ms,
                 "ultrawiki" if ultra else "vault",
+                _stage_summary(stage_timings),
             )
             self._miss(t0, "ultra_timeout" if ultra else "timeout")
             return system_prompt
@@ -424,12 +432,23 @@ class WikiContextInjector:
 
         telemetry.inc("wiki_context_hits")
         log.info(
-            "WikiContextInjector injected=True hits=%d latency_ms=%d source=%s",
+            "WikiContextInjector injected=True hits=%d latency_ms=%d source=%s%s",
             hits_included,
             latency_ms,
             "ultrawiki" if ultra else "vault",
+            f" stages={_stage_summary(stage_timings)}" if stage_timings else "",
         )
         return augmented
+
+
+def _stage_summary(timings: dict[str, float]) -> str:
+    """Compact ``keyword=12 vector=88`` attribution for the one log line —
+    durations only, never query text."""
+    if not timings:
+        return "none"
+    return " ".join(
+        f"{name[: -len('_ms')]}={value:.0f}" for name, value in timings.items()
+    )
 
 
 async def _run_search(search: VaultSearch, query: str) -> list:
@@ -457,7 +476,14 @@ def _active_ultrawiki_service() -> Any | None:
         return None
 
 
-async def _run_ultra_search(service: Any, query: str, k: int) -> list:
+async def _run_ultra_search(
+    service: Any,
+    query: str,
+    k: int,
+    *,
+    budget_s: float,
+    timings: dict[str, float] | None = None,
+) -> list:
     """Candidate retrieval from the UltraWiki store — cheap legs only.
 
     ``rerank=False`` keeps the grading model call off this path (AP-9);
@@ -465,6 +491,14 @@ async def _run_ultra_search(service: Any, query: str, k: int) -> list:
     for an answer the user asked for, not for a prompt hint. ``enforce_floor``
     would be a no-op without grades and is left off deliberately: the gates in
     :meth:`WikiContextInjector.maybe_inject` are what stands in for it.
+
+    ``vector_timeout_s`` caps the vector leg at HALF the caller's overall
+    budget: embedding the query is a network round trip (and the live log
+    shows providers answering 429), and without this cap the outer
+    ``wait_for`` cancels the WHOLE search — the keyword hits die with the
+    slow leg and the injector can structurally never fire. The injection
+    gate only admits keyword-confirmed hits anyway (`_has_keyword_leg`), so
+    losing a slow vector leg costs ordering consensus, never a candidate.
     """
     return await service.search(
         query=query,
@@ -472,6 +506,8 @@ async def _run_ultra_search(service: Any, query: str, k: int) -> list:
         rerank=False,
         enforce_floor=False,
         expand_context=False,
+        vector_timeout_s=max(0.05, budget_s * 0.5),
+        timings=timings,
     )
 
 

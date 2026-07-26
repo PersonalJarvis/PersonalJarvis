@@ -144,6 +144,11 @@ async def test_retrieval_stays_cheap_no_rerank_no_expansion() -> None:
     assert call["expand_context"] is False
     assert call["enforce_floor"] is False
     assert call["k"] <= 5
+    # The vector leg gets HALF the overall budget: a slow query embedding
+    # must cost the consensus ordering, never the keyword hits (the outer
+    # wait_for would otherwise cancel the whole search on a slow provider).
+    assert call["vector_timeout_s"] == pytest.approx(0.25)
+    assert isinstance(call["timings"], dict)
 
 
 @pytest.mark.asyncio
