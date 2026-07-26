@@ -63,12 +63,20 @@ jobs:
             exit 1
           fi
 
+      # The README becomes the whole project page, rendered on PyPI's domain
+      # where repo-relative paths do not resolve. Catch them before publishing,
+      # not after someone reports broken images.
+      - name: Verify the README has no repo-relative URLs
+        run: python scripts/ci/check_readme_absolute_urls.py README.md
+
       - name: Build
         run: python -m build
 
-      # --strict turns a README that PyPI would refuse to render into a build
-      # failure here, rather than a published release with a blank project page.
-      - name: Check the metadata and the rendered README
+      # Metadata only. Do NOT read this as "the README was checked": twine maps
+      # `text/markdown` to no renderer at all ("Rendering cannot fail"), so a
+      # Markdown long_description is never rendered here and always passes. The
+      # README's real failure mode is covered by the URL gate above instead.
+      - name: Check the packaging metadata
         run: python -m twine check --strict dist/*
 
       - name: Upload the artifacts
