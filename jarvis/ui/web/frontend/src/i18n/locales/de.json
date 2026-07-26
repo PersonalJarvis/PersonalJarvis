@@ -2758,6 +2758,53 @@
           "no_entities": "Die Einträge wurden ausgewertet, aber es kamen keine Namen oder Orte darin vor. Die Momente unten kannst du trotzdem durchblättern."
         }
       },
+      "explore": {
+        "vault": {
+          "title": "Obsidian-Vault",
+          "hint": "Dieselben Inhalte als Markdown-Dateien auf der Festplatte.",
+          "export": "Exportieren",
+          "exporting": "Wird geschrieben …",
+          "exported": "{0} Notizen geschrieben, {1} unverändert.",
+          "notes": "{0} Notizen",
+          "never": "Noch nie exportiert",
+          "last": "Zuletzt am {0}",
+          "register": "Bei Obsidian anmelden",
+          "registering": "Wird angemeldet …",
+          "registered": "In Obsidian eingetragen",
+          "not_installed": "Obsidian ist auf diesem Gerät nicht installiert. Die Dateien liegen trotzdem bereit — du kannst sie mit jedem Markdown-Programm öffnen.",
+          "error": "Hat nicht geklappt: {0}"
+        },
+        "tab": "Entdecken",
+        "loading": "Wissensbestand wird gelesen …",
+        "error": "Der Wissensbestand konnte nicht gelesen werden.",
+        "entities_title": "Begriffe",
+        "entities_count": "{0} Begriffe",
+        "moments_title": "Momente",
+        "moments_count": "{0} Momente",
+        "graph_title": "Verbindungen",
+        "search_placeholder": "Begriff suchen …",
+        "no_search_hits": "Kein Begriff passt zu „{0}“.",
+        "mentions": "{0}×",
+        "mentions_long": "{0} Erwähnungen",
+        "period": "{0} bis {1}",
+        "neighbors": "Taucht auf mit",
+        "no_neighbors": "Kommt bisher immer allein vor.",
+        "shared": "{0} gemeinsame Momente",
+        "back": "Zurück zur Übersicht",
+        "open_source": "Beleg öffnen",
+        "source_prefix": "aus",
+        "min_mentions": "Ab {0} Erwähnungen",
+        "graph_shown": "{0} von {1} Begriffen",
+        "graph_hint": "Weniger häufige Begriffe sind ausgeblendet — Regler nach links für alle.",
+        "graph_empty": "Kein Begriff wird oft genug erwähnt. Stell den Regler auf 1.",
+        "moments_of": "Momente mit {0}",
+        "empty": {
+          "no_sources": "Es ist noch keine Quelle verbunden. Verbinde zuerst eine Quelle, dann kann Jarvis etwas wissen.",
+          "nothing_imported": "Eine Quelle ist verbunden, aber es wurde noch nichts geholt. Starte den Import bei den Quellen.",
+          "nothing_distilled": "Es liegen Einträge da, aber noch keiner wurde ausgewertet. Dafür braucht es ein eingerichtetes Sprachmodell in den Einstellungen.",
+          "no_entities": "Die Einträge wurden ausgewertet, aber es kamen keine Namen oder Orte darin vor. Die Momente unten kannst du trotzdem durchblättern."
+        }
+      },
     "explore": {
       "tab": "Entdecken",
       "loading": "Wissensbestand wird gelesen …",
