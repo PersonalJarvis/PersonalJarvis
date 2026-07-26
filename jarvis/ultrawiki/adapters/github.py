@@ -1,10 +1,21 @@
 """GitHub pull adapter — the issues and pull requests you were part of.
 
 The first real reader behind the plugin bridge. Of everything GitHub holds,
-this pulls the part that belongs in a *memory*: the issues and pull requests
-the account is **involved in** — authored, assigned, mentioned, or commented
-on. Those carry the decisions and the reasoning. A list of repository names
-does not, and the file tree is a code search's job, not a memory's.
+this pulls the part that belongs in a *memory*:
+
+1. the issues and pull requests the account is **involved in** — authored,
+   assigned, mentioned, or commented on — **with their comment threads**,
+   because the decision usually lives in the discussion rather than in the
+   opening post;
+2. one **profile per repository** — description, topics, primary language and
+   README — which is what makes "which project was that again?" answerable.
+
+**Nothing is cloned.** No repository is downloaded, no file tree walked, no
+commit history read. That is a decision, not a gap: the repositories reachable
+from one personal account here total roughly 900 MB of git data, and a
+lockfile, a minified bundle or a vendored dependency answers no question a
+person asks their own memory. Source code is a code search's job — Jarvis has
+CLI tools for that. A memory needs what was decided and why.
 
 One search query does all of it (``involves:<login>``), which matters: the
 Search API allows 30 requests a minute, an order of magnitude tighter than the
@@ -45,6 +56,7 @@ __all__ = [
     "GitHubAdapterError",
     "github_pull_adapter",
     "item_from_issue",
+    "item_from_repo",
 ]
 
 #: The plugin-bridge candidate id this adapter serves.
@@ -64,6 +76,21 @@ _TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
 #: Below this the adapter stops early and lets the next sync continue from the
 #: cursor, rather than spending the user's last requests and failing mid-page.
 _RATELIMIT_FLOOR = 3
+
+#: Comment threads cost one request per item that HAS comments. The core
+#: bucket allows 5 000 an hour, so this bound keeps ONE sync predictable
+#: rather than protecting the quota: past it the remaining threads stay as the
+#: "open the link" note they were before.
+_MAX_COMMENT_FETCHES = 300
+
+#: Per item — a 400-comment thread is a mailing list, not a decision record.
+_MAX_COMMENTS_PER_ITEM = 30
+
+#: A README is orientation, not documentation to be reproduced in full.
+_README_MAX_CHARS = 8000
+
+#: Repository pages of 100; four pages covers 400 repositories.
+_MAX_REPO_PAGES = 4
 
 
 class GitHubAdapterError(RuntimeError):
@@ -182,7 +209,9 @@ def _repo_of(issue: dict[str, Any]) -> str:
     return "/".join(parts[-2:]) if len(parts) >= 3 else ""
 
 
-def item_from_issue(issue: dict[str, Any]) -> RawItem | None:
+def item_from_issue(
+    issue: dict[str, Any], comment_text: str = ""
+) -> RawItem | None:
     """One search hit as a ``RawItem``; ``None`` when it is unusable.
 
     The body is composed rather than copied raw: a bare issue body loses which
@@ -221,10 +250,13 @@ def item_from_issue(issue: dict[str, Any]) -> RawItem | None:
         header += f" · opened by {author}"
     body_text = str(issue.get("body") or "").strip()
     comments = int(issue.get("comments") or 0)
-    if comments:
-        # The comment threads are NOT fetched (one request per issue would
-        # blow the 30/min search budget on the first sync). Saying how many
-        # exist keeps the record honest about what it does not contain.
+    if comment_text:
+        # The discussion IS the record: the opening post says what was
+        # proposed, the thread says what was decided and why it changed.
+        body_text += f"\n\n--- discussion ---\n{comment_text}"
+    elif comments:
+        # Not fetched this run (the per-sync bound). Say so, rather than
+        # let the body imply the opening post was the whole conversation.
         body_text += f"\n\n[{comments} comment(s) on GitHub — open the link to read them]"
 
     return RawItem(
@@ -244,9 +276,153 @@ def item_from_issue(issue: dict[str, Any]) -> RawItem | None:
             "state": state,
             "labels": labels,
             "comments": comments,
+            "comments_fetched": bool(comment_text),
             "updated_at": updated,
         },
     )
+
+
+async def _comment_text(
+    client: httpx.AsyncClient, token: str, issue: dict[str, Any]
+) -> str:
+    """The discussion under one issue or pull request, as plain text.
+
+    Returns an empty string on ANY failure: a thread that cannot be read must
+    not lose the item it belongs to. The caller then falls back to the "open
+    the link" note, which is what the record said before comments existed.
+    """
+    url = str(issue.get("comments_url") or "").strip()
+    if not url:
+        return ""
+    try:
+        response = await _get(
+            client, url, token, params={"per_page": _MAX_COMMENTS_PER_ITEM}
+        )
+        rows = response.json()
+    except (GitHubAdapterError, ValueError):
+        log.debug("comment thread unavailable for %s", url, exc_info=True)
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    lines: list[str] = []
+    for row in rows[:_MAX_COMMENTS_PER_ITEM]:
+        if not isinstance(row, dict):
+            continue
+        author = str((row.get("user") or {}).get("login") or "someone")
+        when = str(row.get("created_at") or "")[:10]
+        text = str(row.get("body") or "").strip()
+        if not text:
+            continue
+        lines.append(f"{author} ({when}): {text}")
+    total = int(issue.get("comments") or 0)
+    if total > len(lines) and total > _MAX_COMMENTS_PER_ITEM:
+        lines.append(f"[... {total - len(lines)} further comment(s) on GitHub]")
+    return "\n\n".join(lines)
+
+
+def item_from_repo(repo: dict[str, Any], readme: str = "") -> RawItem | None:
+    """One repository as a PROFILE item — what the project is, not what it contains.
+
+    This is the answer to "which project was that again?", and it is the only
+    repository-level thing worth storing: a name, what it is for, what it is
+    written in, and the README's own explanation. Deliberately NOT the code —
+    see the module docstring.
+    """
+    full_name = str(repo.get("full_name") or "").strip()
+    permalink = str(repo.get("html_url") or "").strip()
+    if not full_name or not permalink:
+        return None
+
+    description = str(repo.get("description") or "").strip()
+    language = str(repo.get("language") or "").strip()
+    topics = [str(topic) for topic in (repo.get("topics") or []) if topic]
+    visibility = "private" if repo.get("private") else "public"
+    pushed = str(repo.get("pushed_at") or "")
+    created = str(repo.get("created_at") or "")
+
+    header = f"{full_name} · repository · {visibility}"
+    if language:
+        header += f" · {language}"
+    if topics:
+        header += f" · {', '.join(topics)}"
+    parts = [header]
+    if description:
+        parts.append(description)
+    if readme:
+        parts.append(readme[:_README_MAX_CHARS])
+        if len(readme) > _README_MAX_CHARS:
+            parts.append("[README truncated — open the link for the rest]")
+
+    return RawItem(
+        external_id=f"repo:{repo.get('id')}",
+        title=full_name,
+        body="\n\n".join(parts).strip(),
+        permalink=permalink,
+        # A repository's "event time" is when it was created; the last push
+        # drives the cursor instead, via metadata.
+        timestamp_utc=created or pushed,
+        thread_key=full_name,
+        author_raw=str((repo.get("owner") or {}).get("login") or ""),
+        metadata={
+            "mtime_ns": _to_ns(pushed or created),
+            "repo": full_name,
+            "kind": "repository",
+            "state": visibility,
+            "language": language,
+            "topics": topics,
+            "pushed_at": pushed,
+        },
+    )
+
+
+async def _readme_text(client: httpx.AsyncClient, token: str, full_name: str) -> str:
+    """A repository's README as plain text, or empty when it has none.
+
+    Asked for as raw text rather than the base64 JSON blob: the raw media type
+    is one request either way and needs no decoding step to get wrong.
+    """
+    try:
+        response = await client.get(
+            f"{_API}/repos/{full_name}/readme",
+            headers={**_headers(token), "Accept": "application/vnd.github.raw"},
+        )
+    except httpx.HTTPError:
+        return ""
+    if response.status_code != 200:
+        # 404 simply means the repository has no README — a normal state.
+        return ""
+    return response.text.strip()
+
+
+async def _repository_items(
+    client: httpx.AsyncClient, token: str
+) -> AsyncIterator[RawItem]:
+    """A profile item for every repository the account can reach."""
+    for page in range(1, _MAX_REPO_PAGES + 1):
+        response = await _get(
+            client,
+            f"{_API}/user/repos",
+            token,
+            params={
+                "per_page": _PER_PAGE,
+                "page": page,
+                "affiliation": "owner,collaborator,organization_member",
+                "sort": "pushed",
+            },
+        )
+        rows = response.json()
+        if not isinstance(rows, list) or not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            full_name = str(row.get("full_name") or "")
+            readme = await _readme_text(client, token, full_name) if full_name else ""
+            item = item_from_repo(row, readme)
+            if item is not None:
+                yield item
+        if len(rows) < _PER_PAGE:
+            break
 
 
 async def github_pull_adapter(
@@ -264,6 +440,7 @@ async def github_pull_adapter(
     token = _token()
     since = _cursor_to_date(checkpoint)
     yielded = 0
+    comment_fetches = 0
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
         login = await _login(client, token)
@@ -292,7 +469,14 @@ async def github_pull_adapter(
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                item = item_from_issue(row)
+                # The thread is fetched only when there IS one, and only while
+                # the per-sync budget lasts — past it the item still lands,
+                # carrying its honest "open the link" note.
+                thread = ""
+                if int(row.get("comments") or 0) and comment_fetches < _MAX_COMMENT_FETCHES:
+                    thread = await _comment_text(client, token, row)
+                    comment_fetches += 1
+                item = item_from_issue(row, thread)
                 if item is not None:
                     yielded += 1
                     yield item
@@ -311,9 +495,22 @@ async def github_pull_adapter(
                     )
                     break
 
+        # Repository profiles last: they are the smallest and least urgent
+        # part of the read, so a rate-limit stop above costs the cheap thing
+        # rather than the discussions.
+        try:
+            async for repo_item in _repository_items(client, token):
+                yielded += 1
+                yield repo_item
+        except GitHubAdapterError as exc:
+            # A failed repository walk must not discard the issues already
+            # yielded — they are the valuable half.
+            log.info("GitHub adapter: repository profiles skipped (%s)", exc)
+
     log.info(
-        "GitHub adapter: yielded %d item(s) for %s (%s)",
+        "GitHub adapter: yielded %d item(s) for %s (%s), %d thread(s) fetched",
         yielded,
         ctx.source_id,
         "incremental" if since else "backfill",
+        comment_fetches,
     )

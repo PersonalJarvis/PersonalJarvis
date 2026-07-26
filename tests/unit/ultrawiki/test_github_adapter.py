@@ -51,6 +51,8 @@ def _issue(**overrides: Any) -> dict[str, Any]:
         "title": "Ship the wake-word fix",
         "html_url": "https://github.com/acme/widgets/issues/7",
         "repository_url": "https://api.github.com/repos/acme/widgets",
+        # Search results carry this; the adapter reads the thread from it.
+        "comments_url": "https://api.github.com/repos/acme/widgets/issues/7/comments",
         "state": "open",
         "body": "The wake word misses every third call.",
         "user": {"login": "rubenluetke10-beep"},
@@ -69,12 +71,26 @@ def _transport(
     login: str = "rubenluetke10-beep",
     headers: dict[str, str] | None = None,
     seen: list[httpx.Request] | None = None,
+    comments: list[dict[str, Any]] | None = None,
+    repos: list[dict[str, Any]] | None = None,
+    readme: str = "",
 ) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
-        if request.url.path == "/user":
+        path = request.url.path
+        if path == "/user":
             return httpx.Response(200, content=json.dumps({"login": login}).encode())
+        if path == "/user/repos":
+            page = int(request.url.params.get("page", "1"))
+            rows = (repos or []) if page == 1 else []
+            return httpx.Response(200, content=json.dumps(rows).encode())
+        if path.endswith("/readme"):
+            if not readme:
+                return httpx.Response(404, content=b"{}")
+            return httpx.Response(200, content=readme.encode())
+        if path.endswith("/comments"):
+            return httpx.Response(200, content=json.dumps(comments or []).encode())
         page = int(request.url.params.get("page", "1"))
         rows = pages[page - 1] if page <= len(pages) else []
         return httpx.Response(
@@ -251,3 +267,160 @@ def test_the_adapter_registers_under_the_bridge_candidate_id():
     # The id must match what list_candidates reports, or the reader is
     # registered under a name nothing looks up.
     assert plugin_bridge.has_pull_adapter("plugin:github") is True
+
+# ---------------------------------------------------------------------------
+# Comment threads — where the decision usually lives
+# ---------------------------------------------------------------------------
+
+
+async def test_the_discussion_is_stored_not_just_the_opening_post():
+    """An opening post says what was PROPOSED; the thread says what was decided.
+
+    Storing only the first message is how a memory ends up confidently
+    reporting a plan that was argued out of existence three comments later.
+    """
+    thread = [
+        {
+            "user": {"login": "reviewer"},
+            "created_at": "2026-03-02T09:00:00Z",
+            "body": "This breaks the wake word on Linux.",
+        },
+        {
+            "user": {"login": "rubenluetke10-beep"},
+            "created_at": "2026-03-02T10:00:00Z",
+            "body": "Good catch — switching to the energy gate instead.",
+        },
+    ]
+    items = await _collect(
+        transport=_transport([[_issue(comments=2)]], comments=thread)
+    )
+    body = items[0].body
+    assert "--- discussion ---" in body
+    assert "reviewer (2026-03-02): This breaks the wake word on Linux." in body
+    assert "switching to the energy gate instead" in body
+    assert items[0].metadata["comments_fetched"] is True
+
+
+async def test_an_item_without_comments_costs_no_extra_request():
+    seen: list[httpx.Request] = []
+    await _collect(transport=_transport([[_issue(comments=0)]], seen=seen))
+    assert not [r for r in seen if r.url.path.endswith("/comments")]
+
+
+async def test_an_unreadable_thread_keeps_the_item_and_says_so():
+    """A failed thread must never take its item down with it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user":
+            return httpx.Response(200, content=json.dumps({"login": "x"}).encode())
+        if request.url.path.endswith("/comments"):
+            return httpx.Response(500, content=b"{}")
+        if request.url.path == "/user/repos":
+            return httpx.Response(200, content=b"[]")
+        return httpx.Response(
+            200, content=json.dumps({"items": [_issue(comments=3)]}).encode()
+        )
+
+    items = await _collect(transport=httpx.MockTransport(handler))
+    assert len(items) == 1
+    # Falls back to the honest note rather than implying the post was all of it.
+    assert "3 comment(s) on GitHub" in items[0].body
+    assert items[0].metadata["comments_fetched"] is False
+
+
+async def test_a_huge_thread_is_capped_and_declares_the_remainder():
+    thread = [
+        {"user": {"login": "u"}, "created_at": "2026-03-02T09:00:00Z", "body": f"c{i}"}
+        for i in range(60)
+    ]
+    items = await _collect(
+        transport=_transport([[_issue(comments=200)]], comments=thread)
+    )
+    body = items[0].body
+    assert body.count("u (2026-03-02):") == 30
+    assert "further comment(s) on GitHub" in body
+
+
+# ---------------------------------------------------------------------------
+# Repository profiles — "which project was that again?"
+# ---------------------------------------------------------------------------
+
+
+def _repo(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "id": 555,
+        "full_name": "acme/widgets",
+        "html_url": "https://github.com/acme/widgets",
+        "description": "The widget pipeline.",
+        "language": "Python",
+        "topics": ["widgets", "pipeline"],
+        "private": True,
+        "owner": {"login": "acme"},
+        "created_at": "2025-01-05T08:00:00Z",
+        "pushed_at": "2026-03-09T12:00:00Z",
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_a_repository_becomes_a_profile_not_a_code_dump():
+    items = await _collect(
+        transport=_transport(
+            [[]], repos=[_repo()], readme="# Widgets\n\nRuns the widget pipeline."
+        )
+    )
+    profile = next(i for i in items if i.metadata["kind"] == "repository")
+    assert profile.external_id == "repo:555"
+    assert profile.title == "acme/widgets"
+    assert profile.permalink == "https://github.com/acme/widgets"
+    # What it IS: visibility, language, topics, purpose, README.
+    assert "acme/widgets · repository · private · Python" in profile.body
+    assert "widgets, pipeline" in profile.body
+    assert "The widget pipeline." in profile.body
+    assert "Runs the widget pipeline." in profile.body
+    # And explicitly NOT a file tree: the timestamp is the repo's creation,
+    # the cursor rides on the last push.
+    assert profile.timestamp_utc == "2025-01-05T08:00:00Z"
+    assert profile.metadata["mtime_ns"] == gh._to_ns("2026-03-09T12:00:00Z")
+
+
+async def test_a_repository_without_a_readme_is_still_a_profile():
+    """404 on the README is a normal state, not a failure."""
+    items = await _collect(transport=_transport([[]], repos=[_repo()], readme=""))
+    profile = next(i for i in items if i.metadata["kind"] == "repository")
+    assert "The widget pipeline." in profile.body
+
+
+async def test_an_overlong_readme_is_truncated_with_a_pointer():
+    items = await _collect(
+        transport=_transport([[]], repos=[_repo()], readme="x" * 20000)
+    )
+    profile = next(i for i in items if i.metadata["kind"] == "repository")
+    assert "README truncated" in profile.body
+    assert len(profile.body) < 12000
+
+
+async def test_a_failed_repository_walk_keeps_the_issues_already_read():
+    """The issues are the valuable half; a repo-list failure must not void them."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user":
+            return httpx.Response(200, content=json.dumps({"login": "x"}).encode())
+        if request.url.path == "/user/repos":
+            return httpx.Response(500, content=b"{}")
+        return httpx.Response(
+            200, content=json.dumps({"items": [_issue()]}).encode()
+        )
+
+    items = await _collect(transport=httpx.MockTransport(handler))
+    assert [i.metadata["kind"] for i in items] == ["issue"]
+
+
+async def test_repositories_are_read_after_the_issues():
+    """A rate-limit stop should cost the cheap half, not the discussions."""
+    seen: list[httpx.Request] = []
+    await _collect(
+        transport=_transport([[_issue()]], repos=[_repo()], seen=seen, readme="hi")
+    )
+    paths = [r.url.path for r in seen]
+    assert paths.index("/search/issues") < paths.index("/user/repos")
