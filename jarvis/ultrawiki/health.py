@@ -40,6 +40,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from jarvis.ultrawiki.progress import build_progress
+
 __all__ = [
     "CheckState",
     "HealthCheck",
@@ -53,6 +55,34 @@ CheckState = Literal["ok", "working", "attention", "blocked"]
 
 #: Rank for the overall verdict: the worst check wins, in this order.
 _SEVERITY: dict[str, int] = {"ok": 0, "working": 1, "attention": 2, "blocked": 3}
+
+
+#: What a queue is waiting for, in words a reader recognises. Keyed by
+#: ``progress["next_step"]`` so the checklist and the overview name the same
+#: activity — "still being summarised" must not become "still embedding".
+_STEP_WORDING: dict[str, str] = {
+    "indexing": "being made searchable",
+    "embedding": "being indexed by meaning",
+    "summarising": "being summarised",
+}
+
+
+def _num(value: int) -> str:
+    """4712 → "4 712". Thin-space grouping, the format the checklist already used."""
+    return f"{int(value):,}".replace(",", " ")
+
+
+def _progress_of(status: dict[str, Any]) -> dict[str, Any]:
+    """The shared progress model — never a second derivation.
+
+    Prefers the block the status payload already carries and falls back to
+    deriving it from the same counts, so a caller that hand-builds a status
+    dict (every unit test does) gets identical arithmetic.
+    """
+    progress = status.get("progress")
+    if isinstance(progress, dict) and progress:
+        return progress
+    return build_progress(status.get("counts"))
 
 
 def _names(rows: list[dict[str, Any]], limit: int = 3) -> tuple[str, bool]:
@@ -271,8 +301,8 @@ def _sources_check(
 
 
 def _content_check(status: dict[str, Any]) -> HealthCheck:
-    counts = dict(status.get("counts") or {})
-    total = int(counts.get("total") or 0)
+    progress = _progress_of(status)
+    total = int(progress.get("total") or 0)
     if total == 0:
         return HealthCheck(
             id="content",
@@ -285,15 +315,29 @@ def _content_check(status: dict[str, Any]) -> HealthCheck:
             action={"kind": "sync_all"},
             facts={"total": 0},
         )
-    searchable = int(counts.get("keyword_indexed") or 0) + int(
-        counts.get("embedded") or 0
-    ) + int(counts.get("distilled") or 0)
+    searchable = int(progress.get("searchable") or 0)
+    failed = int(progress.get("failed") or 0)
+    detail = f"{_num(searchable)} of them can be found by searching."
+    if failed:
+        # Named here rather than silently missing from the searchable count:
+        # an item can dead-letter at any stage, so whether it ever reached the
+        # index is genuinely unknown — and a number nobody can explain is how
+        # a settings screen loses its credibility.
+        detail += (
+            f" {_num(failed)} could not be finished and may not be complete."
+        )
     return HealthCheck(
         id="content",
-        title=f"{total:,} item(s) stored".replace(",", " "),
+        title=f"{_num(total)} item(s) stored",
         state="ok",
-        detail=f"{searchable:,} of them are already searchable.".replace(",", " "),
-        facts={"total": total, "searchable": searchable, **counts},
+        detail=detail,
+        facts={
+            "total": total,
+            "searchable": searchable,
+            "summarised": int(progress.get("summarised") or 0),
+            "failed": failed,
+            **dict(progress.get("buckets") or {}),
+        },
     )
 
 
@@ -301,7 +345,7 @@ def _search_check(status: dict[str, Any]) -> HealthCheck:
     legs = dict(status.get("search_legs") or {})
     keyword = dict(legs.get("keyword") or {})
     vector = dict(legs.get("vector") or {})
-    counts = dict(status.get("counts") or {})
+    progress = _progress_of(status)
     keyword_ready = bool(keyword.get("available"))
     vector_ready = bool(vector.get("available"))
     facts = {"keyword": keyword_ready, "vector": vector_ready}
@@ -317,9 +361,7 @@ def _search_check(status: dict[str, Any]) -> HealthCheck:
             ),
             facts=facts,
         )
-    if int(counts.get("keyword_indexed") or 0) + int(counts.get("embedded") or 0) + int(
-        counts.get("distilled") or 0
-    ) == 0:
+    if int(progress.get("searchable") or 0) == 0:
         return HealthCheck(
             id="search",
             title="Nothing to search yet",
@@ -353,32 +395,67 @@ def _search_check(status: dict[str, Any]) -> HealthCheck:
 
 
 def _processing_check(status: dict[str, Any]) -> HealthCheck:
-    counts = dict(status.get("counts") or {})
+    """The row that used to lie.
+
+    It read the backlog as ``counts["captured"]`` — items not yet keyword-
+    indexed — while the import strip two centimetres above read it as
+    ``captured + keyword_indexed + embedded``. On a corpus of 4 712 items with
+    3 237 queued for distillation, the strip said "Processing (3237 pending)"
+    and this row said "Everything is processed. No backlog." Both from the
+    same payload, in the same second. It now takes the ONE backlog number
+    (:mod:`jarvis.ultrawiki.progress`), so "ok" is reachable only when there
+    is genuinely nothing left to do.
+    """
+    progress = _progress_of(status)
     pipeline = dict(status.get("pipeline") or {})
-    captured = int(counts.get("captured") or 0)
-    failed = int(counts.get("failed") or 0)
+    waiting = int(progress.get("waiting") or 0)
+    failed = int(progress.get("failed") or 0)
+    searchable = int(progress.get("searchable") or 0)
     state = str(pipeline.get("state") or "")
-    facts = {"backlog": captured, "failed": failed, "pipeline_state": state}
+    step = _STEP_WORDING.get(str(progress.get("next_step") or ""), "being processed")
+    facts = {
+        "waiting": waiting,
+        "failed": failed,
+        "pipeline_state": state,
+        "next_step": progress.get("next_step"),
+        **dict(progress.get("waiting_by_bucket") or {}),
+    }
+    backlog_note = (
+        f" {_num(waiting)} item(s) are still {step}." if waiting else ""
+    )
 
     if failed:
         return HealthCheck(
             id="processing",
-            title=f"{failed} item(s) could not be processed",
+            title=f"{_num(failed)} item(s) could not be processed",
             state="attention",
             detail=(
-                "They stay stored and keyword-searchable; only their "
-                "summaries are missing. Retrying usually clears them."
+                "They gave up after repeated errors and are missing at least "
+                "their summary. Retrying usually clears them." + backlog_note
             ),
             facts=facts,
         )
-    if captured:
+    if waiting and state == "paused":
         return HealthCheck(
             id="processing",
-            title=f"{captured:,} item(s) still being processed".replace(",", " "),
+            title=f"{_num(waiting)} item(s) are waiting — processing is paused",
+            state="attention",
+            detail=str(
+                pipeline.get("reason")
+                or "The background pipeline is not running, so the queue is "
+                "standing still."
+            ),
+            facts=facts,
+        )
+    if waiting:
+        return HealthCheck(
+            id="processing",
+            title=f"{_num(waiting)} item(s) still {step}",
             state="working",
             detail=(
-                "Summarising and indexing run in the background. Everything "
-                "already processed is searchable now — you do not have to wait."
+                f"This runs in the background. The {_num(searchable)} item(s) "
+                "already processed can be searched right now — you do not "
+                "have to wait for the rest."
             ),
             facts=facts,
         )
@@ -498,5 +575,8 @@ def build_health(
     return {
         "overall": overall,
         "usable": usable,
+        # The same numbers the overview draws its bar from. Shipped with the
+        # verdict so a client never has to add up buckets to caption it.
+        "progress": _progress_of(status),
         "checks": [c.as_dict() for c in checks],
     }

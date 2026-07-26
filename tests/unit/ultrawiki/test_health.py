@@ -17,7 +17,14 @@ from jarvis.ultrawiki.health import build_health
 
 
 def _status(**overrides: Any) -> dict[str, Any]:
-    """A healthy, fully-imported install; tests override one thing at a time."""
+    """A healthy, fully-imported install; tests override one thing at a time.
+
+    The counts are per-stage buckets an item sits in EXACTLY ONE of, so
+    "fully processed" means every item has arrived in ``distilled``. This
+    fixture used to spread them over three stages and still assert that every
+    check was green — which is precisely the reading error that let the
+    checklist call an 80-item backlog "Everything is processed".
+    """
     base: dict[str, Any] = {
         "enabled": True,
         "started": True,
@@ -25,9 +32,9 @@ def _status(**overrides: Any) -> dict[str, Any]:
         "backend_in_use": "sqlite",
         "counts": {
             "captured": 0,
-            "keyword_indexed": 40,
-            "embedded": 40,
-            "distilled": 20,
+            "keyword_indexed": 0,
+            "embedded": 0,
+            "distilled": 100,
             "failed": 0,
             "total": 100,
         },
@@ -312,9 +319,9 @@ def test_failed_items_do_not_hide_that_the_rest_works():
         _status(
             counts={
                 "captured": 0,
-                "keyword_indexed": 90,
-                "embedded": 90,
-                "distilled": 80,
+                "keyword_indexed": 0,
+                "embedded": 0,
+                "distilled": 90,
                 "failed": 10,
                 "total": 100,
             }
@@ -323,8 +330,15 @@ def test_failed_items_do_not_hide_that_the_rest_works():
     )
     check = _check(health, "processing")
     assert check["state"] == "attention"
-    assert "keyword-searchable" in check["detail"]
+    assert "10" in check["title"]
+    # NOT "they stay keyword-searchable": an item can dead-letter at any
+    # stage, including before it was ever indexed, so the counts cannot prove
+    # that. The row promises only what it can show.
+    assert "keyword-searchable" not in check["detail"]
     assert health["usable"] is True
+    # The 10 are named where the corpus is described, instead of quietly
+    # thinning the searchable number by ten with no explanation.
+    assert "10" in _check(health, "content")["detail"]
 
 
 @pytest.mark.parametrize(

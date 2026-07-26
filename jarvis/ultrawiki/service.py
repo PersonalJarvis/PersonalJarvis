@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from jarvis.ultrawiki.progress import build_progress
 from jarvis.ultrawiki.types import (
     ConnectorContext,
     ConsentState,
@@ -550,8 +551,13 @@ class UltraWikiService:
         # Every slot probe walks credentials (keyring / .env) or an endpoint —
         # all three go to a worker thread together, never on the event loop.
         slots = await asyncio.to_thread(self._slot_statuses)
+        # ONE derivation of "how far along" for every surface that asks (the
+        # strip, the checklist, the overview). See jarvis/ultrawiki/progress.py
+        # for the screenshot that made a second derivation unacceptable.
+        counts_payload = _counts_dict(counts)
+        progress = build_progress(counts_payload)
         state, reason = self._pipeline_state(
-            counts, sources, slots, running=pipeline_running
+            progress, sources, slots, running=pipeline_running
         )
         return {
             "enabled": self._uw_enabled(),
@@ -564,7 +570,8 @@ class UltraWikiService:
             },
             "slots": slots,
             "vector": vector,
-            "counts": _counts_dict(counts),
+            "counts": counts_payload,
+            "progress": progress,
             "pipeline": {
                 "running": pipeline_running,
                 "state": state,
@@ -587,7 +594,7 @@ class UltraWikiService:
 
     def _pipeline_state(
         self,
-        counts: PipelineCounts,
+        progress: dict[str, Any],
         sources: list[dict[str, Any]],
         slots: dict[str, Any],
         *,
@@ -601,6 +608,11 @@ class UltraWikiService:
         being done, so the strip states which of the four situations holds:
         nothing approved yet, nothing left to do, actually processing, or
         blocked on a slot. ``running`` is still reported separately.
+
+        Takes the shared progress model rather than raw counts: the backlog
+        this function reports and the backlog the checklist reports must be
+        the same number, and the only way to guarantee that is to have one
+        function produce it (:mod:`jarvis.ultrawiki.progress`).
         """
         approved = [
             source
@@ -608,11 +620,12 @@ class UltraWikiService:
             if str(source.get("consent") or "") == ConsentState.APPROVED.value
             and bool(source.get("enabled"))
         ]
-        pending_keyword = int(counts.captured)
-        pending_embed = int(counts.keyword_indexed)
-        pending_distill = int(counts.embedded)
-        backlog = pending_keyword + pending_embed + pending_distill
-        failed = int(counts.failed)
+        waiting = dict(progress.get("waiting_by_bucket") or {})
+        pending_keyword = int(waiting.get("captured") or 0)
+        pending_embed = int(waiting.get("keyword_indexed") or 0)
+        pending_distill = int(waiting.get("embedded") or 0)
+        backlog = int(progress.get("waiting") or 0)
+        failed = int(progress.get("failed") or 0)
         failed_note = (
             f" {failed} item(s) gave up after repeated errors — use "
             "'retry failed items' once the cause is fixed."
