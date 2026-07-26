@@ -3123,6 +3123,7 @@
       "verdict_not_ready": "Not ready to answer yet.",
       "verdict_hint": "The steps below are checked in order. Anything you can fix has a button next to it.",
       "action_sync_all": "Import now",
+        "action_retry_failed": "Try again",
       "action_open_sources": "Open sources",
       "action_open_settings": "Open settings",
       "action_enable_mode": "Turn on",

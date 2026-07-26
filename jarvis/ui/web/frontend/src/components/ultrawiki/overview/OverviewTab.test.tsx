@@ -7,7 +7,7 @@
  * change that lets this screen claim it is finished should fail here.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { VerdictCard, verdictToneOf } from "@/components/ultrawiki/overview/VerdictCard";
@@ -293,6 +293,41 @@ describe("ProblemList — only what is not fine", () => {
   it("does not dress a draining backlog up as a problem", () => {
     // "working" is progress. Listing it here is how a list stops being read.
     expect(problemsOf([check("processing", "working")])).toHaveLength(0);
+  });
+
+  it("offers the retry the failed-items row promises", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        calls.push(String(url));
+        return new Response(
+          JSON.stringify({ ok: true, requeued: 140, source_id: "", detail: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const onChanged = vi.fn();
+    const failed: UltraWikiHealthCheck = {
+      id: "processing",
+      title: "140 item(s) could not be processed",
+      state: "attention",
+      detail: "Retrying usually clears them.",
+      action: { kind: "retry_failed" },
+      facts: {},
+    };
+    renderWithQuery(
+      <ProblemList
+        checks={[failed]}
+        handlers={{ onOpenSources: () => {}, onOpenSettings: () => {}, onChanged }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("ultrawiki-problem-action-processing"));
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(
+      calls.some((u) => u.includes("/api/ultrawiki/pipeline/requeue-failed")),
+    ).toBe(true);
   });
 
   it("collapses an all-clear to a single line", () => {

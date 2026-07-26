@@ -331,6 +331,10 @@ def test_failed_items_do_not_hide_that_the_rest_works():
     check = _check(health, "processing")
     assert check["state"] == "attention"
     assert "10" in check["title"]
+    # The row promises that retrying usually clears them, so it must offer the
+    # retry. It did not, and the only retry button lived in a strip the
+    # overview hides — found by clicking the live app, not by a test.
+    assert check["action"] == {"kind": "retry_failed"}
     # NOT "they stay keyword-searchable": an item can dead-letter at any
     # stage, including before it was ever indexed, so the counts cannot prove
     # that. The row promises only what it can show.

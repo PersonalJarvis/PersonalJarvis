@@ -12,6 +12,7 @@ import { useState } from "react";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import {
+  requeueUltraWikiFailed,
   syncAllUltraWikiSources,
   type UltraWikiHealthCheck,
 } from "@/lib/ultrawikiApi";
@@ -47,10 +48,32 @@ export function useCheckActions(handlers: CheckActionHandlers): {
     }
   }
 
+  async function retryFailed() {
+    setBusy(true);
+    try {
+      const result = await requeueUltraWikiFailed();
+      pushToast(
+        "success",
+        t("ultrawiki.progress.retry_failed_done").replace(
+          "{0}",
+          String(result.requeued),
+        ),
+      );
+      handlers.onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function runAction(check: UltraWikiHealthCheck) {
     switch (check.action?.kind) {
       case "sync_all":
         void syncAll();
+        return;
+      case "retry_failed":
+        void retryFailed();
         return;
       case "open_sources":
         handlers.onOpenSources();

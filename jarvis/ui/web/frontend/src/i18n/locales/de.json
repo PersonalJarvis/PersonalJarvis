@@ -3137,6 +3137,7 @@
       "verdict_not_ready": "Kann noch nicht antworten.",
       "verdict_hint": "Die Schritte unten werden der Reihe nach geprüft. Alles, was du beheben kannst, hat einen Knopf daneben.",
       "action_sync_all": "Jetzt importieren",
+        "action_retry_failed": "Erneut versuchen",
       "action_open_sources": "Quellen öffnen",
       "action_open_settings": "Einstellungen öffnen",
       "action_enable_mode": "Einschalten",

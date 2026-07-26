@@ -433,6 +433,10 @@ def _processing_check(status: dict[str, Any]) -> HealthCheck:
                 "They gave up after repeated errors and are missing at least "
                 "their summary. Retrying usually clears them." + backlog_note
             ),
+            # The row says "retrying usually clears them", so it has to offer
+            # the retry. Live testing found this sentence on a screen whose
+            # only retry button was in a strip that screen hides.
+            action={"kind": "retry_failed"},
             facts=facts,
         )
     if waiting and state == "paused":

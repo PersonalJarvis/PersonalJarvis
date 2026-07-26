@@ -3122,6 +3122,7 @@
       "verdict_not_ready": "Todavía no puede responder.",
       "verdict_hint": "Los pasos de abajo se comprueban en orden. Todo lo que puedas arreglar tiene un botón al lado.",
       "action_sync_all": "Importar ahora",
+        "action_retry_failed": "Intentar de nuevo",
       "action_open_sources": "Abrir fuentes",
       "action_open_settings": "Abrir ajustes",
       "action_enable_mode": "Activar",
