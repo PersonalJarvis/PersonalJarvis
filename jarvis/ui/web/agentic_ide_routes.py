@@ -1150,6 +1150,16 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     """
     await ws.accept()
     if not credentials_valid(ws.scope):
+        # Logged because from the pane's side a refused handshake and a terminal
+        # that will not start look identical — both are a red pane — and until
+        # this line the whole failure path wrote nothing anywhere, so a grid of
+        # dead panes could not be explained after the fact. Expected once per
+        # socket on WebKit engines, which withhold the session cookie from a WS
+        # handshake (BUG-065); the client answers by proving the session over
+        # plain HTTP and retrying with a one-time ticket.
+        log.warning(
+            "Agentic IDE: refused an unauthorized terminal socket for %r", name
+        )
         await ws.close(code=4401, reason="unauthorized")
         return
 
@@ -1188,6 +1198,16 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             name, cols, rows, on_output, on_exit, workspace_id=pane_workspace
         )
     except SessionError as exc:
+        # The reason used to travel to the browser and nowhere else, where it
+        # ended up as a tooltip on a red badge. A spawn that fails for every
+        # pane at once is exactly when nobody is hovering — so it is recorded
+        # here as well, with the pane and the workspace it was resolved against.
+        log.warning(
+            "Agentic IDE: %r could not attach (workspace=%s): %s",
+            name,
+            pane_workspace or "front",
+            exc,
+        )
         await ws.send_json({"t": "error", "message": str(exc)})
         await ws.close(code=4404, reason="attach failed")
         return
