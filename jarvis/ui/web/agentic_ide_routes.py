@@ -11,6 +11,9 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /folders``                    → browse folders (no path = start points)
 * ``POST   /session``                    → open a workspace (folder + terminals)
 * ``DELETE /session``                    → close it and stop every agent
+* ``GET    /resume``                     → the last workspace, offered back
+* ``POST   /resume``                     → reopen it (same panes, same places)
+* ``DELETE /resume``                     → forget it and start fresh
 * ``PUT    /mode``                       → focused coding mode on/off
 * ``POST   /terminals``                  → open one more pane (split)
 * ``POST   /terminals/batch``            → open N more panes at once
@@ -41,7 +44,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import recents
+from jarvis.agentic_ide import recents, resume_store
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
 from jarvis.agentic_ide.names import default_names
@@ -211,6 +214,48 @@ class ResolveResponse(BaseModel):
     resolved: str | None = None
     candidates: list[FolderItem] = Field(default_factory=list)
     detail: str = ""
+
+
+class ResumeTerminal(BaseModel):
+    """One pane of the workspace being offered back."""
+
+    key: str
+    name: str
+    agent: str
+    display_name: str
+    column: int
+    slot: int
+    available: bool = Field(
+        description=(
+            "Can this pane be opened at all? False when its coding CLI is no "
+            "longer installed on this machine."
+        )
+    )
+    resumable: bool = Field(
+        description=(
+            "Does its CONVERSATION come back, or only its call-sign? False "
+            "means the pane reopens empty — say so before anyone clicks."
+        )
+    )
+    prompts_sent: int = 0
+
+
+class ResumeOffer(BaseModel):
+    """The last workspace, re-checked against this machine as it is now."""
+
+    available: bool = Field(
+        description="False when there is nothing to reopen, or nothing that could run."
+    )
+    folder: str = ""
+    folder_name: str = ""
+    folder_exists: bool = False
+    saved_at: float = 0.0
+    session_id: str = ""
+    resumable_count: int = Field(
+        default=0,
+        description="How many panes bring their conversation back with them.",
+    )
+    terminals: list[ResumeTerminal] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -422,6 +467,115 @@ async def end_session() -> dict:
     """Close the workspace and stop every agent running in it."""
     closed = await get_registry().end()
     return {"ok": True, "closed": closed}
+
+
+async def _installed_agents() -> set[str]:
+    """Coding CLIs this machine can actually launch, right now.
+
+    The same two-step check ``GET /agents`` makes: detected AND resolvable the
+    way the terminal will resolve it, because a GUI process starts with a
+    minimal PATH and "installed" is not the same question as "launchable from
+    here". A probe that fails answers "none installed" rather than raising —
+    an offer screen must never 500.
+    """
+    try:
+        from jarvis.workspace.agents import detect_agents
+
+        return {
+            info.name
+            for info in await detect_agents()
+            if info.installed and agent_argv(info.name) is not None
+        }
+    except Exception:  # noqa: BLE001 - the offer is more useful than an error
+        log.warning("Agentic IDE: could not detect coding agents", exc_info=True)
+        return set()
+
+
+@router.get(
+    "/resume",
+    response_model=ResumeOffer,
+    summary="The last Agentic-IDE workspace, offered back",
+)
+async def get_resume_offer() -> ResumeOffer:
+    """What reopening the last workspace would bring back.
+
+    Answered against the machine as it is NOW, not as it was when the workspace
+    was saved: the folder may have been deleted, a coding CLI uninstalled, a
+    pane may never have been given a prompt. Each pane therefore reports two
+    different things — whether it can be opened at all, and whether its
+    conversation comes back with it. Both belong on screen before the user
+    clicks, because the alternative is finding out by asking a resumed agent a
+    follow-up question and getting a blank stare.
+
+    ``available: false`` is a normal answer, not an error: a fresh install has
+    nothing to resume.
+    """
+    snapshot = await asyncio.to_thread(resume_store.load)
+    installed = await _installed_agents()
+    return ResumeOffer(**resume_store.offer(snapshot, installed=installed))
+
+
+@router.post("/resume", summary="Reopen the last Agentic-IDE workspace")
+async def resume_workspace() -> dict:
+    """Reopen the last workspace: same panes, same places, same coding CLIs.
+
+    Wherever the coding CLI supports it, each pane also continues the
+    conversation it was having. No agent is started here — the panes connect the
+    way they always do, and that connection is what continues them, so a resumed
+    workspace takes exactly the same path as a freshly opened one.
+
+    ``409`` when there is nothing to resume, ``422`` when the folder is gone.
+    """
+    registry = get_registry()
+    snapshot = await asyncio.to_thread(resume_store.load)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=409, detail="There is no previous workspace to reopen."
+        )
+    try:
+        session = await registry.restore(snapshot)
+    except SessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    split: dict[str, int] = {}
+    for terminal in session.terminals:
+        split[terminal.agent] = split.get(terminal.agent, 0) + 1
+    try:
+        await asyncio.to_thread(
+            recents.remember,
+            session.folder,
+            terminals=len(session.terminals),
+            agents=split,
+        )
+    except Exception:  # noqa: BLE001 - history must never block reopening
+        log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
+
+    resumable = sum(1 for t in session.terminals if t.resume is not None)
+    return {
+        "ok": True,
+        "session": session.to_dict(),
+        # The honest part: the rest of the panes reopen empty, and a caller that
+        # reports "everything is back" without checking this is lying.
+        "resumable_count": resumable,
+        "started_fresh": len(session.terminals) - resumable,
+    }
+
+
+@router.delete(
+    "/resume",
+    summary="Forget the last Agentic-IDE workspace",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def forget_resume_offer() -> dict:
+    """Discard the restore point, so the IDE opens to a clean wizard.
+
+    Nothing on disk is touched and no agent is stopped — this only throws away
+    the note saying which workspace could be reopened. It cannot be undone: the
+    call-signs, the grid positions and the links to each pane's conversation are
+    gone with it.
+    """
+    removed = await asyncio.to_thread(resume_store.clear)
+    return {"ok": True, "removed": removed}
 
 
 @router.put("/mode", summary="Toggle focused coding mode")
@@ -782,7 +936,16 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         await ws.close(code=4404, reason="attach failed")
         return
 
-    await ws.send_json({"t": "ready", "name": term.name, "agent": term.agent})
+    await ws.send_json(
+        {
+            "t": "ready",
+            "name": term.name,
+            "agent": term.agent,
+            # Did this pane pick up its previous conversation, or start empty?
+            # The pane looks identical either way, so it has to be told.
+            "resumed": term.resumed,
+        }
+    )
 
     try:
         while True:
