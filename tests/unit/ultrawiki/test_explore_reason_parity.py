@@ -49,6 +49,27 @@ def test_typescript_union_matches_the_python_enum():
     assert ts_union_values() == {reason.value for reason in ExploreReason}
 
 
+def explore_keys_used_in_components() -> set[str]:
+    """Every ``t("ultrawiki.explore.…")`` the Explore components ask for."""
+    used: set[str] = set()
+    for name in ("ExplorePanel.tsx", "EntityGraph.tsx", "VaultBar.tsx"):
+        source = (FRONTEND / "components/ultrawiki" / name).read_text(encoding="utf-8")
+        used |= set(re.findall(r't\(\s*"(ultrawiki\.explore\.[^"]+)"', source))
+    return used
+
+
+def test_every_string_the_explore_view_asks_for_exists_in_every_locale():
+    """A missing key renders as the raw key on screen — which is exactly what
+    happened once when a concurrent write dropped the vault block between the
+    insert and the commit. The reason codes were covered; the rest was not."""
+    used = explore_keys_used_in_components()
+    assert used, "no i18n keys found — the extraction regex went stale"
+    for locale in SUPPORTED_LOCALES:
+        data = locale_keys(locale)
+        missing = sorted(key for key in used if not isinstance(nested(data, key), str))
+        assert not missing, f"{locale}.json is missing: {missing}"
+
+
 def test_every_reason_has_a_message_in_every_locale():
     # "ok" is the non-empty case and needs no empty-state copy.
     explaining = [r.value for r in ExploreReason if r is not ExploreReason.OK]
