@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jarvis.ultrawiki.connectors.local_folder import (
+    NOISE_DIR_NAMES,
     LocalFolderConnector,
     first_h1_heading,
 )
@@ -38,7 +39,9 @@ class ObsidianVaultConnector(LocalFolderConnector):
     # auth / capabilities inherited: LOCAL_PATH, backfill + CURSOR + deletes.
 
     DEFAULT_EXTENSIONS = (".md",)
-    SKIP_DIR_NAMES = frozenset({".obsidian", ".trash"})
+    # The vault's own internals ON TOP of the shared noise list — a vault kept
+    # inside a project folder still must not import its node_modules.
+    SKIP_DIR_NAMES = NOISE_DIR_NAMES | {".obsidian", ".trash"}
 
     def _extensions(self, ctx: ConnectorContext) -> tuple[str, ...]:
         # An Obsidian vault is markdown by definition; ignore any

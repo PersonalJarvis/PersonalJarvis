@@ -54,6 +54,144 @@ log = logging.getLogger(__name__)
 #: Matches an H1 markdown heading ("# Title") at the start of a line.
 _H1_RE = re.compile(r"^# +(.+?)\s*$", re.MULTILINE)
 
+#: Shell-prompt decoration a pasted path arrives with. ``C:\\Users\\Someone>``
+#: is what an interactive prompt PRINTS; the ``>`` is the prompt, not the
+#: folder. Same for the POSIX ``$`` / ``#`` and PowerShell's ``PS `` prefix.
+_PROMPT_PREFIX_RE = re.compile(r"^(?:PS|pwsh|bash|cmd)\s+", re.IGNORECASE)
+_PROMPT_SUFFIX_RE = re.compile(r"\s*[>$#]+\s*$")
+
+
+class LocalFolderRootError(RuntimeError):
+    """The configured folder cannot be walked — it is missing or not a folder.
+
+    Raised instead of yielding nothing, so the run FAILS and the reason
+    reaches the source card as ``last_error``. Returning empty here is what
+    let a source pasted with a shell prompt still in the path ("...>") report
+    a successful import of zero items, with the reason only ever reaching a
+    log file nobody reads.
+    """
+
+
+def normalize_root_path(raw: str) -> str:
+    """Strip what a human's copy-paste brings along, never a real folder.
+
+    Handles surrounding quotes, stray whitespace, and shell-prompt decoration
+    (``PS C:\\Users\\Someone>``, ``/home/someone$``). Touches the filesystem:
+    a path that EXISTS is returned untouched, so a directory legitimately
+    named ``weird>`` (legal on POSIX) is never cleaned away. Blocking — call
+    it from a worker thread on any async path.
+    """
+    text = str(raw).strip()
+    if not text:
+        return text
+    for quote in ('"', "'"):
+        if len(text) >= 2 and text.startswith(quote) and text.endswith(quote):
+            text = text[1:-1].strip()
+    if _path_exists(text):
+        return text
+    candidate = _PROMPT_PREFIX_RE.sub("", text).strip()
+    candidate = _PROMPT_SUFFIX_RE.sub("", candidate).strip()
+    return candidate or text
+
+
+def _path_exists(text: str) -> bool:
+    """``True`` if something is at ``text``; never raises on a bogus path.
+
+    A string carrying shell decoration can be invalid for the platform's path
+    API (``ValueError``/``OSError`` on Windows for characters like ``>``),
+    which must read as "not a path", not as a crash.
+    """
+    try:
+        return Path(text).expanduser().exists()
+    except (OSError, ValueError):
+        return False
+
+#: Directory names never walked, on top of every dot-prefixed one. These hold
+#: machine output, not knowledge: dependency trees, byte-code caches, and the
+#: per-OS application-data folders. Importing a home folder without this list
+#: buries the user's own files under orders of magnitude of vendored text.
+#: Deliberately per-OS-complete rather than Windows-shaped (charter §3):
+#: ``AppData`` is Windows, ``Library`` is macOS, ``.cache`` (dot-prefixed) is
+#: Linux, and the dependency names are the same everywhere.
+NOISE_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        "site-packages",
+        "dist-packages",
+        "bower_components",
+        "vendor",
+        "venv",
+        "AppData",
+        "Library",
+        "__MACOSX",
+        "$RECYCLE.BIN",
+        "System Volume Information",
+    }
+)
+
+#: Text-shaped suffixes read as UTF-8. Deliberately an ALLOWLIST: a folder
+#: full of photos, videos and installers must import as nothing rather than
+#: as megabytes of replacement characters. Grouped for review, flattened
+#: below — prose and notes, structured text, markup, then source code.
+_PROSE_EXTENSIONS = (".md", ".markdown", ".txt", ".text", ".rst", ".org", ".tex")
+_DATA_EXTENSIONS = (
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env.example",
+)
+_MARKUP_EXTENSIONS = (".html", ".htm", ".xhtml", ".xml", ".svg", ".css", ".scss")
+_CODE_EXTENSIONS = (
+    ".py",
+    ".pyi",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".svelte",
+    ".java",
+    ".kt",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".cs",
+    ".m",
+    ".r",
+    ".lua",
+    ".pl",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".psm1",
+    ".bat",
+    ".cmd",
+    ".sql",
+    ".graphql",
+    ".proto",
+    ".dockerfile",
+    ".gradle",
+)
+
 #: Files stat'ed + read per worker-thread hop. Filesystem I/O must never run
 #: on the event loop (it also serves voice and chat), but one hop per file
 #: would pay the handoff thousands of times over a real vault — a small batch
@@ -115,9 +253,14 @@ class LocalFolderConnector:
         deletes=True,
     )
 
-    DEFAULT_EXTENSIONS: tuple[str, ...] = (".md", ".txt")
+    DEFAULT_EXTENSIONS: tuple[str, ...] = (
+        *_PROSE_EXTENSIONS,
+        *_DATA_EXTENSIONS,
+        *_MARKUP_EXTENSIONS,
+        *_CODE_EXTENSIONS,
+    )
     #: Directory names skipped in addition to hidden (dot-prefixed) ones.
-    SKIP_DIR_NAMES: frozenset[str] = frozenset()
+    SKIP_DIR_NAMES: frozenset[str] = NOISE_DIR_NAMES
     MAX_FILE_BYTES: int = 2 * 1024 * 1024
 
     # ------------------------------------------------------------------
@@ -162,6 +305,14 @@ class LocalFolderConnector:
     # ------------------------------------------------------------------
 
     def _resolve_root(self, ctx: ConnectorContext) -> Path | None:
+        """The folder to walk, or ``None`` when none is configured at all.
+
+        A CONFIGURED path that cannot be walked raises
+        :class:`LocalFolderRootError` rather than returning ``None``: the run
+        must fail so the reason lands on the card. An ABSENT ``root`` stays a
+        warning + empty walk — it cannot come from the UI (the field is
+        required) and subclasses resolve their root elsewhere.
+        """
         raw = ctx.config.get("root")
         if not raw:
             log.warning(
@@ -170,15 +321,35 @@ class LocalFolderConnector:
                 ctx.source_id,
             )
             return None
-        root = Path(str(raw)).expanduser()
-        if not root.is_dir():
-            log.warning(
-                "%s: configured root %s does not exist or is not a directory; yielding nothing",
+        cleaned = normalize_root_path(str(raw))
+        if cleaned != str(raw).strip():
+            log.info(
+                "%s: read the configured folder as %r (the pasted value %r "
+                "carried shell-prompt decoration)",
                 self.id,
-                root,
+                cleaned,
+                str(raw),
             )
-            return None
-        return root
+        try:
+            root = Path(cleaned).expanduser()
+            is_dir = root.is_dir()
+            exists = root.exists()
+        except (OSError, ValueError) as exc:
+            raise LocalFolderRootError(
+                f"{cleaned!r} is not a usable folder path on this system "
+                f"({type(exc).__name__}). Pick the folder again."
+            ) from exc
+        if is_dir:
+            return root
+        if exists:
+            raise LocalFolderRootError(
+                f"{root} is a file, not a folder. Point this source at the "
+                f"folder that CONTAINS it."
+            )
+        raise LocalFolderRootError(
+            f"There is no folder at {root}. Check the path: a value copied "
+            f"from a terminal often carries the prompt with it."
+        )
 
     def _extensions(self, ctx: ConnectorContext) -> tuple[str, ...]:
         raw = ctx.config.get("extensions")
@@ -292,8 +463,11 @@ class LocalFolderConnector:
 
 
 __all__ = [
+    "NOISE_DIR_NAMES",
     "LocalFolderConnector",
+    "LocalFolderRootError",
     "first_h1_heading",
     "iso_utc_from_timestamp",
+    "normalize_root_path",
     "parse_mtime_cursor",
 ]

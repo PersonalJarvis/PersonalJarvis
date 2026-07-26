@@ -27,7 +27,11 @@ from jarvis.ultrawiki.connectors import plugin_bridge as plugin_bridge_module
 from jarvis.ultrawiki.connectors.jarvis_conversations import (
     JarvisConversationsConnector,
 )
-from jarvis.ultrawiki.connectors.local_folder import LocalFolderConnector
+from jarvis.ultrawiki.connectors.local_folder import (
+    LocalFolderConnector,
+    LocalFolderRootError,
+    normalize_root_path,
+)
 from jarvis.ultrawiki.connectors.normal_wiki import NormalWikiConnector
 from jarvis.ultrawiki.connectors.obsidian_vault import ObsidianVaultConnector
 from jarvis.ultrawiki.connectors.plugin_bridge import (
@@ -140,13 +144,20 @@ class TestObsidianVault:
         )
         assert [item.external_id for item in resumed] == ["b.md"]
 
-    async def test_missing_root_yields_nothing_and_logs(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    async def test_missing_root_fails_the_run_instead_of_importing_nothing(
+        self, tmp_path: Path
     ):
-        ctx = _ctx({"root": str(tmp_path / "absent")})
-        with caplog.at_level(logging.WARNING):
-            assert await _collect(ObsidianVaultConnector().backfill(ctx)) == []
-        assert "does not exist" in caplog.text
+        """Was: yields nothing + a log line. A log line is not a user surface.
+
+        A vault path that is gone (external drive unplugged, folder renamed)
+        used to sync "successfully" to zero items, which reads exactly like an
+        empty vault. It now fails, so the reason reaches the card.
+        """
+        missing = tmp_path / "absent"
+        ctx = _ctx({"root": str(missing)})
+        with pytest.raises(LocalFolderRootError) as excinfo:
+            await _collect(ObsidianVaultConnector().backfill(ctx))
+        assert str(missing) in str(excinfo.value)
 
     async def test_unparsable_cursor_reyields_everything(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -205,6 +216,159 @@ class TestLocalFolder:
         with caplog.at_level(logging.WARNING):
             assert await _collect(LocalFolderConnector().backfill(_ctx({}))) == []
         assert "no 'root' configured" in caplog.text
+
+
+class TestLocalFolderRootPath:
+    """A folder path a human typed or pasted, and what it must not do silently.
+
+    The maintainer pasted ``C:\\Users\\Administrator>`` — the trailing ``>``
+    belongs to the shell PROMPT, not to the path. The source registered, the
+    import reported "done", and the card showed zero items with no reason
+    anywhere. Both halves are pinned here: clean what is obviously shell
+    decoration, and REFUSE loudly for whatever is left.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("C:/Users/Someone>", "C:/Users/Someone"),
+            ("  C:/Users/Someone  ", "C:/Users/Someone"),
+            ('"C:/Users/Someone"', "C:/Users/Someone"),
+            ("'C:/Users/Someone'", "C:/Users/Someone"),
+            ("PS C:/Users/Someone>", "C:/Users/Someone"),
+            ("C:/Users/Someone> ", "C:/Users/Someone"),
+            ("/home/someone$", "/home/someone"),
+            ("/home/someone #", "/home/someone"),
+        ],
+    )
+    def test_shell_prompt_decoration_is_stripped(self, raw: str, expected: str):
+        assert normalize_root_path(raw) == expected
+
+    def test_a_real_path_survives_untouched(self, tmp_path: Path):
+        assert normalize_root_path(str(tmp_path)) == str(tmp_path)
+
+    def test_a_folder_ending_in_a_prompt_character_is_kept_when_it_exists(
+        self, tmp_path: Path
+    ):
+        """Cleaning must never eat a real folder. ``>`` is legal on POSIX."""
+        odd = tmp_path / "weird>"
+        try:
+            odd.mkdir()
+        except OSError:
+            pytest.skip("this filesystem rejects '>' in a name")
+        assert normalize_root_path(str(odd)) == str(odd)
+
+    async def test_a_root_that_does_not_exist_raises_instead_of_yielding_nothing(
+        self, tmp_path: Path
+    ):
+        missing = tmp_path / "nope"
+        with pytest.raises(LocalFolderRootError) as excinfo:
+            await _collect(
+                LocalFolderConnector().backfill(_ctx({"root": str(missing)}))
+            )
+        assert str(missing) in str(excinfo.value)
+
+    async def test_a_pasted_prompt_path_is_cleaned_and_then_imported(
+        self, tmp_path: Path
+    ):
+        """The maintainer's exact case: the folder IS there behind the ``>``."""
+        (tmp_path / "note.md").write_text("# Hello", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": f"{tmp_path}>"}))
+        )
+        assert [item.external_id for item in items] == ["note.md"]
+
+    async def test_a_file_instead_of_a_folder_raises(self, tmp_path: Path):
+        target = tmp_path / "notes.md"
+        target.write_text("# Hello", encoding="utf-8")
+        with pytest.raises(LocalFolderRootError):
+            await _collect(
+                LocalFolderConnector().backfill(_ctx({"root": str(target)}))
+            )
+
+    async def test_incremental_raises_for_a_missing_root_too(self, tmp_path: Path):
+        missing = tmp_path / "gone"
+        with pytest.raises(LocalFolderRootError):
+            await _collect(
+                LocalFolderConnector().incremental(_ctx({"root": str(missing)}))
+            )
+
+
+class TestLocalFolderNoiseDirectories:
+    """A real home folder is mostly machine noise; a knowledge base is not.
+
+    Walking a Desktop pulled in dependency trees and caches, which are text
+    but carry no knowledge — and on a developer machine they outnumber the
+    user's own files by orders of magnitude.
+    """
+
+    async def test_dependency_and_cache_directories_are_skipped(
+        self, tmp_path: Path
+    ):
+        (tmp_path / "mine.md").write_text("keep me", encoding="utf-8")
+        for noisy in ("node_modules", "__pycache__", "site-packages", "AppData"):
+            folder = tmp_path / noisy
+            folder.mkdir()
+            (folder / "junk.md").write_text("noise", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["mine.md"]
+
+    async def test_an_obsidian_vault_still_skips_its_own_internals(self):
+        """Widening the shared skip list must not drop the vault's own rules."""
+        assert {".obsidian", ".trash"} <= ObsidianVaultConnector.SKIP_DIR_NAMES
+
+    async def test_the_skip_list_is_not_windows_only(self):
+        """Charter §3: the same walk runs on macOS and Linux."""
+        assert {"node_modules", "__pycache__"} <= LocalFolderConnector.SKIP_DIR_NAMES
+        assert {"AppData", "Library"} <= LocalFolderConnector.SKIP_DIR_NAMES
+
+
+class TestLocalFolderFileTypes:
+    """"Import my whole Desktop" means documents and code, not just notes.
+
+    The connector read ``.md`` and ``.txt`` only, so a folder of PDFs, Office
+    documents or source code imported as zero items — indistinguishable, from
+    the card, from a folder that does not exist.
+    """
+
+    async def test_source_code_and_config_files_are_read(self, tmp_path: Path):
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+        (tmp_path / "config.toml").write_text("[a]\nb = 1", encoding="utf-8")
+        (tmp_path / "page.html").write_text("<h1>Title</h1>", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == [
+            "app.py",
+            "config.toml",
+            "page.html",
+        ]
+
+    async def test_binary_files_are_still_ignored(self, tmp_path: Path):
+        (tmp_path / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        (tmp_path / "clip.mp4").write_bytes(b"\x00" * 64)
+        (tmp_path / "note.md").write_text("keep", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["note.md"]
+
+    async def test_an_explicit_extensions_config_still_wins(self, tmp_path: Path):
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+        (tmp_path / "note.md").write_text("keep", encoding="utf-8")
+        ctx = _ctx({"root": str(tmp_path), "extensions": ["md"]})
+        items = await _collect(LocalFolderConnector().backfill(ctx))
+        assert [item.external_id for item in items] == ["note.md"]
+
+    async def test_an_obsidian_vault_stays_markdown_only(self, tmp_path: Path):
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+        (tmp_path / "note.md").write_text("# Note", encoding="utf-8")
+        items = await _collect(
+            ObsidianVaultConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["note.md"]
 
 
 # ---------------------------------------------------------------------------

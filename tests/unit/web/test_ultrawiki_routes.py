@@ -1535,3 +1535,96 @@ def test_export_preview_is_not_flagged_dangerous(env) -> None:
     assert upload["x-jarvis-dangerous"] is True
     # A multi-gigabyte transfer must outlive the CLI's default client timeout.
     assert upload["x-jarvis-timeout-seconds"] == 600
+
+
+# ---------------------------------------------------------------------------
+# Folder sources: a path a human typed must be checked while they are looking
+# ---------------------------------------------------------------------------
+
+
+def test_a_folder_source_with_a_missing_path_is_refused_at_creation(env) -> None:
+    """The whole point: fail while the user is still in the dialog.
+
+    A path pasted with the shell prompt still attached (``C:/Users/Someone>``)
+    registered, imported "successfully", and showed zero items with the reason
+    nowhere on screen.
+    """
+    _activate(env)
+    missing = env.tmp / "not-a-real-folder"
+
+    response = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Desktop",
+            "config": {"root": str(missing)},
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert str(missing) in response.json()["detail"]
+
+
+def test_a_path_pasted_with_a_shell_prompt_is_cleaned_and_accepted(env) -> None:
+    _activate(env)
+    docs = env.tmp / "desk"
+    docs.mkdir(exist_ok=True)
+
+    response = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Desktop",
+            "config": {"root": f"{docs}>"},
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    # Stored CLEANED, so every later run walks the real folder.
+    assert response.json()["config"]["root"] == str(docs)
+
+
+def test_a_file_offered_as_a_folder_source_is_refused(env) -> None:
+    _activate(env)
+    target = env.tmp / "notes.md"
+    target.write_text("# Notes", encoding="utf-8")
+
+    response = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Notes",
+            "config": {"root": str(target)},
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "folder" in response.json()["detail"].lower()
+
+
+def test_a_folder_source_that_imported_nothing_says_why(env) -> None:
+    """Zero items with a green card and no explanation is the defect itself."""
+    _activate(env)
+    empty = env.tmp / "empty-folder"
+    empty.mkdir(exist_ok=True)
+
+    created = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Empty",
+            "config": {"root": str(empty)},
+        },
+    )
+    assert created.status_code == 201, created.text
+    source_id = created.json()["id"]
+
+    approved = env.client.post(f"/api/ultrawiki/sources/{source_id}/approve")
+    assert approved.status_code == 200, approved.text
+    _wait_for_job(env, approved.json()["job_id"])
+
+    listing = env.client.get("/api/ultrawiki/sources")
+    assert listing.status_code == 200, listing.text
+    row = next(r for r in listing.json()["sources"] if r["id"] == source_id)
+    assert row["last_notice"], "an empty import must explain itself"
+    assert "folder" in row["last_notice"].lower()

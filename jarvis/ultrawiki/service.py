@@ -103,6 +103,23 @@ BRIDGE_ADAPTER_PENDING_NOTICE = (
 #: state is the only one that produces the notice above).
 _BRIDGE_CONNECTOR_ID = "plugin-bridge"
 
+#: Connectors that walk a folder the user chose. A zero-item run on one of
+#: these is never self-explanatory: the folder can be empty, hold only file
+#: types this connector does not read, or contain nothing but skipped noise -
+#: three very different situations that all render as a bare "0".
+_FOLDER_CONNECTOR_IDS = frozenset({"local-folder", "obsidian-vault"})
+
+
+def _empty_folder_notice(source: dict[str, Any]) -> str:
+    """Say which folder was read and why it produced nothing."""
+    root = str((source.get("config") or {}).get("root") or "").strip()
+    where = f" at {root}" if root else ""
+    return (
+        f"The folder{where} was read successfully, but it held no file this "
+        "source can import. Text, documents and code are imported; images, "
+        "video, archives and dependency folders are skipped."
+    )
+
 def _connector_identity(connector_id: str, integration_id: str) -> tuple[str, str]:
     """``(brand asset key, connector kind)`` for one registered source.
 
@@ -943,17 +960,53 @@ class UltraWikiService:
                 f"unknown connector {connector_id!r} "
                 f"(available: {', '.join(sorted(registry))})"
             )
+        resolved_config = await asyncio.to_thread(
+            self._checked_folder_config, registry[connector_id](), dict(config or {})
+        )
         source_id = f"{connector_id}-{uuid.uuid4().hex[:8]}"
         await store.upsert_source(
             source_id,
             connector=connector_id,
-            label=self._resolve_label(connector_id, label, config),
-            config=dict(config or {}),
+            label=self._resolve_label(connector_id, label, resolved_config),
+            config=resolved_config,
             areas=list(area_ids or []),
         )
         source = await store.get_source(source_id)
         assert source is not None
         return source
+
+    @staticmethod
+    def _checked_folder_config(
+        connector: Any, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Clean and CHECK a folder path while the user is still watching.
+
+        A folder source is the one connector whose credential is a path the
+        user typed, so it is the one that can be wrong in a way no later stage
+        can recover from. Validating at registration turns "approved, synced,
+        zero items, no reason" into a refusal the user can act on immediately;
+        the cleaned value is what gets stored, so a path pasted with a shell
+        prompt attached works on the first try instead of never.
+
+        Blocking (it stats the path) — call it through ``asyncio.to_thread``.
+        """
+        from jarvis.ultrawiki.connectors.local_folder import (  # noqa: PLC0415
+            LocalFolderRootError,
+            normalize_root_path,
+        )
+        from jarvis.ultrawiki.types import AuthKind  # noqa: PLC0415
+
+        raw = config.get("root")
+        if getattr(connector, "auth", None) is not AuthKind.LOCAL_PATH or not raw:
+            return config
+        checked = dict(config)
+        checked["root"] = normalize_root_path(str(raw))
+        ctx = ConnectorContext(source_id="(new source)", config=checked)
+        try:
+            connector._resolve_root(ctx)  # noqa: SLF001 — the connector's own rule
+        except LocalFolderRootError as exc:
+            raise ValueError(str(exc)) from exc
+        return checked
 
     async def _heal_bridge_labels(self, store: Any) -> None:
         """One-time self-heal: give pre-existing bridge sources their real name.
@@ -1358,7 +1411,10 @@ class UltraWikiService:
         """
         if job.items > 0:
             return None
-        if str(source.get("connector") or "") != _BRIDGE_CONNECTOR_ID:
+        connector_id = str(source.get("connector") or "")
+        if connector_id in _FOLDER_CONNECTOR_IDS:
+            return _empty_folder_notice(source)
+        if connector_id != _BRIDGE_CONNECTOR_ID:
             return None
         integration_id = str((source.get("config") or {}).get("integration_id") or "")
         if not integration_id:
