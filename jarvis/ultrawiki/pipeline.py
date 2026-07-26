@@ -873,6 +873,18 @@ class PipelineWorker:
 
         filename = reference.display_name
         if kind == "image":
+            # The cheap gate BEFORE the expensive call: most picture files on a
+            # real machine are icons, sprites and cache thumbnails, and each one
+            # would still cost a full model call. Permanent, because a 200-byte
+            # icon never becomes worth reading.
+            skip = media_enrich.skip_reason_for_image(
+                self._media_path_for(item, filename), size_bytes=len(data)
+            )
+            if skip:
+                await self._record_media_outcome(
+                    item, text="", reason=skip, retryable=False
+                )
+                return
             result = await media_enrich.describe_image(
                 data, filename=filename, cfg=self._cfg
             )
@@ -899,6 +911,19 @@ class PipelineWorker:
         await self._record_media_outcome(
             item, text=result.text, reason="", provider=result.provider, kind=kind
         )
+
+    @staticmethod
+    def _media_path_for(item: dict[str, Any], filename: str) -> str:
+        """The path the skip rules judge: the one INSIDE the chosen source.
+
+        Deliberately the ``external_id`` and never the absolute path. An
+        absolute path is mostly the machine's own structure - on Windows every
+        temp file sits under ``AppData`` - so judging it would skip files the
+        user deliberately pointed at. The external id is what the user's own
+        folder looks like, which is what "this belongs to a program" must be
+        read from.
+        """
+        return str(item.get("external_id") or "") or filename
 
     async def _record_media_outcome(
         self,

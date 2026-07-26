@@ -13,6 +13,7 @@ Two things are pinned here that nothing else could catch:
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,7 +24,10 @@ from jarvis.ultrawiki.pipeline import PipelineWorker
 from jarvis.ultrawiki.store import UltraStore
 from jarvis.ultrawiki.types import ConsentState, ItemState, RawItem
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+#: A stand-in photo. Sized like a real one on purpose: the enrichment lane
+#: skips pictures too small to hold readable content, so a 40-byte fixture
+#: would exercise the skip path instead of the description path.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 80_000
 
 #: These workers use an INJECTED distiller, so the production credential probe
 #: must never run — a test whose outcome depends on the host's keys is the
@@ -322,3 +326,76 @@ class TestMediaPass:
         # content changed, so re-embedding it would be pure waste.
         assert after["content_hash"] == before["content_hash"]
         assert after["state"] == before["state"]
+
+
+class TestNotEveryPictureIsWorthAModelCall:
+    """The cheap gate in front of the expensive stage.
+
+    A photo library is tens of thousands of model calls, and most of the
+    picture files on a real machine are not photos at all: icons, sprites and
+    cache thumbnails. Measured on one real Desktop, the audio side had 218,419
+    one-second wake-word clips under a program data folder — the image side has
+    the same shape. Skipping them must be PERMANENT (they will never become
+    worth reading) and must state its reason.
+    """
+
+    async def test_a_tiny_icon_is_skipped_without_calling_a_model(
+        self, store, tmp_path, monkeypatch
+    ):
+        icon = tmp_path / "icon.png"
+        icon.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
+        await store.upsert_items("src1", [photo_item(1, icon)])
+
+        async def _never(data, *, filename, cfg, **kwargs):
+            raise AssertionError("a 200-byte icon must never reach a model")
+
+        patch_describe(monkeypatch, _never)
+        assert await worker_for(store, media_cfg())._media_pass() == 1
+
+        item = await only_item(store)
+        assert item["metadata"]["enrich_pending"] is False, "must not be retried"
+        assert "small" in item["metadata"]["enrich_error"].lower()
+
+    async def test_a_picture_in_a_program_folder_is_skipped(
+        self, store, tmp_path, monkeypatch
+    ):
+        """Judged on the path INSIDE the chosen folder, not the absolute one."""
+        folder = tmp_path / "data" / "wake_debug"
+        folder.mkdir(parents=True)
+        frame = folder / "frame.png"
+        frame.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 60_000)
+        item = photo_item(1, frame)
+        item = dataclasses.replace(item, external_id="data/wake_debug/frame.png")
+        await store.upsert_items("src1", [item])
+
+        async def _never(data, *, filename, cfg, **kwargs):
+            raise AssertionError("a program-folder file must never reach a model")
+
+        patch_describe(monkeypatch, _never)
+        await worker_for(store, media_cfg())._media_pass()
+
+        item = await only_item(store)
+        assert item["metadata"]["enrich_pending"] is False
+        assert "program folder" in item["metadata"]["enrich_error"].lower()
+
+    async def test_a_real_photo_still_reaches_the_model(
+        self, store, tmp_path, monkeypatch
+    ):
+        """The gate must not become the reason nothing is ever described."""
+        photo = tmp_path / "holiday.png"
+        photo.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 400_000)
+        await store.upsert_items("src1", [photo_item(1, photo)])
+        seen: list[str] = []
+
+        async def _describe(data, *, filename, cfg, **kwargs):
+            from jarvis.ultrawiki.media_enrich import EnrichResult
+
+            seen.append(filename)
+            return EnrichResult(text="A beach at sunset.", ok=True, provider="seeing")
+
+        patch_describe(monkeypatch, _describe)
+        await worker_for(store, media_cfg())._media_pass()
+
+        assert seen == ["holiday.png"]
+        item = await only_item(store)
+        assert "A beach at sunset." in item["body_raw"]

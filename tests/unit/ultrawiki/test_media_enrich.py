@@ -285,3 +285,166 @@ async def test_silence_is_a_permanent_outcome_not_a_retry():
 def test_enrich_result_defaults_to_retryable():
     """A new failure mode must default to "try again", never to "give up"."""
     assert EnrichResult().retryable is True
+
+
+# ---------------------------------------------------------------------------
+# Reading a picture, not just describing it
+# ---------------------------------------------------------------------------
+#
+# A description answers "what does this look like". For the pictures a real
+# folder is full of - screenshots, scanned pages, photographed whiteboards -
+# the content IS the text, and a paragraph about "a screenshot of an
+# application window" is unsearchable by anything the user would actually
+# type. So the reading comes first and verbatim, and the description is the
+# short second half.
+
+
+class TestPictureText:
+    async def test_the_prompt_asks_for_the_text_before_the_description(self):
+        """Order is load-bearing: a truncated answer must keep the TEXT."""
+        prompt = media_enrich.image_prompt()
+        assert prompt.index("TEXT") < prompt.index("DESCRIPTION")
+        assert "verbatim" in prompt.lower()
+
+    async def test_the_prompt_offers_a_way_to_say_there_is_no_text(self):
+        """Without an explicit token, a model invents captions for a sunset."""
+        assert media_enrich.NO_TEXT_MARKER in media_enrich.image_prompt()
+
+    def test_a_two_block_answer_splits_into_text_and_description(self):
+        answer = (
+            "TEXT:\n"
+            "Invoice 2026-114\nTotal due: 48,20 EUR\n\n"
+            "DESCRIPTION:\n"
+            "A scanned invoice on white paper."
+        )
+        parsed = media_enrich.parse_image_answer(answer)
+        assert parsed.text == "Invoice 2026-114\nTotal due: 48,20 EUR"
+        assert parsed.description == "A scanned invoice on white paper."
+
+    def test_the_no_text_marker_yields_a_description_only(self):
+        answer = (
+            f"TEXT:\n{media_enrich.NO_TEXT_MARKER}\n\n"
+            "DESCRIPTION:\nTwo people on a beach at sunset."
+        )
+        parsed = media_enrich.parse_image_answer(answer)
+        assert parsed.text == ""
+        assert "beach" in parsed.description
+
+    def test_an_answer_without_headings_counts_as_the_description(self):
+        """Models drop the scaffolding sometimes; that must not lose content."""
+        parsed = media_enrich.parse_image_answer("A mountain range at dawn.")
+        assert parsed.text == ""
+        assert parsed.description == "A mountain range at dawn."
+
+    def test_prose_before_the_first_heading_survives_as_description(self):
+        """Some models answer description-first whatever the prompt asks.
+
+        Everything ahead of the first heading has to be kept: dropping it
+        would silently lose the entire description for those models.
+        """
+        parsed = media_enrich.parse_image_answer(
+            "A photo of two people on a beach, holding surfboards.\n"
+            "TEXT: Malibu 2019"
+        )
+        assert parsed.text == "Malibu 2019"
+        assert "surfboards" in parsed.description
+
+    def test_the_stored_body_leads_with_the_words_that_were_read(self):
+        """Search hits the beginning hardest, and the text is the real content."""
+        parsed = media_enrich.parse_image_answer(
+            "TEXT:\nQuarterly ledger reconciliation\n\n"
+            "DESCRIPTION:\nA screenshot of a spreadsheet."
+        )
+        body = parsed.as_body()
+        assert body.index("Quarterly ledger") < body.index("screenshot")
+
+    def test_a_picture_with_no_text_still_stores_its_description(self):
+        parsed = media_enrich.parse_image_answer(
+            f"TEXT:\n{media_enrich.NO_TEXT_MARKER}\n\nDESCRIPTION:\nA red bicycle."
+        )
+        assert parsed.as_body().strip() == "A red bicycle."
+
+    async def test_a_screenshot_answer_keeps_all_of_its_text(
+        self, all_credential_ready, monkeypatch
+    ):
+        """End to end: what the model read must survive into the result."""
+        lines = "\n".join(f"Row {n}: telescope maintenance" for n in range(40))
+
+        async def _fake_complete(**kwargs: Any) -> Any:
+            answer = kwargs["aggregate"](
+                f"TEXT:\n{lines}\n\nDESCRIPTION:\nA screenshot of a table."
+            )
+            assert kwargs["validate"](answer)
+            return answer, "seeing"
+
+        import jarvis.memory.wiki.provider_chain as chain_mod
+
+        monkeypatch.setattr(chain_mod, "complete_with_fallback", _fake_complete)
+        result = await describe_image(
+            PNG, filename="shot.png", cfg=_Cfg(), registry=_FakeRegistry({"seeing": True})
+        )
+        assert result.ok is True
+        assert result.text.count("telescope maintenance") == 40
+        assert result.meta.get("read_chars", 0) > 0
+
+    async def test_a_blind_model_answer_is_still_refused(
+        self, all_credential_ready, monkeypatch
+    ):
+        """The invented-photo guard must survive the new answer shape."""
+
+        async def _fake_complete(**kwargs: Any) -> Any:
+            answer = kwargs["aggregate"](f"TEXT:\n{CANNOT_SEE_MARKER}")
+            assert not kwargs["validate"](answer)
+            return None
+
+        import jarvis.memory.wiki.provider_chain as chain_mod
+
+        monkeypatch.setattr(chain_mod, "complete_with_fallback", _fake_complete)
+        result = await describe_image(
+            PNG, filename="a.png", cfg=_Cfg(), registry=_FakeRegistry({"seeing": True})
+        )
+        assert result.ok is False
+
+
+class TestWhichPicturesAreWorthReading:
+    """A model call per file is the expensive part; most files are not worth it.
+
+    Measured on a real Desktop: 218,419 of the audio files were one-second
+    wake-word debug clips under a program data folder, and the image side has
+    the same shape - icons, sprites and cache thumbnails outnumber the photos.
+    """
+
+    def test_a_tiny_icon_is_not_worth_a_model_call(self):
+        skip = media_enrich.skip_reason_for_image("icon.png", size_bytes=900)
+        assert skip
+        assert "small" in skip.lower()
+
+    def test_an_ordinary_screenshot_is_worth_reading(self):
+        assert media_enrich.skip_reason_for_image("shot.png", size_bytes=400_000) == ""
+
+    def test_a_picture_inside_a_program_data_folder_is_skipped(self):
+        skip = media_enrich.skip_reason_for_image(
+            "Personal Jarvis/data/wake_debug/frame.png", size_bytes=400_000
+        )
+        assert skip
+        assert "data" in skip.lower() or "program" in skip.lower()
+
+    def test_a_cache_or_build_folder_is_skipped_too(self):
+        for folder in ("cache", "dist", "build", "node_modules", "__pycache__"):
+            skip = media_enrich.skip_reason_for_image(
+                f"project/{folder}/img.png", size_bytes=400_000
+            )
+            assert skip, folder
+
+    def test_a_users_own_pictures_folder_is_never_skipped(self):
+        for path in ("Pictures/holiday.jpg", "Desktop/scan.png", "Documents/x.jpeg"):
+            assert media_enrich.skip_reason_for_image(path, size_bytes=400_000) == "", path
+
+    def test_the_folder_match_is_case_blind(self):
+        assert media_enrich.skip_reason_for_image("App/Data/x.png", size_bytes=400_000)
+
+    def test_a_folder_merely_containing_the_word_is_not_skipped(self):
+        """'data' as a path SEGMENT, never as a substring of a real name."""
+        assert media_enrich.skip_reason_for_image(
+            "my-database-notes/diagram.png", size_bytes=400_000
+        ) == ""

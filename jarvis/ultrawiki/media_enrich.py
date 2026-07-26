@@ -34,8 +34,14 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "CANNOT_SEE_MARKER",
+    "NO_TEXT_MARKER",
+    "PROGRAM_DIR_NAMES",
     "EnrichResult",
+    "ImageReading",
     "describe_image",
+    "image_prompt",
+    "parse_image_answer",
+    "skip_reason_for_image",
     "transcribe_recording",
     "vision_chain",
 ]
@@ -52,28 +58,164 @@ MAX_AUDIO_BYTES = 24 * 1024 * 1024
 
 #: Characters kept from a description or transcript.
 MAX_DESCRIPTION_CHARS = 4000
+
+#: Characters kept from ONE picture's transcription + description together.
+#: Larger than a description cap on purpose: a screenshot of a page carries a
+#: page of words, and cutting it to caption length would discard exactly the
+#: content this stage exists to recover.
+MAX_READING_CHARS = 24_000
 MAX_TRANSCRIPT_CHARS = 40_000
 
 _DEFAULT_TIMEOUT_S = 90.0
 
 _VISION_SYSTEM = (
-    "You describe images for a personal search index. Write plainly and only "
-    "about what is actually visible."
+    "You read and describe images for a personal search index. Transcribe "
+    "what is written, and describe only what is actually visible."
 )
 
-_VISION_PROMPT = (
-    "Describe this image so its owner can find it again by searching in their "
-    "own words months from now.\n\n"
-    "Cover, in one short paragraph: what kind of picture it is (photo, "
-    "screenshot, document scan, diagram), the setting, the notable objects, "
-    "roughly how many people are in it and what they are doing, and the mood "
-    "or occasion if it is evident. Then, if the image contains readable text, "
-    "add a line 'Text:' followed by that text verbatim.\n\n"
-    "Do not guess names of people or places. Do not invent details you cannot "
-    "see. Write in English.\n\n"
-    f"If no image reached you, reply with exactly {CANNOT_SEE_MARKER} and "
-    "nothing else."
+#: The exact token a model answers in the TEXT block when a picture carries no
+#: writing. Without one, a model narrates a sunset into the transcript slot and
+#: an invented caption becomes indexed content.
+NO_TEXT_MARKER = "NO_TEXT_IN_IMAGE"
+
+#: Block headings of the answer. TEXT comes FIRST on purpose: a reply that
+#: runs into the token ceiling loses its tail, and the tail must never be the
+#: transcription — that is the part no other stage can reconstruct.
+_TEXT_HEADING = "TEXT:"
+_DESCRIPTION_HEADING = "DESCRIPTION:"
+
+
+def image_prompt() -> str:
+    """What the model is asked of one picture: read it first, then describe it.
+
+    A description alone ("a screenshot of an application window") is
+    unsearchable by anything its owner would actually type; for screenshots,
+    scans and photographed notes the writing IS the content. So the answer is
+    two blocks, transcription first.
+    """
+    return (
+        "This picture belongs to someone's personal archive. Answer in exactly "
+        "two blocks, in this order.\n\n"
+        f"{_TEXT_HEADING}\n"
+        "Every word visible in the image, transcribed VERBATIM - keep the "
+        "original language, spelling, line breaks and reading order. Include "
+        "menus, labels, captions, handwriting and numbers. Do not summarise, "
+        "translate or correct anything. If the picture contains no readable "
+        f"writing at all, put exactly {NO_TEXT_MARKER} here and nothing else.\n\n"
+        f"{_DESCRIPTION_HEADING}\n"
+        "One or two sentences: what kind of picture it is (photo, screenshot, "
+        "scan, diagram), the setting, the notable objects, roughly how many "
+        "people are in it and what they are doing.\n\n"
+        "Do not guess names of people or places, and never invent detail you "
+        "cannot see. Write the description in English; leave the transcription "
+        "in its own language.\n\n"
+        f"If no image reached you, reply with exactly {CANNOT_SEE_MARKER} and "
+        "nothing else."
+    )
+
+
+#: Pictures below this are decoration, not content: icons, sprites, spacers,
+#: cache thumbnails. Each one would still cost a full model call.
+MIN_IMAGE_BYTES = 20 * 1024
+
+#: Path SEGMENTS that mean "this file belongs to a program, not to the user".
+#: Matched segment-wise and case-blind, so ``my-database-notes`` survives while
+#: ``data/`` does not. The measured motivation: one real Desktop held 218,419
+#: wake-word debug clips under ``data/wake_debug`` - the image side has the
+#: same shape in caches and build output.
+PROGRAM_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "data",
+        "cache",
+        ".cache",
+        "caches",
+        "logs",
+        "dist",
+        "build",
+        "target",
+        "out",
+        "node_modules",
+        "__pycache__",
+        "site-packages",
+        "appdata",
+        "thumbnails",
+        "coverage",
+    }
 )
+# Deliberately NOT here: "tmp" / "temp". Every downloaded photo passes through
+# a temp folder on some machine, and on this one every test path lives under
+# one — a rule that broad stops being a noise filter and starts being the
+# reason nothing is ever described.
+
+
+def skip_reason_for_image(name: str, *, size_bytes: int) -> str:
+    """Why this picture is not worth a model call, or ``""`` to read it.
+
+    The cheap gate in front of the expensive stage. Deliberately only two
+    rules — size and provenance — because both are decidable from the item
+    itself, offline, without opening the file.
+    """
+    if size_bytes < MIN_IMAGE_BYTES:
+        return (
+            f"the picture is too small to hold readable content "
+            f"({size_bytes} bytes); icons and thumbnails are skipped"
+        )
+    parts = [p.strip().lower() for p in str(name).replace("\\", "/").split("/")]
+    for segment in parts[:-1]:  # the filename itself is never a folder
+        if segment in PROGRAM_DIR_NAMES:
+            return (
+                f"it sits in a program folder ({segment}/), which holds "
+                "generated files rather than your own pictures"
+            )
+    return ""
+
+
+@dataclass(slots=True)
+class ImageReading:
+    """What one picture turned out to say, split from how it looks."""
+
+    text: str = ""
+    description: str = ""
+
+    def as_body(self) -> str:
+        """The indexed body: what was READ first, then what it looks like."""
+        return "\n\n".join(part for part in (self.text, self.description) if part)
+
+
+def parse_image_answer(answer: str) -> ImageReading:
+    """Split the two-block reply; tolerate a model that drops the scaffolding.
+
+    An answer with no headings is treated as a description rather than as a
+    transcription: mistaking prose for verbatim text would quietly file a
+    model's paraphrase as if it were the words on the page.
+    """
+    raw = str(answer or "").strip()
+    if not raw:
+        return ImageReading()
+    upper = raw.upper()
+    text_at = upper.find(_TEXT_HEADING)
+    desc_at = upper.find(_DESCRIPTION_HEADING)
+    if text_at < 0 and desc_at < 0:
+        return ImageReading(description=_clean(raw))
+    if text_at < 0:
+        preamble = _clean(raw[:desc_at])
+        body = _clean(raw[desc_at + len(_DESCRIPTION_HEADING) :])
+        return ImageReading(description=_join(preamble, body))
+    text_end = desc_at if desc_at > text_at else len(raw)
+    text = _clean(raw[text_at + len(_TEXT_HEADING) : text_end])
+    described = _clean(raw[desc_at + len(_DESCRIPTION_HEADING) :]) if desc_at > text_at else ""
+    # Anything ahead of the first heading is description a model wrote before
+    # following the format. Dropping it would silently lose the whole
+    # description for every model that answers description-first.
+    description = _join(_clean(raw[:text_at]), described)
+    if NO_TEXT_MARKER in text.upper():
+        text = ""
+    return ImageReading(text=text, description=description)
+
+
+def _join(*parts: str) -> str:
+    return "\n\n".join(part for part in parts if part)
+
 
 #: MIME types by media kind, from the filename. Providers need one, and a
 #: wrong one is rejected by some APIs, so an unknown suffix falls back to the
@@ -215,7 +357,7 @@ async def describe_image(
         messages=(
             BrainMessage(
                 role="user",
-                content=_VISION_PROMPT,
+                content=image_prompt(),
                 images=(
                     ImageBlock(
                         mime=_image_mime(filename),
@@ -226,7 +368,9 @@ async def describe_image(
         ),
         system=_VISION_SYSTEM,
         temperature=0.1,  # description, not creativity
-        max_tokens=900,
+        # A full screen of text is several thousand tokens; the old 900 was
+        # sized for a caption and would cut a transcription off mid-sentence.
+        max_tokens=4000,
         stream=True,
     )
 
@@ -242,8 +386,21 @@ async def describe_image(
     if result is None:
         return EnrichResult(reason="no provider that can read images returned a usable description")
     aggregated, provider = result
-    text = _clean(str(getattr(aggregated, "text", "") or ""))[:MAX_DESCRIPTION_CHARS]
-    return EnrichResult(text=text, ok=True, provider=provider)
+    reading = parse_image_answer(str(getattr(aggregated, "text", "") or ""))
+    # The transcription is bounded like a document, not like a caption: a
+    # screenshot of a page legitimately carries more words than a description
+    # ever would, and truncating it to caption length would lose the content
+    # this stage exists to recover.
+    body = reading.as_body()[:MAX_READING_CHARS]
+    return EnrichResult(
+        text=body,
+        ok=True,
+        provider=provider,
+        meta={
+            "read_chars": len(reading.text),
+            "described_chars": len(reading.description),
+        },
+    )
 
 
 def _aggregate(chunks: Any) -> Any:
