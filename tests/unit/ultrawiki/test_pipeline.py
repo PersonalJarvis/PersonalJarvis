@@ -358,10 +358,19 @@ async def test_batch_embed_failure_retries_members_individually(store):
     assert len(backend.embed_calls) == 1 + count
 
 
-async def test_embed_input_is_capped_to_the_provider_budget(store):
-    await store.upsert_items(
-        "src1", [make_item(1, body="x" * (MAX_EMBED_CHARS * 3))]
+async def test_a_long_item_is_embedded_as_many_passages_not_truncated(store):
+    """The change that makes full-depth ingestion mean anything.
+
+    A long item used to be cut at MAX_EMBED_CHARS and given ONE vector, so
+    everything past the opening paragraph was stored but unsearchable by
+    meaning. It now becomes many passages, each its own document and vector,
+    together covering the whole body — which is the only reason pulling more
+    data changes what a user can retrieve.
+    """
+    body = "\n\n".join(
+        f"Paragraph {i} discussing subject {i}. " * 6 for i in range(200)
     )
+    await store.upsert_items("src1", [make_item(1, body=body)])
     backend = FakeEmbeddingBackend()
     worker = PipelineWorker(
         store,
@@ -374,9 +383,64 @@ async def test_embed_input_is_capped_to_the_provider_budget(store):
     await worker._keyword_pass()  # noqa: SLF001
     await worker._embed_pass()  # noqa: SLF001
 
-    assert backend.embed_calls
-    assert len(backend.embed_calls[0][0]) == MAX_EMBED_CHARS
+    # embed_calls[0] IS the list of texts sent in that batch call.
+    sent = backend.embed_calls[0]
+    assert len(sent) > 5, "a long body must produce many passages"
+    # Each passage stays inside the provider budget…
+    assert all(len(text) <= MAX_EMBED_CHARS for text in sent)
+    # …and text far past the old 8 000-char cut is now genuinely embedded.
+    assert any("Paragraph 199" in text for text in sent)
+    # One document AND one vector per passage, not one per item.
+    docs = await store.item_documents(1)
+    assert len(docs) == len(sent)
+    assert all(doc["has_vector"] for doc in docs)
+    assert [doc["chunk_index"] for doc in docs] == list(range(len(docs)))
     assert (await store.counts()).embedded == 1
+
+
+async def test_every_passage_carries_the_item_title(store):
+    """A vector for "line 4 200 of a file" is unretrievable without its name."""
+    body = "\n\n".join(f"Section {i}. " + "detail " * 80 for i in range(40))
+    await store.upsert_items("src1", [make_item(1, title="Ledger notes", body=body)])
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001
+
+    # embed_calls[0] IS the list of texts sent in that batch call.
+    sent = backend.embed_calls[0]
+    assert len(sent) > 1
+    assert all(text.startswith("Ledger notes") for text in sent)
+
+
+async def test_re_embedding_replaces_the_passages_instead_of_adding_more(store):
+    """Otherwise a second pass doubles every item's vectors."""
+    body = "\n\n".join(f"Line {i} " + "word " * 60 for i in range(30))
+    await store.upsert_items("src1", [make_item(1, body=body)])
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001
+    first = len(await store.item_documents(1))
+
+    await store.reset_vectors()
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001
+
+    assert len(await store.item_documents(1)) == first
 
 
 # ---------------------------------------------------------------------------

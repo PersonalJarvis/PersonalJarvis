@@ -841,11 +841,12 @@ class UltraStore:
         rows = await self._fetchall(
             conn,
             "SELECT d.id, d.doc_type, d.text_norm, d.distill_json,"
-            " d.distill_version, d.created_at,"
+            " d.distill_version, d.created_at, d.chunk_index,"
+            " d.char_start, d.char_end,"
             " EXISTS (SELECT 1 FROM uw_embeddings e WHERE e.document_id = d.id)"
             "   AS has_vector"
             " FROM uw_documents d WHERE d.item_id = ?"
-            " ORDER BY d.id",
+            " ORDER BY d.doc_type, d.chunk_index, d.id",
             (item_id,),
         )
         # `_fetchall` hands back aiosqlite.Row, which has no .get() — mapping
@@ -1207,6 +1208,73 @@ class UltraStore:
             await cur.close()
             assert row is not None
             return int(row[0])
+
+    async def replace_documents(
+        self,
+        item_id: int,
+        doc_type: DocType | str,
+        chunks: Sequence[Any],
+        *,
+        content_hash: str = "",
+    ) -> list[int]:
+        """Replace ALL documents of one ``(item_id, doc_type)`` with N passages.
+
+        :meth:`add_document` keeps exactly one row per ``(item, type)``, which
+        made a multi-vector item structurally impossible: passage 2 deleted
+        passage 1. That single rule is why an item reached the vector space as
+        its opening 8 000 characters and nothing else.
+
+        ``chunks`` are :class:`jarvis.ultrawiki.chunking.Chunk` objects (or any
+        object carrying ``index``/``text``/``char_start``/``char_end``). The
+        whole set is swapped inside ONE transaction, so a reader never observes
+        an item with half its passages, and a re-run is idempotent.
+
+        Returns the new document ids in passage order, so the caller can pair
+        each with its vector.
+        """
+        kind = DocType(doc_type).value
+        now = _iso_utc()
+        async with self._txn() as conn:
+            old_rows = await self._fetchall(
+                conn,
+                "SELECT id FROM uw_documents WHERE item_id = ? AND doc_type = ?",
+                (item_id, kind),
+            )
+            old_ids = [row["id"] for row in old_rows]
+            if old_ids and self._vec_state is not None and self._vec_state[0]:
+                for chunk in _chunks(old_ids):
+                    await conn.execute(
+                        f"DELETE FROM uw_vec WHERE rowid IN ({_placeholders(len(chunk))})",  # noqa: S608 — placeholders only
+                        chunk,
+                    )
+            if old_ids:
+                await conn.execute(
+                    "DELETE FROM uw_documents WHERE item_id = ? AND doc_type = ?",
+                    (item_id, kind),
+                )
+            new_ids: list[int] = []
+            for chunk in chunks:
+                cur = await conn.execute(
+                    "INSERT INTO uw_documents (item_id, doc_type, text_norm,"
+                    " distill_json, distill_version, content_hash, created_at,"
+                    " chunk_index, char_start, char_end)"
+                    " VALUES (?, ?, ?, NULL, 0, ?, ?, ?, ?, ?) RETURNING id",
+                    (
+                        item_id,
+                        kind,
+                        str(getattr(chunk, "text", "")),
+                        content_hash,
+                        now,
+                        int(getattr(chunk, "index", 0)),
+                        int(getattr(chunk, "char_start", 0)),
+                        int(getattr(chunk, "char_end", 0)),
+                    ),
+                )
+                row = await cur.fetchone()
+                await cur.close()
+                assert row is not None
+                new_ids.append(int(row[0]))
+            return new_ids
 
     async def _pinned_space(self) -> tuple[str | None, int | None]:
         model = await self.get_meta(META_EMBED_MODEL)
@@ -2273,11 +2341,12 @@ class PostgresStore:
         rows = await self._fetchall(
             conn,
             "SELECT d.id, d.doc_type, d.text_norm, d.distill_json,"
-            " d.distill_version, d.created_at,"
+            " d.distill_version, d.created_at, d.chunk_index,"
+            " d.char_start, d.char_end,"
             " EXISTS (SELECT 1 FROM uw_embeddings e WHERE e.document_id = d.id)"
             "   AS has_vector"
             " FROM uw_documents d WHERE d.item_id = %s"
-            " ORDER BY d.id",
+            " ORDER BY d.doc_type, d.chunk_index, d.id",
             (item_id,),
         )
         return [
@@ -2570,6 +2639,46 @@ class PostgresStore:
             )
             assert row is not None
             return int(row["id"])
+
+    async def replace_documents(
+        self,
+        item_id: int,
+        doc_type: DocType | str,
+        chunks: Sequence[Any],
+        *,
+        content_hash: str = "",
+    ) -> list[int]:
+        """Postgres twin of :meth:`UltraStore.replace_documents`."""
+        kind = DocType(doc_type).value
+        now = _iso_utc()
+        async with self._txn() as conn:
+            await conn.execute(
+                "DELETE FROM uw_documents WHERE item_id = %s AND doc_type = %s",
+                (item_id, kind),
+            )
+            new_ids: list[int] = []
+            for chunk in chunks:
+                cur = await conn.execute(
+                    "INSERT INTO uw_documents (item_id, doc_type, text_norm,"
+                    " distill_json, distill_version, content_hash, created_at,"
+                    " chunk_index, char_start, char_end)"
+                    " VALUES (%s, %s, %s, NULL, 0, %s, %s, %s, %s, %s)"
+                    " RETURNING id",
+                    (
+                        item_id,
+                        kind,
+                        str(getattr(chunk, "text", "")),
+                        content_hash,
+                        now,
+                        int(getattr(chunk, "index", 0)),
+                        int(getattr(chunk, "char_start", 0)),
+                        int(getattr(chunk, "char_end", 0)),
+                    ),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                new_ids.append(int(row[0]))
+            return new_ids
 
     async def _pinned_space(self) -> tuple[str | None, int | None]:
         model = await self.get_meta(META_EMBED_MODEL)

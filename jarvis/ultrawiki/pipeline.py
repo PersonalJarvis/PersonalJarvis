@@ -68,10 +68,14 @@ KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
 
-#: Character budget per embedded text, mirroring the distillation truncation
-#: in ``jarvis/ultrawiki/distill.py``. An oversized document is a provider
-#: 400/413 that would otherwise retry five times and dead-letter; an embedding
-#: of the first 8000 characters is a far better answer than none.
+#: Character budget per embedded TEXT — now per passage, not per item.
+#:
+#: It used to be a content cap: an item was cut here and everything past it
+#: never reached the vector space, so a 200 KB file was searchable by its
+#: opening paragraph alone. Items are split into passages first
+#: (``jarvis.ultrawiki.chunking``), and this only guards the provider limit
+#: for a single pathological passage. Raising it does not make more content
+#: searchable; the chunker already does that.
 MAX_EMBED_CHARS = 8000
 
 #: Loop pacing: quick follow-up while there is work, gentle poll when idle.
@@ -373,10 +377,47 @@ class PipelineWorker:
 
     @classmethod
     def _raw_text(cls, item: dict[str, Any]) -> str:
+        """The item's FULL text. No cap — the chunker bounds the passages."""
         title = str(item.get("title") or "")
         body = str(item.get("body_raw") or "")
         text = f"{title}\n\n{body}".strip()
-        return cls._cap_embed_input(text or str(item.get("external_id") or ""))
+        return text or str(item.get("external_id") or "")
+
+    @classmethod
+    def _item_chunks(cls, item: dict[str, Any]) -> list[Any]:
+        """The passages of one item, each carrying the item's title.
+
+        Every passage repeats the title: a vector for "line 4 200 of a source
+        file" is unretrievable without knowing which file it is from, and the
+        title is the cheapest possible carrier of that.
+        """
+        from jarvis.ultrawiki.chunking import Chunk, chunk_text  # noqa: PLC0415
+
+        title = str(item.get("title") or "").strip()
+        body = str(item.get("body_raw") or "")
+        pieces = chunk_text(body)
+        if not pieces:
+            text = cls._cap_embed_input(cls._raw_text(item))
+            return [Chunk(index=0, text=text, char_start=0, char_end=len(text))]
+        if not title:
+            return [
+                Chunk(
+                    index=c.index,
+                    text=cls._cap_embed_input(c.text),
+                    char_start=c.char_start,
+                    char_end=c.char_end,
+                )
+                for c in pieces
+            ]
+        return [
+            Chunk(
+                index=c.index,
+                text=cls._cap_embed_input(f"{title}\n\n{c.text}"),
+                char_start=c.char_start,
+                char_end=c.char_end,
+            )
+            for c in pieces
+        ]
 
     @staticmethod
     def _claim_guard(item: dict[str, Any]) -> dict[str, Any]:
@@ -427,7 +468,11 @@ class PipelineWorker:
         )
         if not items:
             return 0
-        texts = [self._raw_text(item) for item in items]
+        # One embed input PER PASSAGE, flattened across the claimed items so
+        # the batch call stays a batch call. The offsets map each block of
+        # vectors back to the item it belongs to.
+        per_item = [self._item_chunks(item) for item in items]
+        texts = [chunk.text for chunks in per_item for chunk in chunks]
         try:
             vectors = await backend.embed(texts, model=model)
             if len(vectors) != len(texts):
@@ -448,10 +493,13 @@ class PipelineWorker:
                 len(items),
                 exc,
             )
-            return await self._embed_individually(items, texts, backend, model)
-        for item, text, vector in zip(items, texts, vectors, strict=True):
+            return await self._embed_individually(items, per_item, backend, model)
+        offset = 0
+        for item, chunks in zip(items, per_item, strict=True):
+            block = vectors[offset : offset + len(chunks)]
+            offset += len(chunks)
             try:
-                await self._store_embedded(item, text, vector, model)
+                await self._store_embedded(item, chunks, block, model)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
@@ -461,17 +509,27 @@ class PipelineWorker:
     async def _embed_individually(
         self,
         items: list[dict[str, Any]],
-        texts: list[str],
+        per_item: list[list[Any]],
         backend: Any,
         model: str,
     ) -> int:
-        """Per-item fallback after a failed batch call (see ``_embed_pass``)."""
-        for item, text in zip(items, texts, strict=True):
+        """Per-item fallback after a failed batch call (see ``_embed_pass``).
+
+        Each item is re-embedded with ITS OWN passages only, so a single
+        unembeddable one accrues the attempt while the rest of the batch
+        still lands.
+        """
+        for item, chunks in zip(items, per_item, strict=True):
             try:
-                vectors = await backend.embed([text], model=model)
-                if not vectors:
-                    raise RuntimeError("backend returned no vector for the text")
-                await self._store_embedded(item, text, vectors[0], model)
+                vectors = await backend.embed(
+                    [chunk.text for chunk in chunks], model=model
+                )
+                if len(vectors) != len(chunks):
+                    raise RuntimeError(
+                        f"backend returned {len(vectors)} vectors for "
+                        f"{len(chunks)} passages"
+                    )
+                await self._store_embedded(item, chunks, vectors, model)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — only this item is charged
@@ -479,24 +537,30 @@ class PipelineWorker:
         return len(items)
 
     async def _store_embedded(
-        self, item: dict[str, Any], text: str, vector: Any, model: str
+        self, item: dict[str, Any], chunks: list[Any], vectors: Any, model: str
     ) -> None:
-        """RAW document + vector + the guarded ``embedded`` transition.
+        """RAW passages + one vector each + the guarded ``embedded`` transition.
 
-        When the compare-and-set finds the item already reset by a concurrent
-        content change, the document just written is stale — harmless, because
-        ``add_document`` REPLACES the ``(item_id, doc_type)`` row when the next
-        pass re-embeds the new content.
+        Every passage of the item becomes its own document and its own vector,
+        which is what makes text beyond the opening paragraph retrievable at
+        all. The whole set is swapped atomically, so a reader never sees an
+        item holding half its passages.
+
+        When the compare-and-set below finds the item already reset by a
+        concurrent content change, the documents just written are stale —
+        harmless, because ``replace_documents`` swaps the whole set again when
+        the next pass re-embeds the new content.
         """
-        doc_id = await self._store.add_document(
+        doc_ids = await self._store.replace_documents(
             int(item["id"]),
             DocType.RAW,
-            text,
+            chunks,
             content_hash=str(item.get("content_hash") or ""),
         )
-        await self._store.store_embedding(
-            doc_id, model=model, dim=len(vector), vector=vector
-        )
+        for doc_id, vector in zip(doc_ids, vectors, strict=True):
+            await self._store.store_embedding(
+                doc_id, model=model, dim=len(vector), vector=vector
+            )
         committed = await self._store.mark_stage_done(
             int(item["id"]), ItemState.EMBEDDED, **self._claim_guard(item)
         )
