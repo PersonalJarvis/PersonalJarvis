@@ -2806,6 +2806,21 @@
         }
       },
     "explore": {
+        "vault": {
+          "title": "Obsidian-Vault",
+          "hint": "Dieselben Inhalte als Markdown-Dateien auf der Festplatte.",
+          "export": "Exportieren",
+          "exporting": "Wird geschrieben …",
+          "exported": "{0} Notizen geschrieben, {1} unverändert.",
+          "notes": "{0} Notizen",
+          "never": "Noch nie exportiert",
+          "last": "Zuletzt am {0}",
+          "register": "Bei Obsidian anmelden",
+          "registering": "Wird angemeldet …",
+          "registered": "In Obsidian eingetragen",
+          "not_installed": "Obsidian ist auf diesem Gerät nicht installiert. Die Dateien liegen trotzdem bereit — du kannst sie mit jedem Markdown-Programm öffnen.",
+          "error": "Hat nicht geklappt: {0}"
+        },
       "tab": "Entdecken",
       "loading": "Wissensbestand wird gelesen …",
       "error": "Der Wissensbestand konnte nicht gelesen werden.",

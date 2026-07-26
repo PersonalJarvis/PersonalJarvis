@@ -2807,6 +2807,21 @@
         }
       },
     "explore": {
+        "vault": {
+          "title": "Obsidian vault",
+          "hint": "The same knowledge as Markdown files on disk.",
+          "export": "Export",
+          "exporting": "Writing …",
+          "exported": "{0} notes written, {1} unchanged.",
+          "notes": "{0} notes",
+          "never": "Never exported",
+          "last": "Last run {0}",
+          "register": "Add to Obsidian",
+          "registering": "Adding …",
+          "registered": "Added to Obsidian",
+          "not_installed": "Obsidian is not installed on this machine. The files are written anyway — any Markdown app can open them.",
+          "error": "That did not work: {0}"
+        },
       "tab": "Explore",
       "loading": "Reading the knowledge base …",
       "error": "The knowledge base could not be read.",

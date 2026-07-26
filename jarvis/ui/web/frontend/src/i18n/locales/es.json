@@ -2806,6 +2806,21 @@
         }
       },
     "explore": {
+        "vault": {
+          "title": "Bóveda de Obsidian",
+          "hint": "El mismo conocimiento como archivos Markdown en el disco.",
+          "export": "Exportar",
+          "exporting": "Escribiendo …",
+          "exported": "{0} notas escritas, {1} sin cambios.",
+          "notes": "{0} notas",
+          "never": "Nunca exportado",
+          "last": "Última vez {0}",
+          "register": "Añadir a Obsidian",
+          "registering": "Añadiendo …",
+          "registered": "Añadido a Obsidian",
+          "not_installed": "Obsidian no está instalado en este equipo. Los archivos se escriben igualmente: cualquier app de Markdown puede abrirlos.",
+          "error": "No funcionó: {0}"
+        },
       "tab": "Explorar",
       "loading": "Leyendo la base de conocimiento …",
       "error": "No se pudo leer la base de conocimiento.",
