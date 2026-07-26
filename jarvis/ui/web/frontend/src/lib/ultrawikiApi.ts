@@ -55,6 +55,7 @@ export const ULTRAWIKI_CONNECTOR_IDS = [
   "local-folder",
   "jarvis-conversations",
   "normal-wiki",
+  "export-import",
   "plugin-bridge",
 ] as const;
 export type UltraWikiConnectorId = (typeof ULTRAWIKI_CONNECTOR_IDS)[number];
@@ -81,6 +82,7 @@ export const ULTRAWIKI_NEUTRAL_BRANDS = [
   "folder",
   "chat",
   "wiki",
+  "archive",
 ] as const;
 export type UltraWikiNeutralBrand =
   (typeof ULTRAWIKI_NEUTRAL_BRANDS)[number];
@@ -331,6 +333,37 @@ export const ULTRAWIKI_PIPELINE_STATES: readonly UltraWikiPipelineState[] = [
   "paused",
 ];
 
+/**
+ * Mirrors jarvis/ultrawiki/progress.py — the ONE cumulative reading of the
+ * corpus, computed in Python and never re-derived here.
+ *
+ * The counts it is built from are mutually exclusive buckets (an item sits in
+ * exactly one `state`). Adding them up in the client is what produced
+ * "Keyword-searchable 0" on a corpus where every item was keyword-searchable,
+ * and a checklist that reported "Everything is processed" over an import
+ * strip reporting 3 237 pending. Read these fields; do not recompute them.
+ */
+export interface UltraWikiProgress {
+  state: "empty" | "working" | "done";
+  /** Every live item, whatever stage it is in. */
+  total: number;
+  /** Items proven past the keyword index — findable by exact words now. */
+  searchable: number;
+  /** Items that reached the last stage and carry a summary. */
+  summarised: number;
+  /** The ONE backlog number. Every surface quotes this, none re-adds it. */
+  waiting: number;
+  /** Dead-lettered. Never counted as searchable: the stage it died at is
+   *  no longer recoverable from the counts, so it would be a guess. */
+  failed: number;
+  /** What the biggest waiting bucket is queued FOR, or null when idle. */
+  next_step: "indexing" | "embedding" | "summarising" | null;
+  waiting_by_bucket: Partial<Record<UltraWikiItemState, number>>;
+  buckets: Partial<UltraWikiCounts>;
+  /** Nested, outermost first: stored ⊇ searchable ⊇ summarised. */
+  milestones: { id: "stored" | "searchable" | "summarised"; reached: number; share: number }[];
+}
+
 export interface UltraWikiPipeline {
   /**
    * The worker LOOP is alive — NOT the same as work being done. Reporting this
@@ -364,6 +397,7 @@ export interface UltraWikiStatus {
     storage?: UltraWikiStorageSlot;
   };
   counts: Partial<UltraWikiCounts>;
+  progress?: UltraWikiProgress;
   pipeline: UltraWikiPipeline;
   sources: UltraWikiSource[];
   jobs: UltraWikiJob[];
@@ -546,6 +580,9 @@ export interface UltraWikiHealth {
   overall: UltraWikiCheckState;
   /** Can the user get answers RIGHT NOW (a backlog does not make this false). */
   usable: boolean;
+  /** The same numbers `/status` reports, shipped with the verdict so the
+   *  overview never captions a check from a second calculation. */
+  progress?: UltraWikiProgress;
   checks: UltraWikiHealthCheck[];
 }
 
@@ -956,6 +993,93 @@ export function fetchUltraWikiBridgeCandidates(): Promise<{
     total: number;
     connected?: number;
   }>("/api/ultrawiki/bridge/candidates");
+}
+
+// Mirrors jarvis/ultrawiki/connectors/export_import.py::EXPORT_FORMATS —
+// five-layer anti-drift discipline (AP-4): the preview renders one label per
+// id (`ultrawiki.export.format_<id>`), pinned by
+// tests/unit/ultrawiki/test_export_import.py.
+export const ULTRAWIKI_EXPORT_FORMATS = [
+  "mbox",
+  "eml",
+  "ics",
+  "vcard",
+  "whatsapp",
+  "csv",
+  "tsv",
+  "jsonl",
+  "json",
+  "pdf",
+  "html",
+  "markdown",
+  "text",
+] as const;
+export type UltraWikiExportFormat = (typeof ULTRAWIKI_EXPORT_FORMATS)[number];
+
+/** One detected format in a preview: how many files, how many items. */
+export interface UltraWikiExportFormatRow {
+  files: number;
+  items_estimate: number;
+  /** False when a scan budget ran out — the number is then a lower bound. */
+  exact: boolean;
+}
+
+/**
+ * `POST /api/ultrawiki/export/preview` — what a drop actually holds, before
+ * anything is imported. `truncated` is the honesty flag: a very large drop
+ * reports a lower bound rather than pretending a partial count is the total.
+ */
+export interface UltraWikiExportPreview {
+  path: string;
+  exists: boolean;
+  is_dir: boolean;
+  formats: Partial<Record<UltraWikiExportFormat | string, UltraWikiExportFormatRow>>;
+  unknown: { extension: string; files: number }[];
+  unreadable: { path: string; reason: string }[];
+  archives: {
+    files: number;
+    entries: number;
+    max_depth: number;
+    budget_exhausted: boolean;
+  };
+  total_bytes: number;
+  files_seen: number;
+  items_estimate: number;
+  unknown_files: number;
+  truncated: boolean;
+  /** Honest English sentences about anything that limited the pass. */
+  notes: string[];
+}
+
+export function previewUltraWikiExport(
+  path: string,
+): Promise<UltraWikiExportPreview> {
+  return postJson<UltraWikiExportPreview>("/api/ultrawiki/export/preview", {
+    path,
+  });
+}
+
+export interface UltraWikiExportUpload {
+  /** Where the file landed — this is what the source's `path` config gets. */
+  path: string;
+  name: string;
+  size: number;
+  detail: string;
+}
+
+/**
+ * Stream a dropped export file to the machine running Jarvis. No
+ * `Content-Type` header on purpose: the browser sets the multipart boundary.
+ */
+export function uploadUltraWikiExport(
+  file: File,
+): Promise<UltraWikiExportUpload> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  return request<UltraWikiExportUpload>("/api/ultrawiki/export/upload", {
+    method: "POST",
+    body: form,
+  });
 }
 
 /** The curated roster the picker renders — product data, not install state. */

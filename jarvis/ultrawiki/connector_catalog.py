@@ -89,7 +89,7 @@ CONNECTOR_STATUSES: tuple[ConnectorStatus, ...] = ("available", "adapter_pending
 #: connector has no vendor and must never borrow one; the frontend maps these
 #: to its own icons. Kept as a closed set so a typo cannot silently become a
 #: missing logo.
-NEUTRAL_BRANDS: tuple[str, ...] = ("vault", "folder", "chat", "wiki")
+NEUTRAL_BRANDS: tuple[str, ...] = ("vault", "folder", "chat", "wiki", "archive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +169,19 @@ BUILTIN_CONNECTORS: tuple[UltraWikiConnectorSpec, ...] = (
         status="available",
         label_key="ultrawiki.sources.connector_normal_wiki",
         description_key="ultrawiki.connectors.normal_wiki",
+    ),
+    # The universal on-ramp: whatever export the user already HAS. It is a
+    # built-in rather than a bridge entry because it belongs to no vendor —
+    # the formats are open standards (mbox, iCalendar, vCard, CSV, PDF), and
+    # every service that matters can produce at least one of them.
+    UltraWikiConnectorSpec(
+        id="export-import",
+        kind="builtin",
+        label="Export file import",
+        brand="archive",
+        status="available",
+        label_key="ultrawiki.sources.connector_export_import",
+        description_key="ultrawiki.connectors.export_import",
     ),
 )
 

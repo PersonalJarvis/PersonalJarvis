@@ -68,6 +68,17 @@ class TestCatalogShape:
         shipped = set(builtin_connectors()) - {BRIDGE_CONNECTOR_ID}
         assert {spec.id for spec in catalog.BUILTIN_CONNECTORS} == shipped
 
+    def test_the_export_on_ramp_is_offered_as_a_vendor_free_builtin(self):
+        """It belongs to no vendor: the formats it reads are open standards,
+        so it must carry a neutral glyph rather than borrow a service's mark."""
+        spec = catalog.get_connector("export-import")
+        assert spec is not None
+        assert spec.kind == "builtin"
+        assert spec.brand == "archive"
+        assert spec.brand in catalog.NEUTRAL_BRANDS
+        assert spec.status == "available"
+        assert catalog.as_dict(spec)["connector"] == "export-import"
+
     def test_the_bridge_itself_is_not_offered_as_a_card(self):
         assert catalog.get_connector(BRIDGE_CONNECTOR_ID) is None
         assert not any(

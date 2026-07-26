@@ -66,13 +66,20 @@ def _make_plugin_bridge() -> UWConnector:
     return PluginBridgeConnector()
 
 
+def _make_export_import() -> UWConnector:
+    from jarvis.ultrawiki.connectors.export_import import ExportImportConnector
+
+    return ExportImportConnector()
+
+
 def builtin_connectors() -> dict[str, ConnectorFactory]:
-    """The five built-in connectors, keyed by connector id."""
+    """The six built-in connectors, keyed by connector id."""
     return {
         "obsidian-vault": _make_obsidian_vault,
         "local-folder": _make_local_folder,
         "jarvis-conversations": _make_jarvis_conversations,
         "normal-wiki": _make_normal_wiki,
+        "export-import": _make_export_import,
         "plugin-bridge": _make_plugin_bridge,
     }
 

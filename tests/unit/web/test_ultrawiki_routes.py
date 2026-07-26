@@ -38,6 +38,8 @@ DANGEROUS_ROUTES = (
     ("/api/ultrawiki/sources/{source_id}/approve", "post"),
     ("/api/ultrawiki/sources/{source_id}/sync", "post"),
     ("/api/ultrawiki/jobs/{job_id}/cancel", "post"),
+    # It writes the uploaded bytes to this machine's disk.
+    ("/api/ultrawiki/export/upload", "post"),
 )
 
 
@@ -1370,3 +1372,166 @@ def test_items_reject_an_unknown_state(env) -> None:
     )
     assert response.status_code == 400
     assert "half-embedded" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Export files — preview before importing, and get the file here first
+# ---------------------------------------------------------------------------
+
+
+def test_export_preview_reports_the_formats_it_found(env) -> None:
+    """The answer to "what does 'import everything' actually mean?"."""
+    drop = env.tmp / "drop"
+    drop.mkdir()
+    (drop / "notes.md").write_text("# Note\n\ncontent", encoding="utf-8")
+    (drop / "WhatsApp Chat with Ada.txt").write_text(
+        "[01.02.24, 09:00:00] Ada: hello\n[02.02.24, 09:00:00] Ada: again\n",
+        encoding="utf-8",
+    )
+    (drop / "blob.bin").write_bytes(bytes([0, 1, 2, 3] * 32))
+
+    response = env.client.post(
+        "/api/ultrawiki/export/preview", json={"path": str(drop)}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["exists"] is True
+    assert body["is_dir"] is True
+    assert body["formats"]["markdown"]["items_estimate"] == 1
+    assert body["formats"]["whatsapp"]["items_estimate"] == 2
+    assert body["unknown"] == [{"extension": ".bin", "files": 1}]
+    assert body["truncated"] is False
+
+
+def test_export_preview_404s_on_a_path_that_is_not_there(env) -> None:
+    response = env.client.post(
+        "/api/ultrawiki/export/preview",
+        json={"path": str(env.tmp / "no-such-export")},
+    )
+    assert response.status_code == 404
+    assert "nothing exists" in response.json()["detail"]
+
+
+def test_export_preview_changes_nothing(env) -> None:
+    """A preview is read-only: no source appears, nothing is imported."""
+    _activate(env)
+    drop = env.tmp / "peek"
+    drop.mkdir()
+    (drop / "notes.md").write_text("# Note", encoding="utf-8")
+    before = env.client.get("/api/ultrawiki/sources").json()["total"]
+
+    env.client.post("/api/ultrawiki/export/preview", json={"path": str(drop)})
+
+    assert env.client.get("/api/ultrawiki/sources").json()["total"] == before
+
+
+def test_export_upload_streams_the_file_and_returns_its_path(env) -> None:
+    payload = b"# Uploaded note\n\nwith a body\n"
+    response = env.client.post(
+        "/api/ultrawiki/export/upload",
+        files={"file": ("takeout.md", payload, "text/markdown")},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "takeout.md"
+    assert body["size"] == len(payload)
+    stored = Path(body["path"])
+    assert stored.read_bytes() == payload
+    # Under the configured data directory, never next to the code.
+    assert "uploads" in stored.parts and str(env.tmp) in str(stored)
+
+
+def test_an_uploaded_file_can_be_previewed_and_imported(env) -> None:
+    """The whole point of the upload: it lands where the connector reads."""
+    _activate(env)
+    uploaded = env.client.post(
+        "/api/ultrawiki/export/upload",
+        files={
+            "file": (
+                "chat.txt",
+                b"[01.02.24, 09:00:00] Ada: hello from the upload\n"
+                b"[01.02.24, 09:01:00] Bruno: and a reply\n",
+                "text/plain",
+            )
+        },
+    ).json()
+
+    preview = env.client.post(
+        "/api/ultrawiki/export/preview", json={"path": uploaded["path"]}
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["formats"]["whatsapp"]["items_estimate"] == 1
+
+    created = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "export-import",
+            "label": "Dropped chat",
+            "config": {"path": uploaded["path"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    # Consent semantics are untouched by the upload/preview detour.
+    assert created.json()["consent"] == "pending"
+
+    approved = env.client.post(
+        f"/api/ultrawiki/sources/{created.json()['id']}/approve"
+    )
+    assert approved.status_code == 200, approved.text
+    snapshot = _wait_for_job(env, approved.json()["job_id"])
+    assert snapshot["status"] == "done", snapshot
+    assert snapshot["new"] == 1
+
+
+def test_export_upload_refuses_a_path_traversal_filename(env) -> None:
+    """Refused, not silently renamed: a rewrite would report success for a
+    file stored somewhere the caller never asked for."""
+    for name in ("../escape.zip", "sub/dir.zip", "C:evil.zip"):
+        response = env.client.post(
+            "/api/ultrawiki/export/upload",
+            files={"file": (name, b"data", "application/zip")},
+        )
+        assert response.status_code == 400, (name, response.text)
+        assert "refusing the filename" in response.json()["detail"]
+
+
+def test_export_upload_refuses_an_empty_file(env) -> None:
+    response = env.client.post(
+        "/api/ultrawiki/export/upload",
+        files={"file": ("empty.zip", b"", "application/zip")},
+    )
+    assert response.status_code == 400
+    assert "empty" in response.json()["detail"]
+
+
+def test_export_upload_enforces_its_size_cap_and_keeps_nothing(
+    env, monkeypatch
+) -> None:
+    from jarvis.ui.web import ultrawiki_routes
+
+    monkeypatch.setattr(ultrawiki_routes, "_MAX_EXPORT_UPLOAD_BYTES", 16)
+    monkeypatch.setattr(ultrawiki_routes, "_UPLOAD_CHUNK_BYTES", 8)
+
+    response = env.client.post(
+        "/api/ultrawiki/export/upload",
+        files={"file": ("big.zip", b"x" * 4096, "application/zip")},
+    )
+
+    assert response.status_code == 413
+    assert "larger than" in response.json()["detail"]
+    # A refused transfer leaves no partial file behind.
+    uploads = env.tmp / "data" / "ultrawiki" / "uploads"
+    assert not uploads.exists() or not any(uploads.rglob("*.zip"))
+
+
+def test_export_preview_is_not_flagged_dangerous(env) -> None:
+    """Reading a path changes nothing, so it must not demand a confirmation."""
+    schema = env.server.app.openapi()
+    operation = schema["paths"]["/api/ultrawiki/export/preview"]["post"]
+    assert "x-jarvis-dangerous" not in operation
+    upload = schema["paths"]["/api/ultrawiki/export/upload"]["post"]
+    assert upload["x-jarvis-dangerous"] is True
+    # A multi-gigabyte transfer must outlive the CLI's default client timeout.
+    assert upload["x-jarvis-timeout-seconds"] == 600

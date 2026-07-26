@@ -1,0 +1,15 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Personal Jarvis//Export Import Fixture//EN
+BEGIN:VEVENT
+UID:event-001@example.com
+DTSTAMP:20240104T090000Z
+DTSTART:20240110T140000Z
+DTEND:20240110T150000Z
+SUMMARY:Telescope maintenance review
+LOCATION:Observatory, room 2
+ORGANIZER:MAILTO:ada@example.com
+ATTENDEE:MAILTO:bruno@example.com
+DESCRIPTION:Walk through the maintenance schedule for the coming quarter.
+END:VEVENT
+END:VCALENDAR

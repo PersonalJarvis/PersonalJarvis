@@ -227,6 +227,7 @@ class TestSourceIdentity:
     def test_brand_and_kind_are_derived_for_builtins_and_bridges(self):
         assert _connector_identity("local-folder", "") == ("folder", "builtin")
         assert _connector_identity("obsidian-vault", "") == ("vault", "builtin")
+        assert _connector_identity("export-import", "") == ("archive", "builtin")
         assert _connector_identity("plugin-bridge", "plugin:slack") == (
             "slack",
             "bridge",

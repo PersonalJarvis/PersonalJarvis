@@ -42,6 +42,17 @@ const ROSTER = {
       integration_id: "",
     },
     {
+      id: "export-import",
+      kind: "builtin",
+      label: "Export file import",
+      label_key: "ultrawiki.sources.connector_export_import",
+      brand: "archive",
+      status: "available",
+      description_key: "ultrawiki.connectors.export_import",
+      connector: "export-import",
+      integration_id: "",
+    },
+    {
       id: "github",
       kind: "bridge",
       label: "GitHub",
@@ -76,8 +87,8 @@ const ROSTER = {
       integration_id: "plugin:acme_notes",
     },
   ],
-  total: 4,
-  builtin: 1,
+  total: 5,
+  builtin: 2,
   bridge: 3,
 };
 
@@ -186,6 +197,36 @@ describe("ConnectorPicker — only the curated roster renders", () => {
     const monogram = screen.getByTestId("uw-picker-brand-acme_notes");
     expect(monogram.getAttribute("data-brand-tier")).toBe("monogram");
     expect(monogram.textContent).toBe("A");
+  });
+
+  it("offers the export on-ramp as a selectable, vendor-free built-in", async () => {
+    const onSelect = mountPicker([candidate({})]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-export-import")).toBeDefined();
+    });
+    const tile = screen.getByTestId("uw-picker-export-import");
+    // It belongs to no vendor: our own glyph, never a borrowed mark.
+    expect(
+      screen
+        .getByTestId("uw-picker-brand-export-import")
+        .getAttribute("data-brand-tier"),
+    ).toBe("neutral");
+    // A built-in is always "connected" — there is nothing to connect.
+    expect(tile.getAttribute("data-connected")).toBe("true");
+    expect(
+      screen
+        .getByTestId("uw-picker-badge-export-import")
+        .getAttribute("data-status"),
+    ).toBe("available");
+
+    fireEvent.click(tile);
+    expect(onSelect.mock.calls[0][0]).toMatchObject({
+      key: "export-import",
+      connector: "export-import",
+      integrationId: "",
+      connected: true,
+    });
   });
 });
 

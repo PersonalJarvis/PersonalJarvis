@@ -60,13 +60,14 @@ def _ctx(config: dict) -> ConnectorContext:
 
 
 class TestRegistry:
-    def test_builtin_connectors_expose_five_fresh_factories(self):
+    def test_builtin_connectors_expose_six_fresh_factories(self):
         registry = builtin_connectors()
         assert set(registry) == {
             "obsidian-vault",
             "local-folder",
             "jarvis-conversations",
             "normal-wiki",
+            "export-import",
             "plugin-bridge",
         }
         for name, factory in registry.items():

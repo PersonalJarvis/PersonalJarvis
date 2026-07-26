@@ -14,11 +14,17 @@
  * the point: it should look like something to fix, not like a design.
  *
  * Built-in connectors have no vendor and must not borrow one. Their brand token
- * is one of the neutral names (`vault`, `folder`, `chat`, `wiki`) and resolves
- * to one of our own icons.
+ * is one of the neutral names (`vault`, `folder`, `chat`, `wiki`, `archive`)
+ * and resolves to one of our own icons.
  */
 import { useState } from "react";
-import { BookOpen, FolderOpen, MessageSquare, Vault } from "lucide-react";
+import {
+  BookOpen,
+  FileArchive,
+  FolderOpen,
+  MessageSquare,
+  Vault,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -41,6 +47,7 @@ const NEUTRAL_ICONS: Record<string, LucideIcon | undefined> = {
   folder: FolderOpen,
   chat: MessageSquare,
   wiki: BookOpen,
+  archive: FileArchive,
 };
 
 /** Which tier a mark resolved to — also exposed as `data-brand-tier`, so a

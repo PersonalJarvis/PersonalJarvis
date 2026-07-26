@@ -1,0 +1,16 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:contact-001
+FN:Ada Lovelace
+N:Lovelace;Ada;;;
+EMAIL;TYPE=WORK:ada@example.com
+TEL;TYPE=CELL:+44 20 7946 0000
+ORG:Analytical Engine Works
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Bruno Marek
+EMAIL;TYPE=HOME:bruno@example.com
+NOTE:Handles the telescope maintenance
+  budget for the observatory.
+END:VCARD

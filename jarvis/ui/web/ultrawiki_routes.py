@@ -22,9 +22,11 @@ import logging
 import math
 import re
 import time
+import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
@@ -1444,6 +1446,194 @@ async def list_bridge_candidates() -> dict[str, Any]:
         "candidates": candidates,
         "total": len(candidates),
         "connected": connected,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Export files — look before you import, and get the file here in the first place
+# ---------------------------------------------------------------------------
+
+#: Hard ceiling for one dropped export. Streamed in fixed chunks, so this
+#: bounds DISK usage; memory stays at one chunk no matter how big the file is.
+_MAX_EXPORT_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+#: Characters that turn a "filename" into a path, a Windows alternate data
+#: stream, or a wildcard. A dropped file is stored under its OWN name, so the
+#: name has to be a name — such an upload is refused, never silently renamed.
+_UNSAFE_NAME_CHARS = frozenset('\\/:*?"<>|\x00')
+
+_MAX_UPLOAD_NAME_CHARS = 200
+
+
+def _safe_upload_name(raw: str) -> str:
+    """The client's filename, or a 400 explaining why it was refused.
+
+    Deliberately a REJECTION rather than a sanitisation: silently rewriting
+    ``../../secrets.zip`` to ``secrets.zip`` would store the file somewhere
+    the caller did not ask for and report success, which is exactly how a
+    traversal attempt becomes an invisible one.
+    """
+    name = (raw or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="the upload has no filename")
+    if len(name) > _MAX_UPLOAD_NAME_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"the filename is longer than {_MAX_UPLOAD_NAME_CHARS} characters",
+        )
+    if (
+        name in (".", "..")
+        or set(name) & _UNSAFE_NAME_CHARS
+        or any(ord(char) < 32 for char in name)
+        or Path(name).name != name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"refusing the filename {name!r}: an upload is stored under its "
+                "own name, so the name may not contain a path, a drive letter, "
+                "or a control character"
+            ),
+        )
+    return name
+
+
+def _discard_upload(directory: Path) -> None:
+    """Remove a partial upload's folder; a failed cleanup is never fatal."""
+    import shutil  # noqa: PLC0415 — lazy, only on the failure path
+
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+class PreviewExportBody(BaseModel):
+    """Which file or folder to inspect. Read-only — nothing is imported."""
+
+    path: str = Field(min_length=1)
+
+
+@router.post(
+    "/export/preview", summary="Report what an export file or folder holds"
+)
+async def preview_export(
+    body: PreviewExportBody, request: Request
+) -> dict[str, Any]:
+    """Detect the formats in a drop and count what is inside — before importing.
+
+    "Approve and import everything" is a big button to press blind. This
+    answers what "everything" IS first: how many mails, events, chats and
+    rows were found, and which files will be skipped as unrecognised. It only
+    reads — no source is registered, no byte is stored.
+
+    The counts are exact when the pass could afford to be; a very large drop
+    reports ``truncated`` and drops ``exact`` on the affected formats rather
+    than presenting a partial number as the whole truth.
+    """
+    from jarvis.ultrawiki.connectors import export_import  # noqa: PLC0415 — lazy
+
+    target = body.path.strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="a path is required")
+    # Walks the filesystem and reads bytes to count records — never on the
+    # event loop, which also serves voice and chat.
+    report = await asyncio.to_thread(export_import.scan_export, target)
+    if not report.get("exists"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"nothing exists at {target!r} on this machine",
+        )
+    return report
+
+
+@router.post(
+    "/export/upload",
+    summary="Upload an export file so it can be imported",
+    openapi_extra={
+        # It writes the uploaded bytes to this machine's disk.
+        "x-jarvis-dangerous": True,
+        # A multi-gigabyte Takeout archive over a slow link takes minutes; the
+        # CLI's default client timeout would give up on a transfer that is
+        # working perfectly.
+        "x-jarvis-timeout-seconds": 600,
+    },
+)
+async def upload_export(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008 — FastAPI dependency default
+) -> dict[str, Any]:
+    """Stream a dropped export file to disk and return the path to import from.
+
+    The alternative — "type the full path to your Takeout archive" — is a
+    non-starter on a machine the user is not sitting at, and unfriendly even
+    on one they are. The bytes go to a fresh folder under the Jarvis data
+    directory in fixed chunks, so a 2 GB archive costs one chunk of memory,
+    and a transfer that exceeds the cap leaves nothing behind.
+    """
+    from jarvis.ultrawiki.connectors import export_import  # noqa: PLC0415 — lazy
+
+    name = _safe_upload_name(file.filename or "")
+    data_dir = getattr(getattr(_config(request), "memory", None), "data_dir", None)
+    folder = export_import.uploads_dir(data_dir) / uuid.uuid4().hex
+    target = folder / name
+
+    try:
+        await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"the upload folder could not be created ({type(exc).__name__}) "
+                "— check that the Jarvis data directory is writable"
+            ),
+        ) from exc
+
+    written = 0
+    too_large = False
+    try:
+        handle = await asyncio.to_thread(target.open, "wb")
+        try:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > _MAX_EXPORT_UPLOAD_BYTES:
+                    too_large = True
+                    break
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            await asyncio.to_thread(handle.close)
+    except OSError as exc:
+        await asyncio.to_thread(_discard_upload, folder)
+        raise HTTPException(
+            status_code=500,
+            detail=f"the upload could not be written ({type(exc).__name__}: {exc})",
+        ) from exc
+
+    if too_large:
+        await asyncio.to_thread(_discard_upload, folder)
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "the file is larger than "
+                f"{_MAX_EXPORT_UPLOAD_BYTES // (1024**3)} GB — nothing was "
+                "kept. Point the source at the file on this machine instead, "
+                "which has no size limit at all."
+            ),
+        )
+    if written == 0:
+        await asyncio.to_thread(_discard_upload, folder)
+        raise HTTPException(status_code=400, detail="the uploaded file is empty")
+
+    return {
+        "path": str(target),
+        "name": name,
+        "size": written,
+        "detail": (
+            "The file is on this machine. Preview it to see what it holds, "
+            "then add it as a source."
+        ),
     }
 
 

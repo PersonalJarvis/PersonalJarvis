@@ -471,3 +471,136 @@ describe("SourcesPanel — bridge sources carry a real identity", () => {
     });
   });
 });
+
+describe("SourcesPanel — the dropped-export add flow", () => {
+  function installExportPickerMock(
+    created: unknown[],
+    extra: Record<string, (init?: RequestInit) => unknown> = {},
+  ) {
+    return installFetchMock({
+      "/api/ultrawiki/areas": () => ({ areas: [], total: 0 }),
+      "/api/ultrawiki/connectors": () => ({
+        connectors: [
+          {
+            id: "export-import",
+            kind: "builtin",
+            label: "Export file import",
+            label_key: "ultrawiki.sources.connector_export_import",
+            brand: "archive",
+            status: "available",
+            description_key: "ultrawiki.connectors.export_import",
+            connector: "export-import",
+            integration_id: "",
+          },
+        ],
+        total: 1,
+        builtin: 1,
+        bridge: 0,
+      }),
+      "/api/ultrawiki/bridge/candidates": () => ({
+        candidates: [],
+        total: 0,
+        connected: 0,
+      }),
+      "/api/ultrawiki/sources": (init) => {
+        created.push(JSON.parse(String(init?.body ?? "{}")));
+        return { id: "src-export" };
+      },
+      ...extra,
+    });
+  }
+
+  it("swaps in the upload + preview controls when the export tile is picked", async () => {
+    installExportPickerMock([]);
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-export-import")).toBeDefined();
+    });
+    // A dropped export is not a vault root: the folder field must not appear.
+    expect(screen.queryByTestId("ultrawiki-export-panel")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("uw-picker-export-import"));
+
+    expect(screen.getByTestId("ultrawiki-export-panel")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-export-upload-input")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-export-preview")).toBeDefined();
+    expect(screen.queryByTestId("ultrawiki-path-input")).toBeNull();
+    // Nothing can be registered until there is something to read.
+    expect(
+      screen.getByTestId("ultrawiki-create-source").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("shows the found-formats report before the source is created", async () => {
+    const created: unknown[] = [];
+    installExportPickerMock(created, {
+      "/api/ultrawiki/export/preview": () => ({
+        path: "/drop/takeout.zip",
+        exists: true,
+        is_dir: false,
+        formats: {
+          mbox: { files: 2, items_estimate: 3214, exact: true },
+          ics: { files: 1, items_estimate: 122, exact: true },
+        },
+        unknown: [{ extension: ".dll", files: 41 }],
+        unreadable: [],
+        archives: { files: 1, entries: 9, max_depth: 1, budget_exhausted: false },
+        total_bytes: 2048,
+        files_seen: 12,
+        items_estimate: 3336,
+        unknown_files: 41,
+        truncated: false,
+        notes: [],
+      }),
+    });
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-export-import")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("uw-picker-export-import"));
+    fireEvent.change(screen.getByTestId("ultrawiki-export-path-input"), {
+      target: { value: "/drop/takeout.zip" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-export-preview"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ultrawiki-export-report")).toBeDefined();
+    });
+    const report = screen.getByTestId("ultrawiki-export-report");
+    expect(report.textContent).toContain("3,214 mails");
+    expect(report.textContent).toContain("122 calendar events");
+    expect(report.textContent).toContain("41 unrecognised files skipped");
+    // A preview registers nothing — consent still starts at the same gate.
+    expect(created).toHaveLength(0);
+  });
+
+  it("registers the source with the export path under its own config key", async () => {
+    const created: unknown[] = [];
+    installExportPickerMock(created);
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("uw-picker-export-import")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("uw-picker-export-import"));
+    fireEvent.change(screen.getByTestId("ultrawiki-export-path-input"), {
+      target: { value: "/drop/takeout.zip" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-create-source"));
+
+    await waitFor(() => {
+      expect(created).toHaveLength(1);
+    });
+    expect(created[0]).toMatchObject({
+      connector: "export-import",
+      label: "Export file",
+      // `path`, not `root`: an export file is not a folder to walk as a vault.
+      config: { path: "/drop/takeout.zip" },
+    });
+  });
+});

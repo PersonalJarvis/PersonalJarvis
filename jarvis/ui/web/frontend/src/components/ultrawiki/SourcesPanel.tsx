@@ -20,6 +20,9 @@
  * brand mark — plus a path field for the folder-shaped connectors and area
  * assignment. A bridge source is named after the integration the user picked
  * ("GitHub"), never after the generic bridge, so the list stays readable.
+ * Picking the dropped-export tile swaps that path field for `ExportPreview`,
+ * which can also upload the file and report what is inside it before the
+ * source exists — consent semantics are untouched either way.
  */
 import { useState } from "react";
 import {
@@ -46,6 +49,7 @@ import {
   connectorLabel,
   type ConnectorOption,
 } from "@/components/ultrawiki/ConnectorPicker";
+import { ExportPreview } from "@/components/ultrawiki/ExportPreview";
 import {
   approveUltraWikiSource,
   cancelUltraWikiJob,
@@ -58,6 +62,14 @@ import {
 
 /** Connectors that read a user-chosen folder (config key `root`). */
 const PATH_CONNECTORS: readonly string[] = ["obsidian-vault", "local-folder"];
+
+/**
+ * The dropped-export connector. It also takes a path, but under its own
+ * config key (`path`) and through its own control: an export needs to be
+ * uploaded and looked inside BEFORE it is registered, which a bare text field
+ * cannot do.
+ */
+const EXPORT_CONNECTOR = "export-import";
 
 /** The generic integration gateway — its cards carry the integration's name. */
 const BRIDGE_CONNECTOR = "plugin-bridge";
@@ -473,6 +485,7 @@ function AddSourceForm({
   const [option, setOption] = useState<ConnectorOption | null>(null);
   const [label, setLabel] = useState("");
   const [rootPath, setRootPath] = useState("");
+  const [exportPath, setExportPath] = useState("");
   const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -484,6 +497,7 @@ function AddSourceForm({
   });
 
   const needsPath = Boolean(option && PATH_CONNECTORS.includes(option.connector));
+  const isExport = option?.connector === EXPORT_CONNECTOR;
   // A bridge card is named after the INTEGRATION the user picked. Falling back
   // to the connector's own name produced a list of identical "Connected
   // integration" rows nobody could tell apart.
@@ -504,6 +518,7 @@ function AddSourceForm({
     setError("");
     const config: Record<string, unknown> = {};
     if (needsPath && rootPath.trim()) config.root = rootPath.trim();
+    if (isExport && exportPath.trim()) config.path = exportPath.trim();
     if (option.connector === BRIDGE_CONNECTOR && option.integrationId) {
       config.integration_id = option.integrationId;
     }
@@ -548,10 +563,12 @@ function AddSourceForm({
           selectedKey={option?.key ?? ""}
           onSelect={(picked) => {
             setOption(picked);
-            // The path belongs to the folder connector it was typed for;
-            // carrying it over to a different source type would silently point
-            // the new one at an unrelated folder.
+            // A path belongs to the connector it was typed for; carrying it
+            // over to a different source type would silently point the new one
+            // at an unrelated folder. The two path kinds are kept apart for
+            // the same reason — an export file is not a vault root.
             if (!PATH_CONNECTORS.includes(picked.connector)) setRootPath("");
+            if (picked.connector !== EXPORT_CONNECTOR) setExportPath("");
           }}
         />
       </div>
@@ -588,6 +605,10 @@ function AddSourceForm({
             {t("ultrawiki.sources.path_hint")}
           </span>
         </label>
+      )}
+
+      {isExport && (
+        <ExportPreview path={exportPath} onPathChange={setExportPath} />
       )}
 
       <div>
@@ -635,7 +656,12 @@ function AddSourceForm({
           <Button
             size="sm"
             type="submit"
-            disabled={submitting || !option || (needsPath && !rootPath.trim())}
+            disabled={
+              submitting ||
+              !option ||
+              (needsPath && !rootPath.trim()) ||
+              (isExport && !exportPath.trim())
+            }
             data-testid="ultrawiki-create-source"
           >
             {submitting && (
