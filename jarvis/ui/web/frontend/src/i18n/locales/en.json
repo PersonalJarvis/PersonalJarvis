@@ -2746,6 +2746,9 @@
       "pipeline_idle": "Pipeline idle",
       "cancel": "Cancel",
       "cancel_failed": "Could not cancel the job: {0}",
+      "retry_failed": "Retry failed items",
+      "retry_failed_done": "{0} item(s) queued again - they resume from their last completed stage.",
+      "retry_failed_error": "Retry did not start: {0}",
       "state_waiting_for_sources": "Waiting for approved sources — nothing is being read yet.",
       "state_processing": "Processing ({0} pending)",
       "state_paused": "Paused",
@@ -3030,5 +3033,15 @@
       "partial": "{0} of {1} source(s) fully landed.",
       "numbers": "read {0} · {1} new · {2} changed · {3} unchanged · {4} stored"
     }
+  },
+  "edit_menu": {
+    "label": "Edit",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "select_all": "Select all",
+    "copy_failed": "Could not copy to the clipboard.",
+    "paste_unavailable": "Could not read the clipboard.",
+    "paste_failed": "Cannot paste here."
   }
 }

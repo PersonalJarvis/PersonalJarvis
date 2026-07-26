@@ -2745,6 +2745,9 @@
       "pipeline_idle": "Canal en espera",
       "cancel": "Cancelar",
       "cancel_failed": "No se pudo cancelar el trabajo: {0}",
+      "retry_failed": "Reintentar elementos fallidos",
+      "retry_failed_done": "{0} elemento(s) en cola de nuevo - continúan desde su última etapa completada.",
+      "retry_failed_error": "El reintento no pudo iniciarse: {0}",
       "state_waiting_for_sources": "Esperando fuentes aprobadas: todavía no se lee nada.",
       "state_processing": "Procesando ({0} pendientes)",
       "state_paused": "En pausa",
@@ -3029,5 +3032,15 @@
       "partial": "{0} de {1} fuentes llegaron completas.",
       "numbers": "leídos {0} · {1} nuevos · {2} cambiados · {3} sin cambios · {4} guardados"
     }
+  },
+  "edit_menu": {
+    "label": "Editar",
+    "cut": "Cortar",
+    "copy": "Copiar",
+    "paste": "Pegar",
+    "select_all": "Seleccionar todo",
+    "copy_failed": "No se pudo copiar al portapapeles.",
+    "paste_unavailable": "No se pudo leer el portapapeles.",
+    "paste_failed": "Aquí no se puede pegar."
   }
 }

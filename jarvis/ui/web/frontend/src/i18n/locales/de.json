@@ -2745,6 +2745,9 @@
       "pipeline_idle": "Pipeline wartet",
       "cancel": "Abbrechen",
       "cancel_failed": "Job konnte nicht abgebrochen werden: {0}",
+      "retry_failed": "Fehlgeschlagene erneut versuchen",
+      "retry_failed_done": "{0} Eintrag/Einträge erneut eingereiht - sie machen an ihrer letzten fertigen Stufe weiter.",
+      "retry_failed_error": "Neuversuch konnte nicht starten: {0}",
       "state_waiting_for_sources": "Wartet auf freigegebene Quellen — es wird noch nichts gelesen.",
       "state_processing": "Verarbeitet ({0} offen)",
       "state_paused": "Pausiert",
@@ -3029,5 +3032,15 @@
       "partial": "{0} von {1} Quellen vollständig angekommen.",
       "numbers": "gelesen {0} · {1} neu · {2} geändert · {3} unverändert · {4} gespeichert"
     }
+  },
+  "edit_menu": {
+    "label": "Bearbeiten",
+    "cut": "Ausschneiden",
+    "copy": "Kopieren",
+    "paste": "Einfügen",
+    "select_all": "Alles auswählen",
+    "copy_failed": "Kopieren in die Zwischenablage nicht möglich.",
+    "paste_unavailable": "Zwischenablage konnte nicht gelesen werden.",
+    "paste_failed": "Hier kann nicht eingefügt werden."
   }
 }

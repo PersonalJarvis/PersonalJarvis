@@ -9,7 +9,14 @@
  * poll up to a few seconds while a job is active).
  */
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, PauseCircle, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  PauseCircle,
+  RotateCcw,
+  XCircle,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -17,6 +24,7 @@ import { useEventStore } from "@/store/events";
 import {
   ULTRAWIKI_ACTIVE_JOB_STATUSES,
   cancelUltraWikiJob,
+  requeueUltraWikiFailed,
   type UltraWikiCounts,
   type UltraWikiJob,
   type UltraWikiPipeline,
@@ -46,6 +54,32 @@ export function ImportProgress({
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const [cancelling, setCancelling] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  async function handleRetryFailed() {
+    setRetrying(true);
+    try {
+      const result = await requeueUltraWikiFailed();
+      pushToast(
+        "success",
+        t("ultrawiki.progress.retry_failed_done").replace(
+          "{0}",
+          String(result.requeued),
+        ),
+      );
+      onChanged();
+    } catch (e) {
+      pushToast(
+        "error",
+        t("ultrawiki.progress.retry_failed_error").replace(
+          "{0}",
+          (e as Error).message,
+        ),
+      );
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function handleCancel(jobId: string) {
     setCancelling(jobId);
@@ -116,6 +150,22 @@ export function ImportProgress({
             );
           })}
         </dl>
+        {(counts.failed ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleRetryFailed()}
+            disabled={retrying}
+            data-testid="ultrawiki-retry-failed"
+            className="inline-flex items-center gap-1 rounded-md border border-destructive/40 px-1.5 py-0.5 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            {retrying ? (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            ) : (
+              <RotateCcw className="h-3 w-3" aria-hidden />
+            )}
+            {t("ultrawiki.progress.retry_failed")}
+          </button>
+        )}
       </div>
 
       {pipeline.reason && (

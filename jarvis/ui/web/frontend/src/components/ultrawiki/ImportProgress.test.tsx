@@ -142,3 +142,42 @@ describe("ImportProgress — honest pipeline state", () => {
     ).toBe("idle");
   });
 });
+
+describe("ImportProgress — retry-failed button", () => {
+  const IDLE: UltraWikiPipeline = { running: true, state: "processing", processed: {} };
+
+  it("is absent while nothing has failed", () => {
+    renderStrip(IDLE, { ...NO_COUNTS, failed: 0 });
+    expect(screen.queryByTestId("ultrawiki-retry-failed")).toBeNull();
+  });
+
+  it("appears with failed items and posts the requeue, then refreshes", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        calls.push(String(url));
+        return new Response(
+          JSON.stringify({ ok: true, requeued: 32, source_id: "", detail: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const onChanged = vi.fn();
+    render(
+      <ImportProgress
+        counts={{ ...NO_COUNTS, failed: 32 }}
+        pipeline={IDLE}
+        jobs={[]}
+        onChanged={onChanged}
+      />,
+    );
+
+    const button = screen.getByTestId("ultrawiki-retry-failed");
+    fireEvent.click(button);
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(
+      calls.some((u) => u.includes("/api/ultrawiki/pipeline/requeue-failed")),
+    ).toBe(true);
+  });
+});
