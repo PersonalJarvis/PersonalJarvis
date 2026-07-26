@@ -3181,9 +3181,13 @@
       "format_jsonl": "record chunks",
       "format_json": "data files",
       "format_pdf": "PDF documents",
+      "format_document": "documents and slide decks",
       "format_html": "web pages",
       "format_markdown": "notes",
-      "format_text": "text files"
+      "format_text": "text files",
+      "format_image": "pictures",
+      "format_audio": "recordings",
+      "format_video": "videos"
     },
     "picker": {
       "builtin_group": "On this machine",

@@ -56,7 +56,9 @@ from jarvis.ultrawiki.document_text import safe_xml_parser
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "DOCUMENT_EXTENSIONS",
     "ExtractResult",
+    "MEDIA_EXTENSIONS",
     "MEDIA_KINDS",
     "TEXT_EXTENSIONS",
     "detect_kind",
@@ -103,6 +105,26 @@ _ZIP_MARKERS: tuple[tuple[str, str], ...] = (
     ("content.xml", "odf"),
     ("META-INF/container.xml", "epub"),
 )
+
+#: Second-pass identification: a member PREFIX rather than an exact manifest
+#: part, for archives that lost their manifest but kept their content.
+_ZIP_LAYOUT_MARKERS: tuple[tuple[str, str], ...] = (
+    ("ppt/slides/", "pptx"),
+    ("word/", "docx"),
+    ("xl/worksheets/", "xlsx"),
+    ("xl/", "xlsx"),
+    ("OEBPS/", "epub"),
+    ("EPUB/", "epub"),
+)
+
+#: Last resort: the name, for a ZIP that identified as nothing at all.
+_ZIP_SUFFIX_KINDS: dict[str, str] = {
+    ".docx": "docx", ".docm": "docx",
+    ".xlsx": "xlsx", ".xlsm": "xlsx",
+    ".pptx": "pptx", ".pptm": "pptx",
+    ".odt": "odf", ".ods": "odf", ".odp": "odf", ".odg": "odf",
+    ".epub": "epub",
+}
 
 #: Kinds that hold meaning no text extractor can reach, but a model can.
 #: The enrichment stage reads exactly these; everything else it ignores.
@@ -209,6 +231,22 @@ _MEDIA_EXTENSIONS: dict[str, str] = {
     # an MPEG transport stream, and calling a source file a video would drop it
     # from a developer's own knowledge base.
 }
+
+#: Public view of the mapping above, for the walkers that decide which files to
+#: even look at. A folder walk needs the list BEFORE it opens anything.
+MEDIA_EXTENSIONS: frozenset[str] = frozenset(_MEDIA_EXTENSIONS)
+
+#: Suffixes this service can turn into text but a plain UTF-8 read cannot.
+#: Same purpose: a walker's allowlist has to name them or they are never seen.
+DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".rtf",
+        ".odt", ".ods", ".odp", ".odg", ".odf",
+        # Pre-2007 Office: not readable, but naming them means the user gets
+        # the "re-save it in the modern format" line instead of silence.
+        ".doc", ".xls", ".ppt",
+    }
+)
 
 #: Files whose NAME says binary regardless of what decodes. Media extensions
 #: are deliberately NOT here any more — they resolve to their media kind
@@ -325,8 +363,16 @@ def is_probably_text(head: bytes) -> bool:
     return lenient.count("\ufffd") <= max(2, len(lenient) * 0.02)
 
 
-def _zip_kind(data: bytes | Path) -> str:
-    """Which office format a ZIP actually is, or plain ``archive``."""
+def _zip_kind(data: bytes | Path, filename: str = "") -> str:
+    """Which office format a ZIP actually is, or plain ``archive``.
+
+    Three passes, weakest evidence last. The manifest part is conclusive, but
+    an archive can be missing it and still hold every slide: a file repaired by
+    a converter, truncated by a sync client, or produced by a tool that writes
+    only what it needs. Falling straight to "archive" there discards a deck
+    whose text is sitting right in front of us, so the layout of the members —
+    and finally the name — get their turn.
+    """
     try:
         source: Any = data if isinstance(data, Path) else io.BytesIO(data)
         with zipfile.ZipFile(source) as archive:
@@ -336,7 +382,11 @@ def _zip_kind(data: bytes | Path) -> str:
     for marker, kind in _ZIP_MARKERS:
         if marker in names:
             return kind
-    return "archive"
+    for prefix, kind in _ZIP_LAYOUT_MARKERS:
+        if any(name.startswith(prefix) for name in names):
+            return kind
+    suffix = Path(filename).suffix.lower() if filename else ""
+    return _ZIP_SUFFIX_KINDS.get(suffix, "archive")
 
 
 def _container_kind(head: bytes) -> str:
@@ -417,7 +467,7 @@ def detect_kind(data: bytes | Path, filename: str = "", mime: str = "") -> str:
                 return "tar"
             return kind
     if head.startswith(b"PK\x03\x04"):
-        return _zip_kind(data)
+        return _zip_kind(data, filename)
     if _is_tar(data):
         return "tar"
 
@@ -455,9 +505,21 @@ def _clean(text: str) -> str:
     return text.strip()[:_MAX_TEXT_CHARS]
 
 
+#: UTF-16 is only ever tried when the file SAYS it is UTF-16. Without a byte
+#: order mark the codec accepts almost any even-length input and silently
+#: produces CJK-looking noise: `b"caf\xe9 notes"` — an ordinary Windows-encoded
+#: note — decoded to `"慣ﺩ潮整"` and was stored that way, unfindable and
+#: unreadable, with nothing anywhere reporting a problem. A BOM is the only
+#: honest evidence for this encoding.
+_UTF16_BOMS: tuple[bytes, ...] = (b"\xff\xfe", b"\xfe\xff")
+
+
 def _decode(raw: bytes) -> str:
     """Text from bytes, trying the encodings that actually occur in the wild."""
-    for encoding in ("utf-8", "utf-8-sig", "utf-16", "cp1252", "latin-1"):
+    encodings = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
+    if raw[:2] in _UTF16_BOMS:
+        encodings = ("utf-16", *encodings)
+    for encoding in encodings:
         try:
             return raw.decode(encoding)
         except (UnicodeDecodeError, LookupError):

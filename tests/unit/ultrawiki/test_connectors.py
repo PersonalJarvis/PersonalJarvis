@@ -415,14 +415,42 @@ class TestLocalFolderFileTypes:
             "page.html",
         ]
 
-    async def test_binary_files_are_still_ignored(self, tmp_path: Path):
-        (tmp_path / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
-        (tmp_path / "clip.mp4").write_bytes(b"\x00" * 64)
+    async def test_machine_files_are_still_ignored(self, tmp_path: Path):
+        """Installers and libraries are not memories and never become items."""
+        (tmp_path / "setup.exe").write_bytes(b"MZ" + b"\x00" * 64)
+        (tmp_path / "lib.dll").write_bytes(b"MZ" + b"\x00" * 64)
+        (tmp_path / "cache.sqlite").write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
         (tmp_path / "note.md").write_text("keep", encoding="utf-8")
         items = await _collect(
             LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
         )
         assert [item.external_id for item in items] == ["note.md"]
+
+    async def test_photos_and_recordings_ARE_captured(self, tmp_path: Path):
+        """The opposite of the rule above, and the reason it had to be split.
+
+        A photo library used to import as nothing at all — the largest and
+        most personal pile of files most people own, invisible. It is captured
+        with what the file states about itself and marked for the enrichment
+        stage; nothing here claims to know what the picture shows.
+        """
+        (tmp_path / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        (tmp_path / "voice.opus").write_bytes(b"OggS\x00\x02" + b"\x00" * 32)
+        (tmp_path / "note.md").write_text("keep", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["note.md", "photo.png", "voice.opus"]
+
+        photo = next(item for item in items if item.external_id == "photo.png")
+        assert photo.metadata["media_kind"] == "image"
+        assert photo.metadata["enrich_pending"] is True
+        assert photo.metadata["media_ref_kind"] == "file"
+        # The body carries facts the FILE states, never a guess about content.
+        assert "photo.png" in photo.body
+
+        voice = next(item for item in items if item.external_id == "voice.opus")
+        assert voice.metadata["media_kind"] == "audio"
 
     async def test_an_explicit_extensions_config_still_wins(self, tmp_path: Path):
         (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
@@ -479,10 +507,19 @@ class TestLocalFolderDocuments:
         )
         assert items[0].title == "ledger"
 
-    async def test_a_document_holding_no_readable_text_is_skipped(
+    async def test_a_document_holding_no_readable_text_is_kept_but_marked(
         self, tmp_path: Path
     ):
-        """An item with an empty body is worse than no item: it ranks and lies."""
+        """An EMPTY body would rank and lie. A body of file facts does neither.
+
+        This replaces "skip it": a scanned invoice with no OCR layer is exactly
+        the document a person searches for by name and date, and dropping it
+        made it unfindable forever — there was no record for a later run, with
+        OCR available or the file repaired, to reclaim. The item therefore
+        carries what the file itself states plus an explicit
+        ``content_missing`` flag and the honest reason, and claims nothing
+        about content it has not read.
+        """
         import zipfile
 
         path = tmp_path / "scan.docx"
@@ -492,7 +529,13 @@ class TestLocalFolderDocuments:
         items = await _collect(
             LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
         )
-        assert [item.external_id for item in items] == ["real.md"]
+        assert [item.external_id for item in items] == ["real.md", "scan.docx"]
+
+        scan = next(item for item in items if item.external_id == "scan.docx")
+        assert scan.metadata["content_missing"] is True
+        assert scan.metadata["content_missing_reason"]
+        assert scan.body.strip(), "an empty body is the thing this must never produce"
+        assert "scan.docx" in scan.body
 
     async def test_the_plain_text_size_cap_does_not_apply_to_documents(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -506,12 +549,18 @@ class TestLocalFolderDocuments:
         assert [item.external_id for item in items] == ["ledger.docx"]
 
     async def test_a_broken_document_never_ends_the_walk(self, tmp_path: Path):
+        """The walk continuing is the point; what the broken file becomes is not.
+
+        Content decides now, so a text file misnamed ``.docx`` is read as the
+        text it is rather than discarded — the walk reaching ``b-good.md`` is
+        what this test exists to protect.
+        """
         (tmp_path / "a-broken.docx").write_bytes(b"not a zip")
         (tmp_path / "b-good.md").write_text("# Good", encoding="utf-8")
         items = await _collect(
             LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
         )
-        assert [item.external_id for item in items] == ["b-good.md"]
+        assert "b-good.md" in [item.external_id for item in items]
 
 
 # ---------------------------------------------------------------------------

@@ -70,7 +70,19 @@ def extract_document_text(path: Path) -> str | None:
 
     ``None`` covers every honest miss: oversized, encrypted, corrupt, a scan
     without a text layer, or an extractor that is not installed. Blocking.
+
+    **Delegates to** :func:`jarvis.ultrawiki.extract.extract_text`. This
+    function is kept for callers that predate the shared service and for the
+    ``None``-means-nothing contract they were written against; the parsing
+    below is gone rather than left as a second copy to drift. Reaching for the
+    shared service directly is preferred in new code — it reports WHY a file
+    yielded nothing, which this signature cannot express.
+
+    The import is local: ``extract`` imports this module's hardened XML parser,
+    so a module-level import here would be circular.
     """
+    from jarvis.ultrawiki.extract import extract_text  # noqa: PLC0415 — see above
+
     try:
         size = path.stat().st_size
     except OSError as exc:
@@ -84,12 +96,11 @@ def extract_document_text(path: Path) -> str | None:
             MAX_DOCUMENT_BYTES,
         )
         return None
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        return _clean(_pdf_text(path))
-    if suffix in (".docx", ".pptx"):
-        return _clean(_ooxml_text(path))
-    return None
+    result = extract_text(path, filename=path.name)
+    if not result.ok:
+        log.info("document yielded no text: %s (%s)", path, result.reason)
+        return None
+    return _clean(result.text)
 
 
 def _clean(text: str | None) -> str | None:

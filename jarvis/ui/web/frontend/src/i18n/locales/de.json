@@ -3195,9 +3195,13 @@
       "format_jsonl": "Datensatzabschnitte",
       "format_json": "Datendateien",
       "format_pdf": "PDF-Dokumente",
+      "format_document": "Dokumente und Präsentationen",
       "format_html": "Webseiten",
       "format_markdown": "Notizen",
-      "format_text": "Textdateien"
+      "format_text": "Textdateien",
+      "format_image": "Bilder",
+      "format_audio": "Aufnahmen",
+      "format_video": "Videos"
     },
     "picker": {
       "builtin_group": "Auf diesem Gerät",

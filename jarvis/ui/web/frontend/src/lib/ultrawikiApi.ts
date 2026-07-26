@@ -1010,9 +1010,13 @@ export const ULTRAWIKI_EXPORT_FORMATS = [
   "jsonl",
   "json",
   "pdf",
+  "document",
   "html",
   "markdown",
   "text",
+  "image",
+  "audio",
+  "video",
 ] as const;
 export type UltraWikiExportFormat = (typeof ULTRAWIKI_EXPORT_FORMATS)[number];
 

@@ -88,7 +88,9 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "ARCHIVE_FORMAT",
+    "CONTAINER_FORMATS",
     "EXPORT_FORMATS",
+    "TAR_FORMAT",
     "ExportImportConnector",
     "ScanReport",
     "chat_name_from_filename",
@@ -116,14 +118,46 @@ EXPORT_FORMATS: tuple[str, ...] = (
     "jsonl",
     "json",
     "pdf",
+    "document",
     "html",
     "markdown",
     "text",
+    "image",
+    "audio",
+    "video",
 )
 
-#: The one container format. Not in :data:`EXPORT_FORMATS` — it yields no
-#: items of its own, only the entries inside it.
+#: The container formats. Not in :data:`EXPORT_FORMATS` — they yield no items
+#: of their own, only the entries inside them.
 ARCHIVE_FORMAT = "zip"
+
+#: Google Takeout offers `.zip` AND `.tgz`, and the second used to be refused
+#: outright — so the user who clicked the default download was left holding a
+#: file this importer would not open.
+TAR_FORMAT = "tar"
+
+CONTAINER_FORMATS: tuple[str, ...] = (ARCHIVE_FORMAT, TAR_FORMAT)
+
+#: Suffixes whose bytes are a ZIP but whose CONTENT is one document. The one
+#: place the extension outranks the magic, and it has to: telling a `.docx`
+#: from a plain archive means reading the archive's member list, which the
+#: sniffer (which sees only the first few KB) cannot do. Getting this wrong is
+#: not cosmetic — a Word file would be walked as an archive and imported as a
+#: pile of its own internal XML parts.
+_DOCUMENT_EXTENSIONS: dict[str, str] = {
+    ".docx": "document", ".docm": "document",
+    ".xlsx": "document", ".xlsm": "document",
+    ".pptx": "document", ".pptm": "document",
+    ".odt": "document", ".ods": "document", ".odp": "document", ".odg": "document",
+    ".epub": "document",
+    ".rtf": "document",
+    ".doc": "document", ".xls": "document", ".ppt": "document",
+}
+
+#: Formats handed to the shared extractor rather than parsed here.
+_SHARED_EXTRACTOR_KINDS: frozenset[str] = frozenset(
+    {"docx", "xlsx", "pptx", "odf", "epub", "rtf", "legacy_office"}
+)
 
 _EXTENSION_FORMATS: dict[str, str] = {
     ".mbox": "mbox",
@@ -170,6 +204,21 @@ MAX_BUFFERED_ZIP_BYTES = 256 * 1024 * 1024
 #: archive. On disk it is opened by path and this cap never applies.
 MAX_BUFFERED_PDF_BYTES = 128 * 1024 * 1024
 
+#: An Office/OpenDocument/EPUB file is a ZIP the extractor must seek inside,
+#: so it is read whole. Generous — a slide deck with images is routinely
+#: 50 MB around a few pages of text — but never unbounded.
+MAX_BUFFERED_DOCUMENT_BYTES = 128 * 1024 * 1024
+
+#: Bytes read from a media file. EXIF sits in front of the image data, so the
+#: header is all that is needed — which is what keeps a folder of 4K video
+#: from being pulled through memory to learn a capture date.
+MEDIA_HEADER_BYTES = 512 * 1024
+
+#: One tar entry buffered in memory. A compressed tar has no central
+#: directory, so entries can only be read in order and cannot be re-opened;
+#: buffering is the only way to hand a parser a re-readable stream.
+MAX_BUFFERED_TAR_ENTRY_BYTES = 64 * 1024 * 1024
+
 #: Formats parsed from one whole in-memory string (calendar, contacts, JSON,
 #: HTML). Bigger than this is refused with an honest line rather than an
 #: out-of-memory kill; the streaming formats have no such limit.
@@ -206,11 +255,22 @@ SKIP_DIR_NAMES: frozenset[str] = frozenset({"__MACOSX", "node_modules"})
 # Detection
 # ---------------------------------------------------------------------------
 
+#: ``PK`` is handled ahead of this table (an office document is a ZIP), and a
+#: gzip stream resolves through its NAME because compression records nothing
+#: about what was compressed.
 _MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
     (b"%PDF-", "pdf"),
-    (b"PK\x03\x04", ARCHIVE_FORMAT),
     (b"BEGIN:VCALENDAR", "ics"),
     (b"BEGIN:VCARD", "vcard"),
+    (b"\x1f\x8b", "gzip_or_tar"),
+)
+
+#: Media formats this importer now carries through to the enrichment stage.
+_MEDIA_FORMATS: frozenset[str] = frozenset({"image", "audio", "video"})
+
+#: Double suffixes that mark a compressed stream as a tar archive.
+_TARBALL_SUFFIXES: tuple[str, ...] = (
+    ".tgz", ".tar.gz", ".taz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst"
 )
 
 #: An mbox opens with a ``From <envelope> <date>`` separator line, followed
@@ -292,19 +352,60 @@ def detect_format(name: str, head: bytes) -> str:
     if stripped.startswith(_UTF8_BOM):
         stripped = stripped[len(_UTF8_BOM) :]
     stripped = stripped.lstrip(b"\r\n \t")
+    suffix = Path(name).suffix.lower()
+
+    # A ZIP is the one case where the name has to win: every modern Office and
+    # OpenDocument file IS a ZIP, and walking one as an archive would import a
+    # Word document as a heap of its own internal XML.
+    if stripped.startswith(b"PK\x03\x04"):
+        return _DOCUMENT_EXTENSIONS.get(suffix, ARCHIVE_FORMAT)
+
     for prefix, fmt in _MAGIC_PREFIXES:
         if stripped[: len(prefix)].upper() == prefix.upper():
+            if fmt == "gzip_or_tar":
+                return TAR_FORMAT if _looks_like_tarball(name) else ""
             return fmt
     if _MBOX_MAGIC.match(stripped):
         return "mbox"
-    ext_format = _EXTENSION_FORMATS.get(Path(name).suffix.lower(), "")
+    ext_format = _EXTENSION_FORMATS.get(suffix, "")
     if ext_format in ("", "text", "markdown") and _looks_like_whatsapp(head):
         return "whatsapp"
-    if not ext_format and head and _is_probably_text(head):
+    if ext_format:
+        return ext_format
+
+    # Everything the shared extractor knows and this module never learned:
+    # photos, voice notes, video, Office documents saved without a helpful
+    # name, tar archives. One detector, so a format is supported once.
+    shared = _shared_kind(name, head)
+    if shared in _MEDIA_FORMATS:
+        return shared
+    if shared in _SHARED_EXTRACTOR_KINDS:
+        return "document"
+    if shared == "tar":
+        return TAR_FORMAT
+
+    if head and _is_probably_text(head):
         # A Takeout mail file has no suffix at all; anything that reads as
         # text is still worth importing as text rather than being dropped.
         return "text"
-    return ext_format
+    return ""
+
+
+def _shared_kind(name: str, head: bytes) -> str:
+    """What :mod:`jarvis.ultrawiki.extract` makes of these leading bytes."""
+    try:
+        from jarvis.ultrawiki.extract import detect_kind  # noqa: PLC0415 — lazy (AP-26)
+
+        return detect_kind(head, filename=name)
+    except Exception:  # noqa: BLE001 — a sniff never fails an import
+        log.debug("export import: shared detection failed for %s", name, exc_info=True)
+        return ""
+
+
+def _looks_like_tarball(name: str) -> bool:
+    """Whether a compressed stream's NAME says it wraps a tar archive."""
+    lowered = Path(name).name.lower()
+    return any(lowered.endswith(suffix) for suffix in _TARBALL_SUFFIXES)
 
 
 def _is_probably_text(head: bytes) -> bool:
@@ -468,6 +569,14 @@ class _Entry:
     #: Set only for on-disk files — a seekable original that ``pypdf`` and the
     #: whole-read parsers can use without buffering.
     disk_path: Path | None = None
+    #: Which container this came out of, if any (``zip`` / ``tar`` / ``""``).
+    archive_kind: str = ""
+    #: On-disk path of that container, empty when it is itself nested. Only a
+    #: ZIP on disk can be reopened entry by entry later, which is what the
+    #: enrichment stage needs to describe a photo inside an export.
+    archive_path: str = ""
+    #: The entry's name inside that container.
+    archive_entry: str = ""
 
 
 def _sorted_disk_files(root: Path) -> list[tuple[str, Path]]:
@@ -546,6 +655,19 @@ def _entries_for_disk_file(
             budget=budget,
             depth=depth + 1,
             label=key,
+            archive_path=str(path.resolve()),
+        )
+        return
+    if fmt == TAR_FORMAT:
+        report.archives["files"] += 1
+        yield from _entries_for_tar(
+            lambda: path.open("rb"),
+            origin=key,
+            prefix="",
+            report=report,
+            budget=budget,
+            depth=depth + 1,
+            label=key,
         )
         return
     if not fmt:
@@ -588,6 +710,7 @@ def _entries_for_zip(
     budget: _Budget,
     depth: int,
     label: str,
+    archive_path: str = "",
 ) -> Iterator[_Entry]:
     """Walk one archive's entries as streams — nothing is written to disk."""
     if depth > MAX_ZIP_DEPTH:
@@ -639,14 +762,15 @@ def _entries_for_zip(
                 report.refuse(key, str(exc))
                 continue
             fmt = detect_format(parts[-1], head)
-            if fmt == ARCHIVE_FORMAT:
+            if fmt in CONTAINER_FORMATS:
                 buffered = _buffer_zip_entry(
                     archive, info, key, report, MAX_BUFFERED_ZIP_BYTES, "archive"
                 )
                 if buffered is None:
                     continue
                 report.archives["files"] += 1
-                yield from _entries_for_zip(
+                walk = _entries_for_zip if fmt == ARCHIVE_FORMAT else _entries_for_tar
+                yield from walk(
                     lambda data=buffered: io.BytesIO(data),
                     origin=origin,
                     prefix=f"{full_inner}!",
@@ -669,7 +793,156 @@ def _entries_for_zip(
                 fmt=fmt,
                 timestamp_utc=_zip_entry_timestamp(info),
                 open_binary=opener,
+                archive_kind=ARCHIVE_FORMAT,
+                archive_path=archive_path,
+                archive_entry=inner,
             )
+
+
+def _entries_for_tar(
+    open_archive: Callable[[], IO[bytes]],
+    *,
+    origin: str,
+    prefix: str,
+    report: ScanReport,
+    budget: _Budget,
+    depth: int,
+    label: str,
+) -> Iterator[_Entry]:
+    """Walk a tar (plain or compressed) as a forward-only stream.
+
+    The honest differences from the ZIP walk, all forced by the format:
+
+    * **Order is the archive's, not sorted.** A compressed tar has no central
+      directory, so the entries can only be read in the order they were
+      written. Resume therefore restarts at the archive, which is safe because
+      every re-read upserts as ``unchanged`` on ``(source_id, external_id)``.
+    * **Each entry is buffered** under :data:`MAX_BUFFERED_TAR_ENTRY_BYTES`.
+      A stream member cannot be re-opened, and the parsers need to read a
+      member more than once (sniff, then parse).
+    * **A member is never written to disk**, and paths are flattened, so a
+      hostile ``../`` entry cannot escape anywhere — there is nowhere to
+      escape TO.
+    """
+    import tarfile  # noqa: PLC0415 — lazy (AP-26): only a tar import pays for it
+
+    if depth > MAX_ZIP_DEPTH:
+        report.note(
+            f"'{label}' contains archives nested deeper than {MAX_ZIP_DEPTH} "
+            "levels; those were left unread."
+        )
+        return
+    report.archives["max_depth"] = max(report.archives["max_depth"], depth)
+    try:
+        # "r|*" is the STREAM mode: no seeking, so it works on a compressed
+        # archive and on a member of another archive alike.
+        archive = tarfile.open(fileobj=open_archive(), mode="r|*")
+    except (OSError, tarfile.TarError, RuntimeError, EOFError) as exc:
+        report.refuse(label, f"{type(exc).__name__}: {exc}")
+        return
+    with archive:
+        try:
+            yield from _tar_members(
+                archive,
+                origin=origin,
+                prefix=prefix,
+                report=report,
+                budget=budget,
+                depth=depth,
+                label=label,
+            )
+        except (OSError, tarfile.TarError, RuntimeError, EOFError) as exc:
+            # A truncated download is the normal way this ends. Everything
+            # read up to here is kept.
+            report.refuse(label, f"{type(exc).__name__}: {exc}")
+
+
+def _tar_members(
+    archive: Any,
+    *,
+    origin: str,
+    prefix: str,
+    report: ScanReport,
+    budget: _Budget,
+    depth: int,
+    label: str,
+) -> Iterator[_Entry]:
+    for member in archive:
+        if not member.isfile():
+            continue
+        inner = str(member.name).replace("\\", "/")
+        parts = [part for part in inner.split("/") if part and part != "."]
+        if not parts or any(
+            part.startswith(".") or part in SKIP_DIR_NAMES or part == ".."
+            for part in parts
+        ):
+            continue
+        if not budget.take(int(member.size)):
+            report.archives["budget_exhausted"] = True
+            report.note(
+                "The archive expands to more than "
+                f"{ZIP_UNCOMPRESSED_BUDGET // (1024**3)} GB; reading stopped "
+                "there so the import cannot be used to fill this machine's "
+                "disk or memory."
+            )
+            return
+        report.archives["entries"] += 1
+        full_inner = f"{prefix}{inner}"
+        key = f"{origin}!{full_inner}"
+        if int(member.size) > MAX_BUFFERED_TAR_ENTRY_BYTES:
+            report.refuse(
+                key,
+                "an entry inside a tar archive has to be held in memory to be "
+                f"read, and this one is larger than "
+                f"{MAX_BUFFERED_TAR_ENTRY_BYTES // (1024 * 1024)} MB; unpack "
+                "the archive and import the folder instead",
+            )
+            continue
+        try:
+            handle = archive.extractfile(member)
+            payload = b"" if handle is None else handle.read()
+        except Exception as exc:  # noqa: BLE001 — one bad member, not the archive
+            report.refuse(key, f"{type(exc).__name__}: {exc}")
+            continue
+        fmt = detect_format(parts[-1], payload[:SNIFF_BYTES])
+        if fmt in CONTAINER_FORMATS:
+            report.archives["files"] += 1
+            walk = _entries_for_zip if fmt == ARCHIVE_FORMAT else _entries_for_tar
+            yield from walk(
+                lambda data=payload: io.BytesIO(data),
+                origin=origin,
+                prefix=f"{full_inner}!",
+                report=report,
+                budget=budget,
+                depth=depth + 1,
+                label=key,
+            )
+            continue
+        if not fmt:
+            report.count_unknown(parts[-1], int(member.size))
+            continue
+        report.count_file(fmt, int(member.size))
+        yield _Entry(
+            origin=origin,
+            key=key,
+            name=parts[-1],
+            permalink=f"file:///{quote(label)}#{quote(full_inner)}",
+            size=int(member.size),
+            fmt=fmt,
+            timestamp_utc=_tar_member_timestamp(member),
+            open_binary=lambda data=payload: io.BytesIO(data),
+            archive_kind=TAR_FORMAT,
+            archive_entry=inner,
+        )
+
+
+def _tar_member_timestamp(member: Any) -> str:
+    try:
+        return datetime.fromtimestamp(int(member.mtime), tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ""
 
 
 def _zip_base_uri(open_archive: Callable[[], IO[bytes]], label: str) -> str:
@@ -1610,6 +1883,177 @@ def _whatsapp_item(
     )
 
 
+# --- Documents and media, through the shared extractor ----------------------
+
+
+def _parse_document(entry: _Entry, report: ScanReport) -> Iterator[RawItem]:
+    """One Office / OpenDocument / EPUB file, read by the shared service.
+
+    Not parsed here on purpose: those formats are supported once, in
+    :mod:`jarvis.ultrawiki.extract`, so a folder walk and a dropped export
+    read the same file identically. A file that yields no text is still
+    stored, carrying the honest reason — a later run with the missing extra
+    installed can then reclaim it instead of it never having existed.
+    """
+    from jarvis.ultrawiki.extract import extract_text  # noqa: PLC0415 — lazy (AP-26)
+
+    source = _entry_bytes(entry, report, MAX_BUFFERED_DOCUMENT_BYTES, "document")
+    if source is None:
+        return
+    result = extract_text(source, filename=entry.name)
+    if result.ok:
+        yield _item(
+            entry,
+            natural_id="",
+            body=result.text,
+            title=_document_title(entry, result.text),
+            metadata={"document_kind": result.kind, **result.meta},
+        )
+        return
+    yield _item(
+        entry,
+        natural_id="",
+        body=_file_facts(entry, {}),
+        title=Path(entry.name).stem,
+        metadata={
+            "document_kind": result.kind,
+            "content_missing": True,
+            "content_missing_reason": result.reason,
+        },
+    )
+
+
+def _parse_media(entry: _Entry, report: ScanReport) -> Iterator[RawItem]:
+    """A photo, recording or video: stored now, understood later.
+
+    The body holds only what the FILE states — name, folder, capture date,
+    camera, coordinates. That is enough to find it by time or place
+    immediately, and it claims nothing about what the picture shows.
+    """
+    from jarvis.ultrawiki.extract import extract_text  # noqa: PLC0415 — lazy (AP-26)
+
+    # Only the header is needed (EXIF sits in front of the image data), which
+    # is what keeps a folder of 4K video from being read into memory.
+    source = _entry_bytes(entry, report, MEDIA_HEADER_BYTES, "media header", partial=True)
+    if source is None:
+        return
+    result = extract_text(source, filename=entry.name)
+    facts = dict(result.meta)
+    metadata: dict[str, Any] = {
+        "media_kind": entry.fmt,
+        "enrich_pending": True,
+        **facts,
+    }
+    reference = _media_reference(entry)
+    if reference is not None:
+        metadata.update(reference.as_metadata())
+    else:
+        # Honest rather than silent: a tar entry cannot be reopened without
+        # decompressing the whole stream again, so nothing will describe it.
+        metadata["enrich_pending"] = False
+        metadata["enrich_blocked_reason"] = (
+            "this file came out of a tar archive, which cannot be reopened "
+            "entry by entry; import the same export as a .zip, or unpack it "
+            "first, to have it described"
+        )
+    captured = str(facts.get("captured_at") or "")
+    yield _item(
+        entry,
+        natural_id="",
+        body=_file_facts(entry, facts),
+        title=Path(entry.name).stem,
+        timestamp_utc=captured or entry.timestamp_utc,
+        metadata=metadata,
+    )
+
+
+def _media_reference(entry: _Entry) -> Any:
+    """A reopenable reference for this entry, or ``None`` when there is none."""
+    from jarvis.ultrawiki.media import MediaRef  # noqa: PLC0415 — lazy (AP-26)
+
+    if entry.disk_path is not None:
+        return MediaRef(kind="file", path=str(entry.disk_path.resolve()))
+    if entry.archive_kind == ARCHIVE_FORMAT and entry.archive_path:
+        return MediaRef(
+            kind="zip-entry", path=entry.archive_path, entry=entry.archive_entry
+        )
+    return None
+
+
+def _document_title(entry: _Entry, text: str) -> str:
+    heading = _H1_RE.search(text[:4000])
+    if heading:
+        return heading.group(1).strip()[:200]
+    return Path(entry.name).stem
+
+
+def _file_facts(entry: _Entry, facts: dict[str, Any]) -> str:
+    """What is known about a file before anything has read its content.
+
+    Every line comes from the file itself. Never a guess — an item that
+    speculates about content it has not read is worse than no item at all.
+    """
+    lines = [f"File: {entry.name}"]
+    folder = Path(entry.key.replace("!", "/")).parent.name
+    if folder:
+        lines.append(f"Folder: {folder}")
+    for label, key in (("Taken", "captured_at"), ("Camera", "camera")):
+        value = facts.get(key)
+        if value:
+            lines.append(f"{label}: {value}")
+    latitude, longitude = facts.get("latitude"), facts.get("longitude")
+    if latitude is not None and longitude is not None:
+        lines.append(f"Location: {latitude}, {longitude}")
+    return "\n".join(lines)
+
+
+def _entry_bytes(
+    entry: _Entry,
+    report: ScanReport,
+    limit: int,
+    what: str,
+    *,
+    partial: bool = False,
+) -> Any:
+    """The entry's bytes, or its path when it has one. ``None`` when refused.
+
+    A path is preferred wherever it exists: the extractors that can stream
+    (PDF above all) then never hold the file in memory. ``partial`` reads only
+    the leading ``limit`` bytes instead of refusing an oversized file, which is
+    what a media header needs.
+    """
+    if entry.disk_path is not None:
+        if partial:
+            try:
+                with entry.disk_path.open("rb") as stream:
+                    return stream.read(limit)
+            except OSError as exc:
+                report.refuse(entry.key, f"{type(exc).__name__}: {exc}")
+                return None
+        if entry.size > limit:
+            report.refuse(
+                entry.key,
+                f"the {what} is larger than {limit // (1024 * 1024)} MB",
+            )
+            return None
+        return entry.disk_path
+    try:
+        with entry.open_binary() as stream:
+            data = stream.read(limit if partial else limit + 1)
+    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        report.refuse(entry.key, f"{type(exc).__name__}: {exc}")
+        return None
+    if not partial and len(data) > limit:
+        report.refuse(
+            entry.key,
+            f"the {what} inside the archive is larger than "
+            f"{limit // (1024 * 1024)} MB, which is more than this import will "
+            "hold in memory at once",
+        )
+        return None
+    return data
+
+
 _PARSERS: dict[str, Callable[[_Entry, ScanReport], Iterator[RawItem]]] = {
     "mbox": _parse_mbox,
     "eml": _parse_eml,
@@ -1621,9 +2065,13 @@ _PARSERS: dict[str, Callable[[_Entry, ScanReport], Iterator[RawItem]]] = {
     "jsonl": _parse_jsonl,
     "json": _parse_json,
     "pdf": _parse_pdf,
+    "document": _parse_document,
     "html": _parse_html,
     "markdown": _parse_text,
     "text": _parse_text,
+    "image": _parse_media,
+    "audio": _parse_media,
+    "video": _parse_media,
 }
 
 

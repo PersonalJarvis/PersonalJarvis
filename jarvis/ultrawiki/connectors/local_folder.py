@@ -41,11 +41,14 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jarvis.ultrawiki.document_text import (
+from jarvis.ultrawiki.extract import (
     DOCUMENT_EXTENSIONS,
-    extract_document_text,
-    is_document,
+    MEDIA_EXTENSIONS,
+    MEDIA_KINDS,
+    detect_kind,
+    extract_text,
 )
+from jarvis.ultrawiki.media import MediaRef
 from jarvis.ultrawiki.types import (
     AuthKind,
     ConnectorCapabilities,
@@ -198,6 +201,17 @@ _CODE_EXTENSIONS = (
     ".gradle",
 )
 
+#: Formats whose SIZE says nothing about how much text they hold. A 30 MB PDF
+#: is mostly layout and images around a few pages of prose, so judging it by
+#: the plain-text ceiling would drop every real document.
+_LARGE_DOCUMENT_KINDS: frozenset[str] = frozenset(
+    {"pdf", "docx", "xlsx", "pptx", "odf", "epub", "rtf"}
+)
+
+#: Absolute ceiling for anything read as a whole document, media excluded.
+#: Far above the text limit, far below what could exhaust a small VPS.
+MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
+
 #: Files stat'ed + read per worker-thread hop. Filesystem I/O must never run
 #: on the event loop (it also serves voice and chat), but one hop per file
 #: would pay the handoff thousands of times over a real vault — a small batch
@@ -264,7 +278,8 @@ class LocalFolderConnector:
         *_DATA_EXTENSIONS,
         *_MARKUP_EXTENSIONS,
         *_CODE_EXTENSIONS,
-        *DOCUMENT_EXTENSIONS,
+        *sorted(DOCUMENT_EXTENSIONS),
+        *sorted(MEDIA_EXTENSIONS),
     )
     #: Directory names skipped in addition to hidden (dot-prefixed) ones.
     SKIP_DIR_NAMES: frozenset[str] = NOISE_DIR_NAMES
@@ -461,31 +476,6 @@ class LocalFolderConnector:
                 items.append(item)
         return items
 
-    def _body_for(self, path: Path, size: int) -> str | None:
-        """The file's text, or ``None`` when there is none worth an item.
-
-        Two different reads behind one call: an opaque document goes through
-        an extractor (and carries its own, far larger size ceiling — a PDF is
-        mostly layout, and judging it by the plain-text limit would drop every
-        real one), everything else is read as UTF-8 with replacement.
-        """
-        if is_document(path):
-            return extract_document_text(path)
-        if size > self.MAX_FILE_BYTES:
-            log.info(
-                "%s: skipping %s (%d bytes exceeds the %d-byte limit)",
-                self.id,
-                path,
-                size,
-                self.MAX_FILE_BYTES,
-            )
-            return None
-        try:
-            return path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            log.debug("%s: read failed for %s: %s", self.id, path, exc)
-            return None
-
     def _mtime_ns(self, path: Path) -> int | None:
         try:
             return path.stat().st_mtime_ns
@@ -494,21 +484,142 @@ class LocalFolderConnector:
             return None
 
     def _item_for(self, root: Path, path: Path) -> RawItem | None:
+        """One file as an item, whatever kind of file it turns out to be.
+
+        Everything goes through the one shared extractor. Three outcomes:
+
+        * **text came out** — the ordinary case.
+        * **it is a photo, recording or video** — stored with what the file
+          says about ITSELF (name, folder, capture date, camera, place) so it
+          is findable immediately, and marked for the enrichment stage to
+          describe later. Deliberately not skipped: a photo library is the
+          largest and most personal thing most people own.
+        * **text could exist but did not come out** — a scan with no OCR
+          layer, a format needing an uninstalled extra. Stored with the honest
+          reason, so a later run can reclaim it rather than the file silently
+          never having existed.
+        """
         try:
             stat = path.stat()
         except OSError as exc:
             log.debug("%s: stat failed for %s: %s", self.id, path, exc)
             return None
-        body = self._body_for(path, stat.st_size)
-        if body is None:
+
+        kind = self._detect(path)
+        if kind in MEDIA_KINDS:
+            return self._media_item(root, path, stat, kind)
+
+        # The size ceiling is a TEXT ceiling and is checked only here: a photo
+        # or video is never read whole (only its header is), so judging it by
+        # the plain-text limit would drop every real one.
+        if kind not in _LARGE_DOCUMENT_KINDS and stat.st_size > self.MAX_FILE_BYTES:
+            log.info(
+                "%s: skipping %s (%d bytes exceeds the %d-byte limit)",
+                self.id,
+                path,
+                stat.st_size,
+                self.MAX_FILE_BYTES,
+            )
             return None
+        if stat.st_size > MAX_DOCUMENT_BYTES:
+            log.info(
+                "%s: skipping %s (%d bytes exceeds the %d-byte document limit)",
+                self.id,
+                path,
+                stat.st_size,
+                MAX_DOCUMENT_BYTES,
+            )
+            return None
+
+        result = extract_text(path, filename=path.name)
+        if result.ok:
+            return self._build_item(root, path, stat, result.text, {})
+        if result.content_missing:
+            return self._build_item(
+                root,
+                path,
+                stat,
+                self._placeholder_body(path, {}),
+                {"content_missing": True, "content_missing_reason": result.reason},
+            )
+        return None
+
+    def _detect(self, path: Path) -> str:
+        """The file's real kind, read from its first bytes. ``""`` on any error."""
+        try:
+            return detect_kind(path, filename=path.name)
+        except Exception:  # noqa: BLE001 — an unreadable file is skipped, not raised
+            log.debug("%s: could not identify %s", self.id, path, exc_info=True)
+            return ""
+
+    def _media_item(
+        self, root: Path, path: Path, stat: os.stat_result, kind: str
+    ) -> RawItem | None:
+        result = extract_text(path, filename=path.name)
+        facts = dict(result.meta)
+        metadata: dict[str, object] = {
+            "media_kind": kind,
+            "enrich_pending": True,
+            **facts,
+            **MediaRef(kind="file", path=str(path.resolve())).as_metadata(),
+        }
+        # The camera's own date beats the filesystem's: a file's mtime is the
+        # day it was COPIED, so an album restored from a backup would otherwise
+        # collapse onto one meaningless afternoon.
+        captured = str(facts.get("captured_at") or "")
+        return self._build_item(
+            root,
+            path,
+            stat,
+            self._placeholder_body(path, facts),
+            metadata,
+            timestamp_utc=captured or iso_utc_from_timestamp(stat.st_mtime),
+        )
+
+    def _placeholder_body(self, path: Path, facts: dict[str, object]) -> str:
+        """What is known about a file before anything has read its content.
+
+        Every line is a fact the file itself carries — never a guess. That is
+        what makes it safe to index: a search for a month, a camera or a folder
+        finds the picture, and nothing claims to know what is in it.
+        """
+        lines = [f"File: {path.name}"]
+        parent = path.parent.name
+        if parent:
+            lines.append(f"Folder: {parent}")
+        for label, key in (
+            ("Taken", "captured_at"),
+            ("Camera", "camera"),
+        ):
+            value = facts.get(key)
+            if value:
+                lines.append(f"{label}: {value}")
+        latitude, longitude = facts.get("latitude"), facts.get("longitude")
+        if latitude is not None and longitude is not None:
+            lines.append(f"Location: {latitude}, {longitude}")
+        return "\n".join(lines)
+
+    def _build_item(
+        self,
+        root: Path,
+        path: Path,
+        stat: os.stat_result,
+        body: str,
+        extra: dict[str, object],
+        *,
+        timestamp_utc: str = "",
+    ) -> RawItem:
         return RawItem(
             external_id=self._external_id_for(root, path),
             body=body,
             permalink=path.resolve().as_uri(),
-            timestamp_utc=iso_utc_from_timestamp(stat.st_mtime),
+            timestamp_utc=timestamp_utc or iso_utc_from_timestamp(stat.st_mtime),
             title=self._title_for(path, body),
-            metadata={"mtime_ns": stat.st_mtime_ns, "size_bytes": stat.st_size},
+            metadata={
+                "mtime_ns": stat.st_mtime_ns,
+                "size_bytes": stat.st_size,
+                **extra,
+            },
         )
 
 

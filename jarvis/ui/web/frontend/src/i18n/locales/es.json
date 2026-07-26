@@ -3180,9 +3180,13 @@
       "format_jsonl": "bloques de registros",
       "format_json": "archivos de datos",
       "format_pdf": "documentos PDF",
+      "format_document": "documentos y presentaciones",
       "format_html": "páginas web",
       "format_markdown": "notas",
-      "format_text": "archivos de texto"
+      "format_text": "archivos de texto",
+      "format_image": "imágenes",
+      "format_audio": "grabaciones",
+      "format_video": "vídeos"
     },
     "picker": {
       "builtin_group": "En este equipo",

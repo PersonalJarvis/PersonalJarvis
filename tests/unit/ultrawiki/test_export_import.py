@@ -747,3 +747,167 @@ class TestFormatParity:
                 assert isinstance(label, str) and label.strip(), (
                     f"{name} has no label for the {fmt} format"
                 )
+
+
+# ---------------------------------------------------------------------------
+# The half of Google Takeout that used to be refused
+# ---------------------------------------------------------------------------
+
+
+def _tar_fixture(target: Path, members: dict[str, bytes], *, compress: bool) -> Path:
+    """A tar written at test time, gzipped or not."""
+    import io
+    import tarfile
+
+    mode = "w:gz" if compress else "w"
+    with tarfile.open(target, mode) as archive:
+        for name, payload in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            info.mtime = 1_700_000_000
+            archive.addfile(info, io.BytesIO(payload))
+    return target
+
+
+class TestTarArchives:
+    """Takeout offers .zip AND .tgz, and .tgz used to be turned away.
+
+    A compressed tar has no central directory, so it can only be read forward
+    — which is why it needs its own walk rather than reusing the ZIP one.
+    """
+
+    async def test_a_gzipped_tar_is_walked_like_any_other_archive(self, tmp_path):
+        _tar_fixture(
+            tmp_path / "takeout-20240101.tgz",
+            {
+                "Takeout/Notes/readme.md": b"# Readme\n\nThe project notes.",
+                "Takeout/Contacts/all.vcf": (
+                    b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\nEND:VCARD\r\n"
+                ),
+            },
+            compress=True,
+        )
+        items = await _items(tmp_path)
+        assert {item.metadata["format"] for item in items} == {"markdown", "vcard"}
+        assert any("Ada Lovelace" in item.body for item in items)
+        # Nothing was unpacked next to the archive.
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["takeout-20240101.tgz"]
+
+    async def test_a_plain_tar_is_recognised_by_content_not_by_name(self, tmp_path):
+        """The magic sits at offset 257, so even a misnamed tar is walked."""
+        _tar_fixture(
+            tmp_path / "archive.bin",
+            {"notes/readme.md": b"# Readme\n\nStill readable."},
+            compress=False,
+        )
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["markdown"]
+
+    async def test_an_entry_too_large_to_buffer_is_refused_with_a_reason(
+        self, tmp_path, monkeypatch
+    ):
+        """Refusing loudly beats an unbounded read; the rest still imports."""
+        import jarvis.ultrawiki.connectors.export_import as module
+
+        monkeypatch.setattr(module, "MAX_BUFFERED_TAR_ENTRY_BYTES", 32)
+        _tar_fixture(
+            tmp_path / "big.tgz",
+            {
+                "huge.md": b"# Huge\n\n" + b"x" * 500,
+                "small.md": b"# Small\n\nfine",
+            },
+            compress=True,
+        )
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["markdown"]
+        assert "Small" in items[0].body
+
+        report = scan_export(tmp_path / "big.tgz")
+        assert any("huge.md" in row["path"] for row in report["unreadable"])
+
+    async def test_a_truncated_archive_keeps_everything_read_so_far(self, tmp_path):
+        """A half-finished download is the normal way this ends."""
+        full = _tar_fixture(
+            tmp_path / "full.tgz",
+            {f"notes/n{index}.md": b"# Note\n\nbody" for index in range(20)},
+            compress=True,
+        )
+        data = full.read_bytes()
+        (tmp_path / "full.tgz").write_bytes(data[: len(data) // 2])
+        items = await _items(tmp_path)
+        # Some prefix survived and nothing raised.
+        assert all(item.metadata["format"] == "markdown" for item in items)
+
+
+# ---------------------------------------------------------------------------
+# Documents and media through the shared extractor
+# ---------------------------------------------------------------------------
+
+
+def _docx_bytes(paragraphs: list[str]) -> bytes:
+    import io
+
+    body = "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" for text in paragraphs)
+    document = (
+        '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+        f'wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>'
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", document)
+    return buffer.getvalue()
+
+
+class TestDocumentsAndMedia:
+    async def test_a_word_file_in_a_drop_is_read_not_walked_as_an_archive(
+        self, tmp_path
+    ):
+        """Every modern Office file IS a zip. Walking one would import a
+        document as a heap of its own internal XML parts."""
+        (tmp_path / "contract.docx").write_bytes(
+            _docx_bytes(["The quarterly ledger", "reconciliation lives here."])
+        )
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["document"]
+        assert "quarterly ledger" in items[0].body
+        assert "word/document.xml" not in items[0].external_id
+
+    async def test_a_photo_in_a_drop_is_captured_and_marked_for_description(
+        self, tmp_path
+    ):
+        (tmp_path / "IMG_0001.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["image"]
+        item = items[0]
+        assert item.metadata["media_kind"] == "image"
+        assert item.metadata["enrich_pending"] is True
+        assert item.metadata["media_ref_kind"] == "file"
+        assert "IMG_0001.png" in item.body
+
+    async def test_a_photo_inside_a_zip_can_still_be_reopened_later(self, tmp_path):
+        """Describing it happens days later, in another process — the item has
+        to carry a way back to the exact bytes."""
+        archive_path = tmp_path / "takeout.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("Photos/beach.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["image"]
+        assert items[0].metadata["media_ref_kind"] == "zip-entry"
+        assert items[0].metadata["media_ref_entry"] == "Photos/beach.png"
+        assert Path(items[0].metadata["media_ref_path"]).name == "takeout.zip"
+
+    async def test_a_photo_inside_a_tar_says_why_it_cannot_be_described(
+        self, tmp_path
+    ):
+        """Silence would be the bug: a tar entry cannot be reopened, so the
+        item states that instead of waiting forever in a queue."""
+        _tar_fixture(
+            tmp_path / "photos.tgz",
+            {"Photos/beach.png": b"\x89PNG\r\n\x1a\n" + b"\x00" * 64},
+            compress=True,
+        )
+        items = await _items(tmp_path)
+        assert [item.metadata["format"] for item in items] == ["image"]
+        assert items[0].metadata["enrich_pending"] is False
+        assert items[0].metadata["enrich_blocked_reason"]

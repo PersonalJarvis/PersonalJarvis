@@ -124,10 +124,19 @@ class TestWordAndSlides:
             archive.writestr("[Content_Types].xml", "<Types/>")
         assert extract_document_text(path) is None
 
-    def test_a_docx_that_is_not_a_zip_is_skipped_not_raised(self, tmp_path: Path):
+    def test_a_docx_that_is_not_a_zip_is_read_as_what_it_actually_is(
+        self, tmp_path: Path
+    ):
+        """Not raising is the requirement; discarding it was never the point.
+
+        Since this delegates to the shared extractor, content decides and the
+        name is only a hint — so a text file somebody saved as ``.docx`` (an
+        everyday mistake) now yields its text instead of being dropped. The
+        contract this test guards is "never raises", and that still holds.
+        """
         path = tmp_path / "broken.docx"
         path.write_bytes(b"this is not a zip at all")
-        assert extract_document_text(path) is None
+        assert extract_document_text(path) == "this is not a zip at all"
 
     def test_malformed_xml_inside_a_docx_is_skipped_not_raised(self, tmp_path: Path):
         path = _make_docx(tmp_path / "torn.docx", document_xml="<w:document><w:body>")
@@ -146,19 +155,33 @@ class TestHostileDocuments:
     """
 
     def test_an_entity_bomb_is_refused_rather_than_expanded(self, tmp_path: Path):
+        """Nine levels of ten: one billion characters if anything expands it.
+
+        The assertion is on the SIZE of what comes back, not on it being
+        ``None``. Returning nothing was how the old parser happened to survive
+        a bomb; surviving is the actual requirement, and the shared extractor
+        reaches it differently — the declaration is refused, so the reference
+        stays an inert nine characters of raw text. A test pinned to ``None``
+        would have failed a change that is equally safe and strictly better at
+        salvaging damaged files.
+        """
+        declarations = ['<!ENTITY lol "lol">']
+        for level in range(1, 10):
+            previous = "lol" if level == 1 else f"lol{level - 1}"
+            declarations.append(
+                f'<!ENTITY lol{level} "' + f"&{previous};" * 10 + '">'
+            )
         bomb = (
             '<?xml version="1.0"?>'
-            "<!DOCTYPE lolz ["
-            ' <!ENTITY lol "lol">'
-            ' <!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
-            ' <!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">'
-            "]>"
+            "<!DOCTYPE lolz [" + "".join(declarations) + "]>"
             '<w:document xmlns:w="http://schemas.openxmlformats.org/'
-            'wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>&lol2;'
+            'wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>&lol9;'
             "</w:t></w:r></w:p></w:body></w:document>"
         )
         path = _make_docx(tmp_path / "bomb.docx", document_xml=bomb)
-        assert extract_document_text(path) is None
+        text = extract_document_text(path) or ""
+        assert len(text) < 1000, "the entity expanded — this is the bomb going off"
+        assert "lollollol" not in text
 
     def test_a_clean_document_still_parses_after_the_hardening(
         self, tmp_path: Path
