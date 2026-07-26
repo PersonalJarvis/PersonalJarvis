@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // jsdom ships no ResizeObserver, and the workspace grid measures itself with
@@ -9,7 +15,8 @@ class ResizeObserverPolyfill {
   disconnect(): void {}
 }
 if (typeof globalThis.ResizeObserver === "undefined") {
-  globalThis.ResizeObserver = ResizeObserverPolyfill as unknown as typeof ResizeObserver;
+  globalThis.ResizeObserver =
+    ResizeObserverPolyfill as unknown as typeof ResizeObserver;
 }
 
 // Identity translator so rendered text equals the i18n key.
@@ -59,6 +66,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   forgetResumeOffer: vi.fn(),
   fetchWorkspaces: vi.fn(),
   activateWorkspace: vi.fn(),
+  renameWorkspace: vi.fn(),
   closeWorkspace: vi.fn(),
   fetchNativePickerSupport: vi.fn(),
   openNativePicker: vi.fn(),
@@ -117,7 +125,8 @@ function stateWith(session: api.SessionState): api.IdeState {
         name: session.project.name,
         branch: session.project.branch,
         terminals: session.terminals.length,
-        live_terminals: session.terminals.filter((t) => t.status === "live").length,
+        live_terminals: session.terminals.filter((t) => t.status === "live")
+          .length,
         focus_mode: session.focus_mode,
         created_at: session.created_at,
         last_active_at: session.created_at,
@@ -131,45 +140,51 @@ function stateWith(session: api.SessionState): api.IdeState {
 
 const NO_OFFER: api.ResumeOffer = {
   available: false,
-  folder: "",
-  folder_name: "",
-  folder_exists: false,
   saved_at: 0,
-  session_id: "",
+  workspace_count: 0,
+  terminal_count: 0,
   resumable_count: 0,
-  terminals: [],
+  workspaces: [],
 };
 
 const PREVIOUS_WORKSPACE: api.ResumeOffer = {
   available: true,
-  folder: "/work/project",
-  folder_name: "project",
-  folder_exists: true,
   saved_at: 1_753_473_600,
-  session_id: "ide_old",
+  workspace_count: 1,
+  terminal_count: 2,
   resumable_count: 1,
-  terminals: [
+  workspaces: [
     {
-      key: "mika",
-      name: "Mika",
-      agent: "claude",
-      display_name: "Claude Code",
-      column: 0,
-      slot: 0,
+      session_id: "ide_old",
+      folder: "/work/project",
+      folder_name: "project",
+      folder_exists: true,
       available: true,
-      resumable: true,
-      prompts_sent: 2,
-    },
-    {
-      key: "nova",
-      name: "Nova",
-      agent: "claude",
-      display_name: "Claude Code",
-      column: 1,
-      slot: 0,
-      available: true,
-      resumable: false,
-      prompts_sent: 0,
+      resumable_count: 1,
+      terminals: [
+        {
+          key: "alex",
+          name: "Alex",
+          agent: "claude",
+          display_name: "Claude Code",
+          column: 0,
+          slot: 0,
+          available: true,
+          resumable: true,
+          prompts_sent: 2,
+        },
+        {
+          key: "blake",
+          name: "Blake",
+          agent: "claude",
+          display_name: "Claude Code",
+          column: 1,
+          slot: 0,
+          available: true,
+          resumable: false,
+          prompts_sent: 0,
+        },
+      ],
     },
   ],
 };
@@ -222,7 +237,12 @@ beforeEach(() => {
     path: null,
     parent: null,
     entries: [
-      { name: "project", path: "/work/project", is_project: true, is_repo: true },
+      {
+        name: "project",
+        path: "/work/project",
+        is_project: true,
+        is_repo: true,
+      },
     ],
     device_name: "Rubens MacBook",
   });
@@ -254,7 +274,9 @@ describe("Agentic IDE wizard", () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
-    const next = screen.getByRole("button", { name: /next/i }) as HTMLButtonElement;
+    const next = screen.getByRole("button", {
+      name: /next/i,
+    }) as HTMLButtonElement;
     expect(next.disabled).toBe(true);
 
     fireEvent.click(await screen.findByRole("button", { name: /project/i }));
@@ -262,7 +284,9 @@ describe("Agentic IDE wizard", () => {
   });
 
   it("walks folder → count → agents → start and opens the workspace", async () => {
-    vi.mocked(api.startIdeSession).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
+    vi.mocked(api.startIdeSession).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
@@ -291,10 +315,11 @@ describe("Agentic IDE wizard", () => {
   });
 
   /**
-   * Drive the wizard to the count step with a workspace of ``width`` pixels,
-   * choose ``n`` through a preset or Custom Terminals, and return its dot grid.
+   * Drive the wizard to the count step in a workspace of ``width`` pixels, set
+   * the count to ``n``, and return the stage — the miniature of the workspace
+   * that is about to open.
    */
-  async function countTile(width: number, n: string): Promise<HTMLElement> {
+  async function stageAt(width: number, n: string): Promise<HTMLElement> {
     const previous = globalThis.ResizeObserver;
     class WidthObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
@@ -307,87 +332,151 @@ describe("Agentic IDE wizard", () => {
       unobserve(): void {}
       disconnect(): void {}
     }
-    globalThis.ResizeObserver = WidthObserver as unknown as typeof ResizeObserver;
+    globalThis.ResizeObserver =
+      WidthObserver as unknown as typeof ResizeObserver;
     try {
       render(<AgenticIdeView />);
       await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
       fireEvent.click(await screen.findByRole("button", { name: /project/i }));
       fireEvent.click(screen.getByRole("button", { name: /next/i }));
-      const preset = screen.queryByRole("button", { name: n });
-      if (preset) return preset.querySelector("div") as HTMLElement;
-
-      fireEvent.click(screen.getByRole("button", { name: /custom terminals/i }));
-      fireEvent.change(screen.getByRole("spinbutton", { name: /custom terminal count/i }), {
-        target: { value: n },
-      });
-      return screen.getByTestId("custom-terminal-preview");
+      fireEvent.change(
+        screen.getByRole("spinbutton", { name: /number of terminals/i }),
+        { target: { value: n } },
+      );
+      return screen.getByTestId("workspace-stage-grid");
     } finally {
       globalThis.ResizeObserver = previous;
     }
   }
 
-  /** The number of columns promised by a preview dot grid. */
-  const dotsOf = (grid: HTMLElement) => grid.style.gridTemplateColumns;
+  /** Columns and bands the stage lays its panes out in. */
+  const columnsOf = (stage: HTMLElement) => stage.style.gridTemplateColumns;
+  const rowsOf = (stage: HTMLElement) => stage.style.gridTemplateRows;
 
-  it("keeps uncommon counts in Custom Terminals instead of fixed cards", async () => {
-    await countTile(2328, "10");
+  /**
+   * A pixel width the way the readout writes it.
+   *
+   * Widths are grouped with a NARROW NO-BREAK SPACE (U+202F) so a number
+   * never breaks across two lines. Spelled as an escape rather than pasted:
+   * the two characters are indistinguishable in an editor, and only one of
+   * them matches.
+   */
+  const grouped = (digits: string) => digits.replace(/ /g, "\u202F");
 
-    expect(screen.queryByRole("button", { name: "10" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "12" })).toBeNull();
-    expect(screen.getByRole("button", { name: /custom terminals/i })).toBeTruthy();
+  it("sets any count from one control instead of cards plus a custom row", async () => {
+    // Two ways to set one number meant two competing "selected" states. The
+    // track covers every value, and the common ones are notches on it.
+    await stageAt(2328, "10");
+
     expect(
-      (screen.getByRole("spinbutton", {
-        name: /custom terminal count/i,
-      }) as HTMLInputElement).value,
+      (
+        screen.getByRole("slider", {
+          name: /number of terminals/i,
+        }) as HTMLInputElement
+      ).value,
     ).toBe("10");
+    expect(screen.getByTestId("terminal-count-value").textContent).toBe("10");
+    expect(
+      screen.queryByRole("button", { name: /custom terminals/i }),
+    ).toBeNull();
   });
 
-  it("builds the requested number of custom terminal plans", async () => {
+  it("builds the requested number of terminal plans", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
     fireEvent.click(await screen.findByRole("button", { name: /project/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
-    fireEvent.click(screen.getByRole("button", { name: /custom terminals/i }));
-    fireEvent.change(screen.getByRole("spinbutton", { name: /custom terminal count/i }), {
-      target: { value: "10" },
-    });
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: /number of terminals/i }),
+      { target: { value: "10" } },
+    );
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     expect(screen.getByLabelText("Call-sign for terminal 10")).toBeTruthy();
   });
 
-  it("caps custom terminal counts at the backend limit", async () => {
-    await countTile(2328, "99");
+  it("caps the count at the backend limit", async () => {
+    await stageAt(2328, "99");
 
     expect(
-      (screen.getByRole("spinbutton", {
-        name: /custom terminal count/i,
-      }) as HTMLInputElement).value,
+      (
+        screen.getByRole("spinbutton", {
+          name: /number of terminals/i,
+        }) as HTMLInputElement
+      ).value,
     ).toBe("12");
     expect(
-      (screen.getByRole("button", { name: /use one more terminal/i }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole("button", {
+          name: /use one more terminal/i,
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
   });
 
   it("previews 12 terminals as 6 and 6 when the window is wide enough", async () => {
     // 2328 px of workspace minus the grid's padding fits six 380 px panes, so
     // the twelve wrap into two even bands — the arrangement the user asked for.
-    const tile = await countTile(2328, "12");
-    expect(dotsOf(tile)).toBe("repeat(6, minmax(0, 1fr))");
+    const stage = await stageAt(2328, "12");
+    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
   });
 
   it("previews the narrower arrangement a narrow window will really produce", async () => {
     // The same twelve in a 1314 px workspace: only three panes stay readable
     // per line, so the grid makes 3 × 4. The preview promised 6 + 6 here once,
     // which is the drift this test exists to catch.
-    const tile = await countTile(1314, "12");
-    expect(dotsOf(tile)).toBe("repeat(3, minmax(0, 1fr))");
+    const stage = await stageAt(1314, "12");
+    expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
   });
 
   it("keeps a small workspace on one line at any usable width", async () => {
-    const tile = await countTile(1314, "3");
-    expect(dotsOf(tile)).toBe("repeat(3, minmax(0, 1fr))");
+    const stage = await stageAt(1314, "3");
+    expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+  });
+
+  it("draws one pane per terminal and never more than the stage can hold", async () => {
+    // The old dot preview sat in a fixed 40×40 px box with nothing bounding it,
+    // so a high count in a narrow window grew a tall column of dots straight out
+    // through the card, over the buttons above and below. The stage divides a
+    // FIXED height between its rows instead, so no count can overflow it — the
+    // panes get thinner, the box does not grow.
+    const stage = await stageAt(800, "12");
+    expect(stage.children.length).toBe(12);
+    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+  });
+
+  it("names the window width its arrangement depends on", async () => {
+    // The reported bug: the preview said "2 across, 4 down" in a 1050 px window
+    // and the workspace opened 4 × 2 once maximised. Both are right — what was
+    // missing is that the arrangement has a condition at all.
+    await stageAt(1050, "8");
+
+    const readout = screen.getByTestId("workspace-stage-readout");
+    expect(readout.textContent).toContain("2 across");
+    expect(readout.textContent).toContain("4 down");
+    // 8 × 380 px + the grid's padding — the width at which they all fit on one
+    // line, stated so a maximise cannot turn the preview into a broken promise.
+    // `grouped` spells out the narrow no-break space the readout separates
+    // thousands with: an invisible literal here reads as a plain space,
+    // passes review, and fails the run.
+    expect(readout.textContent).toContain(grouped("3 064"));
+    // 1 056, not 1 050: the view rounds the measured width to 16 px steps so a
+    // one-pixel drift cannot churn the layout, and the readout reports the width
+    // the arrangement was actually decided from rather than a truer-looking one.
+    expect(readout.textContent).toContain(grouped("1 056"));
+  });
+
+  it("says all side by side once the window really is wide enough", async () => {
+    await stageAt(3200, "8");
+
+    const readout = screen.getByTestId("workspace-stage-readout");
+    expect(readout.textContent).toContain("8 across");
+    expect(readout.textContent).toContain("1 down");
+    expect(readout.textContent).toMatch(/wide enough/i);
   });
 
   it("says so plainly when the machine has no terminal backend", async () => {
@@ -412,14 +501,18 @@ describe("Agentic IDE wizard", () => {
 
 describe("Agentic IDE running workspace", () => {
   it("renders the open session instead of the wizard", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
     render(<AgenticIdeView />);
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
   });
 
   it("toggles focus mode through the API, not just locally", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
     vi.mocked(api.setFocusMode).mockResolvedValue(true);
     render(<AgenticIdeView />);
 
@@ -432,14 +525,18 @@ describe("Agentic IDE running workspace", () => {
     vi.mocked(api.setFocusMode).mockResolvedValue(!before);
 
     fireEvent.click(toggle);
-    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(!before));
+    await waitFor(() =>
+      expect(api.setFocusMode).toHaveBeenLastCalledWith(!before),
+    );
     await waitFor(() =>
       expect(toggle.getAttribute("aria-pressed")).toBe(String(!before)),
     );
   });
 
   it("sends a prompt to the selected terminal through the same endpoint voice uses", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
     vi.mocked(api.promptTerminal).mockResolvedValue({
       terminal: "Mika",
       sent: "run the tests",
@@ -460,7 +557,9 @@ describe("Agentic IDE running workspace", () => {
   });
 
   it("reports a refused prompt instead of pretending it landed", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
     vi.mocked(api.promptTerminal).mockRejectedValue(
       new Error("Mika is not running right now"),
     );
@@ -473,7 +572,10 @@ describe("Agentic IDE running workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
     await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith("error", "Mika is not running right now"),
+      expect(pushToast).toHaveBeenCalledWith(
+        "error",
+        "Mika is not running right now",
+      ),
     );
   });
   it("shows panes that voice opened, without a reload", async () => {
@@ -483,14 +585,18 @@ describe("Agentic IDE running workspace", () => {
      * the listener existed, the agents were running and the user saw the old grid
      * — the feature looked broken while working perfectly.
      */
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
     render(<AgenticIdeView />);
     await screen.findByTestId("pane-Mika");
     expect(screen.queryByTestId("pane-Aria")).toBeNull();
 
     // Voice opened a third pane; the WebSocket layer turns the bus event into
     // this window event.
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova", "Aria"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova", "Aria"])),
+    );
     window.dispatchEvent(
       new CustomEvent("jarvis:agentic-ide-changed", {
         detail: { names: ["Aria"], agent: "claude" },
@@ -510,7 +616,7 @@ describe("AgenticIdeView — resuming the last workspace", () => {
     render(<AgenticIdeView />);
 
     await screen.findByTestId("resume-card");
-    expect(screen.getByTestId("resume-pane-mika")).toBeTruthy();
+    expect(screen.getByTestId("resume-pane-alex")).toBeTruthy();
     // The wizard is still right there — the offer never blocks it.
     expect(screen.getByText("Folder")).toBeTruthy();
   });
@@ -522,7 +628,9 @@ describe("AgenticIdeView — resuming the last workspace", () => {
   });
 
   it("does not offer a resume while a workspace is open", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
     vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
     render(<AgenticIdeView />);
 
@@ -533,9 +641,12 @@ describe("AgenticIdeView — resuming the last workspace", () => {
   it("reopens the workspace and reports what really came back", async () => {
     vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
     vi.mocked(api.resumeWorkspace).mockResolvedValue({
-      session: sessionWith(["Mika", "Nova"]),
+      state: stateWith(sessionWith(["Mika", "Nova"])),
+      workspace_count: 1,
+      terminal_count: 2,
       resumable_count: 1,
       started_fresh: 1,
+      skipped: [],
     });
     render(<AgenticIdeView />);
 
@@ -609,7 +720,9 @@ describe("AgenticIdeView — the workspace bar", () => {
     expect(front.getAttribute("aria-selected")).toBe("true");
     // A background workspace says how many of its agents are still running —
     // that is what keeps "it runs until you close it" honest.
-    expect(screen.getByTestId("workspace-panes-ide_other").textContent).toBe("2/3");
+    expect(screen.getByTestId("workspace-panes-ide_other").textContent).toBe(
+      "2/3",
+    );
   });
 
   it("stays hidden while nothing is open", async () => {
@@ -627,7 +740,9 @@ describe("AgenticIdeView — the workspace bar", () => {
 
     fireEvent.click(await screen.findByTestId("workspace-tab-ide_other"));
 
-    await waitFor(() => expect(api.activateWorkspace).toHaveBeenCalledWith("ide_other"));
+    await waitFor(() =>
+      expect(api.activateWorkspace).toHaveBeenCalledWith("ide_other"),
+    );
     await screen.findByTestId("pane-Kai");
     // Switching is not closing: nothing was ended.
     expect(api.endIdeSession).not.toHaveBeenCalled();
@@ -647,7 +762,9 @@ describe("AgenticIdeView — the workspace bar", () => {
     fireEvent.click(await screen.findByTestId("workspace-add"));
 
     // null, not a close: the workspaces stay open with their agents running.
-    await waitFor(() => expect(api.activateWorkspace).toHaveBeenCalledWith(null));
+    await waitFor(() =>
+      expect(api.activateWorkspace).toHaveBeenCalledWith(null),
+    );
     expect(api.closeWorkspace).not.toHaveBeenCalled();
     expect(api.endIdeSession).not.toHaveBeenCalled();
     // The wizard is showing, and the bar still lists both workspaces.
@@ -667,18 +784,53 @@ describe("AgenticIdeView — the workspace bar", () => {
     expect(api.closeWorkspace).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("workspace-close-confirm-ide_other"));
-    await waitFor(() => expect(api.closeWorkspace).toHaveBeenCalledWith("ide_other"));
+    await waitFor(() =>
+      expect(api.closeWorkspace).toHaveBeenCalledWith("ide_other"),
+    );
     await waitFor(() =>
       expect(screen.queryByTestId("workspace-tab-ide_other")).toBeNull(),
     );
   });
 
-  it("refuses to add one past the cap", async () => {
-    const full = twoWorkspaces();
-    vi.mocked(api.fetchIdeState).mockResolvedValue({ ...full, max_workspaces: 2 });
+  it("renames a workspace from the pencil action", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(twoWorkspaces());
+    const renamed = twoWorkspaces();
+    renamed.workspaces = renamed.workspaces.map((workspace) =>
+      workspace.id === "ide_other"
+        ? { ...workspace, name: "Backend review" }
+        : workspace,
+    );
+    vi.mocked(api.renameWorkspace).mockResolvedValue(renamed);
     render(<AgenticIdeView />);
 
-    const add = (await screen.findByTestId("workspace-add")) as HTMLButtonElement;
+    fireEvent.click(await screen.findByTestId("workspace-rename-ide_other"));
+    const input = screen.getByTestId(
+      "workspace-rename-input-ide_other",
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Backend review" } });
+    fireEvent.click(screen.getByTestId("workspace-rename-save-ide_other"));
+
+    await waitFor(() =>
+      expect(api.renameWorkspace).toHaveBeenCalledWith(
+        "ide_other",
+        "Backend review",
+      ),
+    );
+    expect(await screen.findByText("Backend review")).toBeTruthy();
+    expect(api.closeWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("refuses to add one past the cap", async () => {
+    const full = twoWorkspaces();
+    vi.mocked(api.fetchIdeState).mockResolvedValue({
+      ...full,
+      max_workspaces: 2,
+    });
+    render(<AgenticIdeView />);
+
+    const add = (await screen.findByTestId(
+      "workspace-add",
+    )) as HTMLButtonElement;
     expect(add.disabled).toBe(true);
   });
 });

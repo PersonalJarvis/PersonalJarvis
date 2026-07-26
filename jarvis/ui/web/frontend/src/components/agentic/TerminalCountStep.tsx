@@ -77,10 +77,22 @@ const WORKSPACE_ASPECT = 1636 / 726;
 const STAGE_MIN_HEIGHT_PX = 160;
 const STAGE_MAX_HEIGHT_PX = 340;
 
-/** Below this rendered width a pane has no room for its call-sign. */
-const PANE_LABEL_MIN_PX = 54;
-/** Below this it has no room for anything but a tinted rectangle. */
-const PANE_CHROME_MIN_PX = 22;
+/*
+ * How much of itself a miniature pane has room to draw.
+ *
+ * BOTH axes, which the first version got wrong: it asked only about width, so
+ * sixty terminals — laid out three across and twenty down — kept their title
+ * bars at 16 px of height and rendered every call-sign as a squashed smear.
+ * A pane that is wide and flat has no more room for a name than a narrow one.
+ *
+ * Dropping detail as the panes shrink is also the stage being honest: sixty
+ * terminals really are sixty slivers, and showing them as plain rectangles says
+ * so more clearly than sixty illegible labels.
+ */
+const PANE_LABEL_MIN_WIDTH_PX = 54;
+const PANE_LABEL_MIN_HEIGHT_PX = 44;
+const PANE_CHROME_MIN_WIDTH_PX = 22;
+const PANE_CHROME_MIN_HEIGHT_PX = 22;
 
 interface TerminalCountStepProps {
   /** Terminals currently chosen. */
@@ -188,11 +200,15 @@ function WorkspaceStage({
   const paneWidth = size.width > 0 ? size.width / safeColumns : 0;
   const paneHeight = size.height > 0 ? size.height / safeRows : 0;
   // Panes are laid out as a grid of equal cells, so one pane's detail level is
-  // every pane's — decided once rather than per tile.
+  // every pane's — decided once rather than per tile. Before the first measure
+  // both are 0; assume the roomy case so the stage never flashes as bare tiles.
+  const unmeasured = paneWidth === 0 || paneHeight === 0;
   const detail: PaneDetail =
-    paneWidth === 0 || paneWidth >= PANE_LABEL_MIN_PX
+    unmeasured ||
+    (paneWidth >= PANE_LABEL_MIN_WIDTH_PX && paneHeight >= PANE_LABEL_MIN_HEIGHT_PX)
       ? "full"
-      : paneWidth >= PANE_CHROME_MIN_PX
+      : paneWidth >= PANE_CHROME_MIN_WIDTH_PX &&
+          paneHeight >= PANE_CHROME_MIN_HEIGHT_PX
         ? "chrome"
         : "tile";
 
@@ -275,11 +291,20 @@ function StagePane({
 
   return (
     <div
+      /*
+       * Dark, like the terminals it stands for — not a tile of brand colour.
+       *
+       * The first version filled every pane with the accent, and eight of them
+       * read as a wall of yellow rather than as a workspace. Colour now marks
+       * ONE thing: which pane the prompt bar will type into. That is also the
+       * one piece of state the stage can honestly show, since a fresh workspace
+       * really does open with the first pane selected.
+       */
       className={cn(
         "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border transition-colors",
         focused
-          ? "border-primary/50 bg-primary/[0.09]"
-          : "border-primary/20 bg-primary/[0.04]",
+          ? "border-primary/45 bg-primary/[0.05]"
+          : "border-border/80 bg-background/70",
       )}
     >
       {detail !== "tile" && (
@@ -287,21 +312,21 @@ function StagePane({
           className={cn(
             "flex shrink-0 items-center gap-1.5 border-b px-1.5 py-1",
             focused
-              ? "border-primary/30 bg-primary/10"
-              : "border-primary/15 bg-primary/[0.05]",
+              ? "border-primary/25 bg-primary/[0.07]"
+              : "border-border/60 bg-muted/20",
           )}
         >
           <span
             className={cn(
               "h-1.5 w-1.5 shrink-0 rounded-full",
-              focused ? "bg-primary" : "bg-primary/40",
+              focused ? "bg-primary" : "bg-muted-foreground/50",
             )}
           />
           {detail === "full" && (
             <span
               className={cn(
                 "truncate font-mono text-[10px] leading-none",
-                focused ? "text-primary" : "text-primary/60",
+                focused ? "text-primary" : "text-muted-foreground",
               )}
             >
               {name}
@@ -321,7 +346,10 @@ function StagePane({
                 at once actually look. Deterministic widths and delays, so the
                 stage does not reshuffle itself on every keystroke.
               */
-              className="h-1 shrink-0 animate-pulse rounded-full bg-primary/25 motion-reduce:animate-none"
+              className={cn(
+                "h-1 shrink-0 animate-pulse rounded-full motion-reduce:animate-none",
+                focused ? "bg-primary/30" : "bg-muted-foreground/25",
+              )}
               style={{
                 width: `${[82, 58, 71, 45, 64][(index + line) % 5]}%`,
                 animationDelay: `${((index * 3 + line) % 7) * 260}ms`,
@@ -393,9 +421,26 @@ function Readout({
   );
 }
 
-/** 1 636 rather than 1636 — a width is read, not computed with. */
+/**
+ * Digit grouping for a pixel width the user READS: 1\u202F636, not 1636.
+ *
+ * The separator is an explicit NARROW NO-BREAK SPACE escape rather than a
+ * literal one, so it stays visible in the source and cannot be mistaken for
+ * an ordinary space by the next person who greps for it — which is exactly
+ * how it slipped past a test that searched for a plain space. It also keeps
+ * the number from breaking across two lines mid-thousands.
+ *
+ * Grouped by hand rather than through `toLocaleString`, whose output depends
+ * on the runtime's locale data: a number the user reads should not change
+ * shape with the machine that rendered it.
+ */
+const THOUSANDS_SEPARATOR = "\u202F";
+
 function formatPx(value: number): string {
-  return value.toLocaleString("en-US").replace(/,/g, " ");
+  return String(Math.round(value)).replace(
+    /\B(?=(\d{3})+(?!\d))/g,
+    THOUSANDS_SEPARATOR,
+  );
 }
 
 /**

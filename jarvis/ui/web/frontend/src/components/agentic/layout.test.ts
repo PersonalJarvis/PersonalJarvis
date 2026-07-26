@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_PANES_PER_BAND,
+  MIN_PANE_WIDTH_PX,
+  bandCapacityFor,
   paneColumns,
   paneGrid,
   paneLines,
+  widthForOneBand,
+  wizardPanes,
   workspaceBandCapacityFor,
 } from "./layout";
 
@@ -16,6 +20,71 @@ describe("workspaceBandCapacityFor", () => {
   it("uses the grid content width on both sides of the six-column threshold", () => {
     expect(workspaceBandCapacityFor(2303)).toBe(5);
     expect(workspaceBandCapacityFor(2304)).toBe(6);
+  });
+});
+
+describe("the two width helpers say which width they take", () => {
+  it("separates the grid's own content width from the outer width", () => {
+    // The defect they exist to prevent: the running grid measures its CONTENT
+    // box (padding already excluded) while the wizard measures an unpadded
+    // element. Feeding both to one helper made the grid lay itself out 24 px
+    // narrower than it is, so the preview and the workspace changed column
+    // count at different window widths and the preview looked like a liar.
+    expect(bandCapacityFor(1520)).toBe(4);
+    expect(workspaceBandCapacityFor(1520 + 24)).toBe(4);
+    // Same physical window, same answer — which is the whole point.
+    expect(bandCapacityFor(1519)).toBe(3);
+    expect(workspaceBandCapacityFor(1519 + 24)).toBe(3);
+  });
+});
+
+describe("wizardPanes", () => {
+  it("is the one row of columns the backend opens a workspace with", () => {
+    // Mirrors agentic_ide/session.py, which sets column=index and slot=0 for a
+    // wizard-opened workspace. The preview feeds these to the same `paneGrid`
+    // the running workspace uses, so it cannot describe a layout the backend
+    // would never build.
+    expect(wizardPanes(3)).toEqual([
+      { column: 0, slot: 0 },
+      { column: 1, slot: 0 },
+      { column: 2, slot: 0 },
+    ]);
+  });
+
+  it("has no panes for an empty or nonsensical count", () => {
+    expect(wizardPanes(0)).toEqual([]);
+    expect(wizardPanes(-4)).toEqual([]);
+  });
+
+  it("lays out exactly like the workspace it stands for", () => {
+    // 8 terminals in a window wide enough for 4 columns: 4 across, 2 down —
+    // the arrangement reported as missing from the preview on 2026-07-26.
+    const grid = paneGrid(wizardPanes(8), 4);
+    expect(grid.columns).toBe(4);
+    expect(paneLines(8, 4)).toBe(2);
+    // The same 8 in a narrow window really are 2 across and 4 down. Both are
+    // correct; the preview has to say which one it is showing.
+    expect(paneGrid(wizardPanes(8), 2).columns).toBe(2);
+    expect(paneLines(8, 2)).toBe(4);
+  });
+});
+
+describe("widthForOneBand", () => {
+  it("names the width at which a count stops wrapping", () => {
+    // What the readout tells the user so a maximise cannot turn the preview
+    // into a broken promise: eight panes need 8 × 380 px plus the grid padding.
+    expect(widthForOneBand(8)).toBe(8 * MIN_PANE_WIDTH_PX + 24);
+    // And it agrees with the helper the wizard measures through, rather than
+    // being a second opinion about the same threshold.
+    expect(workspaceBandCapacityFor(widthForOneBand(8) as number)).toBe(8);
+  });
+
+  it("has nothing to offer when there is no wrap to undo", () => {
+    expect(widthForOneBand(1)).toBeNull();
+  });
+
+  it("has nothing to offer past the readable cap, where no width is enough", () => {
+    expect(widthForOneBand(MAX_PANES_PER_BAND + 1)).toBeNull();
   });
 });
 
