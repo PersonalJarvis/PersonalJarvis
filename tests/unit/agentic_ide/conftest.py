@@ -9,7 +9,13 @@ guarantee that only holds until somebody writes the next test.
    unredirected, a test would write into the developer's real data directory and
    leave the app offering to reopen a workspace that pytest invented in a
    temporary folder.
-2. **The trust pre-seed.** Opening a workspace marks its folder as trusted in
+2. **The recent-folder history.** Same store, same failure, one page earlier in
+   the wizard — and it happened: a run against the real store filled seven of
+   the eight slots on the picker's front page with pytest folders and pushed the
+   one folder the developer had actually opened to the bottom. ``recents``
+   declines throwaway paths on its own now, but the redirect stays, because a
+   test must not depend on a production filter to keep its hands off real data.
+3. **The trust pre-seed.** Opening a workspace marks its folder as trusted in
    Claude Code's and Codex's own config files so no pane stops on a "do you
    trust this directory?" dialog. Against a real home that means every test run
    permanently added its throwaway folders to the developer's CLI configs. That

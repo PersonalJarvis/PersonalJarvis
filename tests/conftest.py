@@ -84,6 +84,38 @@ def _browser_lock_pinned_on():
 
 
 @pytest.fixture(autouse=True)
+def _agentic_ide_history_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep every suite away from the developer's real Agentic-IDE history.
+
+    Two small JSON files decide what the workspace picker shows on its front
+    page: the recent-folder list and the resume snapshot. Any test that opens a
+    workspace writes both, and it happened for real — a run left seven pytest
+    temp folders in the recents list, crowding out the one folder the developer
+    had actually opened.
+
+    This lives in the ROOT conftest on purpose. The same redirect existed one
+    directory down, covering the suite that was known to open workspaces, and
+    the leak came in through a different suite that also does. A guarantee that
+    only holds for the tests somebody remembered is not a guarantee.
+
+    The scratch-folder rule is stood down for the same reason it exists.
+    ``recents`` refuses to remember anything under the system temp directory —
+    and pytest hands out ``tmp_path`` from exactly there, so with the rule live
+    every test that opens a workspace in a temporary folder would be recording
+    nothing and asserting against an empty list. Redirecting the STORE is what
+    protects the developer's data; the rule itself is verified against the real
+    temp directory in ``test_recents_scratch_folders.py``.
+    """
+    from jarvis.agentic_ide import recents, resume_store
+
+    root = tmp_path_factory.mktemp("agentic-ide-history")
+    monkeypatch.setattr(recents, "_store_path", lambda: root / "recents.json")
+    monkeypatch.setattr(resume_store, "_store_path", lambda: root / "last_session.json")
+    monkeypatch.setattr(recents, "_temp_roots", list)
+    yield root
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

@@ -11,11 +11,20 @@ and every read is defensive: a truncated or hand-edited file degrades to "no
 recents" instead of breaking the wizard. Entries that no longer exist on disk are
 dropped on read, so a deleted or unplugged folder disappears by itself rather
 than failing at launch.
+
+**Only folders a person actually chose belong here.** Scratch directories are
+filtered out on the way in AND on the way out, because this list is the wizard's
+front page: a user who sees six folders they never opened cannot tell which of
+them they are supposed to trust. That is not hypothetical — an automated run
+against the real store once pushed the one genuine entry to the bottom of the
+list behind its own throwaway folders, so the filter runs on read as well and
+heals a store that was already polluted.
 """
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -24,6 +33,51 @@ from typing import Any
 from loguru import logger
 
 MAX_RECENTS = 8
+
+
+def _temp_roots() -> list[Path]:
+    """Every directory this machine treats as scratch space.
+
+    ``gettempdir()`` is the authoritative answer on all three OSes, but the
+    environment variables are checked too: a session can be started with a
+    different ``TMPDIR``/``TEMP`` than the one the running process resolved, and
+    a folder under either of them is throwaway all the same.
+    """
+    seen: list[Path] = []
+    candidates = [tempfile.gettempdir(), *(os.environ.get(k) for k in ("TMPDIR", "TEMP", "TMP"))]
+    for raw in candidates:
+        if not raw:
+            continue
+        try:
+            resolved = Path(raw).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        if resolved not in seen:
+            seen.append(resolved)
+    return seen
+
+
+def is_throwaway(path: str | Path) -> bool:
+    """True when ``path`` lives in scratch space and must not be remembered.
+
+    A folder under the system temp directory is by definition disposable — a
+    test fixture, an unpacked archive, an editor's scratch checkout. Opening one
+    still works; it simply does not earn a place in the history, because the
+    folder is usually gone before the user looks at the list again.
+    """
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except (OSError, ValueError):
+        return False
+    for root in _temp_roots():
+        if resolved == root:
+            return True
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -68,6 +122,10 @@ def load(*, verify_exists: bool = True) -> list[RecentWorkspace]:
         path = str(item.get("path") or "").strip()
         if not path:
             continue
+        # Filtered on read as well as on write, so a store polluted before this
+        # rule existed cleans itself up the next time anything is written.
+        if is_throwaway(path):
+            continue
         if verify_exists:
             try:
                 if not Path(path).is_dir():
@@ -94,9 +152,17 @@ def load(*, verify_exists: bool = True) -> list[RecentWorkspace]:
 def remember(path: str, *, terminals: int, agents: dict[str, int]) -> None:
     """Record (or refresh) one workspace as the most recent.
 
+    Scratch folders are declined outright — see :func:`is_throwaway`. This is the
+    fail-closed half of the rule: the caller does not have to know which folders
+    deserve a place in the history, and a future caller that forgets cannot
+    pollute the list.
+
     Best-effort: a failure to persist must never stop a session from opening, so
     problems are logged and swallowed.
     """
+    if is_throwaway(path):
+        logger.debug("Agentic IDE: not remembering throwaway folder {}", path)
+        return
     resolved = str(Path(path).expanduser())
     entry = RecentWorkspace(
         path=resolved,
@@ -137,4 +203,11 @@ def forget(path: str) -> bool:
         return False
 
 
-__all__ = ["MAX_RECENTS", "RecentWorkspace", "forget", "load", "remember"]
+__all__ = [
+    "MAX_RECENTS",
+    "RecentWorkspace",
+    "forget",
+    "is_throwaway",
+    "load",
+    "remember",
+]
