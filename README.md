@@ -1,105 +1,120 @@
 <p align="center">
   <a href="https://github.com/PersonalJarvis/PersonalJarvis">
-    <img src="assets/brand/banner.png" alt="Personal Jarvis — voice-driven meta-orchestrator" width="860" />
+    <img src="assets/brand/banner.png" alt="Personal Jarvis" width="860" />
   </a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/PersonalJarvis/PersonalJarvis?style=for-the-badge&label=release&color=e7c46e&labelColor=242424" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
-  <a href="https://x.com/Ruben_Luetke"><img alt="Follow @Ruben_Luetke on X" src="https://img.shields.io/badge/Follow-%40Ruben__Luetke-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
-  <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
+  <a href="https://personaljarvis.ai/"><img alt="Website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
-  <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
+  <img alt="Windows, macOS, Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-242424?style=for-the-badge&labelColor=242424&color=242424" />
 </p>
 
 <p align="center">
-  <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
+  <b>Your own AI assistant — on your machine, in your voice, with your keys.</b>
+</p>
+
+<p align="center">
+  <sub>Open source · runs on Windows, macOS, Linux and a $5 VPS · bring any provider you already pay for</sub>
 </p>
 
 ---
 
-Not a classical voice assistant: a fast **Router-Brain** listens, decides, and *delegates* —
-heavy work goes to interchangeable agent harnesses (Claude Code, Codex CLI, MCP,
-computer-use) that run isolated, get reviewed by a critic, and report back in your language.
-**Provider-agnostic** (Gemini, Claude, OpenAI, OpenRouter — one setting), **self-modifying**,
-and it runs everywhere — headless server to full voice desktop.
+You say something, and it answers immediately — while the real thinking is
+still running behind it. It remembers what you told it three weeks ago. It
+hands the long jobs to its own background agents, which work in a sandbox and
+get reviewed before you ever hear the result. It reads your calendar, writes
+files to your disk, drives your CLIs, and — when you ask it to — takes the
+mouse.
 
-## Just say it
+It is not tied to one AI company. Gemini, Claude, OpenAI, Grok, OpenRouter,
+NVIDIA: use whichever key or subscription you already have. If one goes down,
+runs out, or you never had it, Jarvis crosses to another family and tells you
+it did. No provider in here is load-bearing.
 
-| You say | What happens |
+## Say it out loud
+
+| You say | What actually happens |
 |---|---|
-| *"Research vector databases."* | An isolated agent digs in; the finished report lands as a download in **Outputs**. |
-| *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out through the optional Twilio line. |
-| *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki — still known in every future session. |
-| *"When the download finishes, ping me on Telegram."* | A when-then trigger arms itself and messages you the moment it fires. |
-| *"Open the browser and pull up the weather."* | Jarvis takes mouse and keyboard and does it on your screen. |
+| *"Research the three best vector databases for a two-person team and write it up."* | A background agent starts in its own isolated Git worktree, works, gets checked by a critic, and drops a finished Markdown report in **Outputs**. |
+| *"Remember that Alex hates phone calls. Always text him."* | It lands in your Wiki. Every future session knows it — and it's a plain Markdown file on your disk you can open, edit, or sync to Obsidian. |
+| *"What's on my calendar tomorrow? Mail Tom the summary."* | Google Calendar and Gmail, through your own OAuth connection. Not a scraper. |
+| *"Open display settings and turn on night light."* | Jarvis takes the mouse and keyboard, with a border around the screen so you always see when it's driving. |
+| *"Every weekday at 7:30, brief me on what's due."* | A saved task fires on schedule and speaks it. |
+| *"Switch to Claude."* | The brain provider changes mid-conversation. No restart. No config file. |
+| *"Send a background agent to fix the failing test in this repo."* | Your existing Claude Code, Codex or Antigravity subscription login does the coding, as a mission you can watch tool call by tool call. |
 
-Every one of these works today, out of the box.
-
-## See it in action
+## Watch it work
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo-poster.png" alt="Watch the Personal Jarvis demo — one voice command drives the whole PC" width="860" />
+    <img src="assets/demo/personal-jarvis-demo.gif" alt="Personal Jarvis takes the screen and changes a Windows setting on voice command" width="860" />
   </a>
 </p>
 
 <p align="center">
-  <sub>One voice command, and the Router-Brain takes the screen and does it live &middot; <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">watch the full demo on YouTube</a></sub>
+  <sub>One spoken request; Jarvis opens Settings and changes the accent color itself. Real screen recording, sped up, nothing faked &middot; <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">watch the full demo on YouTube</a></sub>
 </p>
 
-## Why it's different
+That clip shows the loudest trick, not the main one. Most days Jarvis is the
+thing you talk to while you work: it answers, it remembers, it delegates. The
+screen control is there for the times an app has no API.
 
-| | |
+## Read this before you install
+
+Honesty is worth more here than a bigger promise, so here is the unvarnished
+version.
+
+**This is a young project, and it is built by one person.** It hit its first
+public release on 3 July 2026, and 17 releases have shipped in the three weeks
+since. That pace is a feature and a warning at the same time: things move fast,
+and things break.
+
+**It is for developers and tinkerers.** You should be comfortable with a
+terminal, an API key, and a program that occasionally misbehaves. If you want a
+polished consumer assistant that your parents could install, this is not it
+yet — and pretending otherwise would waste your evening.
+
+**It can drive your computer.** It clicks, types, opens apps, and can run shell
+commands. Every action passes a four-tier safety check first (`safe` /
+`monitor` / `ask` / `block`), destructive things ask before they run, and
+Jarvis stops on its own at password fields and 2FA prompts. On my machine,
+nothing bad has ever happened — nothing deleted, no click that cost me
+anything. **But that is one machine and one setup, and I can't promise the same
+for yours.** Install it somewhere a bad day would be annoying, not
+catastrophic.
+
+**Nothing is bundled.** No keys, no free tier, no hosted backend. You bring a
+provider, and you pay that provider directly for what you use.
+
+### What works, and what doesn't yet
+
+| Area | Honest status |
 |---|---|
-| **Never blocks** | A sub-second Ack-Brain replies while the deep brain still thinks. |
-| **Meta-orchestrator** | A lean Router dispatches to specialized harnesses, not one giant prompt. |
-| **Self-healing** | Missions run in isolated worktrees; a critic reviews before you hear it. |
-| **Provider-agnostic** | Gemini, Claude, OpenAI, OpenRouter — switch by voice, smart fallback. |
-| **Your plan or key** | Run agents on a subscription login or a pay-per-token key. |
-| **Self-modifying** | Rewrites its own settings through a reversible, audited pipeline. |
-| **Lasting memory** | A Knowledge Wiki + awareness build a model of you across sessions. |
-| **Runs anywhere** | Headless Linux server to full voice desktop; local parts degrade. |
+| Chat, voice pipeline, background agents, Wiki memory, provider fallback | **Solid.** This is the daily-driver path and it gets used every day. |
+| Computer use | **Works, and genuinely useful** — but a model clicking around your screen is still a model clicking around your screen. Start with something small and watch it. |
+| Realtime voice (OpenAI Realtime, Gemini Live) | **Research preview.** Sub-second and lovely when it works; fewer tools are available, and it falls back to the classic wake → speech → brain → voice pipeline. |
+| Workflows | **Experimental.** The app can run, inspect, enable and delete them — creating one still needs the CLI or the Control API. |
+| Jarvis Board | **Experimental.** Local activity stats and a share image. Achievements, feed and pairing exist as services but have no finished UI. |
+| Phone calls (Twilio) | **Experimental.** Tests cover the routes, audio conversion and a simulated media stream. There is no recorded live phone-network sign-off. |
+| macOS | Every platform seam has a real macOS backend and CI runs a macOS leg — but the repo holds **no dated live desktop sign-off**. Treat a first run as a test. |
+| Linux desktop | X11 is covered. **Wayland** loses idle detection, window focus and the multi-monitor bar — each degrades to an honest log line, never a crash. |
+| Headless Linux server | **Fully supported**, and the smallest install. No local audio; use browser voice over HTTPS. |
 
-## How it works
-
-<img
-  src="assets/brand/how-personal-jarvis-works.png"
-  width="1064"
-  height="568"
-  alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
-/>
-
-Higher layers reach lower layers **only through protocols**; everything else talks over a
-typed, immutable **EventBus** — that strict seam is what lets harnesses, providers, and
-plugins be swapped freely.
-
-<details>
-<summary><b>The 8-layer map</b></summary>
-
-```
-L7  UI/UX           Desktop app (FastAPI + React + pywebview), tray, Orb overlay
-L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager, Controller
-L5  Harness adapter Claude Code, Codex, Open Interpreter, MCP, raw computer-use
-L4  Brain           Gemini · Claude · OpenAI · Grok · OpenRouter  +  sub-second Ack-Brain
-L3  Intent / Risk   Classifier, four-tier risk policy, approval, rate-limit tracking
-L2  Speech          Wake → VAD → STT → TTS  (cloud or local, your choice)
-L1  Audio I/O       Device routing, chime feedback
-L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
-```
-
-A deeper engineering map — anti-patterns, bug classes, phase status with `file:line`
-references — lives in [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md).
-
-</details>
+Every known gap has a public paper trail: [`docs/os-parity.md`](docs/os-parity.md)
+lists the platform gaps one by one, and [`docs/BUGS.md`](docs/BUGS.md) holds 93
+bug entries with their root causes. Competitors can copy a feature list. They
+can't copy a bug register.
 
 ## Install
 
-One command on **Windows, macOS, or Linux**. You need **Python 3.11+** and **Git** — the
-installer checks both and stops with a download link if one is missing. It asks nothing in
-the terminal, launches the app, and the app walks you through a one-time setup (language,
-wake word, API keys). **Bring your own keys**; nothing is bundled.
+One command on **Windows, macOS, or Linux**. You need **Python 3.11+** and
+**Git** — the installer checks both and stops with a download link if one is
+missing. It asks nothing in the terminal, launches the app, and the app walks
+you through a one-time setup: language, wake word, keys.
 
 **Windows** — PowerShell
 
@@ -113,56 +128,30 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-> Open source — read the installer before you run it. It only creates a venv, installs
-> dependencies, prefetches the voice models, and launches the app. Keys land in your OS
-> credential manager, never in the repo. Re-running the same one-liner updates in place.
-
-**Uninstall** — one command as well. Removes the install folder, the autostart entry, and
-the keychain entries; add `--dry-run` to preview, `--yes` to skip the confirmation:
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
-```
-
-```bash
-# macOS · Linux
-bash ~/.personal-jarvis/install/uninstall.sh
-```
-
-Both run the uninstaller **that is already on your disk**. If it is missing or
-refuses to start — installs from 1.1.0 / 1.1.1 shipped one that could not run on
-macOS at all — skip it and use the app's own uninstall directly. Same job, no
-bootstrap involved; add `--dry-run` first to see what it would remove:
-
-```bash
-# macOS · Linux
-~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
-```
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
-```
+> It's open source — read the installer before you pipe it into a shell. It
+> creates a venv, installs dependencies, prefetches the voice models, and
+> starts the app. Keys go into your OS credential manager, never into the repo.
+> Re-running the same one-liner updates in place.
 
 <details>
-<summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
+<summary><b>Optional extras, install flags, pipx, manual clone</b></summary>
 
 <br/>
 
-Everything below is optional — each item only unlocks a specific feature:
+Everything below is optional. Each item unlocks exactly one thing:
 
 | Optional | Unlocks |
 |---|---|
-| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. The in-app setup stores it in your OS credential manager. |
-| **Node.js 18+** | The coding-agent worker CLIs (Claude Code, Codex) heavy missions delegate to. Add it any time. |
-| **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). |
-| A **GPU** | Faster fully-offline speech; everything also runs on CPU. |
+| A provider **API key or subscription login** — Gemini, Claude, OpenAI, Grok, OpenRouter, NVIDIA | Actually talking to a brain. Added in-app; stored in your OS credential manager. |
+| **Node.js 18+** | The coding-agent CLIs (Claude Code, Codex, Antigravity) that heavy missions delegate to. Add it any time. |
+| **libportaudio** *(Linux only)* | Local microphone and speakers — `apt install libportaudio2`. |
+| **xdotool** *(Linux X11 only)* | Typing umlauts, emoji and non-Latin text during computer use. The installer tries to provide it. |
+| A **GPU** | Faster fully-offline speech. Everything also runs on CPU; torch is not in the base install. |
 
 | Install flag | Effect |
 |---|---|
-| `--headless` | Minimal server install: API + WebSocket only, torch-free base, no Node.js — the tiny-VPS path |
-| `--no-launch` | Install only; don't start the app |
+| `--headless` | Minimal server install: API + WebSocket + browser UI, torch-free base, no Node.js — the tiny-VPS path |
+| `--no-launch` | Install only, don't start the app |
 
 **pipx** — isolated, no clone, any OS:
 
@@ -176,17 +165,20 @@ pipx install "git+https://github.com/PersonalJarvis/PersonalJarvis" && jarvis se
 git clone https://github.com/PersonalJarvis/PersonalJarvis
 cd PersonalJarvis
 python -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
-pip install -e .[full]
+pip install -e ".[full]"
 jarvis serve
 ```
+
+To remove Jarvis again: `jarvis --uninstall` (add `--dry-run` first to see
+exactly what it would delete).
 
 </details>
 
 ## Run it
 
 ```bash
-jarvis          # full desktop: window + voice + Orb overlay
-jarvis serve    # headless server: API + WebSocket + browser UI, no local audio needed
+jarvis          # full desktop: window + voice + Jarvis Bar overlay
+jarvis serve    # headless: API + WebSocket + browser UI, no local audio needed
 ```
 
 <p align="center">
@@ -198,81 +190,128 @@ jarvis serve    # headless server: API + WebSocket + browser UI, no local audio 
 
 <br/>
 
-On a server, open **http://localhost:47821** — the full experience lives in the browser,
-including voice through the browser microphone. The one-time setup runs there too; you can
-also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
+On a server, open **http://localhost:47821**. The full experience lives in the
+browser, voice included, through the browser microphone. The one-time setup
+runs there too; you can also set a provider key (e.g. `GEMINI_API_KEY`) in the
+environment or a `.env` file.
 
-Browser microphone access needs a secure context: `localhost` works as-is; for a remote
-VPS, terminate TLS with an HTTPS reverse proxy (Caddy, Nginx) — plain `http://server-ip`
-stays usable for text, but browsers block voice.
+Browser microphone access needs a secure context. `localhost` works as-is. For
+a remote VPS, terminate TLS with a reverse proxy (Caddy, Nginx) — plain
+`http://server-ip` stays fine for text, but browsers block the mic.
 
 </details>
 
-## What's inside
+## What you get
 
-**Missions — the self-healing work loop.** Anything non-trivial ("research X and
-write me a report") spawns a worker in an isolated `git worktree` — a private
-sandbox copy of the workspace, with crash containment. A critic reviews the
-result (up to three rounds) before you ever hear it; deliverables land in
-**Outputs** as downloadable files.
+**A voice you can interrupt.** Wake word → speech-to-text → brain →
+text-to-speech, fully streaming, in English, German or Spanish. Conversation
+mode keeps the mic open for a natural follow-up. A fast ack replies while the
+deep answer is still being written, so you never sit in silence wondering
+whether it heard you. Pick your own wake word — nothing is preset.
 
-**Knowledge Wiki — memory that survives.** An Obsidian-compatible Markdown vault
-Jarvis reads and writes. Tell it something once and every future session knows.
-It's plain files on your disk — read it, edit it, sync it, own it.
+**Agents that check their own work.** Anything non-trivial becomes a mission: a
+worker starts in a fresh, isolated `git worktree` with crash containment, does
+the job, and a critic reviews the result — up to three rounds — before it
+reaches you. Deliverables land in **Outputs** as real files. You can watch
+every tool call live in the Agents view.
 
-**Computer use.** Jarvis takes the mouse and keyboard when you ask: open apps,
-click, type, navigate — with an on-screen action border so you always see when
-it's driving.
+**Memory that survives restarts.** The Knowledge Wiki is an Obsidian-compatible
+Markdown vault that Jarvis reads and writes. It learns from how you talk, not
+only from literal instructions, and marks inferred facts as inferred. It's
+plain files on your disk: read them, edit them, sync them, delete them.
 
-**Channels & telephony.** Desktop window, browser, Telegram, and Discord all
-reach the same brain and share the same memory. Optional Twilio integration
-makes real outbound phone calls.
+**Your tools, connected.** Google Calendar, Gmail and Drive over your own
+OAuth. MCP servers. A catalog of ~20 command-line tools (gh, docker, kubectl,
+stripe, vercel, supabase …) that Jarvis can drive as tools. Skills you write
+yourself. Telegram and Discord as extra front doors to the same brain and the
+same memory.
 
-**Safety tiers.** Every action is classified **safe / monitor / ask / block**
-before it runs — destructive things ask first, whitelisted routines stop nagging
-you, and the blacklist always outranks the whitelist.
+**Computer use, when there's no API.** Jarvis captures the target window, picks
+an action, performs it, and looks again to verify. It stops on password fields,
+2FA prompts and human-verification challenges, and an on-screen border shows
+you when it has the wheel.
 
-**Self-modification.** It can change its own settings by voice — through a
-guarded pipeline (validate → backup → apply → verify → roll back on failure)
-with a full audit trail. Generated skills always land as *drafts* for your
-review; nothing self-activates.
+**Safety you can reason about.** Four tiers — `safe`, `monitor`, `ask`,
+`block` — with the blacklist always outranking the whitelist. Generated skills
+land as *drafts* and never self-activate. Self-modification goes through
+validate → backup → apply → verify → roll back, with an audit trail.
 
-**Realtime voice.** Optional speech-to-speech mode (OpenAI Realtime, Gemini
-Live) for sub-second conversational latency — with automatic fallback to the
-classic wake → STT → brain → TTS pipeline when it's unavailable.
+**Everything is a REST route.** Which means everything is also a CLI command,
+and everything is scriptable. That's a hard rule in this repo, enforced in CI.
+
+## How it works
+
+<img
+  src="assets/brand/how-personal-jarvis-works.png"
+  width="1064"
+  height="568"
+  alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
+/>
+
+A lean **router brain** listens and decides. It doesn't do the work — it
+dispatches. Small things are answered or executed directly; big things go to a
+harness (a coding CLI, an MCP server, computer use) as a reviewed mission.
+That's the whole trick, and it's why swapping a provider or a harness doesn't
+touch anything else.
+
+<details>
+<summary><b>The 8-layer map</b></summary>
+
+```
+L7  UI/UX           Desktop app (FastAPI + React + pywebview), tray, Jarvis Bar overlay
+L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager, Controller
+L5  Harness adapter Mission workers (Claude Code, Codex, Antigravity), MCP, computer use, Python
+L4  Brain           Gemini · Claude · OpenAI · Grok · OpenRouter · NVIDIA  +  fast ack tier
+L3  Intent / Risk   Classifier, four-tier risk policy, approval, rate-limit tracking
+L2  Speech          Wake → VAD → STT → TTS  (cloud or local, your choice)
+L1  Audio I/O       Device routing, chime feedback
+L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
+```
+
+Higher layers reach lower ones **only through protocols**
+([`jarvis/core/protocols.py`](jarvis/core/protocols.py)); everything else talks
+over a typed, immutable **EventBus** carrying a trace ID. One broken subscriber
+is logged, never propagated.
+
+The deeper engineering map — anti-patterns, recurring bug classes, phase status
+with `file:line` references — lives in
+[`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), written to be pasted into an LLM
+chat whole.
+
+</details>
 
 ## Drive it from the terminal
 
-The `jarvis` CLI (aliases `jarvisctl`, `jctl`) controls a **running** instance —
-the same actions as the app, behind the same safety checks, just scriptable.
-Anything you can click, you (or your scripts, or another coding agent) can type:
+The `jarvis` CLI (aliases `jarvisctl`, `jctl`) controls a **running** instance.
+Same actions as the app, same safety checks, just scriptable — by you, by a
+cron job, or by another coding agent:
 
 ```bash
 jarvis system status          # {"reachable": true} when Jarvis is up
-jarvis --json brain status    # which provider is live, as machine-readable JSON
-jarvis api <tag> <op>         # EVERY REST endpoint, auto-generated from OpenAPI
+jarvis --json brain status    # which provider is live, machine-readable
+jarvis api <tag> <op>         # every REST endpoint, generated from OpenAPI
 ```
 
 It's a thin client over the local REST API (`127.0.0.1:47821`), so it inherits
-every guardrail — risk tiers, atomic config writes, the audit log — rather than
-bypassing them. Full guide: [`docs/jarvis-cli.md`](docs/jarvis-cli.md).
+every guardrail — risk tiers, atomic config writes, the audit log — instead of
+going around them. Full guide: [`docs/jarvis-cli.md`](docs/jarvis-cli.md).
 
-## Configuration
+## Configure it
 
-Zero config files needed — every setting has a built-in default and the one-time
-in-app setup covers the rest. For fine control there's one optional, documented
-file ([`jarvis.toml.example`](jarvis.toml.example)):
+You don't need a config file. Every setting has a default, and the in-app setup
+covers the rest. For fine control there is one optional, documented file
+([`jarvis.toml.example`](jarvis.toml.example)):
 
 ```toml
 [profile]
-language = "auto"          # de | en | auto — bilingual auto-detect
+language = "auto"          # en | de | es | auto
 
 [trigger.wake_word]
 phrase = ""                # YOUR word — nothing is preset for you
 engine = "auto"            # resolves the best engine for your phrase
 
 [stt]
-provider = "groq-api"      # or openai-api, openrouter-stt, deepgram-…
+provider = "groq-api"      # or openai-api, gemini-api, openrouter-stt
 
 [tts]
 provider = "gemini-flash-tts"
@@ -280,21 +319,30 @@ fallback = "grok-voice"    # cross-provider fallback is the norm everywhere
 ```
 
 Overrides cascade `jarvis.toml → ENV` (`JARVIS__SECTION__KEY=…`). **Secrets
-never go in this file** — API keys live in your OS credential manager (or
-`.env`), entered in-app.
+never go in this file.** Keys live in your OS credential manager (or `.env`),
+entered in-app.
 
 ## Privacy
 
-- **Keys stay yours** — stored in the OS credential manager, never in the repo, never in a file you could accidentally commit.
-- **The always-on part is local** — wake-word listening runs entirely on your machine; audio only goes to a cloud STT provider *after* you've addressed Jarvis, and only if you chose a cloud provider.
-- **Local per stage, your choice** — speech recognition can run fully offline (`[local-voice]` extra); brain and voice output use whichever provider you configure.
-- **Memory is plain files** — the Knowledge Wiki is Markdown on your disk, not a hosted database.
+- **Your keys stay yours.** OS credential manager, never the repo, never a file
+  you could accidentally commit.
+- **The always-on part is local.** Wake-word listening runs entirely on your
+  machine. Audio only reaches a cloud provider *after* you've addressed Jarvis,
+  and only if you chose a cloud provider.
+- **Local per stage, your choice.** Speech recognition can run fully offline
+  via the `[local-voice]` extra; brain and voice output use whatever you
+  configure.
+- **Memory is plain files.** The Wiki is Markdown on your disk, not a hosted
+  database. Nothing syncs anywhere unless you set that up yourself.
+- **The honest part:** a cloud provider you connect sees what it needs to
+  answer. Computer use sends a screenshot of the working window to your tool
+  model. Both are stated in the app before you turn them on.
 
-## Extend it
+## Build on it
 
-Every pluggable part is a Python **entry point**: write a class against the
+Every pluggable part is a Python **entry point**. Write a class against the
 protocols in [`jarvis/core/protocols.py`](jarvis/core/protocols.py), register
-one line in `pyproject.toml`, reinstall — no fork, no core edits.
+one line in `pyproject.toml`, reinstall. No fork, no core edits.
 
 | Plugin group | What you can add |
 |---|---|
@@ -304,39 +352,36 @@ one line in `pyproject.toml`, reinstall — no fork, no core edits.
 | `jarvis.realtime` | Speech-to-speech providers |
 | `jarvis.harness` | Agent harnesses missions delegate to |
 | `jarvis.tool` | Actions the router can call directly |
-| `jarvis.channel` | New surfaces — chat platforms, transports |
+| `jarvis.channel` | New front doors — chat platforms, transports |
 
 Three rules keep it stable: implement the protocol, stream everything
-(`AsyncIterator` — non-streaming yields one element), and pass the contract
-suite (`pytest tests/contract/`). The deep engineering map — anti-patterns,
-recurring bug classes, phase status — lives in
-[`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), built to be pasted into an LLM
-chat whole.
+(`AsyncIterator`; non-streaming yields one element), and pass the contract
+suite (`pytest tests/contract/`).
 
 <details>
 <summary><b>Project structure</b></summary>
 
 ```text
 PersonalJarvis/
-├── jarvis/          # The application — every core package (brain, speech, missions, memory, UI server…)
-├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
-├── OS-Level/        # Edge-glow overlay process — action border, mascot, cursor trail
+├── jarvis/          # The application — brain, speech, missions, memory, UI server…
+├── ui/              # Jarvis Bar / Orb overlay for the desktop, loaded at runtime
 ├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
 ├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
 ├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
-├── install/         # One-line installers + signed-release verification (cosign / TUF)
-├── tests/           # Unit, integration, contract, and end-to-end suites
-├── docs/            # Architecture docs, ADRs, the philosophy, design specs
-├── assets/          # Brand art, banner, screenshots
-├── .github/         # CI workflows + issue / pull-request templates
+├── install/         # One-line installers + signed-release verification
+├── tests/           # 1,300+ test modules: unit, integration, contract, end-to-end
+├── docs/            # Architecture, 30 ADRs, the bug register, the doctrine
+├── scripts/ci/      # 14 fail-closed repo gates (boot budget, CLI coverage, secrets…)
+├── assets/          # Brand art, banner, screenshots, demo
 ├── scoop-bucket/    # Windows install manifest (Scoop)
 ├── homebrew-tap/    # macOS install formula (Homebrew)
 └── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
 ```
 
-Inside `jarvis/`, the layout mirrors the 8-layer model — `jarvis/brain/` (providers +
-router), `jarvis/speech/` (wake → VAD → STT → TTS), `jarvis/missions/` (the self-healing
-Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the desktop app).
+Inside `jarvis/`, the layout mirrors the 8-layer model: `jarvis/brain/`
+(providers + router), `jarvis/speech/` (wake → VAD → STT → TTS),
+`jarvis/missions/` (the self-healing worker-critic), `jarvis/memory/wiki/`
+(long-term memory), `jarvis/ui/web/` (the app).
 
 </details>
 
@@ -344,18 +389,20 @@ Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the 
 
 | Document | What's in it |
 |---|---|
-| [`docs/architecture-overview.md`](docs/architecture-overview.md) | The full architecture — layers, module catalog, data flow |
+| [`docs/product/`](docs/product/) | The end-user manual — install, first run, every feature, honestly scoped |
+| [`docs/architecture-overview.md`](docs/architecture-overview.md) | Full architecture: layers, module catalog, data flow |
 | [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) | Dense project snapshot, built to paste into an LLM chat whole |
 | [`CLAUDE.md`](CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
-| [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records |
-| [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
-| [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
+| [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register, root causes included |
+| [`docs/os-parity.md`](docs/os-parity.md) | Every open macOS / Linux gap, tracked |
+| [`docs/adr/`](docs/adr/) | 30 Architecture Decision Records |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in every release |
 
 ## Community
 
-Personal Jarvis is built in the open — the roadmap, the bug hunts, and the wins all land
-on Discord first. Come say hi and help shape where it goes.
+Personal Jarvis is built in the open — the roadmap, the bug hunts and the wins
+land on Discord first. If you break it, that's genuinely useful to me. Come and
+tell me how.
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
@@ -366,21 +413,31 @@ on Discord first. Come say hi and help shape where it goes.
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
   <a href="https://x.com/Ruben_Luetke">@Ruben_Luetke</a> ·
   <a href="https://www.instagram.com/personaljarvis/">Instagram</a> ·
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis">GitHub</a>
+  <a href="https://personaljarvis.ai/">Website</a>
 </p>
 
 ## Contributing
 
-Pull requests are welcome — **[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the full guide.
-The short version: artifacts are English, read [`CLAUDE.md`](CLAUDE.md) before larger
-changes, new providers must pass `pytest tests/contract/`, and security issues go to
-[`SECURITY.md`](SECURITY.md) privately.
+Pull requests are welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) has the full
+guide. The short version: everything committed is English, read
+[`CLAUDE.md`](CLAUDE.md) before larger changes, new providers must pass
+`pytest tests/contract/`, and security issues go to
+[`SECURITY.md`](SECURITY.md) privately — not into a public issue.
 
 ## License
 
-**MIT** — free to use, modify, and distribute, including commercially; see
-[`LICENSE`](LICENSE). Third-party names and logos belong to their owners —
-see [`TRADEMARK.md`](TRADEMARK.md).
+**MIT** — free to use, modify and distribute, including commercially. See
+[`LICENSE`](LICENSE). Third-party names and logos belong to their owners; see
+[`TRADEMARK.md`](TRADEMARK.md).
+
+---
+
+**P.S.** — If you read only one section, read
+[Read this before you install](#read-this-before-you-install). This is a young,
+one-person project that can take control of your computer. It is genuinely
+useful, and it is genuinely early. Put it on a machine where a bad day would be
+annoying rather than catastrophic, then
+[tell me what broke](https://discord.gg/x7USduHxbc).
 
 <br/>
 
