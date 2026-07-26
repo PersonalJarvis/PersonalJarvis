@@ -230,8 +230,8 @@ async def test_no_workspace_and_no_recents_is_an_honest_refusal(
     [
         "Spawn a subagent that reviews the wake path",
         "How many terminals can I open?",
-        "What is Mika doing?",
-        "Tell Mika to run the tests",
+        "What is Alex doing?",
+        "Tell Alex to run the tests",
     ],
 )
 async def test_turns_that_are_not_pane_requests_fall_through(

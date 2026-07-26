@@ -2,7 +2,7 @@
 
 The transcript replays the stream onto a terminal screen and reads the rows off
 it. Each test pins one property the Agentic IDE depends on — without them, "what
-is Mika doing?" gets answered from control codes and repainted frames.
+is Alex doing?" gets answered from control codes and repainted frames.
 """
 from __future__ import annotations
 

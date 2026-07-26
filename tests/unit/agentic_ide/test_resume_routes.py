@@ -49,8 +49,8 @@ def _store(folder: Path, *, with_conversation: bool = True) -> None:
             saved_at=100.0,
             terminals=[
                 resume_store.SnapshotTerminal(
-                    key="mika",
-                    name="Mika",
+                    key="alex",
+                    name="Alex",
                     agent="claude",
                     column=0,
                     slot=0,
@@ -64,7 +64,7 @@ def _store(folder: Path, *, with_conversation: bool = True) -> None:
                     prompts_sent=2,
                 ),
                 resume_store.SnapshotTerminal(
-                    key="nova", name="Nova", agent="codex", column=1, slot=0
+                    key="blake", name="Blake", agent="codex", column=1, slot=0
                 ),
             ],
         )
@@ -87,7 +87,7 @@ def test_the_offer_names_the_panes_and_where_they_sat(
     assert body["available"] is True
     assert body["folder"] == str(tmp_path)
     assert body["folder_name"] == tmp_path.name
-    assert [t["name"] for t in body["terminals"]] == ["Mika", "Nova"]
+    assert [t["name"] for t in body["terminals"]] == ["Alex", "Blake"]
     assert [(t["column"], t["slot"]) for t in body["terminals"]] == [(0, 0), (1, 0)]
     assert [t["display_name"] for t in body["terminals"]] == ["Claude Code", "Codex"]
 
@@ -99,8 +99,8 @@ def test_the_offer_says_which_conversations_come_back(
     existing_conversation("u")
     body = client.get("/api/agentic-ide/resume").json()
     panes = {t["name"]: t for t in body["terminals"]}
-    assert panes["Mika"]["resumable"] is True
-    assert panes["Nova"]["resumable"] is False  # never got a conversation id
+    assert panes["Alex"]["resumable"] is True
+    assert panes["Blake"]["resumable"] is False  # never got a conversation id
     assert body["resumable_count"] == 1
 
 
@@ -135,7 +135,7 @@ def test_a_broken_agent_probe_does_not_take_the_screen_down(
     body = res.json()
     # Honest rather than optimistic: nothing is promised that cannot be checked.
     assert body["available"] is False
-    assert [t["name"] for t in body["terminals"]] == ["Mika", "Nova"]
+    assert [t["name"] for t in body["terminals"]] == ["Alex", "Blake"]
 
 
 # ------------------------------------------------------------------ resume
@@ -144,7 +144,7 @@ def test_resuming_reopens_the_workspace(client: TestClient, tmp_path: Path) -> N
     res = client.post("/api/agentic-ide/resume")
     assert res.status_code == 200
     body = res.json()
-    assert [t["name"] for t in body["session"]["terminals"]] == ["Mika", "Nova"]
+    assert [t["name"] for t in body["session"]["terminals"]] == ["Alex", "Blake"]
     assert body["session"]["folder"] == str(tmp_path)
     # The running state agrees, so a client may read either.
     assert client.get("/api/agentic-ide/state").json()["active"] is True
@@ -220,7 +220,7 @@ def test_resuming_counts_conversations_not_handles(
     offer screen exists to prevent — and the one that reached the user as
     "12 conversations restored" for twelve panes that came back empty.
     """
-    _store(tmp_path)  # Mika's id is deliberately not backed by a conversation
+    _store(tmp_path)  # Alex's id is deliberately not backed by a conversation
     body = client.post("/api/agentic-ide/resume").json()
     assert body["resumable_count"] == 0
     assert body["started_fresh"] == 2

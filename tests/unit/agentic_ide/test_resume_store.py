@@ -27,8 +27,8 @@ def _snapshot(folder: str) -> resume_store.Snapshot:
         saved_at=100.0,
         terminals=[
             resume_store.SnapshotTerminal(
-                key="mika",
-                name="Mika",
+                key="alex",
+                name="Alex",
                 agent="claude",
                 column=0,
                 slot=0,
@@ -38,7 +38,7 @@ def _snapshot(folder: str) -> resume_store.Snapshot:
                 prompts_sent=3,
             ),
             resume_store.SnapshotTerminal(
-                key="nova", name="Nova", agent="codex", column=1, slot=0
+                key="blake", name="Blake", agent="codex", column=1, slot=0
             ),
         ],
     )
@@ -49,7 +49,7 @@ def test_a_saved_snapshot_comes_back_intact(tmp_path: Path) -> None:
     resume_store.save(_snapshot(str(tmp_path)))
     loaded = resume_store.load()
     assert loaded is not None
-    assert [t.name for t in loaded.terminals] == ["Mika", "Nova"]
+    assert [t.name for t in loaded.terminals] == ["Alex", "Blake"]
     assert [(t.column, t.slot) for t in loaded.terminals] == [(0, 0), (1, 0)]
     assert [t.agent for t in loaded.terminals] == ["claude", "codex"]
     assert loaded.terminals[0].resume is not None
@@ -84,11 +84,11 @@ def test_a_pane_without_a_name_is_dropped_not_fatal(tmp_path: Path) -> None:
     resume_store.save(_snapshot(str(tmp_path)))
     path = resume_store._store_path()
     path.write_text(
-        path.read_text(encoding="utf-8").replace('"name": "Nova"', '"name": ""'),
+        path.read_text(encoding="utf-8").replace('"name": "Blake"', '"name": ""'),
         encoding="utf-8",
     )
     loaded = resume_store.load()
-    assert loaded is not None and [t.name for t in loaded.terminals] == ["Mika"]
+    assert loaded is not None and [t.name for t in loaded.terminals] == ["Alex"]
 
 
 def test_a_snapshot_without_terminals_is_not_an_offer(tmp_path: Path) -> None:
@@ -200,13 +200,13 @@ def test_the_offer_reports_what_will_actually_come_back(
     assert view["folder_exists"] is True
     assert view["folder_name"] == tmp_path.name
     panes = {p["name"]: p for p in view["terminals"]}
-    # Mika has a handle and its CLI is here -> the conversation comes back.
-    assert panes["Mika"]["resumable"] is True
-    assert panes["Mika"]["available"] is True
-    # Nova never got a handle -> the pane returns, the conversation does not.
-    assert panes["Nova"]["resumable"] is False
+    # Alex has a handle and its CLI is here -> the conversation comes back.
+    assert panes["Alex"]["resumable"] is True
+    assert panes["Alex"]["available"] is True
+    # Blake never got a handle -> the pane returns, the conversation does not.
+    assert panes["Blake"]["resumable"] is False
     # ...and Codex is not installed here, which the user must see beforehand.
-    assert panes["Nova"]["available"] is False
+    assert panes["Blake"]["available"] is False
     assert view["resumable_count"] == 1
 
 

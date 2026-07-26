@@ -98,7 +98,7 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
 
 
 async def _open(registry: Registry, folder: Path):
-    return await registry.start(str(folder), [{"agent": "claude", "name": "Mika"}])
+    return await registry.start(str(folder), [{"agent": "claude", "name": "Alex"}])
 
 
 async def _noop(_text: str) -> None:
@@ -111,7 +111,7 @@ async def _noop_exit(_code: int) -> None:
 
 async def _live(registry: Registry, tmp_path: Path):
     await _open(registry, tmp_path)
-    return await registry.attach("Mika", 100, 30, _noop, _noop_exit)
+    return await registry.attach("Alex", 100, 30, _noop, _noop_exit)
 
 
 async def test_a_trailing_reference_gets_a_closing_space(
@@ -119,7 +119,7 @@ async def test_a_trailing_reference_gets_a_closing_space(
 ) -> None:
     term = await _live(registry, tmp_path)
     # Empty screen: the verification sees no pending input line -> submitted.
-    await registry.send_prompt("Mika", "review this. @jarvis/x.py")
+    await registry.send_prompt("Alex", "review this. @jarvis/x.py")
     assert fake_pty.typed[0] == "review this. @jarvis/x.py ", fake_pty.typed
     assert fake_pty.typed[1] == "\r"
     assert term.submitted is True
@@ -129,7 +129,7 @@ async def test_a_plain_prompt_is_typed_verbatim(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _live(registry, tmp_path)
-    await registry.send_prompt("Mika", "review the pipeline")
+    await registry.send_prompt("Alex", "review the pipeline")
     assert fake_pty.typed[0] == "review the pipeline", fake_pty.typed
 
 
@@ -142,7 +142,7 @@ async def test_enter_is_pressed_again_while_the_prompt_sits_in_the_box(
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty", "\x1b[2J\x1b[H❯ review the pipeline\r\n")
 
-    await registry.send_prompt("Mika", "review the pipeline")
+    await registry.send_prompt("Alex", "review the pipeline")
 
     enters = [d for d in fake_pty.typed if d == "\r"]
     assert len(enters) == 2, f"one Enter plus a single retry, got {fake_pty.typed}"
@@ -158,7 +158,7 @@ async def test_a_prompt_that_lands_reports_submitted(
     # the input line is empty again.
     await on_output("pty", "\x1b[2J\x1b[Hreview the pipeline\r\n✽ Mulling…\r\n❯\r\n")
 
-    await registry.send_prompt("Mika", "review the pipeline")
+    await registry.send_prompt("Alex", "review the pipeline")
     assert term.submitted is True
     assert [d for d in fake_pty.typed if d == "\r"] == ["\r"], "no needless retries"
 
@@ -167,7 +167,7 @@ async def test_the_submitted_flag_is_reported(
     registry: Registry, tmp_path: Path
 ) -> None:
     term = await _live(registry, tmp_path)
-    await registry.send_prompt("Mika", "review the pipeline")
+    await registry.send_prompt("Alex", "review the pipeline")
     assert term.to_dict()["submitted"] is True
 
 
@@ -184,7 +184,7 @@ async def test_a_dead_terminal_still_refuses_outright(
     """Verification never softens the hard refusal: no live agent, nothing typed."""
     await _open(registry, tmp_path)
     with pytest.raises(SessionError, match="not running"):
-        await registry.send_prompt("Mika", "review the pipeline")
+        await registry.send_prompt("Alex", "review the pipeline")
 
 
 # --------------------------------------------------- multi-line transport
@@ -229,7 +229,7 @@ async def test_a_multiline_prompt_is_sent_as_one_bracketed_paste(
 ) -> None:
     term = await _live(registry, tmp_path)
 
-    await registry.send_prompt("Mika", _MARKDOWN)
+    await registry.send_prompt("Alex", _MARKDOWN)
 
     body = fake_pty.typed[0]
     assert body.startswith(PASTE_START)
@@ -245,7 +245,7 @@ async def test_a_single_line_prompt_is_not_wrapped(
 ) -> None:
     term = await _live(registry, tmp_path)
 
-    await registry.send_prompt("Mika", "review the pipeline")
+    await registry.send_prompt("Alex", "review the pipeline")
 
     assert PASTE_START not in fake_pty.typed[0]
     assert term.sent_multiline is False
@@ -267,7 +267,7 @@ async def test_a_rejected_multiline_prompt_falls_back_to_one_line(
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty", "\x1b[2J\x1b[H❯ [Pasted text #1 +4 lines]\r\n")
 
-    await registry.send_prompt("Mika", _MARKDOWN)
+    await registry.send_prompt("Alex", _MARKDOWN)
 
     assert any(d == _ONE_LINE for d in fake_pty.typed), fake_pty.typed
     assert term.sent_multiline is False

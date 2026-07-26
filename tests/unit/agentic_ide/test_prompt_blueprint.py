@@ -132,9 +132,9 @@ def test_neutral_carries_only_the_universally_safe_steers():
 
 def test_user_block_carries_the_skeletons_and_the_house_rules():
     block = user_block(
-        utterance="tell Mika to check the ranking",
+        utterance="tell Alex to check the ranking",
         instruction="check the ranking",
-        terminal_name="Mika",
+        terminal_name="Alex",
         agent_display="Claude Code",
         profile_lines=["Folder: /repo", "Git repository on branch main"],
         candidates=["jarvis/rank.py"],
@@ -142,12 +142,12 @@ def test_user_block_carries_the_skeletons_and_the_house_rules():
         house_rules="Tests: pytest tests/",
     )
 
-    assert "Mika" in block
+    assert "Alex" in block
     assert "Claude Code" in block
     assert "jarvis/rank.py" in block
     assert "def fuse(a, b) -> list: ..." in block
     assert "pytest tests/" in block
-    assert "tell Mika to check the ranking" in block
+    assert "tell Alex to check the ranking" in block
 
 
 def test_user_block_puts_the_request_after_the_longform_data():
@@ -155,7 +155,7 @@ def test_user_block_puts_the_request_after_the_longform_data():
     block = user_block(
         utterance="do the thing",
         instruction="do the thing",
-        terminal_name="Kai",
+        terminal_name="Dana",
         agent_display="Codex",
         profile_lines=["Folder: /repo"],
         candidates=["a.py"],
@@ -171,7 +171,7 @@ def test_user_block_survives_having_nothing_to_offer():
     block = user_block(
         utterance="do the thing",
         instruction="do the thing",
-        terminal_name="Kai",
+        terminal_name="Dana",
         agent_display="Codex",
         profile_lines=[],
         candidates=[],
@@ -180,7 +180,7 @@ def test_user_block_survives_having_nothing_to_offer():
     )
 
     assert "do the thing" in block
-    assert "Kai" in block
+    assert "Dana" in block
 
 
 def test_fallback_renders_markdown_with_a_task_heading():

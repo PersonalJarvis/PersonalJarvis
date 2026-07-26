@@ -57,7 +57,7 @@ async def test_a_fresh_workspace_puts_every_pane_in_its_own_column(
 ) -> None:
     """The wizard's panes stand side by side: one column each, top slot."""
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("Mika", 0, 0), ("Nova", 1, 0), ("Aria", 2, 0)]
+    assert _layout(registry) == [("Alex", 0, 0), ("Blake", 1, 0), ("Casey", 2, 0)]
 
 
 # ---------------------------------------------------------------- split right
@@ -65,10 +65,10 @@ async def test_split_right_opens_a_column_next_to_the_anchor(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    term = await registry.add_terminal(anchor="Mika", direction="right")
+    term = await registry.add_terminal(anchor="Alex", direction="right")
     # Immediately right of its anchor — not appended at the end — and everything
     # further right shifts over rather than being overwritten.
-    assert _layout(registry) == [("Mika", 0, 0), (term.name, 1, 0), ("Nova", 2, 0)]
+    assert _layout(registry) == [("Alex", 0, 0), (term.name, 1, 0), ("Blake", 2, 0)]
 
 
 async def test_split_right_inherits_the_anchor_agent(
@@ -84,7 +84,7 @@ async def test_an_explicit_agent_wins_over_the_anchor(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 1)
-    term = await registry.add_terminal(anchor="Mika", direction="right", agent="codex")
+    term = await registry.add_terminal(anchor="Alex", direction="right", agent="codex")
     assert term.agent == "codex"
 
 
@@ -93,11 +93,11 @@ async def test_split_down_stacks_inside_the_anchor_column(
     registry: Registry, tmp_path: Path
 ) -> None:
     """The point of the column model: splitting one pane must not squash the
-    others. Nova keeps its own full-height column."""
+    others. Blake keeps its own full-height column."""
     await _open(registry, tmp_path, 2)
-    term = await registry.add_terminal(anchor="Mika", direction="down")
+    term = await registry.add_terminal(anchor="Alex", direction="down")
     assert (term.column, term.slot) == (0, 1)
-    assert _layout(registry) == [("Mika", 0, 0), (term.name, 0, 1), ("Nova", 1, 0)]
+    assert _layout(registry) == [("Alex", 0, 0), (term.name, 0, 1), ("Blake", 1, 0)]
 
 
 async def test_split_down_pushes_the_existing_stack_down(
@@ -105,10 +105,10 @@ async def test_split_down_pushes_the_existing_stack_down(
 ) -> None:
     """Inserting into the middle of a stack must not collide with what is there."""
     await _open(registry, tmp_path, 1)
-    bottom = await registry.add_terminal(anchor="Mika", direction="down")
-    middle = await registry.add_terminal(anchor="Mika", direction="down")
+    bottom = await registry.add_terminal(anchor="Alex", direction="down")
+    middle = await registry.add_terminal(anchor="Alex", direction="down")
     slots = {name: (column, slot) for name, column, slot in _layout(registry)}
-    assert slots["Mika"] == (0, 0)
+    assert slots["Alex"] == (0, 0)
     assert slots[middle.name] == (0, 1), "the newest pane sits under its anchor"
     assert slots[bottom.name] == (0, 2), "the older pane moved down"
 
@@ -117,15 +117,15 @@ async def test_split_down_pushes_the_existing_stack_down(
 async def test_new_panes_take_the_next_free_call_sign(
     registry: Registry, tmp_path: Path
 ) -> None:
-    await _open(registry, tmp_path, 2)  # Mika, Nova
+    await _open(registry, tmp_path, 2)  # Alex, Blake
     term = await registry.add_terminal(direction="right")
-    assert term.name == "Aria"
+    assert term.name == "Casey"
 
 
 async def test_an_explicit_name_is_deduplicated(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 1)
-    term = await registry.add_terminal(name="Mika", direction="right")
-    assert term.name == "Mika 2"
+    term = await registry.add_terminal(name="Alex", direction="right")
+    assert term.name == "Alex 2"
 
 
 async def test_the_new_pane_starts_pending_and_addressable(
@@ -154,7 +154,7 @@ async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) 
 async def test_a_bad_direction_is_refused(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 1)
     with pytest.raises(SessionError, match="right.*down"):
-        await registry.add_terminal(anchor="Mika", direction="sideways")
+        await registry.add_terminal(anchor="Alex", direction="sideways")
 
 
 async def test_adding_without_a_workspace_is_refused(registry: Registry) -> None:
@@ -178,23 +178,23 @@ async def test_closing_a_pane_stops_its_agent(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
     pty_id = registry.session.terminals[0].pty_id
-    closed = await registry.close_terminal("Mika")
-    assert closed.name == "Mika"
+    closed = await registry.close_terminal("Alex")
+    assert closed.name == "Alex"
     assert pty_id in fake_pty.closed
-    assert [t.name for t in registry.session.terminals] == ["Nova"]
+    assert [t.name for t in registry.session.terminals] == ["Blake"]
 
 
 async def test_closing_repacks_the_stack(registry: Registry, tmp_path: Path) -> None:
     """A gap in a stack would render as a blank cell, so slots are re-packed."""
     await _open(registry, tmp_path, 1)
-    middle = await registry.add_terminal(anchor="Mika", direction="down")
+    middle = await registry.add_terminal(anchor="Alex", direction="down")
     bottom = await registry.add_terminal(anchor=middle.name, direction="down")
     assert [slot for _n, _c, slot in _layout(registry)] == [0, 1, 2]
 
     await registry.close_terminal(middle.name)
-    assert _layout(registry) == [("Mika", 0, 0), (bottom.name, 0, 1)]
+    assert _layout(registry) == [("Alex", 0, 0), (bottom.name, 0, 1)]
 
 
 async def test_closing_a_whole_column_repacks_the_columns(
@@ -202,8 +202,8 @@ async def test_closing_a_whole_column_repacks_the_columns(
 ) -> None:
     """An emptied column would render as a blank stripe."""
     await _open(registry, tmp_path, 3)
-    await registry.close_terminal("Nova")
-    assert _layout(registry) == [("Mika", 0, 0), ("Aria", 1, 0)]
+    await registry.close_terminal("Blake")
+    assert _layout(registry) == [("Alex", 0, 0), ("Casey", 1, 0)]
 
 
 async def test_closing_the_last_pane_leaves_an_empty_workspace(
@@ -211,7 +211,7 @@ async def test_closing_the_last_pane_leaves_an_empty_workspace(
 ) -> None:
     """Allowed on purpose: the grid then offers to open a fresh terminal."""
     await _open(registry, tmp_path, 1)
-    await registry.close_terminal("Mika")
+    await registry.close_terminal("Alex")
     assert registry.session is not None
     assert registry.session.terminals == []
 
@@ -220,7 +220,7 @@ async def test_closing_an_unknown_pane_names_the_real_ones(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 1)
-    with pytest.raises(SessionError, match="Mika"):
+    with pytest.raises(SessionError, match="Alex"):
         await registry.close_terminal("Gandalf")
 
 
@@ -228,20 +228,20 @@ async def test_a_closed_pane_refuses_further_prompts(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
-    await registry.close_terminal("Mika")
+    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.close_terminal("Alex")
     with pytest.raises(SessionError, match="No terminal called"):
-        await registry.send_prompt("Mika", "still there?")
+        await registry.send_prompt("Alex", "still there?")
 
 
 async def test_a_reopened_call_sign_is_a_fresh_pane(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Closing Mika and splitting again must not resurrect the old transcript."""
+    """Closing Alex and splitting again must not resurrect the old transcript."""
     await _open(registry, tmp_path, 1)
-    await registry.attach("Mika", 80, 24, _noop, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
     registry.session.terminals[0].transcript.feed("old work\r\n")
-    await registry.close_terminal("Mika")
-    fresh = await registry.add_terminal(name="Mika", direction="right")
+    await registry.close_terminal("Alex")
+    fresh = await registry.add_terminal(name="Alex", direction="right")
     assert fresh.transcript.tail() == []
     assert fresh.prompts_sent == 0

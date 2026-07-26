@@ -24,7 +24,7 @@ import pytest
 from jarvis.agentic_ide import intent
 from jarvis.agentic_ide.session import MAX_TERMINALS
 
-NAMES = ["Mika", "Nova", "Aria", "Kai"]
+NAMES = ["Alex", "Blake", "Casey", "Dana"]
 
 
 @pytest.mark.parametrize(
@@ -61,15 +61,30 @@ def test_spoken_terminal_requests(utterance: str, count: int, agent: str | None)
 
 
 def test_a_number_above_the_cap_is_clamped_not_refused() -> None:
-    """Asking for 50 is a real request for "as many as fit", not an error.
+    """An absurd count is a mis-heard number, not an error to refuse.
 
     The registry enforces the true cap against the panes already open; the
     detector only keeps the number in a sane range so nothing downstream has to
-    defend against a spoken "spawne tausend Terminals".
+    defend against a spoken "spawne tausend Terminals". Phrased against the cap
+    rather than a literal, because the cap is a runaway guard whose value moves.
     """
-    found = intent.detect_spawn("Spawne 50 Terminals")  # i18n-allow: spoken input under test
+    # Deliberately three digits: the detector reads at most three on purpose, so
+    # a year mentioned in passing is never taken as a pane count. A four-digit
+    # number is therefore no count at all, rather than a huge one.
+    found = intent.detect_spawn("Spawne 999 Terminals")  # i18n-allow: spoken input under test
     assert found is not None
     assert found.count == MAX_TERMINALS
+
+
+def test_an_ordinary_large_count_is_taken_at_face_value() -> None:
+    """"as many as you want" is the point — 20 panes must not be trimmed to 12.
+
+    Guards the 2026-07-26 directive: the old cap of 12 silently rewrote what the
+    user asked for, which is worse than refusing it.
+    """
+    found = intent.detect_spawn("Spawne 20 Terminals")  # i18n-allow: spoken input under test
+    assert found is not None
+    assert found.count == 20
 
 
 @pytest.mark.parametrize(
@@ -84,10 +99,10 @@ def test_a_number_above_the_cap_is_clamped_not_refused() -> None:
         # Questions are not commands.
         "Wie viele Terminals kann ich öffnen?",  # i18n-allow: spoken input under test
         "How many terminals can I open?",
-        "Was macht Kai im Terminal?",  # i18n-allow: spoken input under test
+        "Was macht Dana im Terminal?",  # i18n-allow: spoken input under test
         # Talk ABOUT terminals, no request to open one.
         "Die Terminals sind zu klein",  # i18n-allow: spoken input under test
-        "Das Terminal von Mika hängt",  # i18n-allow: spoken input under test
+        "Das Terminal von Alex hängt",  # i18n-allow: spoken input under test
         # Too short to be anything.
         "Terminal",
         "",
@@ -124,8 +139,8 @@ def test_an_addressed_terminal_still_wins_over_the_spawn_grammar() -> None:
     into that pane is what they asked for. Addressing is therefore checked
     first, and this test is what keeps that order.
     """
-    utterance = "Sag Mika, sie soll ein Terminal öffnen"  # i18n-allow: spoken input under test
+    utterance = "Sag Alex, sie soll ein Terminal öffnen"  # i18n-allow: spoken input under test
     found = intent.detect(utterance, names=NAMES)
     assert found is not None
-    assert found.terminal == "Mika"
+    assert found.terminal == "Alex"
     assert intent.detect_spawn(utterance, names=NAMES) is None

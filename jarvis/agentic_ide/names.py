@@ -8,11 +8,20 @@ distinct proper name survives an imperfect transcript far better, and a wrong
 match is recoverable (the user hears the name back in the answer).
 
 Selection criteria for the pool:
+- **plain English given names** (maintainer directive 2026-07-26), so anyone
+  can say them — the pool is what an international user base reads and speaks
+  aloud, and a name that is obvious in one language and a guess in the next
+  costs a mis-addressed agent,
 - two syllables or fewer, no consonant clusters that ASR routinely drops,
-- pairwise phonetically distinct (no "Mika"/"Mica", no "Leo"/"Theo"),
-- neutral across the supported locales (de / en / es) — every name is
-  pronounceable and gender-neutral-ish in all three,
-- no collision with the wake word or with provider names.
+- pairwise phonetically distinct — enforced, not eyeballed: at 70+ names no
+  human spots every confusable pair, so
+  ``tests/unit/agentic_ide/test_names.py`` runs the SHIPPING resolver over
+  every pair and fails on any that could steal each other's instructions,
+- no collision with the wake word or with the coding agents' own names.
+
+The pool is long on purpose. A workspace may hold as many panes as the machine
+can stand, and running out of names would fall back to "Alex-2" — a call-sign
+nobody can say naturally, which defeats the entire point of naming panes.
 
 Name resolution is deliberately fuzzy (``resolve``): the caller is matching a
 name a human just spoke through an imperfect transcript. This is NOT the wake
@@ -25,21 +34,31 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 
 # Ordered: the Nth terminal of a session gets the Nth name, so the mapping is
-# reproducible across sessions and the user builds a habit ("Mika is always the
-# first pane").
+# reproducible across sessions and the user builds a habit ("Alex is always the
+# first pane"). The waves are a readability grouping only — the clearest,
+# most everyday names sit first because those are the panes people see most.
 NAME_POOL: tuple[str, ...] = (
-    "Mika",
-    "Nova",
-    "Aria",
-    "Kai",
-    "Luna",
-    "Theo",
-    "Iris",
-    "Bruno",
-    "Vega",
-    "Juno",
-    "Milo",
-    "Zara",
+    # Wave 1 — the panes almost everyone will actually have.
+    "Alex", "Blake", "Casey", "Dana", "Ellis", "Finn", "Grace", "Hunter",
+    "Ivy", "Jasper", "Kate", "Logan", "Maya", "Noah", "Oscar", "Quinn",
+    "Ruby", "Sage", "Tessa", "Vera", "Wyatt", "Zoe",
+    # Wave 2 — still short, still plain English.
+    "Aaron", "Bailey", "Clara", "Drew", "Hazel", "Isaac", "Jade", "Jordan",
+    "Keira", "Lucas", "Mason", "Nina", "Olive", "Parker", "Reese", "Tyler",
+    "Violet", "Brooke", "Cole", "Grant", "Heidi", "Jules",
+    # Wave 3 — the long tail, for workspaces nobody will realistically fill.
+    "Aubrey", "Cody", "Emery", "Felix", "Gemma", "Harvey", "Ivan",
+    "Lila", "Marlow", "Owen", "Preston", "Rowan", "Sawyer", "Tobias",
+    "Vaughn", "Willow", "Yara", "Leah", "Naomi", "Otis", "Pearl",
+    "Simone", "Trent", "Hugo", "Nadia", "Rosa", "Theo", "Colby", "Marcus",
+)
+
+#: Names a pane may never carry: the fixed wake word and the coding agents
+#: themselves. Saying "Claude" to address a pane called Claude is a coin flip.
+#: The user's OWN wake word is configurable and cannot be checked here — the
+#: session layer keeps a call-sign from shadowing it at assignment time.
+RESERVED_NAMES: frozenset[str] = frozenset(
+    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor"}
 )
 
 # Below this similarity a spoken word is NOT treated as a terminal name. Tuned
@@ -146,4 +165,11 @@ def resolve(spoken: str, candidates: list[str]) -> str | None:
     return best[1] if best else None
 
 
-__all__ = ["NAME_POOL", "default_names", "normalize", "phonetic_key", "resolve"]
+__all__ = [
+    "NAME_POOL",
+    "RESERVED_NAMES",
+    "default_names",
+    "normalize",
+    "phonetic_key",
+    "resolve",
+]

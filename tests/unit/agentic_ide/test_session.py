@@ -95,7 +95,7 @@ async def test_start_creates_named_terminals(registry: Registry, tmp_path: Path)
     session = await _open(
         registry, tmp_path, [{"agent": "claude"}, {"agent": "codex"}]
     )
-    assert [t.name for t in session.terminals] == ["Mika", "Nova"]
+    assert [t.name for t in session.terminals] == ["Alex", "Blake"]
     assert [t.agent for t in session.terminals] == ["claude", "codex"]
     assert session.folder == str(tmp_path)
 
@@ -164,7 +164,7 @@ async def test_opening_the_same_folder_again_switches_to_it(
     reopening must not stop them to start a second set.
     """
     first = await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
 
     again = await _open(registry, tmp_path, [{"agent": "codex"}])
@@ -181,7 +181,7 @@ async def test_a_second_folder_opens_beside_the_first(
     other = tmp_path / "second"
     other.mkdir()
     first = await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
 
     second = await _open(registry, other, [{"agent": "claude"}])
@@ -197,7 +197,7 @@ async def test_call_signs_do_not_repeat_across_workspaces(
 ) -> None:
     """A name addresses exactly one pane, however many workspaces are open.
 
-    "Tell Mika to run the tests" has to be an instruction, not a question about
+    "Tell Alex to run the tests" has to be an instruction, not a question about
     which tab was meant.
     """
     other = tmp_path / "second"
@@ -304,7 +304,7 @@ async def test_attach_spawns_the_agent_in_the_chosen_folder(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    term = await registry.attach("Mika", 100, 30, _noop_output, _noop_exit)
+    term = await registry.attach("Alex", 100, 30, _noop_output, _noop_exit)
     assert term.status == "live"
     spawn = fake_pty.spawns[-1]
     assert spawn["cwd"] == str(tmp_path)
@@ -315,16 +315,16 @@ async def test_attach_feeds_the_transcript(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty-id", "\x1b[32mediting main.py\x1b[0m\r\n")
-    assert registry.report("Mika")["transcript"] == ["editing main.py"]
+    assert registry.report("Alex")["transcript"] == ["editing main.py"]
 
 
 async def test_attach_by_spoken_phrase(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    term = await registry.attach("mika", 80, 24, _noop_output, _noop_exit)
-    assert term.name == "Mika"
+    term = await registry.attach("alex", 80, 24, _noop_output, _noop_exit)
+    assert term.name == "Alex"
 
 
 # --------------------------------------------------------------------- prompt
@@ -334,8 +334,8 @@ async def test_prompt_types_text_then_enter_separately(
     """Text and Enter go as two writes: agent TUIs debounce a single burst as a
     paste and insert a line break instead of submitting."""
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
-    await registry.send_prompt("Mika", "run the tests")
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.send_prompt("Alex", "run the tests")
     assert fake_pty.typed == ["run the tests", "\r"]
 
 
@@ -343,8 +343,8 @@ async def test_prompt_counts_and_remembers_the_last_one(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
-    await registry.send_prompt("what is mika doing", "status please")
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.send_prompt("what is alex doing", "status please")
     term = registry.session.terminals[0]
     assert term.prompts_sent == 1
     assert term.last_prompt == "status please"
@@ -354,7 +354,7 @@ async def test_prompt_to_an_unknown_terminal_names_the_real_ones(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    with pytest.raises(SessionError, match="Mika"):
+    with pytest.raises(SessionError, match="Alex"):
         await registry.send_prompt("Gandalf", "hello")
 
 
@@ -365,21 +365,21 @@ async def test_prompt_is_refused_when_the_agent_is_not_running(
     refused rather than typed into something else."""
     await _open(registry, tmp_path, [{"agent": "claude"}])
     with pytest.raises(SessionError, match="not running"):
-        await registry.send_prompt("Mika", "run the tests")
+        await registry.send_prompt("Alex", "run the tests")
 
 
 async def test_prompt_that_sanitizes_to_nothing_is_refused(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
     with pytest.raises(SessionError, match="empty"):
-        await registry.send_prompt("Mika", "\x03\x1b")
+        await registry.send_prompt("Alex", "\x03\x1b")
 
 
 async def test_prompt_without_a_session_is_refused(registry: Registry) -> None:
     with pytest.raises(SessionError, match="No Agentic-IDE session"):
-        await registry.send_prompt("Mika", "hello")
+        await registry.send_prompt("Alex", "hello")
 
 
 # ----------------------------------------------------------------- focus mode
@@ -403,8 +403,8 @@ async def test_end_closes_every_pty(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}, {"agent": "codex"}])
-    await registry.attach("Mika", 80, 24, _noop_output, _noop_exit)
-    await registry.attach("Nova", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("Blake", 80, 24, _noop_output, _noop_exit)
     assert await registry.end() is True
     assert len(fake_pty.closed) == 2
     assert registry.session is None
@@ -416,7 +416,7 @@ async def test_report_includes_status_and_folder(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    data = registry.report("Mika")
-    assert data["name"] == "Mika"
+    data = registry.report("Alex")
+    assert data["name"] == "Alex"
     assert data["folder"] == str(tmp_path)
     assert data["status"] == "pending"
