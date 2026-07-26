@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jarvis.agentic_ide import resume_store
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 
@@ -116,14 +118,17 @@ def test_clear_removes_the_offer(tmp_path: Path) -> None:
 
 
 def test_a_failed_write_leaves_the_previous_snapshot_readable(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A bad write must not turn a good offer into a stub."""
     resume_store.save(_snapshot(str(tmp_path)))
     target = resume_store._store_path()
     before = target.read_text(encoding="utf-8")
-    # A directory sitting exactly where the temp file wants to go.
-    target.with_suffix(".json.tmp").mkdir(parents=True, exist_ok=True)
+
+    def _fail(*_args: object) -> None:
+        raise OSError("the disk went away mid-write")
+
+    monkeypatch.setattr(resume_store.os, "replace", _fail)
     resume_store.save(
         resume_store.Snapshot(
             session_id="ide_other",
@@ -135,6 +140,54 @@ def test_a_failed_write_leaves_the_previous_snapshot_readable(
         )
     )
     assert target.read_text(encoding="utf-8") == before
+    # ...and no debris is left lying around to confuse the next read.
+    assert list(target.parent.glob("*.tmp-*")) == []
+
+
+def test_two_threads_saving_at_once_do_not_lose_the_write(tmp_path: Path) -> None:
+    """The collision that actually happens, and cost a conversation id.
+
+    A pane connecting saves the workspace; a moment later the background lookup
+    that found a Codex conversation saves it again, from another thread. With
+    one shared temp filename the two clobbered each other — and on Windows the
+    second rename failed outright, dropping exactly the id this feature exists
+    to keep.
+    """
+    import threading
+
+    start = threading.Barrier(6)
+    errors: list[BaseException] = []
+
+    def _save(index: int) -> None:
+        try:
+            start.wait(timeout=5)
+            for _ in range(10):
+                resume_store.save(
+                    resume_store.Snapshot(
+                        session_id=f"ide_{index}",
+                        folder=str(tmp_path),
+                        saved_at=float(index),
+                        terminals=[
+                            resume_store.SnapshotTerminal(
+                                key=f"t{index}", name=f"T{index}", agent="claude"
+                            )
+                        ],
+                    )
+                )
+        except BaseException as exc:  # noqa: BLE001 - reported to the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_save, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    # Whoever won, the file is a COMPLETE snapshot and not a torn one.
+    loaded = resume_store.load()
+    assert loaded is not None and len(loaded.terminals) == 1
+    assert list(resume_store._store_path().parent.glob("*.tmp-*")) == []
 
 
 # ------------------------------------------------------------------- offer

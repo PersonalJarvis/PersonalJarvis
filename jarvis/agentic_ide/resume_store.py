@@ -31,14 +31,21 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 
 from .agent_sessions import ResumeHandle
+
+# Saves arrive from more than one thread (see `save`), and the last one has to
+# be the one that lands rather than the one that happened to finish its rename
+# first.
+_WRITE_LOCK = threading.Lock()
 
 # Bumped whenever the stored shape changes incompatibly. An unknown version
 # reads as "nothing to resume": half-understanding a newer build's file would
@@ -158,6 +165,14 @@ def save(snapshot: Snapshot) -> None:
     workspace that is otherwise running perfectly. Failures are logged and
     swallowed, and the previous snapshot survives untouched — the temp file is
     written first and only then replaces the real one.
+
+    **Two writes really do collide here.** A pane connecting saves the workspace,
+    and a moment later the background lookup that finds a Codex conversation id
+    saves it again — from a different thread. Sharing one temp filename made
+    those two clobber each other's file, and on Windows the second ``os.replace``
+    then failed outright with a sharing violation, silently losing exactly the
+    conversation id this feature exists to keep. So each write gets its own temp
+    name, and the lock keeps the last writer's file the one that lands.
     """
     if not snapshot.terminals:
         # Nothing to come back to. Clearing beats storing an empty offer that
@@ -165,13 +180,21 @@ def save(snapshot: Snapshot) -> None:
         clear()
         return
     target = _store_path()
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
-        os.replace(tmp, target)
-    except OSError as exc:
-        logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
+    tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
+    with _WRITE_LOCK:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
+            os.replace(tmp, target)
+        except OSError as exc:
+            logger.warning(
+                "Agentic IDE: could not persist the resume snapshot: {}", exc
+            )
+            # Never leave a half-written temp file behind to be found later.
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:  # noqa: S110 - cleanup is best-effort
+                pass
 
 
 def load() -> Snapshot | None:
