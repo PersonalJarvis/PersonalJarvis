@@ -166,6 +166,16 @@ class CodexBrain:
         # Only the API-key path can see images (see the supports_vision note).
         self.supports_vision = bool(self._api_key())
 
+    @staticmethod
+    def subscription_connected() -> bool:
+        """Whether this provider's ChatGPT subscription login is usable now.
+
+        The subscription resolver asks the provider class rather than importing
+        an auth service per family, so each brain answers for itself. Never
+        raises — a failed probe means "not connected", never a broken turn.
+        """
+        return _codex_oauth_connected()
+
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
 

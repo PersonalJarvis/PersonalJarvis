@@ -190,6 +190,27 @@ class AntigravityBrain:
             budget = 0.0
         self._cli_timeout_s = budget if budget > 0 else _CLI_TIMEOUT_S
 
+    @staticmethod
+    def subscription_connected() -> bool:
+        """Whether this provider's Google subscription login is usable now.
+
+        The subscription resolver asks the provider class rather than importing
+        an auth service per family, so each brain answers for itself. Only a
+        personal OAuth login counts: an API key configured for this family bills
+        per token, which is precisely what a subscription caller is avoiding.
+        Never raises — a failed probe means "not connected", never a broken turn.
+        """
+        try:
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            status = GoogleCliAuthService().status()
+            return bool(
+                getattr(status, "connected", False)
+                and getattr(status, "mode", "") == "oauth-personal"
+            )
+        except Exception:  # noqa: BLE001 - a probe degrades, never raises
+            return False
+
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
 

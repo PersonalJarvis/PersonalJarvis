@@ -31,7 +31,7 @@ Cache strategy: singleton cache, invalidated on ``ConfigReloaded`` event
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
 from jarvis.brain.provider_registry import BrainProviderRegistry
@@ -229,6 +229,122 @@ def resolve_quality_brain(
         return brain
 
     log.info("resolve_quality_brain: no quality-tier provider reachable")
+    return None
+
+
+def _subscription_connected(provider: str) -> bool:
+    """Whether ``provider``'s subscription login is usable right now.
+
+    Asks the provider CLASS through the registry rather than importing an auth
+    service per family here, so a subscription brain added later answers for
+    itself with no edit to this module (AP-21). A provider that offers no probe
+    is treated as connected: the instantiation that follows is the real gate, a
+    false "yes" costs one wasted candidate, and a false "no" would hide a
+    working subscription the user is paying for. The drift guard in
+    ``tests/unit/brain/test_resolve_subscription_brain.py`` is what keeps that
+    lenient default from quietly becoming the normal case.
+    """
+    try:
+        brain_cls = _get_registry().get_class(provider)
+    except Exception:  # noqa: BLE001 - an unloadable plugin is simply not usable
+        return False
+    probe = getattr(brain_cls, "subscription_connected", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe())
+    except Exception:  # noqa: BLE001 - a probe must never break a turn
+        log.info("resolve_subscription_brain: %s probe failed", provider, exc_info=True)
+        return False
+
+
+def _subscription_candidates(config: JarvisConfig) -> list[str]:
+    """Registered brain providers billed against a subscription, in card order.
+
+    Membership comes from the provider cards' billing mode — never a name list,
+    so a fourth coding CLI joins the chain by shipping a card (AP-21/AP-22).
+    ``config`` is accepted for signature symmetry with the other helpers here.
+    """
+    from jarvis.ui.web.provider_spec import PROVIDERS, provider_billing
+
+    available = set(_get_registry().available())
+    return [
+        spec.id
+        for spec in PROVIDERS
+        if spec.tier == "brain"
+        and spec.id in available
+        and provider_billing(spec).startswith("subscription")
+    ]
+
+
+def resolve_subscription_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+    cli_timeout_s: float | None = None,
+) -> Brain | None:
+    """A Brain billed against a connected subscription, or None.
+
+    For callers whose output IS the product and who are already waiting seconds
+    — the Agentic IDE's prompt composer and work splitter. It exists so those
+    callers can spend a plan the user already pays for instead of a per-token
+    key, and so a downloader whose ONLY credential is a coding subscription
+    stops falling through to the deterministic prompt on every instruction.
+
+    Never raises: None means "no subscription can do this", and the caller falls
+    through to the API-billed resolver and finally to its own plain layer.
+
+    **A candidate that cannot honour ``structured_prompts`` is SKIPPED, never
+    used conversationally.** A CLI brain in conversational mode replaces the
+    caller's contract with "answer in one to three short sentences" and returns
+    three fluent sentences that read like a valid brief. That is strictly worse
+    than returning None, because the caller's own fallback is at least honest
+    about being plain.
+
+    Deliberately does NOT populate ``_cache``: its key is ``(provider, model)``
+    and is shared with the voice-tier resolvers, so a cached structured instance
+    would later be handed to a spoken turn built to expect the conversational
+    wrapper.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        candidates = _subscription_candidates(config)
+    except Exception:  # noqa: BLE001 - a spec problem must not kill the caller
+        log.info("resolve_subscription_brain: candidates unavailable", exc_info=True)
+        return None
+
+    for provider in candidates:
+        if not _subscription_connected(provider):
+            log.debug("resolve_subscription_brain: %s not signed in", provider)
+            continue
+        kwargs: dict[str, Any] = {"structured_prompts": True}
+        model = _deep_model_for(config, provider)
+        if model:
+            kwargs["model"] = model
+        if cli_timeout_s and cli_timeout_s > 0:
+            kwargs["cli_timeout_s"] = float(cli_timeout_s)
+        try:
+            brain = _get_registry().instantiate(provider, **kwargs)
+        except TypeError:
+            # Signature probe, not a name check (AP-21): no structured mode
+            # means no brief, so skip rather than degrade invisibly.
+            log.info(
+                "resolve_subscription_brain: %s cannot forward a system "
+                "contract — skipping rather than answering conversationally",
+                provider,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001
+            log.info(
+                "resolve_subscription_brain: %s not instantiable (%s)",
+                provider,
+                type(exc).__name__,
+            )
+            continue
+        log.info("resolve_subscription_brain: writing on %s", provider)
+        return brain
+
+    log.info("resolve_subscription_brain: no connected subscription reachable")
     return None
 
 

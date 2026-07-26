@@ -661,6 +661,26 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
         ),
         live=False,
     )
+    # Claude CLI — the Anthropic-subscription writer (``claude -p``); no
+    # /v1/models over a plan login, so curated only. The aliases are what the CLI
+    # itself accepts, not dated API ids: they keep pointing at the plan's current
+    # model as Anthropic rotates it, which is exactly right for a subscription
+    # path where the account's plan decides what is reachable anyway. Leaving the
+    # model unset is also valid and means "whatever this plan defaults to".
+    cat["claude-cli"] = CatalogSpec(
+        "brain",
+        "model",
+        tuple(
+            _curated(
+                [
+                    ("sonnet", "Claude Sonnet (plan default tier)"),
+                    ("opus", "Claude Opus (deepest, slowest)"),
+                    ("haiku", "Claude Haiku (fastest)"),
+                ]
+            )
+        ),
+        live=False,
+    )
     for p, (selects, opts) in TTS_CATALOG.items():
         cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)
     for p, opts in STT_CATALOG.items():
