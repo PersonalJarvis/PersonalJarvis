@@ -70,6 +70,29 @@ KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
 
+#: How long the embedding-dependent stages sleep after the provider answered
+#: with a rate/quota rejection. A depleted quota is GLOBAL: retrying the batch
+#: members individually just multiplied one 429 into 33 per pass, thousands of
+#: pointless HTTP calls and write transactions per hour (observed live
+#: 2026-07-26), starving the read path's event loop in the process.
+EMBED_COOLDOWN_S = 600.0
+
+#: Provider-answer shapes that mean "stop asking for a while" rather than
+#: "this item is poisoned": rate limit, out of credit, service unavailable.
+_RATE_LIMIT_MARKERS = ("HTTP 429", "HTTP 402", "HTTP 503")
+
+
+def _rate_limited_embed(exc: BaseException) -> bool:
+    """True for an EmbeddingError carrying a rate/quota/unavailable status.
+
+    Checked by class NAME so this module keeps its lazy-import discipline
+    (AP-26); the marker strings come from the adapters' honest error texts.
+    """
+    if type(exc).__name__ != "EmbeddingError":
+        return False
+    message = str(exc)
+    return any(marker in message for marker in _RATE_LIMIT_MARKERS)
+
 #: Media enrichment claims ONE item per pass, and only when every other stage
 #: found nothing to do. Describing a picture costs a model call, and a photo
 #: library is tens of thousands of them — so this lane is deliberately the
@@ -177,6 +200,9 @@ class PipelineWorker:
         #: stage -> the pause reason last logged, so a persistent gap logs once.
         self._pause_reasons: dict[str, str] = {}
         self._source_kind_cache: dict[str, str] = {}
+        #: monotonic deadline until which the embedding-dependent stages rest
+        #: after a rate/quota rejection (0.0 = no cooldown).
+        self._embed_cooldown_until = 0.0
 
     # -- public surface ------------------------------------------------------
 
@@ -258,6 +284,33 @@ class PipelineWorker:
 
     def _clear_stage_pause(self, stage: str) -> None:
         self._pause_reasons.pop(stage, None)
+
+    def _begin_embed_cooldown(self, exc: BaseException) -> None:
+        """One rate/quota rejection rests BOTH embedding-dependent stages.
+
+        No attempt is charged and no retry is written: the failure is the
+        provider's global state, not any item's fault — the claims were
+        read-only, so every item simply becomes claimable again when the
+        cooldown ends.
+        """
+        self._embed_cooldown_until = time.monotonic() + EMBED_COOLDOWN_S
+        log.warning(
+            "UltraWiki embedding provider rejected with a rate/quota answer "
+            "(%s) — resting the embed and distill stages for %.0f minutes "
+            "instead of hammering it per item",
+            exc,
+            EMBED_COOLDOWN_S / 60.0,
+        )
+
+    def _embed_cooldown_reason(self) -> str:
+        """Honest pause reason while the cooldown runs, else ``""``."""
+        remaining = self._embed_cooldown_until - time.monotonic()
+        if remaining <= 0:
+            return ""
+        return (
+            "embedding provider is rate-limited or out of quota — retrying "
+            f"in {max(1, int(remaining // 60))} minute(s)"
+        )
 
     def _note_lost_claim(self, item: dict[str, Any], stage: str) -> None:
         """A concurrent content change invalidated this claim — not an error.
@@ -481,6 +534,10 @@ class PipelineWorker:
         if backend is None:
             self._note_stage_pause("embed", reason)
             return 0
+        cooldown = self._embed_cooldown_reason()
+        if cooldown:
+            self._note_stage_pause("embed", cooldown)
+            return 0
         self._clear_stage_pause("embed")
         items = await self._store.claim_batch(
             ItemState.EMBEDDED, limit=EMBED_BATCH, now=self._claim_now()
@@ -501,6 +558,12 @@ class PipelineWorker:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — fall back to per-item embedding
+            # A rate/quota rejection is GLOBAL, not a poison item: retrying
+            # the members individually would multiply one 429 into 33 calls
+            # per pass. Rest instead; the read-only claims release themselves.
+            if _rate_limited_embed(exc):
+                self._begin_embed_cooldown(exc)
+                return 0
             # ONE unembeddable text (provider 400 on some content) used to
             # charge an attempt to all 32 batch members, so a single poison
             # item dead-lettered a whole healthy batch every five passes.
@@ -552,6 +615,11 @@ class PipelineWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — only this item is charged
+                if _rate_limited_embed(exc):
+                    # Mid-loop quota exhaustion: stop charging anyone and
+                    # rest — the remaining claims are read-only anyway.
+                    self._begin_embed_cooldown(exc)
+                    break
                 await self._retry(item, "embed", exc)
         return len(items)
 
@@ -603,6 +671,12 @@ class PipelineWorker:
         if backend is None:
             self._note_stage_pause("distill", reason)
             return 0
+        cooldown = self._embed_cooldown_reason()
+        if cooldown:
+            # The distilled summary must be embedded too, so this stage rests
+            # through the same provider cooldown as the embed pass.
+            self._note_stage_pause("distill", cooldown)
+            return 0
         distill_ok, distill_reason = await self._distill_ready()
         if not distill_ok:
             self._note_stage_pause("distill", distill_reason)
@@ -622,6 +696,9 @@ class PipelineWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
+                if _rate_limited_embed(exc):
+                    self._begin_embed_cooldown(exc)
+                    break
                 await self._retry(item, "distill", exc)
         return len(items)
 

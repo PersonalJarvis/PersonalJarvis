@@ -358,6 +358,95 @@ async def test_batch_embed_failure_retries_members_individually(store):
     assert len(backend.embed_calls) == 1 + count
 
 
+async def test_quota_rejection_rests_the_stage_instead_of_hammering(store):
+    """A 429/quota answer is GLOBAL: no per-item fan-out (one 429 used to
+    become 33 calls per pass), no attempts charged, and the next pass claims
+    nothing while the cooldown runs."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    await store.upsert_items("src1", [make_item(i) for i in range(5)])
+
+    class QuotaBackend(FakeEmbeddingBackend):
+        async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+            self.embed_calls.append(list(texts))
+            raise EmbeddingError("fake: embedding request failed with HTTP 429")
+
+    backend = QuotaBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001 — drive one stage deliberately
+    await worker._embed_pass()  # noqa: SLF001 — the 429 batch call
+    await worker._embed_pass()  # noqa: SLF001 — cooldown: must not call again
+
+    assert len(backend.embed_calls) == 1, "no per-item fan-out, no re-claim"
+    item = await store.get_item_by_external_id("src1", "ext-0000")
+    assert item["attempt_count"] == 0, "a global outage charges nobody"
+    assert item["state"] == ItemState.KEYWORD_INDEXED.value
+    assert item["last_error"] is None
+
+
+async def test_embed_work_resumes_after_the_cooldown(store):
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    await store.upsert_items("src1", [make_item(1)])
+
+    class HealingBackend(FakeEmbeddingBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next = True
+
+        async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+            if self.fail_next:
+                self.fail_next = False
+                raise EmbeddingError("fake: embedding request failed with HTTP 429")
+            return await super().embed(texts, model=model)
+
+    backend = HealingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001 — 429, cooldown starts
+    worker._embed_cooldown_until = 0.0  # noqa: SLF001 — cooldown elapsed
+    await worker._embed_pass()  # noqa: SLF001
+
+    assert worker.processed_counts()["embed"] == 1
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item["state"] == ItemState.EMBEDDED.value
+
+
+async def test_distill_pass_rests_through_the_embed_cooldown(store):
+    """The distilled summary must be embedded too, so the distill stage
+    shares the provider cooldown instead of burning chat-model calls whose
+    result cannot be stored."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,  # asserts if the stage claims work
+        distill_ready_fn=DISTILL_READY,
+    )
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("fake: embedding request failed with HTTP 429")
+    )
+
+    assert await worker._distill_pass() == 0  # noqa: SLF001
+
+
 async def test_a_long_item_is_embedded_as_many_passages_not_truncated(store):
     """The change that makes full-depth ingestion mean anything.
 
