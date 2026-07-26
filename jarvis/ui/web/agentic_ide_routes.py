@@ -1355,9 +1355,13 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         term = await registry.send_prompt(name, text)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    # `submitted` is the honest part of this answer: the text was typed either
-    # way, but only a True here means the agent actually accepted it and started.
-    # A caller that reports "sent to Mika" on a False is lying to the user.
+    # `submitted` is the honest part of this answer, and it has THREE states:
+    # True the agent accepted the prompt and started, False the text is provably
+    # still in its input box, null the pane never visibly took it and no claim
+    # can be made either way. Collapsing null into False used to report "the
+    # text is sitting in its input box" about a pane where it demonstrably was
+    # not — a confident answer nobody had. A caller that reports "sent to Mika"
+    # on anything but True is lying to the user.
     return {
         "ok": True,
         "terminal": term.name,
@@ -1366,13 +1370,19 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         "composed_by": composed_by,
         "files": files,
         "prompts_sent": term.prompts_sent,
-        "submitted": bool(term.submitted),
+        "submitted": term.submitted,
         "detail": (
             ""
-            if term.submitted
+            if term.submitted is True
             else (
                 f"{term.name} did not accept the prompt — the text is sitting in "
                 "its input box. Tell the user, and let them press Enter there."
+            )
+            if term.submitted is False
+            else (
+                f"{term.name} never showed the prompt arriving, so it may have "
+                "started or may have missed it entirely. Tell the user to check "
+                "that pane."
             )
         ),
     }

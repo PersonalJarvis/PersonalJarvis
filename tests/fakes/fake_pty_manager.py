@@ -10,8 +10,14 @@ signature.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
+
+# Bracketed-paste markers, spelled out rather than imported so the fake stays
+# independent of the module under test.
+_PASTE_START = "\x1b[200~"
+_PASTE_END = "\x1b[201~"
 
 
 @dataclass(slots=True)
@@ -31,7 +37,15 @@ class FakePtyManager:
     closed: list[str] = field(default_factory=list)
     # Set to make spawn fail the way a missing PTY backend would.
     spawn_error: str | None = None
+    # When true the fake DRAWS like an agent TUI: text written to it appears on
+    # the input line, and Enter clears the line and echoes the prompt into the
+    # history. Anything asserting on the submit contract needs this — a screen
+    # that never changes is not a terminal any agent ever ran in, and code that
+    # reads the screen to decide whether a prompt landed cannot be tested
+    # against one.
+    tui_echo: bool = False
     _live: set[str] = field(default_factory=set)
+    _box: dict[str, str] = field(default_factory=dict)
     _counter: int = 0
     # Callbacks per live terminal, so a test can make an agent SPEAK (see
     # ``emit``) rather than only observe what was typed at it.
@@ -74,7 +88,31 @@ class FakePtyManager:
         if terminal_id not in self._live:
             return False
         self.writes.append((terminal_id, data))
+        if self.tui_echo:
+            self._redraw(terminal_id, data)
         return True
+
+    def _redraw(self, terminal_id: str, data: str) -> None:
+        """Repaint the way an agent TUI would after receiving ``data``."""
+        if data == "\r":
+            sent, self._box[terminal_id] = self._box.get(terminal_id, ""), ""
+            # A submitted prompt scrolls up into the history; the line is empty.
+            screen = f"\x1b[2J\x1b[H{sent}\r\n✽ Working…\r\n❯ \r\n"
+        else:
+            text = data.replace(_PASTE_START, "").replace(_PASTE_END, "")
+            # Only the first line is what the input line shows of a paste.
+            self._box[terminal_id] = self._box.get(terminal_id, "") + text
+            first = self._box[terminal_id].split("\n", 1)[0]
+            screen = f"\x1b[2J\x1b[H❯ {first}\r\n"
+        callbacks = self._callbacks.get(terminal_id)
+        if callbacks is None:
+            return
+        # The real reader thread delivers output asynchronously, so this does
+        # too — a test that polls the screen must see the same interleaving.
+        try:
+            asyncio.get_running_loop().create_task(callbacks[0](terminal_id, screen))
+        except RuntimeError:  # no loop (sync test) — nothing is polling anyway
+            pass
 
     def resize(self, terminal_id: str, cols: int, rows: int) -> bool:
         if terminal_id not in self._live:

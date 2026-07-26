@@ -81,6 +81,37 @@ def test_an_echo_above_the_input_line_does_not_count_as_pending() -> None:
     assert not _input_line_holds(["Review the pipeline", "✻ Cooked for 2s", "❯"], needle)
 
 
+@pytest.mark.parametrize(
+    "input_line",
+    [
+        "› [Pasted Content 2497 chars]",   # Codex
+        "❯ [Pasted text #1 +12 lines]",    # Claude Code
+        "> [Pasted 40 lines]",
+        "› [pasted content 812 chars]",
+        "❯ [Image #1 pasted]",
+    ],
+)
+def test_every_paste_placeholder_wording_counts_as_still_pending(
+    input_line: str,
+) -> None:
+    """A collapsed paste is the prompt, still sitting in the box.
+
+    The TUI draws a summary instead of the text, so the text itself cannot be
+    compared against — but it has NOT been sent. Measured against a real Codex
+    (2026-07-26): a brief pasted into a fully booted pane renders as
+    ``[Pasted Content 2497 chars]`` and stays there, because Codex ignores an
+    Enter that arrives too soon after a paste. Recognising only Claude Code's
+    ``[Pasted text …]`` reported all of those as submitted, so no retry was ever
+    pressed and the user was told the prompt had gone out.
+
+    Wording is a TUI detail that changes between releases, so the check keys on
+    the shape — a bracketed summary containing "paste" — not on one vendor's
+    phrasing.
+    """
+    needle = _submit_needle("## Task\nReview the pipeline")
+    assert _input_line_holds([input_line], needle)
+
+
 # ------------------------------------------------------------------ the path
 @pytest.fixture
 def fake_pty() -> FakePtyManager:
@@ -90,10 +121,14 @@ def fake_pty() -> FakePtyManager:
 @pytest.fixture
 def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Registry:
     monkeypatch.setattr(session_mod, "agent_argv", lambda name: (f"/usr/bin/{name}",))
-    # Keep the verification loop fast in tests.
-    monkeypatch.setattr(session_mod, "_SUBMIT_POLL_S", 0.0)
-    monkeypatch.setattr(session_mod, "_SUBMIT_WINDOW_S", 0.0)
-    monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.0)
+    # Keep the arrival wait and the verification loop fast — but not zero: the
+    # fake repaints through the event loop the way a real reader thread does,
+    # so a poll that never yields would never see the screen change.
+    monkeypatch.setattr(session_mod, "_SUBMIT_POLL_S", 0.01)
+    monkeypatch.setattr(session_mod, "_SUBMIT_WINDOW_S", 0.04)
+    monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.02)
+    monkeypatch.setattr(session_mod, "_ARRIVAL_POLL_S", 0.01)
+    monkeypatch.setattr(session_mod, "_ARRIVAL_WINDOW_S", 0.04)
     return Registry(pty_manager=fake_pty)
 
 
@@ -117,8 +152,8 @@ async def _live(registry: Registry, tmp_path: Path):
 async def test_a_trailing_reference_gets_a_closing_space(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
+    fake_pty.tui_echo = True  # a pane that draws what it is given
     term = await _live(registry, tmp_path)
-    # Empty screen: the verification sees no pending input line -> submitted.
     await registry.send_prompt("Alex", "review this. @jarvis/x.py")
     assert fake_pty.typed[0] == "review this. @jarvis/x.py ", fake_pty.typed
     assert fake_pty.typed[1] == "\r"
@@ -149,14 +184,84 @@ async def test_enter_is_pressed_again_while_the_prompt_sits_in_the_box(
     assert term.submitted is False
 
 
+async def test_a_collapsed_paste_is_retried_and_reported_honestly(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Codex's collapsed-paste line must trigger the retry, not a success claim.
+
+    The live failure this guards (2026-07-26): two Codex panes were handed a
+    composed brief, both left it sitting in the input box as
+    ``[Pasted Content 2497 chars]``, and both were logged as "submitted" — so
+    neither the extra Enter nor the single-line fallback ever ran.
+    """
+    term = await _live(registry, tmp_path)
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H› [Pasted Content 2497 chars]\r\n")
+
+    await registry.send_prompt("Alex", "## Task\nReview the pipeline")
+
+    assert [d for d in fake_pty.typed if d == "\r"], "no Enter was ever pressed"
+    assert len([d for d in fake_pty.typed if d == "\r"]) >= 2, (
+        f"the prompt sat in the box — Enter must be pressed again: {fake_pty.typed}"
+    )
+    assert term.submitted is False, "a prompt still in the box is not submitted"
+
+
+async def test_a_prompt_stuck_in_the_box_is_never_typed_a_second_time(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """The single-line fallback must not append a duplicate of a stuck prompt.
+
+    The fallback exists for a pane that never RECEIVED the paste. When the text
+    is demonstrably still sitting in the input box, re-typing it puts a second
+    copy behind the first, and the next Enter submits both — so in that case the
+    only safe move is another Enter, never another paste.
+    """
+    term = await _live(registry, tmp_path)
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H› [Pasted Content 2497 chars]\r\n")
+
+    await registry.send_prompt("Alex", "## Task\nReview the pipeline")
+
+    pastes = [d for d in fake_pty.typed if "Review the pipeline" in d]
+    assert len(pastes) == 1, f"the prompt was typed twice: {fake_pty.typed}"
+    assert term.submitted is False
+
+
+async def test_a_prompt_never_seen_to_arrive_is_reported_as_unconfirmed(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A pane that never displayed the text gets an honest "cannot say".
+
+    Measured against a real Codex (2026-07-26): a pane still booting swallows
+    the paste outright — the input box keeps showing its own idle hint and no
+    part of the prompt ever appears. An empty box is ALSO exactly what a
+    successful submit looks like, so the two cannot be told apart from here and
+    the old check simply picked the flattering reading and claimed success.
+
+    ``None`` is the truthful answer, and the fan-out already treats it as
+    "unknown" rather than overstating. Re-typing is deliberately NOT done: if
+    the text is in fact sitting there unread, a second copy lands behind the
+    first and the pane runs a doubled instruction.
+    """
+    term = await _live(registry, tmp_path)
+    on_output = fake_pty.spawns[-1]["on_output"]
+    # The pane shows its own idle hint — none of our prompt.
+    await on_output("pty", "\x1b[2J\x1b[H› Find and fix a bug in @filename\r\n")
+
+    await registry.send_prompt("Alex", "## Task\nReview the pipeline")
+
+    bodies = [d for d in fake_pty.typed if "Review the pipeline" in d]
+    assert len(bodies) == 1, f"the prompt must not be re-typed: {fake_pty.typed}"
+    assert term.submitted is None, "never seen to arrive is not a success claim"
+
+
 async def test_a_prompt_that_lands_reports_submitted(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
+    """The whole happy path: the pane shows the text, then Enter clears it."""
+    fake_pty.tui_echo = True
     term = await _live(registry, tmp_path)
-    on_output = fake_pty.spawns[-1]["on_output"]
-    # Screen after a successful submit: the prompt is echoed in the history and
-    # the input line is empty again.
-    await on_output("pty", "\x1b[2J\x1b[Hreview the pipeline\r\n✽ Mulling…\r\n❯\r\n")
 
     await registry.send_prompt("Alex", "review the pipeline")
     assert term.submitted is True
@@ -164,8 +269,9 @@ async def test_a_prompt_that_lands_reports_submitted(
 
 
 async def test_the_submitted_flag_is_reported(
-    registry: Registry, tmp_path: Path
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
+    fake_pty.tui_echo = True
     term = await _live(registry, tmp_path)
     await registry.send_prompt("Alex", "review the pipeline")
     assert term.to_dict()["submitted"] is True
@@ -227,6 +333,7 @@ def test_the_needle_uses_only_the_first_line() -> None:
 async def test_a_multiline_prompt_is_sent_as_one_bracketed_paste(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
+    fake_pty.tui_echo = True
     term = await _live(registry, tmp_path)
 
     await registry.send_prompt("Alex", _MARKDOWN)
@@ -259,16 +366,28 @@ def test_a_collapsed_paste_on_the_input_line_counts_as_pending() -> None:
     assert _input_line_holds(["> [Pasted text +4 lines]", ""], needle)
 
 
-async def test_a_rejected_multiline_prompt_falls_back_to_one_line(
+async def test_a_stuck_multiline_prompt_is_left_in_the_box_not_retyped(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """Worst case is the old behaviour, never a lost instruction."""
+    """A prompt the pane is still holding is never typed a second time.
+
+    This replaces an earlier single-line fallback. That fallback was written for
+    a pane that never RECEIVED the paste, but "not submitted" can only be
+    reached by watching the text sit in the input box — which is proof it DID
+    arrive. Re-typing then appends a second copy behind the first and the next
+    Enter submits both, so the pane runs a doubled instruction.
+
+    Nothing is lost by leaving it: the prompt sits in the pane in full, and
+    ``submitted`` reports plainly that it was typed but never accepted.
+    """
     term = await _live(registry, tmp_path)
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty", "\x1b[2J\x1b[H❯ [Pasted text #1 +4 lines]\r\n")
 
     await registry.send_prompt("Alex", _MARKDOWN)
 
-    assert any(d == _ONE_LINE for d in fake_pty.typed), fake_pty.typed
-    assert term.sent_multiline is False
-    assert term.last_prompt == _ONE_LINE
+    assert _ONE_LINE not in fake_pty.typed, f"prompt was re-typed: {fake_pty.typed}"
+    assert len([d for d in fake_pty.typed if "Review the ranking." in d]) == 1
+    assert term.submitted is False
+    assert term.sent_multiline is False, "an unsubmitted prompt did not go out"
+    assert term.last_prompt == _MARKDOWN, "what sits in the box is the markdown"

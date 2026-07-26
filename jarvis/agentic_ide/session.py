@@ -110,10 +110,15 @@ MAX_PROMPT_CHARS = 6000
 # accidental click from spawning them, and the number is what still fits in a
 # row of tabs the user can read.
 MAX_WORKSPACES = 6
-# Delay between the prompt text and the Enter keystroke. Agent TUIs debounce
-# fast bursts as a paste; ~120 ms is past every debounce window measured while
-# still feeling instant.
-ENTER_DELAY_S = 0.12
+# How long to wait for the pane to SHOW the prompt before pressing Enter, and
+# how finely to look. This replaced a fixed 120 ms delay: the wait is not really
+# about debouncing, it is about the pane having taken the text at all. A pane
+# that is still booting swallows a paste outright (measured on a real Codex
+# while its MCP servers were loading), and pressing Enter into that types into
+# nothing. Polling returns the moment the text is visible, so a healthy pane is
+# faster than the old fixed delay, and a busy one gets the time it needs.
+_ARRIVAL_POLL_S = 0.2
+_ARRIVAL_WINDOW_S = 3.0
 
 Status = str  # "pending" | "live" | "exited" | "error"
 
@@ -1727,35 +1732,35 @@ class Registry:
         multiline = "\n" in payload
 
         submitted = await self._write_and_confirm(term, payload, manager, multiline)
-        if not submitted and multiline:
-            # Re-typing is only ever right for a pane that never RECEIVED the
-            # paste. When the text is demonstrably still in the input box, a
-            # second copy would land BEHIND the first and the next Enter would
-            # submit both — so a stuck prompt is answered with Enter alone.
-            if _input_line_holds(term.transcript.tail(10), _submit_needle(payload)):
-                logger.warning(
-                    "Agentic IDE: {} still has the prompt in its input box — "
-                    "leaving it there rather than typing a second copy",
-                    term.name,
-                )
-            else:
-                logger.warning(
-                    "Agentic IDE: {} did not accept a multi-line prompt — "
-                    "re-sending it on one line",
-                    term.name,
-                )
-                payload = sanitize_prompt(payload)
-                multiline = False
-                submitted = await self._write_and_confirm(term, payload, manager, False)
+        if submitted is False:
+            # NOT a retry site. A hard False means the verification watched the
+            # text SIT in the input box for the whole window, which is proof the
+            # pane received it. Typing it again (the single-line fallback this
+            # used to do) appends a second copy behind the first, and the next
+            # Enter submits both — worse, a retry Enter landing mid-rewrite runs
+            # the prompt twice for real. Extra Enters belong in the verification
+            # loop, where each one is guarded by "the text is still there".
+            #
+            # Nothing is lost by stopping: the prompt sits in the pane in full,
+            # visible to the user, and the caller is told plainly it never went.
+            logger.warning(
+                "Agentic IDE: {} kept the prompt in its input box — it was typed "
+                "in full but never submitted",
+                term.name,
+            )
 
         term.prompts_sent += 1
         term.last_prompt = payload
         term.submitted = submitted
-        term.sent_multiline = multiline and submitted
+        term.sent_multiline = multiline and submitted is True
         logger.info(
             "Agentic IDE prompt -> {} ({}, {}): {}",
             term.name,
-            "submitted" if term.submitted else "STILL IN THE INPUT BOX",
+            "submitted"
+            if submitted is True
+            else "STILL IN THE INPUT BOX"
+            if submitted is False
+            else "UNCONFIRMED — never seen to arrive",
             "multi-line" if term.sent_multiline else "one line",
             payload[:120],
         )
@@ -1767,8 +1772,19 @@ class Registry:
         payload: str,
         manager: PtyManager,
         multiline: bool,
-    ) -> bool:
-        """Type ``payload``, press Enter, and report whether it was accepted."""
+    ) -> bool | None:
+        """Type ``payload``, press Enter, and report whether it was accepted.
+
+        Three answers, because there genuinely are three: it went out, it is
+        still sitting in the box, or the pane never visibly took it and no
+        honest claim can be made either way (``None``).
+
+        Enter is timed against the SCREEN, not against a stopwatch. A pane that
+        is still booting swallows a paste whole — measured on a real Codex —
+        and an input box that never received the text is indistinguishable from
+        one that submitted it, so a blind "type, wait 120 ms, press Enter" both
+        pressed into nothing and then reported success.
+        """
         # The completion guard applies to the LAST line: that is the one the
         # cursor sits on when Enter arrives.
         last_line = payload.rsplit("\n", 1)[-1]
@@ -1777,9 +1793,42 @@ class Registry:
             typed = f"{PASTE_START}{typed}{PASTE_END}"
         if not manager.write(term.pty_id or "", typed):
             raise SessionError(f"Could not write to {term.name}.")
-        await asyncio.sleep(ENTER_DELAY_S)
+
+        arrived = await self._await_arrival(term, payload)
         manager.write(term.pty_id or "", "\r")
-        return await self._confirm_submitted(term, payload, manager)
+        left_the_box = await self._confirm_submitted(term, payload, manager)
+
+        if not arrived and left_the_box:
+            # The prompt was never SEEN in the box, and an empty box is exactly
+            # what a successful submit looks like — so "it went out" and "the
+            # pane swallowed it" are indistinguishable from here. Say so instead
+            # of picking the flattering one: a booting Codex really does drop a
+            # paste whole (measured 2026-07-26), and the old check called that
+            # success. Writing it again is NOT the answer — if the text is in
+            # fact sitting there unread, a second copy lands behind the first
+            # and the pane runs a doubled instruction.
+            logger.warning(
+                "Agentic IDE: never saw the prompt reach {} — it may have been "
+                "submitted or dropped; reporting it as unconfirmed",
+                term.name,
+            )
+            return None
+        return left_the_box
+
+    async def _await_arrival(self, term: Terminal, payload: str) -> bool:
+        """Wait until the pane visibly holds ``payload``, or give up.
+
+        Returns as soon as the text (or the TUI's collapsed stand-in for it) is
+        on the input line, which is also the moment Enter is worth pressing —
+        so on a healthy pane this costs a fraction of the old fixed delay.
+        """
+        needle = _submit_needle(payload)
+        deadline = max(1, int(_ARRIVAL_WINDOW_S / _ARRIVAL_POLL_S)) if _ARRIVAL_POLL_S else 1
+        for _ in range(deadline):
+            await asyncio.sleep(_ARRIVAL_POLL_S)
+            if _input_line_holds(term.transcript.tail(10), needle):
+                return True
+        return False
 
     async def _confirm_submitted(self, term: Terminal, payload: str, manager: PtyManager) -> bool:
         """True once ``payload`` has left the terminal's input line.
@@ -1897,7 +1946,6 @@ def reset_registry() -> None:
 __all__ = [
     "AGENT_BINARIES",
     "AGENT_DISPLAY",
-    "ENTER_DELAY_S",
     "MAX_PROMPT_CHARS",
     "MAX_TERMINALS",
     "MAX_WORKSPACES",

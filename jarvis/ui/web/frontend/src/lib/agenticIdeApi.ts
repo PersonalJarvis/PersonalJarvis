@@ -548,12 +548,14 @@ export interface PromptResult {
   /** Repo-relative files referenced with `@` in the sent prompt. */
   files: string[];
   /**
-   * Did the agent actually ACCEPT the prompt? The text is typed either way; a
-   * false means it is still sitting in that terminal's input box (see the
-   * backend's submit verification). Never report a send as done without it.
+   * Did the agent actually ACCEPT the prompt? Three answers, because there are
+   * three: `true` it started, `false` the text is provably still sitting in
+   * that terminal's input box, `null` the pane never visibly took it so nobody
+   * can say (a pane still booting can swallow a paste whole). Only `true` means
+   * the instruction is running — never report a send as done without it.
    */
-  submitted: boolean;
-  /** Plain-language explanation when `submitted` is false. */
+  submitted: boolean | null;
+  /** Plain-language explanation whenever `submitted` is not `true`. */
   detail?: string;
 }
 
