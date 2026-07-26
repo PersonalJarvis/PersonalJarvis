@@ -24,7 +24,6 @@
  * the same status payload the other tabs read, so this screen can never claim
  * something the rest of the UI contradicts.
  */
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -37,10 +36,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
-import { useEventStore } from "@/store/events";
+import { ReconcileStrip } from "@/components/ultrawiki/ReconcileStrip";
+import { useCheckActions } from "@/components/ultrawiki/overview/useCheckActions";
 import {
   fetchUltraWikiHealth,
-  syncAllUltraWikiSources,
   type UltraWikiHealth,
   type UltraWikiHealthCheck,
   type UltraWikiCheckState,
@@ -76,14 +75,16 @@ export function HealthPanel({
   onOpenSources,
   onOpenSettings,
   onEnableMode,
+  showVerdict = true,
 }: {
   onOpenSources: () => void;
   onOpenSettings: () => void;
   onEnableMode?: () => void;
+  /** Off when the overview already carries the verdict above this list —
+   *  two headlines saying the same thing is how a screen stops being read. */
+  showVerdict?: boolean;
 }): JSX.Element {
   const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [busy, setBusy] = useState(false);
 
   const healthQuery = useQuery({
     queryKey: ["ultrawiki", "health"],
@@ -101,26 +102,14 @@ export function HealthPanel({
 
   const health = healthQuery.data ?? null;
 
-  async function runSyncAll() {
-    setBusy(true);
-    try {
-      const result = await syncAllUltraWikiSources();
-      pushToast(result.started.length ? "success" : "info", result.detail);
-      void healthQuery.refetch();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function runAction(check: UltraWikiHealthCheck) {
-    const kind = check.action?.kind;
-    if (kind === "sync_all") return void runSyncAll();
-    if (kind === "open_sources") return onOpenSources();
-    if (kind === "open_settings") return onOpenSettings();
-    if (kind === "enable_mode" && onEnableMode) return onEnableMode();
-  }
+  // Shared with the overview's problem list, so a check offers the same button
+  // wherever it is rendered (see overview/useCheckActions.ts).
+  const { busy, runAction } = useCheckActions({
+    onOpenSources,
+    onOpenSettings,
+    onEnableMode,
+    onChanged: () => void healthQuery.refetch(),
+  });
 
   if (healthQuery.isLoading) {
     return (
@@ -149,7 +138,7 @@ export function HealthPanel({
 
   return (
     <div className="space-y-4 p-4" data-testid="ultrawiki-health-panel">
-      <Verdict health={health} />
+      {showVerdict && <Verdict health={health} />}
 
       <ol className="space-y-2">
         {health.checks.map((check, index) => (
@@ -162,6 +151,13 @@ export function HealthPanel({
           />
         ))}
       </ol>
+
+      {/* The completeness proof. It belongs under the checklist rather than in
+          the inventory: "how many items" is a fact the Contents tab already
+          shows, while "is that all of them" is a VERDICT, and verdicts live
+          here. Re-runs whenever the checks do. */}
+      <ReconcileStrip refreshKey={health.checks.length + (busy ? 1 : 0)} />
+
 
       <div className="flex items-center gap-2">
         <Button

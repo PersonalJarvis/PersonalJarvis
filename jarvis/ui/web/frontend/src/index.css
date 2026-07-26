@@ -667,3 +667,43 @@
     }
   }
 }
+
+@layer components {
+  /*
+   * Unfinished material in the UltraWiki intake bar. The texture says "there
+   * is work left here"; the ANIMATION says "and it is moving right now", so
+   * it is applied separately (.uw-hatch-live) and only when the backend
+   * reports the pipeline actually processing. A hatch scrolling over a paused
+   * queue would be the same false reassurance the section was rebuilt to
+   * remove.
+   */
+  .uw-hatch {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.14) 0px,
+      rgba(255, 255, 255, 0.14) 2px,
+      transparent 2px,
+      transparent 6px
+    );
+    background-size: 8.49px 8.49px;
+  }
+
+  .uw-hatch-live {
+    animation: uw-hatch-drift 1.1s linear infinite;
+  }
+
+  @keyframes uw-hatch-drift {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 8.49px 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .uw-hatch-live {
+      animation: none;
+    }
+  }
+}

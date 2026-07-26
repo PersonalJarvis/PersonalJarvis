@@ -6,22 +6,28 @@
  * never pay for this chunk. Owns the Ultra status poll: every 30 s at rest,
  * every 4 s while a sync job is active (the wiki health polling idiom).
  *
- * Layout: honest degradation banner → staged import-progress strip → the
- * five tabs Check | Ask | Sources | Contents | Settings. A dead required slot
- * banners the problem and links to the settings tab — the mode is never
- * flipped silently (design doc 04, mode-switch rules).
+ * Layout: honest degradation banner → thin status ribbon → the five tabs
+ * Overview | Ask | Sources | Contents | Settings. A dead required slot banners
+ * the problem and links to the settings tab — the mode is never flipped
+ * silently (design doc 04, mode-switch rules).
  *
- * "Check" leads on purpose. Every other tab answers a question you already
- * know to ask; a user whose knowledge base looks empty does not know which
- * one of them holds the reason, and hunting through four screens is how a
- * single missing import step went undiagnosed for days.
+ * "Overview" leads on purpose. Every other tab answers a question you already
+ * know to ask; a user whose knowledge base looks empty does not know which one
+ * of them holds the reason, and hunting through four screens is how a single
+ * missing import step went undiagnosed for days. It replaced a seven-row
+ * checklist that led with six green rows and one that was wrong — the
+ * checklist itself is still there, one disclosure inside the overview.
+ *
+ * The ribbon is hidden on the overview: that tab already draws the corpus and
+ * its backlog in full, and a screen that says the same number twice invites
+ * the reader to check whether the two agree.
  */
 import { useState } from "react";
 import {
   AlertTriangle,
   Compass,
   Database,
-  ListChecks,
+  Gauge,
   MessageCircleQuestion,
   Plug,
   Settings2,
@@ -35,24 +41,18 @@ import {
   hasActiveUltraWikiJobs,
 } from "@/lib/ultrawikiApi";
 import { AskPanel } from "@/components/ultrawiki/AskPanel";
-import { HealthPanel } from "@/components/ultrawiki/HealthPanel";
+import { OverviewTab } from "@/components/ultrawiki/overview/OverviewTab";
 import { SourcesPanel } from "@/components/ultrawiki/SourcesPanel";
 import { ContentsPanel } from "@/components/ultrawiki/ContentsPanel";
 import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
 import { ExplorePanel } from "@/components/ultrawiki/ExplorePanel";
 
-type UltraTab =
-  | "check"
-  | "explore"
-  | "ask"
-  | "sources"
-  | "contents"
-  | "settings";
+type UltraTab = "overview" | "explore" | "ask" | "sources" | "contents" | "settings";
 
 export function UltraWikiPanel(): JSX.Element {
   const t = useT();
-  const [tab, setTab] = useState<UltraTab>("ask");
+  const [tab, setTab] = useState<UltraTab>("overview");
 
   const statusQuery = useQuery({
     queryKey: ["ultrawiki", "status"],
@@ -132,21 +132,23 @@ export function UltraWikiPanel(): JSX.Element {
         </div>
       )}
 
-      <ImportProgress
-        counts={status.counts}
-        pipeline={status.pipeline}
-        jobs={status.jobs}
-        onChanged={refetch}
-        onOpenSources={() => setTab("sources")}
-      />
+      {tab !== "overview" && (
+        <ImportProgress
+          progress={status.progress ?? null}
+          pipeline={status.pipeline}
+          jobs={status.jobs}
+          onChanged={refetch}
+          onOpenSources={() => setTab("sources")}
+        />
+      )}
 
       <div className="flex items-stretch border-b border-border bg-card/40">
         <UltraTabButton
-          active={tab === "check"}
-          onClick={() => setTab("check")}
-          icon={<ListChecks className="h-3.5 w-3.5" aria-hidden />}
-          label={t("ultrawiki.panel.tab_check")}
-          testId="ultrawiki-tab-check"
+          active={tab === "overview"}
+          onClick={() => setTab("overview")}
+          icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.panel.tab_overview")}
+          testId="ultrawiki-tab-overview"
         />
         <UltraTabButton
           active={tab === "explore"}
@@ -186,8 +188,10 @@ export function UltraWikiPanel(): JSX.Element {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "check" && (
-          <HealthPanel
+        {tab === "overview" && (
+          <OverviewTab
+            status={status}
+            onChanged={refetch}
             onOpenSources={() => setTab("sources")}
             onOpenSettings={() => setTab("settings")}
           />

@@ -258,7 +258,10 @@ export function ContentsPanel({
                       )}
                       data-state={item.state}
                     >
-                      {item.state}
+                      {/* Through the shared label map, never the raw state
+                          name: "embedded" is a pipeline word, and the row is
+                          read by someone who did not write the pipeline. */}
+                      {t(`ultrawiki.progress.stage_${item.state}`)}
                     </span>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">

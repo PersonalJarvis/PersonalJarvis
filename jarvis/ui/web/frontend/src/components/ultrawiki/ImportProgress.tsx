@@ -1,12 +1,21 @@
 /**
- * Honest staged import-progress strip (design doc 04 "Import progress").
+ * The thin status ribbon above the tabs — "is anything happening right now?".
  *
- * Renders the per-stage backlog counts (captured → keyword-searchable →
- * embedded → distilled, plus the failed dead-letter) exactly as the store
- * reports them — the same "honest funnel" idiom as WikiCaptureFunnelStrip —
- * and the active/recent sync jobs with a cancel button per active job.
- * Polling cadence is owned by the parent (UltraWikiPanel speeds the status
- * poll up to a few seconds while a job is active).
+ * It used to print the five raw pipeline buckets: "Captured 0 ·
+ * Keyword-searchable 0 · Embedded 3237 · Distilled 1475 · Failed 0". Because
+ * an item sits in exactly ONE bucket, those numbers described the state
+ * machine rather than the corpus: a store where all 4 712 items were
+ * keyword-searchable reported "Keyword-searchable 0", and the figures ran
+ * backwards as work progressed. Worse, the strip added its own backlog while
+ * the checklist below added a different one, and the two contradicted each
+ * other on screen.
+ *
+ * Now it quotes the shared progress model (`jarvis/ultrawiki/progress.py`) and
+ * says the same three things in words: how much is stored, how much can be
+ * found, and how much is still queued. The Overview tab draws the full
+ * picture, so the ribbon hides there rather than repeating it.
+ *
+ * The live controls stay: cancel a running job, retry the dead-lettered items.
  */
 import { useState } from "react";
 import {
@@ -18,34 +27,28 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
+import { formatCount } from "@/components/ultrawiki/overview/primitives";
 import {
   ULTRAWIKI_ACTIVE_JOB_STATUSES,
   cancelUltraWikiJob,
   requeueUltraWikiFailed,
-  type UltraWikiCounts,
   type UltraWikiJob,
   type UltraWikiPipeline,
+  type UltraWikiProgress,
 } from "@/lib/ultrawikiApi";
 
-const STAGES = [
-  ["captured", "ultrawiki.progress.stage_captured"],
-  ["keyword_indexed", "ultrawiki.progress.stage_keyword_indexed"],
-  ["embedded", "ultrawiki.progress.stage_embedded"],
-  ["distilled", "ultrawiki.progress.stage_distilled"],
-  ["failed", "ultrawiki.progress.stage_failed"],
-] as const;
-
 export function ImportProgress({
-  counts,
+  progress,
   pipeline,
   jobs,
   onChanged,
   onOpenSources,
 }: {
-  counts: Partial<UltraWikiCounts>;
+  /** `null` while the backend has not answered — the ribbon then shows only
+   *  the pipeline state, never invented zeros. */
+  progress: UltraWikiProgress | null;
   pipeline: UltraWikiPipeline;
   jobs: UltraWikiJob[];
   onChanged: () => void;
@@ -102,13 +105,7 @@ export function ImportProgress({
   const activeJobs = jobs.filter((job) =>
     ULTRAWIKI_ACTIVE_JOB_STATUSES.includes(job.status),
   );
-
-  // What is still WAITING to be processed. 'distilled' is finished work and
-  // 'failed' gave up, so neither belongs in a "still to do" number.
-  const pendingItems =
-    (counts.captured ?? 0) +
-    (counts.keyword_indexed ?? 0) +
-    (counts.embedded ?? 0);
+  const failed = progress?.failed ?? 0;
 
   return (
     <section
@@ -119,38 +116,34 @@ export function ImportProgress({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
         <PipelineState
           pipeline={pipeline}
-          pending={pendingItems}
+          pending={progress?.waiting ?? 0}
           onOpenSources={onOpenSources}
         />
-        <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-          {STAGES.map(([key, labelKey]) => {
-            const value = counts[key] ?? 0;
-            const isFailed = key === "failed";
-            return (
-              <div
-                className={cn(
-                  "flex items-baseline gap-1",
-                  isFailed && value > 0 && "text-destructive",
-                )}
-                data-testid={`ultrawiki-stage-${key}`}
-                key={key}
-              >
-                <dt>{t(labelKey)}</dt>
-                <dd
-                  className={cn(
-                    "font-medium",
-                    isFailed && value > 0
-                      ? "text-destructive"
-                      : "text-foreground",
-                  )}
-                >
-                  {value}
-                </dd>
-              </div>
-            );
-          })}
-        </dl>
-        {(counts.failed ?? 0) > 0 && (
+        {progress && progress.total > 0 && (
+          <p
+            className="text-muted-foreground"
+            data-testid="ultrawiki-progress-summary"
+          >
+            <span className="font-mono tabular-nums text-foreground">
+              {formatCount(progress.total)}
+            </span>{" "}
+            {t("ultrawiki.progress.stored")} ·{" "}
+            <span className="font-mono tabular-nums text-foreground">
+              {formatCount(progress.searchable)}
+            </span>{" "}
+            {t("ultrawiki.progress.searchable")}
+            {progress.waiting > 0 && (
+              <>
+                {" · "}
+                <span className="font-mono tabular-nums text-foreground">
+                  {formatCount(progress.waiting)}
+                </span>{" "}
+                {t(`ultrawiki.overview.step_${progress.next_step ?? "processing"}`)}
+              </>
+            )}
+          </p>
+        )}
+        {failed > 0 && (
           <button
             type="button"
             onClick={() => void handleRetryFailed()}
@@ -163,7 +156,10 @@ export function ImportProgress({
             ) : (
               <RotateCcw className="h-3 w-3" aria-hidden />
             )}
-            {t("ultrawiki.progress.retry_failed")}
+            {t("ultrawiki.progress.retry_failed").replace(
+              "{0}",
+              formatCount(failed),
+            )}
           </button>
         )}
       </div>
@@ -193,7 +189,7 @@ export function ImportProgress({
               <span>·</span>
               <span>{job.status}</span>
               <span>·</span>
-              <span>
+              <span className="font-mono tabular-nums">
                 +{job.new} / ~{job.changed} / ={job.unchanged}
               </span>
               <button
@@ -271,7 +267,7 @@ function PipelineState({
           ),
           label: t("ultrawiki.progress.state_processing").replace(
             "{0}",
-            String(pending),
+            formatCount(pending),
           ),
         }
       : state === "paused"

@@ -6,30 +6,46 @@
  * is already being pulled although nothing was connected. These pin that each
  * of the four backend states renders its own honest wording, that the blanket
  * "Pipeline running" is gone, and that the waiting state offers the way out.
+ *
+ * The strip now quotes the shared progress model instead of printing the five
+ * raw buckets, so these tests hand it that model — exactly as the backend
+ * sends it — rather than counts the component would have to add up itself.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
-import type { UltraWikiCounts, UltraWikiPipeline } from "@/lib/ultrawikiApi";
+import type { UltraWikiPipeline, UltraWikiProgress } from "@/lib/ultrawikiApi";
 
-const NO_COUNTS: Partial<UltraWikiCounts> = {
-  captured: 0,
-  keyword_indexed: 0,
-  embedded: 0,
-  distilled: 0,
-  failed: 0,
-  total: 0,
-};
+/** A progress payload shaped like jarvis/ultrawiki/progress.py's output. */
+function progressOf(
+  partial: Partial<UltraWikiProgress> = {},
+): UltraWikiProgress {
+  return {
+    state: "empty",
+    total: 0,
+    searchable: 0,
+    summarised: 0,
+    waiting: 0,
+    failed: 0,
+    next_step: null,
+    waiting_by_bucket: {},
+    buckets: {},
+    milestones: [],
+    ...partial,
+  };
+}
+
+const EMPTY = progressOf();
 
 function renderStrip(
   pipeline: UltraWikiPipeline,
-  counts: Partial<UltraWikiCounts> = NO_COUNTS,
+  progress: UltraWikiProgress | null = EMPTY,
   onOpenSources?: () => void,
 ) {
   return render(
     <ImportProgress
-      counts={counts}
+      progress={progress}
       pipeline={pipeline}
       jobs={[]}
       onChanged={() => {}}
@@ -54,7 +70,7 @@ describe("ImportProgress — honest pipeline state", () => {
           "No source is approved yet, so nothing is being read. Approve a source under Sources.",
         processed: {},
       },
-      NO_COUNTS,
+      EMPTY,
       onOpenSources,
     );
 
@@ -72,7 +88,7 @@ describe("ImportProgress — honest pipeline state", () => {
     expect(onOpenSources).toHaveBeenCalledTimes(1);
   });
 
-  it("counts the real backlog while processing", () => {
+  it("quotes the backlog the backend computed, and never re-adds buckets", () => {
     renderStrip(
       {
         running: true,
@@ -80,20 +96,28 @@ describe("ImportProgress — honest pipeline state", () => {
         reason: "6 item(s) are queued for processing.",
         processed: { keyword: 2 },
       },
-      {
-        captured: 1,
-        keyword_indexed: 2,
-        embedded: 3,
-        distilled: 40, // finished work is NOT pending
-        failed: 5, // gave up — also not pending
+      progressOf({
+        state: "working",
         total: 51,
-      },
+        searchable: 45,
+        summarised: 40,
+        waiting: 6,
+        failed: 5,
+        next_step: "summarising",
+      }),
     );
 
     const state = screen.getByTestId("ultrawiki-pipeline-state");
     expect(state.getAttribute("data-state")).toBe("processing");
-    expect(state.textContent).toContain("Processing (6 pending)");
+    expect(state.textContent).toContain("6");
     expect(screen.getByTestId("ultrawiki-pipeline-running")).toBeDefined();
+
+    // The summary reports the corpus in cumulative terms — the reading that
+    // "Keyword-searchable 0 · Embedded 3237" got wrong.
+    const summary = screen.getByTestId("ultrawiki-progress-summary").textContent;
+    expect(summary).toContain("51");
+    expect(summary).toContain("45");
+    expect(summary).toContain("being summarised");
   });
 
   it("shows the blocking reason when a slot pauses the pipeline", () => {
@@ -105,7 +129,13 @@ describe("ImportProgress — honest pipeline state", () => {
           "12 item(s) are keyword-searchable and waiting for the embedding stage: no Gemini API key is configured",
         processed: {},
       },
-      { captured: 0, keyword_indexed: 12, embedded: 0, distilled: 0, failed: 0 },
+      progressOf({
+        state: "working",
+        total: 12,
+        searchable: 12,
+        waiting: 12,
+        next_step: "embedding",
+      }),
     );
 
     const state = screen.getByTestId("ultrawiki-pipeline-state");
@@ -124,7 +154,7 @@ describe("ImportProgress — honest pipeline state", () => {
         reason: "Everything ingested so far is fully processed.",
         processed: { keyword: 9 },
       },
-      { captured: 0, keyword_indexed: 0, embedded: 0, distilled: 9, failed: 0 },
+      progressOf({ state: "done", total: 9, searchable: 9, summarised: 9 }),
     );
 
     const state = screen.getByTestId("ultrawiki-pipeline-state");
@@ -141,13 +171,19 @@ describe("ImportProgress — honest pipeline state", () => {
       screen.getByTestId("ultrawiki-pipeline-state").getAttribute("data-state"),
     ).toBe("idle");
   });
+
+  it("renders no counts at all when the backend has not answered yet", () => {
+    // Zeros the user could mistake for measurements are worse than silence.
+    renderStrip({ running: false, state: "idle", processed: {} }, null);
+    expect(screen.queryByTestId("ultrawiki-progress-summary")).toBeNull();
+  });
 });
 
 describe("ImportProgress — retry-failed button", () => {
   const IDLE: UltraWikiPipeline = { running: true, state: "processing", processed: {} };
 
   it("is absent while nothing has failed", () => {
-    renderStrip(IDLE, { ...NO_COUNTS, failed: 0 });
+    renderStrip(IDLE, progressOf({ failed: 0 }));
     expect(screen.queryByTestId("ultrawiki-retry-failed")).toBeNull();
   });
 
@@ -166,7 +202,7 @@ describe("ImportProgress — retry-failed button", () => {
     const onChanged = vi.fn();
     render(
       <ImportProgress
-        counts={{ ...NO_COUNTS, failed: 32 }}
+        progress={progressOf({ total: 32, failed: 32 })}
         pipeline={IDLE}
         jobs={[]}
         onChanged={onChanged}
@@ -174,6 +210,7 @@ describe("ImportProgress — retry-failed button", () => {
     );
 
     const button = screen.getByTestId("ultrawiki-retry-failed");
+    expect(button.textContent).toContain("32");
     fireEvent.click(button);
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
     expect(

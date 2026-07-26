@@ -206,11 +206,24 @@ export function WikiView(): JSX.Element {
     [showToast, knownSlugs.size],
   );
 
-  const subtitle = treeQuery.isLoading
-    ? t("wiki_view.loading_vault")
-    : totalPages === 0
-      ? t("wiki_view.vault_empty")
-      : `${totalPages} ${t("wiki_view.pages")} · ${totalLinks} ${t("wiki_view.wikilinks")}`;
+  // In Ultra mode the body below is the UltraWiki store, not the vault — so
+  // the header counts that store. It used to read "31 pages · 732 wikilinks"
+  // above a screen reporting 4 712 items, which is two different corpora
+  // described as one and the first thing that made the section unreadable.
+  const ultraProgress = ultraStatusQuery.data?.progress ?? null;
+  const ultraSubtitle = ultraProgress
+    ? t("ultrawiki.panel.header_subtitle")
+        .replace("{0}", ultraProgress.total.toLocaleString("en-US").replace(/,/g, " "))
+        .replace("{1}", String(ultraStatusQuery.data?.sources.length ?? 0))
+    : t("ultrawiki.panel.loading");
+
+  const subtitle = ultraEnabled
+    ? ultraSubtitle
+    : treeQuery.isLoading
+      ? t("wiki_view.loading_vault")
+      : totalPages === 0
+        ? t("wiki_view.vault_empty")
+        : `${totalPages} ${t("wiki_view.pages")} · ${totalLinks} ${t("wiki_view.wikilinks")}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-view">
@@ -227,12 +240,18 @@ export function WikiView(): JSX.Element {
             status={ultraStatusQuery.data ?? null}
             onModeChanged={() => void ultraStatusQuery.refetch()}
           />
-          <ObsidianStatus
-            onOpenSetup={(s) => {
-              setSetupHint(s);
-              setDialogOpen(true);
-            }}
-          />
+          {/* The vault pill belongs to the vault. In Ultra mode nothing on
+              screen comes from Obsidian, and "Obsidian: connected" over a
+              store it is not answering from reads as a claim about THIS
+              screen. It returns the moment the switch goes back to Normal. */}
+          {!ultraEnabled && (
+            <ObsidianStatus
+              onOpenSetup={(s) => {
+                setSetupHint(s);
+                setDialogOpen(true);
+              }}
+            />
+          )}
         </div>
       </div>
 

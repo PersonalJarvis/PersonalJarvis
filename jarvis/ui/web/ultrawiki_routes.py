@@ -29,6 +29,10 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
+# Pure arithmetic over the status counts, no store or model behind it - cheap
+# enough for module level, unlike the store/embeddings/search imports below.
+from jarvis.ultrawiki.progress import build_progress
+
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ultrawiki", tags=["ultrawiki"])
@@ -257,6 +261,9 @@ async def get_status(request: Request) -> dict[str, Any]:
             "backend_in_use": "",
             "slots": {},
             "counts": {},
+            # Same shape as a live answer, so no client has to special-case a
+            # booting backend into zeros of its own invention.
+            "progress": build_progress({}),
             "pipeline": {
                 "running": False,
                 "state": "paused",
@@ -292,6 +299,7 @@ async def get_status(request: Request) -> dict[str, Any]:
         "backend_in_use": str(backend.get("in_use") or ""),
         "slots": slots,
         "counts": data.get("counts", {}),
+        "progress": data.get("progress") or build_progress(data.get("counts")),
         "pipeline": data.get("pipeline", {}),
         "sources": data.get("sources", []),
         "jobs": data.get("jobs", []),

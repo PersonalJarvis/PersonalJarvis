@@ -84,7 +84,8 @@
     "taskbar": "Barra",
     "contacts": "Contactos",
     "feedback": "Comentarios",
-    "agent_instructions": "{name}.md"
+    "agent_instructions": "{name}.md",
+    "agentic_ide": "IDE agéntico"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -3157,5 +3158,21 @@
     "copy_failed": "No se pudo copiar al portapapeles.",
     "paste_unavailable": "No se pudo leer el portapapeles.",
     "paste_failed": "Aquí no se puede pegar."
+  },
+  "agent_accounts": {
+    "title": "Tus suscripciones",
+    "hint": "varios inicios de sesión por CLI",
+    "description": "¿Tienes más de un plan para la misma CLI de programación? Registra cada uno aquí y cambia sin cerrar sesión: todos los accesos siguen siendo válidos a la vez. La marca indica la cuenta con la que se abren los terminales NUEVOS; los terminales en curso conservan la cuenta con la que se iniciaron.",
+    "accounts": "registradas",
+    "loading": "Cargando…",
+    "add": "Añadir cuenta",
+    "add_confirm": "Añadir",
+    "cancel": "Cancelar",
+    "name_placeholder": "Nombre, p. ej. Cuenta de trabajo",
+    "use_account": "Usar para terminales nuevos",
+    "in_use": "en uso",
+    "sign_in": "Iniciar sesión",
+    "rename": "Renombrar",
+    "remove": "Eliminar"
   }
 }

@@ -111,7 +111,11 @@ describe("ContentsPanel", () => {
     expect(row.textContent).toContain("Note 1");
     // The source is shown by its LABEL, not its generated id.
     expect(row.textContent).toContain("My documents");
-    expect(row.textContent).toContain("distilled");
+    // The stage is named in words, not by its database value: "distilled" is
+    // a pipeline term, and this row is read by someone who did not write the
+    // pipeline. The raw name must not leak back in.
+    expect(row.textContent).toContain("Fully processed");
+    expect(row.textContent).not.toContain("distilled");
     expect(row.textContent).toContain("2 min ago");
     // The title links back to where the item came from.
     const link = row.querySelector("a");
