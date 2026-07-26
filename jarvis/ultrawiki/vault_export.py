@@ -49,6 +49,7 @@ __all__ = [
     "ExportResult",
     "assign_note_names",
     "export_vault",
+    "resolve_vault_root",
     "safe_note_name",
 ]
 
@@ -112,6 +113,25 @@ class ExportResult:
     written: int
     unchanged: int
     removed: int
+
+
+def resolve_vault_root(
+    data_dir: str | Path | None = None, configured: str = ""
+) -> Path:
+    """One absolute vault path, independent of the process working directory.
+
+    Mirrors ``resolve_ultrawiki_db_path``: a relative path (including the
+    ``./data`` default) is anchored at the repo root, never at whatever
+    directory the app happened to start in.
+    """
+    from jarvis.core.paths import repo_root  # lazy: keep module import cheap
+
+    if configured.strip():
+        raw = Path(configured.strip())
+        return (raw if raw.is_absolute() else repo_root() / raw).resolve(strict=False)
+    base = Path(data_dir) if data_dir is not None else Path("data")
+    directory = base if base.is_absolute() else repo_root() / base
+    return (directory / "ultrawiki-vault").resolve(strict=False)
 
 
 def safe_note_name(label: str) -> str:

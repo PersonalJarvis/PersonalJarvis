@@ -17,6 +17,7 @@ definition of "is UltraWiki answering right now", never a second opinion.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -217,4 +218,146 @@ async def get_explore_graph(
         "total_entities": len(projection.entities),
         "corpus": corpus,
         "reason": _explore_reason(corpus, len(projection.entities)),
+    }
+
+# ---------------------------------------------------------------------------
+# Vault — the same projection as Markdown files an Obsidian can open
+# ---------------------------------------------------------------------------
+
+
+def _vault_root(request: Request) -> Any:
+    from jarvis.ultrawiki.vault_export import resolve_vault_root
+
+    cfg = getattr(request.app.state, "config", None)
+    memory = getattr(cfg, "memory", None)
+    ultra = getattr(cfg, "ultrawiki", None)
+    return resolve_vault_root(
+        getattr(memory, "data_dir", None), str(getattr(ultra, "vault_path", "") or "")
+    )
+
+
+def _obsidian_state(vault: Any) -> dict[str, Any]:
+    """What Obsidian knows about this vault, honestly on every OS.
+
+    Obsidian is absent on a headless server and on most fresh machines. That
+    is a normal state, not an error: the files are the deliverable, and the
+    app is the optional reader.
+    """
+    from jarvis.setup import obsidian as obsidian_mod
+
+    try:
+        detection = obsidian_mod.detect_obsidian()
+        state = obsidian_mod.read_obsidian_vaults()
+        registered = obsidian_mod.is_vault_registered(list(state.vaults), vault)
+        config_path = str(getattr(state, "config_path", "") or "")
+        error = ""
+    except Exception as exc:  # noqa: BLE001 — a probe must never break the page
+        log.debug("obsidian probe failed: %s", exc)
+        return {
+            "installed": False,
+            "registered": False,
+            "config_path": "",
+            "error": str(exc),
+        }
+    return {
+        "installed": bool(detection.installed),
+        "registered": bool(registered),
+        "config_path": config_path,
+        "error": error,
+    }
+
+
+def _vault_stats(vault: Any) -> dict[str, Any]:
+    from jarvis.ultrawiki.vault_export import MANIFEST_NAME
+
+    if not vault.is_dir():
+        return {"exists": False, "notes": 0, "last_export_at": ""}
+    notes = sum(1 for _ in vault.rglob("*.md"))
+    manifest = vault / MANIFEST_NAME
+    stamp = ""
+    if manifest.exists():
+        from datetime import UTC, datetime
+
+        stamp = (
+            datetime.fromtimestamp(manifest.stat().st_mtime, tz=UTC)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    return {"exists": True, "notes": notes, "last_export_at": stamp}
+
+
+@router.get("/vault/status", summary="Where the Obsidian vault is and what is in it")
+async def get_vault_status(request: Request) -> dict[str, Any]:
+    """Path, note count, last export, and whether Obsidian knows about it."""
+    _require_active(request)
+    vault = _vault_root(request)
+    # Both probes walk the filesystem; off the event loop so a slow disk or a
+    # scanned directory cannot stall every other request.
+    stats = await asyncio.to_thread(_vault_stats, vault)
+    obsidian = await asyncio.to_thread(_obsidian_state, vault)
+    return {"ok": True, "path": str(vault), "obsidian": obsidian, **stats}
+
+
+@router.post(
+    "/vault/export",
+    summary="Write the knowledge base to the Obsidian vault",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def export_vault_now(request: Request) -> dict[str, Any]:
+    """Rewrite the generated folders. Notes under "My notes/" are never touched.
+
+    Runs in a worker thread: a first export writes thousands of files, and
+    holding the event loop for that would freeze every other surface in the
+    app — including a voice turn in progress.
+    """
+    from jarvis.ultrawiki.projection import get_projection
+    from jarvis.ultrawiki.vault_export import export_vault
+
+    service = _require_active(request)
+    store = await _store_of(service)
+    projection = await get_projection(store)
+    vault = _vault_root(request)
+    try:
+        result = await asyncio.to_thread(export_vault, projection, vault)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"could not write the vault at {vault}: {exc}",
+        ) from exc
+    return {
+        "ok": True,
+        "path": str(result.root),
+        "topics": result.topics,
+        "moments": result.moments,
+        "written": result.written,
+        "unchanged": result.unchanged,
+        "removed": result.removed,
+    }
+
+
+@router.post(
+    "/vault/register",
+    summary="Register the vault with the Obsidian app",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def register_vault_with_obsidian(request: Request) -> dict[str, Any]:
+    """Add the vault to Obsidian's own index so it appears in the app."""
+    from jarvis.setup import obsidian as obsidian_mod
+
+    _require_active(request)
+    vault = _vault_root(request)
+    if not vault.is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the vault does not exist yet — run the export first, "
+                "otherwise Obsidian would open an empty folder"
+            ),
+        )
+    result = await asyncio.to_thread(obsidian_mod.register_vault, vault)
+    return {
+        "ok": result.status in ("added", "already_registered"),
+        "status": result.status,
+        "path": str(vault),
+        "error": getattr(result, "error", "") or "",
     }

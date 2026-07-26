@@ -37,6 +37,7 @@ import {
   type UltraWikiMoment,
 } from "@/lib/ultrawikiExploreApi";
 import { EntityGraph } from "@/components/ultrawiki/EntityGraph";
+import { VaultBar } from "@/components/ultrawiki/VaultBar";
 
 export interface ExplorePanelProps {
   onOpenSources: () => void;
@@ -227,6 +228,8 @@ export function ExplorePanel({
           </div>
         </div>
       </div>
+
+      <VaultBar />
 
       <p className="sr-only" data-testid="explore-corpus">
         {corpus.sources}/{corpus.items}/{corpus.distilled}

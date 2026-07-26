@@ -183,3 +183,68 @@ export async function fetchExploreGraph(
 export function exploreReasonKey(reason: UltraWikiExploreReason): string {
   return `ultrawiki.explore.empty.${reason}`;
 }
+
+/** What Obsidian knows about the vault on this machine. */
+export interface UltraWikiObsidianState {
+  installed: boolean;
+  registered: boolean;
+  config_path: string;
+  error: string;
+}
+
+export interface UltraWikiVaultStatus {
+  ok: boolean;
+  path: string;
+  exists: boolean;
+  notes: number;
+  last_export_at: string;
+  obsidian: UltraWikiObsidianState;
+}
+
+export interface UltraWikiVaultExport {
+  ok: boolean;
+  path: string;
+  topics: number;
+  moments: number;
+  written: number;
+  unchanged: number;
+  removed: number;
+}
+
+export interface UltraWikiVaultRegistration {
+  ok: boolean;
+  status: string;
+  path: string;
+  error: string;
+}
+
+async function postJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, { method: "POST" });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = await response.json();
+      detail = String((body as { detail?: unknown })?.detail ?? "");
+    } catch {
+      detail = "";
+    }
+    throw new UltraWikiApiError(
+      detail || `HTTP ${response.status}`,
+      response.status,
+      detail,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+export async function fetchVaultStatus(): Promise<UltraWikiVaultStatus> {
+  return getJson<UltraWikiVaultStatus>("/api/ultrawiki/vault/status");
+}
+
+export async function exportVault(): Promise<UltraWikiVaultExport> {
+  return postJson<UltraWikiVaultExport>("/api/ultrawiki/vault/export");
+}
+
+export async function registerVaultWithObsidian(): Promise<UltraWikiVaultRegistration> {
+  return postJson<UltraWikiVaultRegistration>("/api/ultrawiki/vault/register");
+}

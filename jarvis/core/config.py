@@ -2168,6 +2168,12 @@ class UltraWikiConfig(BaseModel):
     rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
     ollama_endpoint: str = "http://localhost:11434"
 
+    # Where the readable Markdown projection is written (the Obsidian vault).
+    # Empty = "wiki/ultrawiki-vault" under the data dir — beside the normal
+    # wiki's own vault and never inside it: UltraWiki writes to its own files,
+    # which is what keeps the mode switch reversible.
+    vault_path: str = ""
+
     # -- ranking knobs (design: UltraWiki ranking pipeline, 2026-07-25) ------
     # The absolute 0-10 relevance floor an UNSOLICITED surface (context
     # injection, volunteered voice answers) must clear. Explicit searches --

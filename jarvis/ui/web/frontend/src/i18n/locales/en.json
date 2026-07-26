@@ -2712,6 +2712,53 @@
     "result_error": "Couldn't reach Discord, please try again later."
   },
   "ultrawiki": {
+      "explore": {
+        "vault": {
+          "title": "Obsidian vault",
+          "hint": "The same knowledge as Markdown files on disk.",
+          "export": "Export",
+          "exporting": "Writing …",
+          "exported": "{0} notes written, {1} unchanged.",
+          "notes": "{0} notes",
+          "never": "Never exported",
+          "last": "Last run {0}",
+          "register": "Add to Obsidian",
+          "registering": "Adding …",
+          "registered": "Added to Obsidian",
+          "not_installed": "Obsidian is not installed on this machine. The files are written anyway — any Markdown app can open them.",
+          "error": "That did not work: {0}"
+        },
+        "tab": "Explore",
+        "loading": "Reading the knowledge base …",
+        "error": "The knowledge base could not be read.",
+        "entities_title": "Topics",
+        "entities_count": "{0} topics",
+        "moments_title": "Moments",
+        "moments_count": "{0} moments",
+        "graph_title": "Connections",
+        "search_placeholder": "Search a topic …",
+        "no_search_hits": "No topic matches “{0}”.",
+        "mentions": "{0}×",
+        "mentions_long": "{0} mentions",
+        "period": "{0} to {1}",
+        "neighbors": "Appears with",
+        "no_neighbors": "Has only ever appeared on its own.",
+        "shared": "{0} shared moments",
+        "back": "Back to the overview",
+        "open_source": "Open the evidence",
+        "source_prefix": "from",
+        "min_mentions": "From {0} mentions",
+        "graph_shown": "{0} of {1} topics",
+        "graph_hint": "Rarer topics are hidden — move the slider left to show all.",
+        "graph_empty": "No topic is mentioned often enough. Set the slider to 1.",
+        "moments_of": "Moments involving {0}",
+        "empty": {
+          "no_sources": "No source is connected yet. Connect one first, then Jarvis has something to know.",
+          "nothing_imported": "A source is connected but nothing has been fetched yet. Start the import under Sources.",
+          "nothing_distilled": "Entries are stored but none has been analysed yet. That needs a language model configured in the settings.",
+          "no_entities": "The entries were analysed but named no people or places. You can still browse the moments below."
+        }
+      },
     "explore": {
       "tab": "Explore",
       "loading": "Reading the knowledge base …",
