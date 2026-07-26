@@ -1,26 +1,190 @@
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  type ComponentType,
+  type LazyExoticComponent,
+} from "react";
 import { useEventStore } from "@/store/events";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
-import { BoardView } from "@/views/BoardView";
+// The default section is the one view that must be on screen the moment React
+// mounts, so it stays statically linked into the entry chunk. Every other view
+// is code-split below.
 import { ChatsView } from "@/views/ChatsView";
-import { JarvisAgentsView } from "@/views/JarvisAgentsView";
-import { ExtensionsView } from "@/views/ExtensionsView";
-import { DocsView } from "@/views/DocsView";
-import { TasksView } from "@/views/TasksView";
-import { ProfileView } from "@/views/ProfileView";
-import { WikiView } from "@/views/WikiView";
-import { ApiKeysView } from "@/views/ApiKeysView";
-import { SettingsView } from "@/views/SettingsView";
-import { ClisHubView } from "@/views/ClisHubView";
-import { OutputsView } from "@/views/OutputsView";
-import { RunInspectorView } from "@/views/RunInspectorView";
-import { SessionsView } from "@/views/SessionsView";
-import { SocialsView } from "@/views/socials/SocialsView";
-import { ContactsView } from "@/views/contacts/ContactsView";
-import { FeedbackView } from "@/views/feedback/FeedbackView";
-import { AgentInstructionsView } from "@/views/AgentInstructionsView";
-import { TelephonySetupView } from "@/views/TelephonyView";
-import { DictionaryView } from "@/views/DictionaryView";
-import { AgenticIdeView } from "@/views/AgenticIdeView";
+
+/**
+ * Section views are CODE-SPLIT, then prefetched while the app is idle.
+ *
+ * Why (measured 2026-07-26): importing all 21 views statically linked every
+ * section — plus the terminal emulator and the charting library — into a single
+ * 2.83 MB entry chunk. A WebView must download, parse AND execute all of it
+ * before React paints, which is the "the app feels sluggish on start" report.
+ * The boot splash in index.html only hid that wait.
+ *
+ * Splitting alone would move the cost rather than remove it: the first visit to
+ * a section would then pay for its chunk. `useIdleViewPrefetch` closes that gap
+ * by pulling the remaining chunks in during idle time after the first paint, so
+ * switching sections stays instant while startup only pays for what it shows.
+ */
+type ViewModule = { default: ComponentType };
+type ViewLoader = () => Promise<ViewModule>;
+
+/** Loaders for every split view, in the order the idle prefetch warms them. */
+const prefetchQueue: ViewLoader[] = [];
+
+function lazyView(loader: ViewLoader): LazyExoticComponent<ComponentType> {
+  prefetchQueue.push(loader);
+  return lazy(loader);
+}
+
+// Ordered roughly by how likely a section is to be opened, so the warm-up
+// front-loads what the user reaches for first. Views are named exports, hence
+// the explicit unwrap into the { default } shape React.lazy expects.
+const SettingsView = lazyView(() =>
+  import("@/views/SettingsView").then((m) => ({ default: m.SettingsView })),
+);
+const JarvisAgentsView = lazyView(() =>
+  import("@/views/JarvisAgentsView").then((m) => ({
+    default: m.JarvisAgentsView,
+  })),
+);
+const WikiView = lazyView(() =>
+  import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
+);
+const ApiKeysView = lazyView(() =>
+  import("@/views/ApiKeysView").then((m) => ({ default: m.ApiKeysView })),
+);
+const ExtensionsView = lazyView(() =>
+  import("@/views/ExtensionsView").then((m) => ({ default: m.ExtensionsView })),
+);
+const AgenticIdeView = lazyView(() =>
+  import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
+);
+const TasksView = lazyView(() =>
+  import("@/views/TasksView").then((m) => ({ default: m.TasksView })),
+);
+const SessionsView = lazyView(() =>
+  import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
+);
+const OutputsView = lazyView(() =>
+  import("@/views/OutputsView").then((m) => ({ default: m.OutputsView })),
+);
+const ClisHubView = lazyView(() =>
+  import("@/views/ClisHubView").then((m) => ({ default: m.ClisHubView })),
+);
+const ProfileView = lazyView(() =>
+  import("@/views/ProfileView").then((m) => ({ default: m.ProfileView })),
+);
+const DocsView = lazyView(() =>
+  import("@/views/DocsView").then((m) => ({ default: m.DocsView })),
+);
+const BoardView = lazyView(() =>
+  import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
+);
+const RunInspectorView = lazyView(() =>
+  import("@/views/RunInspectorView").then((m) => ({
+    default: m.RunInspectorView,
+  })),
+);
+const DictionaryView = lazyView(() =>
+  import("@/views/DictionaryView").then((m) => ({ default: m.DictionaryView })),
+);
+const AgentInstructionsView = lazyView(() =>
+  import("@/views/AgentInstructionsView").then((m) => ({
+    default: m.AgentInstructionsView,
+  })),
+);
+const SocialsView = lazyView(() =>
+  import("@/views/socials/SocialsView").then((m) => ({
+    default: m.SocialsView,
+  })),
+);
+const ContactsView = lazyView(() =>
+  import("@/views/contacts/ContactsView").then((m) => ({
+    default: m.ContactsView,
+  })),
+);
+const FeedbackView = lazyView(() =>
+  import("@/views/feedback/FeedbackView").then((m) => ({
+    default: m.FeedbackView,
+  })),
+);
+const TelephonySetupView = lazyView(() =>
+  import("@/views/TelephonyView").then((m) => ({
+    default: m.TelephonySetupView,
+  })),
+);
+
+type IdleWindow = Window & {
+  requestIdleCallback?: (
+    cb: () => void,
+    opts?: { timeout: number },
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+/**
+ * Run `task` when the browser is idle, falling back to a timer.
+ *
+ * `requestIdleCallback` is absent on older Safari/WebKit, which is exactly the
+ * macOS WebView this app also ships in, so the timer fallback is load-bearing
+ * rather than cosmetic. The returned function cancels a pending slot.
+ */
+function scheduleIdle(task: () => void): () => void {
+  const w = window as IdleWindow;
+  if (typeof w.requestIdleCallback === "function") {
+    // The timeout caps how long a busy main thread may starve the warm-up.
+    const handle = w.requestIdleCallback(task, { timeout: 2_000 });
+    return () => w.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(task, 300);
+  return () => window.clearTimeout(handle);
+}
+
+/**
+ * Warm the split view chunks one at a time, each in its own idle slot.
+ *
+ * Sequential rather than parallel on purpose: firing 20 imports at once would
+ * compete with the requests the visible section is making, which is the very
+ * stall this is meant to remove. A failed prefetch is ignored — the chunk is
+ * simply fetched again on navigation, where Suspense handles it.
+ */
+function useIdleViewPrefetch(): void {
+  useEffect(() => {
+    let cancelled = false;
+    let cancelSlot: (() => void) | null = null;
+    let index = 0;
+
+    const pump = () => {
+      if (cancelled || index >= prefetchQueue.length) return;
+      const loader = prefetchQueue[index++];
+      void loader()
+        .catch(() => undefined)
+        .then(() => {
+          if (cancelled) return;
+          cancelSlot = scheduleIdle(pump);
+        });
+    };
+
+    cancelSlot = scheduleIdle(pump);
+    return () => {
+      cancelled = true;
+      cancelSlot?.();
+    };
+  }, []);
+}
+
+/**
+ * Placeholder shown while a section chunk is in flight.
+ *
+ * Deliberately empty: the idle prefetch means this is almost never seen, and a
+ * spinner that appears for 30 ms reads as a flicker — worse than nothing. It
+ * only holds the layout so the surrounding chrome does not jump. Being
+ * text-free, it also needs no translation.
+ */
+function ViewLoadingFallback() {
+  return <div className="h-full w-full" aria-busy="true" />;
+}
 
 /**
  * Main area to the right of the sidebar. All views are switched the classic
@@ -32,13 +196,19 @@ export function MainView() {
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
 
+  useIdleViewPrefetch();
+
   return (
     <ViewErrorBoundary
       viewName={active}
       resetKey={active}
       onRecover={() => setActive("chats")}
     >
-      <SwitchOnActiveSection active={active} />
+      {/* Keyed on the active section so switching away from a still-loading
+          view cannot leave the previous section's fallback on screen. */}
+      <Suspense key={active} fallback={<ViewLoadingFallback />}>
+        <SwitchOnActiveSection active={active} />
+      </Suspense>
     </ViewErrorBoundary>
   );
 }
