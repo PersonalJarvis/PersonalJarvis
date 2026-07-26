@@ -7,6 +7,28 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.1.5] — 2026-07-26
+
+### Added
+
+- **Personal Jarvis is on PyPI.** `pipx install personal-jarvis` (or
+  `pip install personal-jarvis`) now installs it from the package index, so
+  no clone and no Git URL are needed. The one-line installer stays the
+  recommended path; this is the isolated, any-OS alternative.
+- The project page carries the full README with its images, the license, the
+  supported Python versions and operating systems, and links to the website,
+  the repository, the changelog, Discord, and the issue tracker.
+
+### Changed
+
+- Every `v*` tag now publishes to PyPI automatically through GitHub Actions
+  using Trusted Publishing — no API token and no repository secret is stored
+  anywhere. A tag whose version disagrees with the packaged one fails the
+  build instead of publishing an untraceable release.
+- The README's images and document links are absolute URLs, because PyPI
+  renders the README on its own domain and does not resolve repo-relative
+  paths — they would otherwise be broken images and dead links.
+
 ## [1.1.4] — 2026-07-23
 
 ### Added
