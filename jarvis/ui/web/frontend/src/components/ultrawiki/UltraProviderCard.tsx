@@ -23,6 +23,10 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import type { UltraWikiCatalogRow } from "@/lib/ultrawikiApi";
+import {
+  isSubscriptionAuthMode,
+  UltraSubscriptionAuth,
+} from "@/components/ultrawiki/UltraSubscriptionAuth";
 
 const STATE_CHIP_TONE = {
   active: "border-primary/40 bg-primary/15 text-primary font-semibold",
@@ -114,7 +118,10 @@ export function UltraProviderCard({
   footer?: ReactNode;
 }): JSX.Element {
   const t = useT();
-  const keyless = row.auth_mode === "none";
+  const subscriptionAuthMode = isSubscriptionAuthMode(row.auth_mode)
+    ? row.auth_mode
+    : null;
+  const keyless = row.auth_mode === "none" || subscriptionAuthMode !== null;
   const managed = row.auth_mode === "managed_link";
 
   // A card click selects, EXCEPT on an interactive child — clicking into the
@@ -216,6 +223,13 @@ export function UltraProviderCard({
         >
           {row.reason}
         </p>
+      )}
+
+      {subscriptionAuthMode && (
+        <UltraSubscriptionAuth
+          authMode={subscriptionAuthMode}
+          onChanged={onCredentialChanged}
+        />
       )}
 
       {children}

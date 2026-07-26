@@ -503,7 +503,10 @@ export type UltraWikiAuthMode =
   | "none"
   | "api_key"
   | "connection_string"
-  | "managed_link";
+  | "managed_link"
+  | "codex"
+  | "antigravity"
+  | "claude_cli";
 
 /**
  * One provider row of `GET /api/ultrawiki/catalog`: the declared spec plus the

@@ -40,6 +40,7 @@ __all__ = [
     "SlotName",
     "UltraWikiAuthMode",
     "UltraWikiProviderSpec",
+    "SUBSCRIPTION_AUTH_MODES",
     "SLOT_NAMES",
     "STORAGE_PROVIDERS",
     "EMBEDDING_PROVIDERS",
@@ -60,7 +61,22 @@ SlotName = Literal["storage", "embedding", "distill", "rerank"]
 #: ``connection_string``  — one secret slot holds a full Postgres URI.
 #: ``managed_link``       — a guided flow assembles the credential for the user
 #:                          (Supabase: browser login → project pick → password).
-UltraWikiAuthMode = Literal["none", "api_key", "connection_string", "managed_link"]
+UltraWikiAuthMode = Literal[
+    "none",
+    "api_key",
+    "connection_string",
+    "managed_link",
+    "codex",
+    "antigravity",
+    "claude_cli",
+]
+
+# Subscription auth modes mirror the established API-Keys/Jarvis-Agent
+# provider descriptors. They are capability labels: callers branch on the
+# login mechanism, never on a vendor or model name (AP-21).
+SUBSCRIPTION_AUTH_MODES: frozenset[str] = frozenset(
+    {"codex", "antigravity", "claude_cli"}
+)
 
 SLOT_NAMES: tuple[SlotName, ...] = ("storage", "embedding", "distill", "rerank")
 
@@ -345,6 +361,43 @@ RERANK_MODEL_IS_USER_CHOSEN = False
 # lets the chain pick, which is the honest default.
 
 DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
+    UltraWikiProviderSpec(
+        id="codex",
+        slot="distill",
+        label="OpenAI Codex (ChatGPT subscription)",
+        auth_mode="codex",
+        secret_keys=(),
+        dashboard_url="https://chatgpt.com/",
+        credential_help=(
+            "Uses your existing ChatGPT/Codex login through the Codex CLI. "
+            "This card never needs an OpenAI API key; usage counts against "
+            "your subscription limits."
+        ),
+    ),
+    UltraWikiProviderSpec(
+        id="antigravity",
+        slot="distill",
+        label="Antigravity (Google subscription)",
+        auth_mode="antigravity",
+        secret_keys=(),
+        dashboard_url="https://antigravity.google/",
+        credential_help=(
+            "Uses your Google subscription through the Antigravity or Gemini "
+            "CLI login. This card does not use the Gemini API key."
+        ),
+    ),
+    UltraWikiProviderSpec(
+        id="claude-cli",
+        slot="distill",
+        label="Claude (Anthropic subscription)",
+        auth_mode="claude_cli",
+        secret_keys=(),
+        dashboard_url="https://claude.ai/",
+        credential_help=(
+            "Uses your Claude subscription through the Claude CLI login. "
+            "This card does not use an Anthropic API key."
+        ),
+    ),
     UltraWikiProviderSpec(
         id="gemini",
         slot="distill",

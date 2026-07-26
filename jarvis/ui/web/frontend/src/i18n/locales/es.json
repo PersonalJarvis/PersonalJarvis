@@ -3073,7 +3073,23 @@
       "auth_none": "No necesita credenciales",
       "auth_api_key": "Clave de API",
       "auth_connection_string": "Cadena de conexión",
-      "auth_managed_link": "Inicio de sesión guiado"
+      "auth_managed_link": "Inicio de sesión guiado",
+      "auth_codex": "Inicio con suscripción de ChatGPT",
+      "auth_antigravity": "Inicio con suscripción de Google",
+      "auth_claude_cli": "Inicio con suscripción de Claude"
+    },
+    "subscription": {
+      "connected": "Suscripción conectada",
+      "connected_as": "Conectado como {0}",
+      "not_connected": "La suscripción no está conectada",
+      "cli_missing": "La CLI necesaria no está instalada",
+      "status_unavailable": "El estado de inicio de sesión no está disponible",
+      "connect": "Conectar",
+      "disconnect": "Desconectar",
+      "login_started": "Inicio de sesión iniciado — complétalo en el navegador o terminal",
+      "login_failed": "No se pudo iniciar sesión: {0}",
+      "disconnected": "Suscripción desconectada",
+      "disconnect_failed": "No se pudo desconectar la suscripción: {0}"
     },
     "supabase": {
       "step1_title": "1. Inicia sesión en Supabase",

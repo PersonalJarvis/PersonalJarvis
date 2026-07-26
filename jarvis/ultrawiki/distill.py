@@ -221,6 +221,18 @@ async def distill_text(
     configured_provider = str(getattr(ultrawiki, "distill_provider", "") or "").strip()
     configured_model = str(getattr(ultrawiki, "distill_model", "") or "").strip()
 
+    # The Codex subscription and OpenAI API are intentionally separate cards.
+    # The shared Codex brain normally prefers a stored API key, so the
+    # subscription auth capability must ride into this explicitly selected
+    # instance or the UI would claim one billing path while using another.
+    provider_options: dict[str, dict[str, Any]] = {}
+    if configured_provider:
+        from jarvis.ultrawiki.provider_catalog import get_provider_spec
+
+        selected_spec = get_provider_spec("distill", configured_provider)
+        if selected_spec is not None and selected_spec.auth_mode == "codex":
+            provider_options[configured_provider] = {"prefer_subscription": True}
+
     available = set(registry.available())
     credential_ready = credential_ready_wiki_providers(available=available, config=cfg)
 
@@ -258,6 +270,7 @@ async def distill_text(
         label="UltraWikiDistiller",
         aggregate=aggregate,
         validate=_validate_distill_response,
+        provider_options=provider_options,
     )
     if result is None:
         raise DistillError(

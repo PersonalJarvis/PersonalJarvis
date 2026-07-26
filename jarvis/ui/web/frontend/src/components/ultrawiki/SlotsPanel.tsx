@@ -426,7 +426,15 @@ function DistillSection({
               key={row.id}
               row={row}
               busy={pending}
-              onSelect={() => void apply({ distill_provider: row.id })}
+              onSelect={() =>
+                void apply({
+                  distill_provider: row.id,
+                  // Models are provider-scoped. Carrying Gemini's model id
+                  // into a Codex/Claude subscription card makes the first
+                  // background call fail before the user can open the picker.
+                  distill_model: row.default_model,
+                })
+              }
               onCredentialChanged={refresh}
             >
               {row.selected && (

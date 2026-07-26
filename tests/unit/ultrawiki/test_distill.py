@@ -178,6 +178,19 @@ async def test_configured_distill_provider_leads_the_chain(chain_env):
     assert chain_env["model_override"] == "gpt-cheap"
 
 
+async def test_codex_subscription_card_forces_the_subscription_auth_path(chain_env):
+    chain_env["script"](GOOD_JSON)
+
+    await distill_text(
+        _cfg(distill_provider="codex", distill_model="gpt-5.6-luna"),
+        title="t", body="b", source_kind="chat", registry=FakeRegistry(),
+    )
+
+    assert chain_env["provider_options"] == {
+        "codex": {"prefer_subscription": True}
+    }
+
+
 async def test_unset_distill_provider_falls_back_to_brain_primary(chain_env):
     chain_env["script"](GOOD_JSON)
 

@@ -3074,7 +3074,23 @@
       "auth_none": "No credential needed",
       "auth_api_key": "API key",
       "auth_connection_string": "Connection string",
-      "auth_managed_link": "Guided sign-in"
+      "auth_managed_link": "Guided sign-in",
+      "auth_codex": "ChatGPT subscription login",
+      "auth_antigravity": "Google subscription login",
+      "auth_claude_cli": "Claude subscription login"
+    },
+    "subscription": {
+      "connected": "Subscription connected",
+      "connected_as": "Connected as {0}",
+      "not_connected": "Subscription login not connected",
+      "cli_missing": "The required CLI is not installed",
+      "status_unavailable": "Login status is unavailable",
+      "connect": "Connect",
+      "disconnect": "Disconnect",
+      "login_started": "Login started — finish it in the browser or terminal window",
+      "login_failed": "Could not start the login: {0}",
+      "disconnected": "Subscription disconnected",
+      "disconnect_failed": "Could not disconnect the subscription: {0}"
     },
     "supabase": {
       "step1_title": "1. Sign in to Supabase",

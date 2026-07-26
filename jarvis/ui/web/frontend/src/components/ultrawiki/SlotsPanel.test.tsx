@@ -16,6 +16,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -122,6 +123,25 @@ const CATALOG: UltraWikiCatalog = {
     ],
     distill: [
       row({
+        id: "codex",
+        slot: "distill",
+        label: "OpenAI Codex (ChatGPT subscription)",
+        auth_mode: "codex",
+        ready: true,
+      }),
+      row({
+        id: "antigravity",
+        slot: "distill",
+        label: "Antigravity (Google subscription)",
+        auth_mode: "antigravity",
+      }),
+      row({
+        id: "claude-cli",
+        slot: "distill",
+        label: "Claude (Anthropic subscription)",
+        auth_mode: "claude_cli",
+      }),
+      row({
         id: "gemini",
         slot: "distill",
         label: "Google Gemini",
@@ -206,6 +226,39 @@ function installFetchMock(overrides: Record<string, () => Response> = {}) {
             fetched_at: 0,
             selects: "model",
             reason: "",
+          }),
+        } as Response;
+      }
+      if (url.startsWith("/api/codex/status")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            installed: true,
+            connected: true,
+            mode: "chatgpt",
+          }),
+        } as Response;
+      }
+      if (url.startsWith("/api/antigravity/status")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            installed: true,
+            connected: false,
+            mode: "unknown",
+          }),
+        } as Response;
+      }
+      if (url.startsWith("/api/claude/status")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            installed: true,
+            connected: false,
+            mode: "unknown",
           }),
         } as Response;
       }
@@ -342,5 +395,53 @@ describe("SlotsPanel", () => {
         "data-selected",
       ),
     ).toBe("true");
+  });
+
+  it("offers every Jarvis-Agent subscription as a distillation card", async () => {
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+
+    expect(await screen.findByTestId("ultrawiki-card-distill-codex")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-card-distill-antigravity")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-card-distill-claude-cli")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-subscription-codex")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-subscription-antigravity")).toBeDefined();
+    expect(screen.getByTestId("ultrawiki-subscription-claude_cli")).toBeDefined();
+  });
+
+  it("switches to a subscription without carrying another provider's model", async () => {
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+
+    fireEvent.click(await screen.findByTestId("ultrawiki-use-distill-codex"));
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+    expect(putBodies[0]).toEqual({
+      distill_provider: "codex",
+      distill_model: "",
+    });
+  });
+
+  it("shows the shared model picker on a selected subscription card", async () => {
+    const selectedCatalog: UltraWikiCatalog = {
+      ...CATALOG,
+      slots: {
+        ...CATALOG.slots,
+        distill: CATALOG.slots.distill.map((entry) => ({
+          ...entry,
+          selected: entry.id === "codex",
+        })),
+      },
+      selected: { ...CATALOG.selected, distill: "codex" },
+    };
+    installFetchMock({
+      "/api/ultrawiki/catalog": () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => selectedCatalog,
+        }) as Response,
+    });
+
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+    const card = await screen.findByTestId("ultrawiki-card-distill-codex");
+    expect(within(card).getByRole("button", { name: /model/i })).toBeDefined();
   });
 });

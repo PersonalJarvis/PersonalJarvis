@@ -502,16 +502,26 @@ async def get_catalog(request: Request) -> dict[str, Any]:
             )
             from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415 — lazy
                 credential_ready_wiki_providers,
+                subscription_login_ready,
             )
 
+            registry = BrainProviderRegistry()
+            available_brains = set(registry.available())
             distill_chain = set(
                 credential_ready_wiki_providers(
-                    available=set(BrainProviderRegistry().available()), config=cfg
+                    available=available_brains, config=cfg
                 )
             )
+            subscription_ready = {
+                spec.id: subscription_login_ready(spec.id, registry=registry)
+                for spec in provider_catalog.DISTILL_PROVIDERS
+                if spec.auth_mode in provider_catalog.SUBSCRIPTION_AUTH_MODES
+                and spec.id in available_brains
+            }
         except Exception as exc:  # noqa: BLE001 — the catalog must never 500
             log.debug("distill chain probe failed: %s", exc, exc_info=True)
             distill_chain = set()
+            subscription_ready = {}
 
         db_url_present = _secret_present("ultrawiki_db_url")
 
@@ -527,6 +537,14 @@ async def get_catalog(request: Request) -> dict[str, Any]:
                     return False, "this backend is not installed in this build"
                 return bool(row.get("ready")), str(row.get("reason") or "")
             if spec.slot == "distill":
+                if spec.auth_mode in provider_catalog.SUBSCRIPTION_AUTH_MODES:
+                    if subscription_ready.get(spec.id) is True:
+                        return True, ""
+                    return False, (
+                        "subscription login is not connected — connect below, "
+                        "or leave the slot on Automatic to use another ready "
+                        "provider"
+                    )
                 if spec.id in distill_chain:
                     return True, ""
                 return False, (

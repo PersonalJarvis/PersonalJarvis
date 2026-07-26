@@ -8,6 +8,11 @@ to render must be a slot the secrets API will actually accept.
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+from typing import get_args
+
 import pytest
 
 from jarvis.core.config_writer import ULTRAWIKI_SLOT_KEYS
@@ -15,6 +20,8 @@ from jarvis.setup.wizard import SECRETS
 from jarvis.ultrawiki import embeddings as embeddings_mod
 from jarvis.ultrawiki import provider_catalog as catalog
 from jarvis.ultrawiki import rerank as rerank_mod
+
+_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_every_catalog_secret_slot_is_writable_through_the_secrets_api():
@@ -72,7 +79,53 @@ def test_a_credentialed_provider_always_names_its_secret_slot():
             if spec.auth_mode in ("api_key", "connection_string", "managed_link"):
                 assert spec.secret_keys, f"{slot}/{spec.id} declares no secret slot"
             else:
-                assert spec.auth_mode == "none"
+                assert spec.auth_mode == "none" or (
+                    spec.auth_mode in catalog.SUBSCRIPTION_AUTH_MODES
+                    and not spec.secret_keys
+                )
+
+
+def test_distillation_exposes_every_subscription_brain_as_its_own_card():
+    subscription_rows = {
+        spec.id: spec.auth_mode
+        for spec in catalog.DISTILL_PROVIDERS
+        if spec.auth_mode in catalog.SUBSCRIPTION_AUTH_MODES
+    }
+    assert subscription_rows == {
+        "codex": "codex",
+        "antigravity": "antigravity",
+        "claude-cli": "claude_cli",
+    }
+
+
+def test_auth_modes_match_typescript_and_the_ui_labels():
+    """Python producer, TypeScript consumer, and UI labels stay in lockstep."""
+    python_modes = set(get_args(catalog.UltraWikiAuthMode))
+    api_source = (
+        _ROOT
+        / "jarvis/ui/web/frontend/src/lib/ultrawikiApi.ts"
+    ).read_text(encoding="utf-8")
+    block = re.search(
+        r"export type UltraWikiAuthMode\s*=\s*(.*?);",
+        api_source,
+        re.DOTALL,
+    )
+    assert block is not None
+    typescript_modes = set(re.findall(r'"([a-z_]+)"', block.group(1)))
+
+    english = json.loads(
+        (
+            _ROOT
+            / "jarvis/ui/web/frontend/src/i18n/locales/en.json"
+        ).read_text(encoding="utf-8")
+    )
+    label_modes = {
+        key.removeprefix("auth_")
+        for key in english["ultrawiki"]["card"]
+        if key.startswith("auth_")
+    }
+
+    assert python_modes == typescript_modes == label_modes
 
 
 def test_storage_presets_resolve_to_the_two_functional_backends_only():

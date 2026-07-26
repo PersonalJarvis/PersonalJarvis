@@ -91,6 +91,20 @@ def test_subscription_probe_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ClaudeCliBrain.subscription_connected() is False
 
 
+def test_api_key_login_does_not_masquerade_as_a_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "jarvis.claude_auth.ClaudeAuthService",
+        lambda: SimpleNamespace(
+            status=lambda: SimpleNamespace(connected=True, mode="api_key")
+        ),
+    )
+    assert ClaudeCliBrain.subscription_connected() is False
+
+
 async def test_complete_raises_a_clear_error_when_the_cli_is_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

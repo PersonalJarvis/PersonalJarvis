@@ -16,7 +16,7 @@ import pytest
 
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 from jarvis.plugins.brain import codex as codex_module
-from jarvis.plugins.brain.codex import CodexBrain
+from jarvis.plugins.brain.codex import CodexBrain, _build_cli_command
 
 
 def _wiki_request() -> BrainRequest:
@@ -96,6 +96,56 @@ async def test_throttled_api_key_crosses_over_to_the_subscription_cli(
 
     assert answer == "cli-answer"
     assert calls == ["cli"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_subscription_choice_bypasses_a_stored_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brain = CodexBrain(prefer_subscription=True)
+    calls = _arm_api_and_oauth(monkeypatch, brain, status=500)
+
+    answer = await _collect(brain.complete(_wiki_request()))
+
+    assert answer == "cli-answer"
+    assert calls == ["cli"]
+
+
+def test_subscription_cli_command_carries_the_selected_model() -> None:
+    argv = _build_cli_command("codex", "gpt-5.6-sol")
+
+    assert argv[argv.index("--model") + 1] == "gpt-5.6-sol"
+
+
+def test_subscription_cli_command_omits_an_unpinned_model() -> None:
+    assert "--model" not in _build_cli_command("codex", "")
+
+
+def test_forced_subscription_reports_only_its_actual_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(CodexBrain, "_api_key", lambda self: "sk-test")
+
+    brain = CodexBrain(prefer_subscription=True)
+
+    assert brain.supports_vision is False
+    assert brain.can_call_tools() is False
+
+
+@pytest.mark.asyncio
+async def test_forced_subscription_rejects_tool_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brain = CodexBrain(prefer_subscription=True)
+    calls = _arm_api_and_oauth(monkeypatch, brain, status=500)
+    request = BrainRequest(
+        messages=(BrainMessage(role="user", content="Open the calculator."),),
+        tools=({"name": "open_app"},),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot execute brain tools"):
+        await _collect(brain.complete(request))
+    assert calls == []
 
 
 @pytest.mark.asyncio

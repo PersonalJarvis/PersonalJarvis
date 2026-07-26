@@ -3088,7 +3088,23 @@
       "auth_none": "Keine Zugangsdaten nötig",
       "auth_api_key": "API-Schlüssel",
       "auth_connection_string": "Verbindungszeichenfolge",
-      "auth_managed_link": "Geführte Anmeldung"
+      "auth_managed_link": "Geführte Anmeldung",
+      "auth_codex": "ChatGPT-Subscription-Anmeldung",
+      "auth_antigravity": "Google-Subscription-Anmeldung",
+      "auth_claude_cli": "Claude-Subscription-Anmeldung"
+    },
+    "subscription": {
+      "connected": "Subscription verbunden",
+      "connected_as": "Verbunden als {0}",
+      "not_connected": "Subscription-Anmeldung nicht verbunden",
+      "cli_missing": "Die benötigte CLI ist nicht installiert",
+      "status_unavailable": "Anmeldestatus ist nicht verfügbar",
+      "connect": "Verbinden",
+      "disconnect": "Trennen",
+      "login_started": "Anmeldung gestartet — im Browser- oder Terminalfenster abschließen",
+      "login_failed": "Anmeldung konnte nicht gestartet werden: {0}",
+      "disconnected": "Subscription getrennt",
+      "disconnect_failed": "Subscription konnte nicht getrennt werden: {0}"
     },
     "supabase": {
       "step1_title": "1. Bei Supabase anmelden",

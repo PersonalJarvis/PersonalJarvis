@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -55,6 +56,8 @@ DEFAULT_MODEL = "gpt-5.5"
 # forever if the subscription is unreachable.
 _CLI_TIMEOUT_S: float = 90.0
 
+_CLI_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+
 
 def _resolve_codex_binary() -> str | None:
     """On-PATH ``codex`` binary (Windows shim variants included), or None."""
@@ -78,6 +81,28 @@ def _codex_oauth_connected() -> bool:
         return bool(status.connected and status.mode == "chatgpt")
     except Exception:  # noqa: BLE001
         return False
+
+
+def _build_cli_command(binary: str, model: str | None) -> list[str]:
+    """Build the read-only subscription CLI command with an optional model."""
+    cmd = [
+        binary,
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "-c",
+        "approval_policy=never",
+    ]
+    selected = str(model or "").strip()
+    if selected:
+        if not _CLI_MODEL_RE.fullmatch(selected):
+            raise RuntimeError(
+                "Codex subscription model id contains unsupported characters."
+            )
+        cmd.extend(["--model", selected])
+    return cmd
 
 
 # Light system instruction for the CLI path. Keeps codex answering as a
@@ -145,14 +170,24 @@ class CodexBrain:
         model: str | None = None,
         structured_prompts: bool = False,
         cli_timeout_s: float | None = None,
+        prefer_subscription: bool = False,
     ) -> None:
         self._model = model or DEFAULT_MODEL
+        # Empty means "use the subscription CLI default". Keep this distinct
+        # from the API fallback model so an unpinned subscription never gets an
+        # unrelated API default forced onto it.
+        self._cli_model = str(model or "").strip()
         self._client: Any = None
         # Background/structured callers (the wiki curator tier) set this so the
         # CLI path forwards their JSON contract verbatim instead of the
         # conversational "answer in 1-3 plain-text sentences" wrapper — which
         # made structured output impossible by instruction.
         self._structured_prompts = bool(structured_prompts)
+        # Capability hint for surfaces that explicitly present the ChatGPT
+        # subscription as a separate choice from the OpenAI API card. Without
+        # it, a stored API key silently wins and the user's selected
+        # subscription card is billed through the API instead.
+        self._prefer_subscription = bool(prefer_subscription)
         # Slow background callers (the wiki Stage-2 judge sends ~16k-char
         # body-aware prompts) pass their own per-call budget; the voice-tier
         # default stays the tight cap. Live 2026-07-21: the judge died on
@@ -164,7 +199,7 @@ class CodexBrain:
             budget = 0.0
         self._cli_timeout_s = budget if budget > 0 else _CLI_TIMEOUT_S
         # Only the API-key path can see images (see the supports_vision note).
-        self.supports_vision = bool(self._api_key())
+        self.supports_vision = bool(self._api_key()) and not self._prefer_subscription
 
     @staticmethod
     def subscription_connected() -> bool:
@@ -185,7 +220,7 @@ class CodexBrain:
         run a tool/Computer-Use turn itself. The caller (``BrainManager``) uses
         this to delegate tool turns to a tool-capable provider instead of letting
         the CLI confabulate a refusal."""
-        return bool(self._api_key())
+        return bool(self._api_key()) and not self._prefer_subscription
 
     # ---- API-key path -------------------------------------------------
 
@@ -236,16 +271,7 @@ class CodexBrain:
             for k, v in os.environ.items()
             if k not in ("OPENAI_API_KEY", "CODEX_HOME")
         }
-        cmd = [
-            binary,
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "read-only",
-            "-c",
-            "approval_policy=never",
-        ]
+        cmd = _build_cli_command(binary, self._cli_model)
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
         log.info(
             "CodexBrain CLI: spawning '%s exec' for the ChatGPT-login brain "
@@ -386,6 +412,25 @@ class CodexBrain:
     # ---- public API ---------------------------------------------------
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        if self._prefer_subscription:
+            if req.tools:
+                raise RuntimeError(
+                    "Codex ChatGPT subscription mode cannot execute brain tools."
+                )
+            oauth = await asyncio.to_thread(_codex_oauth_connected)
+            if not oauth:
+                raise RuntimeError(
+                    "Codex ChatGPT subscription login is not connected."
+                )
+            log.info(
+                "CodexBrain.complete: explicit ChatGPT-subscription path "
+                "(model=%s)",
+                self._model,
+            )
+            async for delta in self._complete_via_cli(req):
+                yield delta
+            return
+
         api_key = self._api_key()
         if api_key:
             log.info("CodexBrain.complete: API-key path (model=%s)", self._model)

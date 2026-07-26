@@ -845,6 +845,28 @@ def test_catalog_marks_the_configured_provider_as_selected(env) -> None:
     assert body["models"]["embedding"] == "fake-embed"
 
 
+def test_catalog_surfaces_subscription_logins_as_distillation_choices(
+    env, monkeypatch
+) -> None:
+    from jarvis.memory.wiki import provider_chain
+
+    monkeypatch.setattr(
+        provider_chain,
+        "subscription_login_ready",
+        lambda provider, *, registry=None: provider in {"codex", "claude-cli"},
+    )
+
+    rows = {
+        row["id"]: row
+        for row in env.client.get("/api/ultrawiki/catalog").json()["slots"]["distill"]
+    }
+    assert {"codex", "antigravity", "claude-cli"} <= set(rows)
+    assert rows["codex"]["auth_mode"] == "codex"
+    assert rows["codex"]["ready"] is True
+    assert rows["antigravity"]["ready"] is False
+    assert "subscription login" in rows["antigravity"]["reason"]
+
+
 def test_catalog_storage_defaults_to_the_local_floor(env) -> None:
     body = env.client.get("/api/ultrawiki/catalog").json()
     storage = {row["id"]: row for row in body["slots"]["storage"]}

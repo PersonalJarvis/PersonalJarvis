@@ -106,7 +106,10 @@ def _claude_subscription_connected() -> bool:
         from jarvis.claude_auth import ClaudeAuthService
 
         status = ClaudeAuthService().status()
-        return bool(getattr(status, "connected", False))
+        return bool(
+            getattr(status, "connected", False)
+            and getattr(status, "mode", "") == "subscription"
+        )
     except Exception:  # noqa: BLE001 - a probe degrades, never raises
         log.debug("claude-cli: subscription probe failed", exc_info=True)
         return False

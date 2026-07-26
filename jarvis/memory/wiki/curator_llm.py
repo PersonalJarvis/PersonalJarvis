@@ -29,6 +29,7 @@ import functools
 import json
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -157,6 +158,7 @@ def instantiate_curator_brain(
     model: str | None,
     *,
     cli_timeout_s: float | None = None,
+    provider_options: Mapping[str, Any] | None = None,
 ) -> Any:
     """Instantiate a curator-tier brain with extended thinking DISABLED.
 
@@ -170,7 +172,7 @@ def instantiate_curator_brain(
     never see the kwarg; a ``TypeError`` from an older provider signature
     falls back to plain instantiation.
     """
-    kwargs: dict[str, Any] = {"model": model}
+    kwargs: dict[str, Any] = {"model": model, **dict(provider_options or {})}
     if provider == "gemini" and "pro" not in (model or "").lower():
         kwargs["thinking_budget"] = 0
     # Subscription-CLI brains (codex, antigravity) flatten voice turns into a
