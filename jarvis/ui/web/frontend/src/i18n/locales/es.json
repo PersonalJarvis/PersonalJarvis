@@ -2710,6 +2710,38 @@
     "result_error": "No se pudo llegar a Discord, inténtalo de nuevo más tarde."
   },
   "ultrawiki": {
+      "explore": {
+        "tab": "Explorar",
+        "loading": "Leyendo la base de conocimiento …",
+        "error": "No se pudo leer la base de conocimiento.",
+        "entities_title": "Temas",
+        "entities_count": "{0} temas",
+        "moments_title": "Momentos",
+        "moments_count": "{0} momentos",
+        "graph_title": "Conexiones",
+        "search_placeholder": "Buscar un tema …",
+        "no_search_hits": "Ningún tema coincide con «{0}».",
+        "mentions": "{0}×",
+        "mentions_long": "{0} menciones",
+        "period": "{0} a {1}",
+        "neighbors": "Aparece junto a",
+        "no_neighbors": "Hasta ahora siempre aparece solo.",
+        "shared": "{0} momentos compartidos",
+        "back": "Volver al resumen",
+        "open_source": "Abrir la evidencia",
+        "source_prefix": "de",
+        "min_mentions": "Desde {0} menciones",
+        "graph_shown": "{0} de {1} temas",
+        "graph_hint": "Los temas menos frecuentes están ocultos: mueve el control a la izquierda para verlos todos.",
+        "graph_empty": "Ningún tema se menciona lo suficiente. Pon el control en 1.",
+        "moments_of": "Momentos con {0}",
+        "empty": {
+          "no_sources": "Todavía no hay ninguna fuente conectada. Conecta una primero y Jarvis tendrá algo que saber.",
+          "nothing_imported": "Hay una fuente conectada pero aún no se ha traído nada. Inicia la importación en Fuentes.",
+          "nothing_distilled": "Hay entradas guardadas pero ninguna se ha analizado todavía. Para eso hace falta un modelo de lenguaje configurado en los ajustes.",
+          "no_entities": "Las entradas se analizaron pero no mencionaron personas ni lugares. Aun así puedes hojear los momentos de abajo."
+        }
+      },
     "mode": {
       "normal": "Normal",
       "ultra": "Ultra",

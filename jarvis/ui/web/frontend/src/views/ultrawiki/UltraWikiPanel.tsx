@@ -19,6 +19,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Compass,
   Database,
   ListChecks,
   MessageCircleQuestion,
@@ -39,8 +40,15 @@ import { SourcesPanel } from "@/components/ultrawiki/SourcesPanel";
 import { ContentsPanel } from "@/components/ultrawiki/ContentsPanel";
 import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
+import { ExplorePanel } from "@/components/ultrawiki/ExplorePanel";
 
-type UltraTab = "check" | "ask" | "sources" | "contents" | "settings";
+type UltraTab =
+  | "check"
+  | "explore"
+  | "ask"
+  | "sources"
+  | "contents"
+  | "settings";
 
 export function UltraWikiPanel(): JSX.Element {
   const t = useT();
@@ -141,6 +149,13 @@ export function UltraWikiPanel(): JSX.Element {
           testId="ultrawiki-tab-check"
         />
         <UltraTabButton
+          active={tab === "explore"}
+          onClick={() => setTab("explore")}
+          icon={<Compass className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.explore.tab")}
+          testId="ultrawiki-tab-explore"
+        />
+        <UltraTabButton
           active={tab === "ask"}
           onClick={() => setTab("ask")}
           icon={<MessageCircleQuestion className="h-3.5 w-3.5" aria-hidden />}
@@ -173,6 +188,12 @@ export function UltraWikiPanel(): JSX.Element {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "check" && (
           <HealthPanel
+            onOpenSources={() => setTab("sources")}
+            onOpenSettings={() => setTab("settings")}
+          />
+        )}
+        {tab === "explore" && (
+          <ExplorePanel
             onOpenSources={() => setTab("sources")}
             onOpenSettings={() => setTab("settings")}
           />
