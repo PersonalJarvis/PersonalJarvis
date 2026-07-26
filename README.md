@@ -47,7 +47,7 @@ it did. No provider in here is load-bearing.
 | *"Switch to Claude."* | The brain provider changes mid-conversation. No restart. No config file. |
 | *"Send a background agent to fix the failing test in this repo."* | Your existing Claude Code, Codex or Antigravity subscription login does the coding, as a mission you can watch tool call by tool call. |
 
-## Watch it work
+## Watch it work (computer-use demo)
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
