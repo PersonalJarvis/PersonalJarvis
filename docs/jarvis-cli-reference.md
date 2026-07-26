@@ -195,6 +195,16 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis telephony outbound <to> --message --yes --dry-run` — Place a real outbound call (destructive: costs money; needs --yes).
 - `jarvis telephony status` — Report telephony availability/status.
 
+## ultrawiki
+
+- `jarvis ultrawiki export --yes --dry-run` — Write the knowledge base to the Obsidian vault as Markdown.
+- `jarvis ultrawiki graph --min-mentions` — The entity graph: which topics come up together, and how often.
+- `jarvis ultrawiki moments --topic --month --limit` — Browse the distilled moments, newest first.
+- `jarvis ultrawiki register --yes --dry-run` — Add the vault to the Obsidian app's own index.
+- `jarvis ultrawiki topic <key> --limit` — Everything known about one topic, with the moments it appears in.
+- `jarvis ultrawiki topics --search --limit` — List what the knowledge base has a name for, most mentioned first.
+- `jarvis ultrawiki vault` — Where the Obsidian vault is, what is in it, and whether Obsidian knows it.
+
 ## version
 
 - `jarvis version` — Print the jarvisctl version.
