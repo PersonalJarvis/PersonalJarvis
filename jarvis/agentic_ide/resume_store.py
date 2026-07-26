@@ -474,6 +474,11 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
                 "session_id": space.session_id,
                 "folder": space.folder,
                 "folder_name": Path(space.folder).name or space.folder,
+                # The label the user gave the tab, empty when never renamed. Kept
+                # beside the folder name rather than replacing it: somebody who
+                # renamed a tab recognises the workspace by that label, and
+                # somebody who did not still needs the folder.
+                "name": space.name,
                 "folder_exists": folder_exists,
                 "available": folder_exists and any(p["available"] for p in panes),
                 "resumable_count": sum(1 for p in panes if p["resumable"]),

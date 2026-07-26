@@ -168,6 +168,8 @@ export interface ResumeWorkspaceOffer {
   session_id: string;
   folder: string;
   folder_name: string;
+  /** The label the user gave this tab, empty when never renamed. */
+  name: string;
   folder_exists: boolean;
   /** False when the folder is gone or none of its coding CLIs are installed. */
   available: boolean;

@@ -94,7 +94,9 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <FolderGit2 className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-primary" />
-        <span className="font-medium text-foreground">{space.folder_name}</span>
+        <span className="font-medium text-foreground">
+          {space.name || space.folder_name}
+        </span>
         <span className="text-xs text-muted-foreground">
           {space.terminals.length} terminal{space.terminals.length === 1 ? "" : "s"}
           {space.resumable_count > 0 && ` · ${space.resumable_count} continuing`}

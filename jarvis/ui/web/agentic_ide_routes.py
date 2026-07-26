@@ -406,6 +406,9 @@ class ResumeWorkspace(BaseModel):
     session_id: str = ""
     folder: str = ""
     folder_name: str = ""
+    name: str = Field(
+        default="", description="The label the user gave this tab, if any."
+    )
     folder_exists: bool = False
     available: bool = Field(
         description="False when the folder is gone or none of its CLIs are installed."
