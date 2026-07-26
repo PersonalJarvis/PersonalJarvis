@@ -71,6 +71,17 @@ ASSETS_DIR = DIST_DIR / "assets"
 # re-throttled every event; the browser reconnects on its own.
 _WS_SEND_TIMEOUT_S = 3.0
 
+# How long the UltraWiki pipeline WORKER is held back after boot. Its store is
+# opened immediately (reads, search and recall all need it), but the worker
+# grinds through the whole ingest backlog and was measured holding ~1.3 CPU
+# cores continuously for as long as items remain queued. Starting it the
+# instant the backend comes up made that backlog compete with the app's own
+# startup, which is exactly the "everything got sluggish" report AP-26 exists
+# to prevent. The window covers a typical cold start with headroom; nothing is
+# skipped, the same work simply begins once the app is usable. A shutdown
+# inside the window cancels the wait rather than delaying it.
+ULTRAWIKI_PIPELINE_GRACE_S = 20.0
+
 
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
@@ -2689,7 +2700,8 @@ class WebServer:
         set_active_service(service)
         if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
             task = asyncio.create_task(
-                service.ensure_started(), name="ultrawiki-start"
+                service.ensure_started(pipeline_grace_s=ULTRAWIKI_PIPELINE_GRACE_S),
+                name="ultrawiki-start",
             )
             self._ultrawiki_start_task = task
             task.add_done_callback(self._on_ultrawiki_start_done)
