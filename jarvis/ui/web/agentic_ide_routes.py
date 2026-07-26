@@ -13,6 +13,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /folders/native``             → open it and return what was picked
 * ``GET    /workspaces``                 → every open workspace, in tab order
 * ``PUT    /workspaces/active``          → bring one to the front (null = wizard)
+* ``PATCH  /workspaces/{workspace_id}``  → rename one workspace tab
 * ``DELETE /workspaces/{workspace_id}``  → close that one and stop its agents
 * ``POST   /session``                    → open ANOTHER workspace (folder + terminals)
 * ``DELETE /session``                    → close the front one and stop every agent
@@ -22,6 +23,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``PUT    /mode``                       → focused coding mode on/off
 * ``POST   /terminals``                  → open one more pane (split)
 * ``POST   /terminals/batch``            → open N more panes at once
+* ``POST   /fanout``                     → run ONE task across several agents
+  (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
@@ -30,6 +33,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 ``{name}`` accepts the call-sign ("mika", "Mika") or a spoken phrase containing
 it, so a voice command reaches the right pane without exact spelling.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -92,9 +96,7 @@ class TerminalRequest(BaseModel):
         default=None,
         description="Call-sign for this terminal; auto-assigned when omitted.",
     )
-    account: str | None = Field(
-        default=None, description=_ACCOUNT_FIELD_DESCRIPTION
-    )
+    account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
 
 
 class StartSessionRequest(BaseModel):
@@ -147,9 +149,7 @@ class AddTerminalsRequest(BaseModel):
         default=None,
         description="Coding agent to run in all of them; defaults to the last pane's.",
     )
-    account: str | None = Field(
-        default=None, description=_ACCOUNT_FIELD_DESCRIPTION
-    )
+    account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
 
 
 class ModeRequest(BaseModel):
@@ -168,6 +168,16 @@ class ActivateWorkspaceRequest(BaseModel):
             "— what the UI is in while the wizard opens an additional one. "
             "Nothing is closed either way."
         ),
+    )
+
+
+class RenameWorkspaceRequest(BaseModel):
+    """A new label for one workspace tab."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=80,
+        description="New workspace tab name; the folder itself is unchanged.",
     )
 
 
@@ -192,6 +202,62 @@ class WorkspacesResponse(BaseModel):
     workspaces: list[WorkspaceCard]
     active_id: str | None = None
     max_workspaces: int
+
+
+class SpawnGroupRequest(BaseModel):
+    """One "N panes running agent X" part of a fleet request."""
+
+    count: int = Field(
+        ge=1,
+        le=MAX_TERMINALS,
+        description="How many terminals to open in this group.",
+    )
+    agent: str | None = Field(
+        default=None,
+        description="Coding agent for this group; defaults to the last pane's.",
+    )
+    account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
+
+
+class FanOutRequest(BaseModel):
+    """Run ONE task across several coding agents at once."""
+
+    instruction: str = Field(
+        min_length=1,
+        max_length=MAX_PROMPT_CHARS,
+        description="What the fleet should do, in plain words.",
+    )
+    terminals: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Call-signs of existing terminals to brief. Combine with 'spawn' "
+            "or leave empty to brief only the newly opened panes."
+        ),
+    )
+    spawn: list[SpawnGroupRequest] = Field(
+        default_factory=list,
+        description=(
+            "Panes to open before briefing, group by group — this is how a "
+            "mixed fleet (five Codex plus three Claude Code) is requested. "
+            "Only the newly opened panes are briefed, so agents already "
+            "working on something else are not interrupted."
+        ),
+    )
+    split: bool = Field(
+        default=False,
+        description=(
+            "Divide the instruction into one distinct assignment per agent "
+            "instead of giving all of them the same brief. Use it when the "
+            "agents should cover different areas; leave it off when they "
+            "should all do the same thing."
+        ),
+    )
+    dry_run: bool = Field(
+        default=False,
+        description=(
+            "Plan the division of labour and return it WITHOUT typing anything into any agent."
+        ),
+    )
 
 
 class PromptRequest(BaseModel):
@@ -334,22 +400,37 @@ class ResumeTerminal(BaseModel):
     prompts_sent: int = 0
 
 
+class ResumeWorkspace(BaseModel):
+    """One workspace being offered back, with the panes it held."""
+
+    session_id: str = ""
+    folder: str = ""
+    folder_name: str = ""
+    folder_exists: bool = False
+    available: bool = Field(
+        description="False when the folder is gone or none of its CLIs are installed."
+    )
+    resumable_count: int = Field(
+        default=0,
+        description="How many of its panes bring their conversation back.",
+    )
+    terminals: list[ResumeTerminal] = Field(default_factory=list)
+
+
 class ResumeOffer(BaseModel):
-    """The last workspace, re-checked against this machine as it is now."""
+    """Everything that was open, re-checked against this machine as it is now."""
 
     available: bool = Field(
         description="False when there is nothing to reopen, or nothing that could run."
     )
-    folder: str = ""
-    folder_name: str = ""
-    folder_exists: bool = False
     saved_at: float = 0.0
-    session_id: str = ""
+    workspace_count: int = 0
+    terminal_count: int = 0
     resumable_count: int = Field(
         default=0,
-        description="How many panes bring their conversation back with them.",
+        description="How many panes across all workspaces continue their conversation.",
     )
-    terminals: list[ResumeTerminal] = Field(default_factory=list)
+    workspaces: list[ResumeWorkspace] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -493,9 +574,7 @@ async def open_native_picker(request: Request, req: NativePickRequest) -> Native
         )
     async with _native_picker_lock:
         result = await asyncio.to_thread(native_picker.choose_folder, start=req.start)
-    return NativePickResponse(
-        path=result.path, cancelled=result.cancelled, error=result.error
-    )
+    return NativePickResponse(path=result.path, cancelled=result.cancelled, error=result.error)
 
 
 @router.get("/recents", response_model=RecentsResponse, summary="Recently opened workspaces")
@@ -565,9 +644,7 @@ async def resolve_folder(req: ResolveRequest) -> ResolveResponse:
     if len(items) == 1:
         return ResolveResponse(resolved=items[0].path, candidates=items)
     if not items:
-        return ResolveResponse(
-            detail=f'No folder called "{wanted}" was found on this machine.'
-        )
+        return ResolveResponse(detail=f'No folder called "{wanted}" was found on this machine.')
     return ResolveResponse(
         candidates=items,
         detail=f'Several folders are called "{wanted}" — pick the right one.',
@@ -634,13 +711,29 @@ async def activate_workspace(req: ActivateWorkspaceRequest) -> dict:
     }
 
 
+@router.patch("/workspaces/{workspace_id}", summary="Rename a workspace")
+async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> dict:
+    """Change only a workspace's tab label; its folder and agents keep running."""
+    registry = get_registry()
+    try:
+        session = await registry.rename(workspace_id, req.name)
+    except SessionError as exc:
+        status = 404 if registry.get(workspace_id) is None else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "workspace": session.to_card(active=session.id == registry.active_id),
+        "state": registry.state(),
+    }
+
+
 @router.post("/session", summary="Open an Agentic-IDE workspace")
 async def start_session(req: StartSessionRequest) -> dict:
     """Open ``folder`` as another workspace, with one terminal per request entry.
 
     Whatever is already open STAYS open with its agents running — this adds a
-    workspace and brings it to the front. Opening a folder that already has one
-    switches to it instead of starting a second set of agents on the same tree.
+    workspace and brings it to the front. The same folder may be opened more
+    than once; each workspace keeps its own panes, conversations, and tab name.
 
     The recent-folder history is updated here, at the user-facing open action,
     rather than inside ``Registry.start``. Internal callers (especially unit
@@ -648,9 +741,7 @@ async def start_session(req: StartSessionRequest) -> dict:
     history with folders the user never selected.
     """
     try:
-        session = await get_registry().start(
-            req.folder, [t.model_dump() for t in req.terminals]
-        )
+        session = await get_registry().start(req.folder, [t.model_dump() for t in req.terminals])
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -755,38 +846,44 @@ async def get_resume_offer() -> ResumeOffer:
 
 @router.post("/resume", summary="Reopen the last Agentic-IDE workspace")
 async def resume_workspace() -> dict:
-    """Reopen the last workspace: same panes, same places, same coding CLIs.
+    """Reopen everything that was open: same panes, same places, same coding CLIs.
 
-    Wherever the coding CLI supports it, each pane also continues the
-    conversation it was having. No agent is started here — the panes connect the
-    way they always do, and that connection is what continues them, so a resumed
-    workspace takes exactly the same path as a freshly opened one.
+    Every workspace in the restore point, not just whichever was on screen —
+    somebody who had four folders open had four. Wherever the coding CLI supports
+    it, each pane also continues the conversation it was having.
 
-    ``409`` when there is nothing to resume, ``422`` when the folder is gone.
+    No agent is started here. The panes connect the way they always do, and that
+    connection is what continues them, so a resumed workspace takes exactly the
+    same path as a freshly opened one — and restoring five workspaces launches
+    nothing until their panes are looked at.
+
+    ``409`` when there is nothing to resume, ``422`` when nothing could be
+    reopened at all. A workspace that individually could not come back (folder
+    deleted, workspace limit reached) does not fail the request: it is reported
+    in ``skipped`` so the caller can say which ones are missing.
     """
     registry = get_registry()
     snapshot = await asyncio.to_thread(resume_store.load)
     if snapshot is None:
-        raise HTTPException(
-            status_code=409, detail="There is no previous workspace to reopen."
-        )
+        raise HTTPException(status_code=409, detail="There is no previous workspace to reopen.")
     try:
-        session = await registry.restore(snapshot)
+        result = await registry.restore(snapshot)
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    split: dict[str, int] = {}
-    for terminal in session.terminals:
-        split[terminal.agent] = split.get(terminal.agent, 0) + 1
-    try:
-        await asyncio.to_thread(
-            recents.remember,
-            session.folder,
-            terminals=len(session.terminals),
-            agents=split,
-        )
-    except Exception:  # noqa: BLE001 - history must never block reopening
-        log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
+    for session in result.sessions:
+        split: dict[str, int] = {}
+        for terminal in session.terminals:
+            split[terminal.agent] = split.get(terminal.agent, 0) + 1
+        try:
+            await asyncio.to_thread(
+                recents.remember,
+                session.folder,
+                terminals=len(session.terminals),
+                agents=split,
+            )
+        except Exception:  # noqa: BLE001 - history must never block reopening
+            log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
 
     # Counted by asking the coding CLI's history, not by counting handles a pane
     # happens to hold: a pane that was opened and never used holds an id that
@@ -802,16 +899,22 @@ async def resume_workspace() -> dict:
         _count_conversations,
         [
             (t.agent, t.resume, account_home(t.agent, t.account))
+            for session in result.sessions
             for t in session.terminals
         ],
     )
+    total_panes = result.terminal_count
     return {
         "ok": True,
-        "session": session.to_dict(),
+        "state": registry.state(),
+        "workspace_count": len(result.sessions),
+        "terminal_count": total_panes,
         # The honest part: the rest of the panes reopen empty, and a caller that
         # reports "everything is back" without checking this is lying.
         "resumable_count": resumable,
-        "started_fresh": len(session.terminals) - resumable,
+        "started_fresh": total_panes - resumable,
+        # Workspaces that could not come back, with the reason for each.
+        "skipped": [{"folder": folder, "detail": detail} for folder, detail in result.skipped],
     }
 
 
@@ -899,9 +1002,7 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     if session is not None and bus is not None and created:
         try:
             await bus.publish(
-                terminals_added_event(
-                    session, created, source_layer="agentic_ide_routes"
-                )
+                terminals_added_event(session, created, source_layer="agentic_ide_routes")
             )
         except Exception as exc:  # noqa: BLE001 - notification is not the work
             log.debug("AgenticIdeTerminalsAdded publish failed: %s", exc)
@@ -971,12 +1072,8 @@ async def terminal_attach(
     found = registry.find_terminal(name)
     if found is None:
         if not registry.sessions:
-            raise HTTPException(
-                status_code=409, detail="No Agentic-IDE session is running."
-            )
-        known = ", ".join(
-            t.name for s in registry.sessions for t in s.terminals
-        ) or "none"
+            raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+        known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
         raise HTTPException(
             status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
         )
@@ -1069,6 +1166,135 @@ async def terminal_attach(
     }
 
 
+@router.post("/fanout", summary="Run one task across several coding agents")
+async def fanout(request: Request, req: FanOutRequest) -> dict:
+    """Brief a fleet: open the panes if asked, divide the work, deliver it.
+
+    The one place a multi-agent run is started from, so voice, CLI and UI cannot
+    grow three different ideas of what "split the work between you" means.
+
+    Three independent decisions, each optional:
+
+    * ``spawn`` opens panes first and briefs ONLY those. Panes that were already
+      working on something else are not interrupted by a fleet request.
+    * ``split`` divides the instruction into one assignment per agent instead of
+      handing all of them the same sentence. Without it every agent gets the
+      same brief, which is right for "all of you run the tests" and wrong for
+      "audit the codebase between you".
+    * ``dry_run`` plans and returns the division of labour without typing
+      anything, so eight agents can be reviewed before they start.
+
+    ``ok`` is true only when EVERY addressed agent was briefed. A partial
+    fan-out is not a success: it is the failure this endpoint's honesty rules
+    exist for, so ``undelivered`` names every agent that was not reached and
+    why.
+    """
+    from jarvis.agentic_ide import fanout as fanout_mod
+    from jarvis.agentic_ide import work_split
+
+    registry = get_registry()
+    if registry.session is None:
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+
+    created: list = []
+    if req.spawn:
+        for group in req.spawn:
+            try:
+                opened, capped = await registry.add_terminals(
+                    group.count, agent=group.agent, account=group.account
+                )
+            except SessionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            created.extend(opened)
+            if capped:
+                break
+        bus = getattr(request.app.state, "bus", None)
+        session = registry.session
+        if session is not None and bus is not None and created:
+            try:
+                await bus.publish(
+                    terminals_added_event(session, created, source_layer="agentic_ide_routes")
+                )
+            except Exception as exc:  # noqa: BLE001 - notification is not the work
+                log.debug("AgenticIdeTerminalsAdded publish failed: %s", exc)
+
+    names = list(req.terminals or []) + [t.name for t in created]
+    if not names:
+        raise HTTPException(
+            status_code=400,
+            detail=("Name the terminals to brief, or ask for panes to be opened with 'spawn'."),
+        )
+
+    session = registry.session
+    plan = None
+    assignments: dict[str, str] | None = None
+    if req.split and len(names) > 1:
+        plan = await work_split.split(req.instruction, session=session, count=len(names))
+        assignments = {name: item.task for name, item in zip(names, plan.assignments, strict=False)}
+
+    if req.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "terminals": names,
+            "opened": [t.to_dict() for t in created],
+            "split": _split_payload(plan),
+            "delivered": [],
+            "undelivered": [],
+            "state": registry.state(),
+        }
+
+    result = await fanout_mod.deliver(
+        session=session,
+        terminals=names,
+        utterance=req.instruction,
+        instruction=req.instruction,
+        assignments=assignments,
+    )
+    return {
+        "ok": result.all_delivered,
+        "dry_run": False,
+        "terminals": names,
+        "opened": [t.to_dict() for t in created],
+        "split": _split_payload(plan),
+        "delivered": [_delivery_payload(d) for d in result.delivered],
+        "undelivered": [_delivery_payload(d) for d in result.undelivered],
+        "state": registry.state(),
+    }
+
+
+def _split_payload(plan: object | None) -> dict | None:
+    """The division of labour, or None when the fleet shares one brief."""
+    if plan is None:
+        return None
+    return {
+        "split_by": plan.split_by,  # type: ignore[attr-defined]
+        "note": plan.note,  # type: ignore[attr-defined]
+        "assignments": [
+            {
+                "area": a.area,
+                "task": a.task,
+                "files": list(a.files),
+                "done_when": a.done_when,
+            }
+            for a in plan.assignments  # type: ignore[attr-defined]
+        ],
+    }
+
+
+def _delivery_payload(delivery: object) -> dict:
+    """One agent's verdict, with the machine-readable failure kind kept."""
+    return {
+        "terminal": delivery.terminal,  # type: ignore[attr-defined]
+        "delivered": delivery.delivered,  # type: ignore[attr-defined]
+        "submitted": delivery.submitted,  # type: ignore[attr-defined]
+        "files": list(delivery.files),  # type: ignore[attr-defined]
+        "composed_by": delivery.composed_by,  # type: ignore[attr-defined]
+        "reason_code": delivery.reason_code,  # type: ignore[attr-defined]
+        "reason": delivery.reason,  # type: ignore[attr-defined]
+    }
+
+
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
 async def terminal_prompt(name: str, req: PromptRequest) -> dict:
     """Type ``prompt`` into the terminal called ``name`` and press Enter.
@@ -1084,9 +1310,7 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
     """
     registry = get_registry()
     if not registry.sessions:
-        raise HTTPException(
-            status_code=409, detail="No Agentic-IDE session is running."
-        )
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
 
     text = req.prompt
     composed_by = "raw"
@@ -1100,9 +1324,7 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         # point the agent at files that are not in its tree.
         found = registry.find_terminal(name)
         if found is None:
-            known = ", ".join(
-                t.name for s in registry.sessions for t in s.terminals
-            ) or "none"
+            known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
             raise HTTPException(
                 status_code=404,
                 detail=f"No terminal called {name!r}. Running: {known}.",
@@ -1112,15 +1334,11 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
             req.prompt,
             session=session,
             terminal_name=term_for_compose.name,
-            agent_display=AGENT_DISPLAY.get(
-                term_for_compose.agent, term_for_compose.agent
-            ),
+            agent_display=AGENT_DISPLAY.get(term_for_compose.agent, term_for_compose.agent),
         )
         text, composed_by, files = result.text, result.composed_by, result.files
         if not text:
-            raise HTTPException(
-                status_code=422, detail="The prompt was empty after composition."
-            )
+            raise HTTPException(status_code=422, detail="The prompt was empty after composition.")
 
     if req.dry_run:
         return {
@@ -1187,9 +1405,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         # socket on WebKit engines, which withhold the session cookie from a WS
         # handshake (BUG-065); the client answers by proving the session over
         # plain HTTP and retrying with a one-time ticket.
-        log.warning(
-            "Agentic IDE: refused an unauthorized terminal socket for %r", name
-        )
+        log.warning("Agentic IDE: refused an unauthorized terminal socket for %r", name)
         await ws.close(code=4401, reason="unauthorized")
         return
 
