@@ -3011,6 +3011,24 @@
       "empty": "This build offers no source types.",
       "selected": "Selected",
       "choose": "Pick a source type"
+    },
+    "item": {
+      "title": "Stored item",
+      "loading": "Loading the stored record…",
+      "open_source": "Open at the source",
+      "as_captured": "As captured",
+      "empty_body": "This item was stored without any text.",
+      "derived": "What Jarvis made of it",
+      "derived_none": "Nothing derived yet. Summaries and vectors are added in the background; the item is already keyword-searchable.",
+      "has_vector": "vector stored",
+      "no_vector": "no vector yet",
+      "derived_error": "The derived documents could not be read ({0}). The captured text above is unaffected."
+    },
+    "reconcile": {
+      "checking": "Checking that everything landed…",
+      "all_complete": "Everything that was read is in the database — {0} item(s).",
+      "partial": "{0} of {1} source(s) fully landed.",
+      "numbers": "read {0} · {1} new · {2} changed · {3} unchanged · {4} stored"
     }
   }
 }

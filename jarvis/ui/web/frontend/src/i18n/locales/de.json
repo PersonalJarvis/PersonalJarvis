@@ -3010,6 +3010,24 @@
       "empty": "In dieser Version werden keine Quellen angeboten.",
       "selected": "Ausgewählt",
       "choose": "Quelle auswählen"
+    },
+    "item": {
+      "title": "Gespeicherter Eintrag",
+      "loading": "Gespeicherter Datensatz wird geladen…",
+      "open_source": "Beim Ursprung öffnen",
+      "as_captured": "So aufgenommen",
+      "empty_body": "Dieser Eintrag wurde ohne Text gespeichert.",
+      "derived": "Was Jarvis daraus gemacht hat",
+      "derived_none": "Noch nichts abgeleitet. Zusammenfassungen und Vektoren entstehen im Hintergrund; über Stichwörter ist der Eintrag bereits findbar.",
+      "has_vector": "Vektor gespeichert",
+      "no_vector": "noch kein Vektor",
+      "derived_error": "Die abgeleiteten Dokumente konnten nicht gelesen werden ({0}). Der aufgenommene Text oben ist davon nicht betroffen."
+    },
+    "reconcile": {
+      "checking": "Wird geprüft, ob alles angekommen ist…",
+      "all_complete": "Alles Gelesene ist in der Datenbank — {0} Einträge.",
+      "partial": "{0} von {1} Quellen vollständig angekommen.",
+      "numbers": "gelesen {0} · {1} neu · {2} geändert · {3} unverändert · {4} gespeichert"
     }
   }
 }

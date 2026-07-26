@@ -1617,6 +1617,148 @@ async def list_items(
     )
 
 
+@router.get("/items/{item_id}", summary="Read one stored item in full")
+async def get_item(item_id: int, request: Request) -> dict[str, Any]:
+    """Everything UltraWiki holds about one item — including the stored text.
+
+    The inventory answers "which items are in there"; this answers "what does
+    it actually KNOW about this one". Both halves matter: the raw text as
+    captured (so a user can confirm nothing was mangled on the way in) AND the
+    derived documents with their distillation and vector state (so "distilled"
+    stops being a badge with nothing behind it).
+    """
+    service = _service(request)
+    store = await _store_of(service)
+    item = await store.get_item(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"unknown item {item_id}")
+
+    documents: list[dict[str, Any]] = []
+    try:
+        rows = await store.item_documents(item_id)
+    except Exception as exc:  # noqa: BLE001 — a missing derivation is not a 500
+        log.debug("item documents unavailable for %s", item_id, exc_info=True)
+        rows = []
+        documents_error = f"{type(exc).__name__}"
+    else:
+        documents_error = ""
+    for row in rows:
+        distill: Any = None
+        raw = row.get("distill_json")
+        if raw:
+            try:
+                import json  # noqa: PLC0415 — lazy, only on the detail path
+
+                distill = json.loads(raw)
+            except (TypeError, ValueError):
+                # Keep the unparsed text rather than dropping it: a broken
+                # distillation is still evidence of what happened.
+                distill = {"raw": str(raw)[:2000]}
+        documents.append(
+            {
+                "id": row.get("id"),
+                "doc_type": row.get("doc_type"),
+                "text": str(row.get("text_norm") or ""),
+                "distill": distill,
+                "has_vector": bool(row.get("has_vector")),
+                "created_at": row.get("created_at"),
+            }
+        )
+
+    return {
+        "id": item.get("id"),
+        "source_id": item.get("source_id"),
+        "external_id": item.get("external_id"),
+        "title": item.get("title") or "",
+        # The text EXACTLY as it was captured — the point of the whole view.
+        "body": item.get("body_raw") or "",
+        "permalink": item.get("permalink") or "",
+        "timestamp_utc": item.get("timestamp_utc") or "",
+        "author": item.get("author_raw") or "",
+        "thread_key": item.get("thread_key") or "",
+        "state": item.get("state") or "",
+        "areas": item.get("areas") or [],
+        "content_hash": item.get("content_hash") or "",
+        "attempt_count": item.get("attempt_count") or 0,
+        "last_error": item.get("last_error") or "",
+        "deleted_at": item.get("deleted_at"),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "documents": documents,
+        "documents_error": documents_error,
+    }
+
+
+@router.get("/reconcile", summary="Did everything that was read actually land?")
+async def reconcile_sources(request: Request) -> dict[str, Any]:
+    """Per-source proof that the last import is fully in the database.
+
+    "It says 4 689 items — but is that everything?" is a fair question that no
+    count alone can answer, because a count cannot distinguish "all of it" from
+    "as much as we managed". The last finished run reports exactly how many
+    items it READ (new + changed + unchanged); the store reports how many it
+    HOLDS for that source. When the stored number covers the read number,
+    everything the connector handed over is in the database — and when it does
+    not, the difference is the honest answer instead of a reassuring total.
+    """
+    service = _service(request)
+    status = await service.status()
+    rows: list[dict[str, Any]] = []
+    for source in status.get("sources", []):
+        counts = dict(source.get("counts") or {})
+        stored = int(counts.get("total") or 0)
+        outcome = dict(source.get("last_outcome") or {})
+        finished = bool(outcome)
+        read = (
+            int(outcome.get("new") or 0)
+            + int(outcome.get("changed") or 0)
+            + int(outcome.get("unchanged") or 0)
+        )
+        if not finished:
+            verdict, detail = "never_imported", "This source has never been read."
+        elif outcome.get("status") != "done":
+            verdict = "incomplete"
+            detail = (
+                f"The last import ended as '{outcome.get('status')}', so it may "
+                "not have read everything."
+            )
+        elif stored >= read:
+            verdict = "complete"
+            detail = (
+                f"All {read} item(s) the last import read are in the database."
+            )
+        else:
+            verdict = "short"
+            detail = (
+                f"The last import read {read} item(s) but only {stored} are "
+                "stored — {0} are missing.".replace("{0}", str(read - stored))
+            )
+        rows.append(
+            {
+                "source_id": source.get("id"),
+                "label": source.get("label") or source.get("id"),
+                "verdict": verdict,
+                "detail": detail,
+                "stored": stored,
+                "read": read,
+                "new": int(outcome.get("new") or 0),
+                "changed": int(outcome.get("changed") or 0),
+                "unchanged": int(outcome.get("unchanged") or 0),
+                "tombstoned": int(outcome.get("tombstoned") or 0),
+                "finished_at": outcome.get("finished_at"),
+                "last_error": source.get("last_error") or "",
+            }
+        )
+    complete = [r for r in rows if r["verdict"] == "complete"]
+    return {
+        "sources": rows,
+        "total_stored": sum(r["stored"] for r in rows),
+        "all_complete": bool(rows) and len(complete) == len(rows),
+        "complete": len(complete),
+        "total_sources": len(rows),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Areas
 # ---------------------------------------------------------------------------

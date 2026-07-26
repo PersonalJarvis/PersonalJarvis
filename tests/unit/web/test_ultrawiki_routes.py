@@ -1076,6 +1076,64 @@ def test_an_unknown_slot_is_a_404(env) -> None:
     assert env.client.get("/api/ultrawiki/models/nonsense").status_code == 404
 
 
+def test_one_item_can_be_read_in_full_including_its_stored_text(env) -> None:
+    """The inventory says WHICH items exist; this says what is actually in one.
+
+    A stage badge reading "distilled" is a claim about a row the user cannot
+    see. Opening the record has to show the captured text itself — otherwise
+    "is the real content in there?" stays unanswerable from the app.
+    """
+    _activate(env)
+    _, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    listed = env.client.get("/api/ultrawiki/items").json()
+    assert listed["total"] >= 1
+
+    bodies = []
+    for row in listed["items"]:
+        response = env.client.get(f"/api/ultrawiki/items/{row['id']}")
+        assert response.status_code == 200, response.text
+        bodies.append(response.json())
+
+    for body in bodies:
+        # The text EXACTLY as captured — the whole point of the view.
+        assert body["body"].strip()
+        assert body["permalink"]
+        assert body["content_hash"]
+        assert isinstance(body["documents"], list)
+
+    # At least one item must carry what was DERIVED from it, so "embedded"
+    # stops being a badge with nothing behind it. Not EVERY item: the staged
+    # pipeline advances items independently, and asserting on all of them
+    # would pin scheduling order rather than the contract.
+    derived = [doc for body in bodies for doc in body["documents"]]
+    assert derived, "a driven pipeline must leave at least one derived document"
+    assert all("has_vector" in doc for doc in derived)
+    assert any(doc["text"].strip() for doc in derived)
+
+
+def test_an_unknown_item_is_a_404_not_an_empty_record(env) -> None:
+    _activate(env)
+    assert env.client.get("/api/ultrawiki/items/999999").status_code == 404
+
+
+def test_reconcile_confirms_the_import_landed(env) -> None:
+    _activate(env)
+    _, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    body = env.client.get("/api/ultrawiki/reconcile").json()
+    folder = next(r for r in body["sources"] if r["source_id"].startswith("local-folder"))
+    assert folder["verdict"] == "complete"
+    assert folder["read"] == folder["stored"] == 2
+    # The default sources were registered but never synced by this test, so the
+    # summary must NOT claim everything landed.
+    assert body["all_complete"] is False
+    assert any(r["verdict"] == "never_imported" for r in body["sources"])
+
+
 def test_a_dead_model_catalog_degrades_instead_of_500ing(env, monkeypatch) -> None:
     """A settings screen must render even when a provider catalog is down."""
     import jarvis.ui.web.provider_routes as provider_routes

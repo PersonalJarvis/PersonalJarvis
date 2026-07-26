@@ -187,6 +187,71 @@ export interface UltraWikiItem {
   updated_at: string;
 }
 
+/**
+ * One derived document of an item — what UltraWiki MADE of the raw text.
+ * `has_vector` is what turns the "embedded" badge from a claim into a fact.
+ */
+export interface UltraWikiItemDocument {
+  id: number;
+  doc_type: "raw" | "summary" | "burst" | string;
+  text: string;
+  distill: Record<string, unknown> | null;
+  has_vector: boolean;
+  created_at: string | null;
+}
+
+/** `GET /api/ultrawiki/items/{id}` — the full record behind one inventory row. */
+export interface UltraWikiItemDetail {
+  id: number;
+  source_id: string;
+  external_id: string;
+  title: string;
+  /** The text EXACTLY as captured, so nothing has to be taken on trust. */
+  body: string;
+  permalink: string;
+  timestamp_utc: string;
+  author: string;
+  thread_key: string;
+  state: UltraWikiItemState | string;
+  areas: string[];
+  content_hash: string;
+  attempt_count: number;
+  last_error: string;
+  deleted_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  documents: UltraWikiItemDocument[];
+  documents_error: string;
+}
+
+/**
+ * Mirrors `GET /api/ultrawiki/reconcile`. `verdict` is the honest four-way
+ * answer to "is everything in there?" — a count alone cannot tell "all of it"
+ * from "as much as we managed".
+ */
+export interface UltraWikiReconcileRow {
+  source_id: string;
+  label: string;
+  verdict: "complete" | "short" | "incomplete" | "never_imported" | string;
+  detail: string;
+  stored: number;
+  read: number;
+  new: number;
+  changed: number;
+  unchanged: number;
+  tombstoned: number;
+  finished_at: string | null;
+  last_error: string;
+}
+
+export interface UltraWikiReconcile {
+  sources: UltraWikiReconcileRow[];
+  total_stored: number;
+  all_complete: boolean;
+  complete: number;
+  total_sources: number;
+}
+
 export interface UltraWikiItemsPage {
   items: UltraWikiItem[];
   /** The UNPAGED total for the active filters. */
@@ -676,6 +741,20 @@ export async function fetchUltraWikiHealth(): Promise<UltraWikiHealth | null> {
 
 export function syncAllUltraWikiSources(): Promise<UltraWikiSyncAllResponse> {
   return postJson<UltraWikiSyncAllResponse>("/api/ultrawiki/sources/sync-all");
+}
+
+/** Everything stored about one item — the raw text AND what was derived. */
+export function fetchUltraWikiItemDetail(
+  itemId: number,
+): Promise<UltraWikiItemDetail> {
+  return request<UltraWikiItemDetail>(
+    `/api/ultrawiki/items/${encodeURIComponent(String(itemId))}`,
+  );
+}
+
+/** Per-source proof that everything the last import read actually landed. */
+export function fetchUltraWikiReconcile(): Promise<UltraWikiReconcile> {
+  return request<UltraWikiReconcile>("/api/ultrawiki/reconcile");
 }
 
 /**

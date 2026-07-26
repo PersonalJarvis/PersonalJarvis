@@ -3010,6 +3010,24 @@
       "empty": "Esta versión no ofrece ningún tipo de origen.",
       "selected": "Seleccionado",
       "choose": "Elige un tipo de origen"
+    },
+    "item": {
+      "title": "Elemento almacenado",
+      "loading": "Cargando el registro almacenado…",
+      "open_source": "Abrir en el origen",
+      "as_captured": "Tal como se capturó",
+      "empty_body": "Este elemento se guardó sin texto.",
+      "derived": "Lo que Jarvis hizo con ello",
+      "derived_none": "Todavía no se ha derivado nada. Los resúmenes y los vectores se crean en segundo plano; el elemento ya se encuentra por palabras.",
+      "has_vector": "vector guardado",
+      "no_vector": "aún sin vector",
+      "derived_error": "No se pudieron leer los documentos derivados ({0}). El texto capturado de arriba no se ve afectado."
+    },
+    "reconcile": {
+      "checking": "Comprobando que todo llegó…",
+      "all_complete": "Todo lo leído está en la base de datos: {0} elementos.",
+      "partial": "{0} de {1} fuentes llegaron completas.",
+      "numbers": "leídos {0} · {1} nuevos · {2} cambiados · {3} sin cambios · {4} guardados"
     }
   }
 }

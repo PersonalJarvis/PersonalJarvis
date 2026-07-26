@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { formatRelativeTime } from "@/components/ultrawiki/relativeTime";
+import { ItemDetailDialog } from "@/components/ultrawiki/ItemDetailDialog";
 import {
   fetchUltraWikiItems,
   type UltraWikiItem,
@@ -82,6 +83,10 @@ export function ContentsPanel({
   useEffect(() => {
     void load(0);
   }, [load]);
+
+  // Which row is opened for inspection. A list of titles cannot answer "is
+  // the real content in there?" — only opening one can.
+  const [openItemId, setOpenItemId] = useState<number | null>(null);
 
   const stageChips = STATE_FILTERS.map(([key, labelKey]) => ({
     key,
@@ -207,28 +212,38 @@ export function ContentsPanel({
               {rows.map((item) => (
                 <tr
                   key={item.id}
-                  className="border-t border-border/60"
+                  className="cursor-pointer border-t border-border/60 hover:bg-primary/[0.04]"
+                  onClick={() => setOpenItemId(item.id)}
                   data-testid={`ultrawiki-item-${item.id}`}
                 >
                   <td className="max-w-[22rem] px-3 py-2">
-                    {item.permalink ? (
-                      <a
-                        href={item.permalink}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-foreground underline-offset-2 hover:underline"
+                    {/* The title opens what is STORED; the arrow goes to the
+                        source. Two different questions, two different targets —
+                        so the link stops the row's click. */}
+                    <span className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="truncate text-left text-foreground underline-offset-2 hover:underline"
+                        data-testid={`ultrawiki-item-open-${item.id}`}
                       >
-                        <span className="truncate">{item.title}</span>
-                        <ExternalLink
-                          className="h-3 w-3 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </a>
-                    ) : (
-                      <span className="truncate text-foreground">
                         {item.title}
-                      </span>
-                    )}
+                      </button>
+                      {item.permalink && (
+                        <a
+                          href={item.permalink}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={t("ultrawiki.item.open_source")}
+                          title={t("ultrawiki.item.open_source")}
+                        >
+                          <ExternalLink
+                            className="h-3 w-3 shrink-0 text-muted-foreground hover:text-primary"
+                            aria-hidden
+                          />
+                        </a>
+                      )}
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {sourceLabels.get(item.source_id) ?? item.source_id}
@@ -294,6 +309,13 @@ export function ContentsPanel({
           </span>
         )}
       </div>
+      {openItemId !== null && (
+        <ItemDetailDialog
+          itemId={openItemId}
+          onClose={() => setOpenItemId(null)}
+        />
+      )}
+
     </div>
   );
 }

@@ -800,6 +800,33 @@ class UltraStore:
         )
         return None if row is None else self._item_row_to_dict(row)
 
+    async def item_documents(self, item_id: int) -> list[dict[str, Any]]:
+        """The derived documents of one item, with their embedding state.
+
+        What a user means by "show me what is actually stored": not the raw
+        text they already have at the source, but what UltraWiki MADE of it —
+        the normalised document, the distillation, and whether it carries a
+        vector. Without this, "distilled" is a badge with nothing behind it.
+        """
+        conn = await self._ensure_open()
+        rows = await self._fetchall(
+            conn,
+            "SELECT d.id, d.doc_type, d.text_norm, d.distill_json,"
+            " d.distill_version, d.created_at,"
+            " EXISTS (SELECT 1 FROM uw_embeddings e WHERE e.document_id = d.id)"
+            "   AS has_vector"
+            " FROM uw_documents d WHERE d.item_id = ?"
+            " ORDER BY d.id",
+            (item_id,),
+        )
+        # `_fetchall` hands back aiosqlite.Row, which has no .get() — mapping
+        # each row through dict() first is what keeps this from raising an
+        # AttributeError the caller would only ever see as "no documents".
+        return [
+            {**dict(row), "has_vector": bool(dict(row).get("has_vector"))}
+            for row in rows
+        ]
+
     async def list_items(
         self,
         *,
@@ -2195,6 +2222,24 @@ class PostgresStore:
             (source_id, external_id),
         )
         return None if row is None else self._item_row_to_dict(row)
+
+    async def item_documents(self, item_id: int) -> list[dict[str, Any]]:
+        """Postgres twin of :meth:`UltraStore.item_documents`."""
+        conn = await self._ensure_open()
+        rows = await self._fetchall(
+            conn,
+            "SELECT d.id, d.doc_type, d.text_norm, d.distill_json,"
+            " d.distill_version, d.created_at,"
+            " EXISTS (SELECT 1 FROM uw_embeddings e WHERE e.document_id = d.id)"
+            "   AS has_vector"
+            " FROM uw_documents d WHERE d.item_id = %s"
+            " ORDER BY d.id",
+            (item_id,),
+        )
+        return [
+            {**dict(row), "has_vector": bool(dict(row).get("has_vector"))}
+            for row in rows
+        ]
 
     async def list_items(
         self,
