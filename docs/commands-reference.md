@@ -291,3 +291,13 @@ Turn the focused coding mode on or off. While on, answers are given inside the o
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "switch into coding mode"
 
+## `agentic-ide-resume` — Resume the last Agentic-IDE workspace
+
+Reopen the coding workspace that was last open: the same folder, the same named terminals in the same grid positions, running the same coding CLIs — and continuing the same conversations wherever that CLI supports it. Use this when the user asks for their terminals or their coding session back after closing the window, restarting the app, or rebooting. CHECK THE REPLY: 'resumable_count' is how many panes actually continued their conversation and 'started_fresh' how many reopened empty. Name the empty ones — an agent that lost its history looks exactly like one that did not until it is asked a follow-up question.
+
+- **Endpoint:** `POST /api/agentic-ide/resume`
+- **Arguments:** none
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "resume all my coding sessions"
+

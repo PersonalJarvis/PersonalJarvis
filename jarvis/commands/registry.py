@@ -777,6 +777,31 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("entra en el modo de programación",),  # i18n-allow: input vocab
             },
         ),
+        AppCommand(
+            id="agentic-ide-resume",
+            title="Resume the last Agentic-IDE workspace",
+            description=(
+                "Reopen the coding workspace that was last open: the same "
+                "folder, the same named terminals in the same grid positions, "
+                "running the same coding CLIs — and continuing the same "
+                "conversations wherever that CLI supports it. Use this when the "
+                "user asks for their terminals or their coding session back "
+                "after closing the window, restarting the app, or rebooting. "
+                "CHECK THE REPLY: 'resumable_count' is how many panes actually "
+                "continued their conversation and 'started_fresh' how many "
+                "reopened empty. Name the empty ones — an agent that lost its "
+                "history looks exactly like one that did not until it is asked "
+                "a follow-up question."
+            ),
+            method="POST",
+            path="/api/agentic-ide/resume",
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("stell meine terminals wieder her",),  # i18n-allow: input vocab
+                "en": ("resume all my coding sessions",),
+                "es": ("restaura mis terminales",),  # i18n-allow: input vocab
+            },
+        ),
     )
 
 
