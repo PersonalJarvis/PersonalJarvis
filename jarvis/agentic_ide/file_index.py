@@ -119,6 +119,14 @@ class _Entry:
     stem_tokens: frozenset[str]
     path_tokens: frozenset[str]
     is_test: bool
+    is_doc: bool = False
+    #: Directory names above this file, verbatim and lowercased. Kept separate
+    #: from ``path_tokens`` because naming a PACKAGE ("the ultrawiki ranking")
+    #: is a much stronger signal than a word that merely appears in the path,
+    #: and only the exact, unsplit name can tell the two apart.
+    dir_names: frozenset[str] = frozenset()
+    #: Bytes on disk, used only to break ties between equally-scoring files.
+    size: int = 0
 
 
 @dataclass(slots=True)
@@ -138,17 +146,29 @@ class FileIndex:
         if not wanted or not self.entries:
             return []
         wants_tests = bool(wanted & {"test", "tests", "spec", "specs"})
-        scored: list[tuple[float, int, str]] = []
+        wants_docs = bool(
+            wanted & {"doc", "docs", "documentation", "readme", "report", "spec",
+                      "dokumentation", "bericht", "documentacion", "informe"}
+        )
+        scored: list[tuple[float, int, int, str]] = []
         for entry in self.entries:
-            score = _score(entry, wanted, wants_tests=wants_tests)
+            score = _score(
+                entry, wanted, wants_tests=wants_tests, wants_docs=wants_docs
+            )
             if score > 0:
                 # Shorter paths win ties: the top-level `config.py` is far more
                 # likely meant than a same-named file nested six levels deep.
-                scored.append((score, -entry.rel.count("/"), entry.rel))
+                # Then SIZE, because naming a whole package ("a deep dive of
+                # ultrawiki") scores every file in it identically, and falling
+                # through to alphabetical order handed back whatever sorted
+                # first — measured, five files starting at `__init__.py` and
+                # `connector_catalog.py`, none of them the substance. The larger
+                # module is the one that tells you what the package does.
+                scored.append((score, -entry.rel.count("/"), entry.size, entry.rel))
         if not scored:
             return []
-        scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
-        return [rel for _s, _d, rel in scored[: max(1, limit)]]
+        scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+        return [rel for _s, _d, _sz, rel in scored[: max(1, limit)]]
 
 
 def _singular(token: str) -> str:
@@ -163,34 +183,90 @@ def _singular(token: str) -> str:
     return token
 
 
+def _keep(token: str) -> bool:
+    return len(token) >= 3 and token not in _STOPWORDS and not token.isdigit()
+
+
 def tokenize(text: str) -> set[str]:
-    """Meaningful lowercase tokens of ``text``, identifiers split apart."""
+    """Meaningful lowercase tokens of ``text``, identifiers split apart.
+
+    Both the PARTS and the WHOLE are kept, and that is load-bearing rather than
+    belt-and-braces. Product names are written camelCase and stored lowercase:
+    someone types "UltraWiki", which splits to ``ultra`` + ``wiki``, while the
+    package on disk is the single word ``ultrawiki``. Those two sets never
+    intersect, so before this the index could not find a module by the name its
+    own product uses — measured 2026-07-26, "deep dive of the Ultrawiki system"
+    returned two files from ``docs/reports/`` and no implementation at all.
+    Keeping the joined form makes the two spellings meet.
+    """
     out: set[str] = set()
     for raw in _TOKEN_RE.findall(text or ""):
+        whole = raw.lower()
+        if _keep(whole):
+            out.add(_singular(whole))
         for piece in _CAMEL_RE.split(raw):
             for chunk in re.split(r"[_\-]+", piece):
                 token = chunk.lower()
-                if len(token) < 3 or token in _STOPWORDS or token.isdigit():
-                    continue
-                out.add(_singular(token))
+                if _keep(token):
+                    out.add(_singular(token))
     return out
 
 
-def _score(entry: _Entry, wanted: set[str], *, wants_tests: bool) -> float:
+def _score(
+    entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bool
+) -> float:
     """How strongly this file answers to the words the user used."""
     stem_hits = entry.stem_tokens & wanted
     path_hits = (entry.path_tokens - entry.stem_tokens) & wanted
     if not stem_hits and not path_hits:
         return 0.0
-    # A hit in the file's own name is what someone means when they name a file;
-    # a hit in a parent directory only narrows the area.
-    score = 3.0 * len(stem_hits) + 1.0 * len(path_hits)
+    # A hit in the file's own name is what someone means when they name a file.
+    # A hit in a parent DIRECTORY used to count as a mild narrowing (1.0), which
+    # badly undersold it: when someone says "the ultrawiki ranking", the package
+    # name is the strongest signal in the sentence — every file inside it is a
+    # candidate, and the one file elsewhere whose stem happens to match is not.
+    # Weighting it at 2.0 is what lets a named module bring its own siblings.
+    score = 3.0 * len(stem_hits) + 2.0 * len(path_hits)
     # Every token of the file's name being named is near-certainty.
     if stem_hits and stem_hits == entry.stem_tokens:
         score += 2.0
+    # Naming the PACKAGE outright. Without this, a report named after a subject
+    # ("ultrawiki-deep-dive.html", three matching words in its stem) outscores
+    # every file of the package it discusses, which have one path hit each.
+    # The document is about the code; the code is what was asked for.
+    if entry.dir_names & wanted:
+        score += 3.0
     if entry.is_test and not wants_tests:
         score *= 0.35
+    if entry.is_doc and not wants_docs:
+        # Reports and design notes are named AFTER the thing they discuss, so
+        # they match its words better than the implementation does — measured,
+        # `docs/reports/realtime-wiki-deep-dive.html` beat every source file for
+        # "deep dive of the Ultrawiki system". A coding agent asked to change
+        # behaviour needs the code; it can still reach the document, just not
+        # ahead of the thing the document is about.
+        score *= 0.4
     return score
+
+
+# Directory names whose contents are written ABOUT the code, not part of it.
+_DOC_DIRS = frozenset({"docs", "doc", "documentation", "reports", "specs", "adr"})
+# Suffixes that are prose or a generated artefact rather than something an
+# agent edits to change behaviour.
+_DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt", ".html", ".htm"})
+
+
+def _is_doc(rel: str, name: str) -> bool:
+    """Whether this file DISCUSSES the code rather than being it.
+
+    Reports and design notes are named after their subject, so they out-match
+    the implementation on the subject's own words. Recognising them is what
+    lets the scorer put the code first while keeping the document reachable.
+    """
+    parts = rel.lower().split("/")
+    if any(part in _DOC_DIRS for part in parts[:-1]):
+        return True
+    return os.path.splitext(name)[1].lower() in _DOC_SUFFIXES
 
 
 def _is_interesting(name: str) -> bool:
@@ -198,6 +274,17 @@ def _is_interesting(name: str) -> bool:
         return True
     suffix = os.path.splitext(name)[1].lower()
     return suffix in _INTERESTING_SUFFIXES
+
+
+def _entry_size(item: os.DirEntry[str]) -> int:
+    """File size from the walk's own stat, or 0 when it cannot be read.
+
+    ``scandir`` caches this, so asking costs nothing extra on the walk.
+    """
+    try:
+        return item.stat().st_size
+    except OSError:
+        return 0
 
 
 def build_index(root: str | Path) -> FileIndex:
@@ -255,6 +342,11 @@ def build_index(root: str | Path) -> FileIndex:
                                 or stem.lower().startswith("test_")
                                 or stem.lower().endswith(("_test", ".test", ".spec"))
                             ),
+                            is_doc=_is_doc(rel, name),
+                            dir_names=frozenset(
+                                part.lower() for part in parent.split("/") if part
+                            ),
+                            size=_entry_size(item),
                         )
                     )
         except (PermissionError, OSError):
