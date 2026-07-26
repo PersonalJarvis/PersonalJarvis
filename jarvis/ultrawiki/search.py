@@ -43,6 +43,7 @@ import asyncio
 import logging
 import math
 import re
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -103,6 +104,43 @@ _TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
 
 _SECONDS_PER_DAY = 86400.0
 
+#: A search slower than this logs its stage breakdown at INFO instead of
+#: DEBUG, so a stalling leg is visible in a normal log without turning on
+#: debug logging first.
+_SLOW_SEARCH_MS = 1000.0
+
+
+async def _timed(name: str, awaitable: Any, sink: dict[str, float]) -> Any:
+    """Await ``awaitable`` and record its wall-clock cost in ``sink`` (ms).
+
+    Recording happens in ``finally`` so a degraded or raising stage still
+    reports the time it burned — the whole point of measuring is seeing
+    where a SLOW failure spent its budget.
+    """
+    started = time.perf_counter()
+    try:
+        return await awaitable
+    finally:
+        sink[name] = round((time.perf_counter() - started) * 1000.0, 1)
+
+
+def _finish_timings(sink: dict[str, float], started: float, *, results: int) -> None:
+    """Close the timing record and log one honest per-stage breakdown."""
+    sink["total_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
+    stages = ", ".join(
+        f"{name[: -len('_ms')]} {value:.0f}"
+        for name, value in sink.items()
+        if name != "total_ms"
+    )
+    level = logging.INFO if sink["total_ms"] >= _SLOW_SEARCH_MS else logging.DEBUG
+    log.log(
+        level,
+        "hybrid search took %.0f ms (%s) -> %d result(s)",
+        sink["total_ms"],
+        stages or "no stages ran",
+        results,
+    )
+
 
 def _uw(cfg: Any) -> Any:
     return getattr(cfg, "ultrawiki", None)
@@ -140,6 +178,7 @@ async def hybrid_search(
     rerank: bool = True,
     enforce_floor: bool = False,
     expand_context: bool = True,
+    timings: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Fused keyword + vector search over an UltraWiki store.
 
@@ -159,25 +198,41 @@ async def hybrid_search(
     grade is unavailable the caller gets results with ``rerank_score=None`` and
     must apply its own deterministic gate (``jarvis.brain.wiki_relevance``).
 
+    ``timings`` (optional) is filled with the wall-clock cost of every stage
+    that ran, in milliseconds (``keyword_ms``, ``vector_ms`` with its
+    ``vector_embed_ms`` / ``vector_ann_ms`` split, ``signals_ms``,
+    ``rerank_ms``, ``context_ms``, ``total_ms``) — the query text itself is
+    never logged, only durations and counts.
+
     An empty/blank query returns ``[]`` without touching any leg.
     """
     if not query or not query.strip():
         return []
+    sink: dict[str, float] = timings if timings is not None else {}
+    started = time.perf_counter()
     keyword_hits, vector_hits, signals = await asyncio.gather(
-        store.keyword_search(query, k=LEG_POOL, area_id=area_id),
-        _vector_leg(store, cfg, query, area_id=area_id),
-        _term_signals(store, query),
+        _timed("keyword_ms", store.keyword_search(query, k=LEG_POOL, area_id=area_id), sink),
+        _timed("vector_ms", _vector_leg(store, cfg, query, area_id=area_id, timings=sink), sink),
+        _timed("signals_ms", _term_signals(store, query), sink),
     )
     fused = _fuse(keyword_hits, vector_hits, cfg=cfg, signals=signals)
     if not fused:
+        _finish_timings(sink, started, results=0)
         return []
     capped = _cap_per_source(fused)
-    ordered = await _maybe_rerank(cfg, query, capped) if rerank else capped
+    # Timed only when a provider is actually configured: an unconfigured
+    # rerank stage is a no-op, and a "rerank 0" entry in the breakdown would
+    # claim a stage ran that never attempted work.
+    if rerank and str(getattr(_uw(cfg), "rerank_provider", "") or "").strip():
+        ordered = await _timed("rerank_ms", _maybe_rerank(cfg, query, capped), sink)
+    else:
+        ordered = capped
     if enforce_floor:
         ordered = _apply_relevance_floor(cfg, ordered)
     top = ordered[: max(0, int(k))]
     if expand_context and top:
-        top = await _expand_context(store, top)
+        top = await _timed("context_ms", _expand_context(store, top), sink)
+    _finish_timings(sink, started, results=len(top))
     return top
 
 
@@ -191,6 +246,7 @@ async def search(
     rerank: bool = True,
     enforce_floor: bool = False,
     expand_context: bool = True,
+    timings: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Keyword-argument facade over :func:`hybrid_search`.
 
@@ -206,6 +262,7 @@ async def search(
         rerank=rerank,
         enforce_floor=enforce_floor,
         expand_context=expand_context,
+        timings=timings,
     )
 
 
@@ -295,14 +352,25 @@ def _configured_model(ultrawiki: Any, provider: str, defaults: dict[str, str]) -
 
 
 async def _vector_leg(
-    store: Any, cfg: Any, query: str, *, area_id: str | None
+    store: Any,
+    cfg: Any,
+    query: str,
+    *,
+    area_id: str | None,
+    timings: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Embed the query and run the store's ANN leg.
 
     Every degraded outcome (unconfigured, unknown, dead backend, store-side
     vector degradation) returns ``[]`` with a logged honest reason — the
     search itself never fails because of the vector leg.
+
+    ``timings`` splits the leg's cost into ``vector_embed_ms`` (the query
+    embedding, usually a network round trip) and ``vector_ann_ms`` (the
+    store's vector query) — the split that tells a slow provider apart from
+    a slow database.
     """
+    sink: dict[str, float] = timings if timings is not None else {}
     ultrawiki = _uw(cfg)
     provider = str(getattr(ultrawiki, "embedding_provider", "") or "").strip()
     if not provider:
@@ -319,7 +387,9 @@ async def _vector_leg(
         return []
     model = _configured_model(ultrawiki, provider, DEFAULT_MODELS)
     try:
-        vectors = await factory(cfg).embed([query], model=model)
+        vectors = await _timed(
+            "vector_embed_ms", factory(cfg).embed([query], model=model), sink
+        )
     except EmbeddingError as exc:
         log.info("vector leg skipped: %s", exc)
         return []
@@ -332,7 +402,11 @@ async def _vector_leg(
     if not vectors or not vectors[0]:
         log.info("vector leg skipped: %s returned no query vector", provider)
         return []
-    results, reason = await store.vector_search(vectors[0], k=LEG_POOL, area_id=area_id)
+    results, reason = await _timed(
+        "vector_ann_ms",
+        store.vector_search(vectors[0], k=LEG_POOL, area_id=area_id),
+        sink,
+    )
     if reason:
         log.info("vector leg degraded: %s", reason)
     return results

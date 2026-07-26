@@ -885,3 +885,74 @@ async def test_context_expansion_can_be_switched_off():
 
     assert results[0].context == ()
     assert store.neighbor_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Stage timing instrumentation
+# ---------------------------------------------------------------------------
+
+
+async def test_timings_report_every_stage_that_ran(store, monkeypatch):
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    register_fake_embedding(monkeypatch, FakeEmbedding())
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+    timings: dict[str, float] = {}
+
+    results = await hybrid_search(store, cfg, "alpha", timings=timings)
+
+    assert results
+    ran = {"keyword_ms", "vector_ms", "vector_embed_ms", "vector_ann_ms",
+           "signals_ms", "context_ms", "total_ms"}
+    assert ran <= set(timings)
+    assert "rerank_ms" not in timings  # no rerank provider configured
+    assert all(value >= 0.0 for value in timings.values())
+    # The stage costs can never exceed the honest total.
+    assert timings["total_ms"] >= timings["keyword_ms"]
+
+
+async def test_timings_record_a_failing_embed_stage(store, monkeypatch):
+    """The point of measuring: a DEGRADED stage still reports the time it
+    burned before giving up, so a slow failure is visible in the breakdown."""
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    register_fake_embedding(
+        monkeypatch, FakeEmbedding(error=EmbeddingError("fake: HTTP 500"))
+    )
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+    timings: dict[str, float] = {}
+
+    results = await hybrid_search(store, cfg, "alpha", timings=timings)
+
+    assert results  # keyword leg still answered
+    assert "vector_embed_ms" in timings  # the failed embed reported its cost
+    assert "vector_ann_ms" not in timings  # the ANN query never ran
+
+
+async def test_slow_search_logs_its_breakdown_at_info(store, monkeypatch, caplog):
+    import jarvis.ultrawiki.search as search_mod
+
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+    monkeypatch.setattr(search_mod, "_SLOW_SEARCH_MS", 0.0)
+
+    with caplog.at_level(logging.INFO, logger="jarvis.ultrawiki.search"):
+        await hybrid_search(store, make_cfg(), "alpha")
+
+    assert any("hybrid search took" in rec.message for rec in caplog.records)
+    # Privacy: durations and counts only — the query text never reaches a log.
+    assert not any("alpha" in rec.getMessage() for rec in caplog.records)
+
+
+async def test_fast_search_stays_quiet_at_info_level(store, caplog):
+    await add_source(store)
+    await store.upsert_items("src1", [raw_item("a", body="alpha content")])
+    await index_all_keyword(store)
+
+    with caplog.at_level(logging.INFO, logger="jarvis.ultrawiki.search"):
+        await hybrid_search(store, make_cfg(), "alpha")
+
+    assert not any("hybrid search took" in rec.message for rec in caplog.records)
