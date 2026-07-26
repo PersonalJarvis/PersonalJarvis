@@ -1,11 +1,12 @@
 <p align="center">
   <a href="https://github.com/PersonalJarvis/PersonalJarvis">
-    <img src="assets/brand/banner.png" alt="Personal Jarvis — voice-driven meta-orchestrator" width="860" />
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/banner.png" alt="Personal Jarvis — voice-driven meta-orchestrator" width="860" />
   </a>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
+  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
   <a href="https://x.com/Ruben_Luetke"><img alt="Follow @Ruben_Luetke on X" src="https://img.shields.io/badge/Follow-%40Ruben__Luetke-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
   <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
@@ -65,7 +66,7 @@ Every one of these works today, out of the box.
 ## How it works
 
 <img
-  src="assets/brand/how-personal-jarvis-works.png"
+  src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-personal-jarvis-works.png"
   width="1064"
   height="568"
   alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
@@ -90,7 +91,7 @@ L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
 ```
 
 A deeper engineering map — anti-patterns, bug classes, phase status with `file:line`
-references — lives in [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md).
+references — lives in [`docs/LLM-CONTEXT.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/LLM-CONTEXT.md).
 
 </details>
 
@@ -164,10 +165,17 @@ Everything below is optional — each item only unlocks a specific feature:
 | `--headless` | Minimal server install: API + WebSocket only, torch-free base, no Node.js — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
 
-**pipx** — isolated, no clone, any OS:
+**pipx** — isolated, no clone, any OS, straight from PyPI:
 
 ```bash
-pipx install "git+https://github.com/PersonalJarvis/PersonalJarvis" && jarvis serve
+pipx install personal-jarvis && jarvis serve
+```
+
+**pip** — into an environment you already have:
+
+```bash
+pip install personal-jarvis          # cloud-first base: API + WebSocket + browser UI
+pip install "personal-jarvis[full]"  # everything: desktop app, telephony, channels, local voice
 ```
 
 **Manual** — clone it, read every line, then run:
@@ -190,7 +198,7 @@ jarvis serve    # headless server: API + WebSocket + browser UI, no local audio 
 ```
 
 <p align="center">
-  <img src="assets/screenshots/app-desktop.png" alt="The Personal Jarvis desktop app" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-desktop.png" alt="The Personal Jarvis desktop app" width="860" />
 </p>
 
 <details>
@@ -255,13 +263,13 @@ jarvis api <tag> <op>         # EVERY REST endpoint, auto-generated from OpenAPI
 
 It's a thin client over the local REST API (`127.0.0.1:47821`), so it inherits
 every guardrail — risk tiers, atomic config writes, the audit log — rather than
-bypassing them. Full guide: [`docs/jarvis-cli.md`](docs/jarvis-cli.md).
+bypassing them. Full guide: [`docs/jarvis-cli.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md).
 
 ## Configuration
 
 Zero config files needed — every setting has a built-in default and the one-time
 in-app setup covers the rest. For fine control there's one optional, documented
-file ([`jarvis.toml.example`](jarvis.toml.example)):
+file ([`jarvis.toml.example`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/jarvis.toml.example)):
 
 ```toml
 [profile]
@@ -293,7 +301,7 @@ never go in this file** — API keys live in your OS credential manager (or
 ## Extend it
 
 Every pluggable part is a Python **entry point**: write a class against the
-protocols in [`jarvis/core/protocols.py`](jarvis/core/protocols.py), register
+protocols in [`jarvis/core/protocols.py`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/jarvis/core/protocols.py), register
 one line in `pyproject.toml`, reinstall — no fork, no core edits.
 
 | Plugin group | What you can add |
@@ -310,7 +318,7 @@ Three rules keep it stable: implement the protocol, stream everything
 (`AsyncIterator` — non-streaming yields one element), and pass the contract
 suite (`pytest tests/contract/`). The deep engineering map — anti-patterns,
 recurring bug classes, phase status — lives in
-[`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), built to be pasted into an LLM
+[`docs/LLM-CONTEXT.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/LLM-CONTEXT.md), built to be pasted into an LLM
 chat whole.
 
 <details>
@@ -344,13 +352,13 @@ Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the 
 
 | Document | What's in it |
 |---|---|
-| [`docs/architecture-overview.md`](docs/architecture-overview.md) | The full architecture — layers, module catalog, data flow |
-| [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) | Dense project snapshot, built to paste into an LLM chat whole |
-| [`CLAUDE.md`](CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
-| [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records |
-| [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
-| [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
+| [`docs/architecture-overview.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) | The full architecture — layers, module catalog, data flow |
+| [`docs/LLM-CONTEXT.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/LLM-CONTEXT.md) | Dense project snapshot, built to paste into an LLM chat whole |
+| [`CLAUDE.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
+| [`docs/PHILOSOPHY.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
+| [`docs/adr/`](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs/adr/) | Architecture Decision Records |
+| [`docs/BUGS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/BUGS.md) | The recurring-bug register |
+| [`docs/BRAND.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
 
 ## Community
 
@@ -371,16 +379,16 @@ on Discord first. Come say hi and help shape where it goes.
 
 ## Contributing
 
-Pull requests are welcome — **[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the full guide.
-The short version: artifacts are English, read [`CLAUDE.md`](CLAUDE.md) before larger
+Pull requests are welcome — **[`CONTRIBUTING.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md)** has the full guide.
+The short version: artifacts are English, read [`CLAUDE.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CLAUDE.md) before larger
 changes, new providers must pass `pytest tests/contract/`, and security issues go to
-[`SECURITY.md`](SECURITY.md) privately.
+[`SECURITY.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md) privately.
 
 ## License
 
 **MIT** — free to use, modify, and distribute, including commercially; see
-[`LICENSE`](LICENSE). Third-party names and logos belong to their owners —
-see [`TRADEMARK.md`](TRADEMARK.md).
+[`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE). Third-party names and logos belong to their owners —
+see [`TRADEMARK.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md).
 
 <br/>
 

@@ -1,0 +1,98 @@
+# Publish Personal Jarvis to PyPI on every `v*` tag.
+#
+# No API token and no repository secret is involved: PyPI's Trusted Publishing
+# mints a short-lived, single-use credential from this workflow's OIDC identity.
+# That identity is (owner, repository, workflow FILE NAME, environment), so the
+# five values below must match the publisher registered on PyPI exactly —
+# renaming this file or the environment silently breaks every future release:
+#
+#   PyPI project   personal-jarvis
+#   Owner          PersonalJarvis
+#   Repository     PersonalJarvis
+#   Workflow       release.yml
+#   Environment    pypi
+#
+# The build and the publish are two jobs on purpose. Only the tiny publish job
+# holds `id-token: write` and enters the `pypi` environment, so the OIDC token
+# is never reachable from the step that executes project code.
+#
+# Action SHAs are pinned to 40-char commits (CVE-2025-30066 hardening), matching
+# the rest of this repo's workflows.
+
+name: Release to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+  # A published version can never be replaced, so a re-run is for the case where
+  # the upload itself failed (network, a mis-registered publisher) while the tag
+  # is already correct.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged tree
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine
+
+      # A tag that disagrees with the shipped version would publish something
+      # nobody can trace back to a commit. Fail before the artifacts exist.
+      - name: Verify the tag matches the packaged version
+        if: github.ref_type == 'tag'
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          project_version="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          package_version="$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("jarvis/__init__.py").read_text()).group(1))')"
+          echo "tag=${tag_version} pyproject=${project_version} package=${package_version}"
+          if [ "${tag_version}" != "${project_version}" ] || [ "${project_version}" != "${package_version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject (${project_version}) / jarvis.__version__ (${package_version})."
+            exit 1
+          fi
+
+      - name: Build
+        run: python -m build
+
+      # --strict turns a README that PyPI would refuse to render into a build
+      # failure here, rather than a published release with a blank project page.
+      - name: Check the metadata and the rendered README
+        run: python -m twine check --strict dist/*
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # The ONLY thing this job is trusted with: minting the OIDC token that
+      # PyPI exchanges for a short-lived upload credential.
+      id-token: write
+    steps:
+      - name: Download the artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1

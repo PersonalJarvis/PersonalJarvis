@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# setuptools>=77 is the floor for the PEP 639 license expression below; the
+# TOML-table form it replaces is deprecated and scheduled for removal.
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +10,44 @@ version = "1.1.4"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Ruben Lütke" }]  # i18n-allow: maintainer proper name (umlaut)
+keywords = [
+    "voice-assistant",
+    "ai-agent",
+    "agents",
+    "llm",
+    "orchestrator",
+    "speech-to-text",
+    "text-to-speech",
+    "wake-word",
+    "computer-use",
+    "automation",
+]
+# No "License :: OSI Approved ::" classifier: PEP 639 forbids pairing one with
+# the SPDX `license` expression above, and setuptools rejects the combination.
+# The OS list is exhaustive on purpose — every feature ships on all three
+# (CLAUDE.md §3), including a headless Linux server with no screen or audio.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Utilities",
+]
 
 dependencies = [
     "anthropic>=0.96",
@@ -168,11 +206,15 @@ dependencies = [
     "python-telegram-bot>=22,<23",
 ]
 
+# These are the sidebar of the PyPI project page — for many visitors the first
+# and only place they meet the project, so every route out of it is listed.
 [project.urls]
-Homepage = "https://github.com/PersonalJarvis/PersonalJarvis"
+Homepage = "https://personaljarvis.ai/"
 Repository = "https://github.com/PersonalJarvis/PersonalJarvis"
 Issues = "https://github.com/PersonalJarvis/PersonalJarvis/issues"
 Documentation = "https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.md"
+Changelog = "https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CHANGELOG.md"
+Discord = "https://discord.gg/x7USduHxbc"
 
 [project.optional-dependencies]
 dev = [
