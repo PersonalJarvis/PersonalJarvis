@@ -60,6 +60,23 @@ export const MAX_PANES_PER_BAND = 10;
  */
 export const MIN_PANE_WIDTH_PX = 380;
 
+/**
+ * Shortest a pane may get before its agent's output stops being readable.
+ *
+ * The mirror of `MIN_PANE_WIDTH_PX`, and it was missing. Panes shared the window
+ * height in equal parts with nothing stopping them from shrinking, so raising
+ * the per-workspace cap from 12 to 100 quietly traded one failure for another:
+ * measured on a 2560 px screen, 12 panes give each ~26 text rows, 40 give 7, and
+ * 100 give 3. Nothing crashes — the workspace simply becomes unusable, which is
+ * harder to notice than a crash and worse to live with.
+ *
+ * An agent TUI needs its input box plus enough history to see what it just did:
+ * roughly a dozen rows at the default 13 px (~17 px per row) plus the pane's
+ * header and frame. Past that point the grid scrolls instead of shrinking, the
+ * same way a long page does.
+ */
+export const MIN_PANE_HEIGHT_PX = 240;
+
 /** Horizontal padding of the rendered grid (`p-3`: 12 px on each side). */
 export const GRID_HORIZONTAL_PADDING_PX = 24;
 

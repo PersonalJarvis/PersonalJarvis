@@ -306,7 +306,7 @@ describe("grid layout", () => {
   it("puts a fresh workspace side by side in one row", () => {
     renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
     expect(gridEl().style.gridTemplateColumns).toBe("repeat(4, minmax(0, 1fr))");
-    expect(gridEl().style.gridTemplateRows).toBe("repeat(1, minmax(0, 1fr))");
+    expect(gridEl().style.gridTemplateRows).toBe("repeat(1, minmax(240px, 1fr))");
   });
 
   it("a downward split takes only its OWN column, not the whole width", () => {
@@ -322,7 +322,7 @@ describe("grid layout", () => {
       ]),
     );
     expect(gridEl().style.gridTemplateColumns).toBe("repeat(3, minmax(0, 1fr))");
-    expect(gridEl().style.gridTemplateRows).toBe("repeat(2, minmax(0, 1fr))");
+    expect(gridEl().style.gridTemplateRows).toBe("repeat(2, minmax(240px, 1fr))");
     expect(cellStyle("Mika")).toContain("grid-row: 1 / span 2");
     expect(cellStyle("Aria")).toContain("grid-row: 1 / span 2");
     expect(cellStyle("Nova")).toContain("grid-row: 1 / span 1");
@@ -684,5 +684,44 @@ describe("prompt bar seam", () => {
     fireEvent.doubleClick(screen.getByTestId("pane-resizer-horizontal"));
 
     expect(screen.getByTestId("agentic-composer").style.height).toBe("176px");
+  });
+});
+
+
+describe("a workspace with far more panes than the window fits", () => {
+  /** Many panes, one per column, the way a big fan-out opens them. */
+  function manyPanes(count: number) {
+    return sessionWith(
+      Array.from({ length: count }, (_, i) => [`T${i}`, i] as [string, number]),
+    );
+  }
+
+  function grid(): HTMLElement {
+    const cell = screen.getAllByTestId(/^pane-cell-/)[0];
+    const container = cell.parentElement;
+    if (!container) throw new Error("no grid container");
+    return container;
+  }
+
+  it("keeps every pane readable instead of sharing the height N ways", () => {
+    // The failure this guards: rows used to be a free `1fr`, so panes shrank
+    // without limit. Measured on a 2560 px screen, 12 panes gave each ~26 text
+    // rows, 40 gave 7 and 100 gave 3 — readable width, unusable height, and
+    // nothing crashed to tell anyone.
+    renderGrid(manyPanes(40));
+    const rows = grid().style.gridTemplateRows;
+    expect(rows).toContain("240px");
+    expect(rows).not.toContain("minmax(0,");
+  });
+
+  it("scrolls once the panes stop fitting, rather than squeezing them", () => {
+    renderGrid(manyPanes(40));
+    expect(grid().className).toContain("overflow-y-auto");
+  });
+
+  it("renders a pane for every one of a hundred terminals", () => {
+    // The backend cap; nothing may be silently dropped on the way to the screen.
+    renderGrid(manyPanes(100));
+    expect(screen.getAllByTestId(/^pane-cell-/)).toHaveLength(100);
   });
 });

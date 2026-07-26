@@ -36,7 +36,12 @@ import {
   type SplitDirection,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
-import { bandCapacityFor, GRID_HORIZONTAL_PADDING_PX, paneGrid } from "./layout";
+import {
+  bandCapacityFor,
+  GRID_HORIZONTAL_PADDING_PX,
+  MIN_PANE_HEIGHT_PX,
+  paneGrid,
+} from "./layout";
 import { PromptPreview } from "./PromptPreview";
 import {
   addTerminal,
@@ -518,10 +523,20 @@ export function AgenticGrid({
       <div
         ref={gridRef}
         data-testid="agentic-grid"
-        className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3"
+        className={cn(
+          "grid min-h-0 flex-1 gap-3 p-3",
+          // Scrolls only once the panes would be squeezed below a readable
+          // height. With a workspace that fits, this is `overflow-hidden`
+          // behaviour and nothing moves.
+          maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
+        )}
         style={{
           gridTemplateColumns: `repeat(${Math.max(1, grid.columns)}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${Math.max(1, grid.rows)}, minmax(0, 1fr))`,
+          // A floor on row height, not a free 1fr. Panes used to share the
+          // window height in equal parts however many there were, so a large
+          // workspace ended up with three text rows per pane — readable width,
+          // unusable height. Below the floor the grid grows and scrolls instead.
+          gridTemplateRows: `repeat(${Math.max(1, grid.rows)}, minmax(${MIN_PANE_HEIGHT_PX}px, 1fr))`,
         }}
       >
         {session.terminals.map((term, index) => {
