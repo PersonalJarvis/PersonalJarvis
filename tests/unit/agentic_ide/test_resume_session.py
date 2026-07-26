@@ -575,7 +575,7 @@ async def test_a_lookup_offers_the_ids_other_panes_already_hold(
     monkeypatch.setattr(ide, "DISCOVERY_DELAYS_S", (0.0,))
     seen: list[set[str]] = []
 
-    def _spy(_agent: str, _cwd: str, _started: float, taken: set[str]):
+    def _spy(_agent: str, _cwd: str, _started: float, taken: set[str], _home=None):
         seen.append(set(taken))
         return None
 

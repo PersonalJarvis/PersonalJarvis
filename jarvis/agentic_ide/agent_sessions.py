@@ -26,6 +26,14 @@ handle can be minted, spent, or found, and an agent that answers "no" degrades
 to a fresh start with an honest message — which is also what any coding CLI
 added later gets for free.
 
+Every lookup takes an optional ``home`` — the config directory whose history is
+meant. It exists because a pane can run any of several subscriptions of the same
+CLI (:mod:`jarvis.agent_accounts`), and each account keeps a SEPARATE history in
+its own directory. Without it, a pane on the second account would look for its
+transcript in the first account's folder, find nothing, and start fresh with no
+sign that anything was lost. ``None`` keeps the old behaviour: the environment
+override if one is set, otherwise the CLI's conventional home.
+
 Cross-platform: nothing here is OS-specific. ``CODEX_HOME`` is honoured when
 set, otherwise the CLI's conventional home directory is used, and paths are
 compared through ``os.path.normcase`` so a drive-letter difference on Windows
@@ -108,10 +116,13 @@ class _Adapter:
     # Extra argv that reopens the conversation behind an id.
     resume: Callable[[str], tuple[str, ...]]
     # Finds the id afterwards, for CLIs that cannot be told one. The third
-    # argument is the set of ids other panes already hold — see `discover`.
-    discover: Callable[[str, float, Collection[str]], ResumeHandle | None] | None
+    # argument is the set of ids other panes already hold — see `discover`; the
+    # fourth is the config dir whose history to search (None = the default).
+    discover: (
+        Callable[[str, float, Collection[str], Path | None], ResumeHandle | None] | None
+    )
     # Is there actually a conversation behind an id? See `has_conversation`.
-    exists: Callable[[ResumeHandle], bool]
+    exists: Callable[[ResumeHandle, Path | None], bool]
 
 
 def _claude_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
@@ -134,7 +145,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         launch=_claude_launch,
         resume=lambda session_id: ("--resume", session_id),
         discover=None,
-        exists=lambda handle: _claude_conversation_exists(handle),
+        exists=lambda handle, home: _claude_conversation_exists(handle, home),
     ),
     "codex": _Adapter(
         kind="codex_rollout",
@@ -144,8 +155,10 @@ _ADAPTERS: dict[str, _Adapter] = {
         resume=lambda session_id: ("resume", session_id),
         # Late-bound on purpose: the discovery function is defined further down,
         # next to the file-format knowledge it needs.
-        discover=lambda cwd, started, taken: _discover_codex(cwd, started, taken),
-        exists=lambda handle: _codex_conversation_exists(handle),
+        discover=lambda cwd, started, taken, home: _discover_codex(
+            cwd, started, taken, home
+        ),
+        exists=lambda handle, home: _codex_conversation_exists(handle, home),
     ),
 }
 
@@ -182,7 +195,9 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     return adapter.resume(handle.id)
 
 
-def has_conversation(agent: str, handle: ResumeHandle | None) -> bool:
+def has_conversation(
+    agent: str, handle: ResumeHandle | None, home: Path | None = None
+) -> bool:
     """Is there actually something behind this handle, or only a reserved id?
 
     **The distinction this whole module got wrong at first.** Being handed an id
@@ -206,7 +221,7 @@ def has_conversation(agent: str, handle: ResumeHandle | None) -> bool:
     if adapter is None or adapter.kind != handle.kind:
         return False
     try:
-        return adapter.exists(handle)
+        return adapter.exists(handle, home)
     except OSError as exc:
         # An unreadable history is not a present conversation. Starting fresh is
         # recoverable; launching into a missing one kills the pane.
@@ -219,6 +234,7 @@ def discover(
     cwd: str,
     started_at: float,
     taken: Collection[str] = (),
+    home: Path | None = None,
 ) -> ResumeHandle | None:
     """Find the session a pane started at ``started_at`` in ``cwd`` created.
 
@@ -238,19 +254,24 @@ def discover(
     if adapter is None or adapter.discover is None:
         return None
     try:
-        return adapter.discover(cwd, started_at, taken)
+        return adapter.discover(cwd, started_at, taken, home)
     except Exception as exc:  # noqa: BLE001 - discovery is a convenience
         logger.warning("Agentic IDE: {} session discovery failed: {}", agent, exc)
         return None
 
 
 # -------------------------------------------------------------- Claude Code
-def _claude_home() -> Path:
+def _claude_home(override: Path | None = None) -> Path:
+    """The config dir whose history to read: the account's, else the default."""
+    if override is not None:
+        return Path(override).expanduser()
     raw = os.environ.get("CLAUDE_CONFIG_DIR")
     return Path(raw).expanduser() if raw else Path.home() / ".claude"
 
 
-def _claude_conversation_exists(handle: ResumeHandle) -> bool:
+def _claude_conversation_exists(
+    handle: ResumeHandle, home: Path | None = None
+) -> bool:
     """True when Claude Code has a transcript filed under this session id.
 
     Searched by id across all project folders rather than by rebuilding the
@@ -262,14 +283,17 @@ def _claude_conversation_exists(handle: ResumeHandle) -> bool:
     session_id = handle.id
     if not session_id or "/" in session_id or "\\" in session_id:
         return False
-    projects = _claude_home() / "projects"
+    projects = _claude_home(home) / "projects"
     if not projects.is_dir():
         return False
     return next(projects.glob(f"*/{session_id}.jsonl"), None) is not None
 
 
 # --------------------------------------------------------------------- Codex
-def _codex_home() -> Path:
+def _codex_home(override: Path | None = None) -> Path:
+    """The CODEX_HOME whose history to read: the account's, else the default."""
+    if override is not None:
+        return Path(override).expanduser()
     raw = os.environ.get("CODEX_HOME")
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
 
@@ -374,7 +398,9 @@ def _candidate_files(root: Path, started_at: float) -> list[Path]:
     return keep[:_MAX_CANDIDATES]
 
 
-def _codex_conversation_exists(handle: ResumeHandle) -> bool:
+def _codex_conversation_exists(
+    handle: ResumeHandle, home: Path | None = None
+) -> bool:
     """True when Codex still has the rollout file this handle came from.
 
     The id is in the filename, and ``captured_at`` says roughly when it was
@@ -386,7 +412,7 @@ def _codex_conversation_exists(handle: ResumeHandle) -> bool:
     session_id = handle.id
     if not session_id or "/" in session_id or "\\" in session_id:
         return False
-    sessions = _codex_home() / "sessions"
+    sessions = _codex_home(home) / "sessions"
     if not sessions.is_dir():
         return False
     if handle.captured_at <= 0:
@@ -406,7 +432,10 @@ def _codex_conversation_exists(handle: ResumeHandle) -> bool:
 
 
 def _discover_codex(
-    cwd: str, started_at: float, taken: Collection[str] = ()
+    cwd: str,
+    started_at: float,
+    taken: Collection[str] = (),
+    home: Path | None = None,
 ) -> ResumeHandle | None:
     """The Codex session a pane in ``cwd`` started at ``started_at`` created.
 
@@ -424,7 +453,7 @@ def _discover_codex(
     """
     claimed = {str(t) for t in taken}
     best: tuple[float, str] | None = None
-    for path in _candidate_files(_codex_home(), started_at):
+    for path in _candidate_files(_codex_home(home), started_at):
         payload = _read_meta(path)
         if payload is None:
             continue

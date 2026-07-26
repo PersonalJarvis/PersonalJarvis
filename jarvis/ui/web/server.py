@@ -288,6 +288,7 @@ class WebServer:
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
+        from .agent_accounts_routes import router as agent_accounts_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
             board_router as board_meta_router,
@@ -366,6 +367,8 @@ class WebServer:
         app.include_router(provider_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
+        # Several subscriptions per coding CLI, switchable without a logout.
+        app.include_router(agent_accounts_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)

@@ -64,6 +64,12 @@ class SnapshotTerminal:
     slot: int = 0
     resume: ResumeHandle | None = None
     prompts_sent: int = 0
+    # Which subscription this pane ran on. Remembered because the resume handle
+    # alone is not enough: an account keeps its conversations in its OWN config
+    # directory, so reopening on a different one would search the wrong history
+    # and silently start fresh. An absent value (an older snapshot) means "the
+    # account that is active when it reopens" — the old behaviour exactly.
+    account: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +80,7 @@ class SnapshotTerminal:
             "slot": self.slot,
             "resume": self.resume.to_dict() if self.resume else None,
             "prompts_sent": self.prompts_sent,
+            "account": self.account,
         }
 
     @staticmethod
@@ -92,7 +99,31 @@ class SnapshotTerminal:
             slot=_as_int(data.get("slot")),
             resume=ResumeHandle.from_dict(data.get("resume")),
             prompts_sent=_as_int(data.get("prompts_sent")),
+            account=(
+                str(data.get("account")).strip() or None
+                if isinstance(data.get("account"), str)
+                else None
+            ),
         )
+
+
+def _account_home(agent: str, account_id: str | None) -> Path | None:
+    """The config dir a remembered pane's conversation lives in.
+
+    Kept local (rather than imported from ``session``) to keep this module free
+    of the import cycle: ``session`` reads this store, not the other way round.
+    """
+    if not account_id:
+        return None
+    try:
+        from jarvis import agent_accounts
+
+        if agent not in agent_accounts.PLATFORMS:
+            return None
+        return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001 - the offer must never fail on this
+        logger.debug("Agentic IDE: account folder for {} is unknown: {}", agent, exc)
+        return None
 
 
 @dataclass(slots=True)
@@ -275,7 +306,10 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
                 "column": term.column,
                 "slot": term.slot,
                 "available": agent_available,
-                "resumable": agent_available and has_conversation(term.agent, term.resume),
+                "resumable": agent_available
+                and has_conversation(
+                    term.agent, term.resume, _account_home(term.agent, term.account)
+                ),
                 "prompts_sent": term.prompts_sent,
             }
         )

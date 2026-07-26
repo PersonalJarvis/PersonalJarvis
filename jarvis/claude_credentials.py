@@ -123,6 +123,40 @@ def _parse_oauth_file(
     return token, sub_type, expires_s
 
 
+def claude_login_in(
+    config_dir: Path, *, now_fn: Callable[[], float] = time.time
+) -> ClaudeOAuthSnapshot:
+    """The login stored in ONE specific config dir, without cross-dir search.
+
+    The multi-account switcher (:mod:`jarvis.agent_accounts`) asks a different
+    question than :func:`freshest_claude_oauth`: not "where is the live login on
+    this machine" but "is THIS account signed in". Answering that with the
+    cross-dir scan would report a neighbouring account's healthy login as if it
+    belonged to the directory being asked about, and the UI would show a green
+    card for an account that cannot run anything.
+
+    Never raises; an unreadable or absent file is ``"absent"``.
+    """
+    parsed = _parse_oauth_file(config_dir / ".credentials.json")
+    if parsed is None:
+        return ClaudeOAuthSnapshot(status="absent", config_dir=config_dir)
+    token, sub_type, expires_s = parsed
+    if expires_s is not None and expires_s <= now_fn() + OAUTH_EXPIRY_SLACK_S:
+        return ClaudeOAuthSnapshot(
+            status="expired",
+            subscription_type=sub_type,
+            config_dir=config_dir,
+            expires_s=expires_s,
+        )
+    return ClaudeOAuthSnapshot(
+        status="valid",
+        access_token=token,
+        subscription_type=sub_type,
+        config_dir=config_dir,
+        expires_s=expires_s,
+    )
+
+
 def freshest_claude_oauth(*, now_fn: Callable[[], float] = time.time) -> ClaudeOAuthSnapshot:
     """Scan every candidate config dir; the freshest LIVE login wins.
 
@@ -178,5 +212,6 @@ __all__ = [
     "OAUTH_EXPIRY_SLACK_S",
     "ClaudeOAuthSnapshot",
     "claude_config_dirs",
+    "claude_login_in",
     "freshest_claude_oauth",
 ]

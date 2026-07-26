@@ -60,6 +60,7 @@ from jarvis.agentic_ide.session import (
     MAX_TERMINALS,
     MAX_WORKSPACES,
     SessionError,
+    account_home,
     agent_argv,
     get_registry,
     terminals_added_event,
@@ -78,11 +79,21 @@ _native_picker_lock = asyncio.Lock()
 # --------------------------------------------------------------------------- #
 # Models                                                                      #
 # --------------------------------------------------------------------------- #
+#: Reused wherever a caller may pick which subscription a pane runs on.
+_ACCOUNT_FIELD_DESCRIPTION = (
+    "Which stored subscription of that agent to run on (see /api/agent-accounts). "
+    "Defaults to the active account; an unknown id falls back to it."
+)
+
+
 class TerminalRequest(BaseModel):
     agent: str = Field(description="Coding agent to run: 'claude' or 'codex'.")
     name: str | None = Field(
         default=None,
         description="Call-sign for this terminal; auto-assigned when omitted.",
+    )
+    account: str | None = Field(
+        default=None, description=_ACCOUNT_FIELD_DESCRIPTION
     )
 
 
@@ -114,6 +125,13 @@ class AddTerminalRequest(BaseModel):
             "anchor's own column and stacks the new pane under it."
         ),
     )
+    account: str | None = Field(
+        default=None,
+        description=(
+            "Which stored subscription to run on; defaults to the anchor pane's, "
+            "then to the active account."
+        ),
+    )
 
 
 class AddTerminalsRequest(BaseModel):
@@ -128,6 +146,9 @@ class AddTerminalsRequest(BaseModel):
     agent: str | None = Field(
         default=None,
         description="Coding agent to run in all of them; defaults to the last pane's.",
+    )
+    account: str | None = Field(
+        default=None, description=_ACCOUNT_FIELD_DESCRIPTION
     )
 
 
@@ -772,11 +793,17 @@ async def resume_workspace() -> dict:
     # points at nothing, and reporting it as continued would be the same lie the
     # offer screen exists to prevent. One thread hop for the whole list, since
     # each check is a filename lookup.
-    def _count_conversations(panes: list[tuple[str, object]]) -> int:
-        return sum(1 for agent, handle in panes if has_conversation(agent, handle))
+    def _count_conversations(panes: list[tuple[str, object, object]]) -> int:
+        # The history to ask is the PANE's account, not the machine default:
+        # each subscription keeps its conversations in its own directory.
+        return sum(1 for agent, handle, home in panes if has_conversation(agent, handle, home))
 
     resumable = await asyncio.to_thread(
-        _count_conversations, [(t.agent, t.resume) for t in session.terminals]
+        _count_conversations,
+        [
+            (t.agent, t.resume, account_home(t.agent, t.account))
+            for t in session.terminals
+        ],
     )
     return {
         "ok": True,
@@ -837,6 +864,7 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
             name=req.name,
             anchor=req.anchor,
             direction=req.direction,
+            account=req.account,
         )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -857,7 +885,9 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     """
     registry = get_registry()
     try:
-        created, capped = await registry.add_terminals(req.count, agent=req.agent)
+        created, capped = await registry.add_terminals(
+            req.count, agent=req.agent, account=req.account
+        )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

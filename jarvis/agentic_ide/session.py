@@ -253,6 +253,79 @@ def sanitize_prompt(text: str, *, keep_newlines: bool = False) -> str:
     return "\n".join(lines).strip()[:MAX_PROMPT_CHARS]
 
 
+def resolve_account(agent: str, requested: str | None) -> str | None:
+    """Pin a pane to a concrete account id at CREATION time.
+
+    ``None`` in, active account out — but the answer is stored, not re-read
+    later. That is the whole point: a pane must keep running on the subscription
+    it was opened with even after the user switches the default, because the
+    alternative is an agent whose conversation history moves out from under it.
+
+    A requested id that does not resolve (or belongs to another CLI) falls back
+    to the active account rather than failing the pane: an unopenable pane is a
+    worse answer than an honest default.
+    """
+    if agent not in AGENT_BINARIES:
+        return None
+    from jarvis import agent_accounts
+
+    if requested:
+        account = agent_accounts.resolve(requested)
+        if account is not None and account.platform == agent:
+            return account.id
+        logger.info(
+            "Agentic IDE: account {!r} is unknown — using the active one instead",
+            requested,
+        )
+    return agent_accounts.active_account(agent).id  # type: ignore[arg-type]
+
+
+def account_label(account_id: str | None) -> str | None:
+    """The display name of a pane's account, or ``None`` when it has none."""
+    if not account_id:
+        return None
+    from jarvis import agent_accounts
+
+    account = agent_accounts.resolve(account_id)
+    return account.label if account is not None else None
+
+
+def _requested_account(entry: dict[str, Any]) -> str | None:
+    """The account id a wizard/API request asked for, if it named one."""
+    value = entry.get("account")
+    return str(value).strip() or None if isinstance(value, str) else None
+
+
+def _spawn_env(term: Terminal) -> dict[str, str] | None:
+    """The child environment that puts this pane on its own subscription.
+
+    ``None`` — plain inheritance — whenever the pane's account needs nothing
+    changed, which is every pane on the built-in account. So a user who never
+    opens the switcher gets a spawn byte-for-byte identical to the one this app
+    produced before the feature existed.
+    """
+    if not term.account or term.agent not in AGENT_BINARIES:
+        return None
+    from jarvis import agent_accounts
+
+    if not agent_accounts.env_overrides(term.agent, term.account):  # type: ignore[arg-type]
+        return None
+    return agent_accounts.spawn_env(term.agent, term.account)  # type: ignore[arg-type]
+
+
+def account_home(agent: str, account_id: str | None) -> Path | None:
+    """The config dir a pane's conversation history lives in.
+
+    ``None`` for a pane with no account (or an agent that has none), which keeps
+    every existing lookup on its old path.
+    """
+    if not account_id or agent not in AGENT_BINARIES:
+        return None
+    from jarvis import agent_accounts
+
+    return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
+
+
 def agent_argv(agent: str) -> tuple[str, ...] | None:
     """argv that runs ``agent`` as the PTY's own process, or None if missing."""
     binary = AGENT_BINARIES.get(agent)
@@ -318,6 +391,12 @@ class Terminal:
     # readable.
     column: int = 0
     slot: int = 0
+    # Which subscription of `agent` this pane runs on (see jarvis.agent_accounts).
+    # Resolved to a concrete id when the pane is CREATED, never read live at
+    # spawn time: flipping the global default must not silently re-point a pane
+    # that is already on screen — least of all one mid-conversation, which would
+    # hand a resumed transcript to an account that has never seen it.
+    account: str | None = None
     status: Status = "pending"
     pty_id: str | None = None
     # Set just before this pane's agent is killed on purpose (viewer gone, pane
@@ -391,6 +470,8 @@ class Terminal:
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
             "has_resume": self.resume is not None,
+            "account": self.account,
+            "account_label": account_label(self.account),
         }
 
     def to_snapshot(self) -> resume_store.SnapshotTerminal:
@@ -403,6 +484,7 @@ class Terminal:
             slot=self.slot,
             resume=self.resume,
             prompts_sent=self.prompts_sent,
+            account=self.account,
         )
 
 
@@ -644,6 +726,7 @@ class Registry:
                         # A wizard-opened workspace is one row of columns; the
                         # user's own "split down" is what creates a stack.
                         column=index,
+                        account=resolve_account(agent, _requested_account(entry)),
                     )
                 )
 
@@ -792,6 +875,11 @@ class Registry:
                     slot=entry.slot,
                     resume=entry.resume,
                     prompts_sent=entry.prompts_sent,
+                    # The remembered account, re-validated: a pane must come back
+                    # on the subscription whose history holds its conversation,
+                    # and an account deleted in the meantime falls back to the
+                    # active one rather than failing the reopen.
+                    account=resolve_account(entry.agent, entry.account),
                 )
                 for index, entry in enumerate(snapshot.terminals)
             ]
@@ -1095,8 +1183,15 @@ class Registry:
         # behind, and asking the CLI to resume that id makes it print "no
         # conversation found" and die. Measured on a real workspace — twelve
         # panes opened, none prompted, twelve dead panes on the way back.
+        # Every history lookup below is scoped to the pane's OWN account: a pane
+        # on the second subscription keeps its transcripts in that account's
+        # directory, and asking the default one would report "no conversation"
+        # for a conversation that is right there.
+        home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not has_conversation(term.agent, term.resume):
+        if continuing is not None and not has_conversation(
+            term.agent, term.resume, home
+        ):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
                 term.name,
@@ -1197,6 +1292,7 @@ class Registry:
                 rows=rows,
                 on_output=_output,
                 on_closed=_closed,
+                env=_spawn_env(term),
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the pane
             term.status = "error"
@@ -1246,7 +1342,12 @@ class Registry:
                         if other.resume is not None
                     }
                     found = await asyncio.to_thread(
-                        discover, term.agent, folder, started_at, taken
+                        discover,
+                        term.agent,
+                        folder,
+                        started_at,
+                        taken,
+                        account_home(term.agent, term.account),
                     )
                     if found is None:
                         continue
@@ -1318,6 +1419,7 @@ class Registry:
         name: str | None = None,
         anchor: str | None = None,
         direction: str = "right",
+        account: str | None = None,
     ) -> Terminal:
         """Open one more terminal in the running workspace.
 
@@ -1330,6 +1432,12 @@ class Registry:
         The agent defaults to the anchor's, because splitting a Claude Code pane
         usually means "another one of these" — but a caller may name any
         installed agent, which is how the UI offers a choice of coding CLI.
+
+        ``account`` names which subscription of that agent to run on; without one
+        the pane inherits the anchor's, falling back to the active account. The
+        inheritance matters more than it looks: splitting a pane that runs the
+        second plan should stay on the second plan, or a "split" would quietly
+        move the work onto a different bill.
         """
         async with self._lock:
             session = self.session
@@ -1391,6 +1499,9 @@ class Registry:
                     if other.column == column and other.slot >= slot:
                         other.slot += 1
 
+            # Inherit the anchor's account only when the split stays on the same
+            # CLI — a Claude account id means nothing to Codex.
+            inherited = base.account if base is not None and base.agent == chosen else None
             term = Terminal(
                 key=normalize(final) or f"t{len(session.terminals)}",
                 name=final,
@@ -1399,6 +1510,7 @@ class Registry:
                 index=len(session.terminals),
                 column=column,
                 slot=slot,
+                account=resolve_account(chosen, account or inherited),
             )
             session.terminals.append(term)
             self._renumber(session)
@@ -1413,7 +1525,7 @@ class Registry:
             return term
 
     async def add_terminals(
-        self, count: int, *, agent: str | None = None
+        self, count: int, *, agent: str | None = None, account: str | None = None
     ) -> tuple[list[Terminal], bool]:
         """Open up to ``count`` more panes — the batch behind "open five more".
 
@@ -1437,7 +1549,7 @@ class Registry:
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
-                created.append(await self.add_terminal(agent=agent))
+                created.append(await self.add_terminal(agent=agent, account=account))
             except SessionError as exc:
                 if not created:
                     raise

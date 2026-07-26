@@ -144,6 +144,35 @@ def _subscription_label(sub_type: str | None) -> str:
     return f"Claude {sub_type}"
 
 
+def subscription_label(sub_type: str | None) -> str:
+    """Public alias of the tier label, for the multi-account switcher."""
+    return _subscription_label(sub_type)
+
+
+def claude_account_identity(config_dir: Path) -> tuple[str | None, str | None]:
+    """``(email, display name)`` of the login kept in *config_dir* — display only.
+
+    The CLI files the identity next to the credentials, but WHERE depends on the
+    directory: with the default ``~/.claude`` it is the SIBLING ``~/.claude.json``;
+    with a custom ``CLAUDE_CONFIG_DIR`` it lives inside that directory. Both are
+    tried so a switched account shows its own email instead of borrowing the
+    default account's.
+
+    Never raises and never returns a secret.
+    """
+    candidates = [config_dir / ".claude.json"]
+    try:
+        if config_dir == Path(os.path.expanduser("~/.claude")):
+            candidates.append(Path(os.path.expanduser("~/.claude.json")))
+    except (OSError, ValueError):  # pragma: no cover - exotic home resolution
+        pass
+    for candidate in candidates:
+        email, name = _account_from_claude_json(_read_json(candidate))
+        if email or name:
+            return email, name
+    return None, None
+
+
 @dataclass(frozen=True)
 class ClaudeCliAuthSnapshot:
     """Display-safe result from ``claude auth status --json``.

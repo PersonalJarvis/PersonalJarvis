@@ -46,6 +46,7 @@ class FakePtyManager:
         rows: int,
         on_output: Any,
         on_closed: Any,
+        env: Any = None,
     ) -> FakePtySession:
         if self.spawn_error:
             raise RuntimeError(self.spawn_error)
@@ -60,6 +61,9 @@ class FakePtyManager:
                 "rows": rows,
                 "on_output": on_output,
                 "on_closed": on_closed,
+                # The environment a pane was started with — how a test proves
+                # which subscription an agent actually runs on.
+                "env": dict(env) if env is not None else None,
             }
         )
         self._live.add(terminal_id)

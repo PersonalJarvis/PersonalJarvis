@@ -23,6 +23,9 @@ guarantee that only holds until somebody writes the next test.
    entries, which the trust check then had to parse before every workspace open.
    The trust logic itself is covered where it belongs, in
    ``tests/unit/workspace/test_trust.py``, against a temporary home.
+4. **The agent-account store.** Panes now record which subscription they run on,
+   which means opening one reads (and resuming one could write) the developer's
+   real account list. Same store, same failure class as 1 and 2.
 """
 
 from __future__ import annotations
@@ -71,6 +74,19 @@ def _agent_history_in_tmp(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(home / "codex"))
     return home
+
+
+@pytest.fixture(autouse=True)
+def _agent_accounts_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Give each test its own empty account list and account folder root."""
+    from jarvis import agent_accounts
+
+    root = tmp_path_factory.mktemp("agent-accounts")
+    monkeypatch.setattr(agent_accounts, "_store_path", lambda: root / "accounts.json")
+    monkeypatch.setattr(agent_accounts, "_accounts_root", lambda: root / "dirs")
+    return root
 
 
 @pytest.fixture

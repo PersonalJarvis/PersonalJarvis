@@ -20,7 +20,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,8 +50,27 @@ def _validated_argv(argv: Sequence[str]) -> list[str]:
     return values
 
 
-def _macos_script(argv: Sequence[str], cwd: Path) -> str:
-    command = f"cd {shlex.quote(str(cwd))} && {shlex.join(argv)}"
+def _child_env(env: Mapping[str, str] | None) -> dict[str, str] | None:
+    """This process's environment plus *env*, or ``None`` to inherit unchanged.
+
+    An overlay, never a replacement: handing a child a bare ``{VAR: value}``
+    would strip ``PATH`` and the CLI being launched would stop resolving.
+    """
+    if not env:
+        return None
+    return {**os.environ, **{str(k): str(v) for k, v in env.items()}}
+
+
+def _macos_script(argv: Sequence[str], cwd: Path, env: Mapping[str, str] | None) -> str:
+    # Terminal.app runs a shell STRING, not an argv with an environment block, so
+    # an override has to be written into the command itself as a `VAR=value`
+    # prefix — the one place where carrying an environment differs per OS.
+    assignments = (
+        "".join(f"{key}={shlex.quote(str(value))} " for key, value in sorted(env.items()))
+        if env
+        else ""
+    )
+    command = f"cd {shlex.quote(str(cwd))} && {assignments}{shlex.join(argv)}"
     apple_string = command.replace("\\", "\\\\").replace('"', '\\"')
     return f'tell application "Terminal"\nactivate\ndo script "{apple_string}"\nend tell'
 
@@ -60,6 +79,7 @@ def _launch_macos(
     argv: Sequence[str],
     *,
     cwd: Path,
+    env: Mapping[str, str] | None = None,
 ) -> InteractiveTerminalLaunch:
     osascript = shutil.which("osascript")
     if not osascript:
@@ -68,7 +88,7 @@ def _launch_macos(
         )
     try:
         result = subprocess.run(
-            [osascript, "-e", _macos_script(argv, cwd)],
+            [osascript, "-e", _macos_script(argv, cwd, env)],
             capture_output=True,
             text=True,
             timeout=8.0,
@@ -106,6 +126,7 @@ def _launch_windows(
     argv: Sequence[str],
     *,
     cwd: Path,
+    env: Mapping[str, str] | None = None,
 ) -> InteractiveTerminalLaunch:
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010) | getattr(
         subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
@@ -116,6 +137,7 @@ def _launch_windows(
             cwd=str(cwd),
             creationflags=flags,
             close_fds=True,
+            env=_child_env(env),
         )
     except OSError as exc:
         raise InteractiveTerminalUnavailable(
@@ -150,6 +172,7 @@ def _launch_linux(
     *,
     cwd: Path,
     title: str,
+    env: Mapping[str, str] | None = None,
 ) -> InteractiveTerminalLaunch:
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise InteractiveTerminalUnavailable(
@@ -175,6 +198,7 @@ def _launch_linux(
                 start_new_session=True,
                 close_fds=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
+                env=_child_env(env),
             )
         except OSError:
             failures.append(name)
@@ -194,21 +218,27 @@ def launch_interactive_terminal(
     *,
     title: str,
     cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> InteractiveTerminalLaunch:
     """Open ``argv`` in a visible terminal, or raise an honest capability error.
 
     Windows receives a fresh console, macOS uses Terminal.app, and Linux probes
     common terminal emulators only when a graphical display is present.  A
     headless server never starts an invisible OAuth process.
+
+    ``env`` is an OVERLAY on this process's environment, not a replacement. It
+    exists so a sign-in can be pointed at a specific config directory — that is
+    how a second subscription is added without disturbing the first
+    (:mod:`jarvis.agent_accounts`).
     """
     command = _validated_argv(argv)
     workdir = Path(cwd) if cwd is not None else Path.home()
     if sys.platform == "win32":
-        return _launch_windows(command, cwd=workdir)
+        return _launch_windows(command, cwd=workdir, env=env)
     if sys.platform == "darwin":
-        return _launch_macos(command, cwd=workdir)
+        return _launch_macos(command, cwd=workdir, env=env)
     if sys.platform.startswith("linux"):
-        return _launch_linux(command, cwd=workdir, title=title)
+        return _launch_linux(command, cwd=workdir, title=title, env=env)
     raise InteractiveTerminalUnavailable(
         f"Interactive terminal launch is not supported on platform {sys.platform!r}."
     )

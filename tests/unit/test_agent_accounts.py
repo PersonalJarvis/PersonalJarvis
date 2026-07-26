@@ -1,0 +1,367 @@
+"""The store, the switch, and the environment behind multi-subscription support.
+
+What these pin down is not "does the JSON round-trip" but the four things that
+would silently send work to the wrong plan:
+
+* the built-in account is synthetic and always there, even with no store;
+* switching the default cannot leave a pane pointing at a vanished account;
+* the built-in account REMOVES the override rather than pinning a path
+  (the macOS Keychain depends on that difference);
+* ``spawn_env`` inherits, because a replaced environment has no ``PATH``.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from jarvis import agent_accounts
+from jarvis.agent_accounts import AccountError
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway store + account root, never the developer's own."""
+    monkeypatch.setattr(agent_accounts, "_store_path", lambda: tmp_path / "accounts.json")
+    monkeypatch.setattr(agent_accounts, "_accounts_root", lambda: tmp_path / "dirs")
+    monkeypatch.setattr(
+        agent_accounts, "_native_dir", lambda platform: tmp_path / "native" / platform
+    )
+    return tmp_path
+
+
+# ------------------------------------------------------------------ built-in
+
+
+def test_every_platform_offers_its_builtin_account_with_no_store() -> None:
+    """A fresh install has one usable account per CLI and no file at all."""
+    for platform in agent_accounts.PLATFORMS:
+        accounts = agent_accounts.list_accounts(platform)
+        assert len(accounts) == 1
+        assert accounts[0].builtin is True
+        assert accounts[0].id == agent_accounts.builtin_id(platform)
+        assert agent_accounts.active_account(platform).id == accounts[0].id
+
+
+def test_the_builtin_account_can_be_neither_renamed_nor_removed() -> None:
+    """It is the CLI's own login; this feature does not get to take it away."""
+    builtin = agent_accounts.builtin_id("claude")
+    with pytest.raises(AccountError):
+        agent_accounts.rename_account(builtin, "Something else")
+    with pytest.raises(AccountError):
+        agent_accounts.delete_account(builtin)
+
+
+# --------------------------------------------------------------------- store
+
+
+def test_an_added_account_survives_a_reread_and_keeps_the_builtin_first() -> None:
+    account = agent_accounts.create_account("claude", "Second seat")
+    listed = agent_accounts.list_accounts("claude")
+    assert [a.builtin for a in listed] == [True, False]
+    assert listed[1].id == account.id
+    assert listed[1].label == "Second seat"
+    assert listed[1].config_dir.is_dir()
+
+
+def test_accounts_of_one_platform_never_leak_into_the_other() -> None:
+    agent_accounts.create_account("claude", "Claude seat")
+    agent_accounts.create_account("codex", "Codex seat")
+    assert [a.label for a in agent_accounts.list_accounts("claude")][1:] == ["Claude seat"]
+    assert [a.label for a in agent_accounts.list_accounts("codex")][1:] == ["Codex seat"]
+
+
+def test_an_unreadable_store_degrades_to_the_builtin_account(tmp_path: Path) -> None:
+    """A truncated or hand-edited file must not break the switcher."""
+    (tmp_path / "accounts.json").write_text("{ not json", encoding="utf-8")
+    assert [a.builtin for a in agent_accounts.list_accounts("claude")] == [True]
+
+
+def test_a_newer_schema_version_is_ignored_rather_than_half_understood(
+    tmp_path: Path,
+) -> None:
+    """Half-reading a future build's file would spawn against the wrong login."""
+    (tmp_path / "accounts.json").write_text(
+        json.dumps(
+            {
+                "version": agent_accounts.SCHEMA_VERSION + 1,
+                "accounts": [
+                    {
+                        "id": "claude:zzz",
+                        "platform": "claude",
+                        "label": "From the future",
+                        "config_dir": str(tmp_path / "future"),
+                    }
+                ],
+                "active": {"claude": "claude:zzz"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert [a.builtin for a in agent_accounts.list_accounts("claude")] == [True]
+    assert agent_accounts.active_account("claude").builtin is True
+
+
+def test_a_malformed_entry_is_skipped_without_losing_its_neighbours(
+    tmp_path: Path,
+) -> None:
+    good = agent_accounts.create_account("claude", "Good one")
+    raw = json.loads((tmp_path / "accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"].insert(0, {"id": "broken"})  # no platform, no config_dir
+    (tmp_path / "accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    listed = agent_accounts.list_accounts("claude")
+    assert [a.id for a in listed] == [agent_accounts.builtin_id("claude"), good.id]
+
+
+def test_an_account_needs_a_name() -> None:
+    with pytest.raises(AccountError):
+        agent_accounts.create_account("claude", "   ")
+
+
+def test_the_per_platform_cap_is_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_accounts, "MAX_ACCOUNTS_PER_PLATFORM", 2)
+    agent_accounts.create_account("claude", "One")
+    agent_accounts.create_account("claude", "Two")
+    with pytest.raises(AccountError):
+        agent_accounts.create_account("claude", "Three")
+
+
+# -------------------------------------------------------------------- switch
+
+
+def test_switching_changes_which_account_new_panes_get() -> None:
+    second = agent_accounts.create_account("claude", "Second seat")
+    assert agent_accounts.active_account("claude").builtin is True
+    agent_accounts.set_active("claude", second.id)
+    assert agent_accounts.active_account("claude").id == second.id
+
+
+def test_switching_one_platform_leaves_the_other_alone() -> None:
+    second = agent_accounts.create_account("claude", "Second seat")
+    agent_accounts.set_active("claude", second.id)
+    assert agent_accounts.active_account("codex").builtin is True
+
+
+def test_an_account_of_the_wrong_platform_cannot_be_made_active() -> None:
+    codex_account = agent_accounts.create_account("codex", "Codex seat")
+    with pytest.raises(AccountError):
+        agent_accounts.set_active("claude", codex_account.id)
+
+
+def test_a_deleted_active_account_falls_back_to_the_builtin_one() -> None:
+    """Never "no account": there would be no directory to spawn against."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    agent_accounts.set_active("claude", second.id)
+    agent_accounts.delete_account(second.id)
+    assert agent_accounts.active_account("claude").builtin is True
+
+
+def test_a_pinned_id_that_vanished_by_hand_edit_falls_back_too(tmp_path: Path) -> None:
+    (tmp_path / "accounts.json").write_text(
+        json.dumps(
+            {
+                "version": agent_accounts.SCHEMA_VERSION,
+                "accounts": [],
+                "active": {"claude": "claude:ghost"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert agent_accounts.active_account("claude").builtin is True
+
+
+def test_forgetting_keeps_the_files_unless_asked() -> None:
+    """Forgetting is reversible; erasing a login is not."""
+    account = agent_accounts.create_account("claude", "Second seat")
+    directory = account.config_dir
+    (directory / ".credentials.json").write_text("{}", encoding="utf-8")
+    agent_accounts.delete_account(account.id)
+    assert directory.is_dir()
+
+
+def test_removing_with_files_erases_the_directory() -> None:
+    account = agent_accounts.create_account("claude", "Second seat")
+    directory = account.config_dir
+    agent_accounts.delete_account(account.id, remove_files=True)
+    assert not directory.exists()
+
+
+def test_renaming_keeps_the_directory_and_the_id() -> None:
+    account = agent_accounts.create_account("codex", "Old name")
+    renamed = agent_accounts.rename_account(account.id, "New name")
+    assert renamed.id == account.id
+    assert renamed.config_dir == account.config_dir
+    assert agent_accounts.list_accounts("codex")[1].label == "New name"
+
+
+# ----------------------------------------------------------------- spawn env
+
+
+def test_the_builtin_account_changes_nothing_about_the_environment() -> None:
+    """Load-bearing twice over.
+
+    Pinning the default path is not the same as leaving the variable unset: on
+    macOS the true default is the Keychain, and an explicit path would send the
+    CLI looking for a file that platform never writes. And clearing an override
+    the app was STARTED with would move the default account off the login the
+    rest of the machine uses.
+    """
+    assert agent_accounts.env_overrides("claude", agent_accounts.builtin_id("claude")) == {}
+    assert agent_accounts.env_overrides("codex", agent_accounts.builtin_id("codex")) == {}
+
+
+def test_an_added_account_pins_its_own_directory() -> None:
+    account = agent_accounts.create_account("codex", "Second seat")
+    assert agent_accounts.env_overrides("codex", account.id) == {
+        "CODEX_HOME": str(account.config_dir)
+    }
+
+
+def test_spawn_env_inherits_rather_than_replaces() -> None:
+    """A bare {VAR: dir} would strip PATH and the agent binary would vanish."""
+    account = agent_accounts.create_account("claude", "Second seat")
+    env = agent_accounts.spawn_env(
+        "claude", account.id, base={"PATH": "/usr/bin", "TERM": "xterm"}
+    )
+    assert env["PATH"] == "/usr/bin"
+    assert env["TERM"] == "xterm"
+    assert env["CLAUDE_CONFIG_DIR"] == str(account.config_dir)
+
+
+def test_spawn_env_for_the_builtin_account_keeps_an_inherited_override() -> None:
+    """On a profile-managed host that override IS the session's default login.
+
+    Clearing it would silently move the default account onto ``~/.claude``,
+    which on such a host is the stale copy nothing refreshes any more.
+    """
+    env = agent_accounts.spawn_env(
+        "claude",
+        agent_accounts.builtin_id("claude"),
+        base={"PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/managed/profile"},
+    )
+    assert env["CLAUDE_CONFIG_DIR"] == "/managed/profile"
+    assert env["PATH"] == "/usr/bin"
+
+
+def test_the_builtin_account_reports_an_inherited_override_as_its_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What the card shows must be the directory the CLI will really read."""
+    monkeypatch.undo()  # drop the _native_dir stand-in for this one case
+    monkeypatch.setattr(agent_accounts, "_store_path", lambda: tmp_path / "accounts.json")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "managed-codex"))
+    assert agent_accounts.active_account("codex").config_dir == tmp_path / "managed-codex"
+
+
+def test_an_unknown_account_id_resolves_to_the_platform_default() -> None:
+    """A stale id in a resumed workspace must reopen the pane, not kill it."""
+    assert agent_accounts.config_dir_for("claude", "claude:ghost") == (
+        agent_accounts._native_dir("claude")
+    )
+    assert agent_accounts.resolve("claude:ghost") is None
+
+
+def test_an_account_id_of_the_other_platform_is_not_honoured() -> None:
+    """A Claude directory means nothing to Codex."""
+    claude_account = agent_accounts.create_account("claude", "Claude seat")
+    assert agent_accounts.env_overrides("codex", claude_account.id) == {}
+
+
+# -------------------------------------------------------------------- status
+
+
+def test_an_account_with_no_login_reports_itself_as_not_signed_in() -> None:
+    account = agent_accounts.create_account("claude", "Fresh seat")
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is False
+    assert "Not signed in" in snapshot.message
+
+
+def test_a_signed_in_claude_account_is_described_from_its_own_directory() -> None:
+    """Not from the machine-wide search — that would show a neighbour's login."""
+    account = agent_accounts.create_account("claude", "Work seat")
+    (account.config_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-test",
+                    "subscriptionType": "max",
+                    # Far future in epoch milliseconds, so this never expires
+                    # into a flaky test.
+                    "expiresAt": 99_999_999_999_000,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (account.config_dir / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "seat-two@example.com"}}),
+        encoding="utf-8",
+    )
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is True
+    assert snapshot.mode == "subscription"
+    assert snapshot.email == "seat-two@example.com"
+    assert snapshot.tier == "max"
+
+
+def test_a_described_account_never_carries_a_token() -> None:
+    account = agent_accounts.create_account("claude", "Work seat")
+    (account.config_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-supersecret",
+                    "subscriptionType": "max",
+                    "expiresAt": 99_999_999_999_000,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    serialized = json.dumps(agent_accounts.describe(account).to_dict())
+    assert "supersecret" not in serialized
+
+
+def test_an_expired_claude_login_is_not_reported_as_connected() -> None:
+    account = agent_accounts.create_account("claude", "Stale seat")
+    (account.config_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-old",
+                    "subscriptionType": "max",
+                    "expiresAt": 1_000,  # long dead
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is False
+    assert snapshot.mode == "expired"
+    # The advice matters: a stale ACCESS token refreshes itself on the next run.
+    assert "refreshes itself" in snapshot.message
+
+
+def test_a_signed_in_codex_account_is_described_from_its_own_directory() -> None:
+    account = agent_accounts.create_account("codex", "Second plan")
+    (account.config_dir / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": "abc", "refresh_token": "def"}}),
+        encoding="utf-8",
+    )
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is True
+    assert snapshot.mode == "subscription"
+
+
+def test_a_codex_account_holding_only_an_api_key_says_so() -> None:
+    account = agent_accounts.create_account("codex", "Key seat")
+    (account.config_dir / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-test"}), encoding="utf-8"
+    )
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is True
+    assert snapshot.mode == "api_key"

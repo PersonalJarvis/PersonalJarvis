@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -66,6 +66,7 @@ class PtyManager:
         rows: int,
         on_output: OutputCallback,
         on_closed: ClosedCallback,
+        env: Mapping[str, str] | None = None,
     ) -> PtySession:
         """Starts a new PTY session and registers the I/O callbacks.
 
@@ -76,6 +77,13 @@ class PtyManager:
         Winpty on Windows, ptyprocess on POSIX, or a null backend that raises a
         clear English RuntimeError when no PTY capability exists (AD-6). Any
         such RuntimeError propagates to the caller as a typed error.
+
+        ``env`` REPLACES the child environment (that is the backend contract, not
+        a choice made here), so a caller passing one must hand over a COMPLETE
+        environment — typically ``os.environ`` plus its own keys. Building that
+        overlay is what `jarvis.agent_accounts.spawn_env` exists for. ``None``
+        inherits this process's environment and is what every caller that does
+        not care gets.
         """
         backend = make_pty_backend()
 
@@ -88,6 +96,7 @@ class PtyManager:
                 cwd=cwd,
                 cols=cols,
                 rows=rows,
+                env=env,
             )
 
         proc = await loop.run_in_executor(None, _spawn_sync)
