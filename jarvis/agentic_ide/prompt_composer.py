@@ -73,12 +73,13 @@ from .session import MAX_PROMPT_CHARS, sanitize_prompt
 # waiting to hear "sent to Kai". On timeout the deterministic prompt ships, so
 # this bound costs quality, never delivery.
 #
-# Measured 2026-07-25 on the live chain: a fast router-tier model answers in
-# 1-3 s and the deep tier took 7-8 s for the same rewrite. Reading file outlines
-# adds to that. The bound is therefore generous rather than tight: a bound that
-# expires mid-composition does not produce a faster good prompt, it produces the
-# regex one — which an earlier 8 s bound did routinely.
-COMPOSE_TIMEOUT_S = 20.0
+# Measured on the live chain: a fast router-tier model answers in 1-3 s, the
+# deep tier took 7-8 s for a plain rewrite, and a full brief that reads five
+# file outlines and describes the code took 16-22 s. A bound that expires
+# mid-composition does not produce a faster good prompt, it produces the regex
+# one — which 8 s did routinely and 20 s still did for the longest brief. The
+# ceiling is therefore well clear of the measured worst case.
+COMPOSE_TIMEOUT_S = 45.0
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
@@ -239,8 +240,12 @@ async def _llm_compose(
         # Deterministic rewriting, not creative writing: the prompt must carry
         # the user's intent, so temperature stays low.
         temperature=0.2,
-        # A structured brief with five sections needs room; 800 truncated it.
-        max_tokens=2000,
+        # Generous, because on a thinking model max_tokens covers the THINKING
+        # as well as the answer. Measured: at 3000 with medium effort, a live
+        # investigation brief was cut off mid-sentence ("...to find") and still
+        # returned as a success. The brief itself never exceeds MAX_BODY_CHARS;
+        # the headroom exists so the reasoning cannot eat the answer.
+        max_tokens=8000,
         stream=True,
         # Turning a spoken sentence plus a set of file outlines into a briefed
         # task is judgement work, not transcription. The documentation is
@@ -381,6 +386,17 @@ async def compose(
 
     if not composed:
         return _deterministic("fallback", "composer returned nothing usable")
+
+    if blueprint.looks_truncated(composed):
+        # Half a brief reads as a whole one, which is exactly what makes it
+        # dangerous: the agent starts on an instruction whose second half was
+        # never written. The plain deterministic prompt is worse but complete.
+        logger.info(
+            "Agentic IDE prompt composer produced a truncated brief ({} chars) "
+            "— falling back",
+            len(composed),
+        )
+        return _deterministic("fallback", "composer output was cut off")
 
     # Keep only the references that survive an existence check — the model may
     # echo a candidate that was renamed, or invent one outright. A dead @path
