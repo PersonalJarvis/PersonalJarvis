@@ -42,10 +42,19 @@ from typing import Any
 
 from loguru import logger
 
-#: Bound for the one splitting call. Shorter than the composer's: this produces
-#: a short JSON plan rather than a full brief, and it runs BEFORE any prompt is
-#: composed — every second here is a second added in front of N compositions.
-SPLIT_TIMEOUT_S = 25.0
+#: Bound for the one splitting call. Still shorter than the composer's: this
+#: produces a short JSON plan rather than a full brief, and it runs BEFORE any
+#: prompt is composed — every second here is a second added in front of N
+#: compositions.
+#:
+#: Raised 25 → 60 s when the writer gained a subscription-CLI path (2026-07-26).
+#: Those brains pay a cold process start of 10-12 s before thinking at all, so a
+#: 25 s bound expired on essentially every subscription split — and an expiry
+#: here is not a slower split, it is the crude by-directory one. Silently
+#: shipping that while the user believes a model planned the fan-out is exactly
+#: the invisible degradation this module's own docstring warns about. The bound
+#: is a reprieve, not a target: a healthy split still returns in a few seconds.
+SPLIT_TIMEOUT_S = 60.0
 
 #: A fleet larger than this is not a split any model plans usefully, and the
 #: deterministic layer runs out of real directories long before it. Above the
@@ -84,15 +93,16 @@ class WorkSplit:
 
 
 def _resolve_splitter() -> Any:
-    """The model that plans a split, or None when only fast tiers are up."""
-    from jarvis.brain.resolver import resolve_quality_brain
-    from jarvis.core.config import load_config
+    """The model that plans a split, or None when nothing qualifies.
 
-    try:
-        return resolve_quality_brain(load_config())
-    except Exception:  # noqa: BLE001 - resolution must never break a turn
-        logger.info("Agentic IDE work splitter could not be resolved", exc_info=True)
-        return None
+    Shares ``writer.resolve_writer`` with the prompt composer on purpose: these
+    two are the Agentic IDE's only billed calls, and a user who moved briefs
+    onto their subscription must not find the split still charging an API key.
+    """
+    from .writer import resolve_writer
+
+    brain, _source = resolve_writer(cli_timeout_s=SPLIT_TIMEOUT_S)
+    return brain
 
 
 _SYSTEM_PROMPT = (

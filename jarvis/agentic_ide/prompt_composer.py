@@ -79,7 +79,13 @@ from .session import MAX_PROMPT_CHARS, sanitize_prompt
 # mid-composition does not produce a faster good prompt, it produces the regex
 # one — which 8 s did routinely and 20 s still did for the longest brief. The
 # ceiling is therefore well clear of the measured worst case.
-COMPOSE_TIMEOUT_S = 45.0
+#
+# Raised 45 → 90 s when the writer gained a subscription-CLI path (2026-07-26).
+# Those brains pay a cold process start before they think at all: measured
+# 10-12 s for a trivial prompt and 26.6 s for a real structured brief on the
+# fastest model. At 45 s a slower model or a loaded machine would have expired
+# routinely, and every expiry buys the regex prompt — never a faster good one.
+COMPOSE_TIMEOUT_S = 90.0
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
@@ -186,22 +192,22 @@ def _extract_referenced(text: str) -> list[str]:
 
 
 def _resolve_writer():  # noqa: ANN202 - Brain | None, avoid an import cycle
-    """The model that writes prompts, or None when only fast tiers are up.
+    """The model that writes prompts, or None when nothing qualifies.
 
-    Uses ``resolve_quality_brain`` rather than the full frontier chain: the
-    latter is built so a core path never dies and therefore ends in small, fast
-    models. Here the OUTPUT is the product, and a brief written by a mini model
-    is worse in a way nobody notices — it reads perfectly well. Returning None
-    lets the caller degrade to the deterministic prompt and say so.
+    Delegates to ``writer.resolve_writer`` so this decision lives in ONE place:
+    the work splitter makes the same choice, and a user who moved briefs onto a
+    subscription must not find the split still billing an API key.
+
+    Neither rung of that order is the full frontier chain. That chain is built
+    so a core path never dies and therefore ends in small, fast models; here the
+    OUTPUT is the product, and a brief written by a mini model is worse in a way
+    nobody notices — it reads perfectly well. Returning None lets the caller
+    degrade to the deterministic prompt and say so.
     """
-    from jarvis.brain.resolver import resolve_quality_brain
-    from jarvis.core.config import load_config
+    from .writer import resolve_writer
 
-    try:
-        return resolve_quality_brain(load_config())
-    except Exception:  # noqa: BLE001 - resolution must never break a turn
-        logger.info("Agentic IDE prompt writer could not be resolved", exc_info=True)
-        return None
+    brain, _source = resolve_writer(cli_timeout_s=COMPOSE_TIMEOUT_S)
+    return brain
 
 
 # How much of the repository's agent instructions to carry. Enough for the
