@@ -60,7 +60,10 @@ __all__ = [
     "SyncAlreadyRunningError",
     "SyncJob",
     "UltraWikiService",
+    "active_search_service",
     "clear_jobs",
+    "get_active_service",
+    "set_active_service",
 ]
 
 #: The honest pipeline states reported by :meth:`UltraWikiService.status`.
@@ -1462,3 +1465,73 @@ class UltraWikiService:
         return await search_mod.search(
             store=self._require_store(), cfg=self._cfg, query=query, **kwargs
         )
+
+
+# ---------------------------------------------------------------------------
+# Active-service seam
+# ---------------------------------------------------------------------------
+#
+# The brain's memory surfaces — the ``wiki-recall`` tool and the system-prompt
+# context injector — sit BELOW the web layer and cannot reach ``app.state``.
+# This is the same write-once-at-bootstrap handle registry
+# ``jarvis/core/runtime_refs.py`` keeps for the BrainManager and the MCP
+# registry: the WebServer registers the instance it constructed, and the lower
+# layers ask for it instead of importing upward.
+#
+# A one-element list lets the setter rebind without ``global``. Assigning a
+# single object reference is atomic in CPython and this is written once at
+# bootstrap and read many times afterwards, so no lock is involved.
+
+_ACTIVE_SERVICE: list[Any] = []
+
+
+def set_active_service(service: UltraWikiService | None) -> None:
+    """Register the live service, or clear the registration with ``None``."""
+    if _ACTIVE_SERVICE:
+        _ACTIVE_SERVICE[0] = service
+    else:
+        _ACTIVE_SERVICE.append(service)
+
+
+def get_active_service() -> UltraWikiService | None:
+    """The live service, or ``None`` when this runtime has none.
+
+    Falls back to the handle the WebServer parks on ``app.state``, so a
+    process that built a service without passing through
+    :func:`set_active_service` still answers. ``None`` therefore means "there
+    is genuinely no service here" (headless brain, tests, boot still in
+    flight), never "the registration was missed".
+    """
+    service = _ACTIVE_SERVICE[0] if _ACTIVE_SERVICE else None
+    if service is not None:
+        return service
+    try:
+        from jarvis.core import runtime_refs  # noqa: PLC0415 — lazy (AP-26)
+
+        app = runtime_refs.get_web_app()
+    except Exception:  # noqa: BLE001 — a missing runtime is a None, never a raise
+        return None
+    return getattr(getattr(app, "state", None), "ultrawiki", None)
+
+
+def active_search_service() -> UltraWikiService | None:
+    """The live service ONLY while it can actually answer a search.
+
+    Three conditions, every one of them IO-free because this is consulted per
+    brain turn on the voice path (AP-9): a service exists, UltraWiki mode is
+    ON in the config object that service holds (the same object the routes
+    mutate on an in-app toggle, so a mode switch needs no restart), and its
+    store is open. Anything else answers ``None`` and the caller keeps its
+    pre-UltraWiki behaviour unchanged.
+    """
+    service = get_active_service()
+    if service is None:
+        return None
+    try:
+        if not service._uw_enabled():
+            return None
+        if service._store is None:
+            return None
+    except Exception:  # noqa: BLE001 — an unreadable handle is simply not ready
+        return None
+    return service

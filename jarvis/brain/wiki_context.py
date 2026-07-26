@@ -24,16 +24,50 @@ Relevance contract (``jarvis.brain.wiki_relevance``):
     When the gate declines a turn the knowledge is not lost: the router brain
     holds the ``wiki-recall`` tool and can look something up deliberately.
 
+UltraWiki mode (decision D-5, either-or):
+    While UltraWiki mode is ON and its store is open, the candidates come from
+    the UltraWiki store instead of the vault — never from both. Only the
+    RETRIEVAL changes; the three gates above still decide what may be injected,
+    because this surface is unsolicited and the Bugatti mandate is retrieval-
+    agnostic: silence beats a personal fact nobody asked for.
+
+    Two gates are mapped honestly onto UltraWiki's different score semantics:
+
+    * The within-call relative floor is REPLACED by a keyword-leg requirement.
+      An UltraWiki ``score`` is an RRF fusion rank — ordinal by construction, so
+      a relative floor over it certifies nothing (a fusion over garbage still
+      produces a confident-looking number one). A candidate that only the vector
+      leg produced has no lexical evidence at all, so the deterministic
+      substitute is: the keyword leg must have seen it too.
+    * Coverage of the question's content terms is applied unchanged — it never
+      depended on scores in the first place.
+
+    The absolute measure UltraWiki does have (the rerank grade, which
+    ``enforce_floor`` gates on) is deliberately NOT used here: grading costs a
+    model call, which is exactly what may not happen on this path (AP-9). Design
+    doc 03 anticipates that case — an ungraded candidate stays the caller's
+    deterministic gate's responsibility, which is this module plus
+    ``wiki_relevance``.
+
 Latency contract:
     The whole ``maybe_inject`` coroutine must complete in <= ``latency_budget_ms``
-    milliseconds.  It uses ``asyncio.wait_for`` to enforce this.  A slow vault
-    (cold filesystem, network FS, etc.) therefore cannot block the voice path.
-    The relevance gate itself is regex-only and IO-free (AP-9/AP-11).
+    milliseconds (``ultra_latency_budget_ms`` for the UltraWiki path).  It uses
+    ``asyncio.wait_for`` to enforce this.  A slow vault (cold filesystem, network
+    FS, etc.) therefore cannot block the voice path.  The relevance gate itself
+    is regex-only and IO-free (AP-9/AP-11).
+
+    The UltraWiki path gets its own, larger budget because it is a database
+    query rather than a grep, and because its vector leg embeds the query text
+    when an embedding provider is configured — cheap on a local endpoint,
+    a network round-trip on a cloud one. The rerank stage (a second model call)
+    is switched off outright. Whatever exceeds the budget is dropped: the turn
+    proceeds with NO context rather than waiting.
 
 Fallback contract:
-    When ``search`` is ``None`` (Agent B not yet merged), the injector silently
-    does nothing.  Pass ``search=None`` from the factory; every ``maybe_inject``
-    call returns the prompt unchanged.
+    When ``search`` is ``None`` (Agent B not yet merged) and no UltraWiki
+    service is available, the injector silently does nothing.  Pass
+    ``search=None`` from the factory; every ``maybe_inject`` call returns the
+    prompt unchanged.
 """
 from __future__ import annotations
 
@@ -41,7 +75,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jarvis.memory.wiki.search import VaultSearch
@@ -111,6 +145,22 @@ _STOPWORDS: frozenset[str] = frozenset({
 
 # Tokenize on whitespace and common punctuation
 _TOKEN_RE = re.compile(r"[^\w\s]|\s+", re.UNICODE)
+
+#: Time budget for the UltraWiki retrieval leg. Its own knob because it is a
+#: store query (plus a possible query embedding) rather than the vault's grep;
+#: design doc 03 allots <= 150 ms to the fan-out inside a <= 900 ms
+#: to-first-spoken-token budget, and this stays in that order of magnitude.
+DEFAULT_ULTRA_LATENCY_BUDGET_MS = 250
+
+#: How many UltraWiki candidates the gates get to judge. Small on purpose: the
+#: block is capped at ``max_chars`` anyway and every extra candidate is one more
+#: chance for an off-topic personal fact to slip past.
+DEFAULT_ULTRA_K = 5
+
+#: The retrieval leg that must have seen an UltraWiki candidate before it may
+#: be injected — the deterministic stand-in for an absolute score (see the
+#: module docstring).
+_KEYWORD_LEG = "keyword"
 
 
 def _extract_keywords(
@@ -195,11 +245,15 @@ class WikiContextInjector:
         relevance_gate: bool = True,
         min_coverage: float = DEFAULT_MIN_COVERAGE,
         min_relative_score: float = DEFAULT_MIN_RELATIVE_SCORE,
+        ultra_latency_budget_ms: int = DEFAULT_ULTRA_LATENCY_BUDGET_MS,
+        ultra_k: int = DEFAULT_ULTRA_K,
     ) -> None:
         self._search = search
         self._max_chars = max_chars
         self._latency_budget_ms = latency_budget_ms
         self._min_keyword_length = min_keyword_length
+        self._ultra_latency_budget_ms = ultra_latency_budget_ms
+        self._ultra_k = ultra_k
         # Escape hatch: ``relevance_gate=False`` restores the pre-gate
         # behaviour (search every turn, inject every hit). Kept so a user who
         # believes the gate is too strict can prove it from config rather than
@@ -225,10 +279,11 @@ class WikiContextInjector:
     ) -> str:
         """Return system_prompt unchanged on any of:
 
-        * ``search is None``
+        * no memory at all (``search is None`` and no UltraWiki service)
         * no extractable keywords from ``user_text``
-        * ``VaultSearch.search`` exceeds ``latency_budget_ms``
-        * search returns zero hits
+        * the retrieval exceeds its latency budget
+        * retrieval returns zero hits
+        * nothing survives the relevance gates
 
         Otherwise returns::
 
@@ -239,12 +294,17 @@ class WikiContextInjector:
 
         Logs exactly one line per call at INFO::
 
-            WikiContextInjector injected=<bool> hits=<n> latency_ms=<int>
+            WikiContextInjector injected=<bool> hits=<n> latency_ms=<int> …
         """
         t0 = time.monotonic()
 
-        # Fast-path: no search engine available (Agent B not merged yet)
-        if self._search is None:
+        # Which memory answers this turn — UltraWiki when the mode is on and
+        # its store is open, the vault otherwise. Never both (D-5).
+        ultra_service = _active_ultrawiki_service()
+
+        # Fast-path: no memory available at all (Agent B not merged yet, and
+        # no UltraWiki service in this runtime)
+        if ultra_service is None and self._search is None:
             self._miss(t0, "no_search")
             return system_prompt
 
@@ -270,19 +330,24 @@ class WikiContextInjector:
         query = " ".join(keywords)
 
         # Run search with a strict latency budget
+        ultra = ultra_service is not None
+        budget_ms = self._ultra_latency_budget_ms if ultra else self._latency_budget_ms
         try:
             hits = await asyncio.wait_for(
-                _run_search(self._search, query),
-                timeout=self._latency_budget_ms / 1000.0,
+                _run_ultra_search(ultra_service, query, self._ultra_k)
+                if ultra
+                else _run_search(self._search, query),
+                timeout=budget_ms / 1000.0,
             )
         except TimeoutError:
             log.warning(
-                "WikiContextInjector timed out after %dms (budget=%dms) — "
-                "skipping wiki context for this turn",
+                "WikiContextInjector timed out after %dms (budget=%dms, "
+                "source=%s) — skipping wiki context for this turn",
                 int((time.monotonic() - t0) * 1000),
-                self._latency_budget_ms,
+                budget_ms,
+                "ultrawiki" if ultra else "vault",
             )
-            self._miss(t0, "timeout")
+            self._miss(t0, "ultra_timeout" if ultra else "timeout")
             return system_prompt
         except Exception:  # noqa: BLE001
             log.warning(
@@ -290,7 +355,7 @@ class WikiContextInjector:
                 "skipping wiki context",
                 exc_info=True,
             )
-            self._miss(t0, "search_error")
+            self._miss(t0, "ultra_search_error" if ultra else "search_error")
             return system_prompt
 
         if not hits:
@@ -301,11 +366,19 @@ class WikiContextInjector:
         # page sharing one common word arrives looking just like one that is
         # on topic. Coverage + a within-call relative floor separate them.
         if self._relevance_gate:
+            if ultra:
+                # An RRF score is ordinal, so the relative floor is neutralised
+                # (0.0) and the keyword leg carries that half of the gate
+                # instead — see the module docstring.
+                hits = [hit for hit in hits if _has_keyword_leg(hit)]
+                if not hits:
+                    self._miss(t0, "no_keyword_leg")
+                    return system_prompt
             hits = relevant_hits(
                 hits,
                 query,
                 min_coverage=self._min_coverage,
-                min_relative_score=self._min_relative_score,
+                min_relative_score=0.0 if ultra else self._min_relative_score,
             )
             if not hits:
                 self._miss(t0, "no_relevant_hits")
@@ -322,12 +395,18 @@ class WikiContextInjector:
             # has no body snippet by contract — fall back to its leading text
             # so the entry carries content instead of just a bare title.
             text = hit.snippet or getattr(hit, "preview", "") or ""
-            entry = f"**{hit.title}**: {text}"
+            if ultra:
+                # An UltraWiki snippet can span lines; the block is one entry
+                # per line. An ingested item may also carry no title at all,
+                # in which case its source is the only honest label.
+                text = " ".join(text.split())
+            title = hit.title or (getattr(hit, "source_id", "") if ultra else "")
+            entry = f"**{title}**: {text}"
             if chars_used + len(entry) + 1 > self._max_chars:
                 # Try trimming to fit the remaining budget
-                remaining = self._max_chars - chars_used - len(f"**{hit.title}**: ") - 1
+                remaining = self._max_chars - chars_used - len(f"**{title}**: ") - 1
                 if remaining >= 40:  # only worth including if enough chars remain
-                    entry = f"**{hit.title}**: {text[:remaining]}…"
+                    entry = f"**{title}**: {text[:remaining]}…"
                 else:
                     break
             context_parts.append(entry)
@@ -345,9 +424,10 @@ class WikiContextInjector:
 
         telemetry.inc("wiki_context_hits")
         log.info(
-            "WikiContextInjector injected=True hits=%d latency_ms=%d",
+            "WikiContextInjector injected=True hits=%d latency_ms=%d source=%s",
             hits_included,
             latency_ms,
+            "ultrawiki" if ultra else "vault",
         )
         return augmented
 
@@ -360,3 +440,52 @@ async def _run_search(search: VaultSearch, query: str) -> list:
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search.search, query)
+
+
+def _active_ultrawiki_service() -> Any | None:
+    """The live UltraWiki service while it can answer, else ``None``.
+
+    Lazy import (AP-26): with the mode off this is one ``sys.modules`` lookup
+    per turn and nothing else — no config read, no disk, no network.
+    """
+    try:
+        from jarvis.ultrawiki.service import active_search_service
+
+        return active_search_service()
+    except Exception:  # noqa: BLE001 — an unavailable mode is not an error here
+        log.debug("WikiContextInjector: UltraWiki lookup failed", exc_info=True)
+        return None
+
+
+async def _run_ultra_search(service: Any, query: str, k: int) -> list:
+    """Candidate retrieval from the UltraWiki store — cheap legs only.
+
+    ``rerank=False`` keeps the grading model call off this path (AP-9);
+    ``expand_context=False`` skips the neighbour lookups, which are evidence
+    for an answer the user asked for, not for a prompt hint. ``enforce_floor``
+    would be a no-op without grades and is left off deliberately: the gates in
+    :meth:`WikiContextInjector.maybe_inject` are what stands in for it.
+    """
+    return await service.search(
+        query=query,
+        k=k,
+        rerank=False,
+        enforce_floor=False,
+        expand_context=False,
+    )
+
+
+def _has_keyword_leg(hit: Any) -> bool:
+    """True when the keyword leg produced this candidate.
+
+    A vector-only candidate matched on embedding proximity alone. Nothing in
+    an RRF score can tell "close in meaning" from "closest of a bad lot", so
+    an unsolicited surface must not inject it. Hits from a store that reports
+    no legs at all are treated as keyword hits — the keyword leg is the one
+    that always runs (search.py), so an absent label is a missing report, not
+    evidence of a vector-only match.
+    """
+    legs = getattr(hit, "matched_by", None)
+    if not legs:
+        return True
+    return _KEYWORD_LEG in tuple(legs)

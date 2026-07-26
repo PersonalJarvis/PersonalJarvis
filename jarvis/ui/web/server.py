@@ -350,6 +350,7 @@ class WebServer:
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
+        from .agentic_ide_routes import router as agentic_ide_router
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
         # otherwise get an ImportError here at server boot.
@@ -421,6 +422,12 @@ class WebServer:
         # Provides agent detection, workspace launch planning, and PTY WebSocket
         # for in-app Claude Code / Codex terminals (xterm panes, not OS windows).
         app.include_router(workspace_router)
+        # Agentic IDE (/api/agentic-ide/*) — a chosen folder plus named terminals
+        # running Claude Code / Codex, addressable by voice ("what is Mika
+        # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
+        # workspace above; adds the folder picker, call-signs, transcripts, and
+        # the focused coding mode.
+        app.include_router(agentic_ide_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(dictionary_router)
@@ -2672,10 +2679,14 @@ class WebServer:
         otherwise a store could finish opening after the shutdown that was
         supposed to close it, and leak the connection.
         """
-        from jarvis.ultrawiki.service import UltraWikiService
+        from jarvis.ultrawiki.service import UltraWikiService, set_active_service
 
         service = UltraWikiService(self.cfg, bus=self.bus)
         self.app.state.ultrawiki = service
+        # The brain's memory surfaces (wiki-recall, the context injector) live
+        # below the web layer and cannot read app.state — the module-level seam
+        # is how they reach the live service (runtime_refs pattern).
+        set_active_service(service)
         if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
             task = asyncio.create_task(
                 service.ensure_started(), name="ultrawiki-start"
@@ -3125,6 +3136,15 @@ class WebServer:
                     "UltraWiki start-task cancel failed: {}", exc
                 )
         self._ultrawiki_start_task = None
+
+        # Clear the brain-facing seam BEFORE the shutdown, so no memory surface
+        # can start a search against a store that is about to close.
+        try:
+            from jarvis.ultrawiki.service import set_active_service
+
+            set_active_service(None)
+        except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+            logger.opt(exception=exc).debug("UltraWiki seam clear failed: {}", exc)
 
         ultrawiki_service = getattr(self.app.state, "ultrawiki", None)
         if ultrawiki_service is not None:
