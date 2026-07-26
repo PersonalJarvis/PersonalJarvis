@@ -27,7 +27,14 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
@@ -1108,6 +1115,74 @@ def _terminal_not_running_line(terminal: str, status: str, lang: str) -> str:
     return action_phrase(
         "ide_terminal_not_running", lang, terminal=terminal, status=status
     )
+
+
+def _join_names(names: Sequence[str], lang: str) -> str:
+    """Call-signs as a speakable list ("Iris und Bruno", "Iris, Bruno and Casey")."""
+    from jarvis.voice.action_phrases import action_phrase
+
+    items = [n for n in names if n]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return action_phrase(
+        "ide_names_pair", lang, head=", ".join(items[:-1]), last=items[-1]
+    )
+
+
+def _fanout_reply_line(result: Any, lang: str) -> str:
+    """Spoken readback for a fan-out, naming who got it and who did not.
+
+    The live 2026-07-26 lie came from a readback that could only describe
+    success: one pane was briefed, the sentence named one pane, and the realtime
+    provider filled the gap from the user's own question ("Iris and Bruno").
+    Every branch here therefore names the panes it is talking about, and the
+    partial case is its own sentence rather than an optional clause — an
+    optional clause is what gets dropped when a model paraphrases.
+
+    A single addressee keeps the exact wording the one-pane path always had:
+    that is the common case, and it should not start sounding like a fleet
+    operation because the plumbing underneath grew one.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    deliveries = result.deliveries
+    ok = [d.terminal for d in result.delivered]
+    bad = [d.terminal for d in result.undelivered]
+
+    if len(deliveries) == 1:
+        only = deliveries[0]
+        if only.delivered:
+            line = _prompt_sent_line(only.terminal, list(only.files), lang)
+        elif only.reason_code == "not_running":
+            line = _terminal_not_running_line(only.terminal, only.status, lang)
+        else:
+            line = action_phrase(
+                "ide_prompt_sent_nobody", lang, failed=only.terminal
+            )
+    elif not ok:
+        line = action_phrase(
+            "ide_prompt_sent_nobody", lang, failed=_join_names(bad, lang)
+        )
+    elif bad:
+        line = action_phrase(
+            "ide_prompt_sent_partial",
+            lang,
+            names=_join_names(ok, lang),
+            failed=_join_names(bad, lang),
+        )
+    else:
+        line = action_phrase(
+            "ide_prompt_sent_many", lang, names=_join_names(ok, lang)
+        )
+
+    stuck = [d.terminal for d in result.typed_but_not_started]
+    if stuck:
+        line = f"{line} " + action_phrase(
+            "ide_prompt_typed_not_started", lang, names=_join_names(stuck, lang)
+        )
+    return line
 
 
 def _recent_agent(recent: Any) -> str:
@@ -5667,31 +5742,36 @@ class BrainManager:
         briefed task with ``@file`` references. That is one bounded provider call
         with a regex fallback, so the instruction is delivered either way.
 
+        Several panes may be addressed in one breath ("Iris und Bruno beide in
+        Deep Dive geben"). They are served CONCURRENTLY and reported
+        individually — see ``agentic_ide.fanout``, which exists because doing
+        this in a loop cannot fit in a voice turn and cannot report a partial
+        delivery honestly.
+
         Returns ``None`` whenever this turn is not an addressed terminal, so the
         normal path runs untouched.
         """
         try:
+            from jarvis.agentic_ide import fanout as ide_fanout
             from jarvis.agentic_ide import intent as ide_intent
-            from jarvis.agentic_ide.session import (
-                AGENT_DISPLAY,
-                SessionError,
-                get_registry,
-            )
         except Exception:  # noqa: BLE001 - optional surface
             return None
 
         try:
+            from jarvis.agentic_ide.session import get_registry
+
             registry = get_registry()
             session = registry.session
             if session is None:
                 return None
-            found = ide_intent.detect(
+            addressed = ide_intent.detect_all(
                 user_text, names=[t.name for t in session.terminals]
             )
         except Exception:  # noqa: BLE001 - detection must never break a turn
             return None
-        if found is None:
+        if not addressed:
             return None
+        found = addressed[0]
         # Naming the spawn vehicle outranks the workspace: "spawn an agent that
         # helps Kai" is a genuine background-worker request even with a
         # workspace open. Same test the spawn gate and ``intent.owns_turn`` use,
@@ -5715,49 +5795,27 @@ class BrainManager:
         if found.kind == ide_intent.KIND_REPORT:
             return None
 
-        term = session.find(found.terminal)
-        if term is None:
-            return None
-        if term.status != "live" or not term.pty_id:
-            log.info(
-                "Agentic IDE fast-path: %s is %s — nothing sent",
-                term.name, term.status,
-            )
-            return _terminal_not_running_line(term.name, term.status, out_lang)
-
-        from jarvis.agentic_ide.prompt_composer import compose
-
-        composed = await compose(
-            user_text,
-            session=session,
-            terminal_name=term.name,
-            agent_display=AGENT_DISPLAY.get(term.agent, term.agent),
-            instruction=found.instruction,
-            # No brain is pinned here on purpose. An earlier version handed the
-            # composer this turn's FAST router model to save 4-5 s, but that
-            # optimised the wrong axis: the prompt is what the coding agent then
-            # works from for minutes, and the maintainer's decision on
-            # 2026-07-25 was explicitly for the better prompt over the quicker
-            # handoff. The composer resolves a quality-tier model itself and
-            # degrades to its deterministic prompt when none is reachable.
-        )
-        if not composed.text:
-            return None
-
+        # No brain is pinned for the composer on purpose. An earlier version
+        # handed it this turn's FAST router model to save 4-5 s, but that
+        # optimised the wrong axis: the prompt is what the coding agent then
+        # works from for minutes, and the maintainer's decision on 2026-07-25
+        # was explicitly for the better prompt over the quicker handoff. The
+        # composer resolves a quality-tier model itself and degrades to its
+        # deterministic prompt when none is reachable.
         try:
-            await registry.send_prompt(term.name, composed.text)
-        except SessionError as exc:
-            log.info("Agentic IDE fast-path could not send to %s: %s", term.name, exc)
-            return str(exc)
+            result = await ide_fanout.deliver(
+                session=session,
+                terminals=[item.terminal for item in addressed],
+                utterance=user_text,
+                instruction=found.instruction,
+            )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)
             return None
 
-        log.info(
-            "Agentic IDE fast-path -> %s (composed_by=%s, files=%d)",
-            term.name, composed.composed_by, len(composed.files),
-        )
-        return _prompt_sent_line(term.name, composed.files, out_lang)
+        if not result.deliveries:
+            return None
+        return _fanout_reply_line(result, out_lang)
 
     async def _run_agentic_ide_spawn_fast_path(
         self,
@@ -8302,7 +8360,28 @@ class BrainManager:
                 )
                 return mission_reply
 
-        if self._skill_turn_match is None:
+        # An addressed Agentic-IDE terminal outranks the desktop gate — the
+        # mirror image of the skill stand-down just above, and for the same
+        # reason: whichever gate holds the MORE SPECIFIC evidence wins.
+        #
+        # Live bug 2026-07-26 09:44 (coding mode on, twelve panes open): "let
+        # Bruno do a deep dive and look into why you cannot paste text in the
+        # Agentic IDE" reached Computer-Use, which clicked into the workspace's
+        # own chat box and typed a prompt there — Jarvis operating its own UI by
+        # hand while the agent named in the sentence sat idle. The gate had
+        # matched the GUI verb "kopieren", a word that appears in that sentence
+        # as the DESCRIPTION of a bug, never as an order to copy anything. A
+        # single-verb matcher cannot tell "copy this" from "copying is broken",
+        # whereas naming a running pane is unambiguous.
+        #
+        # ``owns_turn`` is the shared precedence the force-spawn guard and the
+        # spawn gate already consult (it stands down by itself when the user
+        # names the background-worker vehicle), so this third consumer cannot
+        # drift away from them. The turn is not answered here — it simply stays
+        # available for the Agentic-IDE fast path a few lines below.
+        if self._skill_turn_match is None and not self._agentic_ide_owns_turn(
+            user_text
+        ):
             local_action = await self._run_local_action_fast_path(
                 user_text, trace_id=turn_trace_id,
             )

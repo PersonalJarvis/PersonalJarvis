@@ -326,6 +326,39 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "{terminal} is not running right now ({status}). I sent nothing.",
         "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
     },
+    # Fan-out: ONE order handed to SEVERAL panes. The partial and the
+    # nobody-reached cases are separate keys on purpose — the live 2026-07-26
+    # failure was a partial delivery spoken as a complete one, and a single
+    # template with an optional clause is exactly how that rounds back up.
+    "ide_prompt_sent_many": {
+        "de": "Ist bei {names}.",  # i18n-allow
+        "en": "Sent to {names}.",
+        "es": "Enviado a {names}.",
+    },
+    "ide_prompt_sent_partial": {
+        "de": "Ist bei {names}. Zu {failed} bin ich nicht durchgekommen.",  # i18n-allow
+        "en": "Sent to {names}. I could not reach {failed}.",
+        "es": "Enviado a {names}. No pude llegar a {failed}.",
+    },
+    "ide_prompt_sent_nobody": {
+        "de": "Ich bin zu {failed} nicht durchgekommen, es läuft nichts.",  # i18n-allow
+        "en": "I could not reach {failed}, so nothing is running.",
+        "es": "No pude llegar a {failed}, así que no hay nada en marcha.",
+    },
+    # Typed into the input box but never submitted — looks identical to a
+    # running agent until you ask it something (the 2026-07-25 popup trap).
+    "ide_prompt_typed_not_started": {
+        "de": "Bei {names} steht der Text nur im Eingabefeld.",  # i18n-allow
+        "en": "On {names} the text is only sitting in the input box.",
+        "es": "En {names} el texto solo está en el cuadro de entrada.",
+    },
+    # Joining call-signs for speech. A comma-separated list read aloud sounds
+    # like an enumeration that never ends; the last pair needs the conjunction.
+    "ide_names_pair": {
+        "de": "{head} und {last}",  # i18n-allow
+        "en": "{head} and {last}",
+        "es": "{head} y {last}",
+    },
     # Opening more panes by voice ("spawn five more Claude Code terminals").
     # The names are always read back: they are how the user addresses the new
     # panes in the very next sentence, and hearing them is also the fastest way
