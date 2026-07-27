@@ -24,6 +24,7 @@ import type {
   UltraWikiPipeline,
   UltraWikiProgress,
   UltraWikiSource,
+  UltraWikiThroughput,
 } from "@/lib/ultrawikiApi";
 
 /** The exact live state from the 2026-07-26 screenshot. */
@@ -42,6 +43,46 @@ const SCREENSHOT: UltraWikiProgress = {
     { id: "searchable", reached: 4712, share: 1 },
     { id: "summarised", reached: 1475, share: 0.313 },
   ],
+};
+
+/**
+ * The 2026-07-27 state: a corpus fifty times bigger, moving at 0.65 items a
+ * second, under a headline that said "you do not have to wait".
+ */
+const HUGE_BACKLOG: UltraWikiProgress = {
+  state: "working",
+  total: 236_131,
+  searchable: 137_625,
+  summarised: 216,
+  waiting: 235_915,
+  failed: 0,
+  next_step: "embedding",
+  waiting_by_bucket: { captured: 98_506, keyword_indexed: 133_657, embedded: 3_752 },
+  buckets: {
+    captured: 98_506,
+    keyword_indexed: 133_657,
+    embedded: 3_752,
+    distilled: 216,
+    failed: 0,
+  },
+  milestones: [
+    { id: "stored", reached: 236_131, share: 1 },
+    { id: "searchable", reached: 137_625, share: 0.583 },
+    { id: "summarised", reached: 216, share: 0.0009 },
+  ],
+};
+
+/** The measured lane behind that backlog: ~2 340 items an hour, ~4 days left. */
+const MEASURED: UltraWikiThroughput = {
+  embed: {
+    rate_per_hour: 2340,
+    backlog: 232_163,
+    eta_seconds: 232_163 / 0.65,
+    measured_s: 900,
+    measured_items: 585,
+    stalled: false,
+    paused_reason: "",
+  },
 };
 
 const PROCESSING: UltraWikiPipeline = {
@@ -131,6 +172,84 @@ describe("VerdictCard — the sentence that used to be wrong", () => {
     expect(card.textContent).not.toContain("Nothing stored yet");
     // And no bar, because there is nothing measured to draw.
     expect(screen.queryByTestId("ultrawiki-intake-bar")).toBeNull();
+  });
+});
+
+describe("VerdictCard — how long the backlog takes", () => {
+  it("states the measured duration instead of dismissing the wait", () => {
+    // The defect verbatim: 235 915 queued items described as something you
+    // do not have to wait for, over a queue measuring four days.
+    renderWithQuery(
+      <VerdictCard
+        progress={HUGE_BACKLOG}
+        pipeline={PROCESSING}
+        usable
+        throughput={MEASURED}
+      />,
+    );
+    const detail = screen.getByTestId("ultrawiki-verdict-detail").textContent ?? "";
+    expect(detail).toContain("days");
+    expect(detail.toLowerCase()).not.toContain("you do not have to wait");
+  });
+
+  it("says it is measuring rather than inventing a number", () => {
+    renderWithQuery(
+      <VerdictCard progress={HUGE_BACKLOG} pipeline={PROCESSING} usable />,
+    );
+    const detail = screen.getByTestId("ultrawiki-verdict-detail").textContent ?? "";
+    expect(detail).toContain("still being measured");
+    expect(detail).not.toContain("days");
+  });
+
+  it("reports a standing queue as standing, with no completion time", () => {
+    // "Never at this rate" is not a duration; rendering one implies progress.
+    renderWithQuery(
+      <VerdictCard
+        progress={HUGE_BACKLOG}
+        pipeline={PROCESSING}
+        usable
+        throughput={{
+          embed: {
+            rate_per_hour: 0,
+            backlog: 232_163,
+            eta_seconds: null,
+            measured_s: 900,
+            measured_items: 0,
+            stalled: true,
+            paused_reason: "",
+          },
+        }}
+      />,
+    );
+    const detail = screen.getByTestId("ultrawiki-verdict-detail").textContent ?? "";
+    expect(detail).toContain("standing still");
+    expect(detail).not.toContain("days");
+  });
+
+  it("explains a summary lane that is parked on purpose", () => {
+    // 216 summaries frozen for hours with no reason anywhere on screen.
+    renderWithQuery(
+      <VerdictCard
+        progress={HUGE_BACKLOG}
+        pipeline={PROCESSING}
+        usable
+        throughput={{
+          ...MEASURED,
+          distill: {
+            rate_per_hour: null,
+            backlog: 235_915,
+            eta_seconds: null,
+            measured_s: 900,
+            measured_items: 0,
+            stalled: false,
+            paused_reason: "summaries are paused while the search index is rebuilt",
+          },
+        }}
+      />,
+    );
+    expect(
+      screen.getByTestId("ultrawiki-verdict-summary-pause").textContent,
+    ).toContain("rebuilt");
   });
 });
 

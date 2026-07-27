@@ -647,6 +647,13 @@ class UltraWikiService:
         state, reason = self._pipeline_state(
             progress, sources, slots, running=pipeline_running, embed_block=embed_block
         )
+        # How long the backlog on screen actually takes, measured from the
+        # worker's own completed transitions. See jarvis/ultrawiki/throughput.py
+        # for the five-hour session that made an un-timed backlog unacceptable.
+        pause_reasons = (
+            self._pipeline.stage_pause_reasons() if self._pipeline is not None else {}
+        )
+        throughput = self._throughput(progress, pause_reasons)
         return {
             "enabled": self._uw_enabled(),
             "started": started,
@@ -676,7 +683,13 @@ class UltraWikiService:
                     (embed_block or {}).get("needs_attention")
                 ),
                 "blocked_since": (embed_block or {}).get("since"),
+                # Why a stage is standing still, when it is. A deliberately
+                # parked lane and a broken one both read as "0 processed"
+                # without this.
+                "paused": pause_reasons,
             },
+            # Measured rate + resulting ETA per lane; see _throughput.
+            "throughput": throughput,
             "sources": sources,
             "jobs": _list_job_snapshots(10),
             "degradations": list(self._degradations),
@@ -690,6 +703,49 @@ class UltraWikiService:
             "distill": self._distill_slot_status(),
             "rerank": self._rerank_slot_status(),
         }
+
+    def _throughput(
+        self, progress: dict[str, Any], pause_reasons: dict[str, str]
+    ) -> dict[str, Any]:
+        """Measured rate + ETA for the two model-bound lanes. Never raises.
+
+        The backlogs are derived from the ONE progress model rather than
+        recounted here (progress.py exists because a second derivation always
+        drifts):
+
+        * **embedding** — everything not yet past the embed stage, i.e. the
+          ``captured`` and ``keyword_indexed`` buckets. A rebuild's demoted
+          items are already sitting in ``keyword_indexed``, so they are counted
+          once, here, and not added again.
+        * **summarising** — everything that has not reached ``distilled``,
+          minus the dead-lettered items, because those will not arrive there.
+
+        A worker that has not started yet reports empty snapshots, which
+        :func:`~jarvis.ultrawiki.throughput.build_throughput` renders as "not
+        measured yet" rather than as zero.
+        """
+        try:
+            buckets = dict(progress.get("buckets") or {})
+            captured = int(buckets.get("captured") or 0)
+            keyword_indexed = int(buckets.get("keyword_indexed") or 0)
+            embedded = int(buckets.get("embedded") or 0)
+            meters = (
+                self._pipeline.throughput() if self._pipeline is not None else {}
+            )
+            from jarvis.ultrawiki.throughput import (  # noqa: PLC0415 — lazy (AP-26)
+                build_throughput,
+            )
+
+            return build_throughput(
+                embed=dict(meters.get("embed") or {}),
+                distill=dict(meters.get("distill") or {}),
+                embed_backlog=captured + keyword_indexed,
+                distill_backlog=captured + keyword_indexed + embedded,
+                distill_paused_reason=str(pause_reasons.get("distill") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 — status never raises
+            log.debug("UltraWiki throughput assembly failed: %s", exc, exc_info=True)
+            return {}
 
     def _pipeline_state(
         self,

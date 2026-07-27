@@ -376,6 +376,51 @@ export interface UltraWikiPipeline {
   /** One honest English sentence: what is happening, or what blocks it. */
   reason?: string;
   processed: Record<string, number>;
+  /**
+   * stage -> why it is standing still, for the stages that are. Mirrors
+   * PipelineWorker.stage_pause_reasons(). A lane parked ON PURPOSE (summaries
+   * during an index rebuild) and a broken one both show `processed: 0`
+   * forever; this string is the only thing that tells them apart, which is
+   * why it had to stop living only in the log file.
+   */
+  paused?: Record<string, string>;
+}
+
+/** One measured lane of {@link UltraWikiThroughput}. */
+export interface UltraWikiThroughputLane {
+  /** Completed items an hour, or null while still being measured. */
+  rate_per_hour: number | null;
+  /** Items this lane still has to get through. */
+  backlog: number;
+  /**
+   * Seconds until the backlog clears at the measured rate. Null means either
+   * "not measured long enough" or "not moving" — never an invented number.
+   * `stalled` distinguishes the two.
+   */
+  eta_seconds: number | null;
+  measured_s: number;
+  measured_items: number;
+  /** Observed long enough to be sure, and nothing moved. */
+  stalled: boolean;
+  /** Why this lane is deliberately parked, when it is. */
+  paused_reason: string;
+}
+
+/**
+ * How fast the pipeline actually moves, measured from the worker's own
+ * completed transitions — mirrors jarvis/ultrawiki/throughput.py.
+ *
+ * The section used to state a 236 000-item backlog with no duration attached
+ * and the words "you do not have to wait" underneath, over a queue that
+ * measured four days. Nothing here is estimated from a provider or model
+ * name: an unmeasurable rate reports null and the UI says it is measuring.
+ */
+export interface UltraWikiThroughput {
+  embed?: UltraWikiThroughputLane;
+  distill?: UltraWikiThroughputLane;
+  /** Both lanes summed, or null while either half is unknown. */
+  eta_seconds?: number | null;
+  measured?: boolean;
 }
 
 export interface UltraWikiSearchLeg {
@@ -421,6 +466,8 @@ export interface UltraWikiStatus {
   };
   progress?: UltraWikiProgress;
   pipeline: UltraWikiPipeline;
+  /** Measured rate + ETA per lane. Empty until the worker can answer. */
+  throughput?: UltraWikiThroughput;
   sources: UltraWikiSource[];
   jobs: UltraWikiJob[];
   search_legs: {

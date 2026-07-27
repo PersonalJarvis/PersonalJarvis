@@ -80,6 +80,7 @@ export function OverviewTab({
         pipeline={status.pipeline}
         usable={health?.usable ?? false}
         started={status.started}
+        throughput={status.throughput}
       />
 
       <SourceRoster

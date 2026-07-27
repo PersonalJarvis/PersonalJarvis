@@ -8,14 +8,27 @@
  * the corpus is still unfinished, and whether that stops you using the rest.
  *
  * Every word here is composed from the shared progress numbers through i18n
- * keys — this component never adds up buckets and never invents an estimate
- * for when the backlog will clear.
+ * keys — this component never adds up buckets.
+ *
+ * It also never INVENTS an estimate, which is not the same as never showing
+ * one. It used to close with "you do not have to wait" over a backlog of
+ * 235 915 items that measured four days (2026-07-27), because the payload
+ * carried no notion of speed and the sentence was written for a queue of
+ * minutes. The backend now measures its own completed transitions
+ * (jarvis/ultrawiki/throughput.py), so the duration shown here is observed,
+ * never modelled — and when it has not been observed long enough, the card
+ * says it is still measuring rather than guessing.
  */
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { Eyebrow, Num, formatCount } from "@/components/ultrawiki/overview/primitives";
 import { IntakeBar } from "@/components/ultrawiki/overview/IntakeBar";
-import type { UltraWikiPipeline, UltraWikiProgress } from "@/lib/ultrawikiApi";
+import { paceOf } from "@/lib/ultrawikiEta";
+import type {
+  UltraWikiPipeline,
+  UltraWikiProgress,
+  UltraWikiThroughput,
+} from "@/lib/ultrawikiApi";
 
 type Tone = "done" | "working" | "stalled" | "notready" | "empty" | "starting";
 
@@ -62,12 +75,16 @@ export function VerdictCard({
   pipeline,
   usable,
   started = true,
+  throughput,
 }: {
   progress: UltraWikiProgress;
   pipeline: UltraWikiPipeline;
   usable: boolean;
   /** Is the knowledge store actually open? A closed store reports zeros. */
   started?: boolean;
+  /** Measured lane rates. Absent on an older backend — the card degrades to
+   *  its un-timed wording rather than showing a zero it did not measure. */
+  throughput?: UltraWikiThroughput;
 }): JSX.Element {
   const t = useT();
   const pipelineState = String(pipeline.state ?? "");
@@ -77,6 +94,12 @@ export function VerdictCard({
   const step = t(
     `ultrawiki.overview.step_${progress.next_step ?? "processing"}`,
   );
+  // The embedding lane paces the whole corpus: nothing gets summarised before
+  // it is embedded, so its duration is the one the headline detail quotes.
+  const pace = paceOf(throughput?.embed, t);
+  // A parked summary lane is worth its own line — it is the reason the
+  // "summarised" band stops growing while every other number climbs.
+  const summaryPause = throughput?.distill?.paused_reason ?? "";
   // One line per situation, spelled out rather than nested into a ternary
   // chain — these sentences are the point of the screen and have to stay easy
   // to read in the source too.
@@ -93,15 +116,26 @@ export function VerdictCard({
         formatCount(progress.total),
       );
       break;
-    default:
-      detail = t(
+    default: {
+      // Four wordings for four genuinely different situations. Picking the
+      // measured one only when there IS a measurement is what keeps this
+      // honest: an un-timed backlog says so, rather than borrowing the
+      // confidence of a number nobody took.
+      const key =
         tone === "stalled"
           ? "ultrawiki.overview.detail_stalled"
-          : "ultrawiki.overview.detail_working",
-      )
+          : pace.kind === "moving"
+            ? "ultrawiki.overview.detail_working_eta"
+            : pace.kind === "stalled"
+              ? "ultrawiki.overview.detail_working_stalled"
+              : "ultrawiki.overview.detail_working";
+      detail = t(key)
         .replace("{0}", formatCount(progress.waiting))
         .replace("{1}", formatCount(progress.total))
-        .replace("{2}", step);
+        .replace("{2}", step)
+        .replace("{3}", pace.eta)
+        .replace("{4}", pace.perHour === null ? "" : formatCount(pace.perHour));
+    }
   }
 
   return (
@@ -152,6 +186,19 @@ export function VerdictCard({
             data-testid="ultrawiki-verdict-reason"
           >
             {pipeline.reason}
+          </p>
+        )}
+
+        {/* The summarising lane, when it is deliberately parked. Without this
+            the "summarised" band simply stops growing while every other number
+            climbs, and a correctly paused stage is indistinguishable from a
+            broken one. The backend's own sentence, verbatim. */}
+        {summaryPause && (
+          <p
+            className="mt-1.5 text-xs leading-relaxed text-muted-foreground"
+            data-testid="ultrawiki-verdict-summary-pause"
+          >
+            {t("ultrawiki.overview.pace_paused").replace("{0}", summaryPause)}
           </p>
         )}
 

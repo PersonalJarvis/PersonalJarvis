@@ -389,11 +389,55 @@ def test_a_rebuilding_vector_leg_is_not_reported_as_working_search():
     )
     assert legs["vector"]["available"] is False
     assert legs["vector"]["rebuilding"] is True
-    assert "300 of 4712" in legs["vector"]["reason"]
+    reason = legs["vector"]["reason"]
+    assert "300" in reason and "4712" in reason
 
     check = _check(build_health(_status(search_legs=legs), []), "search")
     assert check["state"] == "attention"
     assert "rebuilding" in check["detail"]
+
+
+def test_the_rebuild_counter_says_which_population_it_counts():
+    """The number that was read as the whole job (2026-07-27).
+
+    ``2 592 of 4 712`` sat a few centimetres under "235 915 items are queued
+    for processing". Both were right; nothing said they counted different
+    populations, so the rebuild looked nearly finished while the real backlog
+    was fifty times larger and untouched by that fraction. The counter now
+    names its own scope and says the rest queues behind it.
+    """
+    from jarvis.ui.web.ultrawiki_routes import _apply_reembed_to_legs
+
+    reason = _apply_reembed_to_legs(
+        {"vector": {"available": True}},
+        {"model": "bge-m3", "done": 2592, "total": 4712},
+    )["vector"]["reason"]
+    assert "already be searched by meaning" in reason
+    assert "queues behind it" in reason
+
+
+def test_a_measured_rate_puts_a_duration_on_the_rebuild():
+    """A backlog without a duration is the defect; carry the measured one."""
+    from jarvis.ui.web.ultrawiki_routes import _apply_reembed_to_legs
+
+    reason = _apply_reembed_to_legs(
+        {"vector": {"available": True}},
+        {"model": "bge-m3", "done": 2592, "total": 4712},
+        {"embed": {"backlog": 232_163, "eta_seconds": 232_163 / 0.65}},
+    )["vector"]["reason"]
+    assert "days" in reason
+
+
+def test_an_unmeasured_rate_adds_no_invented_duration():
+    """Silence beats a guess — the whole contract of throughput.py."""
+    from jarvis.ui.web.ultrawiki_routes import _apply_reembed_to_legs
+
+    reason = _apply_reembed_to_legs(
+        {"vector": {"available": True}},
+        {"model": "bge-m3", "done": 2592, "total": 4712},
+        {"embed": {"backlog": 232_163, "eta_seconds": None}},
+    )["vector"]["reason"]
+    assert "at the current rate" not in reason
 
 
 def test_no_rebuild_leaves_the_vector_leg_exactly_as_probed():
@@ -403,3 +447,97 @@ def test_no_rebuild_leaves_the_vector_leg_exactly_as_probed():
     legs = {"keyword": {"available": True}, "vector": {"available": True}}
     assert _apply_reembed_to_legs(legs, {}) is legs
     assert _check(build_health(_status(search_legs=legs), []), "search")["state"] == "ok"
+
+
+def test_a_backlog_states_how_long_it_takes():
+    """The sentence that made a four-day queue look like a detail.
+
+    "You do not have to wait for the rest" is fair over a queue of minutes and
+    false over one of days. On the 2026-07-27 store it sat under 235 915
+    queued items moving at 0.65 items a second, with nothing on screen saying
+    so. The row now quotes the measured pace instead.
+    """
+    status = _status(
+        counts={
+            "captured": 98_506,
+            "keyword_indexed": 133_657,
+            "embedded": 3_752,
+            "distilled": 216,
+            "failed": 0,
+            "total": 236_131,
+        },
+        pipeline={"running": True, "state": "processing", "reason": "working"},
+        throughput={
+            "embed": {
+                "rate_per_hour": 2340.0,
+                "backlog": 232_163,
+                "eta_seconds": 232_163 / 0.65,
+                "stalled": False,
+                "paused_reason": "",
+            }
+        },
+    )
+    check = _check(build_health(status, []), "processing")
+    assert check["state"] == "working"
+    assert "days" in check["detail"]
+    assert "you do not have to wait" not in check["detail"].lower()
+
+
+def test_an_unmeasured_backlog_says_it_is_measuring():
+    """No rate yet is not the same as no backlog, and neither is a guess."""
+    status = _status(
+        counts={
+            "captured": 500,
+            "keyword_indexed": 0,
+            "embedded": 0,
+            "distilled": 0,
+            "failed": 0,
+            "total": 500,
+        },
+        pipeline={"running": True, "state": "processing", "reason": "working"},
+        throughput={"embed": {"rate_per_hour": None, "backlog": 500}},
+    )
+    check = _check(build_health(status, []), "processing")
+    assert "still being measured" in check["detail"]
+
+
+def test_a_deliberately_parked_summary_lane_explains_itself():
+    """216 summaries frozen for hours with no reason on screen.
+
+    The lane was doing exactly what it was told — distillation pauses during an
+    embedding rebuild, because every summary written meanwhile is written again
+    after the swap — but that reason only ever reached the log file, so a
+    correctly parked stage and a broken one looked identical.
+    """
+    status = _status(
+        counts={
+            "captured": 0,
+            "keyword_indexed": 0,
+            "embedded": 3_752,
+            "distilled": 216,
+            "failed": 0,
+            "total": 3_968,
+        },
+        pipeline={
+            "running": True,
+            "state": "processing",
+            "reason": "working",
+            "paused": {
+                "distill": (
+                    "summaries are paused while the search index is rebuilt on "
+                    "the new embedding model"
+                )
+            },
+        },
+    )
+    health = build_health(status, [])
+    check = _check(health, "summaries")
+    assert check["state"] == "working"
+    assert "rebuilt" in check["detail"]
+    assert "216" in check["detail"]
+
+
+def test_no_summaries_row_when_nothing_is_parked():
+    """The steady state must not grow an extra row explaining nothing."""
+    health = build_health(_status(), [])
+    assert all(c["id"] != "summaries" for c in health["checks"])

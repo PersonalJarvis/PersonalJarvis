@@ -49,6 +49,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from jarvis.ultrawiki.throughput import ThroughputTracker
 from jarvis.ultrawiki.types import DocType, ItemState
 
 log = logging.getLogger(__name__)
@@ -235,6 +236,14 @@ class PipelineWorker:
         self._distill_ready_fn = distill_ready_fn
         #: Per-stage processed counters (successful transitions only).
         self.processed: dict[str, int] = {"keyword": 0, "embed": 0, "distill": 0}
+        #: Sliding-window rate meters over those counters, one per SLOW lane.
+        #: Keyword indexing needs no model and never paces anything, so it gets
+        #: no meter — the two stages that call out to a model are the two that
+        #: decide how long a corpus takes.
+        self._rate: dict[str, ThroughputTracker] = {
+            "embed": ThroughputTracker(),
+            "distill": ThroughputTracker(),
+        }
         self._ready_cache: tuple[float, str, bool, str] | None = None
         self._distill_ready_cache: tuple[float, bool, str] | None = None
         #: stage -> the pause reason last logged, so a persistent gap logs once.
@@ -258,6 +267,27 @@ class PipelineWorker:
     def processed_counts(self) -> dict[str, int]:
         """Copy of the per-stage processed counters."""
         return dict(self.processed)
+
+    def throughput(self) -> dict[str, dict[str, Any]]:
+        """Measured rate of the two model-bound lanes (see
+        :mod:`jarvis.ultrawiki.throughput`).
+
+        The service turns these into an ETA against the live backlog. Reported
+        rather than computed here because the backlog is the store's business,
+        not the worker's.
+        """
+        return {name: meter.snapshot() for name, meter in self._rate.items()}
+
+    def stage_pause_reasons(self) -> dict[str, str]:
+        """Why each paused stage is paused, ``{}`` when everything runs.
+
+        These sentences already existed — they were logged once per change and
+        never left the log file. A summarising lane that has been deliberately
+        parked for the duration of an index rebuild is indistinguishable, from
+        the outside, from one that is broken: both show ``distill: 0`` forever.
+        The difference is this string, so it has to reach the screen.
+        """
+        return dict(self._pause_reasons)
 
     def embed_block(self) -> dict[str, Any] | None:
         """The live provider-level embedding block, or ``None``.
@@ -323,6 +353,13 @@ class PipelineWorker:
         if not attempted or self._media_mode() == "eager":
             attempted += await self._media_pass()
         await self._promote_pass()
+        # Sample AFTER every pass, including passes that achieved nothing: a
+        # lane that is refused or paused has to keep feeding its meter, or a
+        # standstill would simply stop updating and read as the last healthy
+        # rate forever.
+        now = time.monotonic()
+        for name, meter in self._rate.items():
+            meter.sample(now, self.processed.get(name, 0))
         return attempted
 
     async def _reembed_is_running(self) -> bool:

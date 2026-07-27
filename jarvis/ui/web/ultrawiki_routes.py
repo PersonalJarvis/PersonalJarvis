@@ -241,7 +241,9 @@ async def _search_legs_async(cfg: Any) -> dict[str, Any]:
 
 
 def _apply_reembed_to_legs(
-    legs: dict[str, Any], reembed: dict[str, Any]
+    legs: dict[str, Any],
+    reembed: dict[str, Any],
+    throughput: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark the vector leg unavailable while a model switch is rebuilding.
 
@@ -253,6 +255,13 @@ def _apply_reembed_to_legs(
     Reporting the leg as available anyway is how the health screen came to say
     "Both exact words and meaning are searchable" during an outage that lasted
     as long as the rebuild.
+
+    The counter says WHICH population it counts, which the bare "2 592 of
+    4 712" did not. Read beside an overview reporting 235 915 items queued,
+    that number was taken for the whole job and made the rebuild look nearly
+    done; it only ever covered the items that could already be searched by
+    meaning before the switch. Everything imported since queues behind it, so
+    the estimate carries the whole embedding backlog, not the rebuild's slice.
     """
     model = str(reembed.get("model") or "")
     if not model:
@@ -262,7 +271,14 @@ def _apply_reembed_to_legs(
         return legs
     done = int(reembed.get("done") or 0)
     total = int(reembed.get("total") or 0)
-    progress = f"{done} of {total} item(s) done" if total else "just started"
+    if total:
+        scope = (
+            f"{done} of the {total} item(s) that could already be searched by "
+            "meaning have been re-measured"
+        )
+    else:
+        scope = "it has just started"
+    eta = _embed_eta_phrase(throughput)
     return {
         **legs,
         "vector": {
@@ -273,11 +289,27 @@ def _apply_reembed_to_legs(
             # keyword-only costs, and two sentences saying the same thing read
             # as two different problems.
             "reason": (
-                f"semantic search is rebuilding on {model} ({progress}) — it "
-                "comes back by itself when the rebuild finishes."
+                f"semantic search is rebuilding on {model} — {scope}. Anything "
+                "imported since queues behind it" + eta + "."
             ),
         },
     }
+
+
+def _embed_eta_phrase(throughput: dict[str, Any] | None) -> str:
+    """``", and the whole queue needs about 4 days at the current rate"``, or ``""``.
+
+    Empty whenever the rate is not yet measurable or the lane is standing
+    still — an un-timed sentence is better than an invented duration, which is
+    the failure this whole payload exists to correct.
+    """
+    from jarvis.ultrawiki.throughput import format_duration  # noqa: PLC0415 — lazy
+
+    lane = dict((throughput or {}).get("embed") or {})
+    pretty = format_duration(lane.get("eta_seconds"))
+    if not pretty or not lane.get("backlog"):
+        return ""
+    return f", and the whole embedding queue needs about {pretty} at the current rate"
 
 
 # ---------------------------------------------------------------------------
@@ -348,10 +380,14 @@ async def get_status(request: Request) -> dict[str, Any]:
         "counts": data.get("counts", {}),
         "progress": data.get("progress") or build_progress(data.get("counts")),
         "pipeline": data.get("pipeline", {}),
+        # Measured rate + ETA per lane. Empty until the worker has watched
+        # itself long enough to answer honestly (throughput.py) — a client
+        # renders "still measuring" rather than a first-minute extrapolation.
+        "throughput": data.get("throughput", {}),
         "sources": data.get("sources", []),
         "jobs": data.get("jobs", []),
         "search_legs": _apply_reembed_to_legs(
-            await _search_legs_async(cfg), reembed
+            await _search_legs_async(cfg), reembed, data.get("throughput") or {}
         ),
         "degradations": data.get("degradations", []),
     }

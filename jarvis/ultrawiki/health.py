@@ -394,6 +394,78 @@ def _search_check(status: dict[str, Any]) -> HealthCheck:
     )
 
 
+def _pace_sentence(status: dict[str, Any]) -> str:
+    """How long the rest takes, in one sentence, from measured work only.
+
+    Three honest outcomes, never a fourth invented one:
+
+    * not measured long enough yet → say that,
+    * measured and moving → the duration,
+    * measured and NOT moving → say it is not moving, with no duration, because
+      "never at this rate" is not a date and printing one implies progress.
+    """
+    from jarvis.ultrawiki.throughput import format_duration  # noqa: PLC0415 — lazy
+
+    lane = dict((dict(status.get("throughput") or {})).get("embed") or {})
+    if not lane or lane.get("rate_per_hour") is None:
+        return "It runs in the background; how long the rest takes is still being measured."
+    if lane.get("stalled"):
+        return (
+            "It is not moving at the moment, so the rest has no completion "
+            "time — the queue is standing still rather than running slowly."
+        )
+    pretty = format_duration(lane.get("eta_seconds"))
+    rate = lane.get("rate_per_hour")
+    if not pretty:
+        return "It runs in the background."
+    return (
+        f"At the rate measured just now ({_num(round(float(rate)))} item(s) an "
+        f"hour) the rest needs about {pretty}."
+    )
+
+
+def _pace_facts(status: dict[str, Any]) -> dict[str, Any]:
+    """The measured numbers behind :func:`_pace_sentence`, for the UI."""
+    lane = dict((dict(status.get("throughput") or {})).get("embed") or {})
+    return {
+        "rate_per_hour": lane.get("rate_per_hour"),
+        "eta_seconds": lane.get("eta_seconds"),
+        "measured_s": lane.get("measured_s"),
+    }
+
+
+def _summaries_check(status: dict[str, Any]) -> HealthCheck | None:
+    """Say when the summarising lane is deliberately parked, or ``None``.
+
+    Why this row exists (2026-07-27). The summary counter sat at 216 for hours
+    while every other number climbed, and nothing on screen explained it. The
+    lane was doing exactly what it was told: an embedding-model switch pauses
+    distillation on purpose, because ``begin_reembed`` demotes the items and
+    every summary written during a rebuild is written again after the swap.
+    That reason was logged once and never shown, so from the outside a
+    correctly parked stage and a broken one were the same picture — a frozen
+    number with no explanation, which is precisely how a working system loses
+    the reader's trust.
+    """
+    pipeline = dict(status.get("pipeline") or {})
+    reason = str(dict(pipeline.get("paused") or {}).get("distill") or "")
+    if not reason:
+        return None
+    progress = _progress_of(status)
+    summarised = int(progress.get("summarised") or 0)
+    return HealthCheck(
+        id="summaries",
+        title="Summaries are paused on purpose",
+        state="working",
+        detail=(
+            reason.rstrip(".")
+            + f". {_num(summarised)} item(s) have one so far; the rest keep "
+            "their full text and stay searchable meanwhile."
+        ),
+        facts={"summarised": summarised, "paused_reason": reason},
+    )
+
+
 def _processing_check(status: dict[str, Any]) -> HealthCheck:
     """The row that used to lie.
 
@@ -461,16 +533,24 @@ def _processing_check(status: dict[str, Any]) -> HealthCheck:
             facts={**facts, "blocked": bool(pipeline.get("blocked"))},
         )
     if waiting:
+        # "You do not have to wait for the rest" was the wording here, and on a
+        # 236 000-item backlog moving at 0.65 items per second it was the most
+        # misleading sentence on the screen (2026-07-27): four days of embedding
+        # before the first new summary, presented as a detail you could ignore.
+        # It is a fair thing to say about a queue measured in minutes and a
+        # false one about a queue measured in days, and only the measured rate
+        # can tell those apart — so the row now states the duration and lets the
+        # reader decide whether it is worth acting on.
+        pace = _pace_sentence(status)
         return HealthCheck(
             id="processing",
             title=f"{_num(waiting)} item(s) still {step}",
             state="working",
             detail=(
-                f"This runs in the background. The {_num(searchable)} item(s) "
-                "already processed can be searched right now — you do not "
-                "have to wait for the rest."
+                f"The {_num(searchable)} item(s) already processed can be "
+                "searched right now. " + pace
             ),
-            facts=facts,
+            facts={**facts, **_pace_facts(status)},
         )
     if state == "paused":
         return HealthCheck(
@@ -577,6 +657,11 @@ def build_health(
         _search_check(status),
         _processing_check(status),
     ]
+    # Only present while the lane is genuinely parked, and it sits after
+    # processing because it explains a number that row just showed moving.
+    summaries = _summaries_check(status)
+    if summaries is not None:
+        checks.append(summaries)
     worst = max((_SEVERITY[c.state] for c in checks), default=0)
     overall = next(k for k, v in _SEVERITY.items() if v == worst)
     # The headline answers the only question that matters at a glance: can I
