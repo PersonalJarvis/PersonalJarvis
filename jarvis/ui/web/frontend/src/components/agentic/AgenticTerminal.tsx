@@ -75,6 +75,7 @@ import { attachToTerminal } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
+import { OffscreenBuffer } from "./offscreenBuffer";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
@@ -291,6 +292,37 @@ export function AgenticTerminal({
     // scroll the agent's own output away for nothing.
     let troublePrinted = false;
 
+    /*
+     * Is anyone actually looking at this pane?
+     *
+     * A workspace holds dozens of terminals and the browser draws all of them on
+     * the SAME thread that has to notice a keypress — so a pane scrolled out of
+     * the grid, or hidden behind a maximized sibling, was spending real frames
+     * painting pixels nobody could see, at the direct expense of the pane being
+     * typed into. Its output is parked instead and written in one call when it
+     * comes back (see ./offscreenBuffer).
+     *
+     * Starts as VISIBLE: the observer's first callback is asynchronous, and a
+     * pane that withheld output until it arrived would flicker blank on mount.
+     */
+    let paneVisible = true;
+    const offscreen = new OffscreenBuffer();
+
+    const showPane = () => {
+      if (paneVisible) return;
+      paneVisible = true;
+      const held = offscreen.drain();
+      if (held) term.write(held);
+    };
+
+    // Everything this pane draws goes through here, not just the agent's
+    // stream: an exit banner written straight to xterm while output is parked
+    // would appear ABOVE the output it is supposed to follow.
+    const writeToPane = (text: string) => {
+      if (paneVisible) term.write(text);
+      else offscreen.push(text);
+    };
+
     const sendResize = () => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
       // fitting to that would resize the PTY to zero columns — which permanently
@@ -319,7 +351,7 @@ export function AgenticTerminal({
           sendResize();
           requestAnimationFrame(sendResize);
         },
-        onOutput: (text) => term.write(text),
+        onOutput: (text) => writeToPane(text),
         onReady: ({ resumed, reattached }) => {
           troublePrinted = false;
           // Say which of THREE things happened. They look identical on screen and
@@ -338,7 +370,7 @@ export function AgenticTerminal({
         },
         onExit: (code) => {
           report("exited", `exit code ${code}`);
-          term.write(
+          writeToPane(
             `\r\n\x1b[33m[${displayName} exited — code ${code}]\x1b[0m\r\n`,
           );
         },
@@ -350,7 +382,7 @@ export function AgenticTerminal({
           report(retrying ? "connecting" : "error", message);
           if (retrying && troublePrinted) return;
           troublePrinted = true;
-          term.write(
+          writeToPane(
             `\r\n\x1b[${retrying ? "33" : "31"}m[${message}]\x1b[0m\r\n`,
           );
         },
@@ -396,11 +428,39 @@ export function AgenticTerminal({
     const ro = new ResizeObserver(scheduleResize);
     ro.observe(container);
 
+    /*
+     * Stop drawing panes nobody can see.
+     *
+     * Two cases, one mechanism: a pane scrolled past in a tall grid, and a pane
+     * hidden with `display:none` because a sibling is maximized — neither
+     * intersects the viewport, and both used to keep parsing and repainting an
+     * agent's full-screen UI on the thread that owes the user a keystroke.
+     *
+     * The margin is generous on purpose: a pane one flick of the wheel away
+     * catches up before it is looked at, so scrolling never shows a pane
+     * mid-write. `IntersectionObserver` is absent in some test environments and
+     * very old engines — there the pane simply stays visible, which is exactly
+     * the behaviour this replaces.
+     */
+    let io: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        (entries) => {
+          const onScreen = entries[entries.length - 1]?.isIntersecting ?? true;
+          if (onScreen) showPane();
+          else paneVisible = false;
+        },
+        { rootMargin: "300px" },
+      );
+      io.observe(container);
+    }
+
     return () => {
       disposed = true;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       window.removeEventListener("resize", scheduleResize);
       ro.disconnect();
+      io?.disconnect();
       disposePasteBridge();
       try {
         socket?.close();

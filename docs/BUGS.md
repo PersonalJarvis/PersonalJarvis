@@ -7645,3 +7645,91 @@ honesty, and all three disarm paths).
 actually accept, and must never rely on a matching `dragleave` to take that
 announcement down. `dragenter` is a "something is moving over you" signal, not
 a "the user is offering you a file" signal.
+
+## BUG-111: typing into an Agentic-IDE terminal lags 2-3 s and then arrives in a burst (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** Characters typed into a terminal pane took
+seconds to appear. Users concluded the keystrokes were lost, retyped them, and
+the backlog then flushed at once — running the command twice. It got worse the
+more panes a workspace held and the busier the agents in them were. Measured on
+the live machine at the time: **63 panes open in one workspace**, most of them
+idle, the backend burning two cores.
+
+**Root cause — an unbounded fan-in with no pacing, on both sides of the wire.**
+
+1. **Backend: one coroutine and one websocket frame per PTY read**
+   (`jarvis/terminal/pty_manager.py`). The reader thread scheduled
+   `on_output(...)` through `run_coroutine_threadsafe` for every single
+   `read()`, and each one queued behind the socket's send lock. The producer
+   runs at PTY speed and the consumer at browser speed, so with enough panes
+   the queue grew faster than it drained — and every new chunk, including the
+   echo of the key just pressed, joined the END of it. The delay was therefore
+   not constant but *compounding*, which is why it presents as "nothing, then
+   everything at once" rather than as a steady lag.
+2. **Frontend: every pane drew, whether or not anyone could see it**
+   (`.../components/agentic/AgenticTerminal.tsx`). A pane scrolled out of the
+   grid, or hidden with `display:none` behind a maximized sibling, still ran
+   `term.write` for every chunk — parsing the escape stream, updating a cell
+   grid, scheduling a repaint. All of it on the one browser main thread that
+   also has to notice a keypress, and all of it for pixels nobody could see.
+
+Both halves multiply with the pane count, which is why the feature was fine at
+two panes and unusable at sixty.
+
+**What it was NOT.** The PTY read path, the write path, and asyncio dispatch
+were all measured at well under a millisecond, and idle panes cost nothing. The
+screen emulator (`agentic_ide/screen.py`) runs at ~4 MB/s and was never the
+limit. Frame COUNT was the cost, not bytes.
+
+**Fix.**
+
+- `PtyManager` gained a per-session **output pump**: the reader thread appends
+  to a bounded buffer and wakes the pump, and the pump forwards everything that
+  accumulated while the previous send was in flight as ONE chunk. It is
+  self-clocking — an idle pane forwards its first chunk immediately, with no
+  timer and no added latency — so a slow viewer costs frame count, never queue
+  depth. Past `MAX_PENDING_CHARS` the OLDEST output is dropped, for the reason
+  the replay buffer drops it: a terminal UI repaints continuously, so the newest
+  bytes are the screen. `on_closed` now fires after the final flush, so a caller
+  can no longer be told the agent exited while its last words are still
+  buffered.
+- An empty non-EOF read now backs off instead of spinning, which the comment
+  above it had claimed since it was written.
+- The pane writes only when it is on screen (`offscreenBuffer.ts` +
+  an `IntersectionObserver` in `AgenticTerminal.tsx`); hidden output is parked
+  and replayed in a single `term.write` when the pane comes back. Bounded the
+  same way, and every pane write — output, exit banner, trouble notice — goes
+  through the same gate so ordering survives.
+
+**Measured, 45 concurrent panes redrawing a full-screen UI (backend):**
+
+| | before | after |
+|---|---|---|
+| event-loop lag, mean | 45-126 ms | -4.5 ms |
+| event-loop lag, p99 | 482-2227 ms | 16-17 ms |
+| event-loop lag, max | 496-3344 ms | 21-30 ms |
+| keystroke echo, mean | 3.4-3.9 s | 1.1 s |
+| keystroke echo, max | 6.0-8.0 s | 1.5-1.6 s |
+| output actually delivered | 0.46-0.72 MB/s | 4.1 MB/s |
+
+The last row is the tell: the old path was so far behind that it could not even
+carry what the agents produced, in MORE frames than the new one uses.
+
+**Measured, 63 panes in a real browser (frontend):** main-thread scheduling
+delay mean 52-60 ms -> 25-30 ms, p99 102-124 ms -> 79-81 ms — i.e. from above
+the 100 ms interactivity budget to below it.
+
+**Guards.** `tests/unit/terminal/test_pty_output_pump.py` (first chunk not
+delayed, backlog coalesced, oldest dropped under flood, exit after the final
+output, a broken viewer does not stop the PTY, an idle PTY does not spin);
+`offscreenBuffer.test.ts` and `AgenticTerminal.offscreen.test.tsx` (withhold,
+replay in one write, ordering, and no gating where `IntersectionObserver` is
+absent).
+
+**Class rule.** Whenever a thread produces into an event loop for a consumer
+that can be slower than the producer, forward the BACKLOG, not each item: one
+wake-up and one coalesced hand-off, bounded, dropping the stalest. Per-item
+scheduling turns a slow consumer into a compounding delay, and the first thing
+that delay eats is the user's own keystrokes. The same rule governs the far end
+— never render for a surface nobody is looking at, because that thread is
+usually the one holding the keyboard.
