@@ -79,12 +79,28 @@ import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
 import { createKeyEventChain } from "./terminalKeyChain";
 import { installNewlineBridge } from "./terminalNewline";
-import { OffscreenBuffer } from "./offscreenBuffer";
+import {
+  boxOnScreen,
+  OffscreenBuffer,
+  OFFSCREEN_MARGIN_PX,
+} from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollbar } from "./PaneScrollbar";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
+
+/**
+ * Is the whole document out of sight — window behind another, minimized, or in
+ * a background tab?
+ *
+ * Read through a function rather than inlined so a pane behaves the same in a
+ * test environment that ships no `document`, and so the two places that must
+ * agree about it cannot drift apart.
+ */
+function documentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden === true;
+}
 
 /** A coding CLI a split may start, as offered by the pane's split menu. */
 export interface SplitAgentChoice {
@@ -439,6 +455,24 @@ export function AgenticTerminal({
       if (held) term.write(held);
     };
 
+    /**
+     * Un-park this pane if it is genuinely on screen — measured, not remembered.
+     *
+     * The observer below reports CHANGES, and a pane can be left parked in a
+     * state no change ever leads out of (see `boxOnScreen`). This is the way
+     * back, and it is called from the two moments that produce exactly that
+     * state: the document becoming visible again, and the pane being resized.
+     */
+    const revealIfOnScreen = () => {
+      if (paneVisible) return;
+      const box = container.getBoundingClientRect();
+      const viewport = {
+        width: window.innerWidth || 0,
+        height: window.innerHeight || 0,
+      };
+      if (boxOnScreen(box, viewport)) showPane();
+    };
+
     // Everything this pane draws goes through here, not just the agent's
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
@@ -492,6 +526,13 @@ export function AgenticTerminal({
         return;
       }
       if (socket?.send({ t: "r", ...size })) sentSize = size;
+      // Resizing a pane is the other half of the un-park story. Maximizing one,
+      // dragging a seam, changing the font — all of them are a user opening up
+      // a pane to READ it, and the pane it opens must not be a parked one still
+      // holding its agent's screen. The measurement above already proved the
+      // container has area, so this only ever un-parks a pane that is really
+      // there; a pane genuinely off screen stays parked.
+      revealIfOnScreen();
     };
     resizeRef.current = sendResize;
 
@@ -620,18 +661,55 @@ export function AgenticTerminal({
       io = new IntersectionObserver(
         (entries) => {
           const onScreen = entries[entries.length - 1]?.isIntersecting ?? true;
-          if (onScreen) showPane();
-          else paneVisible = false;
+          if (onScreen) {
+            showPane();
+            return;
+          }
+          // A hidden DOCUMENT is not an off-screen pane, and treating the two
+          // as one is what left panes black for minutes at a time. While the
+          // window is behind another one, minimized, or its tab in the
+          // background, EVERY element here reports intersecting nothing — and
+          // bringing the window back changes no geometry, so no further
+          // callback ever arrives to undo it. Parking on that verdict meant a
+          // pane opened while the user was looking elsewhere never drew again
+          // (measured 2026-07-27: a workspace spawned by voice came back with
+          // its new panes empty, and a chatty CLI took ~3 minutes to appear —
+          // exactly how long 256 KB of output takes to force the buffer out).
+          //
+          // Parking is also pointless in that state: a hidden document paints
+          // nothing, so there is no frame budget being defended. The whole
+          // reason this exists is panes competing for the main thread WHILE the
+          // user watches another one.
+          if (!documentHidden()) paneVisible = false;
         },
-        { rootMargin: "300px" },
+        { rootMargin: `${OFFSCREEN_MARGIN_PX}px` },
       );
       io.observe(container);
+    }
+
+    /*
+     * The window came back — check whether this pane is on screen now.
+     *
+     * The observer cannot answer this on its own: showing a window again moves
+     * neither geometry nor scroll position, which are the only things that make
+     * it recompute. Without this a pane parked while the app sat behind an
+     * editor stayed parked after the user switched back to it.
+     */
+    const onDocumentVisible = () => {
+      if (documentHidden()) return;
+      revealIfOnScreen();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onDocumentVisible);
     }
 
     return () => {
       disposed = true;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       window.removeEventListener("resize", scheduleResize);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onDocumentVisible);
+      }
       ro.disconnect();
       io?.disconnect();
       disposePasteBridge();

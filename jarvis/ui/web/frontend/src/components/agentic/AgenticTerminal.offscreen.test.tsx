@@ -199,6 +199,45 @@ describe("AgenticTerminal off-screen output", () => {
     );
   });
 
+  it("does not park while the whole document is hidden", () => {
+    // The window behind an editor, minimized, or a background tab: every
+    // element reports intersecting nothing, and showing the window again moves
+    // no geometry, so no further callback ever arrives to undo it. Parking on
+    // that verdict is what left freshly spawned panes black — for minutes on a
+    // chatty CLI, and indefinitely on one that printed its prompt and went
+    // quiet (2026-07-27).
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    mount();
+    act(() => harness.fire?.(false));
+
+    act(() => harness.handlers?.onOutput("the agent's opening screen"));
+    expect(harness.writes).toContain("the agent's opening screen");
+    hidden.mockRestore();
+  });
+
+  it("replays a parked pane when the window comes back", () => {
+    // Parked while the document was still visible (a pane genuinely scrolled
+    // out of the grid), then the app went behind another window and returned.
+    // No geometry changed across that, so the observer says nothing and the
+    // pane has to answer for itself.
+    mount();
+    act(() => harness.fire?.(false));
+    act(() => harness.handlers?.onOutput("held while away"));
+    expect(harness.writes).toEqual([]);
+
+    // On screen by measurement — jsdom reports a zero box otherwise, which
+    // would (correctly) read as "no area, still off screen".
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 10, bottom: 400, left: 10, right: 400, width: 390, height: 390,
+      x: 10, y: 10, toJSON: () => ({}),
+    } as DOMRect);
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(harness.writes).toEqual(["held while away"]);
+  });
+
   it("stays visible where IntersectionObserver does not exist", () => {
     // Old engines and bare test environments: the pane must keep drawing
     // rather than go permanently silent.

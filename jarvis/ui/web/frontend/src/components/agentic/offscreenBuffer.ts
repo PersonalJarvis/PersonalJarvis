@@ -41,6 +41,51 @@
  */
 export const OFFSCREEN_LIMIT_CHARS = 256 * 1024;
 
+/**
+ * How far outside the window a pane still counts as worth drawing.
+ *
+ * Generous on purpose: a pane one flick of the wheel away catches up before it
+ * is looked at, so scrolling never shows a pane mid-write. Shared by the
+ * `IntersectionObserver` that watches a pane and by {@link boxOnScreen}, which
+ * answers the same question directly — the two must agree, or a pane parks by
+ * one rule and un-parks by another.
+ */
+export const OFFSCREEN_MARGIN_PX = 300;
+
+/**
+ * Is this box on screen right now, by the same rule the observer applies?
+ *
+ * An `IntersectionObserver` is the right tool for *changes* and the wrong one
+ * for *questions*: it only recomputes when geometry or scrolling moves, so
+ * there are states it will never report its way out of. The one that put empty
+ * rectangles in a live workspace (2026-07-27): while the document is HIDDEN —
+ * the app window behind another, minimized, or its tab in the background —
+ * every element reads as intersecting nothing, and the callback that says so
+ * is the last one delivered. Showing the window again changes no geometry, so
+ * nothing fires, and a pane that parked its agent's output in that moment
+ * keeps parking it forever. It comes back only once 256 KB have piled up
+ * ({@link OffscreenBuffer.full}), which for a chatty CLI is minutes and for a
+ * freshly started one that printed its prompt and went quiet is never.
+ *
+ * So the pane asks this instead at the two moments the observer cannot cover:
+ * when the document becomes visible again, and when the pane is resized.
+ */
+export function boxOnScreen(
+  box: { top: number; bottom: number; left: number; right: number; width: number; height: number },
+  viewport: { width: number; height: number },
+  margin: number = OFFSCREEN_MARGIN_PX,
+): boolean {
+  // A pane with no area intersects nothing — that is what an element being laid
+  // out, or hidden behind a maximized sibling, looks like.
+  if (box.width < 1 || box.height < 1) return false;
+  return (
+    box.bottom >= -margin &&
+    box.right >= -margin &&
+    box.top <= viewport.height + margin &&
+    box.left <= viewport.width + margin
+  );
+}
+
 export class OffscreenBuffer {
   private chunks: string[] = [];
   private size = 0;
