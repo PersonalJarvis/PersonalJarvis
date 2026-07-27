@@ -679,11 +679,18 @@ def _build_registry() -> tuple[AppCommand, ...]:
             id="agentic-ide-prompt",
             title="Prompt an Agentic-IDE terminal",
             description=(
-                "Send an instruction to the coding agent in a named terminal. "
+                "Send an instruction to the coding agent in ONE named terminal. "
                 "Use this whenever the user tells a terminal to do something "
                 "('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') "
                 "— that work belongs to that agent, never to a background "
-                "worker. Pass the instruction in the USER's words: everything "
+                "worker. For SEVERAL terminals ('Kai and Mika both ...', 'let "
+                "the two of them ...') call 'agentic-ide-fanout' instead, with "
+                "every call-sign in 'terminals': it briefs them at once and "
+                "reports which ones really got the work. Calling this command "
+                "twice for a pair leaves the second agent idle whenever the "
+                "second call is forgotten, which is the failure mode fanout "
+                "exists to remove. "
+                "Pass the instruction in the USER's words: everything "
                 "they asked for, every constraint and file they named, nothing "
                 "invented and nothing summarised away. Do NOT write the brief "
                 "yourself — a prompt writer that has read this repository turns "
