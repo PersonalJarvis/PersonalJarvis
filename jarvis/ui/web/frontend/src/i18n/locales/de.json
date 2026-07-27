@@ -215,7 +215,7 @@
     "added": "„{0}\" wurde ins Wörterbuch aufgenommen.",
     "saved": "Wörterbuch-Eintrag gespeichert.",
     "deleted": "„{0}\" wurde aus dem Wörterbuch entfernt.",
-    "applies_note": "Änderungen gelten ab der nächsten Pipeline-Transkription — kein Neustart nötig. Im Realtime-Modus werden Wörterbuchkorrekturen nicht verwendet.",
+    "applies_note": "Änderungen gelten ab der nächsten Transkription — kein Neustart nötig. Gilt im Pipeline- wie im Realtime-Modus.",
     "dialog_add_title": "Zum Wortschatz hinzufügen",
     "dialog_edit_title": "Wörterbuch-Eintrag bearbeiten",
     "correction_toggle": "Falsch Erkanntes korrigieren",

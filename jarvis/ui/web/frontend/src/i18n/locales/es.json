@@ -215,7 +215,7 @@
     "added": "«{0}» se añadió al diccionario.",
     "saved": "Entrada del diccionario guardada.",
     "deleted": "«{0}» se eliminó del diccionario.",
-    "applies_note": "Los cambios se aplican desde la siguiente transcripción de Pipeline — no hace falta reiniciar. El modo Realtime no usa las correcciones del diccionario.",
+    "applies_note": "Los cambios se aplican desde la siguiente transcripción — no hace falta reiniciar. Funciona tanto en modo Pipeline como en Realtime.",
     "dialog_add_title": "Añadir a tu vocabulario",
     "dialog_edit_title": "Editar entrada del diccionario",
     "correction_toggle": "Corregir un error de reconocimiento",

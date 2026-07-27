@@ -215,7 +215,7 @@
     "added": "\"{0}\" added to the dictionary.",
     "saved": "Dictionary entry saved.",
     "deleted": "\"{0}\" removed from the dictionary.",
-    "applies_note": "Changes apply to your next Pipeline transcription — no restart needed. Realtime mode does not use Dictionary corrections.",
+    "applies_note": "Changes apply to your next transcription — no restart needed. Works in both Pipeline and Realtime mode.",
     "dialog_add_title": "Add to your vocabulary",
     "dialog_edit_title": "Edit dictionary entry",
     "correction_toggle": "Fix a misrecognition",
