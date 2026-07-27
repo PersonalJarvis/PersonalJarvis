@@ -12,9 +12,9 @@
  * 2. **It only worked for half the CLIs.** Why, and what this does about it,
  *    is in ./paneScroll — in short: Claude Code runs on the alternate screen
  *    with mouse tracking, so the terminal holds no scrollback to drag through
- *    and the wheel belongs to the CLI. That pane gets a grip which relays wheel
- *    notches to Claude Code instead of a thumb that would be lying about a
- *    position it cannot know.
+ *    and the wheel belongs to the CLI. That pane gets a full-track grip which
+ *    relays wheel notches to Claude Code, rather than a short thumb whose very
+ *    shape would claim a position nobody can know.
  *
  * The bar is an overlay, not a layout box: xterm reserves a gutter on the right
  * for the scrollbar it thinks it has, and the bar sits in that gutter, so
@@ -31,6 +31,7 @@ import type { Terminal } from "@xterm/xterm";
 import { cn } from "@/lib/utils";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
+  GRIP_MARKER_PX,
   IDLE_STATE,
   jogNotches,
   lineForThumbTop,
@@ -281,8 +282,13 @@ export function PaneScrollbar({
       const rect = track.getBoundingClientRect();
       const geometry = thumbGeometry(current, rect.height);
       if (!geometry) return;
-      const down = event.clientY - rect.top > geometry.topPx;
       const pages = Math.max(1, current.rows - 1);
+      // In `app` mode the grip covers the whole track, so this is all but
+      // unreachable — and where it is, aiming at the track's own middle is the
+      // only meaningful "up or down": the grip's position holds no answer.
+      const pivot =
+        current.mode === "app" ? rect.height / 2 : geometry.topPx;
+      const down = event.clientY - rect.top > pivot;
       if (current.mode === "app") relay(down ? pages : -pages);
       else term.scrollLines?.(down ? pages : -pages);
     },
@@ -351,9 +357,29 @@ export function PaneScrollbar({
           style={{
             top: geometry.topPx,
             height: geometry.heightPx,
-            background: `rgb(var(--jarvis-yellow) / ${strength})`,
+            // A full-track bar is the shape for "no position to report", so it
+            // is drawn faintly — the bright part is the marking on it, which
+            // is a handle rather than a claim. See ./paneScroll.
+            background: `rgb(var(--jarvis-yellow) / ${
+              geometry.markerPx === undefined ? strength : dragging ? 0.24 : 0.14
+            })`,
           }}
-        />
+        >
+          {geometry.markerPx !== undefined && (
+            <div
+              data-testid={`pane-scrollbar-grip-${name}`}
+              className={cn(
+                "pointer-events-none absolute left-0 w-full rounded-full",
+                dragging ? undefined : "transition-[top] duration-150",
+              )}
+              style={{
+                top: geometry.markerPx,
+                height: Math.min(GRIP_MARKER_PX, geometry.heightPx),
+                background: `rgb(var(--jarvis-yellow) / ${strength})`,
+              }}
+            />
+          )}
+        </div>
       )}
     </div>
   );

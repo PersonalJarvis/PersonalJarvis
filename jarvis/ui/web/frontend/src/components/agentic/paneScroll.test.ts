@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import {
-  GRIP_PX,
+  GRIP_MARKER_PX,
   GRIP_TRAVEL_PX,
   JOG_STEP_PX,
   MIN_THUMB_PX,
@@ -85,7 +85,11 @@ describe("readScrollState", () => {
     expect(state.mode).toBe("app");
     // No leftover position from the frozen viewport: the grip encodes none.
     expect(state.top).toBe(0);
-    expect(thumbGeometry(state, 400)).toEqual({ topPx: 178, heightPx: GRIP_PX });
+    expect(thumbGeometry(state, 400)).toEqual({
+      topPx: 0,
+      heightPx: 400,
+      markerPx: 189,
+    });
   });
 
   it("stays away from a full-screen app that did not take the mouse", () => {
@@ -125,24 +129,52 @@ describe("thumbGeometry", () => {
     expect(geometry!.topPx + geometry!.heightPx).toBe(400);
   });
 
-  it("centres a fixed grip in app mode — it encodes no position", () => {
+  /*
+   * The bug this shape exists to prevent: a fixed 44px grip centred in the
+   * track was read — by the only grammar scrollbars have — as "you are halfway
+   * up", while the pane sat at the live end of Claude Code's transcript. A bar
+   * that spans the track cannot be read that way in either direction.
+   */
+  it("spans the whole track in app mode — no length of it means a position", () => {
     const state = readScrollState(
       fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
     );
 
-    expect(thumbGeometry(state, 300)).toEqual({ topPx: 128, heightPx: GRIP_PX });
+    expect(thumbGeometry(state, 300)).toEqual({
+      topPx: 0,
+      heightPx: 300,
+      markerPx: 139,
+    });
   });
 
-  it("lets the app-mode grip follow a drag, within its travel", () => {
+  it("lets the app-mode marking follow a drag, within its travel", () => {
     const state = readScrollState(
       fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
     );
 
-    expect(thumbGeometry(state, 300, 40)?.topPx).toBe(168);
-    // A long drag keeps relaying wheel notches, but the grip stops moving —
-    // it would otherwise sit at the bottom of the track claiming to be at the
-    // end of a history whose length nobody knows.
-    expect(thumbGeometry(state, 300, 9000)?.topPx).toBe(128 + GRIP_TRAVEL_PX);
+    const dragged = thumbGeometry(state, 300, 40);
+    // The bar itself never moves — only its marking, as drag feedback.
+    expect(dragged?.topPx).toBe(0);
+    expect(dragged?.heightPx).toBe(300);
+    expect(dragged?.markerPx).toBe(179);
+    // A long drag keeps relaying wheel notches, but the marking stops moving:
+    // running it to the track's end would restore the very "you are here" read
+    // the full-track bar is here to refuse.
+    expect(thumbGeometry(state, 300, 9000)?.markerPx).toBe(
+      139 + GRIP_TRAVEL_PX,
+    );
+  });
+
+  it("keeps the app-mode marking inside a track shorter than itself", () => {
+    const state = readScrollState(
+      fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
+    );
+
+    expect(thumbGeometry(state, GRIP_MARKER_PX - 8)).toEqual({
+      topPx: 0,
+      heightPx: GRIP_MARKER_PX - 8,
+      markerPx: 0,
+    });
   });
 
   it("draws nothing when there is nothing to scroll", () => {

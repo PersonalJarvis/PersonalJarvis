@@ -55,9 +55,22 @@ def ensure_trusted(
             results.append(_trust_claude(repo_root, claude_cfg))
         elif name == "codex":
             results.append(_trust_codex(repo_root, codex_home / "config.toml"))
+        elif not _needs_trust(name):
+            # A registered entry with no trust dialog to skip — a plain shell,
+            # or a CLI that simply never asks. Nothing to write, and saying so
+            # is not the same answer as "I do not know this agent".
+            results.append(TrustResult(name, True, "noop", "nothing to pre-trust"))
         else:  # pragma: no cover - guarded upstream
             results.append(TrustResult(name, False, "error", f"unknown agent: {name}"))
     return results
+
+
+def _needs_trust(name: str) -> bool:
+    """Does the registry know this entry, and does it want folder trust seeded?"""
+    from .agents import get_agent
+
+    agent = get_agent(name)
+    return agent is None or agent.needs_trust
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

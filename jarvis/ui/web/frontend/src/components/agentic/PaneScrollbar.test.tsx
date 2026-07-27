@@ -141,7 +141,26 @@ describe("PaneScrollbar", () => {
 
     const bar = screen.getByTestId("pane-scrollbar-Dana");
     expect(bar.dataset.mode).toBe("app");
-    expect(screen.getByTestId("pane-scrollbar-thumb-Dana")).toBeTruthy();
+
+    // And it must not look like a position while it is at it. A short thumb
+    // centred in the track was read as "you are halfway up" by a pane sitting
+    // at the live end of Claude Code's transcript — so the grip spans the
+    // track, and only its marking sits in the middle.
+    const thumb = screen.getByTestId("pane-scrollbar-thumb-Dana");
+    expect(thumb.style.top).toBe("0px");
+    expect(thumb.style.height).toBe("300px");
+    expect(screen.getByTestId("pane-scrollbar-grip-Dana")).toBeTruthy();
+  });
+
+  it("draws no grip marking where the thumb's position IS the answer", () => {
+    render(<Harness term={fakeTerminal({ length: 1000 })} />);
+
+    reachForTheBar();
+
+    expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe(
+      "scrollback",
+    );
+    expect(screen.queryByTestId("pane-scrollbar-grip-Dana")).toBeNull();
   });
 
   it("hands wheel turns over the bar to the CLI that owns the screen", () => {

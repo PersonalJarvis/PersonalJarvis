@@ -46,11 +46,27 @@
  *   shell). The thumb is proportional and exact, and dragging it moves the
  *   viewport.
  * * `app` — the application took the mouse, so it holds the history (Claude
- *   Code). There is no honest position to draw, so the bar becomes a centred
- *   grip: dragging it relays wheel notches to the CLI, which scrolls itself. It
- *   springs back rather than pretending to know where it is.
+ *   Code). There is no honest position to draw, so the bar becomes a full-track
+ *   grip: dragging it relays wheel notches to the CLI, which scrolls itself.
  * * `none` — nothing to scroll (a fresh pane, or a full-screen app that does
  *   not take the mouse). The bar stays away instead of drawing a dead track.
+ *
+ * ## A short bar in the middle of a track IS a position claim
+ *
+ * `app` mode first drew a fixed 44px grip centred in the track, on the reasoning
+ * that a grip which never moves cannot be lying. It was — just in a language the
+ * code was not reading. Every scrollbar anyone has ever used says "you are here"
+ * with exactly that shape, so a pane parked at the live end of Claude Code's
+ * transcript showed a thumb halfway up its track and was read, correctly by the
+ * only grammar available, as "you are halfway up". Abstaining from a claim is
+ * not the same as saying nothing when the shape you abstain with is the shape
+ * the claim is made in.
+ *
+ * So the grip now fills the track end to end — the universal "there is no
+ * position here" — carrying a small marking that shows it can be grabbed and
+ * follows a drag for feedback. The bar occupies the whole track in either
+ * direction, which is the one arrangement no scrollbar has ever used to mean
+ * "somewhere in the middle".
  */
 import type { Terminal } from "@xterm/xterm";
 
@@ -70,6 +86,14 @@ export interface PaneScrollState {
 export interface ThumbGeometry {
   topPx: number;
   heightPx: number;
+  /**
+   * `app` mode only: where the grip's marking sits inside the bar. The bar
+   * itself spans the whole track and says nothing about position, so this is
+   * drag feedback and a "you can grab this" hint, never a location in a
+   * history. Absent in `scrollback` mode, where the bar's own position is the
+   * information.
+   */
+  markerPx?: number;
 }
 
 export const IDLE_STATE: PaneScrollState = {
@@ -82,10 +106,10 @@ export const IDLE_STATE: PaneScrollState = {
 /** A thumb shorter than this is impossible to grab in a tall pane. */
 export const MIN_THUMB_PX = 26;
 
-/** Height of the `app`-mode grip. Fixed: it encodes no position. */
-export const GRIP_PX = 44;
+/** Height of the marking on the `app`-mode grip. Encodes no position. */
+export const GRIP_MARKER_PX = 22;
 
-/** How far the `app`-mode grip may travel from centre while dragged. */
+/** How far the `app`-mode marking may travel from centre while dragged. */
 export const GRIP_TRAVEL_PX = 60;
 
 /** Drag distance that relays one wheel notch in `app` mode. */
@@ -133,8 +157,9 @@ export function appTakesWheel(term: Terminal | null): boolean {
 /**
  * Where to draw the thumb inside a track of `trackPx`, or null for no bar.
  *
- * In `app` mode `offsetPx` is the live drag offset, so the grip follows the
- * pointer while it is held and returns to the middle when it is let go.
+ * In `app` mode `offsetPx` is the live drag offset: the bar stays put — it
+ * spans the whole track — and its marking follows the pointer while it is held,
+ * returning to the middle when it is let go.
  */
 export function thumbGeometry(
   state: PaneScrollState,
@@ -144,12 +169,13 @@ export function thumbGeometry(
   if (trackPx <= 0) return null;
 
   if (state.mode === "app") {
-    const heightPx = Math.min(GRIP_PX, trackPx);
-    const centre = (trackPx - heightPx) / 2;
+    const markerHeight = Math.min(GRIP_MARKER_PX, trackPx);
+    const centre = (trackPx - markerHeight) / 2;
     const travel = clamp(offsetPx, -GRIP_TRAVEL_PX, GRIP_TRAVEL_PX);
     return {
-      heightPx,
-      topPx: Math.round(clamp(centre + travel, 0, trackPx - heightPx)),
+      topPx: 0,
+      heightPx: trackPx,
+      markerPx: Math.round(clamp(centre + travel, 0, trackPx - markerHeight)),
     };
   }
 
