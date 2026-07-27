@@ -81,6 +81,29 @@ def _validate_args(schema: dict[str, Any], args: dict[str, Any]) -> list[str]:
     return errors
 
 
+#: Response keys carrying a FULL app-state snapshot. Mutating routes return one
+#: so an open UI can re-render without a second fetch — but a language model
+#: needs what CHANGED, not the snapshot. Measured: one Agentic-IDE spawn answers
+#: with ~25 000 characters of workspace state (every pane, its transcript, the
+#: project's skills and subagents), so three calls in a turn bury the actual
+#: result and the reply the model has to act on. A live session on 2026-07-27
+#: spent 58 000 input tokens on one turn that way and lost track of the pane it
+#: had just opened. Callers that genuinely want the snapshot have a dedicated
+#: status command.
+_SNAPSHOT_KEYS = frozenset({"state"})
+
+
+def _without_snapshots(data: Any) -> Any:
+    """The server's response minus any full-state snapshot it echoed back."""
+    if not isinstance(data, dict):
+        return data
+    trimmed = {key: value for key, value in data.items() if key not in _SNAPSHOT_KEYS}
+    if trimmed.keys() <= {"ok"}:
+        # The snapshot WAS the answer; trimming it would return nothing at all.
+        return data
+    return trimmed
+
+
 def _summarize(title: str, data: Any) -> str:
     """One honest sentence from the server's actual response payload."""
     if isinstance(data, dict):
@@ -239,7 +262,7 @@ class RegistryCommandTool:
             output={
                 "command_id": cmd.id,
                 "summary": _summarize(cmd.title, data),
-                "response": data,
+                "response": _without_snapshots(data),
             },
         )
 

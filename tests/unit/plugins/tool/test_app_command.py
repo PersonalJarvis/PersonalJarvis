@@ -209,3 +209,37 @@ async def test_end_to_end_against_real_webserver_app(monkeypatch) -> None:
     # old_provider comes from cfg.brain.primary (shared app_control logic),
     # so only pin the destination side of the transition here.
     assert "-> openrouter" in result.output["summary"]
+
+
+# --------------------------------------------------------------------------- #
+# Response trimming: what CHANGED, not a snapshot of everything                #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_full_state_snapshot_is_kept_out_of_the_readback() -> None:
+    """Mutating routes echo the whole app state back; the model must not read it.
+
+    One Agentic-IDE spawn answers with roughly 25 000 characters of workspace
+    state — every pane, its transcript, the project's skills and subagents —
+    purely so an open UI can re-render without a second fetch. Three such calls
+    in one turn buried the result the model then had to act on: a live session
+    on 2026-07-27 spent 58 000 input tokens on a single turn and lost track of
+    the pane it had just opened, spawning three more.
+    """
+    from jarvis.plugins.tool.app_command import _without_snapshots
+
+    trimmed = _without_snapshots(
+        {"ok": True, "terminals": [{"name": "Kate"}], "state": {"huge": "x" * 5000}}
+    )
+
+    assert trimmed == {"ok": True, "terminals": [{"name": "Kate"}]}
+
+
+def test_a_response_that_is_only_a_snapshot_is_still_returned() -> None:
+    """Trimming must never answer with nothing at all."""
+    from jarvis.plugins.tool.app_command import _without_snapshots
+
+    payload = {"ok": True, "state": {"active": True}}
+
+    assert _without_snapshots(payload) == payload
+    assert _without_snapshots("plain text") == "plain text"
