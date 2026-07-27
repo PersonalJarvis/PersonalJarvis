@@ -448,6 +448,24 @@ _ADDITIVE_INDEXES: tuple[str, ...] = (
     # sorts the whole ~115 k-row keyword_indexed bucket.
     "CREATE INDEX IF NOT EXISTS idx_uw_items_claim"
     " ON uw_items(state, reembed_pending DESC, timestamp_utc DESC, id DESC)",
+    # :meth:`_reembed_remaining`'s exact shape, and the one index whose absence
+    # is measurable as CPU load rather than as latency. That count runs on
+    # every pipeline pass while a model switch is rebuilding, and no index
+    # above can serve it: the claim index leads with ``state``, which the
+    # query constrains only by ``!=``, so SQLite fell back to SCAN uw_items —
+    # 665 ms over a 236 k-row store, ten times a second, which is one
+    # saturated core doing nothing but recounting the same number (measured
+    # 2026-07-27).
+    #
+    # PARTIAL on purpose: the flagged backlog is a rounding error next to the
+    # corpus (1.3 k of 236 k here), so this indexes a thousandth of the table
+    # and disappears entirely once a rebuild finishes. Carrying ``state`` and
+    # ``deleted_at`` makes it cover every term of the count, so the answer
+    # comes from the index alone and the table is never touched. Partial
+    # indexes with a WHERE clause are portable across SQLite and Postgres,
+    # like the rest of this tuple.
+    "CREATE INDEX IF NOT EXISTS idx_uw_items_reembed_pending"
+    " ON uw_items(state, deleted_at) WHERE reembed_pending = 1",
 )
 
 #: The persisted per-source outcome of the last finished sync.
