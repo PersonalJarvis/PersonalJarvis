@@ -78,6 +78,21 @@ DISTILL_BATCH = 4
 #: 2026-07-26), starving the read path's event loop in the process.
 EMBED_COOLDOWN_S = 600.0
 
+#: How long the media lane rests after a pass that moved nothing.
+#:
+#: Its backlog query cannot be answered from an index — the pending flag lives
+#: inside ``metadata_json`` and SQL narrows on it with a leading-wildcard
+#: ``LIKE`` — so every attempt is a full scan of the item table, reading every
+#: column of every row it walks. That is affordable once a minute and ruinous
+#: ten times a second: measured at 173 ms over a 236 k-row store, which is a
+#: saturated core spending its entire day re-reading a corpus to rediscover the
+#: same blocked item (observed live 2026-07-27).
+#:
+#: The lane is explicitly allowed to achieve nothing forever, so resting it is
+#: free of consequence — and a pass that DOES move something never reaches the
+#: cooldown, which keeps a working backlog draining at full speed.
+MEDIA_STALL_COOLDOWN_S = 300.0
+
 #: Provider-answer shapes that mean "stop asking for a while" rather than
 #: "this item is poisoned": rate limit, out of credit, service unavailable.
 _RATE_LIMIT_MARKERS = ("HTTP 429", "HTTP 402", "HTTP 503")
@@ -252,6 +267,12 @@ class PipelineWorker:
         #: monotonic deadline until which the embedding-dependent stages rest
         #: after a rate/quota rejection (0.0 = no cooldown).
         self._embed_cooldown_until = 0.0
+        #: monotonic deadline until which the media lane rests after a pass
+        #: that changed nothing, and the id it last handed to enrichment.
+        #: Together they are how a stalled lane stops rescanning the corpus —
+        #: see :meth:`_media_pass`.
+        self._media_cooldown_until = 0.0
+        self._media_last_id: int | None = None
         #: ``name:model`` of the embedding slot the stages last resolved. The
         #: identity of a vector space, and therefore of whatever is refusing
         #: to fill it.
@@ -1061,9 +1082,17 @@ class PipelineWorker:
         mode = self._media_mode()
         if mode == "off":
             return 0
+        # Before the scan, never after: the scan IS the cost here (see
+        # MEDIA_STALL_COOLDOWN_S), so a lane that is resting must not pay for
+        # the question it has already been answered.
+        if time.monotonic() < self._media_cooldown_until:
+            return 0
         pending = await self._pending_media(MEDIA_BATCH)
         if not pending:
             self._clear_stage_pause("media")
+            # An empty backlog is a stable answer — nothing but an import can
+            # change it, and that takes longer than the nap.
+            self._media_cooldown_until = time.monotonic() + MEDIA_STALL_COOLDOWN_S
             return 0
         worked = 0
         for item in pending:
@@ -1081,6 +1110,27 @@ class PipelineWorker:
                     item, text="", reason=f"enrichment failed ({type(exc).__name__})"
                 )
             worked += 1
+        # Did the lane actually MOVE? The backlog is ordered by id, so the same
+        # head twice running means enrichment neither described that item nor
+        # marked it undescribable — the tight circle this lane's docstring
+        # promises never to spin in, and which it nonetheless spun in for a
+        # whole day because every pass reported the item as "worked" and asked
+        # again 100 ms later. Resting on a repeat is what makes that promise
+        # true; a lane that is draining sees a new head every pass and is never
+        # slowed down here.
+        try:
+            head: int | None = int(pending[0]["id"])
+        except (KeyError, TypeError, ValueError):
+            head = None
+        if head is not None and head == self._media_last_id:
+            self._media_cooldown_until = time.monotonic() + MEDIA_STALL_COOLDOWN_S
+            self._note_stage_pause(
+                "media",
+                f"item {head} did not move; resting the lane for "
+                f"{MEDIA_STALL_COOLDOWN_S / 60.0:.0f} min",
+                key="media-stall",
+            )
+        self._media_last_id = head
         return worked
 
     def _media_mode(self) -> str:

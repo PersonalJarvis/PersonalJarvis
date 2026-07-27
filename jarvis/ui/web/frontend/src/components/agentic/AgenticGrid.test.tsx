@@ -213,6 +213,11 @@ const BASE = sessionWith([
  * collapse/reopen behaviour itself.
  */
 beforeEach(() => {
+  // Pane sizes are remembered per workspace, and every test here uses the same
+  // workspace id — so without this a test that splits or drags a seam would
+  // hand its sizes to the next one and the layout assertions would depend on
+  // the order the tests happen to run in.
+  window.localStorage.clear();
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   vi.mocked(api.addTerminal).mockResolvedValue(
     sessionWith([
@@ -411,23 +416,39 @@ describe("pane actions", () => {
 });
 
 describe("grid layout", () => {
-  /** The one grid container every pane is a direct child of. */
-  function gridEl(): HTMLElement {
-    const cell = screen.getAllByTestId(/^pane-cell-/)[0];
-    const container = cell.parentElement;
-    if (!container) throw new Error("no grid container");
-    return container;
-  }
-
   /** The inline style of a pane's cell, as written (jsdom keeps it verbatim). */
   function cellStyle(name: string): string {
     return screen.getByTestId(`pane-cell-${name}`).getAttribute("style") ?? "";
   }
 
+  /**
+   * A pane's rectangle, as the four percentages it was positioned with.
+   *
+   * Panes are placed by FRACTION now rather than by grid track, because one CSS
+   * grid shares `grid-template-columns` across all of its rows — so two bands
+   * could never have had different column widths, and every pane in a band was
+   * stuck the same size as its neighbours.
+   */
+  function box(name: string): { left: number; top: number; width: number; height: number } {
+    const style = cellStyle(name);
+    const read = (property: string) => {
+      const match = new RegExp(`${property}: (?:calc\\()?([-\\d.]+)%`).exec(style);
+      if (!match) throw new Error(`${name} has no ${property}: ${style}`);
+      return Number(match[1]);
+    };
+    return {
+      left: read("left"),
+      top: read("top"),
+      width: read("width"),
+      height: read("height"),
+    };
+  }
+
   it("puts a fresh workspace side by side in one row", () => {
     renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
-    expect(gridEl().style.gridTemplateColumns).toBe("repeat(4, minmax(0, 1fr))");
-    expect(gridEl().style.gridTemplateRows).toBe("repeat(1, minmax(240px, 1fr))");
+    expect(box("Mika")).toMatchObject({ left: 0, top: 0, width: 25, height: 100 });
+    expect(box("Nova").left).toBe(25);
+    expect(box("Kai").left).toBe(75);
   });
 
   it("a downward split takes only its OWN column, not the whole width", () => {
@@ -442,15 +463,13 @@ describe("grid layout", () => {
         ["Aria", 2, 0],
       ]),
     );
-    expect(gridEl().style.gridTemplateColumns).toBe("repeat(3, minmax(0, 1fr))");
-    expect(gridEl().style.gridTemplateRows).toBe("repeat(2, minmax(240px, 1fr))");
-    expect(cellStyle("Mika")).toContain("grid-row: 1 / span 2");
-    expect(cellStyle("Aria")).toContain("grid-row: 1 / span 2");
-    expect(cellStyle("Nova")).toContain("grid-row: 1 / span 1");
-    expect(cellStyle("Vega")).toContain("grid-row: 2 / span 1");
-    // Both panes of the split share one column.
-    expect(cellStyle("Nova")).toContain("grid-column: 2");
-    expect(cellStyle("Vega")).toContain("grid-column: 2");
+    expect(box("Mika").height).toBe(100);
+    expect(box("Aria").height).toBe(100);
+    expect(box("Nova")).toMatchObject({ top: 0, height: 50 });
+    expect(box("Vega")).toMatchObject({ top: 50, height: 50 });
+    // Both panes of the split share one column, so they share its left edge.
+    expect(box("Vega").left).toBe(box("Nova").left);
+    expect(box("Vega").width).toBe(box("Nova").width);
   });
 
   it("wraps a crowded workspace into two even bands", () => {
@@ -458,8 +477,8 @@ describe("grid layout", () => {
     // into 6 above and 6 below.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
-    expect(gridEl().style.gridTemplateColumns).toBe("repeat(6, minmax(0, 1fr))");
-    expect(cellStyle("T7")).toContain("grid-row: 2 / span 1");
+    expect(box("T1")).toMatchObject({ left: 0, top: 0 });
+    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
     // Same parent for every pane — a pane that moves to another parent element
     // is remounted, and remounting kills the agent behind it.
     expect(screen.getByTestId("pane-cell-T12").parentElement).toBe(
@@ -471,25 +490,25 @@ describe("grid layout", () => {
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
-    // Without this the pane would stay in its one-sixth cell while the rest of
-    // the workspace is blank.
-    expect(cellStyle("T3")).toContain("grid-column: 1 / -1");
-    expect(cellStyle("T3")).toContain("grid-row: 1 / -1");
-    // ...and the grid it now spans is ONE track filling the window, not the
-    // twelve-pane template. Spanning that template made the maximized pane
-    // taller than the visible area in any workspace big enough to scroll, so
-    // the terminal fitted itself to rows below the clip — which is where the
-    // CLI keeps its prompt box.
-    expect(gridEl().style.gridTemplateRows).toBe("minmax(0, 1fr)");
-    expect(gridEl().style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    // Without this the pane would stay in its one-twelfth rectangle while the
+    // rest of the workspace is blank.
+    expect(cellStyle("T3")).toContain("inset: 0");
+    // ...and the surface it fills is exactly the window, not the whole
+    // workspace. A maximized pane taller than the visible area made the
+    // terminal fit itself to rows below the clip — which is where the CLI keeps
+    // its prompt box.
+    expect(screen.getByTestId("agentic-grid").className).toContain("overflow-hidden");
+    expect(screen.getByTestId("agentic-grid-canvas").style.height).toBe("");
+    // Nothing to divide while one pane covers the others.
+    expect(screen.queryAllByTestId(/^pane-seam-/)).toHaveLength(0);
   });
 
-  it("gives the tracks back when the pane is restored", () => {
+  it("gives the panes their own rectangles back when one is restored", () => {
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
-    expect(gridEl().style.gridTemplateColumns).toBe("repeat(6, minmax(0, 1fr))");
+    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
   });
 });
 
@@ -1160,6 +1179,157 @@ describe("prompt bar seam", () => {
 });
 
 
+/*
+ * Sizing the workspace by hand.
+ *
+ * Two complaints, one cause: panes were sized by CSS grid tracks, so they were
+ * always all the same. Splitting one therefore resized the whole line, and the
+ * boundaries between them were plain borders with nothing to grab.
+ */
+describe("resizing the workspace", () => {
+  const WEIGHTS_KEY = "jarvis.agenticIde.paneWeights.v1.ide_test";
+
+  /** jsdom measures nothing, and a drag is pixels — so give it a size. */
+  function measured(width: number, height: number) {
+    const spies = [
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width),
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(height),
+    ];
+    return () => spies.forEach((spy) => spy.mockRestore());
+  }
+
+  function widthOf(name: string): number {
+    const style = screen.getByTestId(`pane-cell-${name}`).getAttribute("style") ?? "";
+    const match = /width: (?:calc\()?([-\d.]+)%/.exec(style);
+    if (!match) throw new Error(`${name} has no width: ${style}`);
+    return Math.round(Number(match[1]) * 10) / 10;
+  }
+
+  function stored(): { columns: number[]; panes: Record<string, number> } {
+    return JSON.parse(window.localStorage.getItem(WEIGHTS_KEY) ?? "{}");
+  }
+
+  /*
+   * Drag a seam from `fromX` to `toX`.
+   *
+   * Spelled with `MouseEvent` rather than `fireEvent.pointerDown` because jsdom
+   * has no `PointerEvent`: the synthesised one arrives with no `clientX` at all,
+   * so the drag reads a NaN distance and the test passes or fails for a reason
+   * that has nothing to do with the code. A mouse event carries real
+   * coordinates, and the listeners only ever look at the event's name.
+   */
+  function dragSeamBy(testId: string, fromX: number, toX: number) {
+    const seam = screen.getByTestId(testId);
+    // One `act` per step, not one around all three: the window listeners are
+    // armed by an effect that runs when the drag STARTS, and a single block
+    // would deliver the move before that effect had a chance to run.
+    act(() => {
+      seam.dispatchEvent(
+        new MouseEvent("pointerdown", { clientX: fromX, bubbles: true }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: toX }));
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+  }
+
+  it("puts a grab handle on every boundary between panes", () => {
+    renderGrid(sessionWith([["Mika", 0], ["Nova", 0, 1], ["Aria", 1]]));
+    // One between the two columns, one between the panes stacked in the first.
+    expect(screen.getByTestId("pane-seam-column:0:1")).toBeTruthy();
+    expect(screen.getByTestId("pane-seam-pane:Mika:Nova")).toBeTruthy();
+  });
+
+  it("puts one between two rows of terminals as well", () => {
+    const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
+    renderGrid(sessionWith(panes));
+    expect(screen.getByTestId("pane-seam-band:0:1")).toBeTruthy();
+  });
+
+  it("moves width between the two panes a seam divides and no others", () => {
+    // Wide enough that all three panes share one line — below ~1140 px they
+    // wrap, and a wrapped pane is not a neighbour of the seam being dragged.
+    const restore = measured(1800, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]));
+      dragSeamBy("pane-seam-column:0:1", 600, 900);
+
+      // A sixth of the line moved from Nova to Mika...
+      expect(widthOf("Mika")).toBe(50);
+      expect(widthOf("Nova")).toBe(16.7);
+      // ...and the pane that was not part of the drag is untouched.
+      expect(widthOf("Aria")).toBe(33.3);
+    } finally {
+      restore();
+    }
+  });
+
+  it("remembers the sizes so a restart brings the workspace back as it was", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      expect(stored().columns).toEqual([1.5, 0.5]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("evens two neighbours out again on a double-click", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      expect(widthOf("Mika")).toBe(75);
+
+      fireEvent.doubleClick(screen.getByTestId("pane-seam-column:0:1"));
+      expect(widthOf("Mika")).toBe(50);
+    } finally {
+      restore();
+    }
+  });
+
+  it("moves a seam from the keyboard, which is the only way back on a touchpad", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      const seam = screen.getByTestId("pane-seam-column:0:1");
+      fireEvent.keyDown(seam, { key: "ArrowRight", shiftKey: true });
+      // One coarse step of 64 px out of 1000, moved from Nova to Mika.
+      expect(widthOf("Mika")).toBe(56.4);
+    } finally {
+      restore();
+    }
+  });
+
+  it("halves the pane that was split instead of resizing every other one", async () => {
+    // The complaint: splitting one terminal used to narrow all of them, because
+    // a new pane meant a new share of the window rather than half of its anchor.
+    vi.mocked(api.addTerminal).mockResolvedValue(
+      sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]]),
+    );
+    renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+
+    fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
+
+    await waitFor(() => expect(stored().columns).toEqual([0.5, 0.5, 1]));
+  });
+
+  it("halves it downwards too, leaving the column beside it full height", async () => {
+    vi.mocked(api.addTerminal).mockResolvedValue(
+      sessionWith([["Mika", 0], ["New", 0, 1], ["Nova", 1]]),
+    );
+    renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+
+    fireEvent.click(screen.getByTestId("pane-split-down-Mika"));
+
+    await waitFor(() => expect(stored().panes).toEqual({ Mika: 0.5, New: 0.5 }));
+  });
+});
+
 describe("a workspace with far more panes than the window fits", () => {
   /** Many panes, one per column, the way a big fan-out opens them. */
   function manyPanes(count: number) {
@@ -1168,27 +1338,22 @@ describe("a workspace with far more panes than the window fits", () => {
     );
   }
 
-  function grid(): HTMLElement {
-    const cell = screen.getAllByTestId(/^pane-cell-/)[0];
-    const container = cell.parentElement;
-    if (!container) throw new Error("no grid container");
-    return container;
-  }
-
   it("keeps every pane readable instead of sharing the height N ways", () => {
-    // The failure this guards: rows used to be a free `1fr`, so panes shrank
+    // The failure this guards: height used to be a free `1fr`, so panes shrank
     // without limit. Measured on a 2560 px screen, 12 panes gave each ~26 text
     // rows, 40 gave 7 and 100 gave 3 — readable width, unusable height, and
     // nothing crashed to tell anyone.
+    //
+    // 40 panes one per column wrap into 4 bands of 10, and a band never gets
+    // less than one minimum pane height, so the workspace is drawn 4 × 240 px
+    // tall however short the window is.
     renderGrid(manyPanes(40));
-    const rows = grid().style.gridTemplateRows;
-    expect(rows).toContain("240px");
-    expect(rows).not.toContain("minmax(0,");
+    expect(screen.getByTestId("agentic-grid-canvas").style.height).toBe("960px");
   });
 
   it("scrolls once the panes stop fitting, rather than squeezing them", () => {
     renderGrid(manyPanes(40));
-    expect(grid().className).toContain("overflow-y-auto");
+    expect(screen.getByTestId("agentic-grid").className).toContain("overflow-y-auto");
   });
 
   it("renders a pane for every one of a hundred terminals", () => {
@@ -1433,5 +1598,45 @@ describe("rearranging panes", () => {
 
     await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "Nova is gone."));
     expect(onSessionChanged).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * The one header row, and what shares it.
+ *
+ * Three horizontal bands used to sit above the panes: the app's bar, the
+ * workspace tabs, and this toolbar. They are one row now, which is only safe as
+ * long as the things that moved into it are actually IN it — a Restart button
+ * that quietly stopped rendering would leave the section with no way to pick up
+ * its own rebuild, and nothing else on the screen would look wrong.
+ */
+describe("the workspace header row", () => {
+  it("carries the workspace tabs beside this workspace's own controls", () => {
+    renderGrid(BASE, {
+      workspaceBar: <div data-testid="stand-in-tabs">tabs</div>,
+    });
+
+    const toolbar = screen.getByTestId("agentic-toolbar");
+    expect(toolbar.contains(screen.getByTestId("stand-in-tabs"))).toBe(true);
+    expect(toolbar.contains(screen.getByTestId("agentic-focus-toggle"))).toBe(true);
+  });
+
+  it("carries the app's own actions in the same row", () => {
+    renderGrid(BASE, {
+      appActions: <button type="button">Restart</button>,
+    });
+
+    const toolbar = screen.getByTestId("agentic-toolbar");
+    expect(
+      toolbar.contains(screen.getByRole("button", { name: "Restart" })),
+    ).toBe(true);
+  });
+
+  it("names the project itself when no tabs were handed to it", () => {
+    // The wizard and the component tests render the grid on its own. Without
+    // the tabs the row would otherwise open with no idea which folder it is.
+    renderGrid();
+
+    expect(screen.getByTestId("agentic-toolbar").textContent).toContain("project");
   });
 });

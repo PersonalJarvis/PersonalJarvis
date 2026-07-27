@@ -254,6 +254,77 @@ class TestMediaPass:
         assert await worker_for(store, media_cfg("off"))._media_pass() == 0
         assert len(await store.pending_media_items(limit=10)) == 1
 
+    async def test_a_stalled_lane_stops_rescanning_the_corpus(
+        self, store, tmp_path, monkeypatch
+    ):
+        """An item that stays queued must not be re-fetched every 100 ms.
+
+        The backlog query is a full scan of the item table — the pending flag
+        lives inside metadata_json, so no index can serve it — and the lane
+        above deliberately leaves a failed item queued for a provider that may
+        arrive later. Those two together spun a tight circle that re-read a
+        236 k-row corpus ten times a second for a whole day (2026-07-27). The
+        item stays queued, as it must; what stops is the asking.
+        """
+        photo = tmp_path / "a.png"
+        photo.write_bytes(PNG)
+        await store.upsert_items("src1", [photo_item(1, photo)])
+
+        async def _describe(data, *, filename, cfg, **kwargs):
+            from jarvis.ultrawiki.media_enrich import EnrichResult
+
+            return EnrichResult(reason="no provider can read images")
+
+        patch_describe(monkeypatch, _describe)
+        worker = worker_for(store, media_cfg())
+
+        scans = 0
+        probe = store.pending_media_items
+
+        async def counting(**kwargs):
+            nonlocal scans
+            scans += 1
+            return await probe(**kwargs)
+
+        monkeypatch.setattr(store, "pending_media_items", counting)
+
+        # Two passes to SEE a standstill — the second is what proves the head
+        # did not move — and from then on the lane stops asking entirely.
+        assert await worker._media_pass() == 1
+        assert await worker._media_pass() == 1
+        assert scans == 2
+        assert await worker._media_pass() == 0
+        assert scans == 2, "a rested lane must not scan the corpus again"
+        # And the item is still queued — resting is not giving up.
+        item = await only_item(store)
+        assert item["metadata"]["enrich_pending"] is True
+
+    async def test_a_draining_lane_is_never_slowed_down(
+        self, store, tmp_path, monkeypatch
+    ):
+        """The rest above must not cost throughput while work is getting done.
+
+        A lane that describes something sees a different item next pass, and
+        that difference is exactly what keeps it running at full speed.
+        """
+        for n in (1, 2):
+            photo = tmp_path / f"{n}.png"
+            photo.write_bytes(PNG)
+            await store.upsert_items("src1", [photo_item(n, photo)])
+
+        async def _describe(data, *, filename, cfg, **kwargs):
+            from jarvis.ultrawiki.media_enrich import EnrichResult
+
+            return EnrichResult(text=f"A picture ({filename}).", ok=True, provider="seeing")
+
+        patch_describe(monkeypatch, _describe)
+        worker = worker_for(store, media_cfg())
+
+        assert await worker._media_pass() == 1
+        # No cooldown was armed, so the very next pass runs and drains the second.
+        assert await worker._media_pass() == 1
+        assert await store.pending_media_items(limit=10) == []
+
     async def test_the_lane_defers_to_every_other_stage(self, store, tmp_path):
         """Frugal means: only in the gaps. A photo must never delay the keyword
         indexing of the text that arrived with it."""
