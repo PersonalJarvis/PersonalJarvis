@@ -8,6 +8,14 @@ export interface AgentStatus {
   installed: boolean;
   version: string | null;
   install_command: string | null;
+  /**
+   * What opening this entry gives you: `"cli"` a coding agent, `"shell"` a
+   * plain terminal on this machine's own shell. The UI branches on this rather
+   * than on the entry's name, so a CLI registered later needs no change here.
+   */
+  kind?: string;
+  /** One line a picker can show under the name. */
+  description?: string;
 }
 
 export interface AgentsResponse {
@@ -81,6 +89,13 @@ export interface TerminalState {
   name: string;
   agent: string;
   display_name: string;
+  /**
+   * Can Jarvis type into this pane? False for a plain terminal — that is a
+   * shell prompt, and an injected line would RUN rather than be read, so the
+   * prompt bar leaves those panes out instead of offering a target that
+   * refuses everything sent to it.
+   */
+  accepts_prompts?: boolean;
   index: number;
   /** Grid column, left to right. Each column is its own stack of panes. */
   column: number;
@@ -190,6 +205,24 @@ export interface WorkspaceCard {
   active: boolean;
 }
 
+/**
+ * Which subscription new terminals of one coding CLI open on.
+ *
+ * `account_count` is what lets a surface stay quiet: with a single login there
+ * is nothing to choose, and a chip answering a question nobody has is noise.
+ */
+export interface IdeAccountState {
+  /** Backend id of the coding CLI — "claude", "codex". */
+  agent: string;
+  /** What the user reads — "Claude Code". */
+  display_name: string;
+  active_account: string | null;
+  /** Its display name ("Work seat"), which is the only readable form of the id. */
+  active_label: string | null;
+  /** How many subscriptions are registered for this CLI, the built-in included. */
+  account_count: number;
+}
+
 export interface IdeState {
   active: boolean;
   session: SessionState | null;
@@ -199,6 +232,8 @@ export interface IdeState {
   /** The one on screen, or null while the wizard is showing. */
   active_id: string | null;
   max_workspaces: number;
+  /** The active subscription per coding CLI. Absent on an older backend. */
+  accounts?: IdeAccountState[];
 }
 
 /** One pane of the workspace being offered back after a close or a restart. */
@@ -841,6 +876,27 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
   return body.focus_mode;
 }
 
+/**
+ * One dropped file after the backend has read what is actually in it.
+ *
+ * `detail` is the whole point: for an image it is a description written by a
+ * model that could see it, for a document the extracted text. That is what
+ * makes dropping a screenshot useful against a coding agent that cannot open
+ * one — the file reference alone would leave it guessing.
+ */
+export interface DropAttachment {
+  name: string;
+  /** How the agent should refer to the file — `@path` or a quoted path. */
+  reference: string;
+  kind: "image" | "text" | "pdf" | "other";
+  /** The description or extracted text. Empty when neither could be produced. */
+  detail: string;
+  /** Which layer produced `detail`. */
+  described_by: "vision" | "extraction" | "none";
+  /** Why `detail` is empty or shortened. Empty on the happy path. */
+  note: string;
+}
+
 export interface AttachResult {
   terminal: string;
   /** What was typed into the pane — `@path` for Claude Code, a quoted path otherwise. */
@@ -850,6 +906,10 @@ export interface AttachResult {
   /** How many had to be copied into the workspace (the rest were already there). */
   copied: number;
   submitted: boolean;
+  /** False when `deliver: false` held the files back instead of typing them. */
+  delivered?: boolean;
+  /** Present only when `analyze` was asked for. */
+  analysis?: DropAttachment[];
 }
 
 /**
@@ -859,6 +919,11 @@ export interface AttachResult {
  * `paths` are the real locations an Explorer/Finder drag usually carries, and
  * `files` are raw bytes for everything else (a pasted screenshot has no path at
  * all). Sending both lets the backend skip copying whatever already exists.
+ *
+ * `analyze` and `deliver` are what separate a drop on a PANE from a drop on the
+ * prompt bar. A pane wants the path typed and nothing else. The prompt bar wants
+ * the file read — described or extracted — and held, because the user is still
+ * writing the sentence that explains it.
  */
 export async function attachToTerminal(
   name: string,
@@ -867,6 +932,10 @@ export async function attachToTerminal(
     paths?: string[];
     note?: string;
     submit?: boolean;
+    /** Read the files' contents and return them under `analysis`. */
+    analyze?: boolean;
+    /** Default true. False stores and analyses without typing into the pane. */
+    deliver?: boolean;
   },
 ): Promise<AttachResult> {
   const form = new FormData();
@@ -874,6 +943,8 @@ export async function attachToTerminal(
   if (payload.paths?.length) form.append("paths", payload.paths.join("\n"));
   if (payload.note) form.append("note", payload.note);
   if (payload.submit) form.append("submit", "true");
+  if (payload.analyze) form.append("analyze", "true");
+  if (payload.deliver === false) form.append("deliver", "false");
 
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/attach`,
@@ -912,18 +983,29 @@ export interface PromptResult {
  * `composePrompt`) so the user approves the rewrite before it is typed into
  * their agent. Silently rewriting what someone typed would be the wrong kind
  * of helpful; showing it and asking is not.
+ *
+ * `attachments` belong on the VERBATIM path, not on the composed one. Someone
+ * who chose their own wording still dropped a screenshot on purpose, and
+ * sending their sentence without it would lose the file they attached; the
+ * backend appends the contents underneath their words rather than rewriting
+ * them. The composed text already carries the same material, so passing them
+ * with it would say everything twice.
  */
 export async function promptTerminal(
   name: string,
   prompt: string,
-  options: { compose?: boolean } = {},
+  options: { compose?: boolean; attachments?: DropAttachment[] } = {},
 ): Promise<PromptResult> {
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, compose: Boolean(options.compose) }),
+      body: JSON.stringify({
+        prompt,
+        compose: Boolean(options.compose),
+        attachments: options.attachments ?? [],
+      }),
     },
   );
   if (!res.ok) throw new Error(await detail(res));
@@ -945,17 +1027,24 @@ export interface ComposedPreview {
  * Same composition the spoken path uses, stopped one step short so the user can
  * read it. Takes as long as one model call plus reading a few files — the
  * caller should show that it is working.
+ *
+ * `attachments` are files the user dropped onto the prompt bar, already read by
+ * the attach endpoint. They are passed HERE and not on the send that follows:
+ * the composed text already contains their contents, so sending them twice
+ * would append the same description underneath the brief that just described
+ * it.
  */
 export async function composePrompt(
   name: string,
   prompt: string,
+  attachments: DropAttachment[] = [],
 ): Promise<ComposedPreview> {
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, compose: true, dry_run: true }),
+      body: JSON.stringify({ prompt, compose: true, dry_run: true, attachments }),
     },
   );
   if (!res.ok) throw new Error(await detail(res));

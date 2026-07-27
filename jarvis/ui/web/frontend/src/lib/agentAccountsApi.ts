@@ -27,7 +27,7 @@ export interface AgentAccount {
   email: string | null;
   tier: string | null;
   /**
-   * Set when this account is signed in as the SAME identity as another one â€”
+   * Set when this account is signed in as the SAME identity as another one —
    * two rows, one plan's usage. Absent on older backends, hence optional.
    */
   warning?: string | null;
@@ -125,10 +125,17 @@ export function deleteAgentAccount(
   );
 }
 
-/** The group for one platform, or undefined while the list is still loading. */
+/**
+ * The group for one platform, or undefined while the list is still loading.
+ *
+ * `platforms` is optional-chained as well, and that is not defensive noise: an
+ * older backend, a warming one, or a proxy answering with something else hands
+ * back an object with no `platforms` at all, and reaching into it threw — which
+ * took down the WHOLE section the panel sits in rather than costing one list.
+ */
 export function groupFor(
   data: AgentAccountsResponse | null,
   platform: AccountPlatform,
 ): AccountPlatformGroup | undefined {
-  return data?.platforms.find((group) => group.platform === platform);
+  return data?.platforms?.find((group) => group.platform === platform);
 }

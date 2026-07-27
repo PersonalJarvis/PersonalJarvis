@@ -256,8 +256,11 @@ export function useWebSocket(): void {
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
         }
 
-        if (env.event_name === "AgenticIdeTerminalsAdded") {
-          // Panes were opened by voice or the CLI. The workspace view loads its
+        if (
+          env.event_name === "AgenticIdeTerminalsAdded" ||
+          env.event_name === "AgenticIdeTerminalsClosed"
+        ) {
+          // Panes were changed by voice or the CLI. The workspace view loads its
           // state once on mount, so without this it would keep showing the old
           // grid while the agents are already running. Trigger only — the view
           // re-runs its own fetch, which is the single source of truth for the

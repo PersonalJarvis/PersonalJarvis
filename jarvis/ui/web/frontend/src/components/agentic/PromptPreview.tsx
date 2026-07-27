@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { FileCode2, Send, Type, X } from "lucide-react";
+import { FileCode2, Image as ImageIcon, Paperclip, Send, Type, X } from "lucide-react";
+import type { DropAttachment } from "@/lib/agenticIdeApi";
 
 /**
  * The composed prompt, shown for approval before it is typed into an agent.
@@ -23,6 +24,8 @@ export interface PromptPreviewProps {
   files: string[];
   /** Which layer produced it — `llm` is the full path. */
   composedBy: "llm" | "fallback" | "raw";
+  /** Files dropped with the instruction, and what was read out of them. */
+  attachments?: DropAttachment[];
   onSend: () => void;
   onSendVerbatim: () => void;
   onCancel: () => void;
@@ -33,6 +36,7 @@ export function PromptPreview({
   composed,
   files,
   composedBy,
+  attachments = [],
   onSend,
   onSendVerbatim,
   onCancel,
@@ -82,6 +86,51 @@ export function PromptPreview({
               {file}
             </span>
           ))}
+        </div>
+      )}
+
+      {/*
+        What was read out of the dropped files, shown as itself.
+
+        The description is already folded into the prompt above, so this is not
+        a second copy of the content — it is the answer to the one question the
+        prompt text cannot settle: did the picture actually get looked at? On an
+        install with no vision-capable provider it did not, the brief was
+        written without it, and the user needs to see that BEFORE the agent
+        starts rather than after it asks what the screenshot showed.
+      */}
+      {attachments.length > 0 && (
+        <div className="mt-2" data-testid="prompt-preview-attachments">
+          {attachments.map((item) => {
+            const read = item.described_by !== "none" && item.detail.length > 0;
+            return (
+              <details
+                key={item.name}
+                className="mt-1 rounded-md border border-border bg-background/40 px-2 py-1.5"
+              >
+                <summary className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
+                  {item.kind === "image" ? (
+                    <ImageIcon className="h-3 w-3 shrink-0" />
+                  ) : (
+                    <Paperclip className="h-3 w-3 shrink-0" />
+                  )}
+                  <span className="max-w-[14rem] truncate font-mono text-foreground">
+                    {item.name}
+                  </span>
+                  <span>
+                    {read
+                      ? item.described_by === "vision"
+                        ? "— described and included below"
+                        : "— text read and included"
+                      : "— attached as a file only"}
+                  </span>
+                </summary>
+                <p className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground">
+                  {read ? item.detail : item.note || "Nothing could be read from this file."}
+                </p>
+              </details>
+            );
+          })}
         </div>
       )}
 

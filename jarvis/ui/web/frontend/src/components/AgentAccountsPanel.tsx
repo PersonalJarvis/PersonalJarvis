@@ -54,7 +54,28 @@ const PLATFORM_LABEL: Record<AccountPlatform, string> = {
 
 const PLATFORMS: AccountPlatform[] = ["claude", "codex"];
 
-export function AgentAccountsPanel() {
+/** How the switch is applied — see `onActivate`. */
+type Activate = (
+  platform: AccountPlatform,
+  accountId: string,
+) => Promise<AgentAccountsResponse | void>;
+
+interface AgentAccountsPanelProps {
+  /**
+   * Applies the switch. Defaults to the stored-default route, which is what the
+   * Settings page means by it.
+   *
+   * The Agentic IDE passes its own so the open workspace learns about the
+   * change in the same round-trip — one panel, one behaviour, two places it can
+   * be reached from. Anything it returns replaces the list; returning nothing
+   * makes the panel re-read it.
+   */
+  onActivate?: Activate;
+  /** One extra line under the description, e.g. where the switch takes effect. */
+  note?: string;
+}
+
+export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps = {}) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const [data, setData] = useState<AgentAccountsResponse | null>(null);
@@ -106,6 +127,11 @@ export function AgentAccountsPanel() {
       <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
         {t("agent_accounts.description")}
       </p>
+      {note && (
+        <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+          {note}
+        </p>
+      )}
 
       {error && (
         <p className="px-1 text-[11px] text-amber-600" role="alert">
@@ -121,6 +147,7 @@ export function AgentAccountsPanel() {
             group={groupFor(data, platform)}
             busy={busy}
             run={run}
+            activate={onActivate ?? setActiveAgentAccount}
           />
         ))}
       </div>
@@ -133,11 +160,13 @@ function PlatformCard({
   group,
   busy,
   run,
+  activate,
 }: {
   platform: AccountPlatform;
   group: ReturnType<typeof groupFor>;
   busy: string | null;
   run: (key: string, action: () => Promise<AgentAccountsResponse | void>) => Promise<void>;
+  activate: Activate;
 }) {
   const t = useT();
   const [adding, setAdding] = useState(false);
@@ -175,6 +204,7 @@ function PlatformCard({
             active={account.id === activeId}
             busy={busy}
             run={run}
+            activate={activate}
           />
         ))}
         {accounts.length === 0 && (
@@ -233,11 +263,13 @@ function AccountRow({
   active,
   busy,
   run,
+  activate,
 }: {
   account: AgentAccount;
   active: boolean;
   busy: string | null;
   run: (key: string, action: () => Promise<AgentAccountsResponse | void>) => Promise<void>;
+  activate: Activate;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -245,11 +277,9 @@ function AccountRow({
   const [draft, setDraft] = useState(account.label);
   const pending = busy?.endsWith(account.id) ?? false;
 
-  async function activate() {
+  async function use() {
     if (active) return;
-    await run(`active:${account.id}`, () =>
-      setActiveAgentAccount(account.platform, account.id),
-    );
+    await run(`active:${account.id}`, () => activate(account.platform, account.id));
   }
 
   async function signIn() {
@@ -281,7 +311,7 @@ function AccountRow({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => void activate()}
+          onClick={() => void use()}
           disabled={active || pending}
           aria-pressed={active}
           aria-label={`${t("agent_accounts.use_account")}: ${account.label}`}
@@ -371,8 +401,8 @@ function AccountRow({
         <span className="min-w-0 break-words">{account.message}</span>
       </p>
 
-      {/* Two accounts on ONE subscription look completely healthy â€” both rows
-          green, both naming a valid plan â€” and the only symptom is usage
+      {/* Two accounts on ONE subscription look completely healthy — both rows
+          green, both naming a valid plan — and the only symptom is usage
           draining twice as fast. So it is said out loud, next to the row that
           duplicates another, rather than left to be deduced from a usage page. */}
       {account.warning && (
