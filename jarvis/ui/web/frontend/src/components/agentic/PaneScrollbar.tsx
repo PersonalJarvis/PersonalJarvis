@@ -212,9 +212,15 @@ export function PaneScrollbar({
   // settle period later and a pointer crossing the hot zone twice in that time
   // must not ask twice.
   //
-  // One answer does expire: "this pane has no history at all" is true of the
-  // moment it was measured, and a pane that was empty when it opened fills up.
-  // See `measuredNoHistory` in ./paneAppScroll.
+  // Only one answer stands for good: "there IS history here". Everything else
+  // expires. "This pane has no history at all" is true of the moment it was
+  // measured, and a pane that was empty when it opened fills up; a probe that
+  // produced no answer AT ALL — sent while the application was repainting, or
+  // into a terminal that was still being built — leaves the pane in the very
+  // same state, without a bar and with nothing measured. Treating only the
+  // first of those as re-askable is what left a pane one unlucky probe away
+  // from having no scrollbar for the rest of its life. See `measuredNoHistory`
+  // and `PROBE_STALE_MS` in ./paneAppScroll.
   const probedAt = useRef<{ epoch: number; at: number } | null>(null);
   useEffect(() => {
     if (!nearEdge) return;
@@ -225,10 +231,7 @@ export function PaneScrollbar({
     const stale = () => {
       const last = probedAt.current;
       if (!last || last.epoch !== epoch) return true;
-      return (
-        measuredNoHistory(positionRef.current) &&
-        Date.now() - last.at >= PROBE_STALE_MS
-      );
+      return Date.now() - last.at >= PROBE_STALE_MS;
     };
     // Nothing to ask while a history is known to exist — except when the only
     // thing known is that there was none, and that reading has gone stale.

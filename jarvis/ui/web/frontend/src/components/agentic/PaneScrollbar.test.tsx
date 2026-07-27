@@ -367,6 +367,67 @@ describe("PaneScrollbar", () => {
   });
 
   /*
+   * The same rule for the question that was never answered at all — a notch
+   * relayed into a terminal that was still being built, or while the agent was
+   * repainting its whole screen. Nothing is measured either way, so the pane
+   * looks exactly like one with no history: no bar. Treating only an explicit
+   * "nothing here" as re-askable left such a pane one unlucky probe away from
+   * having no scrollbar for the rest of its life, which is the original bug
+   * with a rarer trigger.
+   */
+  it("asks again when the first probe went unanswered", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      const relayed: number[] = [];
+      render(<Harness term={pane.term} />);
+      const host = document.querySelector(".agentic-terminal-host")!;
+      const paneScreen = host.querySelector(".xterm-screen")!;
+      paneScreen.addEventListener("wheel", (event) => {
+        const delta = (event as WheelEvent).deltaY;
+        relayed.push(delta);
+        pane.show(
+          delta < 0
+            ? [...transcript(0, 1), ...transcript(1, 23)]
+            : transcript(1, 24),
+        );
+      });
+      // The terminal is not up yet: there is nothing to hand a notch to.
+      paneScreen.remove();
+
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+      expect(relayed).toEqual([]);
+      expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
+
+      // Pointer away, the terminal arrives, and the question is asked again.
+      fireEvent.mouseMove(screen.getByTestId("region"), {
+        clientX: 40,
+        clientY: 150,
+      });
+      host.appendChild(paneScreen);
+      act(() => vi.advanceTimersByTime(PROBE_STALE_MS));
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+
+      expect(relayed).toEqual([-1, 1]);
+      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe(
+        "app",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
    * And it is only for panes whose application holds the history. A terminal that
    * owns its scrollback already reports the truth, and a relayed notch there would
    * scroll the user's view for no reason at all.

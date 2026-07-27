@@ -154,6 +154,31 @@ function identifiable(text: string): boolean {
 }
 
 /**
+ * How many rows hold different text than they did a moment ago.
+ *
+ * The evidence that SOMETHING happened, counted without any claim about what.
+ * A row that was blank and still is does not count, and neither does trailing
+ * whitespace — an application that repaints a row with the same text on it has
+ * not moved anything.
+ *
+ * Used by {@link detectShift} to tell its two silences apart. See the reasoning
+ * there: a screen full of short, look-alike rows can be scrolled without a
+ * single row being recognisable afterwards, and the difference between "it did
+ * not move" and "we cannot say how far" is the difference between a pane that
+ * keeps its scrollbar and one that loses it.
+ */
+function restlessRows(before: string[], after: string[]): number {
+  const rows = Math.max(before.length, after.length);
+  let restless = 0;
+  for (let i = 0; i < rows; i += 1) {
+    const was = (before[i] ?? "").trim();
+    const now = (after[i] ?? "").trim();
+    if (was !== now && (was !== "" || now !== "")) restless += 1;
+  }
+  return restless;
+}
+
+/**
  * The lines currently on screen, top row first.
  *
  * Defensive like the rest of this area: an xterm build without `getLine`, or a
@@ -189,6 +214,26 @@ export function visibleRows(term: Terminal | null): string[] {
  * the prompt box and status line of a coding agent — match at zero and nowhere
  * else, so they raise every candidate's floor equally and never decide the
  * outcome as long as the scrolling region is the larger part of the screen.
+ *
+ * ## Zero is a verdict, and it is only reached on a still screen
+ *
+ * "Did not move" is the single most consequential answer this function gives:
+ * {@link applyShift} reads it as an end of the history, and an end of the
+ * history at distance zero is a pane with nothing to scroll — which takes its
+ * scrollbar away. So it may only be returned when the screen really did stand
+ * still, and NOT merely because nothing recognisable lined up.
+ *
+ * Those two came apart on a real transcript. When the scrolling region is
+ * short, look-alike rows — a column of numbers, a file tree, a wrapped list —
+ * every one of them fails the `identifiable` test above, the only rows left to
+ * vote are the prompt box and status line the application pins to the bottom,
+ * and those match at zero by construction. The screen had scrolled by three
+ * lines; the measurement reported that it had not moved at all, and the pane
+ * was recorded as having no history to scroll (measured 2026-07-27 against
+ * Claude Code 2.1.220, replaying a recorded session into a real terminal).
+ *
+ * Hence the last guard: if rows changed that no offset accounts for, the honest
+ * answer is null — we cannot say how far it went — and never zero.
  */
 export function detectShift(before: string[], after: string[]): number | null {
   const anchors = before.filter(identifiable).length;
@@ -214,7 +259,12 @@ export function detectShift(before: string[], after: string[]): number | null {
       bestScore = score;
     }
   }
-  return bestScore >= MIN_COMPARABLE_ROWS ? best : null;
+  if (bestScore < MIN_COMPARABLE_ROWS) return null;
+  // Zero only stands for a screen that stood still — see the header above.
+  if (best === 0 && restlessRows(before, after) >= MIN_COMPARABLE_ROWS) {
+    return null;
+  }
+  return best;
 }
 
 /**
@@ -318,14 +368,24 @@ export const PROBE_RETURN_MS = SETTLE_MS + 60;
 export const PROBE_WAIT_MS = SETTLE_MS + 40;
 
 /**
- * How long a "there is no history here" answer stands before it may be re-asked.
+ * How long an answer that found nothing stands before the pane may be re-asked.
  *
  * See {@link measuredNoHistory}: that answer is true of a moment, not of a pane.
- * A minute is long enough that nobody meets the probe twice in one reach for the
- * edge, and short enough that a pane which has since filled up gets its bar back
- * the next time somebody looks for it.
+ * The same goes for the probe that produced no answer at all — a terminal that
+ * was still being built, a relay that landed while the application was busy
+ * repainting. Both leave the pane exactly as it was: without a bar.
+ *
+ * A minute was far too long for that. Re-asking costs nothing precisely BECAUSE
+ * the last answer was "nothing here": a probe against a pane with no history
+ * moves nothing and is invisible, and one against a pane that has since filled
+ * up is the measurement that gives it its scrollbar back. Seconds, then — long
+ * enough that nobody meets the probe twice in one reach for the edge, short
+ * enough that the next reach after the pane fills up finds a working bar.
+ *
+ * "There IS history" is the one answer that never expires: a transcript does not
+ * get shorter.
  */
-export const PROBE_STALE_MS = 60_000;
+export const PROBE_STALE_MS = 5_000;
 
 /**
  * Ask a full-screen CLI whether it has a history — without moving the user.

@@ -104,6 +104,40 @@ describe("detectShift", () => {
     expect(detectShift(before, after)).toBe(1);
   });
 
+  /*
+   * The failure the whole bar hung on, in miniature — measured 2026-07-27 by
+   * replaying a recorded Claude Code 2.1.220 session into a real terminal.
+   *
+   * A column of short, look-alike rows (numbers, a file tree, a wrapped list)
+   * carries nothing recognisable enough to survive a scroll, so the only rows
+   * that still match are the ones the application pins to the bottom — and
+   * those match at a shift of zero by construction. Read as "the screen did not
+   * move", that is an end of the history at distance zero: a pane with nothing
+   * to scroll, and therefore no scrollbar at all, while its transcript was
+   * scrolling three lines at a time under the pointer.
+   *
+   * "We cannot say how far it went" is the honest answer, and it costs nothing:
+   * the caller falls back to what it asked for and claims no end of anything.
+   */
+  it("refuses to call a screen still that plainly changed", () => {
+    const furniture = [
+      "─────────────────",
+      "> type here",
+      "─────────────────",
+      "main · Opus 5 (1M context)",
+      "bypass permissions on",
+    ];
+    const numbers = (from: number) =>
+      Array.from({ length: 10 }, (_, i) => `  ${from + i}`);
+
+    expect(
+      detectShift(
+        [...numbers(40), ...furniture],
+        [...numbers(37), ...furniture],
+      ),
+    ).toBeNull();
+  });
+
   it("refuses to guess from a screen with nothing on it", () => {
     expect(detectShift(["", "", "a", ""], ["", "", "", "a"])).toBeNull();
     expect(detectShift(transcript(1, 2), transcript(1, 2))).toBeNull();
