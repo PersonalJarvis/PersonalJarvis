@@ -7,6 +7,75 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.6.0] — 2026-07-27
+
+> **On the version number.** This release jumps from 1.1.5 to 1.6.0. The
+> numbers in between were used by an internal development line that was never
+> published, and reusing them would have made two different builds share a
+> name. Nothing is missing — 1.6.0 follows directly on 1.1.5.
+
+### Added
+
+- **Agentic IDE — a voice-driven workspace for coding agents.** Open several
+  named terminal panes, each running a different coding CLI (Codex, Claude,
+  Gemini and others), then split, drag and resize them freely. Address a pane
+  by its name, spoken or typed, and the instruction goes to that agent; one
+  request can brief a whole fleet at once and reports back which agents
+  actually received it. Drop files onto a pane and they are analysed before
+  they become part of the prompt. Workspaces and sessions survive a restart
+  and offer to resume. When a spoken call-sign is unclear, the assistant asks
+  once instead of guessing — and says so plainly when an instruction reached
+  nobody.
+- **UltraWiki — a personal knowledge base built from your own material.** A
+  staged import pipeline, hybrid keyword and semantic search, and an Explore
+  view with topics, moments and a graph. Readers cover local folders, GitHub
+  issues and pull requests, cloud-storage attachments, phone media (with
+  image description and audio transcription), generic HTTP and RSS sources,
+  and Obsidian vault import and export.
+
+  What it needs: semantic search requires one embedding backend — Ollama runs
+  locally with no key at all, or use a Gemini, OpenAI, Voyage, Mistral or
+  Cohere key. Without one, search runs on keywords only and the built-in
+  health checklist says so rather than failing quietly. Storage is SQLite by
+  default and needs no setup; Postgres and Supabase are optional
+  (`pip install "personal-jarvis[ultrawiki-postgres]"`). Your own content
+  never leaves your machine except to the providers you configure.
+- **Local and subscription brains.** A generic provider for any server
+  speaking the OpenAI chat API (llama.cpp, vLLM, LM Studio, HF serve), a
+  keyless local Ollama provider, and an Anthropic-subscription option — a
+  fully offline or self-hosted setup is now a real path.
+- **Marketplace connectors**, including Home Assistant, plus a self-hosted
+  server option for supported services.
+
+### Changed
+
+- Wake-word verification no longer assumes the wake phrase is spoken in
+  German; it follows the language actually in use.
+- Skill routing is deterministic and relevance-scored, and mission workers
+  now reach the same knowledge the voice assistant does.
+- A coding CLI is a registry entry rather than a hardcoded path, so a newly
+  supported agent is reachable by voice the day it lands.
+- UltraWiki's background import paces itself against a configurable share of
+  the machine instead of monopolising a core.
+
+### Fixed
+
+- **A skill imported from a link no longer activates itself.** Imported
+  skills are stored as drafts and stay inactive until explicitly enabled, and
+  a downloaded file can no longer declare itself active.
+- A misheard agent name can no longer deliver an instruction to the wrong
+  terminal.
+- A denied tool call inside a mission is treated as a recoverable setback
+  rather than ending the whole mission.
+- Sub-second audio gaps mid-answer, a realtime fallback misreported as a
+  hangup, and a turn-planner failure ending a live call.
+- A spoken mention of an unrelated product name could unlock desktop control;
+  dictation and auto-type tools went dead while the app ran elevated.
+- Disconnecting a marketplace plugin now revokes the grant at the provider
+  instead of only forgetting it locally.
+
+---
+
 ## [1.1.5] — 2026-07-26
 
 ### Added
