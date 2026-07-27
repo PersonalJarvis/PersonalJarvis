@@ -177,6 +177,27 @@ async def deliver(
     gate = asyncio.Semaphore(max(1, int(limit)))
 
     async def one(name: str) -> Delivery:
+        """One pane's verdict, announced the moment it is known.
+
+        Announced here rather than after the gather: with a fleet composing at
+        once, collecting every line until the slowest pane finishes turns
+        per-pane progress back into the silence it exists to remove.
+        """
+        delivery = await _one(name)
+        try:
+            from .prompt_composer import announce_delivery
+
+            announce_delivery(
+                delivery.terminal,
+                delivered=delivery.delivered,
+                submitted=delivery.submitted,
+                reason=delivery.reason,
+            )
+        except Exception:  # noqa: BLE001 - a progress line never costs a delivery
+            log.debug("Agentic IDE fan-out: could not announce %s", name, exc_info=True)
+        return delivery
+
+    async def _one(name: str) -> Delivery:
         term = session.find(name) if session is not None else None
         if term is None:
             return Delivery(
@@ -184,6 +205,19 @@ async def deliver(
                 delivered=False,
                 reason_code="unknown_pane",
                 reason="there is no terminal by that name in this workspace",
+            )
+        # A plain terminal is a shell, not an agent — Jarvis does not type into
+        # one (see session.accepts_prompts). Checked here as well as in the
+        # sender so naming one in a fleet order costs neither a composition nor
+        # an exception, and comes back as a plain sentence the readback can say.
+        from .session import accepts_prompts
+
+        if not accepts_prompts(str(getattr(term, "agent", "") or "")):
+            return Delivery(
+                terminal=term.name,
+                delivered=False,
+                reason_code="not_an_agent",
+                reason="it is a plain terminal, so Jarvis does not type into it",
             )
         # Status and PTY are checked BEFORE composing: a prompt for a dead pane
         # costs a full quality-tier call and can never be typed anywhere.

@@ -121,22 +121,44 @@ def _suffix(name: str) -> str:
     return PurePosixPath(name.replace("\\", "/")).suffix.lower()
 
 
-def _is_image(item: DroppedItem) -> bool:
+# The three classifiers below are PUBLIC on purpose. The Agentic IDE analyses
+# the same dropped files a second time (to describe a screenshot and extract a
+# document before a coding agent is briefed), and a second copy of the
+# extension/MIME register there would drift the moment either side learns a new
+# file type — the classic multi-layer drift this repo keeps getting bitten by.
+# One register, two callers.
+
+
+def is_image(item: DroppedItem) -> bool:
+    """True when this drop is a picture — something a model has to SEE."""
     return item.mime.lower().startswith("image/")
 
 
-def _is_textual(item: DroppedItem) -> bool:
+def is_textual(item: DroppedItem) -> bool:
+    """True when this drop can be inlined as UTF-8 text.
+
+    Extension and MIME both count, because drag-drop MIME is unreliable: an OS
+    happily hands over ``application/octet-stream`` for a ``.py`` file.
+    """
     mime = item.mime.lower()
     if mime.startswith(_TEXTUAL_MIME_PREFIXES) or mime in _TEXTUAL_MIMES:
         return True
     return _suffix(item.name) in _TEXT_EXTS
 
 
-def _is_pdf(item: DroppedItem) -> bool:
+def is_pdf(item: DroppedItem) -> bool:
+    """True when this drop is a PDF, whichever of MIME or name says so."""
     return item.mime.lower() == "application/pdf" or _suffix(item.name) == ".pdf"
 
 
-def _extract_pdf_text(data: bytes, *, max_chars: int) -> str:
+# Kept as private aliases: this module's own call sites read better unprefixed,
+# and the names appear in existing tests.
+_is_image = is_image
+_is_textual = is_textual
+_is_pdf = is_pdf
+
+
+def extract_pdf_text(data: bytes, *, max_chars: int) -> str:
     """Best-effort PDF text extraction; empty string when unavailable.
 
     ``pypdf`` is optional — never a hard dependency. Any failure (missing lib,
@@ -156,6 +178,9 @@ def _extract_pdf_text(data: bytes, *, max_chars: int) -> str:
         return "\n".join(parts).strip()[:max_chars]
     except Exception:  # noqa: BLE001 — optional, best-effort
         return ""
+
+
+_extract_pdf_text = extract_pdf_text
 
 
 def classify_and_compose(

@@ -229,6 +229,9 @@ def test_an_agent_fleet_with_a_split_belongs_to_the_open_workspace() -> None:
     assert found is not None
     assert found.count == 5
     assert intent.owns_turn(FLEET_REQUEST, names=NAMES) is True
+    instruction = intent.spawn_instruction(FLEET_REQUEST)
+    assert "spawnen" not in instruction  # i18n-allow: fixture assertion
+    assert "Codebase" in instruction
 
 
 def test_an_agent_fleet_naming_a_coding_cli_also_counts() -> None:
@@ -284,3 +287,195 @@ def test_an_addressed_terminal_still_wins_over_the_spawn_grammar() -> None:
     assert found is not None
     assert found.terminal == "Alex"
     assert intent.detect_spawn(utterance, names=NAMES) is None
+
+
+# --------------------------------------------------------------------------- #
+# Live voice regressions from 2026-07-27                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_repeated_fleet_count_inside_the_task_does_not_double_the_spawn() -> None:
+    utterance = (
+        "Kannst du bitte fünf neue Codex Terminals spawnen und ich möchte, "
+        "dass du jeden dieser fünf Codex Agents promptest, dass sie einen "
+        "Deep Dive machen"
+    )  # i18n-allow: production transcript under test
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.count == 5
+    assert found.agent == "codex"
+    assert intent.spawn_includes_task(utterance) is True
+    assert intent.spawn_instruction(utterance) == "einen Deep Dive machen"
+
+
+def test_worker_count_later_in_the_task_is_not_a_terminal_count() -> None:
+    utterance = (
+        "Spawn five Codex terminals and prompt each one to start 50 subagents "
+        "for a read-only review"
+    )
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.count == 5
+    assert found.groups == (intent.SpawnGroup(count=5, agent="codex"),)
+    assert intent.spawn_includes_task(utterance) is True
+
+
+def test_polite_commas_do_not_separate_the_spawn_verb_from_the_count() -> None:
+    found = intent.detect_spawn(
+        "Spawn, please, five Codex terminals for me",
+        names=NAMES,
+    )
+
+    assert found is not None
+    assert found.count == 5
+    assert found.agent == "codex"
+
+
+def test_follow_up_about_existing_terminals_does_not_spawn_worker_count() -> None:
+    utterance = (
+        "Aber du hast hier zehn neue Terminals und du sollst jeden davon "
+        "prompten, dass die selber noch mal 50 Subagenten starten"
+    )  # i18n-allow: production transcript under test
+
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.references_recent_fleet(utterance) is True
+    assert [item.terminal for item in intent.detect_all(utterance, names=NAMES)] == NAMES
+
+
+def test_close_all_codex_terminals_is_a_workspace_intent() -> None:
+    utterance = "Kannst du bitte alle Codex Terminals schließen?"  # i18n-allow: production transcript under test
+
+    found = intent.detect_close_fleet(utterance)
+
+    assert found == intent.CloseTerminalsRequest(agent="codex", utterance=utterance)
+    assert intent.owns_turn(utterance, names=NAMES) is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Are all Codex terminals closed?",
+        "Close the Codex terminal named Alex",
+        "What closes every terminal?",
+    ],
+)
+def test_close_all_detector_rejects_questions_and_single_panes(utterance: str) -> None:
+    assert intent.detect_close_fleet(utterance) is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Briefing the fleet — the verb belongs to the WORK, not to the panes.
+        "tell all the terminals to stop what they are doing",
+        "tell every terminal to stop the dev server",
+        "ask all terminals to stop after this task",
+        "have each terminal close the files it opened",
+        "sag allen Terminals, sie sollen die Tests stoppen",  # i18n-allow: spoken input under test
+        # The quantifier belongs to something running INSIDE the panes.
+        "kill all the node processes in the terminals",
+        "stop all the failing tests in the terminals",
+        "beende alle laufenden Testläufe in den Terminals",  # i18n-allow: spoken input under test
+    ],
+)
+def test_fleet_instructions_are_never_read_as_closing_the_workspace(
+    utterance: str,
+) -> None:
+    """A prompt for the fleet must not destroy the fleet.
+
+    Every one of these closed EVERY pane in the workspace — no confirmation, no
+    undo, ten coding agents gone — because the detector only asked whether a
+    pane noun, an "all" word and a stop-verb appeared anywhere in the sentence.
+    They are the ordinary way a user talks to a workspace full of terminals, so
+    each one has to stay a prompt.
+    """
+    assert intent.detect_close_fleet(utterance) is None
+
+
+@pytest.mark.parametrize(
+    ("utterance", "agent"),
+    [
+        ("close all terminals", None),
+        ("Please close all Codex terminals", "codex"),
+        ("schliess alle Terminals", None),  # i18n-allow: spoken input under test
+        # i18n-allow: spoken input under test
+        ("Kannst du bitte alle Claude Code Terminals beenden?", "claude"),
+        ("close all the open terminals", None),
+        ("stop every pane", None),
+    ],
+)
+def test_a_real_close_request_still_closes(utterance: str, agent: str | None) -> None:
+    """The narrowing must not cost the feature itself."""
+    found = intent.detect_close_fleet(utterance)
+
+    assert found is not None
+    assert found.agent == agent
+
+
+# --------------------------------------------------------------------------- #
+# Live voice regression from 2026-07-27: the task stated BEFORE the spawn       #
+# --------------------------------------------------------------------------- #
+# The user described the work first, named a pane that was not running, and put
+# the spawn in a conditional afterthought: "let Lee do a deep dive on this and
+# fix it — if there is no terminal by that name, open one and prompt it right in
+# there". Only the text AFTER the spawn clause was read for a task, and that
+# text is nothing but the fallback wording. So one blank pane opened, was
+# announced as ready, and the deep dive was never handed to anyone. The user's
+# next sentence was "you did nothing".
+
+CONDITIONAL_SPAWN = (
+    "Kannst du bitte dazu Lee einen Deep Dive machen lassen? Und das fixen. "
+    "Wenn es kein Terminal gibt, welches so heißt, spawn ein neues und lass "
+    "es dann direkt da rein"
+)  # i18n-allow: production transcript under test
+
+
+def test_a_task_stated_before_a_conditional_spawn_still_reaches_the_new_pane() -> None:
+    found = intent.detect_spawn(CONDITIONAL_SPAWN, names=NAMES)
+
+    assert found is not None
+    assert found.count == 1, "one pane was asked for, not one per clause"
+    assert intent.spawn_includes_task(CONDITIONAL_SPAWN) is True
+    instruction = intent.spawn_instruction(CONDITIONAL_SPAWN)
+    assert "Deep Dive" in instruction
+    assert "spawn" not in instruction.casefold(), "the fallback wording is not the work"
+
+
+def test_the_english_and_spanish_conditional_forms_carry_the_task_too() -> None:
+    english = (
+        "Have Lee investigate the empty area in the layout and fix it. "
+        "If there is no terminal called that, open a new one and prompt it there"
+    )
+    spanish = (
+        "Que Lee revise el área vacía del diseño y lo arregle. "
+        "Si no hay una terminal con ese nombre, abre una nueva"
+    )  # i18n-allow: spoken input under test
+
+    for utterance in (english, spanish):
+        assert intent.spawn_includes_task(utterance) is True
+        assert "Lee" in intent.spawn_instruction(utterance)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # No condition: the sentence in front is conversation, not a brief.
+        # i18n-allow: spoken input under test
+        "Die Tests sind gerade grün geworden. Spawne zwei neue Terminals",
+        "I fixed the layout myself. Open two more Codex terminals",
+        # A condition but nothing that reads as work in front of it.
+        "Wenn noch Platz ist, spawn bitte ein Terminal",  # i18n-allow: spoken input under test
+    ],
+)
+def test_talk_in_front_of_a_plain_spawn_is_not_a_brief(utterance: str) -> None:
+    """The panes open blank, which is exactly what was asked for.
+
+    Reading any leading sentence as a task would type yesterday's news into a
+    fresh agent — the mirror image of the bug above, and just as wrong.
+    """
+    assert intent.detect_spawn(utterance, names=NAMES) is not None
+    assert intent.spawn_includes_task(utterance) is False

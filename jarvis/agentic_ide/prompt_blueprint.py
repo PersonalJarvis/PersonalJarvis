@@ -298,6 +298,7 @@ def user_block(
     candidates: list[str],
     skeletons: dict[str, str],
     house_rules: str,
+    attachments: list | None = None,
 ) -> str:
     """Everything the composer knows, laid out for one model call.
 
@@ -311,6 +312,14 @@ def user_block(
         parts.append("WORKSPACE\n" + "\n".join(profile_lines))
     if house_rules:
         parts.append("HOUSE RULES OF THIS REPOSITORY\n" + house_rules)
+
+    dropped = attachment_block(attachments or [])
+    if dropped:
+        parts.append(
+            "FILES THE USER DROPPED (already saved where the agent can open "
+            "them; an image was described by a model that could see it)\n" + dropped
+        )
+        parts.append(_ATTACHMENT_RULES)
 
     if skeletons:
         outlines = "\n\n".join(
@@ -343,16 +352,45 @@ def user_block(
     return "\n\n".join(parts)
 
 
-def render_fallback(instruction: str, files: list[str]) -> str:
+def render_fallback(
+    instruction: str,
+    files: list[str],
+    attachments: list | None = None,
+) -> str:
     """The deterministic prompt: same skeleton, no model involved.
 
     Used whenever no writer model is reachable. It is always better than the
     raw transcript, so the feature never depends on a provider being up.
+
+    Dropped files are carried here as well, and that is the load-bearing half
+    for a downloader with no writing model: the screenshot was still described
+    (vision and prompt-writing are separate providers, and having one without
+    the other is ordinary), so the description belongs in the prompt whether or
+    not a model wrote the prose around it.
     """
     task = " ".join((instruction or "").split())
-    if not task:
+    usable = [a for a in attachments or [] if getattr(a, "name", "")]
+    if not task and not usable:
         return ""
-    out = [f"## Task\n{task}"]
+    out = [f"## Task\n{task}"] if task else []
+
+    if usable:
+        blocks: list[str] = []
+        for item in usable:
+            head = f"### {item.name}"
+            if item.reference:
+                # Plain hyphen, like the rest of the agent-facing text here: this
+                # string is TYPED into a terminal, and a pane's encoding is not
+                # ours to assume.
+                head += f" - {item.reference}"
+            if item.detail and getattr(item, "described_by", "") == "vision":
+                blocks.append(f"{head}\nWhat this image shows:\n\n{item.detail}")
+            elif item.detail:
+                blocks.append(f"{head}\nContents:\n\n```\n{item.detail}\n```")
+            else:
+                blocks.append(f"{head}\n{item.note or 'No content could be read.'}")
+        out.append("## Dropped files\n" + "\n\n".join(blocks))
+
     if files:
         listed = "\n".join(f"- `@{f}`" for f in files)
         out.append(f"## Key files\n{listed}")
@@ -429,6 +467,7 @@ __all__ = [
     "MAX_BODY_CHARS",
     "TARGET_MAX_CHARS",
     "TARGET_MIN_CHARS",
+    "attachment_block",
     "ends_on_reference",
     "looks_like_brief",
     "looks_truncated",

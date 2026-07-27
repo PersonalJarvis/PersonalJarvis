@@ -13,11 +13,14 @@ class, one layer up. These tests pin the three things that make the feature real
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from jarvis.agentic_ide import recents, session as session_mod
+from jarvis.agentic_ide import recents
+from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import MAX_TERMINALS, Registry
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
@@ -44,7 +47,10 @@ def _event_names(bus: FakeBus) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_recents(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolated_recents(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Keep the recents file out of the developer's real data directory.
 
     Opening a workspace records it as "most recently used", and that file lives
@@ -148,6 +154,73 @@ async def test_a_named_agent_is_honoured_over_the_inherited_one(
 
     assert registry.session is not None
     assert [t.agent for t in registry.session.terminals] == ["codex", "claude", "claude"]
+
+
+async def test_spawn_and_prompt_queues_exactly_the_new_codex_fleet(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1, agent="claude")
+    received: list[tuple[list[str], str]] = []
+    called = asyncio.Event()
+
+    async def _brief(_session: object, names: list[str], utterance: str) -> None:
+        received.append((names, utterance))
+        called.set()
+
+    monkeypatch.setattr(mgr, "_brief_spawned_agentic_ide_fleet", _brief)
+    utterance = (
+        "Spawn five Codex terminals and prompt each one to start 50 subagents "
+        "for a read-only platform review"
+    )
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path(utterance)
+    await asyncio.wait_for(called.wait(), timeout=1)
+
+    assert registry.session is not None
+    new_terms = registry.session.terminals[1:]
+    assert len(new_terms) == 5
+    assert {term.agent for term in new_terms} == {"codex"}
+    assert received == [([term.name for term in new_terms], utterance)]
+    assert reply is not None
+    assert "as soon as the terminals are ready" in reply
+
+
+async def test_queued_fleet_receives_the_task_not_the_spawn_scaffolding(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.agentic_ide import fanout, fleet_actions
+
+    mgr, _bus = manager
+    session = await _open(registry, tmp_path, 2, agent="codex")
+    names = [term.name for term in session.terminals]
+    captured: dict[str, object] = {}
+
+    async def _ready(_session: object, wanted: list[str]) -> tuple[str, ...]:
+        return tuple(wanted)
+
+    async def _deliver(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=(object(), object()))
+
+    monkeypatch.setattr(fleet_actions, "wait_for_prompt_ready", _ready)
+    monkeypatch.setattr(fanout, "deliver", _deliver)
+    utterance = (
+        "Spawn two Codex terminals and prompt each one to perform a read-only "
+        "platform compatibility review"
+    )
+
+    await mgr._brief_spawned_agentic_ide_fleet(session, names, utterance)
+
+    assert captured["terminals"] == tuple(names)
+    assert captured["instruction"] == "perform a read-only platform compatibility review"
+    assert "Spawn two Codex terminals" not in str(captured["instruction"])
 
 
 async def test_without_a_named_agent_the_new_panes_inherit(
@@ -318,3 +391,86 @@ async def test_a_clearly_german_turn_is_answered_in_german_without_a_pin(
     )
     assert reply is not None
     assert "neue Terminals" in reply  # i18n-allow: asserted German reply
+
+
+# --------------------------------------------------------------------------- #
+# Live voice regression 2026-07-27: one pane, and it gets the work             #
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_conditional_spawn_opens_one_pane_and_briefs_it(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole reported failure, pinned at the layer that produced it.
+
+    The user described the work, named a pane that was not running, and made
+    the spawn a fallback: "let Lee do a deep dive on this and fix it — if there
+    is no terminal by that name, open one and prompt it right there". The task
+    sits in FRONT of the spawn clause, and only what followed it was read, so a
+    blank pane opened, "ready" was spoken, and nobody was briefed. What the user
+    said next was "you did nothing" — followed by four more panes as the router
+    tried to reach a call-sign that could never exist.
+    """
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 2)
+    received: list[tuple[list[str], str]] = []
+    called = asyncio.Event()
+
+    async def _brief(_session: object, names: list[str], utterance: str) -> None:
+        received.append((names, utterance))
+        called.set()
+
+    monkeypatch.setattr(mgr, "_brief_spawned_agentic_ide_fleet", _brief)
+    utterance = (
+        "Kannst du bitte dazu Lee einen Deep Dive machen lassen? Und das fixen. "
+        "Wenn es kein Terminal gibt, welches so heißt, spawn ein neues und lass "
+        "es dann direkt da rein"
+    )  # i18n-allow: production transcript under test
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path(utterance)
+    await asyncio.wait_for(called.wait(), timeout=1)
+
+    assert registry.session is not None
+    opened = registry.session.terminals[2:]
+    assert len(opened) == 1, "one pane was asked for — the four extra ones are the bug"
+    assert received == [([opened[0].name], utterance)]
+    assert reply is not None
+    assert opened[0].name in reply, "the pane's real call-sign is spoken back"
+
+
+async def test_the_conditional_brief_carries_the_task_and_not_the_fallback(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the new pane is told has to be the work, not the spawn wording."""
+    from jarvis.agentic_ide import fanout, fleet_actions
+
+    mgr, _bus = manager
+    session = await _open(registry, tmp_path, 1)
+    names = [term.name for term in session.terminals]
+    captured: dict[str, object] = {}
+
+    async def _ready(_session: object, wanted: list[str]) -> tuple[str, ...]:
+        return tuple(wanted)
+
+    async def _deliver(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=(object(),))
+
+    monkeypatch.setattr(fleet_actions, "wait_for_prompt_ready", _ready)
+    monkeypatch.setattr(fanout, "deliver", _deliver)
+    utterance = (
+        "Have Lee investigate the huge empty area in the layout and fix it. "
+        "If there is no terminal called that, open a new one and prompt it there"
+    )
+
+    await mgr._brief_spawned_agentic_ide_fleet(session, names, utterance)
+
+    instruction = str(captured["instruction"])
+    assert "empty area" in instruction
+    assert "open a new one" not in instruction, "the fallback is not the work"

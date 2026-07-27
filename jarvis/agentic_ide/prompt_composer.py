@@ -56,11 +56,33 @@ slower, better prompt explicitly. Reading file outlines costs more still. So
 the composer takes its time and the bound below is generous — what must never
 happen is a silent demotion to a weaker model, because nobody inspects a prompt
 that looks fine.
+
+**What was made faster, and what deliberately was not.** The model's own
+writing is the wait, and shortening it means a shorter brief — the one thing
+this module exists not to do. What WAS serial and did not need to be is the
+preparation around it: resolving the writer (a config load plus a subscription
+probe per candidate CLI) ran on the event loop and finished before the first
+file was opened, and the file outlines were read before the house rules were.
+All of that now overlaps and none of it runs on the loop, so the model call
+starts as soon as the slowest single piece of preparation is done instead of
+after their sum.
+
+**On the silence.** The rest is perceived latency: for 10-27 s nothing at all
+was said, so a working composer and a wedged one looked identical. The three
+beats below (``start`` → ``thinking``/``drafting`` → ``ready``, and ``sent``
+once the pane took it) are printed as they happen, and each one names the pane
+it belongs to — with a fleet composing at once, an unattributed line is worse
+than none. They are terminal lines, so they follow the English-artifact rule
+like every other log line; the SPOKEN readback the user hears is a separate
+surface and stays in the turn's resolved output language.
 """
 from __future__ import annotations
 
 import asyncio
 import re
+import sys
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,6 +90,13 @@ from loguru import logger
 
 from .file_index import cached_index
 from .session import MAX_PROMPT_CHARS, sanitize_prompt
+from .task_kind import (
+    KIND_IMPLEMENT,
+    KIND_INVESTIGATE,
+    KIND_NEUTRAL,
+    KIND_QUESTION,
+    KIND_REVIEW,
+)
 
 # The composer is not on the voice hot path the way an ack is, but the user is
 # waiting to hear "sent to Kai". On timeout the deterministic prompt ships, so
@@ -131,6 +160,221 @@ class ComposedPrompt:
 
     note: str = ""
     """Why the fallback was used, when it was. Empty on the happy path."""
+
+
+# --------------------------------------------------------------- progress
+# The stages of one composition, in the order they happen. Named constants
+# because a sink may want to filter or style them, and a caller matching on a
+# literal string is how a stage gets renamed and silently stops arriving.
+STAGE_START = "start"
+STAGE_THINKING = "thinking"
+STAGE_DRAFTING = "drafting"
+STAGE_READY = "ready"
+STAGE_FALLBACK = "fallback"
+STAGE_SENT = "sent"
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeNotice:
+    """One progress line about the prompt being written for one terminal."""
+
+    stage: str
+    """One of the ``STAGE_*`` constants above."""
+
+    message: str
+    """The finished English line, ready to print. Always names the terminal."""
+
+    terminal: str = ""
+    kind: str = ""
+    """The detected task kind, so a sink can style a review differently from a
+    build. Empty for notices that happen outside a composition (``sent``)."""
+
+
+ProgressSink = Callable[[ComposeNotice], None]
+"""Where notices go. Sync on purpose: a sink is called from inside a voice turn
+and must not be able to await anything, let alone the pane it describes."""
+
+
+def print_notice(notice: ComposeNotice) -> None:
+    """Put one notice where the user is actually looking. Never raises.
+
+    Standard output when there is one — that is the terminal a headless install
+    and a ``--dev`` run are both watched from. Under the tray build there is no
+    console at all (``pythonw.exe`` gives the process no stdout), so the line
+    goes to the log file instead of being lost. Exactly one copy either way:
+    the same sentence twice reads as a bug in the thing reporting progress.
+    """
+    logger.debug("Agentic IDE composer [{}] {}", notice.stage, notice.message)
+    stream = getattr(sys, "stdout", None)
+    if stream is None:
+        logger.info("Agentic IDE composer: {}", notice.message)
+        return
+    try:
+        stream.write(f"Jarvis: {notice.message}\n")
+        stream.flush()
+    except (OSError, ValueError, AttributeError, UnicodeError):
+        # A closed, detached or non-decodable stream is not a failure of the
+        # composition — the notice just goes somewhere that survives.
+        logger.info("Agentic IDE composer: {}", notice.message)
+
+
+def _emit(sink: ProgressSink | None, notice: ComposeNotice) -> None:
+    """Deliver one notice. A broken sink costs the line, never the prompt."""
+    try:
+        (sink or print_notice)(notice)
+    except Exception:  # noqa: BLE001 - progress is decoration, the brief is not
+        logger.debug("Agentic IDE composer: a progress sink raised", exc_info=True)
+
+
+# How much of the instruction a notice quotes back. Long enough to recognise
+# the request, short enough that the line stays one line in a narrow terminal.
+_MAX_SUBJECT_CHARS = 72
+
+
+def _subject(instruction: str) -> str:
+    """A short stand-in for what the user asked for, in their own words.
+
+    Quoted rather than paraphrased: paraphrasing costs a model call, and this
+    line has to appear BEFORE any of the work starts to be worth printing.
+    """
+    words = " ".join((instruction or "").split())
+    if len(words) <= _MAX_SUBJECT_CHARS:
+        return words
+    return words[:_MAX_SUBJECT_CHARS].rsplit(" ", 1)[0].rstrip(",;:-") + "..."
+
+
+def _variant(options: tuple[str, ...], seed: str) -> str:
+    """One of ``options``, chosen by the instruction rather than at random.
+
+    Two properties at once. Varied, because the same sentence on every turn
+    stops being read after the second time and the user is then back to
+    watching silence. Deterministic, because a test cannot pin a line that
+    changes per run — and ``hash()`` is salted per process, so it is unusable
+    here even though it looks like the obvious choice.
+    """
+    if not options:
+        return ""
+    return options[sum(map(ord, seed or "")) % len(options)]
+
+
+_START_PHRASES: dict[str, tuple[str, ...]] = {
+    KIND_IMPLEMENT: (
+        'All right - writing {name} the build brief for "{subject}".',
+        'On it: {name} gets the full spec for "{subject}".',
+        'Right, briefing {name} to build "{subject}".',
+    ),
+    KIND_REVIEW: (
+        'All right - writing {name} a review brief for "{subject}".',
+        'On it: {name} gets asked to review "{subject}".',
+        'Right, briefing {name} to go through "{subject}".',
+    ),
+    KIND_INVESTIGATE: (
+        'All right - briefing {name} to dig into "{subject}".',
+        'On it: {name} gets the investigation brief for "{subject}".',
+        'Right, pointing {name} at "{subject}" to find the cause.',
+    ),
+    KIND_QUESTION: (
+        'All right - writing {name} the question about "{subject}".',
+        'On it: asking {name} about "{subject}".',
+        'Right, putting {name}\'s question about "{subject}" together.',
+    ),
+    KIND_NEUTRAL: (
+        'All right, writing the prompt for {name} - "{subject}".',
+        'On it: putting {name}\'s prompt together - "{subject}".',
+        'Right, {name}\'s prompt is being written - "{subject}".',
+    ),
+}
+
+_THINKING_PHRASES = (
+    "Thinking {name}'s brief through - {context}.",
+    "Reading the code before {name} is briefed - {context}.",
+    "Working out what {name} needs to know - {context}.",
+)
+
+_DRAFTING_PHRASES = (
+    "{name}'s brief is coming in now.",
+    "Writing {name}'s brief out.",
+    "The brief for {name} is being written.",
+)
+
+_READY_PHRASES = (
+    "{name} is briefed - {size} characters{files} in {secs}s. Sending it now.",
+    "Brief written for {name}: {size} characters{files}, {secs}s. Handing it over.",
+    "Done - {size} characters{files} for {name} in {secs}s. Sending.",
+)
+
+
+def _start_message(kind: str, instruction: str, terminal_name: str) -> str:
+    """The opening line, matched to what the user actually asked for."""
+    options = _START_PHRASES.get(kind) or _START_PHRASES[KIND_NEUTRAL]
+    return _variant(options, instruction).format(
+        name=terminal_name, subject=_subject(instruction)
+    )
+
+
+def _thinking_message(
+    instruction: str, terminal_name: str, *, outlines: int, writer_label: str
+) -> str:
+    """The line that stands while the model works — with what it was handed."""
+    if outlines == 1:
+        context = "one file outline to go on"
+    elif outlines:
+        context = f"{outlines} file outlines to go on"
+    else:
+        context = "no matching files, so your words alone"
+    if writer_label:
+        context = f"{context}, via {writer_label}"
+    return _variant(_THINKING_PHRASES, instruction).format(
+        name=terminal_name, context=context
+    )
+
+
+def _ready_message(
+    instruction: str, terminal_name: str, *, size: int, files: int, seconds: float
+) -> str:
+    """What was written, before it is typed anywhere."""
+    if files == 1:
+        files_clause = ", one file attached"
+    elif files:
+        files_clause = f", {files} files attached"
+    else:
+        files_clause = ""
+    return _variant(_READY_PHRASES, instruction).format(
+        name=terminal_name, size=size, files=files_clause, secs=f"{seconds:.1f}"
+    )
+
+
+def _writer_label(brain: object) -> str:
+    """The writing model's own name, when it has one worth printing."""
+    name = str(getattr(brain, "name", "") or "").strip()
+    return name[:40]
+
+
+def announce_delivery(
+    terminal_name: str,
+    *,
+    delivered: bool,
+    submitted: bool | None = None,
+    reason: str = "",
+    sink: ProgressSink | None = None,
+) -> None:
+    """The closing line, once the pane has been handed the prompt — or has not.
+
+    Lives here rather than at the send site so the whole sequence the user
+    reads is worded in one place, and so it can never claim more than happened:
+    "typed" and "started" are different states (a prompt ending on an ``@path``
+    sits in the input box looking exactly like a running task), and the
+    unconfirmed third state says so instead of picking the flattering reading.
+    """
+    if not delivered:
+        message = f"{terminal_name} did not get it: {reason or 'it refused the prompt'}."
+    elif submitted is True:
+        message = f"Sent - {terminal_name} has the brief and is working on it."
+    elif submitted is False:
+        message = f"{terminal_name} is holding the brief in its input box - it never started."
+    else:
+        message = f"Sent to {terminal_name} - I could not confirm it started."
+    _emit(sink, ComposeNotice(stage=STAGE_SENT, message=message, terminal=terminal_name))
 
 
 def _clean_speech(text: str) -> str:
@@ -236,8 +480,15 @@ async def _llm_compose(
     brain,  # noqa: ANN001 - Brain, avoid an import cycle
     system_prompt: str,
     user_block: str,
+    on_first_delta: Callable[[], None] | None = None,
 ) -> str:
-    """One bounded call that writes the prompt."""
+    """One bounded call that writes the prompt.
+
+    ``on_first_delta`` fires the moment the model's answer starts arriving. It
+    is the only signal that separates "still waiting" from "it is writing", and
+    the gap between them is the whole wait on a subscription CLI, which pays a
+    10-12 s cold process start before it thinks at all.
+    """
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
     request = BrainRequest(
@@ -262,8 +513,29 @@ async def _llm_compose(
     chunks: list[str] = []
     async for delta in brain.complete(request):
         if delta.content:
+            if not chunks and on_first_delta is not None:
+                on_first_delta()
             chunks.append(delta.content)
     return "".join(chunks).strip()
+
+
+async def _read_context(
+    session,  # noqa: ANN001 - Session, avoid an import cycle
+    candidates: list[str],
+) -> tuple[dict[str, str], str]:
+    """The file outlines and the repository's house rules, read at once.
+
+    Both are disk IO on a path a voice turn is waiting on, and neither needs
+    the other's result. They used to be awaited one after the other for no
+    reason beyond the order they were written in.
+    """
+    from .code_skeleton import skeletons as read_skeletons
+
+    outlines, house_rules = await asyncio.gather(
+        asyncio.to_thread(read_skeletons, session.folder, candidates),
+        asyncio.to_thread(_house_rules, session),
+    )
+    return outlines, house_rules
 
 
 async def _compose_once(
@@ -276,17 +548,30 @@ async def _compose_once(
     agent_display: str,
     candidates: list[str],
     kind: str,
+    context,  # noqa: ANN001 - Awaitable[tuple[dict[str, str], str]]
+    notify: Callable[[str, str], None],
+    attachments: list,
 ) -> str:
-    """Read the candidate files, then make the one writing call.
+    """Wait for the file material, then make the one writing call.
 
-    File reading runs in a worker thread: it is disk IO on a path a voice turn
-    is waiting on, and the whole call already sits under ``COMPOSE_TIMEOUT_S``.
+    ``context`` arrives as an awaitable rather than as finished data so the
+    reading can already be running while the caller resolves the writer — and
+    so the wait for it still sits inside ``COMPOSE_TIMEOUT_S``, which a value
+    computed before the timeout was armed would not.
     """
     from . import prompt_blueprint as blueprint
-    from .code_skeleton import skeletons as read_skeletons
 
-    outlines = await asyncio.to_thread(read_skeletons, session.folder, candidates)
-    house_rules = await asyncio.to_thread(_house_rules, session)
+    outlines, house_rules = await context
+
+    notify(
+        STAGE_THINKING,
+        _thinking_message(
+            base_instruction or said,
+            terminal_name,
+            outlines=len(outlines),
+            writer_label=_writer_label(brain),
+        ),
+    )
 
     return await _llm_compose(
         brain=brain,
@@ -300,6 +585,13 @@ async def _compose_once(
             candidates=candidates,
             skeletons=outlines,
             house_rules=house_rules,
+            attachments=attachments,
+        ),
+        on_first_delta=lambda: notify(
+            STAGE_DRAFTING,
+            _variant(_DRAFTING_PHRASES, base_instruction or said).format(
+                name=terminal_name
+            ),
         ),
     )
 
@@ -315,6 +607,26 @@ def _strip_wrapper(text: str) -> str:
     return stripped
 
 
+async def _resolved_writer(task: asyncio.Task) -> object | None:
+    """The writer the background probe found, or None. Never raises.
+
+    The probe loads the config and asks every subscription candidate whether it
+    is signed in; a broken one there must cost the deterministic prompt, not
+    the turn.
+    """
+    try:
+        return await task
+    except Exception:  # noqa: BLE001 - resolution never breaks a composition
+        logger.info("Agentic IDE writer resolution failed", exc_info=True)
+        return None
+
+
+def _discard(task: asyncio.Task) -> None:
+    """Drop a preparation task whose result is no longer wanted, quietly."""
+    task.cancel()
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+
+
 async def compose(
     utterance: str,
     *,
@@ -325,6 +637,8 @@ async def compose(
     use_llm: bool = True,
     max_files: int = MAX_FILE_REFERENCES,
     brain=None,  # noqa: ANN001 - Brain, avoid an import cycle
+    on_progress: ProgressSink | None = None,
+    attachments: Sequence | None = None,
 ) -> ComposedPrompt:
     """Build the prompt for ``terminal_name`` out of what the user said.
 
@@ -332,6 +646,19 @@ async def compose(
     resolves a quality-tier model and degrades openly when none is reachable.
     Passing a fast model here trades prompt accuracy for a few seconds, which
     is the trade the maintainer decided against on 2026-07-25.
+
+    ``attachments`` are ``drop_analysis.DropAnalysis`` entries for files the
+    user dropped alongside the instruction — a described screenshot, an
+    extracted document. They reach BOTH layers: the writer folds them into the
+    brief, and the deterministic prompt lists them, because the model that
+    described the picture and the model that writes prose are separate
+    providers and having one without the other is ordinary.
+
+    ``on_progress`` receives a ``ComposeNotice`` at each beat of the
+    composition; left None they are printed (see ``print_notice``). The typed
+    prompt bar passes ``use_llm=False`` and gets no notices at all — nothing is
+    being written there, and a progress line about an instant operation is
+    noise.
 
     Never raises: every failure path lands on the deterministic prompt, because
     "the agent got a rougher prompt" is a far better outcome than "your
@@ -342,16 +669,29 @@ async def compose(
 
     said = (utterance or "").strip()
     base_instruction = _clean_speech(instruction or said) or (instruction or said).strip()
+    attached = list(attachments or [])
     if not said:
         return ComposedPrompt(text="", composed_by="raw", note="empty instruction")
 
-    candidates = _file_candidates(session, base_instruction or said, max_files * 2)
+    subject = base_instruction or said
+    kind = classify(base_instruction)
 
-    def _deterministic(composed_by: str, note: str = "") -> ComposedPrompt:
-        chosen = candidates[:max_files]
+    def notify(stage: str, message: str) -> None:
+        _emit(
+            on_progress,
+            ComposeNotice(
+                stage=stage, message=message, terminal=terminal_name, kind=kind
+            ),
+        )
+
+    def _deterministic(
+        composed_by: str, note: str = "", candidates: list[str] | None = None
+    ) -> ComposedPrompt:
+        chosen = (candidates or [])[:max_files]
         return ComposedPrompt(
             text=sanitize_prompt(
-                blueprint.render_fallback(base_instruction, chosen), keep_newlines=True
+                blueprint.render_fallback(base_instruction, chosen, attached),
+                keep_newlines=True,
             )[:MAX_PROMPT_CHARS],
             files=chosen,
             composed_by=composed_by,
@@ -359,13 +699,38 @@ async def compose(
         )
 
     if not use_llm:
-        return _deterministic("raw")
+        found = await asyncio.to_thread(
+            _file_candidates, session, subject, max_files * 2
+        )
+        return _deterministic("raw", candidates=found)
 
-    writer = brain if brain is not None else _resolve_writer()
+    started = time.monotonic()
+    notify(STAGE_START, _start_message(kind, subject, terminal_name))
+
+    # The writer probe goes first and runs on its own: it is the one piece of
+    # preparation that can take seconds (a config load plus a sign-in probe per
+    # subscription CLI), it needs nothing from the disk work below, and running
+    # it on the event loop stalled every other pane of a fan-out with it.
+    writer_task: asyncio.Task | None = (
+        asyncio.create_task(asyncio.to_thread(_resolve_writer)) if brain is None else None
+    )
+
+    candidates = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
+
+    def degrade(note: str) -> ComposedPrompt:
+        notify(STAGE_FALLBACK, f"{terminal_name} gets the plain brief instead: {note}.")
+        return _deterministic("fallback", note, candidates=candidates)
+
+    # Reading the outlines starts NOW, not once the writer is known — on a cold
+    # subscription CLI the probe is the longer of the two.
+    context_task = asyncio.create_task(_read_context(session, candidates))
+
+    writer = brain if writer_task is None else await _resolved_writer(writer_task)
     if writer is None:
         # Deliberately NOT falling through to whatever model is left: see the
         # module docstring. Plain and honest beats polished and quietly worse.
-        return _deterministic("fallback", "no quality-tier provider reachable")
+        _discard(context_task)
+        return degrade("no quality-tier provider reachable")
 
     try:
         composed = await asyncio.wait_for(
@@ -377,21 +742,24 @@ async def compose(
                 terminal_name=terminal_name,
                 agent_display=agent_display,
                 candidates=candidates,
-                kind=classify(base_instruction),
+                kind=kind,
+                context=context_task,
+                notify=notify,
+                attachments=attached,
             ),
             timeout=COMPOSE_TIMEOUT_S,
         )
         composed = _strip_wrapper(composed)
     except TimeoutError:
-        return _deterministic(
-            "fallback", f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
-        )
+        _discard(context_task)
+        return degrade(f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades
         logger.info("Agentic IDE prompt composer fell back: {}", exc)
-        return _deterministic("fallback", f"composer unavailable ({type(exc).__name__})")
+        _discard(context_task)
+        return degrade(f"composer unavailable ({type(exc).__name__})")
 
     if not composed:
-        return _deterministic("fallback", "composer returned nothing usable")
+        return degrade("composer returned nothing usable")
 
     if not blueprint.looks_like_brief(composed):
         # A subscription CLI writes its own errors to stdout, so "the process
@@ -403,7 +771,7 @@ async def compose(
             "({} chars) — falling back",
             len(composed),
         )
-        return _deterministic("fallback", "composer output was not a brief")
+        return degrade("composer output was not a brief")
 
     if blueprint.looks_truncated(composed):
         # Half a brief reads as a whole one, which is exactly what makes it
@@ -414,13 +782,14 @@ async def compose(
             "— falling back",
             len(composed),
         )
-        return _deterministic("fallback", "composer output was cut off")
+        return degrade("composer output was cut off")
 
     # Keep only the references that survive an existence check — the model may
     # echo a candidate that was renamed, or invent one outright. A dead @path
     # costs the agent a turn; the bare path costs it nothing.
-    referenced = _existing(session.folder, _extract_referenced(composed))
-    for bad in (r for r in _extract_referenced(composed) if r not in referenced):
+    written = _extract_referenced(composed)
+    referenced = _existing(session.folder, written)
+    for bad in (r for r in written if r not in referenced):
         composed = composed.replace(f"@{bad}", bad)
 
     if blueprint.ends_on_reference(composed):
@@ -430,13 +799,34 @@ async def compose(
 
     final = sanitize_prompt(composed, keep_newlines=True)[:MAX_PROMPT_CHARS]
     if not final:
-        return _deterministic("fallback", "composer returned nothing usable")
+        return degrade("composer returned nothing usable")
+
+    notify(
+        STAGE_READY,
+        _ready_message(
+            subject,
+            terminal_name,
+            size=len(final),
+            files=len(referenced),
+            seconds=time.monotonic() - started,
+        ),
+    )
     return ComposedPrompt(text=final, files=referenced, composed_by="llm")
 
 
 __all__ = [
     "COMPOSE_TIMEOUT_S",
     "MAX_FILE_REFERENCES",
+    "STAGE_DRAFTING",
+    "STAGE_FALLBACK",
+    "STAGE_READY",
+    "STAGE_SENT",
+    "STAGE_START",
+    "STAGE_THINKING",
+    "ComposeNotice",
     "ComposedPrompt",
+    "ProgressSink",
+    "announce_delivery",
     "compose",
+    "print_notice",
 ]

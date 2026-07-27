@@ -66,6 +66,24 @@ RESERVED_NAMES: frozenset[str] = frozenset(
 # unrelated word ("Wiki", "Marker") does not.
 _MATCH_FLOOR = 0.72
 
+# The NEAR-MISS band: close enough that a human would ask "did you mean Ellis?",
+# too far to act on. Its whole reason to exist is the live 2026-07-27 failure —
+# a pane called "Ellis" came back from speech recognition as "Ilies" (0.667,
+# just under the floor), so the addressed-terminal path stood down in silence
+# and the user was told an agent was working when none was.
+#
+# The floor of the band is NOT what makes acting on it safe: ordinary words of
+# the spoken language reach well into it ("wieso" scores 0.500 against "Finn",
+# "kannst" 0.600 against "Casey"), and no threshold separates those from a
+# garbled call-sign. Safety comes from the CONTEXT gate in ``clarify.py`` — a
+# near miss may only ever produce a QUESTION, and only in a turn that is
+# addressing the workspace at all. The band merely keeps that question rare.
+#
+# Set low enough to reach the maintainer's own example (2026-07-27): a pane
+# called "Maggie" heard as "Max" scores 0.571, and asking is exactly what
+# should happen there.
+_NEAR_MISS_FLOOR = 0.55
+
 
 def default_names(count: int) -> list[str]:
     """First ``count`` call-signs, extended with numbered fallbacks if needed."""
@@ -183,11 +201,66 @@ def resolve(
     return best[1] if best else None
 
 
+def similarity(spoken: str, name: str) -> float:
+    """How close ONE spoken word is to ONE call-sign, on the resolver's scale.
+
+    The exact score ``resolve`` ranks by, exposed so the near-miss path cannot
+    drift into scoring differently from the path that acts.
+    """
+    word = normalize(spoken)
+    key = normalize(name)
+    if not word or not key:
+        return 0.0
+    return max(
+        SequenceMatcher(None, word, key).ratio(),
+        SequenceMatcher(None, phonetic_key(word), phonetic_key(key)).ratio(),
+    )
+
+
+def near_miss(
+    spoken: str, candidates: list[str], *, limit: int = 3
+) -> tuple[tuple[str, float], ...]:
+    """Call-signs ``spoken`` ALMOST names, best first, or ``()``.
+
+    The line is drawn at CERTAINTY, not at a score: a word that is the name or
+    folds to the same sound ("Elis" → "Ellis") is certain and returns ``()`` —
+    the acting path owns it. Everything else that still scores close is
+    uncertain and belongs in a question, however high it scores.
+
+    That boundary matters more than it looks. A merely-similar word used to sit
+    in a blind spot between the two paths: "Dena" scores 0.75 against "Dana", so
+    the resolver called it a match and the near-miss check stood down — while
+    the addressing templates, which need the exact spelling, found nothing at
+    all. The turn produced neither an action nor a question. Anchoring both
+    sides on the same notion of certainty is what closes that gap.
+
+    Several candidates are returned on purpose. A transcript that sits between
+    two panes ("Mags" between "Max" and "Maggie") is exactly the case where
+    picking the best score silently is how the wrong agent gets the work; the
+    caller asks instead, and it can only ask if it knows both.
+    """
+    if not spoken or not candidates:
+        return ()
+    if resolve(spoken, candidates, fuzzy=False) is not None:
+        return ()
+    scored = sorted(
+        (
+            (name, score)
+            for name in candidates
+            if (score := similarity(spoken, name)) >= _NEAR_MISS_FLOOR
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return tuple(scored[:limit])
+
+
 __all__ = [
     "NAME_POOL",
     "RESERVED_NAMES",
     "default_names",
+    "near_miss",
     "normalize",
     "phonetic_key",
     "resolve",
+    "similarity",
 ]

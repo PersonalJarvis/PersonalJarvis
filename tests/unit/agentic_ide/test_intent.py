@@ -270,3 +270,148 @@ def test_a_request_to_divide_the_work_is_recognised(utterance: str) -> None:
 )
 def test_ordinary_orders_are_not_split_requests(utterance: str) -> None:
     assert intent.wants_split(utterance) is False
+
+
+# --------------------------------------------------------------------------- #
+# A name that belongs to a running pane IS that pane                           #
+# --------------------------------------------------------------------------- #
+# Live failure 2026-07-27 (voice session 16:53): asked "Was hat Dana gemacht?"
+# with a terminal called Dana running, Jarvis answered that it did not know
+# which person Dana was. The utterance is ordinary spoken German in the perfect
+# tense, and every report template was written in the present — `\bmacht` finds
+# nothing inside "gemacht", because there is no word boundary after "ge".
+#
+# The lesson pinned here is bigger than one tense: enumerating verbs is what
+# failed, so the general rule is that a QUESTION naming a running pane is about
+# that pane, whatever verb it happens to carry.
+
+
+@pytest.mark.parametrize(
+    ("utterance", "terminal"),
+    [
+        # The verbatim live failure.
+        ("Was hat Dana gemacht?", "Dana"),
+        # The same question in the other tenses and locales.
+        ("Was hat Dana gestern gemacht?", "Dana"),
+        ("Was hat Alex gebaut?", "Alex"),
+        ("What did Dana do?", "Dana"),
+        ("What has Blake been up to?", "Blake"),
+        ("Que hizo Dana?", "Dana"),
+        # No verb of doing at all — the name and the question mark are enough.
+        ("Was ist mit Casey?", "Casey"),  # i18n-allow: German speech input under test
+        ("Wie weit ist Alex?", "Alex"),  # i18n-allow: German speech input under test
+        ("Dana?", "Dana"),
+    ],
+)
+def test_a_question_naming_a_pane_is_a_report_about_it(
+    utterance: str, terminal: str
+) -> None:
+    found = intent.detect(utterance, names=NAMES)
+    assert found is not None, utterance
+    assert found.terminal == terminal
+    # READ, never write: the question must never be typed into the agent.
+    assert found.kind == intent.KIND_REPORT
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # A surname makes it a person, even though a pane shares the first name.
+        "Was hat Dana Schmidt gemacht?",
+        # Somebody out in the world who shares no name with any pane.
+        "Was hat Elon Musk gemacht?",
+        "Was hat der Bundeskanzler gemacht?",  # i18n-allow: German speech input under test
+        # A question with no call-sign in it at all.
+        "Was hast du heute gemacht?",  # i18n-allow: German speech input under test
+        "Wie ist das Wetter?",  # i18n-allow: German speech input under test
+    ],
+)
+def test_a_question_about_the_world_is_not_a_pane_report(utterance: str) -> None:
+    assert intent.detect(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+def test_addressing_still_outranks_the_question_reading() -> None:
+    """A question that HANDS WORK over stays a prompt, not a status read."""
+    found = intent.detect("Kannst du das an Dana schicken?", names=NAMES)
+    assert found is not None
+    assert found.terminal == "Dana"
+    assert found.kind == intent.KIND_PROMPT
+
+
+# --------------------------------------------------------------------------- #
+# A polite order is still an order                                             #
+# --------------------------------------------------------------------------- #
+# Live failure (voice session 2026-07-27 18:01): "Could you please prompt this
+# terminal Alex, do a deep dive ...?" reached nobody. "prompt" — the verb that
+# literally names this feature — carried no addressing shape, so the trailing
+# question mark sent the turn into the read-only branch, the fast path stood
+# down, and the live model answered "I have let Alex know" while Alex's pane
+# still showed its startup banner. Politeness is how people give orders out
+# loud, and a question mark must never be the thing that swallows one.
+
+LIVE_FAILURE_POLITE_PROMPT = (
+    "Could you please prompt this terminal Alex, do a deep dive and analyze "
+    "all our whole code base and look for security vulnerabilities which can "
+    "come up when using personal Jarvis?"
+)
+
+
+def test_a_polite_prompt_request_reaches_the_pane_it_names() -> None:
+    """The exact 2026-07-27 utterance must be typed into Alex, not read back."""
+    found = intent.detect(LIVE_FAILURE_POLITE_PROMPT, names=NAMES)
+    assert found is not None
+    assert found.terminal == "Alex"
+    assert found.kind == intent.KIND_PROMPT
+    assert intent.owns_turn(LIVE_FAILURE_POLITE_PROMPT, names=NAMES) is True
+    # The pane noun is part of the address, not of the work: an agent briefed
+    # with "this terminal do a deep dive" reads it as an order to open one.
+    assert "terminal" not in found.instruction.lower()
+    assert "deep dive" in found.instruction.lower()
+
+
+def test_a_polite_prompt_request_is_not_a_terminal_spawn() -> None:
+    """Naming a pane outranks the terminal noun the sentence also carries."""
+    assert intent.detect_spawn(LIVE_FAILURE_POLITE_PROMPT, names=NAMES) is None
+
+
+@pytest.mark.parametrize(
+    ("utterance", "terminal"),
+    [
+        # The briefing verb sits too far from the name for any anchored
+        # template — the un-anchored backstop is what carries these.
+        ("Could you prompt the terminal that is called Blake to fix the tests?", "Blake"),
+        ("Kannst du Alex bitte anweisen, den Wake-Pfad zu pruefen?", "Alex"),  # i18n-allow: input
+        ("Instruct Casey to refactor the vosk provider", "Casey"),
+        ("Prompte Dana mal bitte, sie soll die Tests fixen", "Dana"),  # i18n-allow: input
+    ],
+)
+def test_briefing_verbs_hand_work_over_across_locales(
+    utterance: str, terminal: str
+) -> None:
+    found = intent.detect(utterance, names=NAMES)
+    assert found is not None, utterance
+    assert found.terminal == terminal
+    assert found.kind == intent.KIND_PROMPT
+
+
+def test_a_polite_question_about_a_pane_is_still_a_read() -> None:
+    """The backstop must not swallow reads phrased as a request.
+
+    "ask" has a status-question reading and is deliberately NOT a briefing
+    verb; without that distinction, wanting to know what an agent is doing
+    would type the question into it.
+    """
+    utterance = "Kannst du Alex fragen, was er macht?"  # i18n-allow: German input
+    found = intent.detect(utterance, names=NAMES)
+    assert found is not None
+    assert found.terminal == "Alex"
+    assert found.kind == intent.KIND_REPORT
+
+
+def test_a_pane_named_in_a_sentence_about_a_person_still_reaches_the_pane() -> None:
+    """One occurrence carrying a surname must not disown the other."""
+    # i18n-allow: German speech input under test
+    found = intent.detect("Frag Dana, ob Dana Schmidt geantwortet hat", names=NAMES)
+    assert found is not None
+    assert found.terminal == "Dana"

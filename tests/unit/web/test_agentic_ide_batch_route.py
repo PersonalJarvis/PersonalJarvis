@@ -42,11 +42,13 @@ class FakeRegistry:
     def __init__(self, created: list[object], capped: bool, folder: Path) -> None:
         self._created = created
         self._capped = capped
-        self.calls: list[tuple[int, str | None]] = []
+        self.calls: list[tuple[int, str | None, str | None]] = []
         self.session = SimpleNamespace(id="ide_test", folder=str(folder))
 
-    async def add_terminals(self, count: int, *, agent: str | None = None):
-        self.calls.append((count, agent))
+    async def add_terminals(
+        self, count: int, *, agent: str | None = None, account: str | None = None
+    ):
+        self.calls.append((count, agent, account))
         return self._created, self._capped
 
     def state(self) -> dict:
@@ -69,7 +71,9 @@ async def test_a_batch_opens_the_panes_and_tells_the_clients(
     assert result["requested"] == 2
     assert result["capped"] is False
     assert [t["name"] for t in result["terminals"]] == ["Juno", "Milo"]
-    assert registry.calls == [(2, "claude")]
+    # No account named — the registry then opens every pane of the batch on the
+    # workspace's active subscription (see Registry.add_terminal).
+    assert registry.calls == [(2, "claude", None)]
 
     # Exactly one event for the batch, naming every pane — five panes must not
     # make the open view refetch five times.
@@ -103,7 +107,9 @@ async def test_a_refusal_becomes_a_conflict_with_the_reason(
     class Refusing:
         session = None
 
-        async def add_terminals(self, count: int, *, agent: str | None = None):
+        async def add_terminals(
+            self, count: int, *, agent: str | None = None, account: str | None = None
+        ):
             raise SessionError("This workspace already has the maximum of 12 terminals.")
 
         def state(self) -> dict:

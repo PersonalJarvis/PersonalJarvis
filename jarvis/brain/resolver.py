@@ -232,6 +232,62 @@ def resolve_quality_brain(
     return None
 
 
+def resolve_vision_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """A Brain that can actually LOOK at an image, or None.
+
+    Gated purely on the ``supports_vision`` capability (AP-21) — never on a
+    provider name or a model id. Several providers in a normal chain are
+    text-only (a subscription CLI, a local model), and handing one an image
+    does not fail loudly: it answers about the words around the picture as if
+    it had seen it. That is the failure mode this resolver exists to prevent,
+    so a provider is skipped unless it declares the capability.
+
+    ``supports_vision`` is read defensively rather than assumed True: a
+    provider that does not declare it at all is treated as blind, because the
+    caller's whole job here is to describe a picture and a confident
+    description of an image nobody looked at is worse than no description.
+
+    Never raises. None means "nothing here can see", and the caller says so
+    instead of pretending otherwise.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("resolve_vision_brain: chain could not be built", exc_info=True)
+        return None
+
+    for provider, model in chain:
+        cache_key = (provider, model or "")
+        brain = _cache.get(cache_key)
+        if brain is None:
+            try:
+                brain = _get_registry().instantiate(
+                    provider, **({"model": model} if model else {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.info(
+                    "resolve_vision_brain: %s/%s not instantiable (%s)",
+                    provider, model or "<default>", type(exc).__name__,
+                )
+                continue
+            _cache[cache_key] = brain
+        if not getattr(brain, "supports_vision", False):
+            log.debug(
+                "resolve_vision_brain: skipping %s/%s (supports_vision is not set)",
+                provider, model or "<default>",
+            )
+            continue
+        return brain
+
+    log.info("resolve_vision_brain: no vision-capable provider reachable")
+    return None
+
+
 def _subscription_connected(provider: str) -> bool:
     """Whether ``provider``'s subscription login is usable right now.
 

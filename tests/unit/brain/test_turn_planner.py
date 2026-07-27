@@ -444,3 +444,65 @@ def test_calendar_trivia_stays_native(utterance: str) -> None:
 )
 def test_time_words_with_real_evidence_still_delegate(utterance: str) -> None:
     assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
+# --------------------------------------------------------------------------- #
+# A turn naming an open coding terminal                                        #
+# --------------------------------------------------------------------------- #
+# Live failure 2026-07-27 16:53 (Realtime): with a terminal called Dana running,
+# "Was hat Dana gemacht?" was routed natively and the live model answered that
+# it did not know which person Dana was. The utterance carries no lookup verb,
+# no action, no possessive and no connected domain — the static vocabularies
+# structurally cannot hold the evidence, because the call-signs are chosen per
+# workspace at runtime. The NAME is the evidence, so it is passed in.
+
+PANES = ("Alex", "Dana", "Logan")
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Was hat Dana gemacht?",  # the verbatim live failure
+        "Was hat Logan gebaut?",  # i18n-allow: German speech-input fixture
+        "Was ist mit Dana?",  # i18n-allow: German speech-input fixture
+        "Dana?",
+        "What did Dana do?",
+        "Que hizo Dana?",
+        # A garbled call-sign still has to reach the orchestrator: only it can
+        # ask "did you mean Dana?".
+        "Was hat Danna gemacht?",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_a_turn_naming_an_open_terminal_delegates(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME, (
+        "precondition: without a workspace this turn is native"
+    )
+    plan = plan_turn(utterance, workspace_names=PANES)
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.WORKSPACE in plan.reasons
+    # The pane's transcript is evidence the live model never holds.
+    assert plan.requires_evidence is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # A person who merely shares a first name with a pane.
+        "Was hat Dana Schmidt gemacht?",  # i18n-allow: German speech-input fixture
+        # Somebody out in the world.
+        "Was hat Elon Musk gemacht?",  # i18n-allow: German speech-input fixture
+        # Plain conversation while a workspace happens to be open.
+        "Erzaehl mir einen Witz",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_an_open_workspace_does_not_capture_unrelated_turns(utterance: str) -> None:
+    assert plan_turn(utterance, workspace_names=PANES).path is (
+        TurnPath.NATIVE_REALTIME
+    )
+
+
+def test_no_open_workspace_changes_nothing() -> None:
+    """The parameter is inert when no terminals are running."""
+    assert plan_turn("Was hat Dana gemacht?", workspace_names=()).path is (
+        TurnPath.NATIVE_REALTIME
+    )

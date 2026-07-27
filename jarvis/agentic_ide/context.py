@@ -45,7 +45,7 @@ _HEADER = (
     "\n"
     "How to behave while this mode is on:\n"
     "- When the user tells a named terminal to do something (\"tell Kai to …\", "
-    "\"Mika soll …\", \"let Nova refactor …\"), send it to THAT terminal with "
+    "\"Mika soll …\", \"let Nova refactor …\"), send it to THAT terminal with "  # i18n-allow: quoted addressing examples the router must match
     "the agentic-ide-prompt function. That is the whole point of this mode. "
     "NEVER spawn a background agent for work aimed at a terminal, and never "
     "answer with what you WOULD have sent — send it.\n"

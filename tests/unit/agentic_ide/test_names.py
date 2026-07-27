@@ -114,9 +114,8 @@ def test_name_embedded_in_a_sentence_is_found() -> None:
     # A German utterance is the point of this case: the resolver has to find a
     # call-sign inside whatever language the user speaks, so the sentence around
     # the name is speech-recognition input vocabulary, not prose.
-    assert resolve(  # i18n-allow: spoken input vocabulary under test
-        "sag nova sie soll die tests laufen lassen", ["Mika", "Nova"]
-    ) == "Nova"
+    utterance = "sag nova sie soll die tests laufen lassen"  # i18n-allow: input vocab
+    assert resolve(utterance, ["Mika", "Nova"]) == "Nova"
 
 
 def test_unrelated_words_resolve_to_nothing() -> None:

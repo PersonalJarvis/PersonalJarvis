@@ -17,6 +17,7 @@ The composer is faked throughout. It is a quality-tier provider call by design
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -183,6 +184,28 @@ async def test_a_single_addressed_pane_keeps_the_singular_reply(
     assert not _sent_to(registry, second)
 
 
+async def test_pronoun_follow_up_only_targets_the_newly_spawned_fleet(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    await _open(registry, tmp_path, 4)
+    first, _second, third, fourth = _names(registry)
+    assert registry.session is not None
+    manager._last_ide_spawn = (
+        registry.session.id,
+        (third, fourth),
+        time.monotonic(),
+    )
+
+    reply = await manager._run_agentic_ide_fast_path(
+        "Prompt each of them to run a read-only review"
+    )
+
+    assert reply is not None
+    assert not _sent_to(registry, first)
+    assert _sent_to(registry, third)
+    assert _sent_to(registry, fourth)
+
+
 def _prompt_of(registry: Registry, name: str) -> str:
     assert registry.session is not None
     term = registry.session.find(name)
@@ -281,5 +304,65 @@ async def test_nobody_reachable_is_never_reported_as_sent(
     )
 
     assert reply is not None
+    lowered = reply.lower()
+    assert any(word in lowered for word in ("not", "could not", "n't"))
+
+
+async def test_a_polite_prompt_request_reaches_the_pane_end_to_end(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """The live 2026-07-27 18:01 turn, through the whole brain path.
+
+    "Could you please prompt this terminal X, do a deep dive ...?" produced no
+    reply and no keystroke: the verb "prompt" carried no addressing shape, so
+    the trailing question mark routed the turn to the read-only branch and this
+    fast path stood down in silence. The live model then answered "I have let X
+    know" over a terminal still showing its startup banner. Pinned here rather
+    than only in the detector tests, because it was the SILENCE that made the
+    lie possible — the reply is as load-bearing as the keystroke.
+    """
+    await _open(registry, tmp_path, 2)
+    first, second = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(
+        f"Could you please prompt this terminal {first}, do a deep dive and "
+        "analyze all our whole code base and look for security vulnerabilities?"
+    )
+
+    assert reply is not None
+    assert first in reply
+    assert _sent_to(registry, first)
+    assert not _sent_to(registry, second)
+    # The pane noun belongs to the address, not to the work: an agent briefed
+    # with "this terminal do a deep dive" reads it as an order to open one.
+    assert "deep dive" in _prompt_of(registry, first).lower()
+
+
+async def test_a_fan_out_that_falls_over_still_says_so(
+    manager: BrainManager,
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delivery that did not happen must never be answered with silence.
+
+    Returning None hands the turn to the model with nothing to go on, and a
+    model asked about a pane it cannot see answers from the user's own question
+    — which is how a briefing that never left the building was spoken as done.
+    """
+    from jarvis.agentic_ide import fanout as ide_fanout
+
+    async def exploding_deliver(**_kwargs: object) -> object:
+        raise RuntimeError("pty layer is gone")
+
+    monkeypatch.setattr(ide_fanout, "deliver", exploding_deliver)
+
+    await _open(registry, tmp_path, 1)
+    (only,) = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(f"Tell {only} to run the tests")
+
+    assert reply is not None, "a failed delivery must be spoken, not swallowed"
+    assert only in reply
     lowered = reply.lower()
     assert any(word in lowered for word in ("not", "could not", "n't"))

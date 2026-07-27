@@ -401,11 +401,15 @@ jarvis/agentic_ide/prompt_composer.py
 
 # --- Their tests: every German string is a simulated user utterance fed to the
 #     classifiers above — the speech input the matcher is scored on, i.e. the
-#     content under test (reason 4, same shape as tts_eval/corpus.py). ---
-tests/unit/agentic_ide/test_clarify.py
-tests/unit/agentic_ide/test_intent.py
-tests/unit/agentic_ide/test_file_index.py
-tests/unit/agentic_ide/test_prompt_submit.py
+#     content under test (reason 4, same shape as tts_eval/corpus.py). The whole
+#     directory is listed rather than each file: it exists to score the
+#     addressing classifiers, so a future test there is by construction another
+#     batch of utterances. The two brain-side fast-path tests below hold the
+#     same fixtures and are listed individually — tests/unit/brain/ at large
+#     stays English-checked. ---
+tests/unit/agentic_ide/*
+tests/unit/brain/test_agentic_ide_spawn_fast_path.py
+tests/unit/brain/test_agentic_ide_clarify_fast_path.py
 
 # --- Generated command reference: every German fragment in it is a quoted
 #     SPOKEN EXAMPLE copied out of a Command-Registry description ("'Mika soll

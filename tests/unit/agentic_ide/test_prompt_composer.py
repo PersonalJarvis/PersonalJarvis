@@ -160,15 +160,22 @@ async def test_a_fenced_or_quoted_answer_is_unwrapped(
 ) -> None:
     _prime(workspace)
 
+    # A BRIEF inside the fence, not a bare sentence: the composer rejects output
+    # with no heading as debris (``looks_like_brief``), so a one-line payload
+    # would take the fallback and this would be testing that instead of the
+    # unwrapping it is named for.
+    brief = "## Task\nReview the wake word detection."
+
     async def _fenced(**_kwargs: object) -> str:
-        return "```\nReview the wake word detection.\n```"
+        return f"```\n{brief}\n```"
 
     monkeypatch.setattr(prompt_composer, "_llm_compose", _fenced)
 
     result = await prompt_composer.compose(
         "review the wake word detection", session=workspace, terminal_name="Kai"
     )
-    assert result.text == "Review the wake word detection."
+    assert result.text == brief
+    assert result.composed_by == "llm"
 
 
 async def test_use_llm_false_keeps_the_users_own_wording(workspace: _Session) -> None:

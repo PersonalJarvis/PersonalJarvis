@@ -191,17 +191,15 @@ async def test_the_route_opens_the_fleet_it_needs(
 async def test_a_freshly_opened_pane_is_reported_as_not_yet_running(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
-    """KNOWN LIMIT, pinned so it cannot be mistaken for success.
+    """With nothing able to MOUNT the panes, the route says so instead of lying.
 
-    A pane's agent process starts when the workspace VIEW mounts it, not when
-    the registry entry is created — so panes opened by this call are still
-    ``pending`` microseconds later and nothing can be typed into them yet.
+    A pane's agent process starts when the workspace view mounts it, not when
+    the registry entry is created. This client has no bus, so no view is ever
+    told the panes exist and none of them can come up — waiting would only turn
+    an honest "not_running" into a slow one.
 
-    The route reports that truthfully rather than claiming a briefed fleet, and
-    that honesty is what this test pins. What it does NOT yet do is wait for
-    the panes to come up and brief them once they have; until it does,
-    spawn+brief in one call opens the fleet and briefs nobody. Delivering after
-    the panes go live is the remaining piece of this feature.
+    When there IS a bus, the route waits for the panes and briefs them; that is
+    ``test_fanout_opens_and_briefs_a_pane_in_one_call`` below.
     """
     await _live_workspace(registry, tmp_path, 1)
 
@@ -274,3 +272,131 @@ async def test_dry_run_plans_without_typing_anything(
     assert len(body["split"]["assignments"]) == 2
     assert registry.session is not None
     assert all(t.prompts_sent == 0 for t in registry.session.terminals)
+
+
+# ------------------------------------------------- prompting a pane that is not there
+# A live voice session on 2026-07-27 asked for a pane called "Lee", which was
+# not running. The prompt 404'd with a bare "no terminal called that", the caller
+# read it as "then open one", and call-signs come from a fixed pool — so the pane
+# it opened was called something else and the very same prompt failed again. Four
+# rounds later the workspace had four blank panes and nobody had been briefed.
+# The error now names the move that actually recovers, and it says the same thing
+# whether or not composition was asked for.
+
+
+async def test_prompting_an_unknown_pane_says_how_to_recover(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    names = await _live_workspace(registry, tmp_path, 2)
+
+    response = client.post(
+        "/api/agentic-ide/terminals/Lee/prompt",
+        json={"prompt": "do a deep dive", "compose": False},
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "No terminal called 'Lee'" in detail
+    assert all(name in detail for name in names), "the running panes are named"
+    assert "cannot be requested" in detail, "opening a pane will not create this name"
+    assert "/api/agentic-ide/fanout" in detail, "the one call that does recover"
+
+
+async def test_the_unknown_pane_error_does_not_depend_on_composition(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """One cause, one answer.
+
+    Composition used to decide the shape of this failure: 404 with it on, 409
+    with it off. Two different-looking dead ends for one cause is how a caller
+    learns to retry instead of to recover.
+    """
+    await _live_workspace(registry, tmp_path, 1)
+
+    composed = client.post(
+        "/api/agentic-ide/terminals/Lee/prompt",
+        json={"prompt": "do a deep dive", "compose": True},
+    )
+    verbatim = client.post(
+        "/api/agentic-ide/terminals/Lee/prompt",
+        json={"prompt": "do a deep dive", "compose": False},
+    )
+
+    assert composed.status_code == verbatim.status_code == 404
+    assert composed.json()["detail"] == verbatim.json()["detail"]
+
+
+class _MountingBus:
+    """A bus whose subscriber behaves like the workspace view: it MOUNTS panes.
+
+    That is the whole mechanism the route depends on — the view hears about new
+    panes, mounts them, and their agents start. Simulating it here is what makes
+    "open one and brief it" testable end to end instead of only up to the point
+    where the old code gave up.
+    """
+
+    def __init__(self, registry: Registry) -> None:
+        self._registry = registry
+        self.sections: list[str] = []
+
+    async def publish(self, event: object) -> None:
+        section = getattr(event, "section", None)
+        if section is not None:
+            self.sections.append(section)
+            return
+        for name in getattr(event, "names", ()):
+            await self._registry.attach(name, 100, 30, _noop, _noop_exit)
+
+
+@pytest.fixture
+def mounting_client(registry: Registry) -> TestClient:
+    from jarvis.ui.web.agentic_ide_routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.bus = _MountingBus(registry)
+    return TestClient(app)
+
+
+async def test_fanout_opens_and_briefs_a_pane_in_one_call(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """The recovery the 404 points at has to actually work in one step.
+
+    This is the whole answer to "if no terminal is called that, open one and
+    prompt it": the reply carries the call-sign the new pane was really given,
+    so the caller never has to guess a name that was never available to it —
+    and the pane is actually briefed, which is what "in one call" has to mean.
+    """
+    await _live_workspace(registry, tmp_path, 1)
+
+    response = mounting_client.post(
+        "/api/agentic-ide/fanout",
+        json={"instruction": "investigate the empty area", "spawn": [{"count": 1}]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    opened = [t["name"] for t in body["opened"]]
+    assert len(opened) == 1
+    assert body["ok"] is True
+    assert [d["terminal"] for d in body["delivered"]] == opened
+    assert body["undelivered"] == []
+
+
+async def test_opening_panes_brings_the_workspace_forward(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """A workspace behind another section never starts the panes it just got.
+
+    The mount is what starts a pane's agent, so a fan-out that opens panes
+    without bringing the view forward can be relied on to brief nobody.
+    """
+    await _live_workspace(registry, tmp_path, 1)
+
+    mounting_client.post(
+        "/api/agentic-ide/fanout",
+        json={"instruction": "investigate the empty area", "spawn": [{"count": 1}]},
+    )
+
+    assert mounting_client.app.state.bus.sections == ["agentic-ide"]
