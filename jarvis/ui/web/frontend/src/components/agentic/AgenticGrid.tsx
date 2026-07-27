@@ -854,12 +854,26 @@ export function AgenticGrid({
           maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
         )}
         style={{
-          gridTemplateColumns: `repeat(${Math.max(1, grid.columns)}, minmax(0, 1fr))`,
+          // While one pane is maximized the grid IS that pane: a single track
+          // filling exactly what the window shows. Spanning the full template
+          // instead was wrong in a workspace large enough to scroll — the
+          // tracks then add up to more than the window, so the maximized pane
+          // was taller than the visible area and the terminal fitted itself to
+          // rows nobody could see, putting the CLI's prompt box below the clip.
+          // A grid that had been scrolled also kept its offset, so the pane
+          // came up part-way past its own header.
+          gridTemplateColumns:
+            maximized !== null
+              ? "minmax(0, 1fr)"
+              : `repeat(${Math.max(1, grid.columns)}, minmax(0, 1fr))`,
           // A floor on row height, not a free 1fr. Panes used to share the
           // window height in equal parts however many there were, so a large
           // workspace ended up with three text rows per pane — readable width,
           // unusable height. Below the floor the grid grows and scrolls instead.
-          gridTemplateRows: `repeat(${Math.max(1, grid.rows)}, minmax(${MIN_PANE_HEIGHT_PX}px, 1fr))`,
+          gridTemplateRows:
+            maximized !== null
+              ? "minmax(0, 1fr)"
+              : `repeat(${Math.max(1, grid.rows)}, minmax(${MIN_PANE_HEIGHT_PX}px, 1fr))`,
         }}
       >
         {session.terminals.map((term, index) => {

@@ -118,7 +118,13 @@ export interface PaneSocketHandlers {
 }
 
 export interface PaneSocket {
-  send(payload: unknown): void;
+  /**
+   * Hand a frame to the server. Returns whether it actually went out — a
+   * socket that is connecting, retrying or gone accepts nothing, and a caller
+   * that must not lose what it was saying (a pane's measured size) needs to
+   * know that rather than assume it arrived.
+   */
+  send(payload: unknown): boolean;
   close(): void;
 }
 
@@ -301,9 +307,15 @@ export function openPaneSocket(
   open();
 
   return {
-    send(payload: unknown): void {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+    send(payload: unknown): boolean {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      try {
         ws.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+        return true;
+      } catch {
+        // The socket died between the check and the write. Reported as not
+        // sent, which is exactly what happened.
+        return false;
       }
     },
     close(): void {

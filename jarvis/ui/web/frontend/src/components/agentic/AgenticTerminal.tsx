@@ -84,11 +84,19 @@ export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
 /** A coding CLI a split may start, as offered by the pane's split menu. */
 export interface SplitAgentChoice {
-  /** Backend id — "claude", "codex". */
+  /** Backend id — "claude", "codex", "shell". */
   name: string;
-  /** What the user reads — "Claude Code". */
+  /** What the user reads — "Claude Code", "Plain Terminal". */
   displayName: string;
   installed: boolean;
+  /**
+   * `"cli"` for a coding agent, `"shell"` for a plain terminal on this
+   * machine's own shell. Carried so the menu can say what a choice actually
+   * opens without knowing any entry by name.
+   */
+  kind?: string;
+  /** One line under the name — the shell that would open, for instance. */
+  description?: string;
 }
 
 export type SplitDirection = "right" | "down";
@@ -107,6 +115,17 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
+  /**
+   * What this session is doing, in one clause — the header's main label.
+   *
+   * It REPLACES the agent name there when present, because the agent name is
+   * the same for every pane in the grid and this is the part that differs. The
+   * CLI is still one hover away (the tooltip names it) and the pane's call-sign
+   * badge never moves.
+   */
+  recap?: string;
+  /** The one-or-two-sentence version of `recap`, revealed on hover. */
+  recapDetail?: string;
   /**
    * Which subscription this pane runs on ("Work seat"), when that is worth
    * saying. Undefined for everyone with a single login — the header must not
@@ -158,6 +177,8 @@ export function AgenticTerminal({
   name,
   workspaceId,
   displayName,
+  recap,
+  recapDetail,
   accountLabel,
   appearance,
   fontSize,
@@ -358,6 +379,21 @@ export function AgenticTerminal({
       if (offscreen.full) term.write(offscreen.drain());
     };
 
+    /*
+     * The size the terminal PROCESS has actually been told.
+     *
+     * Recorded only when the socket took the frame, and that is the whole
+     * point. A pane's socket is not open at all times — a backend restart, a
+     * moment of unreachability, a reconnect in flight — and anything handed to
+     * one in those states goes nowhere. Treating a size as delivered because
+     * it was offered is what let one go missing for good: the pane looked
+     * right, and the agent inside it went on formatting for the size it last
+     * heard about, drawing its screen into a corner of a pane that had become
+     * much larger. Left un-recorded, the next fit offers it again, and a fresh
+     * socket is told unconditionally.
+     */
+    let sentSize: { cols: number; rows: number } | null = null;
+
     const sendResize = () => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
       // fitting to that would resize the PTY to zero columns — which permanently
@@ -370,7 +406,14 @@ export function AgenticTerminal({
         return;
       }
       if (term.cols < 2 || term.rows < 2) return;
-      socket?.send({ t: "r", cols: term.cols, rows: term.rows });
+      const size = { cols: term.cols, rows: term.rows };
+      // Already delivered and unchanged: the fit above was the whole job.
+      // Re-announcing a size makes the agent on the other end redraw its
+      // entire screen, and a pane refits several times per settling layout.
+      if (sentSize && sentSize.cols === size.cols && sentSize.rows === size.rows) {
+        return;
+      }
+      if (socket?.send({ t: "r", ...size })) sentSize = size;
     };
     resizeRef.current = sendResize;
 
@@ -385,6 +428,11 @@ export function AgenticTerminal({
       {
         onOpen: () => {
           report("connecting");
+          // A fresh socket has been told nothing about this pane, whatever the
+          // one before it heard — so the size goes out again unconditionally.
+          // This is also what hands over a size that was measured while the
+          // pane was unreachable.
+          sentSize = null;
           // The spawn used a best-effort size (the mount-time fit usually runs
           // before the grid cell is measured), and resizes sent while the socket
           // was connecting were dropped — without this the agent's full-screen
@@ -543,6 +591,36 @@ export function AgenticTerminal({
   }, [fontSize]);
 
   /*
+   * Refit when the pane is maximized, and again when it is restored.
+   *
+   * Maximizing is by far the largest size change a pane ever makes — a cell in
+   * a grid of ten becomes the whole window — and until now the terminal inside
+   * it only found out through its ResizeObserver. That is a single debounced
+   * notification, competing with everything else the grid re-lays out in the
+   * same breath, and delivered when the browser gets round to it. Usually it
+   * arrives and the pane fills. Occasionally it did not, and the result was the
+   * reported bug: a pane visibly maximized with its agent still drawing at the
+   * old cell's width, the rest of the window left blank.
+   *
+   * So the one size change the pane genuinely KNOWS about is driven from that
+   * knowledge instead of waited for. Three passes because the grid settles over
+   * a frame or two — and they are nearly free: a fit that lands on the size the
+   * terminal already has sends nothing at all.
+   */
+  useEffect(() => {
+    const refit = () => resizeRef.current?.();
+    const frame = requestAnimationFrame(refit);
+    const timers = [
+      window.setTimeout(refit, 120),
+      window.setTimeout(refit, 400),
+    ];
+    return () => {
+      cancelAnimationFrame(frame);
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [maximized]);
+
+  /*
    * Drag a file onto the pane, or paste a screenshot into it.
    *
    * A native terminal writes a dragged file's PATH into the prompt; a browser
@@ -637,6 +715,8 @@ export function AgenticTerminal({
         onRestart={onRestart}
         name={name}
         displayName={displayName}
+        recap={recap}
+        recapDetail={recapDetail}
         accountLabel={accountLabel}
         appearance={appearance}
         focused={focused}
@@ -703,6 +783,8 @@ export function AgenticTerminal({
 function PaneHeader({
   name,
   displayName,
+  recap,
+  recapDetail,
   accountLabel,
   appearance,
   focused,
@@ -717,6 +799,8 @@ function PaneHeader({
 }: {
   name: string;
   displayName: string;
+  recap?: string;
+  recapDetail?: string;
   accountLabel?: string | null;
   appearance: TerminalAppearance;
   focused: boolean;
@@ -752,10 +836,10 @@ function PaneHeader({
         background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
       }}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <span
           className={cn(
-            "rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
+            "shrink-0 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
             focused ? "bg-primary/20 text-primary" : "",
           )}
           style={
@@ -766,19 +850,20 @@ function PaneHeader({
         >
           {name}
         </span>
-        <span
-          className="truncate text-[11px] uppercase tracking-wider"
-          style={{ color: light ? "#77777f" : "#8a8a95" }}
-        >
-          {displayName}
-        </span>
+        <PaneRecap
+          name={name}
+          displayName={displayName}
+          recap={recap}
+          detail={recapDetail}
+          light={light}
+        />
         {/* Which of several subscriptions this pane is spending. Only rendered
             when the user actually has more than one, so the header stays quiet
             for everybody else — but with two seats open side by side, knowing
             which pane bills which plan is the whole point. */}
         {accountLabel && (
           <span
-            className="truncate rounded-full px-1.5 text-[10px] tracking-wide"
+            className="max-w-[8rem] shrink-0 truncate rounded-full px-1.5 text-[10px] tracking-wide"
             style={{
               color: light ? "#6b6b73" : "#9a9aa5",
               backgroundColor: light ? "#00000010" : "#ffffff12",
@@ -875,15 +960,147 @@ function PaneHeader({
 }
 
 /**
- * The CLI picker a split button opens.
+ * Is this element showing all of its text, or has CSS clipped it?
+ *
+ * `scrollWidth > clientWidth` is the only honest answer: whether a sentence fits
+ * depends on the pane's width, the font that ended up loading and how long the
+ * agent's last line happened to be — none of which can be guessed from the
+ * string. Re-measured whenever the text changes or the element is resized, which
+ * in a draggable grid of terminals is constantly.
+ *
+ * Environments without a ResizeObserver (jsdom, very old engines) simply keep
+ * the first measurement, which is the behaviour this replaces rather than a
+ * regression.
+ */
+function useIsTruncated(
+  ref: React.RefObject<HTMLElement | null>,
+  text: string,
+): boolean {
+  const [truncated, setTruncated] = useState(false);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) {
+      setTruncated(false);
+      return;
+    }
+    // A one-pixel slack: sub-pixel font metrics make scrollWidth exceed
+    // clientWidth on text that visibly fits, and a tooltip that appears for
+    // nothing is worse than one that occasionally does not.
+    const measure = () => setTruncated(node.scrollWidth > node.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ref, text]);
+  return truncated;
+}
+
+/**
+ * The pane header's headline: what this session is doing, in one line.
+ *
+ * Two things happen here and both matter for a grid of eight terminals:
+ *
+ * 1. **The recap replaces the agent name.** "CLAUDE CODE" is identical on every
+ *    pane, so as a label it answers nothing; the recap is the part that differs
+ *    pane to pane. Without one — a pane that has just been opened, or a backend
+ *    that predates the field — the agent name is shown exactly as before.
+ * 2. **The clipped part is one hover away.** A header is a few centimetres wide
+ *    and a recap is a sentence, so it WILL be cut. The tooltip carries the
+ *    longer form, and it is offered when the line is actually clipped or when
+ *    the longer form says more than the line does — never merely because there
+ *    is text.
+ *
+ * A native `title` would have been free, but it appears after a browser-chosen
+ * delay, renders as unstyled OS chrome, and cannot show the two-part layout
+ * (which CLI, then the recap) that makes this readable at a glance.
+ */
+function PaneRecap({
+  name,
+  displayName,
+  recap,
+  detail,
+  light,
+}: {
+  name: string;
+  displayName: string;
+  recap?: string;
+  detail?: string;
+  light: boolean;
+}) {
+  const lineRef = useRef<HTMLSpanElement | null>(null);
+  const headline = (recap ?? "").trim();
+  const clipped = useIsTruncated(lineRef, headline);
+
+  if (!headline) {
+    return (
+      <span
+        className="truncate text-[11px] uppercase tracking-wider"
+        style={{ color: light ? "#77777f" : "#8a8a95" }}
+        data-testid={`pane-agent-${name}`}
+      >
+        {displayName}
+      </span>
+    );
+  }
+
+  const body = (detail ?? "").trim() || headline;
+  const showsTooltip = clipped || body !== headline;
+  const tipId = `pane-recap-tip-${name}`;
+
+  return (
+    <span className="group/recap min-w-0 flex-1">
+      <span
+        ref={lineRef}
+        // Reachable without a mouse: the tooltip opens on focus too, so the
+        // clipped half of the sentence is not mouse-only information.
+        tabIndex={showsTooltip ? 0 : undefined}
+        aria-describedby={showsTooltip ? tipId : undefined}
+        className="block truncate rounded-sm text-[11px] leading-tight outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+        style={{ color: light ? "#5f5f68" : "#9b9ba6" }}
+        data-testid={`pane-recap-${name}`}
+      >
+        {headline}
+      </span>
+      {showsTooltip && (
+        /*
+         * Positioned against the HEADER, not against this span: the header is
+         * the only positioned ancestor that spans the pane, so the card can be
+         * wide enough to read without hanging off a narrow pane's edge. The
+         * pane clips its own overflow, so a card anchored to a 60 px label
+         * would be cut in half.
+         */
+        <span
+          role="tooltip"
+          id={tipId}
+          data-testid={`pane-recap-tooltip-${name}`}
+          className="pointer-events-none absolute left-3 top-full z-50 mt-1 hidden w-max max-w-[calc(100%-1.5rem)] flex-col gap-1 rounded-lg border border-border bg-card p-2.5 text-left shadow-xl group-focus-within/recap:flex group-hover/recap:flex"
+        >
+          <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+            {displayName} · {name}
+          </span>
+          <span className="block text-[11px] leading-relaxed text-foreground">
+            {body}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The picker a split button opens: what should run in the new pane?
  *
  * Splitting used to inherit the anchor's agent silently, which made running a
  * Codex pane next to a Claude Code one impossible from the grid — you had to
  * close the workspace and start it again from the wizard. The backend always
  * accepted an agent per terminal; this is the surface that finally asks.
  *
- * A CLI that is not installed stays listed but disabled, so the absence is
- * visible and explains itself rather than the entry simply not being there.
+ * The list is whatever the backend registered, so it is not a fixed pair of
+ * CLIs: a plain terminal (this machine's own shell, no agent around it) sits in
+ * the same menu, and a CLI registered later appears here without a change on
+ * this side. An entry that is not installed stays listed but disabled, so the
+ * absence is visible and explains itself rather than silently not being there.
  */
 function SplitAgentMenu({
   paneName,
@@ -905,16 +1122,16 @@ function SplitAgentMenu({
       <div className="fixed inset-0 z-40" onMouseDown={onDismiss} />
       <div
         role="menu"
-        aria-label={`Which CLI should run ${direction === "right" ? "beside" : "below"} ${paneName}?`}
+        aria-label={`What should run ${direction === "right" ? "beside" : "below"} ${paneName}?`}
         data-testid={`pane-split-menu-${direction}-${paneName}`}
-        className="absolute right-2 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-card p-1 shadow-xl"
+        className="absolute right-2 top-full z-50 mt-1 w-60 rounded-lg border border-border bg-card p-1 shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") onDismiss();
         }}
       >
         <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-          {direction === "right" ? "Open beside — which CLI?" : "Split below — which CLI?"}
+          {direction === "right" ? "Open beside — what?" : "Split below — what?"}
         </p>
         {agents.map((agent) => (
           <button
@@ -928,12 +1145,22 @@ function SplitAgentMenu({
               e.stopPropagation();
               onPick(agent.name);
             }}
-            className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
           >
-            <span>{agent.displayName}</span>
+            <span className="min-w-0">
+              <span className="block truncate">{agent.displayName}</span>
+              {/* What this choice actually opens — "no agent, just a prompt"
+                  is the difference a user needs before clicking, and it is the
+                  entry's own words rather than a name this menu recognises. */}
+              {agent.description && (
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {agent.description}
+                </span>
+              )}
+            </span>
             {!agent.installed && (
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                not installed
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {agent.kind === "shell" ? "no shell here" : "not installed"}
               </span>
             )}
           </button>

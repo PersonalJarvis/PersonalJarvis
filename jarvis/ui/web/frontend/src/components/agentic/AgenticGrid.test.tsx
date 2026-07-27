@@ -437,6 +437,21 @@ describe("grid layout", () => {
     // the workspace is blank.
     expect(cellStyle("T3")).toContain("grid-column: 1 / -1");
     expect(cellStyle("T3")).toContain("grid-row: 1 / -1");
+    // ...and the grid it now spans is ONE track filling the window, not the
+    // twelve-pane template. Spanning that template made the maximized pane
+    // taller than the visible area in any workspace big enough to scroll, so
+    // the terminal fitted itself to rows below the clip — which is where the
+    // CLI keeps its prompt box.
+    expect(gridEl().style.gridTemplateRows).toBe("minmax(0, 1fr)");
+    expect(gridEl().style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+  });
+
+  it("gives the tracks back when the pane is restored", () => {
+    const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
+    renderGrid(sessionWith(panes));
+    fireEvent.click(screen.getByTestId("pane-maximize-T3"));
+    fireEvent.click(screen.getByTestId("pane-maximize-T3"));
+    expect(gridEl().style.gridTemplateColumns).toBe("repeat(6, minmax(0, 1fr))");
   });
 });
 
