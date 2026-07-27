@@ -269,10 +269,12 @@ def _apply_reembed_to_legs(
             **vector,
             "available": False,
             "rebuilding": True,
+            # Deliberately short: `health.py::_search_check` appends what
+            # keyword-only costs, and two sentences saying the same thing read
+            # as two different problems.
             "reason": (
-                f"semantic search is rebuilding on {model} ({progress}). Exact "
-                "words are found the whole time; meaning-based search returns "
-                "by itself the moment the rebuild finishes."
+                f"semantic search is rebuilding on {model} ({progress}) — it "
+                "comes back by itself when the rebuild finishes."
             ),
         },
     }

@@ -1425,3 +1425,18 @@ async def test_a_rebuild_started_by_an_older_build_is_adopted_on_open(tmp_path):
 
     assert (status["done"], status["total"]) == (0, 1)
     assert [row["id"] for row in claimed] == [item_id]
+
+
+async def test_reembed_is_running_is_a_single_meta_read(store):
+    """The pipeline asks once per pass, so it must stay a primary-key read."""
+    await add_source(store)
+    item_id, doc_id = await _seed_embedded_item(store, 0)
+    await store.store_embedding(doc_id, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+    assert await store.reembed_is_running() is False
+
+    await store.begin_reembed("model-b")
+    assert await store.reembed_is_running() is True
+
+    await store.abort_reembed()
+    assert await store.reembed_is_running() is False

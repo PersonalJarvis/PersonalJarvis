@@ -325,6 +325,23 @@ class PipelineWorker:
         await self._promote_pass()
         return attempted
 
+    async def _reembed_is_running(self) -> bool:
+        """Is a model switch rebuilding the vector space? Never raises.
+
+        A store without the capability (an older embedded one, a test fake)
+        answers ``False``, so every stage keeps its normal behaviour there.
+        """
+        probe = getattr(self._store, "reembed_is_running", None)
+        if probe is None:
+            return False
+        try:
+            return bool(await probe())
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — an unreadable pin never pauses a stage
+            log.debug("UltraWiki: rebuild probe failed", exc_info=True)
+            return False
+
     async def _promote_pass(self) -> None:
         """Swap in a finished embedding rebuild (see
         ``UltraStore.promote_pending_space``).
@@ -864,6 +881,22 @@ class PipelineWorker:
         distill_ok, distill_reason = await self._distill_ready()
         if not distill_ok:
             self._note_stage_pause("distill", distill_reason)
+            return 0
+        if await self._reembed_is_running():
+            # A model switch has taken semantic search down until the new space
+            # is complete, and distillation cannot shorten that: only the embed
+            # stage releases an item from the rebuild. Worse, `begin_reembed`
+            # demoted these items, so every summary produced now is produced
+            # again after the swap. Measured on a live store, the LLM round
+            # trips of this stage were ~90 % of a pass — the rebuild was
+            # waiting hours on work that would be thrown away.
+            self._note_stage_pause(
+                "distill",
+                "summaries are paused while the search index is rebuilt on the "
+                "new embedding model - they resume by themselves once it is "
+                "complete, and nothing is lost meanwhile",
+                key="reembed-priority",
+            )
             return 0
         self._clear_stage_pause("distill")
         items = await self._store.claim_batch(

@@ -2087,6 +2087,14 @@ class UltraStore:
         )
         return True
 
+    async def reembed_is_running(self) -> bool:
+        """Is a model switch rebuilding the vector space right now?
+
+        One primary-key read, because the pipeline asks once per pass to
+        decide whether a stage should stand aside for the rebuild.
+        """
+        return await self.get_meta(META_PENDING_EMBED_MODEL) is not None
+
     async def reembed_status(self) -> dict[str, Any]:
         """Honest progress of a running rebuild, for the settings surface.
 
@@ -3831,6 +3839,10 @@ class PostgresStore:
             active_model,
         )
         return True
+
+    async def reembed_is_running(self) -> bool:
+        """Postgres twin of :meth:`UltraStore.reembed_is_running`."""
+        return await self.get_meta(META_PENDING_EMBED_MODEL) is not None
 
     async def reembed_status(self) -> dict[str, Any]:
         """Postgres twin of :meth:`UltraStore.reembed_status`."""
