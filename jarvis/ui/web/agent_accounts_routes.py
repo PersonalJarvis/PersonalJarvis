@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from jarvis import agent_accounts
-from jarvis.agent_accounts import MAX_LABEL_CHARS, PLATFORMS, AccountError
+from jarvis.agent_accounts import MAX_LABEL_CHARS, AccountError, platforms
 from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 
 log = logging.getLogger(__name__)
@@ -33,7 +33,13 @@ router = APIRouter(prefix="/api/agent-accounts", tags=["agent-accounts"])
 
 
 class AccountCreateRequest(BaseModel):
-    platform: str = Field(description="Which coding CLI: 'claude' or 'codex'.")
+    platform: str = Field(
+        description=(
+            "Which coding CLI this seat belongs to. The accepted values are "
+            "whichever CLIs this build can switch logins for; GET this "
+            "endpoint to see them."
+        )
+    )
     label: str = Field(
         max_length=MAX_LABEL_CHARS,
         description="Display name for this subscription, e.g. 'Work seat'.",
@@ -47,15 +53,21 @@ class AccountRenameRequest(BaseModel):
 
 
 class ActiveRequest(BaseModel):
-    platform: str = Field(description="Which coding CLI to switch: 'claude' or 'codex'.")
+    platform: str = Field(
+        description=(
+            "Which coding CLI to switch. GET this endpoint for the accepted "
+            "values on this build."
+        )
+    )
     account_id: str = Field(description="Id of the account new terminals should use.")
 
 
 def _platform(value: str) -> str:
-    if value not in PLATFORMS:
+    known = platforms()
+    if value not in known:
         raise HTTPException(
             status_code=422,
-            detail=f"Unknown platform {value!r}. Known: {', '.join(PLATFORMS)}.",
+            detail=f"Unknown platform {value!r}. Known: {', '.join(known)}.",
         )
     return value
 
@@ -69,7 +81,7 @@ def _collect() -> dict[str, Any]:
                 "active_account": agent_accounts.active_account(platform).id,
                 "accounts": [s.to_dict() for s in agent_accounts.snapshots(platform)],
             }
-            for platform in PLATFORMS
+            for platform in platforms()
         ]
     }
 

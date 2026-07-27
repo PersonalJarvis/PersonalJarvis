@@ -102,7 +102,34 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #
 # argv is built here rather than reused from jarvis.workspace.agents because the
 # IDE runs the agent as the PTY's OWN process, not inside a persistent shell.
-AGENT_BINARIES: dict[str, str] = {"claude": "claude", "codex": "codex"}
+AGENT_BINARIES: dict[str, str] = {
+    a.name: a.executable for a in workspace_agents.coding_agents()
+}
+
+
+def is_coding_agent(agent: str) -> bool:
+    """Does ``agent`` run a coding CLI (as opposed to a bare shell)?
+
+    Asks the registry rather than the snapshot above, so a CLI registered after
+    this module was imported is not invisible to the one test that decides
+    whether a pane may be typed into at all.
+    """
+    spec = workspace_agents.get_agent(agent)
+    return spec is not None and spec.is_coding_agent
+
+
+def has_accounts(agent: str) -> bool:
+    """Can this CLI hold several subscriptions the app can switch between?
+
+    A DIFFERENT question from :func:`is_coding_agent`, and conflating the two is
+    what the single membership test used to do. Every coding CLI can be typed
+    into; only some publish a variable that moves their whole identity, and one
+    that does not must never be offered an account switcher that would silently
+    keep spending the same login.
+    """
+    from jarvis import agent_accounts
+
+    return agent in agent_accounts.platforms()
 
 # A pane that runs the machine's own shell and nothing else — see `agent_argv`.
 # It is NOT in AGENT_BINARIES on purpose: it has no account, no conversation to
@@ -142,10 +169,7 @@ def accepts_prompts(agent: str) -> bool:
     by voice. That is precisely the boundary the module docstring's rule 1 draws,
     and it is why a plain terminal is typed into by hand or not at all.
     """
-    if agent in AGENT_BINARIES:
-        return True
-    spec = workspace_agents.get_agent(agent)
-    return spec is not None and spec.is_coding_agent
+    return is_coding_agent(agent)
 
 
 def _unavailable(agent: str) -> str:
@@ -407,7 +431,7 @@ def resolve_account(agent: str, requested: str | None) -> str | None:
     to the active account rather than failing the pane: an unopenable pane is a
     worse answer than an honest default.
     """
-    if agent not in AGENT_BINARIES:
+    if not has_accounts(agent):
         return None
     from jarvis import agent_accounts
 
@@ -460,7 +484,7 @@ def _redirected_home(term: Terminal) -> Path | None:
     A path means the CLI has been redirected, which is what everything below has
     to compensate for.
     """
-    if not term.account or term.agent not in AGENT_BINARIES:
+    if not term.account or not has_accounts(term.agent):
         return None
     from jarvis import agent_accounts
 
@@ -488,21 +512,71 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
     before the spawn (:mod:`jarvis.agent_config_parity`), and only what a shared
     settings file cannot carry falls back to the narrow per-key mode mirror.
 
+    On top of the account, the pane carries whatever the registry entry declares
+    for EVERY pane of that CLI: a fixed environment (switching off an updater
+    that would otherwise swap the binary mid-conversation) and, for an entry
+    whose environment depends on user configuration, a factory resolved fresh
+    here. A factory that answers ``None`` means "not configured" and raises,
+    because the alternative is the quiet disaster: the one entry that needs this
+    is a launch profile pointing a borrowed binary at a different vendor's
+    endpoint, the binary reads that endpoint once at start-up and never mentions
+    which one it got, so a pane launched without it answers perfectly well from
+    the wrong vendor and bills the wrong account.
+
     Filesystem work, so callers run it off the event loop.
     """
-    if _redirected_home(term) is None:
-        return None
     from jarvis import agent_accounts, agent_config_parity
 
-    report = agent_config_parity.ensure_parity(term.agent, term.account)  # type: ignore[arg-type]
-    mode_file = agent_accounts.mode_file_name(term.agent)  # type: ignore[arg-type]
-    # Only when the account's settings file IS the user's file does sharing it
-    # carry the mode too. A file the account has partly written itself was merely
-    # filled in with the keys it lacked, and the mode may well be one of the keys
-    # it already had — so the narrow per-key mirror still has work to do there.
-    if report.shared.get(str(mode_file)) not in {"mirrored", "current"}:
-        agent_accounts.inherit_default_mode(term.agent, term.account)  # type: ignore[arg-type]
-    return agent_accounts.spawn_env(term.agent, term.account)  # type: ignore[arg-type]
+    env: dict[str, str] | None = None
+    if _redirected_home(term) is not None:
+        report = agent_config_parity.ensure_parity(term.agent, term.account)  # type: ignore[arg-type]
+        mode_file = agent_accounts.mode_file_name(term.agent)  # type: ignore[arg-type]
+        # Only when the account's settings file IS the user's file does sharing
+        # it carry the mode too. A file the account has partly written itself was
+        # merely filled in with the keys it lacked, and the mode may well be one
+        # of the keys it already had — so the narrow per-key mirror still has
+        # work to do there.
+        if report.shared.get(str(mode_file)) not in {"mirrored", "current"}:
+            agent_accounts.inherit_default_mode(term.agent, term.account)  # type: ignore[arg-type]
+        env = agent_accounts.spawn_env(term.agent, term.account)  # type: ignore[arg-type]
+
+    overlay = agent_spawn_overlay(term.agent)
+    if not overlay:
+        return env
+    env = dict(os.environ if env is None else env)
+    for key, value in overlay.items():
+        # An empty value means "remove this variable from the child". A GLM pane
+        # needs it: this host may well carry an ANTHROPIC_API_KEY for unrelated
+        # reasons, it outranks the token being passed, and the result is the
+        # silent wrong-vendor pane above.
+        if value:
+            env[key] = value
+        else:
+            env.pop(key, None)
+    return env
+
+
+def agent_spawn_overlay(agent: str) -> dict[str, str]:
+    """Per-CLI environment every pane of ``agent`` gets, resolved now.
+
+    Raises :class:`SessionError` when the entry declares a factory and the
+    factory reports the CLI is not configured. Refusing to open the pane is the
+    point — see :func:`_spawn_env`.
+    """
+    spec = workspace_agents.get_agent(agent)
+    if spec is None:
+        return {}
+    overlay = dict(spec.spawn_env)
+    if spec.spawn_env_factory is None:
+        return overlay
+    resolved = spec.spawn_env_factory()
+    if resolved is None:
+        raise SessionError(
+            f"{spec.display_name} is not configured yet — add its API key in "
+            "Settings, then open the pane again."
+        )
+    overlay.update(resolved)
+    return overlay
 
 
 def account_home(agent: str, account_id: str | None) -> Path | None:
@@ -511,7 +585,7 @@ def account_home(agent: str, account_id: str | None) -> Path | None:
     ``None`` for a pane with no account (or an agent that has none), which keeps
     every existing lookup on its old path.
     """
-    if not account_id or agent not in AGENT_BINARIES:
+    if not account_id or not has_accounts(agent):
         return None
     from jarvis import agent_accounts
 
@@ -526,16 +600,12 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
     ``$SHELL`` first on macOS/Linux) — no agent wrapped around it, and None on a
     host that has no shell at all, which reads the same as a missing binary.
     """
-    binary = AGENT_BINARIES.get(agent)
-    if binary is None:
-        spec = workspace_agents.get_agent(agent)
-        if spec is None:
-            return None
-        if not spec.is_coding_agent:
-            return workspace_agents.plain_terminal_argv()
-        # A CLI registered at runtime: run the command it declared, resolved
-        # through the same shim handling the built-in agents get below.
-        binary = spec.launch_command or spec.name
+    spec = workspace_agents.get_agent(agent)
+    if spec is None:
+        return None
+    if not spec.is_coding_agent:
+        return workspace_agents.plain_terminal_argv()
+    binary = spec.executable or spec.launch_command or spec.name
     try:
         from jarvis.core.path_augment import ensure_cli_paths
 
@@ -548,30 +618,46 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
     if sys.platform == "win32":
         lowered = exe.lower()
         if lowered.endswith((".cmd", ".bat")):
-            if agent == "codex":
-                from jarvis.core.path_augment import resolve_node_executable
-
-                node = resolve_node_executable()
-                codex_js = (
-                    Path(exe).resolve().parent
-                    / "node_modules"
-                    / "@openai"
-                    / "codex"
-                    / "bin"
-                    / "codex.js"
-                )
-                if node and codex_js.is_file():
-                    return (node, str(codex_js))
+            if (direct := _behind_win_shim(spec, exe)) is not None:
+                return (*direct, *spec.launch_args)
             # ConPTY cannot exec a batch shim. `cmd /c` (never /k) exits with
             # the agent, so no shell survives it.
             comspec = os.environ.get("COMSPEC") or "cmd.exe"
-            return (comspec, "/c", exe)
+            return (comspec, "/c", exe, *spec.launch_args)
         if lowered.endswith(".ps1"):
             shell = shutil.which("pwsh") or shutil.which("powershell")
             if shell is None:
                 return None
-            return (shell, "-NoLogo", "-NoProfile", "-File", exe)
-    return (exe,)
+            return (shell, "-NoLogo", "-NoProfile", "-File", exe, *spec.launch_args)
+    return (exe, *spec.launch_args)
+
+
+def _behind_win_shim(
+    spec: workspace_agents.WorkspaceAgent, shim: str
+) -> tuple[str, ...] | None:
+    """What the Windows ``.cmd`` shim would have launched, launched directly.
+
+    ``cmd /c <shim>`` works and stays the fallback, but it wedges a second
+    process between the pane and the agent, which costs clean signal delivery
+    and a clean exit. When the entry declares where the real thing sits inside
+    the installed package we skip the shim entirely.
+
+    Two shapes exist and the entry says which: a Node script that needs
+    ``node.exe`` in front of it, and a native executable that is simply run.
+    ``None`` whenever the declared path is not actually there — an install
+    laid out differently than expected must fall back, never fail.
+    """
+    if spec.win_shim is None:
+        return None
+    target = Path(shim).resolve().parent.joinpath(*spec.win_shim.relative_path)
+    if not target.is_file():
+        return None
+    if spec.win_shim.kind == "exe":
+        return (str(target),)
+    from jarvis.core.path_augment import resolve_node_executable
+
+    node = resolve_node_executable()
+    return (node, str(target)) if node else None
 
 
 @dataclass(slots=True)
@@ -947,7 +1033,7 @@ class Registry:
         login rather than to nothing (``resolve_account`` owns that fallback).
         ``None`` only for something that is not a coding CLI with accounts.
         """
-        if agent not in AGENT_BINARIES:
+        if not has_accounts(agent):
             return None
         return resolve_account(agent, self._active_accounts.get(agent))
 
@@ -962,7 +1048,7 @@ class Registry:
         from jarvis import agent_accounts
 
         rows: list[dict[str, Any]] = []
-        for agent in AGENT_BINARIES:
+        for agent in agent_accounts.platforms():
             account_id = self.active_account_id(agent)
             rows.append(
                 {
@@ -987,8 +1073,8 @@ class Registry:
         survives a restart and the app's own account page cannot end up
         disagreeing with the workspace about which seat is in use.
         """
-        if agent not in AGENT_BINARIES:
-            raise SessionError(f"Unknown agent: {agent}")
+        if not has_accounts(agent):
+            raise SessionError(f"{agent} has no switchable subscriptions.")
         from jarvis import agent_accounts
 
         account = await asyncio.to_thread(agent_accounts.resolve, account_id)

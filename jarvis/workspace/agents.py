@@ -526,18 +526,23 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         needs_trust=False,
         # Its update preflight can check, install and PROMPT mid-session.
         spawn_env=(("KIMI_CODE_NO_AUTO_UPDATE", "1"),),
-        account=AccountSpec(
-            # ONE variable moves config, sessions and credentials together,
-            # which is the cleanest multi-seat override of any entry here.
-            env=(("KIMI_CODE_HOME", "{dir}"),),
-            native_dir="~/.kimi-code",
-            # Deliberately no login markers: this CLI's credential file layout
-            # has not been verified against a live install, and guessing one
-            # would make a signed-in seat read as signed-out. Switching seats
-            # works; the sign-in dot honestly says it cannot tell.
-            login_markers=(),
-            login_argv=("login",),
-        ),
+        # DELIBERATELY no AccountSpec — several seats of this CLI are not
+        # offered yet, and the reason is worth writing down because the data to
+        # enable it looks complete: ``KIMI_CODE_HOME`` really does move the whole
+        # data root. Three things stop it being honest today.
+        #
+        # 1. The wound-down generation does not read that variable at all. On a
+        #    machine that has it — including the one this was written on — every
+        #    "separate" seat would quietly resolve to the same login, and the
+        #    switcher would report a switch that did not happen.
+        # 2. Its configuration and its credentials live in the SAME file, so
+        #    there is no subset of setup that can be carried to a new seat
+        #    without carrying the key with it.
+        # 3. Its credential layout has not been verified against a live install,
+        #    so a sign-in indicator here would be a guess.
+        #
+        # A seat switcher that silently spends one login is worse than none.
+        # Tracked in docs/os-parity.md.
         # Its own installer drops the binary here, which is not on the PATH a
         # GUI-launched process inherits on macOS or Linux.
         extra_path_dirs=("~/.local/bin",),

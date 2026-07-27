@@ -107,9 +107,34 @@ def _windows_candidates() -> list[str]:
     return dirs
 
 
+def _registered_agent_dirs() -> list[str]:
+    """Install dirs contributed by registered coding-CLI entries.
+
+    A CLI whose own installer drops the binary somewhere the platform lists are
+    not going to guess (``~/.local/bin`` on a GUI-launched macOS process, for
+    one) says so on its registry entry rather than earning a line in the
+    platform tables here — which would put product knowledge in a module that
+    has no business holding any.
+
+    Failures are swallowed: PATH augmentation is best-effort by contract, and a
+    registry that cannot be imported must not take the whole lookup with it.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        return [
+            os.path.expanduser(d)
+            for agent in workspace_agents.coding_agents()
+            for d in agent.extra_path_dirs
+        ]
+    except Exception:  # noqa: BLE001 - see docstring
+        return []
+
+
 def candidate_dirs() -> list[str]:
     """The platform's well-known CLI install dirs (existing or not)."""
-    return _windows_candidates() if sys.platform == "win32" else _posix_candidates()
+    base = _windows_candidates() if sys.platform == "win32" else _posix_candidates()
+    return [*base, *_registered_agent_dirs()]
 
 
 def ensure_cli_paths() -> list[str]:

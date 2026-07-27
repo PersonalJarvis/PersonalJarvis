@@ -185,13 +185,18 @@ def test_every_cli_that_can_be_redirected_has_a_setup_allowlist() -> None:
     """A CLI gains accounts, and its panes silently lose the user's setup again.
 
     That is how this bug arrives a second time: redirecting a config dir is one
-    line in ``agent_accounts.ENV_VAR``, while carrying the user's setup across is
-    a table somebody has to remember. The two must not be able to drift apart —
-    so a platform with an override and no allowlist fails here rather than in
-    somebody's terminal six months from now.
+    ``AccountSpec`` on a registry entry, while carrying the user's setup across
+    is a table somebody has to remember. The two must not be able to drift
+    apart — so a platform with an override and no allowlist fails here rather
+    than in somebody's terminal six months from now.
+
+    This is also the gate that decides whether a NEW coding CLI may offer
+    several seats at all: if nothing of its setup can be shared safely (a CLI
+    that keeps its configuration and its key in one file), it must not declare
+    an override in the first place.
     """
-    for platform in agent_accounts.PLATFORMS:
-        assert platform in agent_accounts.ENV_VAR
+    for platform in agent_accounts.platforms():
+        assert agent_accounts.env_var(platform)
         entries = agent_config_parity.USER_SETUP.get(platform)
         assert entries, f"{platform} can be redirected but shares nothing back"
         # Every entry is one the CLI reads; nothing that identifies the account.

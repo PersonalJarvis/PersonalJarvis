@@ -1041,6 +1041,38 @@ def snapshots(platform: Platform) -> list[AccountSnapshot]:
 # ------------------------------------------------------------------- login
 
 
+def _generic_login_argv(account: AgentAccount) -> list[str]:
+    """The CLI's own sign-in command, built from what its entry declared.
+
+    Raises the same honest ``FileNotFoundError`` the built-in paths do when the
+    binary is missing, and an ``AccountError`` when the entry declares no login
+    command at all — a CLI whose only sign-in lives inside its TUI cannot be
+    driven from here, and saying so beats opening an empty terminal.
+    """
+    import shutil
+
+    from jarvis.core.path_augment import ensure_cli_paths
+    from jarvis.workspace import agents as workspace_agents
+
+    entry = workspace_agents.get_agent(account.platform)
+    spec = entry.account if entry is not None else None
+    login_argv = tuple(getattr(spec, "login_argv", ()) or ())
+    if entry is None or not login_argv:
+        raise AccountError(
+            f"{_display(account.platform)} has no sign-in command that can be "
+            "started from here — open a pane and sign in inside it."
+        )
+    ensure_cli_paths()
+    binary = shutil.which(entry.executable)
+    if binary is None:
+        hint = workspace_agents.install_command(entry.name)
+        raise FileNotFoundError(
+            f"{entry.display_name} is not installed"
+            + (f" (run: {hint})." if hint else ".")
+        )
+    return [binary, *login_argv]
+
+
 def start_login(account: AgentAccount) -> Any:
     """Open the CLI's own sign-in flow POINTED AT this account's directory.
 

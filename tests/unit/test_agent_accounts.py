@@ -37,7 +37,7 @@ def _isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_every_platform_offers_its_builtin_account_with_no_store() -> None:
     """A fresh install has one usable account per CLI and no file at all."""
-    for platform in agent_accounts.PLATFORMS:
+    for platform in agent_accounts.platforms():
         accounts = agent_accounts.list_accounts(platform)
         assert len(accounts) == 1
         assert accounts[0].builtin is True

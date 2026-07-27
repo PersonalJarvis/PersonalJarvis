@@ -119,7 +119,7 @@ def _account_home(agent: str, account_id: str | None) -> Path | None:
     try:
         from jarvis import agent_accounts
 
-        if agent not in agent_accounts.PLATFORMS:
+        if agent not in agent_accounts.platforms():
             return None
         return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001 - the offer must never fail on this
