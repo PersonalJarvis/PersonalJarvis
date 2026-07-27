@@ -1,11 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { TopBar } from "./TopBar";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TopBar, TopBarActions } from "./TopBar";
+import { useEventStore } from "@/store/events";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
 }));
 
+// The bar is section-aware now, so every test below states which screen it is
+// on rather than inheriting whatever a previous one left behind.
+beforeEach(() => useEventStore.setState({ activeSection: "chats" }));
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar restart button", () => {
@@ -104,5 +108,40 @@ describe("TopBar restart button", () => {
         screen.getByRole("button", { name: /^restart$/i }),
       ).toBeTruthy();
     });
+  });
+});
+
+/*
+ * The one screen that renders these actions itself.
+ *
+ * The Agentic IDE is a wall of terminal output with a single header row, and a
+ * second full-width strip above it holding two buttons was the third horizontal
+ * band in a row. So the bar steps aside there — but the ACTIONS must not, and
+ * that is the half worth pinning: a frontend change only reaches the user
+ * through that Restart button, so a refactor that quietly drops it from the IDE
+ * would leave the section with no way to pick up its own rebuild.
+ */
+describe("TopBar in the Agentic IDE", () => {
+  it("renders no bar of its own there", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+
+    const { container } = render(<TopBar />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("still offers the restart through the actions the IDE carries", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+
+    render(<TopBarActions />);
+
+    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+  });
+
+  it("keeps its bar on every other screen", () => {
+    const { container } = render(<TopBar />);
+
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
   });
 });

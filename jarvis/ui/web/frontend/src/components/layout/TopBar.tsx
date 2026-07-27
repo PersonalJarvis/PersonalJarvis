@@ -27,10 +27,48 @@ import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
  * A restart tears down the whole app mid-task, so both buttons honor the mission
  * guard (409 → arm a force override) rather than killing live missions silently.
  * We avoid a native ``window.confirm`` on purpose — it blocks the pywebview loop.
+ *
+ * **One section renders the bar itself.** The Agentic IDE is a wall of terminal
+ * output with a single header row of its own, and a second full-width bar above
+ * it holding two buttons cost that view ~40 px it had better uses for. So the
+ * IDE takes `TopBarActions` into its own row and this bar steps aside there —
+ * the actions are still on that screen, which is the rule that matters; what
+ * moved is the furniture around them. Every other view keeps the bar.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
 export function TopBar() {
+  const activeSection = useEventStore((s) => s.activeSection);
+  if (activeSection === "agentic-ide") return null;
+
+  return (
+    <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/70 px-4 backdrop-blur-sm">
+      {/* Status, not an action — carries its own `mr-auto` so it sits at the
+          left end of this right-aligned bar and never crowds the buttons. */}
+      <CodingModeBadge />
+      <TopBarActions />
+    </div>
+  );
+}
+
+/**
+ * The app-chrome ACTIONS, without the bar around them.
+ *
+ * Separate from `TopBar` so a view that already has a header row can carry them
+ * in it rather than under a second one. They are the same components either
+ * way — a screen that had its own copy of "restart the app" would drift from
+ * this one within a release.
+ */
+export function TopBarActions() {
+  return (
+    <>
+      <UpdateButton />
+      <RestartButton />
+    </>
+  );
+}
+
+function RestartButton() {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const [confirming, setConfirming] = useState(false);
@@ -124,30 +162,24 @@ export function TopBar() {
         : t("topbar.restart");
 
   return (
-    <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/70 px-4 backdrop-blur-sm">
-      {/* Status, not an action — carries its own `mr-auto` so it sits at the
-          left end of this right-aligned bar and never crowds the buttons. */}
-      <CodingModeBadge />
-      <UpdateButton />
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={restarting}
-        title={t("topbar.restart_hint")}
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
-          confirming || forceArmed
-            ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
-            : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
-        )}
-      >
-        <RotateCw
-          aria-hidden
-          className={cn("h-3.5 w-3.5", restarting && "animate-spin")}
-        />
-        {label}
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={restarting}
+      title={t("topbar.restart_hint")}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
+        confirming || forceArmed
+          ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+          : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
+      )}
+    >
+      <RotateCw
+        aria-hidden
+        className={cn("h-3.5 w-3.5", restarting && "animate-spin")}
+      />
+      {label}
+    </button>
   );
 }
 

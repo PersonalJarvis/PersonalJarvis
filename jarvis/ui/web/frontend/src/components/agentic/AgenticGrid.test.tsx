@@ -25,6 +25,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeTerminal: vi.fn(),
   closeTerminals: vi.fn(),
   composePrompt: vi.fn(),
+  moveTerminal: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
   // doing. Resolves empty by default; the recap tests give it real rows.
   fetchTerminalRecaps: vi.fn(async () => ({
@@ -53,6 +54,12 @@ vi.mock("@/hooks/useTheme", () => ({
 }));
 
 /**
+ * The pane header's press handler, as much of it as the stub needs. Spelled out
+ * rather than borrowed from React's types so the stub stays a stub.
+ */
+type PointerEventLike = { clientX: number; clientY: number; button: number };
+
+/**
  * xterm needs a real canvas, so the pane is stubbed — but the stub exposes the
  * same action buttons, because what these tests check is the WIRING: which call
  * a button makes and what the grid does with the answer.
@@ -70,6 +77,8 @@ vi.mock("./AgenticTerminal", () => ({
     onToggleMaximize,
     onSplit,
     onClose,
+    onArrangeStart,
+    arranging,
   }: {
     name: string;
     maximized?: boolean;
@@ -82,6 +91,8 @@ vi.mock("./AgenticTerminal", () => ({
     onToggleMaximize?: () => void;
     onSplit?: (direction: "right" | "down", agent?: string) => void;
     onClose?: () => void;
+    onArrangeStart?: (event: PointerEventLike) => void;
+    arranging?: boolean;
   }) => (
     <div
       data-testid={`pane-${name}`}
@@ -90,8 +101,14 @@ vi.mock("./AgenticTerminal", () => ({
       data-restart-token={String(restartToken ?? 0)}
       data-recap={recap ?? ""}
       data-recap-detail={recapDetail ?? ""}
+      // Whether this pane offers the drag at all, and whether it is the one
+      // currently in hand — the real header draws both; here they are read.
+      data-arrangeable={onArrangeStart ? "yes" : "no"}
+      data-arranging={arranging ? "yes" : "no"}
     >
       {name}
+      {/* Stands for the pane header, which is the grip in the real component. */}
+      <div data-testid={`pane-drag-${name}`} onPointerDown={onArrangeStart} />
       <button data-testid={`pane-maximize-${name}`} onClick={onToggleMaximize}>
         max
       </button>
@@ -1236,5 +1253,185 @@ describe("session recaps", () => {
         "Waiting for its first instruction.",
       ),
     );
+  });
+});
+
+/*
+ * Rearranging the grid by dragging a pane by its header.
+ *
+ * A workspace is assembled one split at a time and ends up in the order the
+ * splits happened, not the order the work is in. The only way to fix that used
+ * to be closing a pane and opening a new one elsewhere, which kills a working
+ * agent and its whole conversation — so these tests are really about one
+ * promise: a drop changes where a pane is drawn and NOTHING else.
+ *
+ * jsdom ships neither PointerEvent nor layout, so both are supplied here: the
+ * gesture is fired as MouseEvents (which carry the coordinates a plain Event
+ * drops), and each pane cell is told where it is on screen.
+ */
+describe("rearranging panes", () => {
+  /** Give a pane cell a box, since jsdom lays nothing out. */
+  function placeCell(name: string, left: number, top: number, width = 200, height = 100) {
+    const cell = screen.getByTestId(`pane-cell-${name}`);
+    cell.getBoundingClientRect = () =>
+      ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
+
+  /** Two panes side by side, each 200×100, Mika at the origin. */
+  function twoPlacedPanes() {
+    const handles = renderGrid();
+    placeCell("Mika", 0, 0);
+    placeCell("Nova", 200, 0);
+    return handles;
+  }
+
+  function press(name: string, x: number, y: number) {
+    fireEvent(
+      screen.getByTestId(`pane-drag-${name}`),
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+      }),
+    );
+  }
+
+  function move(x: number, y: number) {
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y }));
+    });
+  }
+
+  /** Let go — awaited, so the move the drop triggers settles inside `act`. */
+  async function release() {
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+  }
+
+  it("swaps two panes when one is dropped in the middle of the other", async () => {
+    const swapped = sessionWith([
+      ["Nova", 0],
+      ["Mika", 1],
+    ]);
+    vi.mocked(api.moveTerminal).mockResolvedValue(swapped);
+    const { onSessionChanged } = twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(300, 50); // the middle of Nova
+
+    // Mid-drag the grid says what the drop would do, before it happens.
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("swap");
+    expect(screen.getByTestId("agentic-arrange-ghost").textContent).toContain("Mika");
+    expect(screen.getByTestId("pane-Mika").dataset.arranging).toBe("yes");
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "swap");
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(swapped));
+  });
+
+  it("places a pane beside another when it is dropped near an edge", async () => {
+    vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(205, 50); // hard against Nova's left edge
+
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("left");
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "left");
+  });
+
+  it("reads the bottom of a pane as 'put it underneath'", async () => {
+    vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(300, 97);
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "below");
+  });
+
+  it("leaves a plain click on the header alone", async () => {
+    // The header is also where a pane is clicked to focus it. A press that goes
+    // nowhere must stay a click, or every click would rearrange the grid.
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(102, 51); // inside the threshold — not a drag
+    await release();
+
+    expect(api.moveTerminal).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("agentic-arrange-ghost")).toBeNull();
+  });
+
+  it("cancels the drag on Escape", async () => {
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(300, 50);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    await release();
+
+    expect(api.moveTerminal).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("agentic-arrange-ghost")).toBeNull();
+  });
+
+  it("does nothing when a pane is dropped back on itself", async () => {
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(150, 50); // still over Mika
+    await release();
+
+    expect(api.moveTerminal).not.toHaveBeenCalled();
+  });
+
+  it("offers no drag while a pane is maximized", () => {
+    // Every other pane is hidden, so there is nothing on screen to drop onto.
+    renderGrid();
+    expect(screen.getByTestId("pane-Mika").dataset.arrangeable).toBe("yes");
+
+    fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+
+    expect(screen.getByTestId("pane-Mika").dataset.arrangeable).toBe("no");
+  });
+
+  it("offers no drag in selection mode", () => {
+    // Selection mode's overlay owns every click on a pane.
+    renderGrid();
+
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+
+    expect(screen.getByTestId("pane-Mika").dataset.arrangeable).toBe("no");
+  });
+
+  it("says so when the move is refused", async () => {
+    vi.mocked(api.moveTerminal).mockRejectedValue(new Error("Nova is gone."));
+    const { onSessionChanged } = twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(300, 50);
+    await release();
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "Nova is gone."));
+    expect(onSessionChanged).not.toHaveBeenCalled();
   });
 });

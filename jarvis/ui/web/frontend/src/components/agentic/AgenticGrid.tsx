@@ -18,6 +18,7 @@ import {
   ChevronUp,
   FileText,
   FolderGit2,
+  GripVertical,
   Image as ImageIcon,
   ListChecks,
   Loader2,
@@ -61,12 +62,14 @@ import {
   nameClipboardFile,
   type PaneDropPayload,
 } from "./paneDrop";
+import { usePaneArrange, type DropZone } from "./paneArrange";
 import {
   addTerminal,
   attachToTerminal,
   closeTerminal,
   closeTerminals,
   composePrompt,
+  moveTerminal,
   clearTerminalRecap,
   fetchTerminalRecaps,
   refreshTerminalRecap,
@@ -112,10 +115,37 @@ interface AgenticGridProps {
    * Left out (the wizard, tests) the toolbar simply names the project itself.
    */
   workspaceBar?: React.ReactNode;
+  /**
+   * The app's own chrome actions (Restart, and Update when one is offered),
+   * pinned to the far right of this same row.
+   *
+   * They belong to the shell, not to this workspace — but the shell's bar does
+   * not render in this section (see TopBar), because a full-width strip holding
+   * two buttons above a wall of terminals was the third horizontal band in a
+   * row. Passing them in keeps them on screen, which is the part that matters:
+   * a frontend change reaches the user through that Restart button.
+   */
+  appActions?: React.ReactNode;
 }
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+
+/**
+ * The part of the hovered pane a drop would take, drawn as it will look.
+ *
+ * A label alone ("Right of Mika") is a sentence to read mid-gesture; the filled
+ * half is the answer at a glance, and it is the same shape the pane will
+ * actually have afterwards. Swap fills the whole pane because that is exactly
+ * what it takes over.
+ */
+const ZONE_BOX: Record<DropZone, string> = {
+  swap: "inset-0",
+  left: "inset-y-0 left-0 w-1/2",
+  right: "inset-y-0 right-0 w-1/2",
+  above: "inset-x-0 top-0 h-1/2",
+  below: "inset-x-0 bottom-0 h-1/2",
+};
 
 /**
  * How often the pane headers re-read what their agents are doing.
@@ -519,10 +549,45 @@ export function AgenticGrid({
   }, [composerCollapsed, resizeComposer]);
 
   const perBand = useMemo(() => bandCapacityFor(gridWidth), [gridWidth]);
-  const grid = useMemo(
-    () => paneGrid(session.terminals, perBand),
-    [session.terminals, perBand],
+
+  /*
+   * The sizes the panes are drawn at, and the seams between them.
+   *
+   * Kept apart from the arrangement on purpose: `session.terminals` says which
+   * column and slot each pane is in and only the backend may change that, while
+   * the weights say how much room each one gets and only this browser does. A
+   * drag therefore never waits on a request, and a workspace opened on a second
+   * machine is the same arrangement at that machine's own sizes.
+   */
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const sizes = usePaneWeights(
+    session.id,
+    useCallback(
+      () => ({
+        width: canvasRef.current?.clientWidth ?? gridWidth,
+        height: canvasRef.current?.clientHeight ?? gridHeight,
+      }),
+      [gridWidth, gridHeight],
+    ),
   );
+  const layout = useMemo(
+    () => paneLayout(session.terminals, perBand, sizes.weights),
+    [session.terminals, perBand, sizes.weights],
+  );
+
+  /*
+   * How tall the workspace is drawn, which is not always how tall it looks.
+   *
+   * Panes take a percentage of this, so it is also the floor that keeps them
+   * readable: once the bands' tallest stacks cannot fit at `MIN_PANE_HEIGHT_PX`
+   * each, the canvas grows past the window and the workspace scrolls rather
+   * than shrinking every pane further. A maximized pane is exactly the window,
+   * so it can never end up taller than the area it is being read in.
+   */
+  const canvasHeight =
+    maximized !== null
+      ? gridHeight
+      : Math.max(gridHeight, layout.minHeightUnits * MIN_PANE_HEIGHT_PX);
 
   const atLimit = session.terminals.length >= maxTerminals;
 
@@ -549,12 +614,70 @@ export function AgenticGrid({
     }
   };
 
+  /*
+   * A pane was dragged onto another one.
+   *
+   * The move is asked of the backend rather than applied here first. An
+   * optimistic reorder would be a second implementation of the placement
+   * arithmetic living in the browser, and the two would drift — the workspace on
+   * disk is what a restart brings back, so the layout the user sees has to be
+   * the layout the backend actually recorded.
+   */
+  const movePane = useCallback(
+    async (moved: string, target: string, zone: DropZone) => {
+      setWorking(true);
+      try {
+        const next = await moveTerminal(moved, target, zone);
+        // Column widths follow the panes that carried them, so a pane dropped
+        // into a wide column does not drag that column's width away with it.
+        sizes.setWeights((current) =>
+          remapColumnWeights(current, session.terminals, next.terminals),
+        );
+        onSessionChanged?.(next);
+      } catch (error) {
+        pushToast("error", (error as Error).message);
+      } finally {
+        setWorking(false);
+      }
+    },
+    [onSessionChanged, pushToast, session.terminals, sizes.setWeights],
+  );
+
+  const arrange = usePaneArrange(
+    useCallback(
+      (moved: string, target: string, zone: DropZone) => {
+        void movePane(moved, target, zone);
+      },
+      [movePane],
+    ),
+  );
+
+  /*
+   * When a pane may be picked up at all.
+   *
+   * Not while a pane is maximized (the others are hidden with CSS, so there is
+   * nothing on screen to drop onto), not in selection mode (its overlay owns
+   * every click), and not while another workspace change is still in flight —
+   * two layout writes racing would leave the grid describing neither.
+   */
+  const canArrange =
+    !selectionMode &&
+    maximized === null &&
+    !busy &&
+    !working &&
+    session.terminals.length > 1;
+
   const closeOne = async (name: string) => {
     setWorking(true);
     try {
       const next = await closeTerminal(name);
       setPendingClose(null);
       if (maximized === name) setMaximized(null);
+      // The surviving columns keep the widths they were dragged to; the closed
+      // pane's own height weight goes with it.
+      sizes.setWeights((current) =>
+        remapColumnWeights(current, session.terminals, next.terminals),
+      );
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
     } catch (e) {
@@ -957,68 +1080,62 @@ export function AgenticGrid({
         panes on every split, close, and wrap. With one flat container the
         layout only ever changes numbers, and nothing moves in the DOM.
 
+        It used to be a CSS grid, which gave that property for free — but a grid
+        has ONE `grid-template-columns` shared by all of its rows, so two bands
+        could never have different column widths, and every pane in a band was
+        the same width whatever the user wanted. Fractional positioning inside
+        one container keeps the mounting guarantee and drops that ceiling.
+
         The same reasoning covers maximizing: the other panes are HIDDEN with
-        CSS, never removed, and the maximized one is told to span the whole
-        grid instead of keeping its narrow cell.
+        CSS, never removed, and the maximized one is told to fill the container
+        instead of keeping its own rectangle.
       */}
       <div
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "grid min-h-0 flex-1",
+          "relative min-h-0 flex-1",
           // Scrolls only once the panes would be squeezed below a readable
           // height. With a workspace that fits, this is `overflow-hidden`
           // behaviour and nothing moves.
           maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
+          // A drag across the grid would otherwise sweep a text selection over
+          // every header and label it crosses.
+          arrange.held !== null && "select-none",
         )}
-        style={{
-          // Inline rather than a utility class so ONE number drives both the
-          // rendered gap and the width the column count is computed from.
-          gap: GRID_GAP_PX,
-          padding: GRID_GAP_PX,
-          // While one pane is maximized the grid IS that pane: a single track
-          // filling exactly what the window shows. Spanning the full template
-          // instead was wrong in a workspace large enough to scroll — the
-          // tracks then add up to more than the window, so the maximized pane
-          // was taller than the visible area and the terminal fitted itself to
-          // rows nobody could see, putting the CLI's prompt box below the clip.
-          // A grid that had been scrolled also kept its offset, so the pane
-          // came up part-way past its own header.
-          gridTemplateColumns:
-            maximized !== null
-              ? "minmax(0, 1fr)"
-              : `repeat(${Math.max(1, grid.columns)}, minmax(0, 1fr))`,
-          // A floor on row height, not a free 1fr. Panes used to share the
-          // window height in equal parts however many there were, so a large
-          // workspace ended up with three text rows per pane — readable width,
-          // unusable height. Below the floor the grid grows and scrolls instead.
-          gridTemplateRows:
-            maximized !== null
-              ? "minmax(0, 1fr)"
-              : `repeat(${Math.max(1, grid.rows)}, minmax(${MIN_PANE_HEIGHT_PX}px, 1fr))`,
-        }}
+        // Inline rather than a utility class so ONE number drives both the
+        // rendered outer margin and the width the column count is computed from.
+        style={{ padding: GRID_GAP_PX }}
+      >
+      {/*
+        The surface the fractions resolve against.
+
+        Separate from the scroller because the two have different heights on
+        purpose: the scroller is the window, this is the workspace, and a
+        workspace whose panes would fall below `MIN_PANE_HEIGHT_PX` grows past
+        the window and scrolls rather than shrinking them further.
+      */}
+      <div
+        ref={canvasRef}
+        data-testid="agentic-grid-canvas"
+        className="relative w-full"
+        style={{ height: canvasHeight || undefined }}
       >
         {session.terminals.map((term, index) => {
-          const place = grid.placements[index];
+          const box = layout.boxes[index];
           const isMaximized = maximized === term.name;
           return (
             <div
               key={term.key}
+              ref={arrange.registerCell(term.name)}
               data-testid={`pane-cell-${term.name}`}
               className={cn(
-                "relative min-h-0 min-w-0 rounded-lg",
+                "absolute min-h-0 min-w-0 rounded-lg",
                 selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 maximized !== null && !isMaximized && "hidden",
               )}
-              style={
-                isMaximized
-                  ? { gridColumn: "1 / -1", gridRow: "1 / -1" }
-                  : {
-                      gridColumn: place?.column ?? 1,
-                      gridRow: `${place?.row ?? 1} / span ${place?.rowSpan ?? 1}`,
-                    }
-              }
+              style={isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
             >
               <AgenticTerminal
                 name={term.name}
@@ -1067,9 +1184,49 @@ export function AgenticGrid({
                 onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onClose={() => setPendingClose(term.name)}
                 onAttachError={(message) => pushToast("error", message)}
+                // Picked up by its header, put down on another pane. Undefined
+                // rather than a disabled flag when rearranging is off, so the
+                // header goes back to being a plain header — no grab cursor
+                // promising a gesture that would do nothing.
+                onArrangeStart={
+                  canArrange
+                    ? (event) => arrange.start(term.name, event)
+                    : undefined
+                }
+                arranging={arrange.held === term.name}
                 restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
               />
+              {/* Where a drop on THIS pane would put the pane in hand. Every
+                  other pane is outlined the moment a drag starts, so the grid
+                  says "these are the places" before the cursor gets there, and
+                  the one under the cursor fills in the half it would take. */}
+              {arrange.held !== null && arrange.held !== term.name && (
+                <div
+                  data-testid={`pane-dropzone-${term.name}`}
+                  data-zone={
+                    arrange.hover?.target === term.name ? arrange.hover.zone : ""
+                  }
+                  className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-dashed border-primary/30"
+                >
+                  {arrange.hover?.target === term.name && (
+                    <>
+                      <div
+                        className={cn(
+                          "absolute rounded-md bg-primary/25 ring-2 ring-primary transition-all",
+                          ZONE_BOX[arrange.hover.zone],
+                        )}
+                      />
+                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg">
+                        {t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
+                          "{0}",
+                          term.name,
+                        )}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
               {selectionMode && (
                 <button
                   type="button"
@@ -1119,11 +1276,44 @@ export function AgenticGrid({
             </div>
           );
         })}
+        {/*
+          The boundaries, and the whole reason they are their own elements.
+
+          A seam sits BETWEEN two panes rather than on the edge of one, because
+          that is the thing being moved: dragging it right widens the pane on
+          the left and narrows the one on the right by exactly as much, and no
+          other pane in the workspace changes at all. Three kinds — between two
+          columns, between two rows of columns, and between two panes stacked in
+          one column — all behave identically, which is the point.
+
+          Hidden while a pane is maximized (there is nothing to divide), while
+          panes are being selected or dragged (those gestures own the pointer),
+          and, naturally, when there is only one pane.
+        */}
+        {maximized === null &&
+          !selectionMode &&
+          arrange.held === null &&
+          layout.seams.map((seam) => (
+            <PaneResizer
+              key={seam.id}
+              testId={`pane-seam-${seam.id}`}
+              orientation={seam.orientation}
+              title={seam.label}
+              active={sizes.dragging === seam.id}
+              onPointerDown={(event) => sizes.startDrag(seam, event)}
+              onDoubleClick={() => sizes.even(seam)}
+              // An arrow key moves the seam the way it points, which for the
+              // vertical axis is the opposite of `PaneResizer`'s own sign: its
+              // default is written for a grip on a pane's own edge, where "up"
+              // means "give that pane more room".
+              onNudge={(delta) =>
+                sizes.nudge(seam, seam.orientation === "horizontal" ? -delta : delta)
+              }
+              style={seamStyle(seam)}
+            />
+          ))}
         {session.terminals.length === 0 && (
-          <div
-            className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
-            style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}
-          >
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             <span>Every terminal in this workspace is closed.</span>
             <button
               type="button"
@@ -1330,6 +1520,29 @@ export function AgenticGrid({
               {session.terminals[0]?.name ?? "Mika"} to run the tests”.
             </p>
           )}
+        </div>
+      )}
+
+      {/* The pane in hand, following the cursor.
+          A label rather than a copy of the terminal: an xterm canvas cannot be
+          cloned without a second WebSocket, and what the user needs to see mid-
+          drag is which pane they are carrying, not its output. */}
+      {arrange.held !== null && arrange.point !== null && (
+        <div
+          data-testid="agentic-arrange-ghost"
+          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold shadow-xl"
+          style={{ left: arrange.point.x + 14, top: arrange.point.y + 14 }}
+        >
+          <GripVertical className="h-3.5 w-3.5 text-primary" />
+          {arrange.held}
+          <span className="font-normal text-muted-foreground">
+            {arrange.hover === null
+              ? t("agentic_grid.arrange.carrying")
+              : t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
+                  "{0}",
+                  arrange.hover.target,
+                )}
+          </span>
         </div>
       )}
     </div>
