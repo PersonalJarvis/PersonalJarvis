@@ -70,6 +70,7 @@ from jarvis.agentic_ide.session import (
     terminals_added_event,
 )
 
+from jarvis.agentic_ide.terminal_input import is_terminal_report_only
 from .surface_security import credentials_valid, is_loopback_request
 
 log = logging.getLogger(__name__)
@@ -77,7 +78,6 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 
 # One system folder window at a time — see ``open_native_picker``.
-from jarvis.agentic_ide.terminal_input import is_terminal_report_only
 _native_picker_lock = asyncio.Lock()
 
 
@@ -1507,6 +1507,12 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     resolved against whichever workspace happens to be showing, and could land
     in a pane in a different folder. Omitted, the front workspace answers (the
     single-workspace case, and what older clients send).
+
+    The optional ``appearance`` parameter (``light`` / ``dark``) is the ground
+    this pane is drawn on. It is what the agent's CLI is told when it asks the
+    terminal for its colours — a question answered in the backend rather than
+    by xterm, so the reply cannot arrive after the CLI stopped waiting for it
+    (see ``jarvis.agentic_ide.terminal_input``).
     """
     await ws.accept()
     if not credentials_valid(ws.scope):
@@ -1525,6 +1531,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     cols = _safe_int(qp.get("cols"), 80)
     rows = _safe_int(qp.get("rows"), 24)
     workspace_id = (qp.get("workspace") or "").strip() or None
+    appearance = (qp.get("appearance") or "").strip().lower() or None
 
     registry = get_registry()
     send_lock = asyncio.Lock()
@@ -1794,10 +1801,3 @@ async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
 
 
 __all__ = ["router"]
-
-    The optional ``appearance`` parameter (``light`` / ``dark``) is the ground
-    this pane is drawn on. It is what the agent's CLI is told when it asks the
-    terminal for its colours — a question answered in the backend rather than
-    by xterm, so the reply cannot arrive after the CLI stopped waiting for it
-    (see ``jarvis.agentic_ide.terminal_input``).
-    appearance = (qp.get("appearance") or "").strip().lower() or None

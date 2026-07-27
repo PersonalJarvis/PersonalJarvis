@@ -76,9 +76,9 @@ from .agent_sessions import (
 )
 from .folders import ProjectProfile, probe_project
 from .names import default_names, normalize, resolve
+from .terminal_input import THEME_COLOURS, TerminalQueryResponder
 from .transcript import ReplayBuffer, Transcript
 
-from .terminal_input import THEME_COLOURS, TerminalQueryResponder
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from jarvis.terminal.pty_manager import PtyManager
 
@@ -468,6 +468,13 @@ class Terminal:
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
     # replays always belongs to the process it is now watching.
     replay: ReplayBuffer = field(default_factory=ReplayBuffer)
+    # Answers the emulator queries the agent's CLI asks on startup. It lives on
+    # the TERMINAL rather than on the viewer's socket for two reasons: the PTY
+    # outlives its viewers, and the replay handed to a re-joining viewer carries
+    # the original queries — answering those a second time would write the reply
+    # into a prompt the agent has long since opened, which is the corruption
+    # this exists to prevent. Only live output reaches it.
+    queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
     # Where this pane's output currently goes, or None while nobody is looking.
     #
     # A mutable slot rather than a closure captured at spawn time, and that is
@@ -565,13 +572,6 @@ class Session:
     restored_from: str = ""
 
     def find(self, wanted: str) -> Terminal | None:
-    # Answers the emulator queries the agent's CLI asks on startup. It lives on
-    # the TERMINAL rather than on the viewer's socket for two reasons: the PTY
-    # outlives its viewers, and the replay handed to a re-joining viewer carries
-    # the original queries — answering those a second time would write the reply
-    # into a prompt the agent has long since opened, which is the corruption
-    # this exists to prevent. Only live output reaches it.
-    queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
         """Terminal by key, call-sign, or a spoken phrase containing one."""
         if not wanted:
             return None
@@ -1339,12 +1339,19 @@ class Registry:
         on_output: Any,
         on_exit: Any,
         workspace_id: str | None = None,
+        appearance: str | None = None,
     ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
 
         ``on_output(text)`` / ``on_exit(code)`` are awaited in this loop. The
         transcript is fed here, so it keeps filling even if the UI pane is
         closed and reconnects later.
+
+        ``appearance`` is the light/dark ground the viewer draws this pane on.
+        It is answered to the agent's CLI when it asks for the screen colours,
+        so a CLI on a light pane picks a palette for paper rather than for
+        slate. Omitted (an internal re-attach), whatever the last viewer said
+        stands.
 
         **A running agent is re-joined, never restarted.** A pane whose PTY is
         still alive — the normal case after switching workspaces, reloading the
@@ -1375,6 +1382,8 @@ class Registry:
                 raise SessionError("No Agentic-IDE session is running.")
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
+        if appearance in THEME_COLOURS:
+            term.queries.appearance = appearance
 
         manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
@@ -1530,7 +1539,6 @@ class Registry:
         except Exception as exc:  # noqa: BLE001 - surfaced to the pane
             term.status = "error"
             term.error = str(exc)
-        appearance: str | None = None,
             raise SessionError(str(exc)) from exc
 
         term.pty_id = pty_session.terminal_id
@@ -1538,12 +1546,6 @@ class Registry:
         term.error = ""
         term.exit_code = None
         term.started_at = time.time()
-        ``appearance`` is the light/dark ground the viewer draws this pane on.
-        It is answered to the agent's CLI when it asks for the screen colours,
-        so a CLI on a light pane picks a palette for paper rather than for
-        slate. Omitted (an internal re-attach), whatever the last viewer said
-        stands.
-
         term.last_output_at = time.time()
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
@@ -1573,8 +1575,6 @@ class Registry:
                     await asyncio.sleep(delay)
                     if term not in owner.terminals or owner.id not in self._sessions:
                         return  # the pane (or the workspace) is gone
-        if appearance in THEME_COLOURS:
-            term.queries.appearance = appearance
                     session = owner
                     if term.resume is not None:
                         return
