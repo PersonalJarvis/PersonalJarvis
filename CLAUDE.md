@@ -437,6 +437,18 @@ Detail in [`docs/BUGS.md`](docs/BUGS.md):
 - **App restart is `POST /api/settings/restart-app`**, not `Stop-Process`
   (Access Denied under the tray `pythonw.exe`). Editable-install fixes need
   this restart to take effect.
+- **Jarvis is used as a DESKTOP APP, not a browser tab.** The window is an
+  embedded WebView (`jarvis/ui/desktop_app.py`) with no address bar, no
+  reload button and no dev tools, so "press Ctrl+R / F5", "hard-refresh",
+  "clear the browser cache" and "open the console" are instructions that
+  cannot be followed — never end a frontend change with one. A frontend fix
+  reaches the user in exactly two steps: `npm run build` in
+  `jarvis/ui/web/frontend/` (the app serves the built `dist/`, never Vite),
+  then the **Restart** button in the app's top bar, which is on every screen
+  and posts to the endpoint above. Say that, and say that a restart takes
+  live terminal panes with it — they reattach or resume, but it is not free.
+  Running from a browser against `--dev` is a contributor path, not the
+  maintainer's.
 - **New worktree:** run `pwsh scripts/preflight.ps1` before writing code;
   non-zero exit → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before
