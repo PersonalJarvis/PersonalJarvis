@@ -1113,7 +1113,13 @@ class WebServer:
                 codex_bin = (
                     getattr(getattr(cfg, "codex", None), "binary_path", "") or None
                 )
-                codex_status = CodexAuthService(codex_bin).status()
+                # Off the event loop like the Claude probe above: it spawns the
+                # CLI binary, and on the loop that few-hundred-millisecond pause
+                # froze the realtime voice socket into an audible mid-sentence
+                # hole (forensic 2026-07-27).
+                codex_status = await asyncio.to_thread(
+                    CodexAuthService(codex_bin).status
+                )
                 codex_connected = codex_status.connected
                 codex_installed = codex_status.installed
             except Exception:  # noqa: BLE001
@@ -1170,7 +1176,10 @@ class WebServer:
                     antigravity_provider_ready,
                 )
 
-                antigravity_status = GoogleCliAuthService().status()
+                # Off the event loop for the same reason as the Codex probe.
+                antigravity_status = await asyncio.to_thread(
+                    GoogleCliAuthService().status
+                )
                 antigravity_connected = (
                     antigravity_status.connected
                     and antigravity_status.mode == "oauth-personal"

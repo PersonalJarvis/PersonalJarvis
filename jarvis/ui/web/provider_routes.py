@@ -2199,7 +2199,17 @@ async def realtime_voice_preview(
 
 @router.get("/codex/status")
 async def codex_status(request: Request) -> dict[str, Any]:
-    return CodexAuthService(_codex_binary_path(request)).status().to_dict()
+    """Honest snapshot of the Codex CLI login.
+
+    Off the event loop: the probe SPAWNS the CLI binary, which costs a few
+    hundred milliseconds. On the loop that pause froze everything else running
+    in this process — including the realtime voice socket, where it surfaced as
+    an audible hole mid-sentence (forensic 2026-07-27, see
+    ``jarvis.audio.player.DEFAULT_OUTPUT_BUFFER_S``).
+    """
+    service = CodexAuthService(_codex_binary_path(request))
+    status = await asyncio.to_thread(service.status)
+    return status.to_dict()
 
 
 @router.post("/codex/test")
@@ -2241,7 +2251,7 @@ async def codex_set_binary_path(body: CodexBinaryPathBody, request: Request) -> 
 @router.post("/codex/login")
 async def codex_login(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(
             status_code=409,
@@ -2265,10 +2275,10 @@ async def codex_login(request: Request) -> dict[str, Any]:
 @router.post("/codex/logout")
 async def codex_logout(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(status_code=409, detail="Codex CLI is not installed")
-    ok, error = service.logout_blocking()
+    ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Codex logout failed")
     return {"ok": True, "message": "Codex was disconnected"}

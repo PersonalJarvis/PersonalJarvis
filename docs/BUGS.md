@@ -7979,3 +7979,78 @@ everything that lives there, not the one thing you were thinking about. Before
 redirecting one, enumerate what else resolves from that directory — and when the
 answer is "the user's whole setup", carry it across explicitly instead of
 discovering the loss one setting at a time.
+
+## BUG-115: Jarvis pauses for a fraction of a second mid-sentence, then speaks on (MEDIUM, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "When you talk to Jarvis there are
+sometimes pauses of 0.2 or 0.5 seconds in the middle of a sentence, then he
+carries on." Intermittent, never reproducible on demand, no error anywhere.
+
+**Root cause — one buffer, three different producers of a gap.** The realtime
+voice path fed a device stream opened with a 200 ms PortAudio buffer, and that
+buffer was the ONLY thing between a hiccup and silence. The app already
+attributed its own holes: `RealtimeSession._note_audio_flow` logs every
+mid-reply gap with a cause, and the 2026-07-26/27 logs name all three —
+
+- **this process stalled its own event loop** (5 events, 311-375 ms): "the
+  audio likely sat unread in the socket, not missing from the provider". A PTY
+  spawn storm from the Agentic IDE, synchronous CLI auth probes behind the
+  provider panels, embedding work. While the loop is stalled NOTHING can move
+  audio, so only what is already inside PortAudio keeps playing — 200 ms of it;
+- **the provider delivered no audio** (3 events, 405-686 ms): gemini-live
+  bursts and then goes quiet while it generates the next span. Nothing was
+  banked to bridge it, because the writer is throttled to one buffer ahead;
+- **the provider rendered its own pause as silent PCM** (many, 400-800 ms) —
+  a genuine generation pause inside the audio, not a hole in delivery, and the
+  one of the three that is the model speaking rather than Jarvis failing.
+
+Every one of the first two exceeded 200 ms, so every one of them was audible.
+The earlier de-click (2026-07-21) had smoothed the EDGES of these gaps without
+touching what produced them.
+
+**Fix — give the gap something to eat, at both levels.**
+
+- `jarvis/audio/player.py` — `DEFAULT_OUTPUT_BUFFER_S = 0.4`: the reserved
+  device buffer now outlasts the worst measured event-loop stall. This is the
+  only layer that helps there, because audio banked in an asyncio queue still
+  needs the stalled loop to reach the device. It costs nothing elsewhere:
+  barge-in's `Pa_AbortStream` discards the buffer, so a deeper one never speaks
+  past an interruption; the realtime echo guard already reads the stream's
+  REPORTED latency instead of assuming a value; and a deeper buffer bounds only
+  how far AHEAD the writer may run — it does not pre-fill, so the first word
+  still starts on the first write.
+- The feed-dry de-click window is derived from that buffer instead of being
+  fixed at 80 ms. Ramping the waveform down while the device still holds 400 ms
+  would carve a dip out of speech that was never going to break — with a deep
+  buffer, ordinary network jitter is exactly that case.
+- `jarvis/realtime/desktop.py` — a jitter buffer (`DEFAULT_PREBUFFER_MS = 180`)
+  banks the opening of each turn before playback starts, so a provider that
+  goes quiet mid-reply eats a reserve rather than the speaker. Bounded twice
+  over — by `prebuffer_timeout_ms` and by the end-of-turn sentinel — so a short
+  reply is never held back and the first word is delayed by at most the
+  timeout.
+- `jarvis/ui/web/{provider_routes,antigravity_routes,server}.py` — the Codex
+  and Google CLI auth probes now run in a worker thread. Each one SPAWNS the
+  CLI binary; on the event loop, one poll from an open provider panel was a
+  few hundred milliseconds of frozen process. `list_providers` and the Claude
+  probe had already been moved off the loop for the same reason; these were
+  the ones left behind.
+
+**Regression guard.** `tests/unit/audio/test_player_output_buffer.py` — the
+reserved buffer outlasts the measured stall, a requested depth is clamped to an
+audible range, the stall window scales with the buffer, a gap the buffer
+absorbs reaches the device byte-identical, and a gap past the window is still
+de-clicked. `tests/unit/realtime/test_desktop.py` — playback waits for the
+reserve, order and content survive it, a short reply is released by the
+sentinel, and the wait is bounded by its timeout.
+`tests/unit/web/test_cli_auth_probes_off_the_event_loop.py` — a structural walk
+of the route modules that fails on any `async def` reaching a blocking CLI probe
+inline, which is what regresses the next time a provider CLI is added.
+
+**Class rule.** While audio is streaming, the event loop is a real-time
+deadline: anything blocking on it is heard. A buffer sized for a device's own
+jitter is not sized for the process that feeds it — pick the depth from the
+worst stall the process actually produces, and measure that instead of assuming
+the remote end is at fault. What the third cause shows is the other half of the
+rule: log an attributable cause at the boundary, or an intermittent gap stays
+unfalsifiable forever.

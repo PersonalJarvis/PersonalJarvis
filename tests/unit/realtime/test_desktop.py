@@ -209,6 +209,64 @@ async def test_handshake_sample_rate_is_used_for_the_next_turn():
     assert [chunk.sample_rate for chunk in player.chunks] == [16_000]
 
 
+@pytest.mark.asyncio
+async def test_playback_waits_for_the_jitter_buffer_before_the_first_word() -> None:
+    """A turn banks a reserve first, so a provider pause has something to eat.
+
+    Live forensic 2026-07-27: gemini-live went quiet for 405-686 ms mid-reply
+    ("the provider sent no audio for this span") and the speaker ran dry.
+    """
+    player = FakePlayer()
+    # 24 kHz mono int16 = 48 bytes per millisecond; 100 ms of reserve = 4800 B.
+    playback = DesktopRealtimePlayback(
+        player, prebuffer_ms=100, prebuffer_timeout_ms=10_000
+    )
+
+    await playback.send_binary(b"\x01\x00" * 24)  # ~1 ms — nowhere near full
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert player.chunks == [], "playback must not start on a bare first chunk"
+
+    await playback.send_binary(b"\x02\x00" * 2_400)  # tips it over 100 ms
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    await playback.finish_turn()
+    assert [chunk.pcm for chunk in player.chunks] == [
+        b"\x01\x00" * 24,
+        b"\x02\x00" * 2_400,
+    ], "the reserve delays playback; it never drops or reorders audio"
+
+
+@pytest.mark.asyncio
+async def test_short_reply_is_not_held_back_by_the_jitter_buffer() -> None:
+    """A reply shorter than the reserve still plays — the sentinel releases it."""
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(
+        player, prebuffer_ms=5_000, prebuffer_timeout_ms=10_000
+    )
+
+    await playback.send_binary(b"\x07\x00" * 8)
+    await playback.finish_turn()
+
+    assert [chunk.pcm for chunk in player.chunks] == [b"\x07\x00" * 8]
+
+
+@pytest.mark.asyncio
+async def test_jitter_buffer_wait_is_bounded_by_its_timeout() -> None:
+    """A provider that trickles audio out still starts speaking on time."""
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(
+        player, prebuffer_ms=5_000, prebuffer_timeout_ms=30
+    )
+
+    await playback.send_binary(b"\x05\x00" * 8)
+    await asyncio.sleep(0.15)  # past the timeout, turn still open
+
+    assert [chunk.pcm for chunk in player.chunks] == [b"\x05\x00" * 8]
+    await playback.finish_turn()
+
+
 def test_energy_pre_gate_skips_onnx_for_quiet_frames() -> None:
     # BUG-062: quiet frames (silence / hiss / moderate speaker echo) must
     # never reach the Silero model — that is both the loop-load fix (stutter

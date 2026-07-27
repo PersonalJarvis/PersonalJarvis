@@ -45,19 +45,67 @@ _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
 _MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
+
+# How much audio the OUTPUT DEVICE is asked to hold (PortAudio's ``latency``).
+#
+# This buffer is the only thing that keeps speech continuous while NOTHING in
+# this process is able to move audio: during an event-loop stall the playback
+# task cannot run, so whatever already sits inside PortAudio is all that will
+# be heard. Audio banked in an asyncio queue does not help there — moving it
+# needs the very loop that is stalled.
+#
+# Live forensic 2026-07-27 (realtime voice, gemini-live): mid-reply holes of
+# 400-800 ms, attributed by ``RealtimeSession._note_audio_flow``. Half of them
+# read "this process's event loop stalled 311-375 ms in the same window" — a
+# PTY spawn storm from the Agentic IDE, synchronous CLI auth probes, embedding
+# work. Against the previous 200 ms buffer every one of those stalls became an
+# audible pause mid-sentence.
+#
+# 400 ms covers the measured stalls with margin and costs nothing elsewhere:
+# barge-in calls ``stop()``, whose ``Pa_AbortStream`` DISCARDS the buffer (so a
+# deeper buffer never speaks past an interruption); the realtime echo guard
+# reads the stream's REPORTED latency instead of assuming a value; and a
+# deeper buffer only bounds how far AHEAD the writer may run — it does not
+# pre-fill, so the first word still starts on the first write.
+DEFAULT_OUTPUT_BUFFER_S = 0.4
+# Below ~100 ms USB headsets underrun (Wave-2 diagnosis 2026-05-16); above 2 s
+# the UI's speaking animation would visibly lead the voice, because the level
+# tap is fed at write time rather than at playout time.
+_MIN_OUTPUT_BUFFER_S = 0.1
+_MAX_OUTPUT_BUFFER_S = 2.0
 # Feed-dry stall de-click (live forensic 2026-07-21 08:40: the realtime
 # provider paused audio delivery 1850 ms mid-sentence; the device buffer
 # drained and PortAudio cut the waveform at speech amplitude — audible as a
 # choppy mid-sentence pause with a click/crackle at both edges). The missing
 # audio cannot be conjured locally, but the gap's EDGES can be smoothed:
-# when the chunk feed stays dry longer than FEED_STALL_FADE_S, append a
+# when the chunk feed stays dry longer than the stall window, append a
 # short ramp from the last written sample down to zero, and ramp the first
-# resumed block back in. The timeout must undercut the device-buffer drain
-# (a completed 120 ms write leaves at least ~that much buffered), so the
-# ramp reaches PortAudio before the buffer runs empty; a healthy burst-fed
+# resumed block back in. The window must undercut the device-buffer drain so
+# the ramp reaches PortAudio before the buffer runs empty; a healthy burst-fed
 # stream never waits this long between chunks.
+#
+# It is derived from the ACTIVE device buffer (``_feed_stall_window_s``), not
+# fixed: ramping while the device still holds hundreds of milliseconds would
+# insert an audible dip into speech that was never going to break. This floor
+# applies to a shallow buffer; a deeper one waits proportionally longer.
 FEED_STALL_FADE_S = 0.08
+# Headroom left between the stall window and the device-buffer drain: one
+# ``TTS_WRITE_BUFFER_MS`` batch, which is what a flush has to push through.
+_STALL_FADE_HEADROOM_S = TTS_WRITE_BUFFER_MS / 1000.0
 STALL_EDGE_FADE_MS = 12.0
+
+
+def _clamp_output_buffer_s(value: float | None) -> float:
+    """Bound a requested output-buffer depth to a safe, audible range."""
+    if value is None:
+        return DEFAULT_OUTPUT_BUFFER_S
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_OUTPUT_BUFFER_S
+    if not math.isfinite(seconds):
+        return DEFAULT_OUTPUT_BUFFER_S
+    return min(_MAX_OUTPUT_BUFFER_S, max(_MIN_OUTPUT_BUFFER_S, seconds))
 
 
 class _PlaybackSuperseded(RuntimeError):
@@ -414,6 +462,7 @@ class AudioPlayer:
         bus: Any = None,
         volume: float = 1.0,
         device_priority: Sequence[str] | None = None,
+        buffer_s: float | None = None,
     ) -> None:
         # User-configured device-name priority ([audio].output_device_priority).
         # Consulted BEFORE the generic _HEADSET_PRIORITY default when resolving
@@ -431,6 +480,10 @@ class AudioPlayer:
         # boost + soft limiter so 100% is a real loudness lift, not just unity.
         # Clamped so a stray config/runtime value can never invert or over-range.
         self._volume = clamp_volume(volume)
+        # How deep the device buffer is opened. See DEFAULT_OUTPUT_BUFFER_S:
+        # it is the process's only defense against an event-loop stall eating
+        # a hole out of the middle of a spoken answer.
+        self._output_buffer_s = _clamp_output_buffer_s(buffer_s)
         self._device_logged = False  # logged once on the first play call
         # Optional bus reference. When set, play_chunks() publishes
         # AudioOutFirst on the first audible sample so UI subscribers
@@ -519,6 +572,29 @@ class AudioPlayer:
             lock = threading.Lock()
             self._stream_state_lock = lock
         return lock
+
+    def _output_buffer_seconds(self) -> float:
+        """Device-buffer depth this player opens streams with.
+
+        ``getattr`` default: ``__new__``-built instances (test fixtures,
+        hot-reload) skip ``__init__`` and must still open a stream.
+        """
+        return _clamp_output_buffer_s(
+            getattr(self, "_output_buffer_s", DEFAULT_OUTPUT_BUFFER_S)
+        )
+
+    def _feed_stall_window_s(self) -> float:
+        """How long a dry chunk feed may last before the gap is de-clicked.
+
+        Scales with the device buffer: ramping the waveform down while the
+        device still holds hundreds of milliseconds would carve an audible dip
+        out of speech that was never going to break. One write batch of
+        headroom is kept so the ramp still reaches PortAudio in time.
+        """
+        return max(
+            FEED_STALL_FADE_S,
+            self._output_buffer_seconds() - _STALL_FADE_HEADROOM_S,
+        )
 
     @property
     def output_latency_s(self) -> float:
@@ -718,14 +794,15 @@ class AudioPlayer:
         last_exc: BaseException | None = None
         for target_rate in candidates:
             try:
-                # latency=0.2 reserves a real 200 ms PortAudio buffer.
-                # The string keyword "high" is a DEVICE HINT — on USB
+                # An explicit float reserves a REAL buffer of that many
+                # seconds. The string keyword "high" is a DEVICE HINT — on USB
                 # headsets like the AB13X it resolves to ~10 ms, far too
                 # small to absorb inter-sentence pipeline gaps. The Wave 2
                 # diagnosis on 2026-05-16 attributed audible "crackling +
-                # slowdown" to this 10 ms drain. 0.2 s matches the buffer
-                # depth used by LiveKit-Agents / Pipecat / RealtimeTTS for
-                # TTS-streaming on WASAPI shared mode.
+                # slowdown" to this 10 ms drain. The depth itself is
+                # DEFAULT_OUTPUT_BUFFER_S — see the constant for why it has to
+                # cover this process's worst event-loop stall, not just the
+                # device's own jitter.
                 # Guarded against the hot-swap watcher's PortAudio re-init
                 # window (BUG-102): a stream born between _terminate and
                 # _initialize is a native fault.
@@ -736,7 +813,7 @@ class AudioPlayer:
                         channels=stream_channels,
                         dtype="float32",
                         blocksize=0,
-                        latency=0.2,
+                        latency=self._output_buffer_seconds(),
                     )
                     stream.start()
                 self._stream_channels = stream_channels
@@ -1131,6 +1208,7 @@ class AudioPlayer:
             feed = _from_first().__aiter__()
             next_pull: asyncio.Task[AudioChunk] | None = None
             resume_fade_in = False
+            stall_window_s = self._feed_stall_window_s()
             try:
                 while True:
                     if next_pull is None:
@@ -1140,7 +1218,7 @@ class AudioPlayer:
                         timeout=(
                             None
                             if resume_fade_in or pending_rate is None
-                            else FEED_STALL_FADE_S
+                            else stall_window_s
                         ),
                     )
                     if not done:

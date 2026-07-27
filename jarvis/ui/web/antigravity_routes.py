@@ -45,8 +45,16 @@ def _install_hint() -> str:
 
 @router.get("/antigravity/status")
 async def antigravity_status() -> dict[str, Any]:
-    """Honest snapshot of the Google CLI login (installed / connected / account)."""
-    return GoogleCliAuthService().status().to_dict()
+    """Honest snapshot of the Google CLI login (installed / connected / account).
+
+    Off the event loop: the probe SPAWNS the CLI binary, which costs a few
+    hundred milliseconds. On the loop that pause froze everything else running
+    in this process — including the realtime voice socket, where it surfaced as
+    an audible hole mid-sentence (forensic 2026-07-27, see
+    ``jarvis.audio.player.DEFAULT_OUTPUT_BUFFER_S``).
+    """
+    status = await asyncio.to_thread(GoogleCliAuthService().status)
+    return status.to_dict()
 
 
 @router.post("/antigravity/test")
@@ -93,10 +101,10 @@ async def antigravity_login() -> dict[str, Any]:
 async def antigravity_logout() -> dict[str, Any]:
     """Disconnect the Google login (removes the on-disk creds / agy logout)."""
     service = GoogleCliAuthService()
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(status_code=409, detail="No Google CLI found")
-    ok, error = service.logout_blocking()
+    ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Google logout failed")
     return {"ok": True, "message": "Antigravity (Google) was disconnected"}
