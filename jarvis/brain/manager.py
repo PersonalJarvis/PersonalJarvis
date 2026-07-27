@@ -5818,6 +5818,18 @@ class BrainManager:
 
         names = [item.terminal for item in addressed]
 
+        # Say something NOW. Everything below this line — planning a split,
+        # writing each prompt — is deliberately slow (a quality-tier call per
+        # pane, 10-21 s measured), and it used to run in complete silence: the
+        # maintainer's 2026-07-27 report is that "prompt Finn" felt like a hung
+        # assistant, because the first sound of any kind was the delivery
+        # readback a quarter of a minute later. The confirmation is composed for
+        # THIS request rather than drawn from a pool, so it names the topic back
+        # and doubles as a readback of what was understood.
+        await self._announce_ide_handoff(
+            names, user_text=user_text, language=out_lang
+        )
+
         # Two agents told to "split the work between you" must get DIFFERENT
         # briefs — the same sentence twice is two agents racing on one file.
         # Only an explicit request plans a split: it costs a provider call, and
@@ -5867,6 +5879,87 @@ class BrainManager:
         if not result.deliveries:
             return None
         return _fanout_reply_line(result, out_lang)
+
+    #: Hard ceiling for composing the hand-off line. It is spoken BEFORE the
+    #: work starts, so every millisecond here is added to the user's wait —
+    #: while the wait it bridges is 10-21 s. Same budget as the Computer-Use
+    #: dispatch ack, which sits in exactly the same place in its own path.
+    _IDE_HANDOFF_BUDGET_MS = 900
+
+    async def _announce_ide_handoff(
+        self,
+        names: list[str],
+        *,
+        user_text: str,
+        language: str,
+    ) -> None:
+        """Speak one short, topic-fitting line before the panes are briefed.
+
+        Published on the announcement bus rather than returned, because this
+        turn's REPLY is the delivery readback that comes ten to twenty seconds
+        later ("Sent to Finn"): the two are different statements at different
+        times, and a turn can only return one string. ``kind="preamble"`` is what
+        makes the pipeline treat it as the bridge line it is — stale the moment
+        Jarvis starts speaking the actual answer, and dropped rather than queued
+        behind it.
+
+        Why composed and not canned: a fixed sentence is the thing the
+        maintainer explicitly did not want (2026-07-27) — hearing the same
+        "one moment" on every request tells you nothing about whether the right
+        thing was understood, whereas a line that names the topic back is a
+        readback and a reassurance in one. ``facts`` carries the user's own
+        words and the call-signs, and nothing else: the prompt has not been
+        written yet at this point, so there is no other truth to state, and
+        ``in_progress=True`` rejects any candidate that claims it is done.
+
+        Never raises and never delays the hand-off by more than
+        ``_IDE_HANDOFF_BUDGET_MS``: with no bus, no composer, or no reachable
+        provider the deterministic phrase goes out instead (§3 — a downloader
+        with no key hears the fallback, not silence).
+        """
+        if self._bus is None or not names:
+            return
+        listed = _join_names(names, language)
+        if len(names) == 1:
+            canned = action_phrase("ide_prompt_handoff", language, terminal=listed)
+        else:
+            canned = action_phrase("ide_prompt_handoff_many", language, names=listed)
+        try:
+            text = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "You have just understood the user's request and are handing "
+                    "it to the coding agents named below, which takes a moment. "
+                    "In one short sentence, tell the user you are passing THIS "
+                    "request on right now — refer to what it is actually about, "
+                    "in their own words. It has not been done yet."
+                ),
+                language=language,
+                canned=lambda: canned,
+                facts={
+                    "user_request": user_text[:200],
+                    "coding_agents": listed,
+                },
+                in_progress=True,
+                latency_budget_ms=self._IDE_HANDOFF_BUDGET_MS,
+            )
+            if not text.strip():
+                return
+            await self._bus.publish(
+                AnnouncementRequested(
+                    text=text,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                    source_layer="brain.agentic_ide.handoff",
+                )
+            )
+        except Exception:  # noqa: BLE001 - a bridge line never costs a delivery
+            log.debug("Agentic IDE hand-off announcement failed", exc_info=True)
+            return
+        # Counted as this turn's spoken ack so the router's grounded ack does not
+        # stack a second interim line on top of it moments later.
+        self._last_grounded_ack_monotonic = time.monotonic()
 
     async def _run_agentic_ide_spawn_fast_path(
         self,
