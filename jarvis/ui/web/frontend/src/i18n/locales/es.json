@@ -3255,10 +3255,10 @@
       "headline_stalled": "Listo para responder, pero la cola está parada.",
       "headline_notready": "Todavía no puede responder.",
       "headline_empty": "Aún no hay nada guardado.",
-        "headline_starting": "El almacén de conocimiento aún no está abierto.",
-        "detail_starting": "Mientras no se abra no puede decir qué contiene, por eso no se muestran cifras. Suele resolverse a los pocos segundos de arrancar; si no, las comprobaciones de abajo dicen por qué.",
+      "headline_starting": "El almacén de conocimiento aún no está abierto.",
+      "detail_starting": "Mientras no se abra no puede decir qué contiene, por eso no se muestran cifras. Suele resolverse a los pocos segundos de arrancar; si no, las comprobaciones de abajo dicen por qué.",
       "detail_done": "Los {0} elementos son buscables y están resumidos.",
-      "detail_working": "{0} de {1} siguen {2}. Todo lo demás ya se puede buscar: no hace falta esperar.",
+      "detail_working": "{0} de {1} siguen {2}. Todo lo demás ya se puede buscar; cuánto tarda el resto se está midiendo.",
       "detail_stalled": "{0} de {1} siguen {2}, pero ahora mismo nada los está procesando.",
       "detail_notready": "Hay algo que resolver antes de poder responder preguntas. La lista de abajo dice qué.",
       "detail_empty": "Añade una fuente y su contenido aparecerá aquí. Nada se lee antes de que lo apruebes.",
@@ -3351,7 +3351,18 @@
       "summary_blocked": "{0} no se pueden continuar hasta que sus agentes vuelvan a ejecutarse.",
       "result_continued": "{0} panel(es) continúan: {1}.",
       "result_unconfirmed": "Revisa estos paneles tú mismo: la instrucción se escribió pero no se vio enviarse: {0}.",
-      "result_failed": "No se pudieron continuar: {0}."
+      "result_failed": "No se pudieron continuar: {0}.",
+      "sending": "Enviando …",
+      "starting": "Su agente todavía está arrancando: continuará en cuanto esté listo.",
+      "result_queued": "{0} aún arrancan; seguirán en cuanto estén listos: {1}."
+    },
+    "arrange": {
+      "carrying": "suéltalo sobre un terminal",
+      "swap": "Intercambiar con {0}",
+      "left": "A la izquierda de {0}",
+      "right": "A la derecha de {0}",
+      "above": "Encima de {0}",
+      "below": "Debajo de {0}"
     },
     "selection": {
       "start": "Seleccionar terminales",

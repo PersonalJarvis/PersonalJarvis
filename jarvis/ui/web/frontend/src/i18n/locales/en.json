@@ -3256,10 +3256,10 @@
       "headline_stalled": "Ready to answer, but the queue is standing still.",
       "headline_notready": "Not ready to answer yet.",
       "headline_empty": "Nothing stored yet.",
-        "headline_starting": "The knowledge store is not open yet.",
-        "detail_starting": "Until it opens it cannot say what it holds, so no numbers are shown. This usually clears within seconds of starting the app; if it does not, the checks below say why.",
+      "headline_starting": "The knowledge store is not open yet.",
+      "detail_starting": "Until it opens it cannot say what it holds, so no numbers are shown. This usually clears within seconds of starting the app; if it does not, the checks below say why.",
       "detail_done": "All {0} items are searchable and summarised.",
-      "detail_working": "{0} of {1} are still {2}. Everything else can be searched right now — you do not have to wait.",
+      "detail_working": "{0} of {1} are still {2}. Everything else can be searched right now; how long the rest takes is still being measured.",
       "detail_stalled": "{0} of {1} are still {2} — but nothing is processing them right now.",
       "detail_notready": "Something below has to be sorted out before questions can be answered. The list underneath says what.",
       "detail_empty": "Add a source and its contents land here. Nothing is read before you approve it.",
@@ -3352,7 +3352,18 @@
       "summary_blocked": "{0} cannot be continued until their agents are running again.",
       "result_continued": "{0} pane(s) carrying on: {1}.",
       "result_unconfirmed": "Check these panes yourself — the instruction was typed in but never seen to submit: {0}.",
-      "result_failed": "Could not be continued: {0}."
+      "result_failed": "Could not be continued: {0}.",
+      "sending": "Sending …",
+      "starting": "Its agent is still starting — it will be continued as soon as it is up.",
+      "result_queued": "{0} still starting; they carry on the moment they are up: {1}."
+    },
+    "arrange": {
+      "carrying": "drop it on a terminal",
+      "swap": "Swap with {0}",
+      "left": "Left of {0}",
+      "right": "Right of {0}",
+      "above": "Above {0}",
+      "below": "Below {0}"
     },
     "selection": {
       "start": "Select terminals",

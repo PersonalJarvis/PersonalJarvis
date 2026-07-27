@@ -3270,10 +3270,10 @@
       "headline_stalled": "Bereit für Fragen, aber die Warteschlange steht.",
       "headline_notready": "Noch nicht bereit für Fragen.",
       "headline_empty": "Noch nichts gespeichert.",
-        "headline_starting": "Der Wissensspeicher ist noch nicht geöffnet.",
-        "detail_starting": "Solange er nicht offen ist, kann er nicht sagen, was er enthält — deshalb stehen hier keine Zahlen. Das erledigt sich meist Sekunden nach dem Start; wenn nicht, sagen die Prüfungen unten warum.",
+      "headline_starting": "Der Wissensspeicher ist noch nicht geöffnet.",
+      "detail_starting": "Solange er nicht offen ist, kann er nicht sagen, was er enthält — deshalb stehen hier keine Zahlen. Das erledigt sich meist Sekunden nach dem Start; wenn nicht, sagen die Prüfungen unten warum.",
       "detail_done": "Alle {0} Einträge sind durchsuchbar und zusammengefasst.",
-      "detail_working": "{0} von {1} werden noch {2}. Alles andere ist schon durchsuchbar — du musst nicht warten.",
+      "detail_working": "{0} von {1} sind noch {2}. Alles andere ist schon durchsuchbar; wie lange der Rest dauert, wird gerade gemessen.",
       "detail_stalled": "{0} von {1} werden noch {2} — aber im Moment arbeitet nichts daran.",
       "detail_notready": "Unten muss erst etwas geklärt werden, bevor Fragen beantwortet werden können. Die Liste darunter sagt, was.",
       "detail_empty": "Füge eine Quelle hinzu, dann landen ihre Inhalte hier. Gelesen wird nichts, bevor du es erlaubst.",
@@ -3366,7 +3366,18 @@
       "summary_blocked": "{0} können erst fortgesetzt werden, wenn ihre Agenten wieder laufen.",
       "result_continued": "{0} Pane(s) machen weiter: {1}.",
       "result_unconfirmed": "Diese Panes bitte selbst prüfen — die Anweisung wurde eingetippt, aber nicht sichtbar abgeschickt: {0}.",
-      "result_failed": "Konnten nicht fortgesetzt werden: {0}."
+      "result_failed": "Konnten nicht fortgesetzt werden: {0}.",
+      "sending": "Wird gesendet …",
+      "starting": "Der Agent startet noch — er wird fortgesetzt, sobald er läuft.",
+      "result_queued": "{0} starten noch; sie machen weiter, sobald sie laufen: {1}."
+    },
+    "arrange": {
+      "carrying": "auf ein Terminal ziehen",
+      "swap": "Mit {0} tauschen",
+      "left": "Links von {0}",
+      "right": "Rechts von {0}",
+      "above": "Über {0}",
+      "below": "Unter {0}"
     },
     "selection": {
       "start": "Terminals auswählen",
