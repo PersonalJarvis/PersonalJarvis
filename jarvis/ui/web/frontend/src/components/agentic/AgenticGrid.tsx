@@ -49,8 +49,15 @@ import {
   bandCapacityFor,
   GRID_HORIZONTAL_PADDING_PX,
   MIN_PANE_HEIGHT_PX,
-  paneGrid,
 } from "./layout";
+import {
+  paneLayout,
+  remapColumnWeights,
+  weightsAfterSplit,
+  type PaneBox,
+  type PaneSeam,
+} from "./paneLayout";
+import { usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PromptPreview } from "./PromptPreview";
 import { WorkspaceSettings } from "./WorkspaceSettings";
@@ -211,6 +218,75 @@ const GRID_RESERVED_PX = 200;
  */
 const GRID_GAP_PX = 4;
 
+/** Half of it — what each pane gives up on the sides it shares with a neighbour. */
+const HALF_GAP_PX = GRID_GAP_PX / 2;
+
+/** A maximized pane simply fills the workspace. */
+const MAXIMIZED_BOX: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+};
+
+/** True when a fraction is at an edge of the workspace, allowing for float drift. */
+function atEdge(value: number): boolean {
+  return value <= 0.0001 || value >= 0.9999;
+}
+
+/**
+ * Where one pane is drawn.
+ *
+ * The percentage is the pane's share; the pixels are the gap around it. A pane
+ * gives up half a gap on each side it SHARES with a neighbour and nothing on a
+ * side that faces the workspace edge — so neighbours end up one full gap apart
+ * while the outer margin stays the container's own padding, whichever pane
+ * happens to be on the outside.
+ */
+function paneBoxStyle(box: PaneBox | undefined): React.CSSProperties {
+  if (!box) return MAXIMIZED_BOX;
+  const left = atEdge(box.x) ? 0 : HALF_GAP_PX;
+  const right = atEdge(box.x + box.w) ? 0 : HALF_GAP_PX;
+  const top = atEdge(box.y) ? 0 : HALF_GAP_PX;
+  const bottom = atEdge(box.y + box.h) ? 0 : HALF_GAP_PX;
+  // Plain percentages where no gap is subtracted: a pane against two edges is
+  // the whole workspace, and `calc(100% - 0px)` only makes that harder to read
+  // in the inspector.
+  const span = (fraction: number, trim: number) =>
+    trim === 0 ? `${fraction * 100}%` : `calc(${fraction * 100}% - ${trim}px)`;
+  const start = (fraction: number, shift: number) =>
+    shift === 0 ? `${fraction * 100}%` : `calc(${fraction * 100}% + ${shift}px)`;
+  return {
+    position: "absolute",
+    left: start(box.x, left),
+    top: start(box.y, top),
+    width: span(box.w, left + right),
+    height: span(box.h, top + bottom),
+  };
+}
+
+/**
+ * Where one seam is drawn — centred on the boundary, spanning what it divides.
+ *
+ * The grip is 6 px wide against a 4 px gap, so it deliberately overlaps its two
+ * panes by a pixel each. A seam narrower than the gap it sits in would be a
+ * coordination test rather than a control.
+ */
+function seamStyle(seam: PaneSeam): React.CSSProperties {
+  const half = 3;
+  return seam.orientation === "vertical"
+    ? {
+        position: "absolute",
+        left: `calc(${seam.x * 100}% - ${half}px)`,
+        top: `${seam.y * 100}%`,
+        height: `${seam.h * 100}%`,
+      }
+    : {
+        position: "absolute",
+        top: `calc(${seam.y * 100}% - ${half}px)`,
+        left: `${seam.x * 100}%`,
+        width: `${seam.w * 100}%`,
+      };
+}
+
 /*
  * Terminal appearance and text size are remembered, and the appearance follows
  * the app's own theme until the user says otherwise.
@@ -287,6 +363,7 @@ export function AgenticGrid({
   accounts = [],
   onStateChanged,
   workspaceBar,
+  appActions,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -471,17 +548,25 @@ export function AgenticGrid({
    */
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  // How tall the workspace's visible area is. Panes are sized as FRACTIONS of
+  // it now rather than by grid tracks, so unlike the width this is not only a
+  // wrapping question — it is the number a percentage height resolves against,
+  // and the floor under it (below) is what makes the workspace scroll instead
+  // of squeezing every pane to three unreadable rows.
+  const [gridHeight, setGridHeight] = useState(0);
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
     const fallback = () =>
       Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
     setGridWidth(fallback());
+    setGridHeight(node.clientHeight);
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? fallback();
       // Round to a step so a one-pixel drift cannot churn the layout (and with
       // it every pane's resize) on window animations.
       setGridWidth(Math.round(width / 16) * 16);
+      setGridHeight(Math.round(entries[0]?.contentRect.height ?? node.clientHeight));
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -603,6 +688,27 @@ export function AgenticGrid({
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
       const added = next.terminals.find((t) => !known.has(t.name));
+      /*
+       * A split HALVES the pane it was asked of, and touches nothing else.
+       *
+       * This is the behaviour people expect from every tiling terminal and
+       * editor, and the one the old workspace did not have: a new pane became a
+       * new full-height column, so every other pane on the line lost width to
+       * make room for it. Splitting the pane you clicked should be a local
+       * event — see `weightsAfterSplit`.
+       */
+      sizes.setWeights((current) =>
+        anchor && added
+          ? weightsAfterSplit(
+              current,
+              session.terminals,
+              next.terminals,
+              anchor,
+              added.name,
+              perBand,
+            )
+          : remapColumnWeights(current, session.terminals, next.terminals),
+      );
       // ...unless it is a plain terminal — that one is typed into by hand, and
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
@@ -693,6 +799,9 @@ export function AgenticGrid({
       const result = await closeTerminals(names);
       setPendingSelectionClose(null);
       setSelectedTerminals(new Set(result.failed.map((item) => item.name)));
+      sizes.setWeights((current) =>
+        remapColumnWeights(current, session.terminals, result.session.terminals),
+      );
       onSessionChanged?.(result.session);
       const remaining = new Set(result.session.terminals.map((term) => term.name));
       if (maximized && !remaining.has(maximized)) setMaximized(null);
@@ -1065,12 +1174,24 @@ export function AgenticGrid({
             onConfirm={onClose}
           />
         </Dialog.Root>
+
+        {/* The shell's own actions, last in the row and separated from the
+            workspace's — closing a workspace and restarting the whole app are
+            not neighbours you want to confuse at a glance. */}
+        {appActions && (
+          <div
+            data-testid="agentic-app-actions"
+            className="ml-1 flex shrink-0 items-center gap-2 border-l border-border pl-2"
+          >
+            {appActions}
+          </div>
+        )}
       </div>
 
       {/* ------------------------------------------------------------- grid */}
       {/*
-        ONE grid, and every pane is a direct child of it — placed by the
-        coordinates `paneGrid` computed rather than by where it sits in a tree
+        ONE container, and every pane is a direct child of it — placed by the
+        fractions `paneLayout` computed rather than by where it sits in a tree
         of row and column elements.
 
         That is not a style choice. Every pane must stay MOUNTED for its whole
@@ -1326,6 +1447,7 @@ export function AgenticGrid({
             </button>
           </div>
         )}
+      </div>
       </div>
 
       {/* Closing a terminal kills a working agent, so it always asks first. */}

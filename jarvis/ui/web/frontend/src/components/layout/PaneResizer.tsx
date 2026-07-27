@@ -33,6 +33,20 @@ export interface PaneResizerProps {
   active: boolean;
   /** Hover tooltip. Also used as the accessible name. */
   title: string;
+  /**
+   * Where to put the seam, for layouts that place it rather than flow it.
+   *
+   * A splitter between two flex children needs nothing here — it sits in the
+   * flow between them. A tiled workspace has no such flow: its panes are
+   * positioned by fraction, so its seams are too, and they arrive as absolute
+   * coordinates. The look and the behaviour stay in this one component either
+   * way, which is the whole reason it exists.
+   */
+  style?: React.CSSProperties;
+  /** Extra classes for the same reason as `style`. */
+  className?: string;
+  /** Overrides the default test id, for screens that render several seams. */
+  testId?: string;
 }
 
 /** How far one arrow-key press moves the seam. */
@@ -47,6 +61,9 @@ export function PaneResizer({
   onNudge,
   active,
   title,
+  style,
+  className,
+  testId,
 }: PaneResizerProps) {
   const vertical = orientation === "vertical";
 
@@ -71,15 +88,17 @@ export function PaneResizer({
       aria-label={title}
       title={title}
       tabIndex={0}
-      data-testid={`pane-resizer-${orientation}`}
+      data-testid={testId ?? `pane-resizer-${orientation}`}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
+      style={style}
       className={cn(
         "group relative z-10 flex shrink-0 touch-none select-none outline-none",
         vertical
           ? "w-1.5 cursor-col-resize items-stretch"
           : "h-1.5 cursor-row-resize justify-stretch",
+        className,
       )}
     >
       {/* The visible line — it replaces the border it sits on top of. */}
