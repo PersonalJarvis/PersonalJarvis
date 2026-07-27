@@ -557,7 +557,7 @@ export function AgenticTerminal({
         <div
           ref={containerRef}
           data-testid={`agentic-terminal-host-${name}`}
-          className="h-full min-h-0 w-full overflow-hidden"
+          className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
       </div>
       {(dragging || attaching) && (
