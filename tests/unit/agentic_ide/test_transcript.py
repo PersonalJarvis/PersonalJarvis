@@ -212,3 +212,62 @@ def test_a_truncated_replay_alone_cannot_rebuild_the_screen() -> None:
         "followed by a repaint rather than trusted on its own"
     )
     assert buffer.truncated is True
+
+
+def test_a_truncated_replay_still_says_who_owns_the_screen() -> None:
+    """The bug behind four rounds of "scrolling is broken in Claude Code panes".
+
+    A CLI negotiates what kind of terminal it is talking to exactly once, in its
+    first few hundred bytes. Measured against Claude Code 2.1.220: take the
+    whole screen (``?1049h``) and send me the mouse (``?1000/1002/1003/1006h``).
+    Those bytes leave a 128 KB tail within minutes, and every viewer that
+    re-joined afterwards got a terminal that had never heard them — so it kept
+    the wheel to itself and scrolled its own stale buffer, which the agent
+    overwrote on its next repaint. Nothing moved, ever, in the app.
+    """
+    start = "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?25lhello"
+    buffer = ReplayBuffer(limit=64)
+    buffer.feed(start)
+    buffer.feed("x" * 200)
+
+    replay = buffer.text()
+
+    assert buffer.truncated is True
+    for mode in ("?1049h", "?1000h", "?1002h", "?1003h", "?1006h", "?25l"):
+        assert f"\x1b[{mode}" in replay, f"{mode} must survive the truncation"
+    # And before the content, or the screen switch would wipe what it restored.
+    assert replay.index("\x1b[?1049h") < replay.index("x" * 20)
+
+
+def test_a_mode_the_agent_turned_off_comes_back_off() -> None:
+    """Several private modes are ON in a terminal that was just built.
+
+    Wraparound and the cursor among them — restoring only what was switched on
+    would hand the viewer a cursor the agent had deliberately hidden.
+    """
+    buffer = ReplayBuffer(limit=32)
+    buffer.feed("\x1b[?7h\x1b[?25h\x1b[?7l\x1b[?25l")
+    buffer.feed("y" * 100)
+
+    replay = buffer.text()
+
+    assert "\x1b[?7l" in replay and "\x1b[?25l" in replay
+    assert "\x1b[?7h" not in replay and "\x1b[?25h" not in replay
+
+
+def test_an_untruncated_replay_is_still_verbatim() -> None:
+    """Nothing is prepended while the original negotiation is still in there."""
+    stream = "\x1b[?1049h\x1b[?1006hhello"
+    buffer = ReplayBuffer(limit=1024)
+    buffer.feed(stream)
+
+    assert buffer.text() == stream
+
+
+def test_a_replay_forgets_the_modes_when_it_is_cleared() -> None:
+    buffer = ReplayBuffer(limit=32)
+    buffer.feed("\x1b[?1049h" + "z" * 100)
+    buffer.clear()
+    buffer.feed("fresh")
+
+    assert buffer.text() == "fresh"

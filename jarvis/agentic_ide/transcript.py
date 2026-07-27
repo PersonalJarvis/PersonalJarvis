@@ -22,6 +22,7 @@ box border by a column; and a two-column TUI layout still reads left-to-right
 per row, exactly as it looks on screen. Both are irrelevant for answering "what
 is this agent working on?", and both keep the module dependency-free.
 """
+
 from __future__ import annotations
 
 import re
@@ -48,6 +49,9 @@ _ANY_ESC_RE = re.compile(
 # intermediates, then the final byte. The leading "[" is optional because the
 # split may have fallen either side of it.
 _CSI_TAIL_RE = re.compile(r"\[?[0-?]*[ -/]*[@-~]")
+
+#: ``ESC [ ? <params> h|l`` — how a CLI turns terminal features on and off.
+_PRIVATE_MODE_RE = re.compile(r"\x1b\[\?([0-9;]+)([hl])")
 
 _DECORATION_CHARS = set("─│┌┐└┘├┤┬┴┼━┃╭╮╯╰═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓▔▁·.-_=*#~ ")
 _SPINNER_CHARS = set("|/\\-◐◓◑◒✻✽✢·✳✶⣿")
@@ -186,6 +190,25 @@ class ReplayBuffer:
     Whoever replays a truncated buffer therefore has to ask the agent for a
     fresh paint afterwards; :meth:`SessionRegistry.attach` does it with a
     window-size change, the one request every TUI answers with a full redraw.
+
+    **The modes are kept even when the bytes that set them are gone.** A CLI
+    negotiates what kind of terminal it is talking to exactly ONCE, in its first
+    few hundred bytes — measured against Claude Code 2.1.220: ``ESC[?1049h``
+    (take the whole screen) and ``ESC[?1000h ESC[?1002h ESC[?1003h ESC[?1006h``
+    (send me the mouse). Those bytes fall out of a 128 KB tail within minutes of
+    an agent working, and every viewer that re-joined afterwards built a
+    terminal that did not know any of it: xterm stayed on the normal buffer and
+    kept the wheel to itself, while the agent went on believing it owned both.
+    A wheel turn then scrolled the viewer's own stale buffer — which the agent
+    overwrote on its next repaint, since it addresses the screen absolutely — so
+    scrolling a Claude Code pane did nothing at all, in the app, forever, while
+    a Codex pane (which negotiates neither) was unaffected. Reported four times
+    over as "the scrollbar only works in Codex"; the scrollbar was the symptom.
+
+    So every private mode the agent has set is remembered as it goes past, and a
+    truncated replay is prefixed with the ones still in force. Cheap — a regex
+    over each chunk, a dict of at most a dozen entries — and it puts the viewer
+    in the state the agent thinks it is in, which is the whole job of a replay.
     """
 
     limit: int = REPLAY_LIMIT_CHARS
@@ -197,10 +220,15 @@ class ReplayBuffer:
     #: Did the last dropped chunk stop inside an escape sequence? Then the rest
     #: of that sequence is at the front of what remains.
     _open_escape: bool = field(default=False, init=False)
+    #: Every private mode seen, in the order it was first negotiated, with the
+    #: value it was last given. Insertion order matters: a screen switch has to
+    #: be replayed before what was drawn on that screen.
+    _modes: dict[str, bool] = field(default_factory=dict, init=False)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
             return
+        self._note_modes(chunk)
         self._chunks.append(chunk)
         self._size += len(chunk)
         while self._size > self.limit and len(self._chunks) > 1:
@@ -208,6 +236,23 @@ class ReplayBuffer:
             self._size -= len(dropped)
             self.truncated = True
             self._open_escape = _ends_mid_escape(dropped)
+
+    def _note_modes(self, chunk: str) -> None:
+        """Remember what the agent has told the terminal it wants.
+
+        ``ESC[?1000;1006h`` sets several at once, so each parameter is recorded
+        on its own. Modes are kept whichever way they were set — a mode the
+        agent turned OFF is restored as off, because several of them (wraparound,
+        the cursor) are ON in a terminal that was just built.
+        """
+        for params, action in _PRIVATE_MODE_RE.findall(chunk):
+            for param in params.split(";"):
+                if param:
+                    self._modes[param] = action == "h"
+
+    def _mode_prologue(self) -> str:
+        """The negotiation a truncated replay lost, re-stated in order."""
+        return "".join(f"\x1b[?{mode}{'h' if on else 'l'}" for mode, on in self._modes.items())
 
     def text(self) -> str:
         """Everything kept, oldest first — ready to be written to a terminal.
@@ -218,6 +263,11 @@ class ReplayBuffer:
         in the middle of the agent's interface — so that remnant is skipped, and
         an attribute reset makes the starting colour deterministic rather than
         inherited from bytes that are gone.
+
+        The repair also re-states the modes the agent negotiated (see the class
+        docstring): they are set once at startup and are the first thing a long
+        tail loses, and a viewer that never heard them is a terminal the agent
+        cannot reach with the mouse.
         """
         text = "".join(self._chunks)
         if not self.truncated or not text:
@@ -226,7 +276,7 @@ class ReplayBuffer:
             remnant = _CSI_TAIL_RE.match(text)
             if remnant is not None:
                 text = text[remnant.end() :]
-        return "\x1b[0m" + text
+        return self._mode_prologue() + "\x1b[0m" + text
 
     def clear(self) -> None:
         self._chunks.clear()
