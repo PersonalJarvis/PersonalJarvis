@@ -28,47 +28,22 @@
   display: none;
 }
 
-/* Agentic IDE terminal scrollbar. This targets the shared xterm host rather
-   than a coding CLI, so Claude Code, Codex, and future agents all get the same
-   native scrollback controls. The visible track makes the scroll range easy to
-   discover; the inset thumb stays quiet until hover/drag. Keep this top-level:
-   xterm creates the viewport at runtime and Tailwind would purge it in a layer. */
+/* Agentic IDE panes draw their OWN scrollbar (components/agentic/PaneScrollbar)
+   and hide the browser's, for two reasons the native bar could not meet: it is
+   permanently on screen, and it is powered by the xterm viewport — which a
+   full-screen CLI like Claude Code leaves empty, because it runs on the
+   alternate screen buffer and keeps its history in its own process. Hiding it
+   here rather than switching the viewport to `overflow: hidden` is deliberate:
+   xterm still needs a scrollable viewport for the wheel and for `scrollToLine`.
+   Keep this top-level — xterm creates the viewport at runtime, so Tailwind
+   would purge a rule for it out of an @layer. */
 .agentic-terminal-host .xterm-viewport {
-  scrollbar-color: rgb(var(--jarvis-yellow) / 0.5) rgba(127, 127, 127, 0.14);
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .agentic-terminal-host .xterm-viewport::-webkit-scrollbar {
-  width: 10px;
-}
-
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar-track {
-  background: rgba(127, 127, 127, 0.14);
-  border-radius: 999px;
-  box-shadow: inset 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
-  min-height: 32px;
-  background: rgb(var(--jarvis-yellow) / 0.5);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-  border-radius: 999px;
-}
-
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--jarvis-yellow) / 0.72);
-  background-clip: padding-box;
-}
-
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:active {
-  background: rgb(var(--jarvis-yellow) / 0.92);
-  background-clip: padding-box;
-}
-
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar-corner {
-  background: transparent;
+  width: 0;
+  height: 0;
 }
 
 @layer base {

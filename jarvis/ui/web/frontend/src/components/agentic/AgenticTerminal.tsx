@@ -76,6 +76,7 @@ import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
 import { OffscreenBuffer } from "./offscreenBuffer";
+import { PaneScrollbar } from "./PaneScrollbar";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
@@ -173,6 +174,9 @@ export function AgenticTerminal({
   restartToken = 0,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // The padded box around the xterm host. The pane's scrollbar overlays it and
+  // measures hover against it — see ./PaneScrollbar.
+  const scrollRegionRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   // Lets the font-size effect trigger a REAL resize (xterm + the terminal
@@ -182,6 +186,11 @@ export function AgenticTerminal({
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
   const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
+  // Bumped once per built terminal. The scrollbar subscribes to xterm events,
+  // and the instance behind `termRef` is replaced on every restart — without a
+  // signal it would keep listening to a disposed one.
+  const [termEpoch, setTermEpoch] = useState(0);
+  const getTerminal = useCallback(() => termRef.current, []);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -252,6 +261,7 @@ export function AgenticTerminal({
     }
     termRef.current = term;
     fitRef.current = fit;
+    setTermEpoch((epoch) => epoch + 1);
     // Let the app-wide right-click menu reach this terminal. It cannot use the
     // browser selection here — the canvas renderer above paints the text, so
     // there is no selectable DOM to read — and it must paste through xterm so
@@ -613,11 +623,25 @@ export function AgenticTerminal({
         `min-h-0` is equally load-bearing: this is a shrinking flex child, and
         xterm's canvas must not become its implicit minimum height.
       */}
-      <div className="min-h-0 flex-1 overflow-hidden px-2 pb-1 pt-1">
+      <div
+        ref={scrollRegionRef}
+        className="relative min-h-0 flex-1 overflow-hidden px-2 pb-1 pt-1"
+      >
         <div
           ref={containerRef}
           data-testid={`agentic-terminal-host-${name}`}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
+        />
+        {/* Overlaid rather than laid out, and deliberately not the browser's
+            own bar — see ./PaneScrollbar for why a CSS-only scrollbar could
+            never work in a Claude Code pane. */}
+        <PaneScrollbar
+          name={name}
+          regionRef={scrollRegionRef}
+          hostRef={containerRef}
+          getTerminal={getTerminal}
+          epoch={termEpoch}
+          appearance={appearance}
         />
       </div>
       {(dragging || attaching) && (
