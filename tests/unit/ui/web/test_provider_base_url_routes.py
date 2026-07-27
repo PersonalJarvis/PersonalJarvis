@@ -111,7 +111,7 @@ def test_provider_payload_carries_base_url_fields(server: WebServer) -> None:
 def test_set_provider_base_url_writes_quoted_table(tmp_path, monkeypatch) -> None:
     from jarvis.core import config_writer
 
-    # Keep the best-effort drift-soll sync away from the real scripts/ file.
+    # Keep the best-effort drift-guard baseline sync away from the real file.
     monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a, **k: None)
     toml_path = tmp_path / "jarvis.toml"
     toml_path.write_text('[brain]\nprimary = "gemini"\n', encoding="utf-8")
@@ -123,7 +123,7 @@ def test_set_provider_base_url_writes_quoted_table(tmp_path, monkeypatch) -> Non
     assert doc["brain"]["providers"]["local-openai"]["base_url"] == "http://localhost:8000"
 
     # Clearing writes an empty string (falsy everywhere the override is read)
-    # instead of deleting the key, so TOML and drift-soll stay in agreement.
+    # instead of deleting the key, so TOML and the baseline stay in agreement.
     config_writer.set_provider_base_url("local-openai", None, path=toml_path)
     doc = tomlkit.parse(toml_path.read_text(encoding="utf-8"))
     assert doc["brain"]["providers"]["local-openai"]["base_url"] == ""

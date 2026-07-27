@@ -774,6 +774,7 @@ def _session_instructions(
     tool_directive: str = "",
     preferences: str = "",
     skill_directive: str = "",
+    workspace_directive: str = "",
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -863,6 +864,11 @@ def _session_instructions(
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
         tool_directive,
+        # The live workspace roster sits with the tool directive because it is
+        # a routing rule, not background colour: it names the one class of word
+        # that must always reach the action function instead of the model's own
+        # knowledge.
+        workspace_directive,
         # A matched skill's own instructions, when the turn qualified for direct
         # injection. Placed AFTER the tool directive and BEFORE the safety
         # appendix on purpose: the skill refines HOW to answer this turn, and
@@ -1186,6 +1192,7 @@ class RealtimeVoiceSession:
                 ),
                 context=context,
                 skill_index=self._skill_match_index(),
+                workspace_names=self._workspace_call_signs(),
             )
         except Exception:  # noqa: BLE001 — routing must never end a live call
             # Planning only chooses a route, and both routes can answer. The
@@ -1202,6 +1209,66 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
             return TurnPlan(path=TurnPath.NATIVE_REALTIME)
+
+    @staticmethod
+    def _workspace_call_signs() -> tuple[str, ...]:
+        """Call-signs of the open Agentic-IDE workspace, or ``()``.
+
+        Pure in-memory read of the process-wide registry, so it is free on the
+        hot path. Any fault answers "no workspace": the coding surface is
+        optional and must never be able to break a live call.
+        """
+        try:
+            from jarvis.agentic_ide.session import running_call_signs
+
+            return tuple(running_call_signs())
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return ()
+
+    def _workspace_directive(self) -> str:
+        """Tell the live model which coding agents are running, by name.
+
+        The live 2026-07-27 miss in one sentence: asked "was hat Dana gemacht",
+        the model said it did not know which person Dana was — and it was right
+        not to know, because its instructions never mentioned that a coding
+        agent called Dana was running in front of the user. It only answered
+        correctly after the user said the words "agentic IDE" out loud, which is
+        not a workflow anybody should have to learn.
+
+        So the roster goes into the per-turn instructions: the model cannot
+        route a name it has never heard of. Deliberately only the NAMES and
+        their state — what each agent actually printed stays with the
+        orchestrator, which holds the full focus-context block and the terminal
+        report tool. Sending transcripts here would re-send several kilobytes on
+        every single turn for an answer the model still could not verify.
+
+        The directive is the belt to the planner's braces: the planner routes
+        such a turn deterministically (``TurnReason.WORKSPACE``), and this makes
+        the model WANT the same thing, so a phrasing the detectors miss still
+        lands.
+        """
+        names = self._workspace_call_signs()
+        if not names:
+            return ""
+        roster = ", ".join(names)
+        return (
+            "[Agentic IDE — coding agents are running right now]\n"
+            f"Terminals open in the user's coding workspace: {roster}.\n"
+            "Those are names of RUNNING CODING AGENTS, not people you know. "
+            "When the user says one of them — in any language, any tense, on "
+            "its own or inside a sentence — they mean that terminal. Never "
+            "answer that you do not know who that is, never guess what it is "
+            "doing, and never treat it as a public figure or an acquaintance. "
+            "Call your action function so the workspace can answer from what "
+            "that terminal actually printed, and say the terminal's name back "
+            "in your reply so the user knows which agent you mean.\n"
+            "Never say a terminal has been told, briefed, prompted or asked "
+            "anything unless your action function reported that it happened. "
+            "Live failure 2026-07-27: this model answered \"I have let Alex "
+            "know\" on a turn where nothing had reached Alex, and the user "
+            "found the pane still sitting at its startup banner. If you do not "
+            "know that the work went out, say what you actually did instead."
+        )
 
     def _skill_directive(self, text: str) -> str:
         """A matched skill's instructions, injected straight into this turn.
@@ -1471,6 +1538,7 @@ class RealtimeVoiceSession:
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(),
                     preferences=_preferences_block(self._config),
+                    workspace_directive=self._workspace_directive(),
                 ),
                 language=self._language,
                 input_language=self._input_language,
@@ -2093,6 +2161,10 @@ class RealtimeVoiceSession:
                                 skill_directive=self._skill_directive(
                                     self._last_user_text or ""
                                 ),
+                                # Rebuilt per turn: panes open and close mid
+                                # call, and a roster naming a terminal that is
+                                # gone is worse than none.
+                                workspace_directive=self._workspace_directive(),
                             ),
                             "language": new_language,
                         }

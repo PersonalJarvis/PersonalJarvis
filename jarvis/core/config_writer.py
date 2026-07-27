@@ -1534,7 +1534,7 @@ def set_provider_base_url(
     (``PUT /api/providers/{id}/base-url``). ``None``/"" writes an EMPTY string
     rather than deleting the key — "" is falsy everywhere the override is read
     (``resolve_provider_endpoint``), and keeping the key present means the
-    drift-soll layer and the TOML always agree (BUG-010 class). Same atomic
+    drift-guard baseline layer and the TOML always agree (BUG-010 class). Atomic
     discipline as every setter here (AP-7); tomlkit quotes hyphenated provider
     ids (``[brain.providers."local-openai"]``) on its own.
     """
@@ -1568,7 +1568,7 @@ def set_provider_base_url(
             out = _BOM + out
         _atomic_write(path, out)
 
-    # Best-effort drift-soll sync (never raises, never blocks the TOML write).
+    # Best-effort drift-guard baseline sync (never raises, never blocks the write).
     try:
         _update_config_soll_section(  # i18n-allow
             f"brain.providers.{provider}", {"base_url": cleaned}

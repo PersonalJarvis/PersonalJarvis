@@ -40,9 +40,9 @@ from jarvis.cli_ctl.commands import sessions as sessions_cmd
 from jarvis.cli_ctl.commands import skills as skills_cmd
 from jarvis.cli_ctl.commands import socials as socials_cmd
 from jarvis.cli_ctl.commands import system as system_cmd
-from jarvis.cli_ctl.commands import ultrawiki as ultrawiki_cmd
 from jarvis.cli_ctl.commands import tasks as tasks_cmd
 from jarvis.cli_ctl.commands import telephony as telephony_cmd
+from jarvis.cli_ctl.commands import ultrawiki as ultrawiki_cmd
 from jarvis.cli_ctl.commands import wiki as wiki_cmd
 from jarvis.cli_ctl.commands import workflows as workflows_cmd
 

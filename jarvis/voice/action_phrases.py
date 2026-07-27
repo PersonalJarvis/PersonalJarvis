@@ -378,6 +378,21 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "{count} new terminals: {names}.",
         "es": "{count} terminales nuevas: {names}.",
     },
+    "ide_terminals_briefing_queued": {
+        "de": "Ich übergebe ihnen die Aufgabe, sobald die Terminals bereit sind.",  # i18n-allow
+        "en": "I will hand them the task as soon as the terminals are ready.",
+        "es": "Les entregaré la tarea en cuanto las terminales estén listas.",
+    },
+    "ide_terminals_closed": {
+        "de": "{count} Terminals geschlossen: {names}.",  # i18n-allow
+        "en": "Closed {count} terminals: {names}.",
+        "es": "Cerré {count} terminales: {names}.",
+    },
+    "ide_terminals_none_to_close": {
+        "de": "Es sind keine passenden Terminals offen.",  # i18n-allow
+        "en": "There are no matching open terminals.",
+        "es": "No hay terminales abiertas que coincidan.",
+    },
     # Fewer than asked for, because the workspace cap cut the batch short. Named
     # separately from the plain success so the shortfall is impossible to miss.
     "ide_terminals_spawned_capped": {
@@ -397,6 +412,52 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {folder} geöffnet: {names}.",  # i18n-allow
         "en": "I opened {folder}: {names}.",
         "es": "Abrí {folder}: {names}.",
+    },
+    # A call-sign the transcript almost matched. Both variants REPEAT what was
+    # heard: the user's own word is the only thing that lets them tell a
+    # misheard name from a wrong pane, and hearing "I understood Ilies" is what
+    # makes "no, Ellis" the obvious next thing to say.
+    "ide_terminal_clarify_one": {
+        "de": "Ich habe {spoken} verstanden — meinst du {name}?",  # i18n-allow
+        "en": "I heard {spoken} — did you mean {name}?",
+        "es": "Entendí {spoken}: ¿te refieres a {name}?",
+    },
+    "ide_terminal_clarify_many": {
+        "de": "Ich habe {spoken} verstanden — meinst du {names}?",  # i18n-allow
+        "en": "I heard {spoken} — did you mean {names}?",
+        "es": "Entendí {spoken}: ¿te refieres a {names}?",
+    },
+    # The separator for the final pair of an alternative list ("Maggie or Max").
+    # A phrase entry rather than a literal, so the choice is offered in the
+    # turn's language like every other spoken word.
+    "join_or": {
+        "de": " oder ",  # i18n-allow
+        "en": " or ",
+        "es": " o ",
+    },
+    # The separator for the final pair of a LIST ("Alex and Blake"). Distinct
+    # from ``join_or`` because the two questions mean opposite things: "Max or
+    # Maggie" offers a choice between panes, "Alex and Blake" asks about both.
+    "join_and": {
+        "de": " und ",  # i18n-allow
+        "en": " and ",
+        "es": " y ",
+    },
+    # Panes were briefed AND one call-sign of the same breath stayed unclear.
+    # The two halves are said in one sentence on purpose: the user has to hear
+    # which agents actually got the work before being asked about the rest.
+    "ide_terminal_clarify_also": {
+        "de": "Ich habe außerdem {spoken} verstanden — meinst du {names}?",  # i18n-allow
+        "en": "I also heard {spoken} — did you mean {names}?",
+        "es": "También entendí {spoken}: ¿te refieres a {names}?",
+    },
+    # The user addressed several panes and only one call-sign survived speech
+    # recognition. Saying which one was placed is the load-bearing half: it is
+    # what stops the user believing a second agent is working when none is.
+    "ide_terminal_who_else": {
+        "de": "Ich konnte nur {names} zuordnen — wer sollte noch ran?",  # i18n-allow
+        "en": "I could only place {names} — who else did you mean?",
+        "es": "Solo pude identificar a {names}: ¿quién más?",
     },
     "ide_terminals_nowhere": {
         "de": (  # i18n-allow

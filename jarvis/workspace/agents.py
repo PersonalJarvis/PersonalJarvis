@@ -119,6 +119,17 @@ class AccountSpec:
     native_dir: str
     #: Subset of ``env`` whose variables are shared with other tools.
     shared_env: tuple[str, ...] = ()
+    #: Paths inside the account directory whose presence proves a login, tried
+    #: in order. EMPTY is a meaningful value: it says this build cannot read
+    #: this CLI's sign-in state, and the account is then reported as exactly
+    #: that. Switching still works — the variable genuinely redirects the CLI —
+    #: only the green/red dot is unavailable, which is a far better answer than
+    #: a confident one derived from a file layout nobody verified.
+    login_markers: tuple[str, ...] = ()
+    #: Arguments appended to the CLI's binary to start its own interactive
+    #: sign-in, pointed at the account directory. Empty means this CLI has no
+    #: login command to offer.
+    login_argv: tuple[str, ...] = ()
 
     @property
     def dedicated(self) -> bool:
@@ -516,7 +527,16 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # Its update preflight can check, install and PROMPT mid-session.
         spawn_env=(("KIMI_CODE_NO_AUTO_UPDATE", "1"),),
         account=AccountSpec(
-            env=(("KIMI_CODE_HOME", "{dir}"),), native_dir="~/.kimi-code"
+            # ONE variable moves config, sessions and credentials together,
+            # which is the cleanest multi-seat override of any entry here.
+            env=(("KIMI_CODE_HOME", "{dir}"),),
+            native_dir="~/.kimi-code",
+            # Deliberately no login markers: this CLI's credential file layout
+            # has not been verified against a live install, and guessing one
+            # would make a signed-in seat read as signed-out. Switching seats
+            # works; the sign-in dot honestly says it cannot tell.
+            login_markers=(),
+            login_argv=("login",),
         ),
         # Its own installer drops the binary here, which is not on the PATH a
         # GUI-launched process inherits on macOS or Linux.

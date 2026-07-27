@@ -56,7 +56,7 @@ Switch which realtime voice engine (speech-to-speech) is active, e.g. openai-rea
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.
 
 - **Endpoint:** `POST /api/computer-use/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
@@ -66,7 +66,7 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 Switch the provider used for new missions (e.g. codex to openai). The next mission uses the new provider.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "switch the agent provider to openai"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, local-openai, nvidia, ollama, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, local-openai, nvidia, ollama, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -263,7 +263,7 @@ Read what the coding agent in a named terminal is doing — its status and its r
 
 ## `agentic-ide-prompt` — Prompt an Agentic-IDE terminal
 
-Send an instruction to the coding agent in a named terminal. Use this whenever the user tells a terminal to do something ('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') — that work belongs to that agent, never to a background worker. Pass the instruction in the USER's words: everything they asked for, every constraint and file they named, nothing invented and nothing summarised away. Do NOT write the brief yourself — a prompt writer that has read this repository turns what you pass into a briefed task with the relevant files attached, and a headline you composed instead arrives at the agent as its whole assignment. Only ever names a terminal that is ALREADY running: if the call fails with 'no terminal called …', opening a pane will not create that name — use 'agentic-ide-fanout' with spawn to open and brief one in a single step, and never repeat the spawn. CHECK THE REPLY: it carries a 'submitted' flag. True means the agent accepted the prompt and started. False means the text is only sitting in that terminal's input box — say so plainly and name the terminal, never report it as done.
+Send an instruction to the coding agent in ONE named terminal. Use this whenever the user tells a terminal to do something ('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') — that work belongs to that agent, never to a background worker. For SEVERAL terminals ('Kai and Mika both ...', 'let the two of them ...') call 'agentic-ide-fanout' instead, with every call-sign in 'terminals': it briefs them at once and reports which ones really got the work. Calling this command twice for a pair leaves the second agent idle whenever the second call is forgotten, which is the failure mode fanout exists to remove. Pass the instruction in the USER's words: everything they asked for, every constraint and file they named, nothing invented and nothing summarised away. Do NOT write the brief yourself — a prompt writer that has read this repository turns what you pass into a briefed task with the relevant files attached, and a headline you composed instead arrives at the agent as its whole assignment. Only ever names a terminal that is ALREADY running: if the call fails with 'no terminal called …', opening a pane will not create that name — use 'agentic-ide-fanout' with spawn to open and brief one in a single step, and never repeat the spawn. CHECK THE REPLY: it carries a 'submitted' flag. True means the agent accepted the prompt and started. False means the text is only sitting in that terminal's input box — say so plainly and name the terminal, never report it as done.
 
 - **Endpoint:** `POST /api/agentic-ide/terminals/{name}/prompt`
 - **Arguments:** `name` (string; required); `prompt` (string; required); `compose` (boolean; optional)
@@ -271,9 +271,19 @@ Send an instruction to the coding agent in a named terminal. Use this whenever t
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "tell mika to run the tests"
 
+## `agentic-ide-fanout` — Open and brief Agentic-IDE terminals in one step
+
+Give ONE task to coding terminals — existing ones, brand-new ones, or both — in a single call. This is the ONLY correct way to handle 'if no terminal is called that, open one and prompt it' and 'spawn N terminals and let them do X': pass the work as 'instruction', the panes to brief as 'terminals', and the panes to open first as 'spawn'. Never emulate it by opening panes and then prompting — call-signs are assigned automatically, so a pane you open is NOT called the name you had in mind, and re-spawning after a failed prompt just leaves blank panes behind. Set 'split' true only when the user asked for the work to be DIVIDED between the agents. CHECK THE REPLY: 'delivered' names the agents that really got the task and 'undelivered' those that did not — report both, and use the call-signs the reply gives you.
+
+- **Endpoint:** `POST /api/agentic-ide/fanout`
+- **Arguments:** `instruction` (string; required); `terminals` (array; optional); `spawn` (array; optional); `split` (boolean; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "open a terminal and have it fix the tests"
+
 ## `agentic-ide-spawn-terminals` — Open more Agentic-IDE terminals
 
-Open one or more additional coding terminals in the open workspace. Use this when the user asks for MORE TERMINALS / panes ('spawn five new Claude Code terminals', 'open two more Codex terminals') — that is a request for workspace panes, never for a background worker. Pass count, and agent only when the user named one ('claude' or 'codex'); omitted, the new panes run whatever the last pane runs. CHECK THE REPLY: 'capped' true means the workspace maximum cut the request short — say how many actually opened and name them, never report the full number as done.
+Open one or more additional coding terminals in the open workspace, WITHOUT giving them work. Use this only when the user asks for bare panes ('spawn five new Claude Code terminals', 'open two more Codex terminals') — that is a request for workspace panes, never for a background worker. When the new panes are also meant to DO something, use 'agentic-ide-fanout' instead, which opens and briefs them in one step. Pass count, and agent only when the user named one ('claude' or 'codex'); omitted, the new panes run whatever the last pane runs. Their call-signs are assigned automatically — the reply's names are the only way to address them, and calling this again never produces a name you picked. CHECK THE REPLY: 'capped' true means the workspace maximum cut the request short — say how many actually opened and name them, never report the full number as done.
 
 - **Endpoint:** `POST /api/agentic-ide/terminals/batch`
 - **Arguments:** `count` (integer; required); `agent` (one of: claude, codex; optional)

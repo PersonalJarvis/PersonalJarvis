@@ -137,6 +137,41 @@ def test_brain_switch_enum_excludes_subagent_only_providers() -> None:
     assert "antigravity" not in enum
 
 
+def test_spawn_agent_enum_follows_the_agent_registry() -> None:
+    """A newly registered coding CLI must be spawnable by voice the same day.
+
+    The enum used to be the literal ``["claude", "codex"]`` in two schemas, so
+    an agent added to ``jarvis.workspace.agents`` opened from the UI, resumed
+    and accepted prompts while being absent from the one surface meant to drive
+    it. Registering one now invalidates the cached catalog.
+    """
+    from jarvis.commands.registry import get_registry as catalog
+    from jarvis.workspace import agents as workspace_agents
+
+    def spawn_enum() -> list[str]:
+        cmd = get_command("agentic-ide-spawn-terminals")
+        assert cmd is not None
+        return list(cmd.params["properties"]["agent"].get("enum") or [])
+
+    assert set(spawn_enum()) == set(workspace_agents.coding_agent_names())
+
+    added = workspace_agents.make_cli_agent(
+        "test-cli", "Test CLI", binary="test-cli"
+    )
+    try:
+        workspace_agents.register_agent(added)
+        assert "test-cli" in spawn_enum()
+        fanout = get_command("agentic-ide-fanout")
+        assert fanout is not None
+        group = fanout.params["properties"]["spawn"]["items"]["properties"]["agent"]
+        assert "test-cli" in (group.get("enum") or [])
+    finally:
+        workspace_agents._AGENTS.pop("test-cli", None)  # noqa: SLF001 - test cleanup
+        catalog.cache_clear()
+
+    assert "test-cli" not in spawn_enum()
+
+
 def test_registry_served_over_rest() -> None:
     from jarvis.core.bus import EventBus
     from jarvis.core.config import JarvisConfig

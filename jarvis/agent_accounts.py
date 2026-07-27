@@ -6,16 +6,14 @@ exactly one login, so getting to the other means a full ``logout`` / ``login``
 round trip that throws the first one away. Holding two plans and being able to
 use only one at a time is the problem this module exists to remove.
 
-**One account is one directory.** Both CLIs resolve their whole identity —
-credentials, account file, conversation history — from a single directory, and
-both publish the environment variable that moves it:
-
-===========  ======================  ==============
-CLI          Variable                Platform default
-===========  ======================  ==============
-Claude Code  ``CLAUDE_CONFIG_DIR``   ``~/.claude``
-Codex        ``CODEX_HOME``          ``~/.codex``
-===========  ======================  ==============
+**One account is one directory.** A CLI that qualifies resolves its whole
+identity — credentials, account file, conversation history — from a single
+directory, and publishes the environment variable that moves it. WHICH CLIs
+those are, and which variables move them, is registry data
+(``jarvis.workspace.agents.AccountSpec``) rather than a list here; ask
+:func:`platforms`. A CLI with no such variable simply has no directory to
+switch and is honestly absent from this feature instead of being offered a
+switcher that would silently keep spending one login.
 
 So switching is not an auth operation at all: it decides which directory the
 NEXT spawn points at. Every login stays valid, side by side, indefinitely — and
@@ -73,23 +71,79 @@ from uuid import uuid4
 
 from loguru import logger
 
-Platform = Literal["claude", "codex"]
+#: A registry entry's name. Deliberately not a ``Literal`` any more: the set of
+#: CLIs that own a switchable login is registry DATA, and a closed type here was
+#: a second, silently drifting copy of it — exactly the multi-layer enum drift
+#: the project has been bitten by repeatedly (AP-4). Values are validated
+#: against :func:`platforms` at every entry point instead.
+Platform = str
 
-#: The platforms that own a switchable subscription login. Anything else — an
-#: API-key provider — has no directory to switch and is deliberately absent.
-PLATFORMS: tuple[Platform, ...] = ("claude", "codex")
 
-#: The official config-dir override each CLI publishes. This mapping IS the
-#: mechanism; everything else in this module is bookkeeping around it.
-ENV_VAR: dict[Platform, str] = {
-    "claude": "CLAUDE_CONFIG_DIR",
-    "codex": "CODEX_HOME",
-}
+def _account_entries() -> list[Any]:
+    """Registry entries that declare how their whole identity moves."""
+    from jarvis.workspace import agents as workspace_agents
 
-#: Where each CLI looks when its override is unset.
-_NATIVE_DIR: dict[Platform, str] = {"claude": "~/.claude", "codex": "~/.codex"}
+    return [a for a in workspace_agents.coding_agents() if a.account is not None]
 
-_DISPLAY: dict[Platform, str] = {"claude": "Claude Code", "codex": "Codex"}
+
+def _platforms() -> tuple[str, ...]:
+    """The platforms that own a switchable subscription login, live.
+
+    Read from the registry at CALL time rather than snapshotted at import, so a
+    CLI registered after this module loads is offerable without a restart —
+    the same promise the workspace registry makes everywhere else. Anything
+    with no config-dir override (an API-key provider, or a CLI whose whole
+    identity cannot be moved by an environment variable) has no directory to
+    switch and is deliberately absent.
+    """
+    return tuple(a.name for a in _account_entries())
+
+
+def _account_spec(platform: Platform) -> Any:
+    from jarvis.workspace import agents as workspace_agents
+
+    entry = workspace_agents.get_agent(platform)
+    return entry.account if entry is not None else None
+
+
+def platforms() -> tuple[Platform, ...]:
+    """The platforms that own a switchable subscription login.
+
+    A FUNCTION rather than a constant, and that is the whole point: a module
+    constant is a snapshot taken at import, and the set it snapshots is registry
+    data that can grow afterwards. Callers ask when they need to know.
+    """
+    return _platforms()
+
+
+def env_var(platform: Platform) -> str | None:
+    """The PRIMARY config-dir override this CLI publishes.
+
+    Only the primary one, because that is what a caller asking this question
+    means. A CLI that needs several variables to move (a data root AND a config
+    root) must go through :func:`env_overrides`, which applies the whole
+    mapping — setting half of them relocates half the identity and leaves the
+    CLI spending the previous login, which is the worst possible outcome of an
+    account switch and looks exactly like a switch that worked.
+    """
+    spec = _account_spec(platform)
+    if spec is None or not spec.env:
+        return None
+    return str(spec.env[0][0])
+
+
+def _native_dir_template(platform: Platform) -> str:
+    """Where the CLI looks when its override is unset."""
+    spec = _account_spec(platform)
+    return spec.native_dir if spec is not None else "~"
+
+
+def _display(platform: Platform) -> str:
+    """What this CLI is called on screen."""
+    from jarvis.workspace import agents as workspace_agents
+
+    entry = workspace_agents.get_agent(platform)
+    return entry.display_name if entry is not None else platform
 
 #: Bumped when the stored shape changes incompatibly. An unknown version reads
 #: as "no added accounts": half-understanding a newer build's file would offer
@@ -184,10 +238,10 @@ def _native_dir(platform: Platform) -> Path:
     variable at spawn) would move panes onto a different, probably stale login
     than the one everything else on the machine uses.
     """
-    inherited = os.environ.get(ENV_VAR[platform], "").strip()
+    inherited = os.environ.get(env_var(platform) or "", "").strip()
     if inherited:
         return Path(inherited).expanduser()
-    return Path(os.path.expanduser(_NATIVE_DIR[platform]))
+    return Path(os.path.expanduser(_native_dir_template(platform)))
 
 
 def native_dir(platform: Platform) -> Path:
@@ -210,7 +264,7 @@ def _builtin(platform: Platform) -> AgentAccount:
     return AgentAccount(
         id=builtin_id(platform),
         platform=platform,
-        label=f"Default {_DISPLAY[platform]} login",
+        label=f"Default {_display(platform)} login",
         config_dir=_native_dir(platform),
         builtin=True,
     )
@@ -270,7 +324,7 @@ def _parse_account(raw: Any) -> AgentAccount | None:
     config_dir = raw.get("config_dir")
     if not (isinstance(account_id, str) and account_id):
         return None
-    if platform not in PLATFORMS:
+    if platform not in platforms():
         return None
     if not (isinstance(config_dir, str) and config_dir):
         return None
@@ -310,14 +364,14 @@ def list_accounts(platform: Platform) -> list[AgentAccount]:
 
 def all_accounts() -> list[AgentAccount]:
     """Every account of every platform, grouped by platform."""
-    return [account for platform in PLATFORMS for account in list_accounts(platform)]
+    return [account for platform in platforms() for account in list_accounts(platform)]
 
 
 def resolve(account_id: str | None) -> AgentAccount | None:
     """An id back to its account; ``None`` when the id is unknown or empty."""
     if not account_id:
         return None
-    for platform in PLATFORMS:
+    for platform in platforms():
         if account_id == builtin_id(platform):
             return _builtin(platform)
     for account in all_accounts():
@@ -343,7 +397,7 @@ def active_account(platform: Platform) -> AgentAccount:
 
 def active_ids() -> dict[str, str]:
     """``{platform: active account id}`` for every platform."""
-    return {platform: active_account(platform).id for platform in PLATFORMS}
+    return {platform: active_account(platform).id for platform in platforms()}
 
 
 # ----------------------------------------------------------------- mutate
@@ -363,7 +417,7 @@ def create_account(platform: Platform, label: str) -> AgentAccount:
     adding a row to a list. Until then the account reports itself as not signed
     in, which is exactly true.
     """
-    if platform not in PLATFORMS:
+    if platform not in platforms():
         raise AccountError(f"Unknown platform: {platform}")
     clean_label = (label or "").strip()[:MAX_LABEL_CHARS]
     if not clean_label:
@@ -371,7 +425,7 @@ def create_account(platform: Platform, label: str) -> AgentAccount:
     existing = [a for a in list_accounts(platform) if not a.builtin]
     if len(existing) >= MAX_ACCOUNTS_PER_PLATFORM:
         raise AccountError(
-            f"{_DISPLAY[platform]} already has the maximum of "
+            f"{_display(platform)} already has the maximum of "
             f"{MAX_ACCOUNTS_PER_PLATFORM} extra accounts."
         )
     account_id = f"{platform}:{uuid4().hex[:12]}"
@@ -511,7 +565,10 @@ def env_overrides(platform: Platform, account_id: str | None) -> dict[str, str]:
     account = resolve(account_id)
     if account is None or account.platform != platform or account.builtin:
         return {}
-    return {ENV_VAR[platform]: str(account.config_dir)}
+    return {
+        var: template.format(dir=str(account.config_dir))
+        for var, template in (_account_spec(platform).env or ())
+    }
 
 
 def spawn_env(
@@ -772,7 +829,7 @@ def inherit_default_mode(platform: Platform, account_id: str | None) -> bool:
         logger.info(
             "Agent accounts: {!r} inherited your default {} mode ({})",
             account.label,
-            _DISPLAY[platform],
+            _display(platform),
             ", ".join(applied),
         )
     return bool(applied)
@@ -795,7 +852,55 @@ def describe(account: AgentAccount) -> AccountSnapshot:
     """
     if account.platform == "claude":
         return _describe_claude(account)
-    return _describe_codex(account)
+    if account.platform == "codex":
+        return _describe_codex(account)
+    return _describe_generic(account)
+
+
+def _describe_generic(account: AgentAccount) -> AccountSnapshot:
+    """Sign-in state for a CLI this build has no dedicated reader for.
+
+    The important thing here is what it does NOT do. Falling through to another
+    CLI's reader — which is what an ``if claude / else codex`` pair quietly does
+    to every third platform — makes every seat of a new provider read as
+    permanently "not signed in", because it is looking for a file that CLI never
+    writes. Nothing raises, nothing logs, and the switcher shows a red dot next
+    to an account that works perfectly.
+
+    So a spec that declares no login markers gets an honest "cannot tell" rather
+    than a confident wrong answer. Switching seats still works — the environment
+    variable genuinely redirects the CLI — and the pane itself will say if a
+    login is missing, which is the one place that can actually know.
+    """
+    spec = _account_spec(account.platform)
+    markers = tuple(getattr(spec, "login_markers", ()) or ())
+    if not markers:
+        return AccountSnapshot(
+            account=account,
+            connected=False,
+            mode="unknown",
+            message=(
+                f"{_display(account.platform)} reports its sign-in state only in "
+                "the pane — open one to check. Switching seats works either way."
+            ),
+        )
+    for marker in markers:
+        try:
+            if (account.config_dir / marker).exists():
+                return AccountSnapshot(
+                    account=account,
+                    connected=True,
+                    mode="subscription",
+                    message=f"Signed in for this {_display(account.platform)} seat.",
+                )
+        except OSError:  # noqa: PERF203 - an unreadable path is simply not proof
+            continue
+    return AccountSnapshot(
+        account=account,
+        connected=False,
+        mode="unknown",
+        message=_not_signed_in_message(account),
+    )
 
 
 def _describe_claude(account: AgentAccount) -> AccountSnapshot:
@@ -876,7 +981,7 @@ def _not_signed_in_message(account: AgentAccount) -> str:
     login that is silently the first account's. Tracked in docs/os-parity.md.
     """
     if account.builtin:
-        return f"Not signed in — use Sign in to connect this {_DISPLAY[account.platform]} plan."
+        return f"Not signed in — use Sign in to connect this {_display(account.platform)} plan."
     return (
         "Not signed in yet — use Sign in, and finish the flow in the window that opens."
     )
@@ -961,7 +1066,7 @@ def start_login(account: AgentAccount) -> Any:
             raise FileNotFoundError(f"Claude CLI is not installed. {claude_install_hint()}")
         argv = service._login_argv(binary)  # noqa: SLF001 — capability-selected argv
         title = f"Claude sign-in — {account.label}"
-    else:
+    elif account.platform == "codex":
         from jarvis.codex_auth import CodexAuthService
 
         service_codex = CodexAuthService()
@@ -972,6 +1077,13 @@ def start_login(account: AgentAccount) -> Any:
             )
         argv = [binary, "login"]
         title = f"Codex sign-in — {account.label}"
+    else:
+        # Same reasoning as _describe_generic: an unrecognised platform must not
+        # inherit a neighbour's login command. Spawning `codex login` for a Kimi
+        # seat would sign the user into the wrong product, into the wrong
+        # directory, and report success.
+        argv = _generic_login_argv(account)
+        title = f"{_display(account.platform)} sign-in — {account.label}"
     # The directory must exist before the CLI writes into it; a login that fails
     # on a missing folder looks to the user like a rejected account.
     try:
@@ -983,10 +1095,8 @@ def start_login(account: AgentAccount) -> Any:
 
 
 __all__ = [
-    "ENV_VAR",
     "MAX_ACCOUNTS_PER_PLATFORM",
     "MAX_LABEL_CHARS",
-    "PLATFORMS",
     "SCHEMA_VERSION",
     "AccountError",
     "AccountSnapshot",
@@ -1001,10 +1111,12 @@ __all__ = [
     "delete_account",
     "describe",
     "env_overrides",
+    "env_var",
     "inherit_default_mode",
     "list_accounts",
     "mode_file_name",
     "native_dir",
+    "platforms",
     "rename_account",
     "resolve",
     "set_active",
