@@ -64,6 +64,7 @@ from jarvis.agentic_ide.session import (
     MAX_TERMINALS,
     MAX_WORKSPACES,
     SessionError,
+    SessionNotReady,
     account_home,
     agent_argv,
     get_registry,
@@ -1568,6 +1569,20 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             workspace_id=pane_workspace,
             appearance=appearance,
         )
+    except SessionNotReady as exc:
+        # "Not yet", not "not here": this pane connected while its workspace was
+        # still being restored — the ordinary state of affairs for a second or
+        # two after the app restarts, when every pane in a full grid reconnects
+        # at once. Told "no such pane" (4404) they all gave up permanently and
+        # the whole workspace came back frozen, so this says "try again" with a
+        # code of its own and the pane keeps waiting.
+        log.info(
+            "Agentic IDE: %r connected before its workspace was open — asked it to wait",
+            name,
+        )
+        await ws.send_json({"t": "error", "message": str(exc)})
+        await ws.close(code=4503, reason="not ready")
+        return
     except SessionError as exc:
         # The reason used to travel to the browser and nowhere else, where it
         # ended up as a tooltip on a red badge. A spawn that fails for every
@@ -1641,7 +1656,14 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         # None of those mean "stop working", so the agent keeps running and
         # only the viewer is released; the next viewer re-joins it. What stops
         # an agent is closing its workspace (DELETE /workspaces/{id}).
-        registry.detach(term.key, pane_workspace)
+        #
+        # ``on_output`` identifies WHICH viewer is leaving, and that is what
+        # keeps a reload from blinding itself: the replacement socket for this
+        # pane may already have taken the slot while this one was still closing,
+        # and releasing it then would leave a live agent painting into nothing
+        # (BUG-113).
+        registry.detach(term.key, pane_workspace, viewer=on_output)
+
 
 
 def _safe_int(value: object, default: int) -> int:

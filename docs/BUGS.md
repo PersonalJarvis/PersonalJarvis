@@ -7827,3 +7827,82 @@ tool keeps current is that tool's choice and changes between its releases. And
 an identity read for account A must never be satisfied from account B's file:
 a confident wrong name sends work to the wrong plan, where the only feedback is
 a number on a billing page nobody is watching.
+
+---
+
+## BUG-113: a workspace of Agentic-IDE terminals freezes on screen while every agent behind it keeps working (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "All the terminals you see here are frozen.
+You can't write in them any more — the only one you can still type into is one
+you spawn fresh." The panes drew a screen that never changed again; typing into
+them appeared to do nothing.
+
+**What was actually true at that moment.** Measured on the reporting machine
+while the panes were frozen:
+
+- `GET /api/agentic-ide/state` reported all 16 panes `live`, four of them with
+  `idle_seconds` of 0.0-0.2 — agents printing *right now*.
+- `netstat` showed 17 established connections to the backend port: the panes'
+  WebSockets were open, not dropped.
+
+So neither the agents nor the wire were broken. The keystrokes even arrived —
+input is written straight to the PTY and never touches the viewer — but with
+nothing coming back, a pane that echoes nothing is indistinguishable from a pane
+that ignores you.
+
+**Root cause A — a departing viewer released a slot it no longer owned.** A
+pane's output goes to ONE viewer slot (`Terminal.viewer_output`), and viewers
+overlap by design: reloading the page, restarting a pane or coming back to the
+section closes one socket and opens another for the same pane in the same
+breath, while the agent keeps running. `attach()` handed the slot to the new
+viewer; the old socket's teardown then ran
+
+```python
+finally:
+    registry.detach(term.key, pane_workspace)   # cleared the slot unconditionally
+```
+
+Whichever of the two the server finished first was a matter of milliseconds, and
+with a full grid reconnecting at once some panes always lost the race. The
+loser's screen was never fed again: socket open, agent alive, transcript
+filling, pane frozen for the rest of the session. Nothing recovered it, because
+nothing re-attached — the socket was still connected.
+
+**Root cause B — "not yet" was answered as "not here".** A pane that connects
+while the workspace is still being restored got `SessionError("No Agentic-IDE
+session is running.")`, which the socket closed with **4404**. The client reads
+4404 as "this terminal does not exist here" and stops for good — correctly, for
+what that code means. It is exactly the state every pane reconnects into after
+an app restart: the log shows eleven panes doing it within nine seconds of the
+10:00 boot, all of them permanently dead while their workspace came back twelve
+minutes later. On top of that, ANY pane that spent its eight attempts was dead
+for the session — a laptop waking up was enough.
+
+**Fix.**
+- `jarvis/agentic_ide/session.py` — `detach(key, workspace_id, viewer=...)`
+  releases the slot only if it still holds *that* viewer's callback (compared by
+  equality, since a bound method is a new object per attribute access). A caller
+  that means "nobody is watching this pane" — teardown, tests — passes nothing
+  and clears it outright. New `SessionNotReady(SessionError)` separates "the
+  workspace is not open yet" from "no such pane".
+- `jarvis/ui/web/agentic_ide_routes.py` — the PTY socket passes its own
+  `on_output` when detaching, and closes with **4503** on `SessionNotReady`
+  instead of 4404.
+- `paneSocket.ts` — 4503 is waited out on its own counter (fast while a restart
+  plays out, then every 30 s), and a spent attempt budget no longer ends the
+  pane: it reports itself unreachable and keeps knocking every 30 s, so a
+  backend that comes back finds its terminals waiting. Only 4404 is final.
+- `AgenticTerminal.tsx` — at most one line per KIND of trouble, so a pane that
+  knocks every half minute does not stamp a red line into the terminal forever.
+
+**Regression guard.** `tests/unit/agentic_ide/test_viewer_handover.py` — the
+reload race in the order that used to freeze the workspace, the ordinary release
+still working, an exit reaching the viewer that took over, and "not yet" vs.
+"not here". `paneSocket.test.ts` — 4503 waited out, and a pane that ran out of
+fast attempts still reconnecting half a minute later.
+
+**Class rule.** A shared slot may only be cleared by whoever still holds it —
+"I am leaving" is never the same statement as "nobody is here". And a client
+that gives up permanently needs a reason that is permanent: everything else is a
+delay, so the honest answer to it is a slower retry, not a dead pane in front of
+a live process.

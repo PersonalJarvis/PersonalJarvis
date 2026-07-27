@@ -148,7 +148,7 @@ describe("openPaneSocket", () => {
     socket.close();
   });
 
-  it("stops retrying once the attempt budget is spent", async () => {
+  it("slows down once the attempt budget is spent, and says so", async () => {
     const cb = handlers();
     const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
 
@@ -157,13 +157,58 @@ describe("openPaneSocket", () => {
       await vi.advanceTimersByTimeAsync(20_000);
     }
 
-    // Bounded: a backend that is genuinely gone must not be hammered forever,
-    // and the pane must end up saying so rather than spinning silently.
+    // Bounded: a backend that is genuinely gone must not be hammered, and the
+    // pane must end up saying so rather than spinning silently.
     expect(cb.onTrouble).toHaveBeenLastCalledWith(expect.any(String), false);
     const attempts = MockWebSocket.opened.length;
-    MockWebSocket.last!.dropped(1006);
     await vi.advanceTimersByTimeAsync(20_000);
     expect(MockWebSocket.opened).toHaveLength(attempts);
+    socket.close();
+  });
+
+  it("keeps knocking every half minute instead of dying for the session", async () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+
+    for (let i = 0; i < 12; i += 1) {
+      MockWebSocket.last!.dropped(1006);
+      await vi.advanceTimersByTimeAsync(20_000);
+    }
+    expect(cb.onTrouble).toHaveBeenLastCalledWith(expect.any(String), false);
+    MockWebSocket.last!.dropped(1006);
+    const spent = MockWebSocket.opened.length;
+
+    // The reasons a pane cannot connect are nearly always temporary — an app
+    // restarting, a machine waking up. A pane that gave up for good left a live
+    // agent behind an unusable terminal until the whole workspace was rebuilt
+    // by hand (BUG-113), so it stays quiet but never stops trying.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(MockWebSocket.opened).toHaveLength(spent);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(MockWebSocket.opened.length).toBeGreaterThan(spent);
+
+    MockWebSocket.last!.fire("open");
+    MockWebSocket.last!.deliver({ t: "ready", resumed: false, reattached: true });
+    expect(cb.onReady).toHaveBeenCalledTimes(1);
+    socket.close();
+  });
+
+  it("waits out a backend that is up but has not restored the workspace yet", async () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+
+    // 4503 is "not yet", the state every pane of a restored workspace connects
+    // into for a second or two after the app restarts. Read as "no such pane"
+    // it ended a whole grid at once; here it must cost nothing but patience.
+    for (let i = 0; i < 12; i += 1) {
+      MockWebSocket.last!.dropped(4503);
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(cb.onTrouble).toHaveBeenLastCalledWith(expect.any(String), true);
+
+    MockWebSocket.last!.fire("open");
+    MockWebSocket.last!.deliver({ t: "ready", resumed: true, reattached: false });
+    expect(cb.onReady).toHaveBeenCalledTimes(1);
     socket.close();
   });
 

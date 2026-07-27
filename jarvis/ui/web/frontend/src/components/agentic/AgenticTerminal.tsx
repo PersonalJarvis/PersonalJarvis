@@ -309,11 +309,13 @@ export function AgenticTerminal({
 
     let socket: PaneSocket | null = null;
     let disposed = false;
-    // Only the first attempt of a run of trouble is printed into the pane, plus
-    // the verdict if it ends badly. A reconnect that succeeds redraws the screen
-    // from the server's replay buffer anyway, so narrating every retry would
-    // scroll the agent's own output away for nothing.
-    let troublePrinted = false;
+    // At most one line per KIND of trouble: one when the connection starts
+    // wobbling, one if it is declared unreachable. A reconnect that succeeds
+    // redraws the screen from the server's replay buffer anyway, so narrating
+    // every attempt would scroll the agent's own output away for nothing — and
+    // a pane that keeps knocking every half minute would otherwise stamp a red
+    // line into the terminal twice a minute forever.
+    let troubleShown: "retrying" | "unreachable" | null = null;
 
     /*
      * Is anyone actually looking at this pane?
@@ -392,7 +394,7 @@ export function AgenticTerminal({
         },
         onOutput: (text) => writeToPane(text),
         onReady: ({ resumed, reattached }) => {
-          troublePrinted = false;
+          troubleShown = null;
           // Say which of THREE things happened. They look identical on screen and
           // only differ when it matters: an agent that never stopped still holds
           // everything, a resumed one re-read its history, and a fresh one will
@@ -419,8 +421,9 @@ export function AgenticTerminal({
           // there is what left a whole grid painted red over a backend that was
           // merely restarting.
           report(retrying ? "connecting" : "error", message);
-          if (retrying && troublePrinted) return;
-          troublePrinted = true;
+          const kind = retrying ? "retrying" : "unreachable";
+          if (troubleShown === kind) return;
+          troubleShown = kind;
           writeToPane(
             `\r\n\x1b[${retrying ? "33" : "31"}m[${message}]\x1b[0m\r\n`,
           );

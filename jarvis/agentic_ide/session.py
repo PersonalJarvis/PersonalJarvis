@@ -639,6 +639,18 @@ class SessionError(RuntimeError):
     """A request the registry refuses, with a user-facing English message."""
 
 
+class SessionNotReady(SessionError):
+    """The addressed workspace is not open — not "not here", but "not yet".
+
+    Raised where the old code raised a plain ``SessionError`` with the same
+    message, and the distinction is the whole point: a pane that connects while
+    the backend is still coming up (a restart, a workspace not restored yet) is
+    asking about a workspace that WILL exist, and a viewer told "no such pane"
+    stops trying for good. Every caller that can wait must be able to tell the
+    two apart — see the PTY socket's close codes.
+    """
+
+
 class Registry:
     """Process-wide holder of the open Agentic-IDE workspaces.
 
@@ -1379,7 +1391,8 @@ class Registry:
         found = self._locate(key, workspace_id)
         if found is None:
             if self.get(workspace_id) is None:
-                raise SessionError("No Agentic-IDE session is running.")
+                # Not a refusal — a "not yet". A viewer may wait for this.
+                raise SessionNotReady("No Agentic-IDE session is running.")
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
         if appearance in THEME_COLOURS:
@@ -1387,9 +1400,11 @@ class Registry:
 
         manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
-            # The agent never stopped. Take over the viewer slot — the previous
-            # viewer, if any, is gone by definition (a socket that closed) or is
-            # being replaced by this one, so there is still exactly one.
+            # The agent never stopped. Take over the viewer slot: the previous
+            # viewer is either gone (a socket that closed) or is being replaced
+            # by this one, so the newest viewer always wins. The one it replaces
+            # may still be TIDYING UP — see ``detach``, which is what stops that
+            # tidy-up from clearing the slot this line just filled.
             term.viewer_output = on_output
             term.viewer_exit = on_exit
             term.reattached = True
@@ -1657,7 +1672,7 @@ class Registry:
         term.transcript.resize(cols, rows)
         return self._manager().resize(term.pty_id, cols, rows)
 
-    def detach(self, key: str, workspace_id: str | None = None) -> None:
+    def detach(self, key: str, workspace_id: str | None = None, viewer: Any = None) -> None:
         """Let go of a pane's viewer. The agent behind it keeps running.
 
         Detaching used to kill the PTY, on the reasoning that an agent nobody
@@ -1670,11 +1685,35 @@ class Registry:
         runs until its workspace is closed.** Nothing is invisible about it —
         every open workspace is a tab with a live-pane count on it, and closing
         one stops its agents immediately (see ``_close_locked``).
+
+        **``viewer`` is what stops a leaving viewer from blinding the one that
+        replaced it** (BUG-113). Viewers overlap: reloading the page, restarting
+        a pane or switching back to the section closes one socket and opens
+        another for the SAME pane in the same breath, and which of the two the
+        server finishes first is a matter of milliseconds. Clearing the slot
+        unconditionally therefore wiped a viewer that had just been installed —
+        the pane then sat there with an open socket, a live agent typing into a
+        transcript, and a screen that never moved again. Passing the callback
+        that was handed to ``attach`` makes this a no-op unless the slot is
+        still that viewer's; a caller that genuinely means "nobody is watching
+        this pane" (a test, a teardown) passes nothing and clears it outright.
         """
         found = self._locate(key, workspace_id)
         if found is None:
             return
         term = found[1]
+        current = term.viewer_output
+        # Compared by equality, not only by identity: a bound method is a brand
+        # new object on every attribute access, so `is` would answer "you are
+        # not the viewer" to the very callback sitting in the slot.
+        if viewer is not None and current is not viewer and current != viewer:
+            # Somebody else is watching this pane now. Leaving quietly is the
+            # whole job — the slot belongs to the newer viewer.
+            logger.debug(
+                "Agentic IDE: a departing viewer left {} to the one that replaced it",
+                term.name,
+            )
+            return
         term.viewer_output = None
         term.viewer_exit = None
 
@@ -2181,6 +2220,7 @@ __all__ = [
     "Registry",
     "Session",
     "SessionError",
+    "SessionNotReady",
     "Terminal",
     "agent_argv",
     "get_registry",

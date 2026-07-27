@@ -21,9 +21,14 @@
  *  - **A dropped connection.** A backend restart, a reload, a moment of
  *    unreachability. One failed attempt used to be final, which is why a
  *    whole grid of panes could go red at once and stay that way.
+ *  - **A backend that is up but not ready.** After a restart the panes of a
+ *    restored workspace reconnect within milliseconds — reliably before the
+ *    workspace itself is back. That answer (4503) is a "not yet" and is waited
+ *    out; only "not here" (4404) ends a pane for good.
  *
- * Both are bounded: a pane never hammers a backend that is genuinely gone, and
- * whatever it ends up believing, it says out loud.
+ * All three are bounded: a pane never hammers a backend that is genuinely
+ * gone — it falls back to knocking every half minute — and whatever it ends up
+ * believing, it says out loud.
  */
 
 import { mintWsTicket } from "@/lib/ws";
@@ -32,16 +37,38 @@ import { mintWsTicket } from "@/lib/ws";
 const CLOSE_UNAUTHORIZED = 4401;
 /** Server close code: no such pane in the addressed workspace. */
 const CLOSE_NO_SUCH_PANE = 4404;
+/**
+ * Server close code: the workspace this pane belongs to is not open YET.
+ *
+ * Its own code because it is the opposite verdict from 4404 with the same
+ * shape: the backend is up but still restoring, which is precisely the state
+ * every pane of a full grid reconnects into after the app restarts. Until the
+ * server distinguished them, that answer arrived as "no such pane" and a whole
+ * workspace of terminals gave up for good (BUG-113).
+ */
+const CLOSE_NOT_READY = 4503;
 
 const MIN_BACKOFF = 500;
 const MAX_BACKOFF = 8_000;
 
 /**
- * Consecutive failed attempts before a pane declares itself unreachable.
- * Eight covers the ~20 s a backend restart takes to answer again, and stops
- * well short of retrying at a dead server for the rest of the session.
+ * Consecutive failed attempts before a pane stops retrying quickly.
+ * Eight covers the ~20 s a backend restart takes to answer again.
  */
 const MAX_ATTEMPTS = 8;
+
+/**
+ * How often a pane that has run out of fast attempts still knocks.
+ *
+ * It does keep knocking, and that is the point: the reasons a terminal cannot
+ * be reached are overwhelmingly temporary — a backend restarting, a workspace
+ * not restored yet, a laptop that was asleep — and every one of them used to
+ * end with a pane that was dead for the rest of the session while the agent
+ * behind it was alive and working. Half a minute apart costs nothing and is the
+ * difference between a workspace that heals itself and one the user has to
+ * rebuild by hand.
+ */
+const IDLE_BACKOFF = 30_000;
 
 /**
  * Consecutive 4401s that still count as a transient authorization hiccup.
@@ -120,6 +147,8 @@ export function openPaneSocket(
   /** The agent reported its own exit — a later close is not a lost wire. */
   let agentExited = false;
   let attempts = 0;
+  /** Consecutive "not yet" answers — waiting, which is not failing. */
+  let waits = 0;
   let ticketRetries = 0;
   let pendingTicket: string | null = null;
 
@@ -139,7 +168,12 @@ export function openPaneSocket(
   const retryLater = (message: string) => {
     attempts += 1;
     if (attempts > MAX_ATTEMPTS) {
-      giveUp(message);
+      // Out of fast attempts, not out of hope: the pane says so (``retrying``
+      // false paints it as unreachable and offers the restart button) and then
+      // keeps knocking every half minute, so a backend that comes back finds
+      // its terminals waiting rather than needing every one of them reopened.
+      handlers.onTrouble(message, false);
+      schedule(IDLE_BACKOFF);
       return;
     }
     handlers.onTrouble(message, true);
@@ -168,6 +202,22 @@ export function openPaneSocket(
       // The server is not saying "not right now", it is saying "not here".
       // No number of retries turns that into a terminal.
       giveUp("This terminal is no longer part of the open workspace.");
+      return;
+    }
+    if (code === CLOSE_NOT_READY) {
+      // The workspace is still coming up. Waiting is the correct answer, and it
+      // is counted separately from failures: the backend is answering, doing
+      // exactly what it said it was doing, so this must not burn down the
+      // budget that decides whether the pane is UNREACHABLE. Fast while a
+      // restart plays out, patient afterwards — a workspace restored a quarter
+      // of an hour later still finds its panes waiting.
+      waits += 1;
+      handlers.onTrouble("Waiting for the workspace to come back…", true);
+      schedule(
+        waits > MAX_ATTEMPTS
+          ? IDLE_BACKOFF
+          : Math.min(MAX_BACKOFF, MIN_BACKOFF * 2 ** (waits - 1)),
+      );
       return;
     }
     if (code === CLOSE_UNAUTHORIZED) {
@@ -215,6 +265,7 @@ export function openPaneSocket(
         // this attempt used, it worked.
         ticketRetries = 0;
         attempts = 0;
+        waits = 0;
         handlers.onReady({
           resumed: Boolean(msg.resumed),
           reattached: Boolean(msg.reattached),
