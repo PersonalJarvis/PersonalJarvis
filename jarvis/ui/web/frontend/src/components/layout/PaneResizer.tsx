@@ -15,6 +15,7 @@
  *   the arrow keys mean the layout can be adjusted from the keyboard, which is
  *   also the only way to recover a pane that was dragged shut on a touchpad.
  */
+import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
 /** How the seam itself runs — not the axis it moves along. */
@@ -54,17 +55,28 @@ const KEY_STEP_PX = 16;
 /** …and one press with Shift held, for crossing the screen quickly. */
 const KEY_STEP_COARSE_PX = 64;
 
-export function PaneResizer({
-  orientation = "vertical",
-  onPointerDown,
-  onDoubleClick,
-  onNudge,
-  active,
-  title,
-  style,
-  className,
-  testId,
-}: PaneResizerProps) {
+/**
+ * The ref is forwarded because a seam is not always laid out by React.
+ *
+ * A tiled workspace repaints its boxes directly during a drag — see
+ * `usePaneWeights` — and the seam being dragged has to travel with them. It is
+ * the one element in the gesture the user is actually looking at, so leaving it
+ * to a re-render would make the line lag behind the pointer holding it.
+ */
+export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function PaneResizer(
+  {
+    orientation = "vertical",
+    onPointerDown,
+    onDoubleClick,
+    onNudge,
+    active,
+    title,
+    style,
+    className,
+    testId,
+  },
+  ref,
+) {
   const vertical = orientation === "vertical";
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -83,6 +95,7 @@ export function PaneResizer({
 
   return (
     <div
+      ref={ref}
       role="separator"
       aria-orientation={orientation}
       aria-label={title}
@@ -128,4 +141,4 @@ export function PaneResizer({
       />
     </div>
   );
-}
+});

@@ -9,7 +9,14 @@
  * take the identical path through the app, and the two can never behave
  * differently.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowUp,
@@ -56,6 +63,7 @@ import {
   weightsAfterSplit,
   type PaneBox,
   type PaneSeam,
+  type PaneWeights,
 } from "./paneLayout";
 import { usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
@@ -285,6 +293,25 @@ function seamStyle(seam: PaneSeam): React.CSSProperties {
         left: `${seam.x * 100}%`,
         width: `${seam.w * 100}%`,
       };
+}
+
+/**
+ * The style properties a box or a seam is positioned by, and nothing else.
+ *
+ * Written straight onto the element while a seam is being dragged, so the
+ * gesture never goes through React (see `paintDraggedLayout` and the header of
+ * `usePaneWeights`). Kept to the four that `paneBoxStyle` and `seamStyle`
+ * actually set, and blanking a missing one is what lets the same helper place
+ * both: a vertical seam has a height and no width, a horizontal one the
+ * reverse.
+ */
+const POSITION_KEYS = ["left", "top", "width", "height"] as const;
+
+function writePosition(node: HTMLElement, style: React.CSSProperties): void {
+  for (const key of POSITION_KEYS) {
+    const value = style[key];
+    node.style[key] = value === undefined ? "" : String(value);
+  }
 }
 
 /*
