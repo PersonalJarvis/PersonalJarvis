@@ -141,21 +141,41 @@ def test_the_user_scope_mcp_servers_are_merged_without_the_identity(native: Path
     assert doc["oauthAccount"] == {"emailAddress": "b@example.com"}
 
 
-def test_codex_shares_its_config_and_prompts(tmp_path: Path) -> None:
-    """The same promise for the other CLI — never a Claude-only fix (AP-21)."""
+def test_codex_shares_its_config_skills_rules_and_prompts(tmp_path: Path) -> None:
+    """The same promise for the other CLI — never a Claude-only fix (AP-21).
+
+    The entry names are the ones a real Codex home carries (measured
+    2026-07-27): its skills, its standing rules, its plugins and its one
+    config file, which is where its MCP servers live.
+    """
     home = tmp_path / "native" / "codex"
-    (home / "prompts").mkdir(parents=True)
-    (home / "prompts" / "review.md").write_text("review\n", encoding="utf-8")
+    for folder, marker in (
+        ("prompts", "review.md"),
+        ("skills", "recap"),
+        ("rules", "default.rules"),
+    ):
+        (home / folder).mkdir(parents=True)
+        (home / folder / marker).write_text("x\n", encoding="utf-8")
     (home / "config.toml").write_text(
         '[mcp_servers.chrome]\ncommand = "chrome-mcp"\n', encoding="utf-8"
     )
+    # Identity, in both places Codex keeps it.
     (home / "auth.json").write_text('{"token": "codex-secret"}', encoding="utf-8")
+    (home / "secrets").mkdir()
+    (home / "secrets" / "mcp_oauth.age").write_text("encrypted", encoding="utf-8")
+
     account = agent_accounts.create_account("codex", "Second plan")
     report = ensure_parity("codex", account.id)
+
     assert "config.toml" in report.shared
     assert (account.config_dir / "prompts" / "review.md").is_file()
+    assert (account.config_dir / "skills" / "recap").is_file()
+    assert (account.config_dir / "rules" / "default.rules").is_file()
     assert "mcp_servers" in (account.config_dir / "config.toml").read_text(encoding="utf-8")
+    # An allowlist is a promise about what it does NOT do: a login and an
+    # encrypted credential store are not on it, so no code path can reach them.
     assert not (account.config_dir / "auth.json").exists()
+    assert not (account.config_dir / "secrets").exists()
 
 
 # ------------------------------------------------------------- identity is safe
@@ -289,12 +309,20 @@ def test_an_unknown_account_is_a_no_op(native: Path) -> None:
 
 
 def test_a_machine_with_no_setup_of_its_own_is_not_a_failure(tmp_path: Path) -> None:
-    """A fresh install has no user-level config — there is nothing to share."""
+    """A fresh install has no user-level config — there is nothing to share.
+
+    This is also the headless container case (the compose deployment): there is
+    no home-directory CLI setup to carry, so this writes nothing at all rather
+    than creating an empty scaffold of folders nobody asked for.
+    """
     account = _account()
     report = ensure_parity("claude", account.id)
     assert report.redirected is True
     assert report.shared == {}
     assert report.skipped == ()
+    # Not one entry of its own making — not even the bookkeeping file.
+    assert not (account.config_dir / agent_config_parity.STATE_FILE).exists()
+    assert not (account.config_dir / "skills").exists()
 
 
 # ------------------------------------------------------------------- every host

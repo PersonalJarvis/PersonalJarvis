@@ -171,6 +171,11 @@ USER_SETUP: dict[Platform, tuple[Shared, ...]] = {
         Shared("hooks.json", "file", fmt="json"),
         Shared("prompts", "dir"),
         Shared("skills", "dir"),
+        # User-level rules — the standing instructions a Codex session starts
+        # with, the counterpart of Claude Code's user memory file.
+        Shared("rules", "dir"),
+        # Same reasoning as Claude Code's plugins above, and the same treatment.
+        Shared("plugins", "dir", copy_fallback=False, whole=True),
     ),
 }
 
