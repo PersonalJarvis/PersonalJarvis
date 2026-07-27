@@ -14,11 +14,26 @@ log = logging.getLogger(__name__)
 
 
 def _ready_for_prompt(term: Any) -> bool:
+    """Is this pane far enough along to be typed into?
+
+    Every CLI observed so far swallows a prompt that arrives while it is still
+    booting — the keystrokes go nowhere and the user is told the work was sent.
+    So waiting for a real input line is the DEFAULT, and an entry only skips it
+    by declaring so: one CLI has a launch-and-prompt path measured to be stable
+    without the wait, and making it wait would slow down behaviour that already
+    works.
+
+    Getting that default the wrong way round is what a new provider cannot
+    afford. Opting in silently means every CLI registered later loses its first
+    prompt until somebody notices; opting out silently costs one CLI a little
+    speed. The cheap mistake is the one worth defaulting to.
+    """
     if getattr(term, "status", "") != "live" or not getattr(term, "pty_id", None):
         return False
-    # Claude Code already has a stable launch-and-prompt path. Restrict the new
-    # startup gate to Codex so that working behaviour stays byte-for-byte fast.
-    if getattr(term, "agent", "") != "codex":
+    from jarvis.workspace import agents as workspace_agents
+
+    spec = workspace_agents.get_agent(getattr(term, "agent", ""))
+    if spec is not None and not spec.needs_input_line_wait:
         return True
     transcript = getattr(term, "transcript", None)
     if transcript is None:
@@ -27,7 +42,8 @@ def _ready_for_prompt(term: Any) -> bool:
         lines = transcript.tail(30)
     except Exception:  # noqa: BLE001 - a test double may expose no real buffer
         return True
-    return any(line.strip().startswith(_INPUT_MARKERS) for line in lines)
+    markers = (spec.input_markers if spec else ()) or _INPUT_MARKERS
+    return any(line.strip().startswith(markers) for line in lines)
 
 
 async def wait_for_prompt_ready(

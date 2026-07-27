@@ -139,6 +139,11 @@ def _codex_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
     return ((), None)
 
 
+def _discovered_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
+    """Nothing can be passed: the id is the CLI's to choose and ours to find."""
+    return ((), None)
+
+
 _ADAPTERS: dict[str, _Adapter] = {
     "claude": _Adapter(
         kind="claude_session",
@@ -160,21 +165,59 @@ _ADAPTERS: dict[str, _Adapter] = {
         ),
         exists=lambda handle, home: _codex_conversation_exists(handle, home),
     ),
+    "opencode": _Adapter(
+        kind="opencode_session",
+        launch=_discovered_launch,
+        # Long form on purpose. The short flags of a TUI are the ones that get
+        # reused for something else between releases; `--session` has to keep
+        # meaning this or the CLI would break its own users.
+        resume=lambda session_id: ("--session", session_id),
+        discover=lambda cwd, started, taken, home: _discover_opencode(
+            cwd, started, taken, home
+        ),
+        exists=lambda handle, home: _opencode_conversation_exists(handle, home),
+    ),
+    "kimi": _Adapter(
+        kind="kimi_session",
+        launch=_discovered_launch,
+        # Long form again, and here it is not a preference: the two shipping
+        # generations disagree on the SHORT flag (-C versus -c), so a short one
+        # would mean something different depending on which is installed.
+        resume=lambda session_id: ("--session", session_id),
+        discover=lambda cwd, started, taken, home: _discover_kimi(
+            cwd, started, taken, home
+        ),
+        exists=lambda handle, home: _kimi_conversation_exists(handle, home),
+    ),
 }
+
+
+def _adapter_for(agent: str) -> _Adapter | None:
+    """The adapter that reopens ``agent``'s conversations.
+
+    Goes through the registry so an entry may name ANOTHER entry's adapter. That
+    is what lets a launch profile over an existing binary — the same CLI pointed
+    at a different vendor — inherit resume exactly rather than owning a second
+    copy of it that can drift.
+    """
+    from jarvis.workspace import agents as workspace_agents
+
+    entry = workspace_agents.get_agent(agent)
+    return _ADAPTERS.get(entry.adapter_key if entry is not None else agent)
 
 
 def can_resume(agent: str) -> bool:
     """True when this coding CLI can reopen one of its own conversations."""
-    return agent in _ADAPTERS
+    return _adapter_for(agent) is not None
 
 
 def launch_extra(agent: str) -> tuple[tuple[str, ...], ResumeHandle | None]:
     """Extra argv for a fresh start, plus the handle it will be reachable by.
 
-    A ``None`` handle does not mean "not resumable" — Codex simply cannot be
-    told its id, so the handle arrives later through :func:`discover`.
+    A ``None`` handle does not mean "not resumable" — most CLIs cannot be told
+    their id, so the handle arrives later through :func:`discover`.
     """
-    adapter = _ADAPTERS.get(agent)
+    adapter = _adapter_for(agent)
     if adapter is None:
         return ((), None)
     return adapter.launch()
@@ -189,7 +232,7 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     """
     if handle is None:
         return None
-    adapter = _ADAPTERS.get(agent)
+    adapter = _adapter_for(agent)
     if adapter is None or adapter.kind != handle.kind:
         return None
     return adapter.resume(handle.id)
@@ -217,7 +260,7 @@ def has_conversation(
     """
     if handle is None:
         return False
-    adapter = _ADAPTERS.get(agent)
+    adapter = _adapter_for(agent)
     if adapter is None or adapter.kind != handle.kind:
         return False
     try:
@@ -250,7 +293,7 @@ def discover(
     for every agent that does not need discovery (its handle already exists) and
     whenever nothing convincing is found.
     """
-    adapter = _ADAPTERS.get(agent)
+    adapter = _adapter_for(agent)
     if adapter is None or adapter.discover is None:
         return None
     try:
@@ -478,6 +521,256 @@ def _discover_codex(
     if best is None:
         return None
     return ResumeHandle(kind="codex_rollout", id=best[1], captured_at=best[0])
+
+
+# ------------------------------------------------------------------ OpenCode
+def _opencode_data_dir(override: Path | None = None) -> Path:
+    """The directory holding this CLI's session database.
+
+    Follows the XDG data convention it actually uses, on every OS — it does not
+    switch to ``%APPDATA%`` on Windows, so hardcoding a Windows-shaped path here
+    would look right and find nothing.
+    """
+    if override is not None:
+        return Path(override).expanduser()
+    raw = os.environ.get("XDG_DATA_HOME")
+    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
+    return base / "opencode"
+
+
+def _opencode_db(home: Path | None = None) -> Path | None:
+    """The session database, or ``None`` when this CLI has never run here.
+
+    Globbed rather than named: the file name carries the release channel unless
+    that is switched off, so a user on a non-stable channel has a differently
+    named database and a hardcoded name would silently find no sessions at all —
+    which reads as "nothing to resume" rather than as the lookup bug it is.
+    """
+    root = _opencode_data_dir(home)
+    try:
+        candidates = [p for p in root.glob("opencode*.db") if p.is_file()]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _opencode_rows(
+    home: Path | None, query: str, params: tuple[Any, ...]
+) -> list[tuple[Any, ...]]:
+    """Run a read-only query against the session database.
+
+    Read-only and never ``immutable``: the CLI may well be running and holding a
+    write-ahead log, and declaring the file immutable would hand back a stale
+    snapshot that is missing exactly the session just created — the one every
+    caller here is looking for.
+    """
+    db = _opencode_db(home)
+    if db is None:
+        return []
+    import sqlite3
+
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return []
+    try:
+        return list(con.execute(query, params))
+    except sqlite3.Error as exc:
+        # A schema this build does not recognise is not an error the user can
+        # act on; it costs a fresh conversation, which is the same degradation
+        # every other unreadable history gets.
+        logger.debug("Agentic IDE: opencode session query failed: {}", exc)
+        return []
+    finally:
+        con.close()
+
+
+def _epoch_seconds(value: Any) -> float | None:
+    """A stored timestamp as POSIX seconds, whether it was written in ms or s."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    # Anything past ~5138 in seconds is milliseconds — no real timestamp lands
+    # between the two ranges, so this cannot mis-read a genuine value.
+    return number / 1000.0 if number > 1e11 else number
+
+
+def _opencode_conversation_exists(
+    handle: ResumeHandle, home: Path | None = None
+) -> bool:
+    rows = _opencode_rows(
+        home, "SELECT 1 FROM session WHERE id = ? LIMIT 1", (handle.id,)
+    )
+    return bool(rows)
+
+
+def _discover_opencode(
+    cwd: str,
+    started_at: float,
+    taken: Collection[str] = (),
+    home: Path | None = None,
+) -> ResumeHandle | None:
+    """The session a pane in ``cwd`` started at ``started_at`` created.
+
+    Same matching rule as every other discovered CLI — folder, not already
+    claimed, earliest moment at or after the pane launched — so several panes
+    opened together queue rather than all claiming the first session.
+
+    ``parent_id IS NULL`` is the one CLI-specific part: this agent files its
+    subagents' threads in the same table, and a pane that resumed one of those
+    would reopen a fragment of its own previous run instead of the conversation
+    the user was having.
+    """
+    claimed = {str(t) for t in taken}
+    rows = _opencode_rows(
+        home,
+        "SELECT id, directory, time_created FROM session "
+        "WHERE parent_id IS NULL ORDER BY time_created LIMIT ?",
+        (_MAX_CANDIDATES,),
+    )
+    for session_id, directory, created in rows:
+        session_id = str(session_id or "").strip()
+        if not session_id or session_id in claimed:
+            continue
+        if not isinstance(directory, str) or not _same_folder(directory, cwd):
+            continue
+        stamp = _epoch_seconds(created)
+        if stamp is None or stamp < started_at - _SKEW_S:
+            continue
+        return ResumeHandle(
+            kind="opencode_session", id=session_id, captured_at=stamp
+        )
+    return None
+
+
+# ---------------------------------------------------------------- Kimi Code
+def _kimi_root(home: Path | None = None) -> Path | None:
+    """The data root of whichever generation of this CLI is installed.
+
+    Two generations ship under one binary name and keep separate roots. Asking
+    the registry which one is present — rather than picking one — is what stops
+    a pane reading the other generation's history and reporting "nothing to
+    resume" on a machine that has plenty.
+    """
+    if home is not None:
+        return Path(home).expanduser()
+    from jarvis.workspace import agents as workspace_agents
+
+    generation = workspace_agents.generation_of("kimi")
+    if generation == workspace_agents.KIMI_LEGACY:
+        return Path.home() / ".kimi"
+    if generation == workspace_agents.KIMI_CURRENT:
+        return Path.home() / ".kimi-code"
+    return None
+
+
+def _kimi_folder_key(cwd: str) -> str | None:
+    """The per-working-directory folder name this CLI derives from a path.
+
+    MEASURED against a live install rather than taken from documentation: the
+    folder is the MD5 of the working directory exactly as the OS spells it
+    (``C:\\Users\\...`` on Windows), which is why the native string is hashed and
+    not a normalised or POSIX one.
+
+    This is the ONLY link between a session and the folder it belongs to — the
+    files inside record no working directory — so when the derived folder is
+    absent there is simply nothing to match against, and the caller starts a
+    fresh conversation instead of guessing.
+    """
+    import hashlib
+
+    try:
+        native = str(Path(cwd).expanduser().resolve())
+    except OSError:
+        return None
+    if not native:
+        return None
+    return hashlib.md5(native.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+def _kimi_sessions_dir(cwd: str, home: Path | None) -> Path | None:
+    root = _kimi_root(home)
+    key = _kimi_folder_key(cwd)
+    if root is None or key is None:
+        return None
+    folder = root / "sessions" / key
+    return folder if folder.is_dir() else None
+
+
+def _kimi_conversation_exists(
+    handle: ResumeHandle, home: Path | None = None
+) -> bool:
+    """True when this CLI still holds a conversation behind the handle.
+
+    Searched by id across every working-directory folder, for the same reason
+    the Claude check is: the id is unique everywhere, while the folder name is
+    the CLI's own convention and could change without notice.
+    """
+    session_id = handle.id
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return False
+    root = _kimi_root(home)
+    if root is None:
+        return False
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return False
+    try:
+        return any(
+            child.is_dir() and any(child.iterdir())
+            for child in sessions.glob(f"*/{session_id}")
+        )
+    except OSError:
+        return False
+
+
+def _discover_kimi(
+    cwd: str,
+    started_at: float,
+    taken: Collection[str] = (),
+    home: Path | None = None,
+) -> ResumeHandle | None:
+    """The session a pane in ``cwd`` started at ``started_at`` created.
+
+    A session here is a DIRECTORY named after its id, so the moment it was
+    created is its own timestamp — no file has to be opened at all, which keeps
+    this the cheapest discovery of the three even for a heavy user.
+
+    An empty directory is skipped: this CLI creates the folder when the session
+    opens and writes into it once the conversation has content, so resuming an
+    empty one reopens nothing and costs the pane its launch.
+    """
+    folder = _kimi_sessions_dir(cwd, home)
+    if folder is None:
+        return None
+    claimed = {str(t) for t in taken}
+    best: tuple[float, str] | None = None
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return None
+    for child in children[:_MAX_CANDIDATES]:
+        session_id = child.name
+        if session_id in claimed or not child.is_dir():
+            continue
+        try:
+            if not any(child.iterdir()):
+                continue
+            stamp = child.stat().st_mtime
+        except OSError:
+            continue
+        if stamp < started_at - _SKEW_S:
+            continue
+        if best is None or stamp < best[0]:
+            best = (stamp, session_id)
+    if best is None:
+        return None
+    return ResumeHandle(kind="kimi_session", id=best[1], captured_at=best[0])
 
 
 __all__ = [

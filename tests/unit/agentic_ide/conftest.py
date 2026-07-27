@@ -69,10 +69,31 @@ def _agent_history_in_tmp(
     that history. Pointed at the real one they would inherit whatever the
     developer happens to have on disk — a test could pass because an unrelated
     conversation was lying around, or fail on a fresh machine.
+
+    The per-CLI variables are read from the registry rather than listed here, so
+    a CLI registered later is redirected without anybody remembering to add it.
+    The two that resolve their history from the home directory instead of a
+    variable are redirected at their own seam, for the same reason: a test that
+    can reach the developer's real history is a test that will, eventually.
     """
+    from jarvis.agentic_ide import agent_sessions
+    from jarvis.workspace import agents as workspace_agents
+
     home = tmp_path_factory.mktemp("agent-history")
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / "claude"))
-    monkeypatch.setenv("CODEX_HOME", str(home / "codex"))
+    for entry in workspace_agents.coding_agents():
+        for variable, template in (entry.account.env if entry.account else ()):
+            monkeypatch.setenv(variable, template.format(dir=home / entry.name))
+    # This CLI follows the XDG data convention on every OS, so one variable
+    # moves its whole session database.
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "xdg"))
+    # And this one derives its root from the home directory with no variable at
+    # all, so the seam is the only place to intercept it.
+    kimi_root = home / "kimi"
+    monkeypatch.setattr(
+        agent_sessions,
+        "_kimi_root",
+        lambda override=None: Path(override) if override else kimi_root,
+    )
     return home
 
 
@@ -99,16 +120,37 @@ def existing_conversation() -> Any:
     """
     from jarvis.agentic_ide import agent_sessions
 
+    def _claude(session_id: str) -> None:
+        folder = agent_sessions._claude_home() / "projects" / "a-project"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+
+    def _codex(session_id: str) -> None:
+        folder = agent_sessions._codex_home() / "sessions" / "2026" / "07" / "26"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"rollout-2026-07-26T00-00-00-{session_id}.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
+
+    def _kimi(session_id: str) -> None:
+        # One directory per session, named after the id, under a folder named
+        # after the working directory — the layout measured on a live install.
+        folder = agent_sessions._kimi_root() / "sessions" / "a-project" / session_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "context.jsonl").write_text("{}\n", encoding="utf-8")
+
+    # One writer per session STORE. A CLI whose store this table does not know
+    # falls to the last entry, which would quietly build a conversation the CLI
+    # under test never reads — so an unknown agent raises instead.
+    writers = {"claude": _claude, "codex": _codex, "kimi": _kimi}
+
     def _make(session_id: str, *, agent: str = "claude") -> None:
-        if agent == "claude":
-            folder = agent_sessions._claude_home() / "projects" / "a-project"
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
-        else:
-            folder = agent_sessions._codex_home() / "sessions" / "2026" / "07" / "26"
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / f"rollout-2026-07-26T00-00-00-{session_id}.jsonl").write_text(
-                "{}\n", encoding="utf-8"
+        writer = writers.get(agent)
+        if writer is None:
+            raise AssertionError(
+                f"No conversation writer for {agent!r} — add one here rather "
+                "than letting the test read another CLI's history."
             )
+        writer(session_id)
 
     return _make

@@ -210,14 +210,24 @@ def store(
 def reference(path: str, *, agent: str) -> str:
     """How ``path`` should be written so ``agent`` picks the file up.
 
-    Claude Code resolves ``@path`` into the file's contents — verified live, the
-    file-picker popup does not eat an injected reference. Codex has no such
-    syntax, so it gets a quoted path and reads it because the sentence asks it
-    to. Quoting matters on both: workspace paths contain spaces far more often
+    Some CLIs resolve ``@path`` into the file's contents — verified live for the
+    ones that declare it, including that the file-picker popup does not eat an
+    injected reference. A CLI without that syntax gets a quoted path and reads
+    it because the sentence asks it to, which works everywhere and is therefore
+    the default a newly registered entry gets.
+
+    Which of the two a CLI wants is registry data, not a name test here: a
+    dropped file is one of the places a wrong guess is invisible — the path goes
+    in, the agent answers, and nobody notices it never opened the file.
+
+    Quoting matters in both forms: workspace paths contain spaces far more often
     than people expect ("Personal Jarvis").
     """
+    from jarvis.workspace import agents as workspace_agents
+
     posix = path.replace("\\", "/")
-    if agent == "claude":
+    spec = workspace_agents.get_agent(agent)
+    if spec is not None and spec.file_reference == "at":
         # An @reference containing a space would end at the space, so a path
         # that needs quoting is passed plainly instead of half-referenced.
         return f"@{posix}" if " " not in posix else f'"{posix}"'

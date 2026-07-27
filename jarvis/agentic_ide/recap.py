@@ -92,6 +92,28 @@ _CHROME_FRAGMENTS = (
     "plan mode on",
 )
 
+
+def _chrome_fragments() -> tuple[str, ...]:
+    """The shared set, plus whatever the registered CLIs add to it.
+
+    The list above is what every TUI observed so far draws, and it is shared
+    rather than per-CLI on purpose — these phrases are near-universal, and
+    splitting them per product would mean a new entry starting with none of
+    them and its recaps reading "? for shortcuts". An entry adds only its own
+    peculiarities.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        extra = tuple(
+            fragment.lower()
+            for agent in workspace_agents.coding_agents()
+            for fragment in agent.chrome_fragments
+        )
+    except Exception:  # noqa: BLE001 - a recap must never fail on decoration
+        extra = ()
+    return (*_CHROME_FRAGMENTS, *extra)
+
 # Leading decoration a TUI puts in front of a real line: bullets, tree glyphs,
 # check marks, spinner frames. Stripped so the recap starts on a word. The
 # allowed openers are kept out of the class deliberately — a path, a quote or an
@@ -194,7 +216,7 @@ def _informative(line: str) -> bool:
     if len(text) < 4 or text.startswith(_INPUT_MARKERS):
         return False
     lowered = text.lower()
-    if any(fragment in lowered for fragment in _CHROME_FRAGMENTS):
+    if any(fragment in lowered for fragment in _chrome_fragments()):
         return False
     # A row of numbers, punctuation or box residue is not a sentence.
     return sum(1 for ch in text if ch.isalpha()) >= 3
