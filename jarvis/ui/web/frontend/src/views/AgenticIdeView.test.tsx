@@ -718,11 +718,27 @@ describe("AgenticIdeView — the workspace bar", () => {
     const front = screen.getByTestId("workspace-tab-ide_test");
     expect(other.getAttribute("aria-selected")).toBe("false");
     expect(front.getAttribute("aria-selected")).toBe("true");
-    // A background workspace says how many of its agents are still running —
-    // that is what keeps "it runs until you close it" honest.
+    // The badge is one number: open terminal panes, not running agents versus
+    // every pane ever placed in the workspace.
     expect(screen.getByTestId("workspace-panes-ide_other").textContent).toBe(
-      "2/3",
+      "3",
     );
+  });
+
+  it("uses the active session count instead of a stale spawn total", async () => {
+    const active = sessionWith(["Mika", "Nova"]);
+    const state = stateWith(active);
+    state.workspaces[0] = {
+      ...state.workspaces[0],
+      terminals: 60,
+      live_terminals: 60,
+    };
+    vi.mocked(api.fetchIdeState).mockResolvedValue(state);
+    render(<AgenticIdeView />);
+
+    expect(
+      (await screen.findByTestId("workspace-panes-ide_test")).textContent,
+    ).toBe("2");
   });
 
   it("stays hidden while nothing is open", async () => {

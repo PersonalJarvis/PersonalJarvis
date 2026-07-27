@@ -10,9 +10,9 @@
  * Two things the tabs have to say out loud, because the alternative is a user
  * guessing:
  *
- * * **how many agents are alive in there.** A workspace you are not looking at
- *   is still working (and still spending), so the count is the thing that keeps
- *   "it runs until you close it" honest rather than hidden.
+ * * **how many terminal panes are open in there.** The number follows panes as
+ *   they are added or closed; it is not a historical spawn total or a process
+ *   health readout.
  * * **which one is on screen.** With the panes of only one workspace visible at
  *   a time, an unmarked bar would make the grid look like it belongs to
  *   whichever tab the eye landed on.
@@ -259,13 +259,7 @@ export function WorkspaceBar({
   );
 }
 
-/**
- * "3" when every pane is running, "1/3" when they are not.
- *
- * The split form only appears when it carries information. A tab that always
- * read "3/3" would train the eye to skip the number, and the number is the
- * whole point on a workspace nobody is watching.
- */
+/** The number of terminal panes currently open in this workspace. */
 function PaneCount({
   workspace,
   selected,
@@ -273,18 +267,10 @@ function PaneCount({
   workspace: WorkspaceCard;
   selected: boolean;
 }) {
-  const allLive = workspace.live_terminals === workspace.terminals;
-  const label = allLive
-    ? String(workspace.terminals)
-    : `${workspace.live_terminals}/${workspace.terminals}`;
   return (
     <span
       data-testid={`workspace-panes-${workspace.id}`}
-      title={
-        allLive
-          ? `${workspace.terminals} agent${workspace.terminals === 1 ? "" : "s"} running`
-          : `${workspace.live_terminals} of ${workspace.terminals} agents running`
-      }
+      title={`${workspace.terminals} terminal${workspace.terminals === 1 ? "" : "s"} open`}
       className={cn(
         "shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]",
         selected
@@ -292,7 +278,7 @@ function PaneCount({
           : "bg-muted text-muted-foreground",
       )}
     >
-      {label}
+      {workspace.terminals}
     </span>
   );
 }

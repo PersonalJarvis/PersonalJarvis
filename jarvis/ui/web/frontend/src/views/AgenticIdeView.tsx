@@ -543,10 +543,20 @@ export function AgenticIdeView() {
    * — it is about which one you are in — so it stays put whether the grid or
    * the wizard is below it. A bar that moved (or vanished while adding one)
    * would leave the user without a way back to the workspaces still running.
+   *
+   * Pane actions return the updated session, while the compact workspace cards
+   * remain the snapshot from the last full-state request. Replace the active
+   * card's count from that live session so closing or adding a terminal updates
+   * the badge immediately instead of leaving the original spawn count behind.
    */
+  const barWorkspaces = workspaces.map((workspace) =>
+    session && workspace.id === session.id
+      ? { ...workspace, terminals: session.terminals.length }
+      : workspace,
+  );
   const bar = (
     <WorkspaceBar
-      workspaces={workspaces}
+      workspaces={barWorkspaces}
       activeId={session?.id ?? null}
       addingNew={addingNew}
       maxWorkspaces={maxWorkspaces}
