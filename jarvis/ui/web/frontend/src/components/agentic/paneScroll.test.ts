@@ -99,17 +99,35 @@ describe("readScrollState", () => {
   });
 
   /*
-   * The reported bug, in one assertion. A pane showing an agent's newest output
-   * must draw its thumb AT THE BOTTOM — even before anyone has scrolled it, when
-   * the size of the history is still unknown.
+   * The follow-up report on the same strip: a pane nobody has scrolled yet gets
+   * NO bar. It used to be credited with an assumed screenful of history, which
+   * sized a half-track thumb and left the other half as empty furniture down the
+   * side of every pane in a freshly opened workspace.
    */
-  it("puts an unscrolled app-mode pane at the live end", () => {
+  it("draws no bar for an app-mode pane nothing has been measured on", () => {
     const state = readScrollState(
       fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 30 }),
       AT_LIVE_END,
     );
+
+    expect(state.mode).toBe("none");
+    expect(thumbGeometry(state, 300)).toBeNull();
+  });
+
+  /*
+   * And the moment there IS a measurement, the pane showing the agent's newest
+   * output draws its thumb AT THE BOTTOM — the original reported bug, which the
+   * gate above must not quietly undo. `span` without `offset` is a pane that
+   * travelled back through the history and came home to the live end.
+   */
+  it("puts a measured app-mode pane at the live end", () => {
+    const state = readScrollState(
+      fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 30 }),
+      measured({ offset: 0, span: 90, spanKnown: true }),
+    );
     const geometry = thumbGeometry(state, 300)!;
 
+    expect(state.mode).toBe("app");
     expect(geometry.topPx + geometry.heightPx).toBe(300);
   });
 

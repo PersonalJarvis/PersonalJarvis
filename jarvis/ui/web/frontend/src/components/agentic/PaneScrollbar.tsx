@@ -19,6 +19,16 @@
  * The bar is an overlay, not a layout box: xterm reserves a gutter on the right
  * for the scrollbar it thinks it has, and the bar sits in that gutter, so
  * nothing is drawn underneath it.
+ *
+ * That gutter is real even though ./index.css gives the native bar zero width.
+ * Measured against xterm 5.5.0, `Viewport` computes
+ * `scrollBarWidth = viewportElement.offsetWidth - scrollArea.offsetWidth || 15`
+ * — and a scrollbar hidden by CSS makes that difference 0, so the `|| 15`
+ * fallback takes over and `FitAddon.proposeDimensions` drops 15 px of columns.
+ * Hence `GUTTER_PX`: the bar is placed flush against the terminal host's right
+ * edge, INSIDE the reserved strip. Floating it in the pane's own padding instead
+ * (the original `right-1`) left dead space on both sides of it — part of the
+ * empty right-hand strip reported on 2026-07-27.
  */
 import {
   useCallback,
@@ -47,6 +57,18 @@ import {
 
 /** How close to the pane's right edge the pointer reveals the bar. */
 const HOT_ZONE_PX = 28;
+
+/**
+ * How far the bar sits from the pane's right edge.
+ *
+ * Equal to the terminal region's own horizontal padding (`px-2` in
+ * ./AgenticTerminal), which lands the bar flush against the xterm host's right
+ * edge — the near side of the gutter xterm reserves for the scrollbar it thinks
+ * it has (see the file header). The earlier `right-1` put it 4 px from the
+ * region edge instead, i.e. half in the pane's visual padding, with dead space
+ * on both sides of it.
+ */
+const BAR_INSET_PX = 8;
 
 /** Grace period before a bar the pointer left disappears again. */
 const HIDE_DELAY_MS = 260;
@@ -408,10 +430,11 @@ export function PaneScrollbar({
       onWheel={onWheel}
       onMouseDown={(event) => event.stopPropagation()}
       className={cn(
-        "absolute bottom-1 right-1 top-1 z-10 w-[10px] rounded-full transition-opacity duration-150",
+        "absolute bottom-1 top-1 z-10 w-[10px] rounded-full transition-opacity duration-150",
         shown ? "opacity-100" : "pointer-events-none opacity-0",
       )}
       style={{
+        right: BAR_INSET_PX,
         background: shown
           ? light
             ? "rgba(0,0,0,0.06)"

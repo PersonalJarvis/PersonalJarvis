@@ -47,9 +47,9 @@
  * * `app` — the application took the mouse, so it holds the history (Claude
  *   Code). Position and extent are MEASURED from how far the screen's content
  *   moves when it is scrolled — see ./paneAppScroll.
- * * `none` — nothing to scroll (a fresh pane, or a full-screen app measured as
- *   having no history at all). The bar stays away instead of drawing a dead
- *   track.
+ * * `none` — nothing to scroll, or nothing measured yet: a fresh pane, an
+ *   application nobody has scrolled, or one measured as having no history at
+ *   all. The bar stays away instead of drawing a dead track.
  *
  * ## Both modes draw the same thumb, because both now know the same things
  *
@@ -69,12 +69,22 @@
  * only thing still specific to `app` mode is HOW a drag is carried out —
  * relayed wheel notches instead of a viewport call — because that is the only
  * language the application listens in.
+ *
+ * ## And it says nothing until it has measured something
+ *
+ * A real answer is only available once there has been something to measure. Until
+ * then `app` mode draws NO bar, rather than sizing one from an assumed screenful
+ * of history: that assumption left half the track empty on every pane nobody had
+ * scrolled yet — which, in a workspace that was just opened, is all of them.
+ * Reported 2026-07-27 as a strip of empty space down the right-hand side of a
+ * pane, on the same edge as the position bug above and immediately after it.
  */
 import type { Terminal } from "@xterm/xterm";
 import {
   appScrollExtent,
   appTakesWheel,
   AT_LIVE_END,
+  hasMeasuredHistory,
   type AppScrollPosition,
 } from "./paneAppScroll";
 
@@ -138,6 +148,13 @@ export function readScrollState(
   // holds the history with it, in EITHER buffer, so the viewport it left behind
   // is ignored in favour of what the measurement found.
   if (appTakesWheel(term)) {
+    // Nothing measured yet, so there is nothing to draw. An application that
+    // holds its own history does not reveal how much of it there is until it is
+    // scrolled, and a bar sized from an ASSUMED screenful spends half its track
+    // on empty furniture — down the side of every pane in a fresh workspace,
+    // because a pane nobody has scrolled yet is the normal state of one. See
+    // `hasMeasuredHistory` in ./paneAppScroll.
+    if (!hasMeasuredHistory(position)) return IDLE_STATE;
     const extent = appScrollExtent(position, rows);
     // A measurement that found no history at all — a dashboard, a pager on a
     // short file — takes the bar away rather than drawing a thumb that fills

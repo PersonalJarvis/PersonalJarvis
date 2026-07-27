@@ -9,6 +9,7 @@ import {
   appTakesWheel,
   applyShift,
   detectShift,
+  hasMeasuredHistory,
   notchesForLines,
   trackAppScroll,
   visibleRows,
@@ -218,14 +219,44 @@ describe("applyShift", () => {
   });
 });
 
+describe("hasMeasuredHistory", () => {
+  it("knows nothing about a pane nobody has scrolled", () => {
+    expect(hasMeasuredHistory(AT_LIVE_END)).toBe(false);
+  });
+
+  /*
+   * The three ways something can be known, each on its own — because each is a
+   * pane the user has already scrolled, and one that must keep the bar it was
+   * scrolled with even after coming home to the newest output.
+   */
+  it("knows something once the pane has been away from the live end", () => {
+    expect(hasMeasuredHistory({ ...AT_LIVE_END, offset: 4 })).toBe(true);
+  });
+
+  it("knows something once a depth has been reached", () => {
+    expect(hasMeasuredHistory({ ...AT_LIVE_END, span: 40 })).toBe(true);
+  });
+
+  /*
+   * Including the pane measured as having NO history at all: something IS known
+   * about it, and what `readScrollState` does with that is take the bar away —
+   * for a reason of its own, not for want of a measurement.
+   */
+  it("knows something once a scroll has hit the top", () => {
+    expect(hasMeasuredHistory({ ...AT_LIVE_END, spanKnown: true })).toBe(true);
+  });
+});
+
 describe("appScrollExtent", () => {
   /*
-   * Before anybody has scrolled, the size of the history is unknown but the
-   * position is not: the application is showing its newest output. So the thumb
-   * rests at the BOTTOM — which is the reading the reported bug was missing —
-   * and is sized by an assumed screenful above it.
+   * The arithmetic for a position whose top is still unfound: one screenful is
+   * assumed above the deepest point reached, and the viewport sits at the bottom
+   * of it. Note this is the arithmetic ONLY — whether a bar is drawn at all is
+   * `hasMeasuredHistory`'s call, and for an untouched pane the answer is no (see
+   * `readScrollState` in ./paneScroll). Kept as a unit so the "top unknown" case
+   * that DOES reach the screen — scrolled back, top not yet hit — stays pinned.
    */
-  it("puts an unscrolled pane at the bottom of its track", () => {
+  it("assumes one screen above a position whose top is unfound", () => {
     expect(appScrollExtent(AT_LIVE_END, 30)).toEqual({ total: 60, top: 30 });
   });
 

@@ -161,14 +161,13 @@ describe("PaneScrollbar", () => {
   });
 
   /*
-   * The reported bug, at the level a user meets it. Alternate screen + mouse
-   * tracking means the terminal holds no scrollback to read a position from —
-   * and a pane showing the agent's newest output must still draw its thumb at
-   * the BOTTOM. It used to draw a short bright marking halfway up the track,
-   * which reads as "you are in the middle" to everyone who has ever used a
-   * scrollbar.
+   * The second report on this strip, at the level a user meets it. Reaching for
+   * the right edge of a Claude Code pane nobody has scrolled must reveal NOTHING:
+   * no measurement has been taken, so there is no history to describe, and the
+   * bar that used to appear here spent half its track on empty space — on every
+   * pane of a workspace that was just opened.
    */
-  it("puts a Claude-Code-style pane's thumb at the live end", () => {
+  it("shows nothing on a Claude-Code-style pane nobody has scrolled", () => {
     render(
       <Harness
         term={
@@ -183,11 +182,50 @@ describe("PaneScrollbar", () => {
 
     reachForTheBar();
 
-    expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe("app");
-    expect(thumbTop() + thumbHeight()).toBe(TRACK_PX);
-    // And nothing is drawn on the thumb that could be read as a position of
-    // its own.
-    expect(screen.queryByTestId("pane-scrollbar-grip-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
+  });
+
+  /*
+   * The FIRST reported bug, which the silence above must not undo: once the pane
+   * has been scrolled and brought back to the agent's newest output, its thumb
+   * sits at the BOTTOM. It used to draw a short bright marking halfway up the
+   * track, which reads as "you are in the middle" to everyone who has ever used
+   * a scrollbar.
+   */
+  it("puts a scrolled pane's thumb at the live end once it returns there", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      render(<Harness term={pane.term} />);
+      reachForTheBar();
+
+      // Back four lines into the history, then all the way home again.
+      fireEvent.wheel(document.querySelector(".xterm-screen")!, {
+        deltaY: -1,
+        deltaMode: 1,
+      });
+      pane.show([...transcript(-3, 4), ...transcript(1, 20)]);
+      act(() => vi.advanceTimersByTime(SETTLE_MS));
+
+      fireEvent.wheel(document.querySelector(".xterm-screen")!, {
+        deltaY: 1,
+        deltaMode: 1,
+      });
+      pane.show(transcript(1, 24));
+      act(() => vi.advanceTimersByTime(SETTLE_MS));
+
+      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe("app");
+      expect(thumbTop() + thumbHeight()).toBe(TRACK_PX);
+      // And nothing is drawn on the thumb that could be read as a position of
+      // its own.
+      expect(screen.queryByTestId("pane-scrollbar-grip-Dana")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /*
@@ -205,7 +243,6 @@ describe("PaneScrollbar", () => {
       });
       render(<Harness term={pane.term} />);
       reachForTheBar();
-      const atLiveEnd = thumbTop();
 
       fireEvent.wheel(document.querySelector(".xterm-screen")!, {
         deltaY: -1,
@@ -214,7 +251,9 @@ describe("PaneScrollbar", () => {
       pane.show([...transcript(-3, 4), ...transcript(1, 20)]);
       act(() => vi.advanceTimersByTime(SETTLE_MS));
 
-      expect(thumbTop()).toBeLessThan(atLiveEnd);
+      // The measurement is what brings the bar into the document at all, and it
+      // arrives already showing the position it measured: above the live end.
+      expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX);
       expect(screen.getByTestId("pane-scrollbar-Dana").dataset.shown).toBe(
         "true",
       );
@@ -251,29 +290,41 @@ describe("PaneScrollbar", () => {
   });
 
   it("hands wheel turns over the bar to the CLI that owns the screen", () => {
-    render(
-      <Harness
-        term={
-          fakeTerminal({
-            type: "alternate",
-            length: 24,
-            mouseTrackingMode: "any",
-          }).term
-        }
-      />,
-    );
-    reachForTheBar();
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      render(<Harness term={pane.term} />);
+      reachForTheBar();
 
-    const relayed: number[] = [];
-    document
-      .querySelector(".xterm-screen")!
-      .addEventListener("wheel", (event) =>
-        relayed.push((event as WheelEvent).deltaY),
-      );
+      // One measured notch, purely to bring the bar into the document: an
+      // app-mode pane nothing has been measured on draws none, so there would be
+      // nothing to turn a wheel over.
+      fireEvent.wheel(document.querySelector(".xterm-screen")!, {
+        deltaY: -1,
+        deltaMode: 1,
+      });
+      pane.show([...transcript(-3, 4), ...transcript(1, 20)]);
+      act(() => vi.advanceTimersByTime(SETTLE_MS));
 
-    fireEvent.wheel(screen.getByTestId("pane-scrollbar-Dana"), { deltaY: 120 });
+      const relayed: number[] = [];
+      document
+        .querySelector(".xterm-screen")!
+        .addEventListener("wheel", (event) =>
+          relayed.push((event as WheelEvent).deltaY),
+        );
 
-    expect(relayed).toEqual([1, 1, 1]);
+      fireEvent.wheel(screen.getByTestId("pane-scrollbar-Dana"), {
+        deltaY: 120,
+      });
+
+      expect(relayed).toEqual([1, 1, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("scrolls the viewport itself when the terminal holds the history", () => {

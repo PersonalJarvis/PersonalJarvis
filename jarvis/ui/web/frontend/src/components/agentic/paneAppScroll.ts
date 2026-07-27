@@ -40,14 +40,25 @@
  *
  * ## What it is honest about
  *
- * Before anyone has scrolled, the extent of the history is genuinely unknown —
- * so it is treated as "at least one more screen above", which draws a half-track
- * thumb resting at the BOTTOM. That is a claim about size, made openly and
- * corrected by the first real measurement; it is not a claim about position, and
- * the position it does show — you are at the newest output — is the true one.
- * A full-screen application with no history at all (a dashboard, a pager on a
- * short file) reveals itself on the first scroll attempt that moves nothing, and
- * its pane loses the bar entirely.
+ * Before anyone has scrolled, NOTHING about the history is known — not its
+ * extent and not whether it exists at all — and a bar is drawn only once
+ * something has actually been measured ({@link hasMeasuredHistory}).
+ *
+ * That rule replaces an assumption. An untouched pane used to be credited with
+ * "at least one more screen above", which put a half-track thumb at the bottom
+ * of the track — and the other half of the track was then empty furniture down
+ * the side of every pane that nobody had scrolled yet, which is every pane in a
+ * fresh workspace (reported 2026-07-27, second round on the same strip). The
+ * assumed screenful was not measured, so the empty half was paying for a claim
+ * this module had no evidence for.
+ *
+ * Once a wheel notch HAS been measured the extent is real, and the arithmetic
+ * below applies as before: while the top is still unfound one more screen is
+ * assumed above the deepest point reached, which is a claim about size only —
+ * openly made, corrected by the next measurement, and never a claim about
+ * position. A full-screen application with no history at all (a dashboard, a
+ * pager on a short file) reveals itself on the first scroll attempt that moves
+ * nothing, and its pane keeps no bar either.
  */
 import type { Terminal } from "@xterm/xterm";
 
@@ -85,6 +96,24 @@ export const AT_LIVE_END: AppScrollPosition = {
   spanKnown: false,
   linesPerNotch: 1,
 };
+
+/**
+ * Has anything about this pane's history actually been measured yet?
+ *
+ * The gate between "we know nothing" and "we know something", and the reason a
+ * fresh pane draws no bar at all — see the file header. Any one of the three is
+ * enough: the user is standing away from the live end, a depth has been reached
+ * at some point, or a scroll towards older output ran into the top.
+ *
+ * Deliberately a property of the VALUE rather than an identity check against
+ * {@link AT_LIVE_END}. A position that travelled back into the history and
+ * returned to the newest output is no longer that constant, but it has learned
+ * that the history exists — and a pane the user has already scrolled once must
+ * keep the bar they scrolled it with.
+ */
+export function hasMeasuredHistory(position: AppScrollPosition): boolean {
+  return position.spanKnown || position.span > 0 || position.offset > 0;
+}
 
 /**
  * Fewest recognisable rows two screens need before they may be compared.
