@@ -3,7 +3,12 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import { PaneScrollbar } from "./PaneScrollbar";
-import { PROBE_RETURN_MS, PROBE_WAIT_MS, SETTLE_MS } from "./paneAppScroll";
+import {
+  PROBE_RETURN_MS,
+  PROBE_STALE_MS,
+  PROBE_WAIT_MS,
+  SETTLE_MS,
+} from "./paneAppScroll";
 
 const REGION = { top: 0, bottom: 300, left: 0, right: 400 };
 const TRACK_PX = 300;
@@ -282,6 +287,80 @@ describe("PaneScrollbar", () => {
       );
 
       expect(relayed).toEqual([-1, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * The one answer that expires. A pane opened a minute ago holds a single screen
+   * and nothing above it, so the first probe honestly finds no history — and a
+   * pane is at its emptiest exactly when somebody first reaches for its edge. Ten
+   * minutes of an agent printing later there are pages of it, and treating that
+   * first reading as final would leave the pane bar-less for good: the original
+   * bug arriving through a different door.
+   */
+  it("asks again once a pane that had no history has had time to fill up", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      const relayed: number[] = [];
+      let hasHistory = false;
+      render(<Harness term={pane.term} />);
+      document
+        .querySelector(".xterm-screen")!
+        .addEventListener("wheel", (event) => {
+          const delta = (event as WheelEvent).deltaY;
+          relayed.push(delta);
+          // Nothing above the screen at first, so the CLI repaints unchanged.
+          if (!hasHistory) return;
+          pane.show(
+            delta < 0
+              ? [...transcript(0, 1), ...transcript(1, 23)]
+              : transcript(1, 24),
+          );
+        });
+
+      const reachAndWait = () => {
+        reachForTheBar();
+        act(() =>
+          vi.advanceTimersByTime(
+            PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2,
+          ),
+        );
+        // Pointer away again, so the next reach is a fresh one.
+        fireEvent.mouseMove(screen.getByTestId("region"), {
+          clientX: 40,
+          clientY: 150,
+        });
+        act(() => vi.advanceTimersByTime(1000));
+      };
+
+      reachAndWait();
+      expect(relayed).toEqual([-1, 1]);
+      expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
+
+      // Straight away, the answer still stands — no second probe.
+      reachAndWait();
+      expect(relayed).toEqual([-1, 1]);
+
+      // A while later the pane has printed, and the question is worth asking
+      // again.
+      hasHistory = true;
+      act(() => vi.advanceTimersByTime(PROBE_STALE_MS));
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+
+      expect(relayed).toEqual([-1, 1, -1, 1]);
+      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe(
+        "app",
+      );
     } finally {
       vi.useRealTimers();
     }

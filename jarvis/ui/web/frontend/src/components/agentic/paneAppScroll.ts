@@ -116,6 +116,24 @@ export function hasMeasuredHistory(position: AppScrollPosition): boolean {
 }
 
 /**
+ * Did the measurement come back saying there is no history at all?
+ *
+ * A real answer, but only about the moment it was taken — and that is the whole
+ * point of asking it separately. A pane opened a minute ago holds one screen and
+ * nothing above it, so the first probe honestly finds nothing; ten minutes of an
+ * agent printing later there are pages of it, and a measurement kept as final
+ * would leave that pane without a bar for the rest of its life. Which is the bug
+ * the probe exists to fix, arriving through a different door.
+ *
+ * So the caller re-asks a pane that answered this way once it has had time to
+ * produce something (`PROBE_STALE_MS`). "There is history" needs no such
+ * expiry: a transcript does not get shorter.
+ */
+export function measuredNoHistory(position: AppScrollPosition): boolean {
+  return position.spanKnown && position.span === 0 && position.offset === 0;
+}
+
+/**
  * Fewest recognisable rows two screens need before they may be compared.
  *
  * A near-empty screen matches itself at every offset, so a shift measured off
@@ -298,6 +316,16 @@ export const PROBE_RETURN_MS = SETTLE_MS + 60;
  * and no probe is sent.
  */
 export const PROBE_WAIT_MS = SETTLE_MS + 40;
+
+/**
+ * How long a "there is no history here" answer stands before it may be re-asked.
+ *
+ * See {@link measuredNoHistory}: that answer is true of a moment, not of a pane.
+ * A minute is long enough that nobody meets the probe twice in one reach for the
+ * edge, and short enough that a pane which has since filled up gets its bar back
+ * the next time somebody looks for it.
+ */
+export const PROBE_STALE_MS = 60_000;
 
 /**
  * Ask a full-screen CLI whether it has a history — without moving the user.

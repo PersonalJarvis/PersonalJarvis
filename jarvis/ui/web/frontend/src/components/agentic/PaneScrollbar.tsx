@@ -57,8 +57,10 @@ import {
   appTakesWheel,
   AT_LIVE_END,
   hasMeasuredHistory,
+  measuredNoHistory,
   notchesForLines,
   probeAppHistory,
+  PROBE_STALE_MS,
   PROBE_WAIT_MS,
   trackAppScroll,
   type AppScrollPosition,
@@ -208,25 +210,38 @@ export function PaneScrollbar({
   // for why waiting for a wheel turn instead left the bar unreachable in exactly
   // the panes it exists for.
   //
-  // Asked once per terminal, only while nothing is known, and only after the pane
-  // has been quiet for `PROBE_WAIT_MS`: a probe moves the application by a notch
-  // and back, which is invisible once but would be a twitch on every pass of the
-  // pointer — and a probe folded into a burst of the user's own scrolling measures
-  // neither of them. `probedEpoch` rather than the position alone, because the
-  // answer lands a settle period later and a pointer crossing the hot zone twice
-  // in that time must not ask twice.
-  const probedEpoch = useRef<number | null>(null);
+  // Asked only while nothing is known, and only after the pane has been quiet for
+  // `PROBE_WAIT_MS`: a probe moves the application by a notch and back, which is
+  // invisible once but would be a twitch on every pass of the pointer — and a
+  // probe folded into a burst of the user's own scrolling measures neither of
+  // them. `probedAt` rather than the position alone, because the answer lands a
+  // settle period later and a pointer crossing the hot zone twice in that time
+  // must not ask twice.
+  //
+  // One answer does expire: "this pane has no history at all" is true of the
+  // moment it was measured, and a pane that was empty when it opened fills up.
+  // See `measuredNoHistory` in ./paneAppScroll.
+  const probedAt = useRef<{ epoch: number; at: number } | null>(null);
   useEffect(() => {
     if (!nearEdge) return;
     const host = hostRef.current;
     const term = getTerminal();
     if (!host || !term || !appTakesWheel(term)) return;
-    if (
-      hasMeasuredHistory(positionRef.current) ||
-      probedEpoch.current === epoch
-    ) {
-      return;
-    }
+
+    const stale = () => {
+      const last = probedAt.current;
+      if (!last || last.epoch !== epoch) return true;
+      return (
+        measuredNoHistory(positionRef.current) &&
+        Date.now() - last.at >= PROBE_STALE_MS
+      );
+    };
+    // Nothing to ask while a history is known to exist — except when the only
+    // thing known is that there was none, and that reading has gone stale.
+    const settled = () =>
+      hasMeasuredHistory(positionRef.current) &&
+      !measuredNoHistory(positionRef.current);
+    if (settled() || !stale()) return;
 
     let stopProbe: (() => void) | undefined;
     let wait: number | undefined;
@@ -236,8 +251,8 @@ export function PaneScrollbar({
       host.removeEventListener("wheel", defer, { capture: true });
       // The wait may have been all it took: a wheel turn measures the pane
       // better than any probe, so if one landed there is nothing left to ask.
-      if (hasMeasuredHistory(positionRef.current)) return;
-      probedEpoch.current = epoch;
+      if (settled()) return;
+      probedAt.current = { epoch, at: Date.now() };
       stopProbe = probeAppHistory((direction) =>
         relayWheelNotch(host, direction),
       );
