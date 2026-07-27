@@ -335,6 +335,13 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
     changed, which is every pane on the built-in account. So a user who never
     opens the switcher gets a spawn byte-for-byte identical to the one this app
     produced before the feature existed.
+
+    Redirecting the CLI's config directory moves its user-level SETTINGS along
+    with its login, and the mode a session starts in is one of them. Without the
+    line below, a pane on an added account opened in the CLI's built-in fallback
+    — manual mode — no matter what the user had equipped globally, and every pane
+    had to be switched over by hand. Carrying those settings across is what makes
+    a pane start the way the same CLI starts in an ordinary terminal.
     """
     if not term.account or term.agent not in AGENT_BINARIES:
         return None
@@ -342,6 +349,7 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
 
     if not agent_accounts.env_overrides(term.agent, term.account):  # type: ignore[arg-type]
         return None
+    agent_accounts.inherit_default_mode(term.agent, term.account)  # type: ignore[arg-type]
     return agent_accounts.spawn_env(term.agent, term.account)  # type: ignore[arg-type]
 
 

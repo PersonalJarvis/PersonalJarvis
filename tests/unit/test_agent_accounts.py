@@ -269,6 +269,188 @@ def test_an_account_id_of_the_other_platform_is_not_honoured() -> None:
     assert agent_accounts.env_overrides("codex", claude_account.id) == {}
 
 
+# ------------------------------------------------------------ inherited mode
+
+
+def _write_native(platform: str, name: str, text: str) -> Path:
+    """Put a global settings file where the CLI's own default directory is."""
+    path = agent_accounts._native_dir(platform) / name  # noqa: SLF001 — test seam
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _claude_mode(directory: Path) -> str | None:
+    try:
+        raw = json.loads((directory / "settings.json").read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return raw.get("permissions", {}).get("defaultMode")
+
+
+def test_a_pane_on_an_added_account_starts_in_the_globally_equipped_mode() -> None:
+    """The bug: a redirected config dir left every pane in manual mode.
+
+    The mode lives in the user-level settings, and pointing CLAUDE_CONFIG_DIR at
+    the account's own folder moves those settings along with the login — so the
+    CLI fell back to its built-in default however the user had equipped it.
+    """
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps(
+            {
+                "permissions": {"defaultMode": "bypassPermissions", "allow": ["Read"]},
+                "skipDangerousModePermissionPrompt": True,
+                "model": "opus",
+            }
+        ),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+
+    assert agent_accounts.inherit_default_mode("claude", account.id) is True
+
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["permissions"]["defaultMode"] == "bypassPermissions"
+    assert settings["skipDangerousModePermissionPrompt"] is True
+    # Only the mode travels. The rest of the global file is none of our business.
+    assert "allow" not in settings["permissions"]
+    assert "model" not in settings
+
+
+def test_codex_inherits_its_own_pair_of_mode_settings() -> None:
+    """Same defect, different file format — and the answer must not be Claude's."""
+    _write_native(
+        "codex",
+        "config.toml",
+        'model = "gpt-5"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n',
+    )
+    account = agent_accounts.create_account("codex", "Second seat")
+
+    assert agent_accounts.inherit_default_mode("codex", account.id) is True
+
+    written = (account.config_dir / "config.toml").read_text(encoding="utf-8")
+    assert 'approval_policy = "never"' in written
+    assert 'sandbox_mode = "danger-full-access"' in written
+    assert "gpt-5" not in written
+
+
+def test_an_existing_account_file_keeps_everything_it_already_had() -> None:
+    """Seeding a mode must never look like a settings reset."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "acceptEdits"}}),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+    (account.config_dir / "settings.json").write_text(
+        json.dumps({"theme": "dark"}), encoding="utf-8"
+    )
+
+    agent_accounts.inherit_default_mode("claude", account.id)
+
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["theme"] == "dark"
+    assert settings["permissions"]["defaultMode"] == "acceptEdits"
+
+
+def test_the_builtin_account_is_left_completely_alone() -> None:
+    """Nothing was redirected, so nothing was lost — and nothing may be written."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
+    )
+    builtin = agent_accounts.builtin_id("claude")
+    before = (agent_accounts._native_dir("claude") / "settings.json").read_text(  # noqa: SLF001
+        encoding="utf-8"
+    )
+
+    assert agent_accounts.inherit_default_mode("claude", builtin) is False
+    assert (agent_accounts._native_dir("claude") / "settings.json").read_text(  # noqa: SLF001
+        encoding="utf-8"
+    ) == before
+
+
+def test_no_global_preference_means_the_cli_keeps_its_own_default() -> None:
+    """The stated fallback: manual mode, but only when nothing says otherwise."""
+    account = agent_accounts.create_account("claude", "Second seat")
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+    assert not (account.config_dir / "settings.json").exists()
+
+    _write_native("claude", "settings.json", json.dumps({"model": "opus"}))
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+
+
+def test_a_mode_chosen_for_this_account_by_hand_outranks_the_global_one() -> None:
+    """Two accounts, two ways of working. The per-account choice wins and stays."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
+    )
+    account = agent_accounts.create_account("claude", "Careful seat")
+    (account.config_dir / "settings.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "plan"}}), encoding="utf-8"
+    )
+
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+    assert _claude_mode(account.config_dir) == "plan"
+
+
+def test_changing_the_global_mode_follows_through_to_an_untouched_account() -> None:
+    """What the mirror record buys: inherited values track, typed ones do not."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+    agent_accounts.inherit_default_mode("claude", account.id)
+
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "acceptEdits"}}),
+    )
+    assert agent_accounts.inherit_default_mode("claude", account.id) is True
+    assert _claude_mode(account.config_dir) == "acceptEdits"
+
+
+def test_inheriting_twice_writes_nothing_the_second_time() -> None:
+    """It runs on every pane spawn, so a no-op has to stay a no-op."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+    assert agent_accounts.inherit_default_mode("claude", account.id) is True
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+
+
+def test_a_broken_global_settings_file_never_fails_the_spawn() -> None:
+    """A pane opening in the CLI's fallback beats a pane that does not open."""
+    _write_native("claude", "settings.json", "{ not json at all")
+    account = agent_accounts.create_account("claude", "Second seat")
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+
+
+def test_a_broken_account_settings_file_is_left_untouched() -> None:
+    """Overwriting a file we cannot parse would destroy whatever it holds."""
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+    broken = account.config_dir / "settings.json"
+    broken.write_text("{ half a file", encoding="utf-8")
+
+    assert agent_accounts.inherit_default_mode("claude", account.id) is False
+    assert broken.read_text(encoding="utf-8") == "{ half a file"
+
+
 # -------------------------------------------------------------------- status
 
 

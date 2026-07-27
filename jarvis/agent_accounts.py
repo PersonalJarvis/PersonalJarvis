@@ -29,6 +29,15 @@ behind :mod:`jarvis.claude_credentials` are exactly that failure, one directory
 further left each time. Separate directories each refresh themselves and cannot
 go stale relative to one another.
 
+**A redirected directory moves the settings too, so the mode is carried over.**
+The directory holds more than a login: the user-level configuration lives there
+as well, including the mode the CLI starts a session in. Left alone, a pane on
+an added account therefore opened in the CLI's built-in fallback — manual mode —
+however the user had equipped it globally, and had to be switched over by hand
+every time. :func:`inherit_default_mode` copies exactly those mode settings
+across (nothing else, and never over a value set for that account by hand), so a
+pane starts the way the same CLI starts in an ordinary terminal.
+
 **The built-in account is synthetic.** Every platform always offers the CLI's
 own default directory as an account that was never created here, cannot be
 deleted, and is never written to the store. A user who never opens this feature
@@ -512,6 +521,233 @@ def spawn_env(
     return env
 
 
+# ------------------------------------------------- inherited operating mode
+
+
+@dataclass(frozen=True, slots=True)
+class _ModeFile:
+    """Where ONE CLI records the mode it starts a fresh session in."""
+
+    #: File inside the config directory that carries the setting.
+    name: str
+    #: How to read and write it. Both formats are round-tripped in place.
+    fmt: Literal["json", "toml"]
+    #: The setting paths to carry over, each a sequence of nested keys.
+    keys: tuple[tuple[str, ...], ...]
+
+
+#: What "the mode this CLI starts in" is, per platform.
+#:
+#: Claude Code's companion flag is listed on purpose: a default of
+#: ``bypassPermissions`` that has never been acknowledged opens on a warning
+#: screen, so carrying the mode without the acknowledgement would swap one
+#: manual step for another. Only a value the user already set globally is ever
+#: copied — this never invents an acknowledgement they did not give.
+_MODE_FILES: dict[Platform, _ModeFile] = {
+    "claude": _ModeFile(
+        name="settings.json",
+        fmt="json",
+        keys=(("permissions", "defaultMode"), ("skipDangerousModePermissionPrompt",)),
+    ),
+    "codex": _ModeFile(
+        name="config.toml",
+        fmt="toml",
+        keys=(("approval_policy",), ("sandbox_mode",)),
+    ),
+}
+
+#: Written beside the account's own config: the values this module last mirrored
+#: from the native directory. It is what tells a value the user typed themselves
+#: apart from one we put there, so a later global change follows through while a
+#: deliberate per-account choice is left alone. Losing the file is harmless — the
+#: account's existing values then simply count as the user's own.
+_MIRROR_FILE = "jarvis-inherited-mode.json"
+
+#: Distinguishes "this setting is absent" from "this setting is set to None".
+_MISSING: Any = object()
+
+
+def _read_settings(path: Path, fmt: str) -> dict[str, Any] | None:
+    """The mapping in *path* as plain Python values, or ``None`` if unusable.
+
+    Unreadable, unparsable and not-a-mapping all answer the same ``None``. A
+    hand-broken settings file is a bad reason to fail a pane spawn, so every one
+    of them degrades to "nothing to inherit".
+    """
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    try:
+        if fmt == "json":
+            data: Any = json.loads(raw or "{}")
+        else:
+            import tomllib
+
+            data = tomllib.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        logger.debug("Agent accounts: {} is not readable ({}) — not inherited", path, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _open_settings(path: Path, fmt: str) -> Any:
+    """The account's own file as an editable document, or ``None`` if unusable.
+
+    A missing file is an EMPTY document rather than a failure — that is the
+    normal case for an account that has never been written to. TOML goes through
+    ``tomlkit`` so an existing file keeps its comments and layout.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        raw = ""
+    try:
+        if fmt == "json":
+            data: Any = json.loads(raw or "{}")
+            return data if isinstance(data, dict) else None
+        import tomlkit
+
+        return tomlkit.parse(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        logger.debug("Agent accounts: {} is not editable ({}) — left alone", path, exc)
+        return None
+
+
+def _setting_at(data: Any, key: tuple[str, ...]) -> Any:
+    """The value at a nested key path, or ``_MISSING`` if nothing lives there."""
+    node = data
+    for part in key:
+        if not isinstance(node, Mapping) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
+
+
+def _put_setting(doc: Any, key: tuple[str, ...], value: Any, fmt: str) -> None:
+    """Write *value* at a nested key path, creating the tables on the way."""
+    node = doc
+    for part in key[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            if fmt == "toml":
+                import tomlkit
+
+                child = tomlkit.table()
+            else:
+                child = {}
+            node[part] = child
+        node = child
+    node[key[-1]] = value
+
+
+def _dump_settings(doc: Any, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    import tomlkit
+
+    return tomlkit.dumps(doc)
+
+
+def _write_settings(path: Path, text: str) -> bool:
+    """Atomic replace — a half-written settings file must never be readable."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logger.warning("Agent accounts: {} could not be updated: {}", path, exc)
+        return False
+    return True
+
+
+def inherit_default_mode(platform: Platform, account_id: str | None) -> bool:
+    """Carry the user's default operating mode into a redirected config home.
+
+    **The gap this closes.** Pointing ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` at
+    an account's own directory moves the CLI's whole user-level configuration,
+    not only its login — and the default operating mode lives there. So a pane on
+    an added account started in the CLI's built-in fallback (Claude Code's manual
+    mode, Codex's ask-every-time) even when the user had globally equipped
+    something else, and every single pane had to be switched over by hand.
+    Running the same CLI from an ordinary terminal never had that problem, which
+    is exactly the inconsistency this removes.
+
+    Only the mode settings are mirrored — never credentials, never history, never
+    the rest of the file. Project-level settings are untouched by the redirect
+    (the CLI reads those from the folder it runs in) and need nothing here.
+
+    **A value the user typed into the account is never overwritten.** The mirror
+    file records what was last copied across, so a setting that no longer matches
+    it is a deliberate per-account choice and is left exactly as it is; one that
+    still matches follows a later change of the global default. An account with
+    no such setting at all simply receives the global one.
+
+    Returns True when something was actually written. Never raises: a spawn must
+    not fail because a settings file could not be read or updated — the pane then
+    opens in the CLI's own fallback, which is the behaviour that existed before.
+    """
+    account = resolve(account_id)
+    if account is None or account.platform != platform or account.builtin:
+        # The built-in account reads the native directory itself. Nothing was
+        # redirected, so nothing was lost, so there is nothing to carry over.
+        return False
+    spec = _MODE_FILES.get(platform)
+    if spec is None:
+        return False
+    native_dir = _native_dir(platform)
+    if os.path.normcase(str(native_dir)) == os.path.normcase(str(account.config_dir)):
+        return False
+    native = _read_settings(native_dir / spec.name, spec.fmt)
+    if not native:
+        # No global preference recorded — the CLI's own default is the answer.
+        return False
+
+    mirror_path = account.config_dir / _MIRROR_FILE
+    mirrored = _read_settings(mirror_path, "json") or {}
+    settings_path = account.config_dir / spec.name
+    doc = _open_settings(settings_path, spec.fmt)
+    if doc is None:
+        return False
+
+    updated = dict(mirrored)
+    applied: list[str] = []
+    for key in spec.keys:
+        wanted = _setting_at(native, key)
+        if wanted is _MISSING:
+            continue
+        dotted = ".".join(key)
+        current = _setting_at(doc, key)
+        previous = mirrored[dotted] if dotted in mirrored else _MISSING
+        if current is not _MISSING and current != previous:
+            # Set by hand for this account. That outranks the global default.
+            continue
+        if current != wanted:
+            _put_setting(doc, key, wanted, spec.fmt)
+            applied.append(dotted)
+        updated[dotted] = wanted
+
+    if not applied and updated == mirrored:
+        return False
+    if applied and not _write_settings(settings_path, _dump_settings(doc, spec.fmt)):
+        return False
+    try:
+        payload = json.dumps(updated, indent=2, ensure_ascii=False) + "\n"
+    except (TypeError, ValueError):
+        # A value we cannot record is a value we must not claim to own later.
+        return bool(applied)
+    _write_settings(mirror_path, payload)
+    if applied:
+        logger.info(
+            "Agent accounts: {!r} inherited your default {} mode ({})",
+            account.label,
+            _DISPLAY[platform],
+            ", ".join(applied),
+        )
+    return bool(applied)
+
+
 # ------------------------------------------------------------------ status
 
 
@@ -735,6 +971,7 @@ __all__ = [
     "delete_account",
     "describe",
     "env_overrides",
+    "inherit_default_mode",
     "list_accounts",
     "rename_account",
     "resolve",
