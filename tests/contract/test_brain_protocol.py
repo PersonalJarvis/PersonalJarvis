@@ -21,8 +21,9 @@ BRAIN_PROVIDERS = [
     "openrouter",
     "openai",
     "gemini",
-    # Keyless local provider, re-added 2026-07-25 (local-first mandate).
+    # Keyless local providers, added 2026-07-25 (local-first mandate).
     "ollama",
+    "local-openai",
 ]
 
 
