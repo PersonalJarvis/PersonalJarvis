@@ -243,6 +243,10 @@ class PipelineWorker:
         #: monotonic deadline until which the embedding-dependent stages rest
         #: after a rate/quota rejection (0.0 = no cooldown).
         self._embed_cooldown_until = 0.0
+        #: ``name:model`` of the embedding slot the stages last resolved. The
+        #: identity of a vector space, and therefore of whatever is refusing
+        #: to fill it.
+        self._embed_slot_key = ""
         #: The live provider-level embedding block, or ``None`` while vectors
         #: are coming back. Survives the individual cooldown naps: what matters
         #: to a reader is "this has been refused since yesterday evening", not
@@ -318,7 +322,31 @@ class PipelineWorker:
         # deference; it does not raise the batch size.
         if not attempted or self._media_mode() == "eager":
             attempted += await self._media_pass()
+        await self._promote_pass()
         return attempted
+
+    async def _promote_pass(self) -> None:
+        """Swap in a finished embedding rebuild (see
+        ``UltraStore.promote_pending_space``).
+
+        A model switch builds the new vector space alongside the live one, so
+        SOMETHING has to notice when the shadow is complete. This runs after
+        every pass and costs one meta read when no rebuild is going on. A store
+        without the capability (an older embedded one) simply never promotes.
+        """
+        promote = getattr(self._store, "promote_pending_space", None)
+        if promote is None:
+            return
+        try:
+            await promote()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed swap retries next pass
+            log.warning(
+                "UltraWiki embedding-space promotion failed; the current "
+                "vectors keep serving search",
+                exc_info=True,
+            )
 
     # -- shared helpers ------------------------------------------------------
 
@@ -380,6 +408,11 @@ class PipelineWorker:
             # ten-minute rest began a moment ago.
             "since": str(previous.get("since") or _utc_now_iso()),
             "rejections": int(previous.get("rejections") or 0) + 1,
+            # WHOSE refusal this is. A block belongs to the slot that produced
+            # it, and answering "switch your embedding backend" while still
+            # reporting the old backend's complaint is worse than saying
+            # nothing (see _forget_block_from_another_slot).
+            "slot": self._embed_slot_key,
         }
         # Only the FIRST rejection of a streak warns. A permanent block would
         # otherwise write a fresh warning every ten minutes forever, and a log
@@ -398,6 +431,34 @@ class PipelineWorker:
                     else ""
                 ),
             )
+
+    def _forget_block_from_another_slot(self, slot_key: str) -> None:
+        """Drop a block (and its cooldown) once the slot itself has changed.
+
+        The advice a blocked stage gives is "add credit, or switch the
+        embedding backend". Taking that advice used to change nothing for up
+        to ten minutes: the cooldown was a global nap, and the block was
+        remembered without recording WHOSE it was — so a freshly chosen,
+        perfectly healthy backend sat out the dead one's rest while the UI
+        went on quoting the dead one's complaint (observed live 2026-07-27,
+        switching from a depleted key to a local backend).
+
+        A block belongs to the slot that earned it. A different slot has
+        earned nothing, and starts clean.
+        """
+        block = self._embed_block
+        if block is None or block.get("slot") == slot_key:
+            return
+        log.info(
+            "UltraWiki embedding slot changed to %s — dropping the standstill "
+            "recorded for %s and resuming immediately",
+            slot_key or "(none)",
+            block.get("slot") or "(unknown)",
+        )
+        self._embed_block = None
+        self._embed_cooldown_until = 0.0
+        self._clear_stage_pause("embed")
+        self._clear_stage_pause("distill")
 
     def _note_embed_success(self) -> None:
         """A vector came back — whatever the provider was refusing is over.
@@ -470,6 +531,11 @@ class PipelineWorker:
         ok, reason = await self._backend_ready(backend)
         if not ok:
             return None, "", reason
+        # The identity of the vector space this pass will write into. Recorded
+        # before any call, so a rejection can be attributed to the slot that
+        # earned it rather than to whatever is configured when it is read.
+        self._embed_slot_key = f"{getattr(backend, 'name', '?')}:{model}"
+        self._forget_block_from_another_slot(self._embed_slot_key)
         return backend, model, ""
 
     async def _backend_ready(self, backend: Any) -> tuple[bool, str]:

@@ -449,7 +449,16 @@ def _processing_check(status: dict[str, Any]) -> HealthCheck:
                 or "The background pipeline is not running, so the queue is "
                 "standing still."
             ),
-            facts=facts,
+            # A refused provider is the one paused case with somewhere to go:
+            # the row's own sentence says "switch the embedding backend", so
+            # it has to offer the way there rather than leave the reader
+            # hunting for the tab.
+            action=(
+                {"kind": "open_settings", "tab": "embedding"}
+                if pipeline.get("blocked")
+                else None
+            ),
+            facts={**facts, "blocked": bool(pipeline.get("blocked"))},
         )
     if waiting:
         return HealthCheck(

@@ -548,6 +548,68 @@ async def test_a_vector_coming_back_clears_the_block_without_a_restart(store):
     assert worker.processed_counts()["embed"] == 1
 
 
+async def test_switching_the_backend_resumes_at_once_instead_of_serving_the_nap(store):
+    """Taking the advice has to work immediately.
+
+    A blocked stage tells the user to add credit *or switch the embedding
+    backend*. Following that used to change nothing for up to ten minutes: the
+    cooldown was global and the block did not record whose it was, so a
+    freshly chosen, healthy backend sat out the dead one's rest while the UI
+    kept quoting the dead one's complaint (observed live 2026-07-27).
+    """
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    await store.upsert_items("src1", [make_item(1)])
+    healthy = FakeEmbeddingBackend()
+    healthy.name = "other-provider"
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: healthy,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    # A standstill earned by the PREVIOUS slot, cooldown still running.
+    worker._embed_slot_key = "dead-provider:some-model"  # noqa: SLF001
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("dead-provider: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+    assert worker.embed_block() is not None
+
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001 — the NEW slot owes nothing
+
+    assert worker.embed_block() is None, "a new backend starts clean"
+    assert worker.processed_counts()["embed"] == 1
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item["state"] == ItemState.EMBEDDED.value
+
+
+async def test_a_block_survives_a_pass_on_the_same_slot(store):
+    """The other half: forgetting on every pass would forget everything."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    await worker._embedding_slot()  # noqa: SLF001 — record the live slot
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+
+    await worker._embed_pass()  # noqa: SLF001 — same slot, still resting
+
+    block = worker.embed_block()
+    assert block is not None
+    assert block["slot"] == "fake:fake-model"
+    assert backend.embed_calls == [], "the cooldown still holds"
+
+
 async def test_a_standstill_is_logged_once_not_every_countdown_tick(store, caplog):
     """The pause sentence carries a live countdown, so deduplicating on the
     text logged the same standstill every time the minute changed — 2 614
@@ -561,6 +623,9 @@ async def test_a_standstill_is_logged_once_not_every_countdown_tick(store, caplo
         distill_fn=distill_never,
         distill_ready_fn=DISTILL_READY,
     )
+    # Resolve the slot first: a rejection can only ever be earned by a slot
+    # the stage already resolved, and the block is attributed to it.
+    await worker._embedding_slot()  # noqa: SLF001
     worker._begin_embed_cooldown(  # noqa: SLF001
         EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
     )
