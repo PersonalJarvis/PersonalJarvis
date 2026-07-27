@@ -16,6 +16,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -234,6 +235,68 @@ describe("topic detail", () => {
 
     const link = await screen.findByTestId("explore-moment-link-1");
     expect(link.getAttribute("href")).toBe("app://a");
+  });
+
+  it("returns to all moments from a topic", async () => {
+    installRoutes({
+      "/api/ultrawiki/explore/entities/tahiti": {
+        ok: true,
+        entity: ENTITIES[1],
+        moments: MOMENTS,
+        total: 1,
+        corpus: FULL_CORPUS,
+      },
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByTestId("explore-entity-tahiti"));
+    await screen.findByTestId("explore-detail");
+
+    fireEvent.click(screen.getByTestId("explore-reader-back"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("explore-detail")).toBeNull();
+    });
+    expect(screen.getByTestId("explore-moment-1")).toBeTruthy();
+  });
+});
+
+describe("reading a moment", () => {
+  it("holds the answer back until the reader asks for it", async () => {
+    // A moment carries a summary AND the resolution the distillation arrived
+    // at. Printing both for two hundred moments is the wall of text this view
+    // was rebuilt to stop being; the resolution was simply never rendered at
+    // all, which is the other extreme. Closed = headline plus a few lines,
+    // open = the whole thing.
+    installRoutes();
+    renderPanel();
+
+    const card = await screen.findByTestId("explore-moment-1");
+    expect(card.getAttribute("data-open")).toBe("false");
+    expect(card.textContent).not.toContain("Fly via Tahiti.");
+
+    fireEvent.click(within(card).getByRole("button"));
+
+    expect(card.getAttribute("data-open")).toBe("true");
+    expect(card.textContent).toContain("Fly via Tahiti.");
+  });
+});
+
+describe("the three columns", () => {
+  it("cannot be widened past the window by anything inside them", async () => {
+    // The map paints a canvas at a fixed pixel width. A flex child that
+    // cannot shrink below its content turns that into the section's floor —
+    // which is how Explore grew a horizontal scrollbar that clipped the right
+    // edge off every moment and could never shrink back out of it.
+    installRoutes();
+    renderPanel();
+    await screen.findByTestId("explore-entity-berlin");
+
+    const columns = screen.getByTestId("explore-columns");
+    expect(columns.className).toContain("min-w-0");
+    for (const column of Array.from(columns.children)) {
+      expect(column.className).toContain("min-w-0");
+    }
   });
 });
 

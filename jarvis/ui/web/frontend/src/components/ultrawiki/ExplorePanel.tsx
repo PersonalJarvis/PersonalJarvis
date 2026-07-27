@@ -5,10 +5,24 @@
  * what is importing, what is configured. This is the one view that answers
  * the question the user actually has — "what does it know about my life?"
  *
+ * Layout: three columns, and the split is the whole design.
+ *
+ *   ┌───────────┬──────────────────────────┬───────────────┐
+ *   │ topics    │        THE MAP           │    reader     │
+ *   │ (17 rem)  │       (all the rest)     │   (27 rem)    │
+ *   └───────────┴──────────────────────────┴───────────────┘
+ *
+ * It replaced a stack — a 224 px map wedged above a full-width list — which
+ * failed at both ends: a force layout squeezed into a letterbox is a smear,
+ * and a paragraph set 1 500 px wide is a wall no one reads a second line of.
+ * Splitting them fixes both with the same move. The map gets area, the prose
+ * gets a column about 65 characters across, which is the width text has been
+ * set at for four hundred years.
+ *
  * Visual encoding (lib/entityGraph.ts, never inline):
  * - how OFTEN a topic comes up → its count and its node size in the graph
  * - WHEN it lived in your history → the time bar under each topic and the
- *   brightness of its node
+ *   warmth of its node, ash → signal yellow
  * Both are derived from the data. There is no decorative colour in here.
  *
  * The time bar is the signature of this view: at a glance you see that
@@ -17,7 +31,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, Search } from "lucide-react";
+import { ArrowLeft, ChevronDown, ExternalLink, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -130,6 +144,7 @@ export function ExplorePanel({
     distilled: 0,
   };
   const action = EMPTY_ACTION[reason];
+  const detail = detailQuery.data?.entity.key === selected ? detailQuery.data : null;
 
   return (
     // h-full, not flex-1: the tab body this renders into is itself a
@@ -137,7 +152,10 @@ export function ExplorePanel({
     // ceiling — the panel grew to 46 000 px on a real corpus, pushing the
     // vault strip somewhere no one would ever scroll to. Taking the parent's
     // height instead is what makes the inner lists scroll on their own.
-    <div className="flex h-full min-h-0 flex-col" data-testid="explore-panel">
+    <div
+      className="flex h-full min-h-0 min-w-0 flex-col"
+      data-testid="explore-panel"
+    >
       {reason !== "ok" && (
         <div
           data-testid="explore-empty"
@@ -160,11 +178,18 @@ export function ExplorePanel({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="flex min-h-0 shrink-0 flex-col border-b border-border lg:w-72 lg:border-b-0 lg:border-r">
-          <div className="relative border-b border-border px-3 py-2">
+      {/* min-w-0 on every column of this row, without exception: the map
+          paints a canvas at a fixed pixel width, and one flex child that
+          cannot shrink below its content is all it takes to give the whole
+          section a horizontal scrollbar it can never shrink back out of. */}
+      <div
+        data-testid="explore-columns"
+        className="flex min-h-0 min-w-0 flex-1 flex-col xl:flex-row"
+      >
+        <aside className="flex min-h-0 min-w-0 shrink-0 flex-col border-b border-border xl:w-[17rem] xl:border-b-0 xl:border-r">
+          <div className="relative shrink-0 px-3 pb-2 pt-3">
             <Search
-              className="pointer-events-none absolute left-5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              className="pointer-events-none absolute left-6 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
             />
             <input
@@ -173,22 +198,22 @@ export function ExplorePanel({
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t("ultrawiki.explore.search_placeholder")}
               aria-label={t("ultrawiki.explore.search_placeholder")}
-              className="w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary"
+              className="h-8 w-full rounded-lg border border-border bg-background/60 pl-8 pr-2.5 text-xs outline-none transition-colors placeholder:text-muted-foreground hover:border-border focus-visible:border-primary/50 focus-visible:ring-1 focus-visible:ring-primary/40"
             />
           </div>
 
-          <p className="px-4 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <p className="shrink-0 px-4 pb-1.5 pt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
             {t("ultrawiki.explore.entities_count").replace(
               "{0}",
               String(filtered.length),
             )}
           </p>
 
-          <div className="min-h-0 flex-1 overflow-y-auto pb-2 max-lg:max-h-64">
+          <div className="scrollbar-jarvis min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 max-xl:max-h-56">
             {filtered.length === 0 && search.trim() !== "" && (
               <p
                 data-testid="explore-no-search-hits"
-                className="px-4 py-3 text-xs text-muted-foreground"
+                className="px-2.5 py-3 text-xs text-muted-foreground"
               >
                 {t("ultrawiki.explore.no_search_hits").replace("{0}", search.trim())}
               </p>
@@ -205,33 +230,73 @@ export function ExplorePanel({
           </div>
         </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="h-56 shrink-0 border-b border-border sm:h-64">
-            <EntityGraph
-              minMentions={minMentions}
-              onMinMentionsChange={setMinMentions}
-              selectedKey={selected}
-              onSelect={setSelected}
-            />
-          </div>
+        {/* The map. No fixed height anywhere on this branch — it takes the
+            column, which on a desktop window is most of the screen. */}
+        <div className="min-h-[20rem] min-w-0 shrink-0 border-b border-border xl:min-h-0 xl:flex-1 xl:shrink xl:border-b-0">
+          <EntityGraph
+            minMentions={minMentions}
+            onMinMentionsChange={setMinMentions}
+            selectedKey={selected}
+            onSelect={setSelected}
+          />
+        </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {selected && detailQuery.data ? (
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-card/20 xl:w-[27rem] xl:flex-none xl:border-l xl:border-border">
+          <header className="flex shrink-0 items-start gap-2 border-b border-border px-4 py-2.5">
+            {selected && (
+              <button
+                type="button"
+                data-testid="explore-reader-back"
+                onClick={() => setSelected(null)}
+                aria-label={t("ultrawiki.explore.back")}
+                title={t("ultrawiki.explore.back")}
+                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-primary"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                {selected && detail
+                  ? t("ultrawiki.explore.moments_of").replace(
+                      "{0}",
+                      detail.entity.label,
+                    )
+                  : t("ultrawiki.explore.moments_title")}
+              </p>
+              <p className="text-[11px] tabular-nums text-muted-foreground">
+                {t("ultrawiki.explore.moments_count").replace(
+                  "{0}",
+                  String(
+                    selected && detail
+                      ? detail.moments.length
+                      : (momentsQuery.data?.total ?? 0),
+                  ),
+                )}
+                {!selected && (
+                  <>
+                    {" · "}
+                    <span className="normal-case">
+                      {t("ultrawiki.explore.reader_hint")}
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+          </header>
+
+          <div className="scrollbar-jarvis min-h-0 flex-1 overflow-y-auto">
+            {selected && detail ? (
               <EntityDetail
-                entity={detailQuery.data.entity}
-                moments={detailQuery.data.moments}
-                onBack={() => setSelected(null)}
+                entity={detail.entity}
+                moments={detail.moments}
                 onSelect={setSelected}
               />
             ) : (
-              <MomentList
-                title={t("ultrawiki.explore.moments_title")}
-                moments={momentsQuery.data?.moments ?? []}
-                count={momentsQuery.data?.total ?? 0}
-              />
+              <MomentList moments={momentsQuery.data?.moments ?? []} />
             )}
           </div>
-        </div>
+        </section>
       </div>
 
       <VaultBar />
@@ -264,20 +329,29 @@ function EntityRow({
       data-entity-key={entity.key}
       data-active={active ? "true" : "false"}
       className={cn(
-        "group block w-full px-4 py-1.5 text-left transition-colors",
-        active ? "bg-primary/10" : "hover:bg-muted/50",
+        "group block w-full rounded-lg px-2.5 py-1.5 text-left transition-colors",
+        active
+          ? "bg-primary/10 ring-1 ring-inset ring-primary/25"
+          : "hover:bg-muted/60",
       )}
     >
       <span className="flex items-baseline justify-between gap-2">
-        <span className="truncate text-xs text-foreground">{entity.label}</span>
+        <span
+          className={cn(
+            "truncate text-xs",
+            active ? "text-primary" : "text-foreground",
+          )}
+        >
+          {entity.label}
+        </span>
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {entity.mentions}
         </span>
       </span>
       {/* The signature of this view: where in your history this topic lived.
-          Width is its lifetime, position is when, brightness is how recent. */}
+          Width is its lifetime, position is when, warmth is how recent. */}
       <span
-        className="mt-1 block h-[3px] w-full rounded-full bg-muted"
+        className="mt-1 block h-[3px] w-full rounded-full bg-white/[0.06]"
         aria-hidden
       >
         <span
@@ -299,44 +373,33 @@ function EntityRow({
 function EntityDetail({
   entity,
   moments,
-  onBack,
   onSelect,
 }: {
   entity: UltraWikiEntity;
   moments: UltraWikiMoment[];
-  onBack: () => void;
   onSelect: (key: string) => void;
 }): JSX.Element {
   const t = useT();
   return (
-    <div className="p-4" data-testid="explore-detail">
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-3 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" aria-hidden />
-        {t("ultrawiki.explore.back")}
-      </button>
+    <div data-testid="explore-detail">
+      <div className="border-b border-border px-4 py-3.5">
+        <h3 className="text-sm text-foreground">{entity.label}</h3>
+        <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
+          {t("ultrawiki.explore.mentions_long").replace(
+            "{0}",
+            String(entity.mentions),
+          )}
+          {entity.first_seen && (
+            <>
+              {" · "}
+              {t("ultrawiki.explore.period")
+                .replace("{0}", entity.first_seen.slice(0, 10))
+                .replace("{1}", entity.last_seen.slice(0, 10))}
+            </>
+          )}
+        </p>
 
-      <h3 className="text-sm text-foreground">{entity.label}</h3>
-      <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
-        {t("ultrawiki.explore.mentions_long").replace(
-          "{0}",
-          String(entity.mentions),
-        )}
-        {entity.first_seen && (
-          <>
-            {" · "}
-            {t("ultrawiki.explore.period")
-              .replace("{0}", entity.first_seen.slice(0, 10))
-              .replace("{1}", entity.last_seen.slice(0, 10))}
-          </>
-        )}
-      </p>
-
-      <div className="mt-3">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <p className="mt-3 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
           {t("ultrawiki.explore.neighbors")}
         </p>
         {entity.neighbors.length === 0 ? (
@@ -355,7 +418,7 @@ function EntityDetail({
                   "{0}",
                   String(neighbor.shared),
                 )}
-                className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
               >
                 {neighbor.label}
                 <span className="ml-1 tabular-nums opacity-60">
@@ -367,68 +430,99 @@ function EntityDetail({
         )}
       </div>
 
-      <MomentList
-        title={t("ultrawiki.explore.moments_of").replace("{0}", entity.label)}
-        moments={moments}
-        count={moments.length}
-        className="mt-4"
-      />
+      <MomentList moments={moments} />
     </div>
   );
 }
 
-function MomentList({
-  title,
-  moments,
-  count,
-  className,
-}: {
-  title: string;
-  moments: UltraWikiMoment[];
-  count: number;
-  className?: string;
-}): JSX.Element {
-  const t = useT();
+function MomentList({ moments }: { moments: UltraWikiMoment[] }): JSX.Element {
   return (
-    <div className={cn("px-4 py-3", className)}>
-      <p className="flex items-baseline gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-        {title}
-        <span className="tabular-nums normal-case opacity-70">
-          {t("ultrawiki.explore.moments_count").replace("{0}", String(count))}
+    <ol className="space-y-2 p-3">
+      {moments.map((moment) => (
+        <MomentCard key={moment.document_id} moment={moment} />
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * One distilled moment, as something you can actually read.
+ *
+ * Closed it is a headline and three lines — enough to scan a couple of
+ * hundred of them. Open it is the whole summary plus the answer the
+ * distillation arrived at, which until now was fetched, stored, and never
+ * shown to anyone.
+ */
+function MomentCard({ moment }: { moment: UltraWikiMoment }): JSX.Element {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const expandable = Boolean(moment.summary || moment.resolution);
+
+  return (
+    <li
+      data-testid={`explore-moment-${moment.document_id}`}
+      data-open={open ? "true" : "false"}
+      className="rounded-xl border border-border/70 bg-card/40 px-3.5 py-3 transition-colors hover:border-primary/25 hover:bg-card/70"
+    >
+      <button
+        type="button"
+        disabled={!expandable}
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={expandable ? open : undefined}
+        aria-label={
+          expandable
+            ? t(open ? "ultrawiki.explore.read_less" : "ultrawiki.explore.read_more")
+            : undefined
+        }
+        className="flex w-full items-start gap-2 text-left disabled:cursor-default"
+      >
+        <span className="min-w-0 flex-1 text-[13px] font-medium leading-relaxed text-foreground">
+          {moment.title}
         </span>
-      </p>
-      <ol className="mt-2 space-y-2.5">
-        {moments.map((moment) => (
-          <li
-            key={moment.document_id}
-            data-testid={`explore-moment-${moment.document_id}`}
-            className="border-l-2 border-border pl-3"
-          >
-            <p className="text-xs leading-snug text-foreground">{moment.title}</p>
-            {moment.summary && (
-              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-                {moment.summary}
-              </p>
+        {expandable && (
+          <ChevronDown
+            className={cn(
+              "mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-180",
             )}
-            <p className="mt-1 flex items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
-              <span>{moment.timestamp_utc.slice(0, 10)}</span>
-              <span aria-hidden>·</span>
-              <span className="truncate">{moment.source_label}</span>
-              {moment.permalink && (
-                <a
-                  href={moment.permalink}
-                  data-testid={`explore-moment-link-${moment.document_id}`}
-                  className="inline-flex items-center gap-0.5 hover:text-foreground"
-                >
-                  <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-                  {t("ultrawiki.explore.open_source")}
-                </a>
-              )}
-            </p>
-          </li>
-        ))}
-      </ol>
-    </div>
+            aria-hidden
+          />
+        )}
+      </button>
+
+      {moment.summary && (
+        <p
+          className={cn(
+            "mt-1.5 text-xs leading-relaxed text-muted-foreground",
+            !open && "line-clamp-3",
+          )}
+        >
+          {moment.summary}
+        </p>
+      )}
+
+      {open && moment.resolution && (
+        <p className="mt-2.5 border-l-2 border-primary/40 pl-2.5 text-xs leading-relaxed text-foreground/90">
+          {moment.resolution}
+        </p>
+      )}
+
+      <p className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] tabular-nums text-muted-foreground">
+        <span>{moment.timestamp_utc.slice(0, 10)}</span>
+        <span aria-hidden>·</span>
+        <span className="truncate">{moment.source_label}</span>
+        {moment.permalink && (
+          <a
+            href={moment.permalink}
+            data-testid={`explore-moment-link-${moment.document_id}`}
+            className="inline-flex items-center gap-0.5 transition-colors hover:text-primary"
+          >
+            <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+            {t("ultrawiki.explore.open_source")}
+          </a>
+        )}
+      </p>
+    </li>
   );
 }
 

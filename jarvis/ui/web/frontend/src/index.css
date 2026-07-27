@@ -4,6 +4,44 @@
 @tailwind components;
 @tailwind utilities;
 
+/* App-wide scrollbars — PLAIN (non-@layer) CSS on purpose, same reason as the
+   xterm rules below: a `@layer` rule keyed on an element rather than a class
+   is not guaranteed to survive Tailwind's purge.
+   The native WebView2 bar is a light-grey 17 px column with arrow buttons —
+   it reads as somebody else's chrome bolted onto a matte-black app, and it
+   was the single loudest non-theme surface left on screen. This makes every
+   scroll container in the app agree: a thin dark thumb floating on the
+   content, no track, no buttons. Individual surfaces still opt out
+   (.agentic-terminal-host below, PaneScrollbar) — a class beats `*`. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  /* The transparent border + content-box clip is what makes the thumb read as
+     a floating pill rather than a filled gutter. */
+  background-color: hsl(var(--border));
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground));
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 /* xterm.js viewport scrollbar — PLAIN (non-@layer) CSS on purpose. Tailwind
    tree-shakes `@layer utilities` by class usage, and `.xterm-viewport` is
    created by xterm.js at runtime (it never appears in the source), so a rule
@@ -283,20 +321,21 @@
     color: transparent;
   }
 
-  /* Custom scrollbar — matching the theme */
+  /* Quieter than the app-wide default at the top of this file — for dense
+     lists where even the default pill is one line of noise too many. The
+     app-wide rules already cover track, buttons and corner. */
   .scrollbar-jarvis::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .scrollbar-jarvis::-webkit-scrollbar-track {
-    background: transparent;
+    width: 8px;
+    height: 8px;
   }
   .scrollbar-jarvis::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
-    border-radius: 3px;
+    background-color: hsl(var(--border));
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
   }
   .scrollbar-jarvis::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background-color: hsl(var(--muted-foreground));
   }
 
   /* ===========================================================
@@ -708,6 +747,52 @@
 
   .uw-hatch-live {
     animation: uw-hatch-drift 1.1s linear infinite;
+  }
+
+  /*
+   * The Explore stage — the surface the topic map is drawn on.
+   *
+   * The map used to be a 224 px letterbox above a wall of text, which is the
+   * one arrangement that makes a network unreadable: a force layout needs
+   * area, not width. It now owns the middle of the screen, and these three
+   * layers are what stop that area from reading as an empty black rectangle.
+   * All of it is behind the canvas and none of it carries data — the grid
+   * gives the depth a floating cloud of dots has nothing to sit on, the glow
+   * marks the centre of gravity, the vignette pulls the eye off the edges.
+   */
+  .uw-stage {
+    background-color: hsl(var(--background));
+    background-image:
+      linear-gradient(rgba(255, 214, 10, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 214, 10, 0.028) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .uw-stage-glow {
+    background: radial-gradient(
+      circle at 50% 46%,
+      rgba(255, 214, 10, 0.13) 0%,
+      rgba(255, 214, 10, 0.04) 34%,
+      transparent 66%
+    );
+    filter: blur(46px);
+  }
+
+  .uw-stage-vignette {
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      transparent 42%,
+      rgba(0, 0, 0, 0.5) 100%
+    );
+  }
+
+  /* The floating control pills over the stage (floor slider, legend, counts).
+     Glass rather than a solid card: the map has to stay visible underneath,
+     or the controls become a second letterbox. */
+  .uw-stage-pill {
+    background: rgba(10, 10, 10, 0.66);
+    border: 1px solid hsl(var(--border));
+    backdrop-filter: blur(10px);
   }
 
   @keyframes uw-hatch-drift {

@@ -1,17 +1,29 @@
 /**
- * The map of which topics appear together.
+ * The map of which topics appear together — the centre of Explore, not a
+ * banner above it.
  *
  * A node is a topic, an edge means "these two came up in the same moment",
  * and the edge is thicker the more often that happened. Node size is mention
  * count, node brightness is recency — both computed in lib/entityGraph.ts so
  * the list and the map speak the same visual language.
  *
- * The mention floor is the whole reason this is readable. On a real corpus
- * 977 topics collapse to 313 at two mentions and 77 at five; drawing every
- * one-off at once is a hairball, not a map. The slider makes the trade
- * explicit and reversible instead of hiding data silently.
+ * Two things make it readable, and both are structural rather than cosmetic:
+ *
+ * 1. AREA. A force layout spreads its nodes in two dimensions; squeezed into
+ *    a 224 px letterbox it collapses into a smear no zoom can undo. The
+ *    component now fills whatever box the panel gives it and every chrome
+ *    element floats ON the map instead of stealing height from it.
+ * 2. The mention FLOOR. On a real corpus 977 topics collapse to 313 at two
+ *    mentions and 77 at five; drawing every one-off at once is a hairball,
+ *    not a map. The slider makes the trade explicit and reversible instead of
+ *    hiding data silently.
+ *
+ * The canvas is absolutely positioned inside its container on purpose: the
+ * renderer paints at a FIXED pixel width, and a fixed-width child inside a
+ * flex row sets that row's floor — which is how the whole section grew a
+ * horizontal scrollbar it could never shrink back out of.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Maximize2, Minimize2 } from "lucide-react";
 import ForceGraph2D from "react-force-graph-2d";
@@ -66,6 +78,12 @@ const FLOORS = [1, 2, 3, 5, 8] as const;
  */
 const POINTER_PAD = 2;
 
+/** The recency ramp, sampled for the legend so it cannot drift from the map. */
+const LEGEND_SPAN = { start: 0, end: 100 };
+const LEGEND_STOPS = [0, 25, 50, 75, 100].map((position) =>
+  recencyTint(new Date(position).toISOString(), LEGEND_SPAN),
+);
+
 export function EntityGraph({
   minMentions,
   onMinMentionsChange,
@@ -87,16 +105,28 @@ export function EntityGraph({
     staleTime: 30_000,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = containerRef.current;
     if (!element) return;
-    const observer = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (!box) return;
-      const next = { w: Math.round(box.width), h: Math.round(box.height) };
+    const apply = (w: number, h: number) => {
+      const next = { w: Math.round(w), h: Math.round(h) };
       // Sub-pixel churn would restart the force simulation and make the
       // network flail; the shared threshold helper absorbs it.
       setSize((prev) => (sizeChanged(prev, next) ? next : prev));
+    };
+    // Measure BEFORE the observer's first callback. Without a width the
+    // renderer falls back to `window.innerWidth` — a canvas wider than the
+    // column it sits in, drawing the network off-centre and, until this
+    // column got a `min-w-0`, dragging a horizontal scrollbar across the
+    // whole app. The observer callback is one frame away at best, and a tab
+    // the OS considers occluded produces no frames at all, so that fallback
+    // could stand indefinitely. The box is already laid out here.
+    const box = element.getBoundingClientRect();
+    apply(box.width, box.height);
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect;
+      if (!measured) return;
+      apply(measured.width, measured.height);
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -161,72 +191,16 @@ export function EntityGraph({
       id="explore-entity-graph"
       data-testid="explore-entity-graph"
       data-expanded={isExpanded ? "true" : "false"}
+      ref={containerRef}
       className={cn(
-        "flex h-full flex-col bg-background",
+        "uw-stage relative h-full min-h-0 w-full min-w-0 overflow-hidden",
         isExpanded && "fixed inset-0 z-[100]",
       )}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-1.5">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          {t("ultrawiki.explore.graph_title")}
-        </p>
-        <div className="flex items-center gap-2">
-          <span
-            data-testid="explore-graph-shown"
-            className="text-[11px] tabular-nums text-muted-foreground"
-          >
-            {t("ultrawiki.explore.graph_shown")
-              .replace("{0}", String(shown))
-              .replace("{1}", String(total))}
-          </span>
-          <input
-            type="range"
-            data-testid="explore-graph-floor"
-            min={0}
-            max={FLOORS.length - 1}
-            step={1}
-            value={Math.max(FLOORS.indexOf(minMentions as (typeof FLOORS)[number]), 0)}
-            onChange={(event) =>
-              onMinMentionsChange(FLOORS[Number(event.target.value)] ?? 1)
-            }
-            aria-label={t("ultrawiki.explore.min_mentions").replace(
-              "{0}",
-              String(minMentions),
-            )}
-            title={t("ultrawiki.explore.min_mentions").replace(
-              "{0}",
-              String(minMentions),
-            )}
-            className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
-          />
-          <button
-            type="button"
-            data-testid="explore-graph-expand-toggle"
-            onClick={() => setIsExpanded((expanded) => !expanded)}
-            aria-controls="explore-entity-graph"
-            aria-expanded={isExpanded}
-            aria-label={t(
-              isExpanded
-                ? "wiki_graph.restore_view_title"
-                : "wiki_graph.expand_view_title",
-            )}
-            title={t(
-              isExpanded
-                ? "wiki_graph.restore_view_title"
-                : "wiki_graph.expand_view_title",
-            )}
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-background/70 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-          >
-            {isExpanded ? (
-              <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-            )}
-          </button>
-        </div>
-      </div>
+      {/* Behind the canvas, carrying no data — see .uw-stage in index.css. */}
+      <div className="uw-stage-glow pointer-events-none absolute inset-0" aria-hidden />
 
-      <div ref={containerRef} className="relative min-h-0 flex-1">
+      <div className="absolute inset-0" data-testid="explore-graph-canvas">
         {shown === 0 ? (
           <p
             data-testid="explore-graph-empty"
@@ -245,7 +219,7 @@ export function EntityGraph({
             nodeRelSize={1}
             nodeVal={(node: NodeObject<RenderNode>) => node.radius}
             nodeLabel={(node: NodeObject<RenderNode>) => node.label}
-            linkColor={() => "rgba(125, 184, 255, 0.16)"}
+            linkColor={() => "rgba(255, 214, 10, 0.11)"}
             linkWidth={(link) =>
               Math.min(0.4 + (link.weight ?? 1) * 0.15, 2.4)
             }
@@ -277,8 +251,22 @@ export function EntityGraph({
               ctx.fillStyle = node.colour;
               ctx.fill();
               if (selected) {
+                // Two rings: a white core edge that reads against a yellow
+                // dot, and a wide soft halo that finds the selection again
+                // once the map is zoomed out and the dot is three pixels.
                 ctx.lineWidth = 1.5 / scale;
                 ctx.strokeStyle = "#ffffff";
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(
+                  node.x,
+                  node.y,
+                  node.radius + 4 + 2 / scale,
+                  0,
+                  2 * Math.PI,
+                );
+                ctx.lineWidth = 1 / scale;
+                ctx.strokeStyle = "rgba(255, 214, 10, 0.55)";
                 ctx.stroke();
               }
               // Labels only once the user has zoomed in, and only for the
@@ -290,71 +278,178 @@ export function EntityGraph({
                 ctx.textBaseline = "top";
                 ctx.fillStyle = selected
                   ? "rgba(255,255,255,0.95)"
-                  : "rgba(255,255,255,0.55)";
+                  : "rgba(255,255,255,0.62)";
                 ctx.fillText(node.label, node.x, node.y + node.radius + 1.5);
               }
             }}
           />
         )}
-
-        {isExpanded && selection && (
-          <div
-            data-testid="explore-graph-selection"
-            className="absolute bottom-3 left-3 max-w-xs rounded-lg border border-border bg-background/90 px-3 py-2 shadow-lg backdrop-blur-sm"
-          >
-            <p className="text-sm text-foreground">{selection.label}</p>
-            <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
-              {t("ultrawiki.explore.mentions_long").replace(
-                "{0}",
-                String(selection.mentions),
-              )}
-              {detail?.first_seen && (
-                <>
-                  {" · "}
-                  {t("ultrawiki.explore.period")
-                    .replace("{0}", detail.first_seen.slice(0, 10))
-                    .replace("{1}", detail.last_seen.slice(0, 10))}
-                </>
-              )}
-            </p>
-
-            {detail && (
-              <div className="mt-2">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {t("ultrawiki.explore.neighbors")}
-                </p>
-                {detail.neighbors.length === 0 ? (
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {t("ultrawiki.explore.no_neighbors")}
-                  </p>
-                ) : (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {detail.neighbors.slice(0, 8).map((neighbor) => (
-                      <button
-                        key={neighbor.key}
-                        type="button"
-                        data-testid={`explore-graph-neighbor-${neighbor.key}`}
-                        onClick={() => onSelect(neighbor.key)}
-                        title={t("ultrawiki.explore.shared").replace(
-                          "{0}",
-                          String(neighbor.shared),
-                        )}
-                        className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                      >
-                        {neighbor.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
-      <p className="border-t border-border px-4 py-1 text-[10px] text-muted-foreground">
-        {t("ultrawiki.explore.graph_hint")}
-      </p>
+      {/* Edges of a force layout carry no meaning, so they get darkened to
+          push the eye to the middle. Above the canvas, below the controls. */}
+      <div
+        className="uw-stage-vignette pointer-events-none absolute inset-0"
+        aria-hidden
+      />
+
+      {/* --- Floating chrome. None of it takes height from the map. --- */}
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3">
+        <div className="uw-stage-pill pointer-events-auto rounded-lg px-3 py-1.5">
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            {t("ultrawiki.explore.graph_title")}
+          </p>
+          <p
+            data-testid="explore-graph-shown"
+            className="text-[11px] tabular-nums text-foreground"
+          >
+            {t("ultrawiki.explore.graph_shown")
+              .replace("{0}", String(shown))
+              .replace("{1}", String(total))}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          data-testid="explore-graph-expand-toggle"
+          onClick={() => setIsExpanded((expanded) => !expanded)}
+          aria-controls="explore-entity-graph"
+          aria-expanded={isExpanded}
+          aria-label={t(
+            isExpanded
+              ? "wiki_graph.restore_view_title"
+              : "wiki_graph.expand_view_title",
+          )}
+          title={t(
+            isExpanded
+              ? "wiki_graph.restore_view_title"
+              : "wiki_graph.expand_view_title",
+          )}
+          className="uw-stage-pill pointer-events-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          {isExpanded ? (
+            <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+          )}
+        </button>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-end justify-between gap-2 p-3">
+        {/* The legend earns its place: without it the two encodings on screen
+            (size, warmth) are decoration the reader has to guess at. */}
+        <div className="uw-stage-pill pointer-events-auto rounded-lg px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5" aria-hidden>
+              <span className="block h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+              <span className="block h-2.5 w-2.5 rounded-full bg-muted-foreground" />
+              <span className="block h-3.5 w-3.5 rounded-full bg-muted-foreground" />
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {t("ultrawiki.explore.legend_size")}
+            </span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span
+              className="block h-1.5 w-14 rounded-full"
+              style={{
+                backgroundImage: `linear-gradient(90deg, ${LEGEND_STOPS.join(", ")})`,
+              }}
+              aria-hidden
+            />
+            <span className="text-[10px] text-muted-foreground">
+              {t("ultrawiki.explore.legend_recency")}
+            </span>
+          </div>
+        </div>
+
+        <div
+          className="uw-stage-pill pointer-events-auto flex items-center gap-2.5 rounded-lg px-3 py-2"
+          title={t("ultrawiki.explore.graph_hint")}
+        >
+          <span className="text-[10px] text-muted-foreground">
+            {t("ultrawiki.explore.graph_hint_short")}
+          </span>
+          <input
+            type="range"
+            data-testid="explore-graph-floor"
+            min={0}
+            max={FLOORS.length - 1}
+            step={1}
+            value={Math.max(FLOORS.indexOf(minMentions as (typeof FLOORS)[number]), 0)}
+            onChange={(event) =>
+              onMinMentionsChange(FLOORS[Number(event.target.value)] ?? 1)
+            }
+            aria-label={t("ultrawiki.explore.min_mentions").replace(
+              "{0}",
+              String(minMentions),
+            )}
+            title={t("ultrawiki.explore.min_mentions").replace(
+              "{0}",
+              String(minMentions),
+            )}
+            className="h-1 w-28 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+          />
+          <span className="w-8 text-right text-[10px] tabular-nums text-foreground">
+            {t("ultrawiki.explore.mentions").replace("{0}", String(minMentions))}
+          </span>
+        </div>
+      </div>
+
+      {isExpanded && selection && (
+        <div
+          data-testid="explore-graph-selection"
+          className="uw-stage-pill absolute bottom-24 left-3 max-w-xs rounded-xl px-3.5 py-3 shadow-2xl"
+        >
+          <p className="text-sm text-foreground">{selection.label}</p>
+          <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
+            {t("ultrawiki.explore.mentions_long").replace(
+              "{0}",
+              String(selection.mentions),
+            )}
+            {detail?.first_seen && (
+              <>
+                {" · "}
+                {t("ultrawiki.explore.period")
+                  .replace("{0}", detail.first_seen.slice(0, 10))
+                  .replace("{1}", detail.last_seen.slice(0, 10))}
+              </>
+            )}
+          </p>
+
+          {detail && (
+            <div className="mt-2.5">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                {t("ultrawiki.explore.neighbors")}
+              </p>
+              {detail.neighbors.length === 0 ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {t("ultrawiki.explore.no_neighbors")}
+                </p>
+              ) : (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {detail.neighbors.slice(0, 8).map((neighbor) => (
+                    <button
+                      key={neighbor.key}
+                      type="button"
+                      data-testid={`explore-graph-neighbor-${neighbor.key}`}
+                      onClick={() => onSelect(neighbor.key)}
+                      title={t("ultrawiki.explore.shared").replace(
+                        "{0}",
+                        String(neighbor.shared),
+                      )}
+                      className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                    >
+                      {neighbor.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

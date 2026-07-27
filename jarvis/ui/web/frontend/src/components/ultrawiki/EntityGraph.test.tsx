@@ -287,6 +287,58 @@ it("keeps the fullscreen card out of the way when the panel is visible", async (
   expect(screen.queryByTestId("explore-graph-selection")).toBeNull();
 });
 
+it("sizes the canvas from its own box, not from the window", async () => {
+  // No width prop and the renderer falls back to window.innerWidth: a canvas
+  // wider than the column it lives in, drawing the network off-centre. The
+  // ResizeObserver callback is a frame away at best — and a tab the OS treats
+  // as occluded delivers no frames at all, so the fallback could stand for as
+  // long as the window stayed hidden. The first measurement is synchronous.
+  installFetch();
+  const width = 640;
+  const height = 480;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    width,
+    height,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+
+  renderGraph();
+
+  await waitFor(() => expect(forceGraphProps.length).toBeGreaterThan(0));
+  const props = forceGraphProps.at(-1) as Record<string, unknown>;
+  expect(props.width).toBe(width);
+  expect(props.height).toBe(height);
+});
+
+it("gives the map the whole box and floats its chrome on top", async () => {
+  // The map used to be a 224 px letterbox: a title bar, a hint line and a
+  // control row each took a slice of the little height it had, and a force
+  // layout with no area is a smear. Every piece of chrome is now positioned
+  // OVER the canvas, so none of it can shrink the map again.
+  installFetch();
+  renderGraph();
+
+  const stage = screen.getByTestId("explore-entity-graph");
+  expect(stage.className).toContain("h-full");
+  // The canvas paints at a fixed pixel width; out of flow it can set no
+  // floor for the column it lives in.
+  expect(screen.getByTestId("explore-graph-canvas").className).toContain(
+    "absolute",
+  );
+  expect(stage.className).toContain("overflow-hidden");
+  expect(stage.className).toContain("min-w-0");
+
+  for (const id of ["explore-graph-floor", "explore-graph-shown"]) {
+    expect(screen.getByTestId(id).closest(".absolute")).not.toBeNull();
+  }
+});
+
 it("expands across the app and restores with Escape", async () => {
   installFetch();
   renderGraph();

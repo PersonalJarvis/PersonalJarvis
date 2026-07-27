@@ -37,12 +37,14 @@ const MIN_RADIUS = 3;
 const RADIUS_RANGE = 9;
 
 /**
- * Oldest → newest tint. The dim end is deliberately a desaturated blue-grey
- * rather than a second hue: two hues would read as two CATEGORIES, and
- * recency is one continuous axis.
+ * Oldest → newest tint: ash that warms into the signal yellow the whole app
+ * is built on. ONE hue travelling from desaturated to saturated, deliberately
+ * — two hues would read as two CATEGORIES, and recency is one continuous
+ * axis. The dim end stays light enough to hold ~3.5:1 against the matte-black
+ * background, so an old topic is quiet, never invisible.
  */
-const TINT_OLD = { r: 0x4c, g: 0x5a, b: 0x72 };
-const TINT_NEW = { r: 0x7d, g: 0xb8, b: 0xff };
+const TINT_OLD = { r: 0x6b, g: 0x66, b: 0x54 };
+const TINT_NEW = { r: 0xff, g: 0xd6, b: 0x0a };
 
 function parse(timestamp: string): number | null {
   const value = Date.parse(timestamp);

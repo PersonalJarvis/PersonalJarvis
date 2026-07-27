@@ -142,7 +142,7 @@ export function UltraWikiPanel(): JSX.Element {
         />
       )}
 
-      <div className="flex items-stretch border-b border-border bg-card/40">
+      <div className="scrollbar-jarvis flex items-stretch overflow-x-auto border-b border-border bg-card/40">
         <UltraTabButton
           active={tab === "overview"}
           onClick={() => setTab("overview")}
@@ -187,7 +187,18 @@ export function UltraWikiPanel(): JSX.Element {
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* Explore is the one tab that manages its own scrolling: it is a
+          three-column workspace whose map fills the height it is given, and
+          an outer scroll container would let that height grow without limit
+          instead of pinning it to the window. */}
+      <div
+        className={cn(
+          "min-h-0 flex-1",
+          tab === "explore"
+            ? "overflow-hidden"
+            : "scrollbar-jarvis overflow-y-auto",
+        )}
+      >
         {tab === "overview" && (
           <OverviewTab
             status={status}
@@ -245,7 +256,7 @@ function UltraTabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs transition-colors",
+        "flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2.5 text-xs transition-colors",
         active
           ? "border-primary text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground",
