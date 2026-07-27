@@ -190,6 +190,17 @@ def _native_dir(platform: Platform) -> Path:
     return Path(os.path.expanduser(_NATIVE_DIR[platform]))
 
 
+def native_dir(platform: Platform) -> Path:
+    """Public name for the directory the CLI reads when nothing is redirected.
+
+    A thin wrapper on purpose: it delegates at CALL time, so a test that
+    redirects the private implementation still governs every caller — including
+    :mod:`jarvis.agent_config_parity`, which needs this to know whose setup a
+    redirected account dir has to carry.
+    """
+    return _native_dir(platform)
+
+
 def builtin_id(platform: Platform) -> str:
     """The stable id of a platform's synthetic default account."""
     return f"{platform}:default"
@@ -662,8 +673,27 @@ def _write_settings(path: Path, text: str) -> bool:
     return True
 
 
+def mode_file_name(platform: Platform) -> str | None:
+    """Which file inside a config dir carries that CLI's default mode.
+
+    Read by callers that share the WHOLE file (see
+    :mod:`jarvis.agent_config_parity`): once the user's own settings file is
+    mirrored across, the narrow per-key mirror below has nothing left to do, and
+    running it anyway would only risk disagreeing with the file it just copied.
+    """
+    spec = _MODE_FILES.get(platform)
+    return None if spec is None else spec.name
+
+
 def inherit_default_mode(platform: Platform, account_id: str | None) -> bool:
     """Carry the user's default operating mode into a redirected config home.
+
+    Superseded for the common case by :func:`jarvis.agent_config_parity.
+    ensure_parity`, which shares the entire settings file and therefore carries
+    the mode with it. This stays for the case that one cannot serve: an account
+    whose settings file is its OWN (hand-edited, or written by the CLI inside a
+    running pane) is never overwritten wholesale, and the mode keys are still
+    worth carrying into it one at a time.
 
     **The gap this closes.** Pointing ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` at
     an account's own directory moves the CLI's whole user-level configuration,
@@ -973,6 +1003,8 @@ __all__ = [
     "env_overrides",
     "inherit_default_mode",
     "list_accounts",
+    "mode_file_name",
+    "native_dir",
     "rename_account",
     "resolve",
     "set_active",

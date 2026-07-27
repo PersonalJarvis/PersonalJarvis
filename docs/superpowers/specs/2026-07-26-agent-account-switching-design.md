@@ -179,3 +179,68 @@ runs a shell string).
 - `tests/unit/test_agent_accounts_routes.py` — route contract + danger metadata.
 - Frontend: the accounts panel renders, switches, and shows an unsigned account
   honestly.
+
+---
+
+## 8. Follow-up 2026-07-27 — the redirect cost the user their whole CLI
+
+**Reported symptom.** An Agentic-IDE pane "is not a real Claude Code session":
+in a normal terminal the maintainer sees 93 skills, thirteen plugins and their
+global instructions; in a pane, only the CLI's built-in skills and the project's
+own `.claude/`. Same machine, same binary, same folder.
+
+**Cause.** §2's mechanism is sound about the login and wrong about everything
+else in that directory. `CLAUDE_CONFIG_DIR` / `CODEX_HOME` do not move a
+credential — they move the CLI's **entire user level**: `skills/`, `agents/`,
+`commands/`, `hooks/`, `output-styles/`, `plugins/` (marketplaces = connectors),
+the user-level `CLAUDE.md` / `AGENTS.md`, and `settings.json` /
+`config.toml`. An account directory holds none of that, so every pane on an
+added subscription ran a quieter, emptier version of the CLI the user installed.
+`inherit_default_mode` had already patched the narrowest instance of this (the
+operating mode) without recognising the class.
+
+The Agentic IDE is the ONLY spawn path that passes `env=` to the PTY manager,
+which is exactly why the same CLI behaves correctly in every other terminal
+Jarvis opens.
+
+**Resolution — `jarvis/agent_config_parity.py`.** Before every pane spawn, a
+redirected config dir is given the user's own setup:
+
+- **Directories are linked** — symlink, or a Windows **junction** where symlink
+  creation needs a privilege the app does not have (measured: `WinError 1314` on
+  the maintainer's non-elevated install), or a copy where neither works. A link
+  means a skill installed today is in every account tomorrow.
+- **Files are mirrored, then merged** — a file the account does not have is
+  copied and tracked by digest, so a later change to the user's file follows
+  through. A file the account has written to itself (a pane that changed its
+  theme) is never overwritten: the keys it is **missing** are filled in
+  recursively instead. Without that last step the fix was half a fix — the
+  plugin trees arrived while `enabledPlugins` stayed absent, so nothing loaded.
+- **`plugins/` is shared whole or not at all.** Which plugins are active lives
+  in state files beside the marketplaces they name; the account's half-written
+  copy is moved to `plugins.jarvis-superseded` and replaced by the user's.
+- **Identity is untouched by construction** — an explicit allowlist, so
+  `.credentials.json`, `auth.json`, `.claude.json`, `projects/`, `sessions/` and
+  `history.jsonl` are never shared. Claude Code's user-scope MCP servers are
+  merged out of `.claude.json` one key at a time, because that document holds
+  the login too.
+- **Never raises.** Every failure degrades to one unshared entry plus a log
+  line, and the report names it — a pane must open either way.
+
+**Second defect found on the way.** `jarvis/workspace/trust.py` seeded folder
+trust only into the machine's default config, so a pane on an added account met
+the "do you trust this directory?" dialog — which voice and the prompt bar
+cannot answer. `ensure_trusted` now takes `config_dirs`, and the registry
+pre-trusts the directory each pane will actually run from (once per folder and
+account).
+
+**Scope.** Agentic-IDE panes only. Mission workers keep their deliberately
+isolated, hook-free environment (§6), and a pane on the built-in login still
+spawns with a plain inherited environment — byte for byte what it always was.
+
+**Tests.** `tests/unit/test_agent_config_parity.py` (the setup arrives and keeps
+arriving; identity is never shared; an account's own value survives while its
+missing keys are filled; symlink host, junction host, copy-only host, and a host
+that can do none of it), plus `tests/unit/agentic_ide/test_account_spawn.py`
+(the pane spawn provisions and pre-trusts) and `tests/unit/workspace/
+test_trust.py` (per-account trust, de-duplicated).

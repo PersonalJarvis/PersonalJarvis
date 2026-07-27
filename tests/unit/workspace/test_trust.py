@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import tomllib
 from pathlib import Path
 
@@ -158,6 +157,55 @@ def test_codex_falls_through_when_the_config_is_unreadable(tmp_path: Path) -> No
     [res] = ensure_trusted(_repo(tmp_path), ["codex"], home=home)
     assert res.method == "error"
     assert res.ok is False
+
+
+def test_an_added_accounts_config_dir_is_trusted_as_well(tmp_path: Path) -> None:
+    """A terminal on a second subscription reads a different config directory.
+
+    Seeded only into the machine's default, it opens on the very dialog this
+    module exists to skip — so a caller that knows which account a terminal will
+    run on can name its directory and get both seeded.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = _repo(tmp_path)
+    account = tmp_path / "accounts" / "second-seat"
+
+    results = ensure_trusted(
+        repo, ["claude"], home=home, config_dirs={"claude": [account]}
+    )
+
+    assert [r.ok for r in results] == [True, True]
+    for cfg in (home / ".claude.json", account / ".claude.json"):
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        assert data["projects"][str(repo)]["hasTrustDialogAccepted"] is True
+
+
+def test_the_same_account_named_twice_is_only_seeded_once(tmp_path: Path) -> None:
+    """Eight panes on one account must not parse and rewrite one config eight times."""
+    home = tmp_path / "home"
+    home.mkdir()
+    account = tmp_path / "accounts" / "second-seat"
+    results = ensure_trusted(
+        _repo(tmp_path),
+        ["codex"],
+        home=home,
+        config_dirs={"codex": [account, account, home / ".codex"]},
+    )
+    # The machine's default plus the account — never the default a second time.
+    assert len(results) == 2
+    assert tomllib.loads((account / "config.toml").read_text(encoding="utf-8"))["projects"]
+
+
+def test_an_account_directory_for_another_agent_is_ignored(tmp_path: Path) -> None:
+    """A Claude config dir means nothing to Codex — it must not be written to."""
+    home = tmp_path / "home"
+    home.mkdir()
+    account = tmp_path / "accounts" / "claude-seat"
+    ensure_trusted(
+        _repo(tmp_path), ["codex"], home=home, config_dirs={"claude": [account]}
+    )
+    assert not account.exists()
 
 
 def test_test_mode_ignores_real_codex_home_env(tmp_path: Path, monkeypatch) -> None:

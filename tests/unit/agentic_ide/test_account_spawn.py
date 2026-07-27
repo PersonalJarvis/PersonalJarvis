@@ -19,7 +19,7 @@ import pytest
 
 from jarvis import agent_accounts
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import Registry
+from jarvis.agentic_ide.session import Registry, SessionError
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -90,13 +90,20 @@ async def test_switching_the_default_does_not_move_a_running_pane(
 async def test_a_new_pane_after_the_switch_gets_the_new_account(
     registry: Registry, tmp_path: Path
 ) -> None:
+    """A terminal opened with no anchor is a NEW terminal, not a split.
+
+    It therefore follows the active account. Inheriting from whatever pane
+    happened to be last (the first version) made the switch reach nothing a user
+    could predict: flipping to the second seat and opening a terminal still
+    billed the first one.
+    """
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     second = agent_accounts.create_account("claude", "Second seat")
     agent_accounts.set_active("claude", second.id)
     added = await registry.add_terminal(agent="claude", anchor=None)
-    # No anchor was named, so the last pane is the anchor and its account is
-    # inherited — the switch reaches the panes that DON'T inherit one.
-    assert added.account == registry.session.terminals[0].account
+    assert added.account == second.id
+    # ...and the pane that was already open is untouched by it.
+    assert registry.session.terminals[0].account == agent_accounts.builtin_id("claude")
 
 
 async def test_a_split_stays_on_the_account_its_anchor_runs_on(
@@ -126,6 +133,114 @@ async def test_an_unknown_account_falls_back_instead_of_failing_the_pane(
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "claude", "account": "claude:ghost"}])
     assert registry.session.terminals[0].account == agent_accounts.builtin_id("claude")
+
+
+# ------------------------------------------------------- the workspace switch
+
+
+async def test_the_workspace_starts_on_the_stored_default(registry: Registry) -> None:
+    """Nothing chosen here yet — so the answer is the machine's own default."""
+    assert registry.active_account_id("claude") == agent_accounts.builtin_id("claude")
+    assert registry.active_account_id("codex") == agent_accounts.builtin_id("codex")
+
+
+async def test_switching_in_the_workspace_moves_the_next_terminal(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The whole point of the settings panel, as one assertion."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    await registry.set_active_account("claude", second.id)
+    assert registry.active_account_id("claude") == second.id
+    added = await registry.add_terminal(agent="claude")
+    assert added.account == second.id
+
+
+async def test_switching_in_the_workspace_leaves_running_panes_alone(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A running agent must never be moved onto a plan that has not seen it."""
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    pinned = registry.session.terminals[0].account
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.set_active_account("claude", second.id)
+    assert registry.session.terminals[0].account == pinned
+
+
+async def test_the_switch_survives_a_restart(registry: Registry) -> None:
+    """Written through to the stored default, so a fresh registry agrees.
+
+    Two surfaces can switch this — the workspace and the app's account page —
+    and a workspace-only pin would let them disagree the moment one was used.
+    """
+    second = agent_accounts.create_account("codex", "Second plan")
+    await registry.set_active_account("codex", second.id)
+    assert agent_accounts.active_account("codex").id == second.id
+    assert Registry().active_account_id("codex") == second.id
+
+
+async def test_switching_to_an_account_of_another_cli_is_refused(
+    registry: Registry,
+) -> None:
+    """A Claude account id means nothing to Codex — say so instead of guessing."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    with pytest.raises(SessionError):
+        await registry.set_active_account("codex", second.id)
+    with pytest.raises(SessionError):
+        await registry.set_active_account("claude", "claude:ghost")
+
+
+async def test_a_batch_of_terminals_opens_on_the_active_account(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """"Open five more" is five new terminals, so all five follow the switch."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    await registry.set_active_account("claude", second.id)
+    created, capped = await registry.add_terminals(3, agent="claude")
+    assert capped is False
+    assert [t.account for t in created] == [second.id] * 3
+
+
+async def test_a_split_still_stays_on_its_anchor_after_a_switch(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The switch governs NEW terminals; a split is "another one of these"."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    anchor = registry.session.terminals[0]
+    await registry.set_active_account("claude", second.id)
+    split = await registry.add_terminal(anchor=anchor.name, direction="down")
+    assert split.account == anchor.account
+
+
+async def test_the_state_names_the_active_account_in_words(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """An id is not something anybody can read back — the UI shows the label."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    await registry.set_active_account("claude", second.id)
+    claude = next(row for row in registry.state()["accounts"] if row["agent"] == "claude")
+    assert claude["active_account"] == second.id
+    assert claude["active_label"] == "Second seat"
+    assert claude["display_name"] == "Claude Code"
+    # Built-in plus the added one — what tells a UI there is anything to choose.
+    assert claude["account_count"] == 2
+
+
+async def test_a_terminal_opened_after_the_switch_spawns_on_that_config_dir(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """End to end: the switch has to reach the child environment, or it is talk."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    await registry.set_active_account("claude", second.id)
+    added = await registry.add_terminal(agent="claude")
+    await _attach(registry, added.name)
+    env = _env_of(fake_pty, -1)
+    assert env is not None
+    assert env["CLAUDE_CONFIG_DIR"] == str(second.config_dir)
 
 
 # --------------------------------------------------------------- the spawn
@@ -166,6 +281,80 @@ async def test_the_spawn_environment_keeps_PATH(
     assert env is not None
     assert env.get("PATH")
     assert env["CODEX_HOME"] == str(second.config_dir)
+
+
+async def test_a_pane_on_an_added_account_still_runs_the_users_own_setup(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The switch must not cost the user their CLI.
+
+    Redirecting the config dir moves the CLI's whole user level with it, so
+    without provisioning a pane on a second subscription opens with none of the
+    user's skills, plugins, hooks or global instructions — a quieter, different
+    product than the same CLI in a terminal. Asserted at the spawn, because the
+    provisioning is only worth anything if it happens before the agent starts.
+    """
+    own = Path(agent_accounts.native_dir("claude"))
+    (own / "skills" / "git-rescue").mkdir(parents=True)
+    (own / "skills" / "git-rescue" / "SKILL.md").write_text("# rescue\n", encoding="utf-8")
+    (own / "CLAUDE.md").write_text("Answer in plain language.\n", encoding="utf-8")
+
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude", "account": second.id}])
+    await _attach(registry, registry.session.terminals[0].name)
+
+    assert (second.config_dir / "skills" / "git-rescue" / "SKILL.md").is_file()
+    assert (second.config_dir / "CLAUDE.md").is_file()
+    # ...and the login it was opened for is still the only identity in there.
+    assert not (second.config_dir / ".credentials.json").exists()
+
+
+async def test_a_pane_pre_trusts_the_folder_in_its_own_account_directory(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLI reads trust from the directory it was pointed at.
+
+    Seeded only into the machine's default, an added-account pane opens on the
+    "do you trust this directory?" dialog — and a dialog nobody can answer from
+    voice or the prompt bar is an agent that never starts.
+    """
+    from jarvis.workspace import trust
+
+    seen: list[tuple[str, list[str], dict[str, list[Path]] | None]] = []
+
+    def _record(root: Path, agents: list[str], **kwargs: object) -> list[object]:
+        seen.append((str(root), agents, kwargs.get("config_dirs")))  # type: ignore[arg-type]
+        return []
+
+    monkeypatch.setattr(trust, "ensure_trusted", _record)
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude", "account": second.id}])
+    await _attach(registry, registry.session.terminals[0].name)
+
+    seeded = [call for call in seen if call[2]]
+    assert seeded, "the pane's own account directory was never pre-trusted"
+    assert seeded[0][2] == {"claude": [second.config_dir]}
+    # Once per folder and account, however many panes attach to it.
+    await _attach(registry, registry.session.terminals[0].name)
+    assert len([call for call in seen if call[2]]) == 1
+
+
+async def test_a_pane_on_the_builtin_login_is_not_pre_trusted_twice(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing was redirected, so the workspace open already covered it."""
+    from jarvis.workspace import trust
+
+    seen: list[dict[str, list[Path]] | None] = []
+
+    def _record(_root: Path, _agents: list[str], **kwargs: object) -> list[object]:
+        seen.append(kwargs.get("config_dirs"))  # type: ignore[arg-type]
+        return []
+
+    monkeypatch.setattr(trust, "ensure_trusted", _record)
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    await _attach(registry, registry.session.terminals[0].name)
+    assert [call for call in seen if call] == []
 
 
 async def test_two_panes_can_run_two_different_subscriptions_at_once(

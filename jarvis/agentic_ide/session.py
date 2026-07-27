@@ -39,6 +39,16 @@ process, so it is bounded deliberately):
    because agent TUIs treat an instant text+newline burst as a paste and insert
    a literal line break instead of submitting.
 
+**A pane is the user's own CLI, not a stripped copy of it.** Whatever the user
+gets by typing ``claude`` or ``codex`` in a terminal — their skills, subagents,
+slash commands, plugins and connectors, hooks, output styles, global
+instructions, default mode — a pane gets too. That is free while the CLI keeps
+its own configuration directory, and it is NOT free for a pane running on an
+added subscription, because switching accounts works by redirecting exactly that
+directory (see ``_spawn_env`` and :mod:`jarvis.agent_config_parity`). Anything
+this module opens must close that gap rather than ship a second, quieter version
+of the CLI the user installed.
+
 Platform notes: the PTY layer itself is already cross-platform behind
 ``jarvis.terminal.backend`` (ConPTY on Windows, ptyprocess on POSIX, a clearly
 messaged no-op where no PTY exists). What this module adds per platform is
@@ -328,6 +338,25 @@ def _restore_key(space: resume_store.SnapshotWorkspace) -> str:
     return f"{space.session_id}|{resume_store.folder_key(space.folder)}"
 
 
+def _redirected_home(term: Terminal) -> Path | None:
+    """The config dir this pane's CLI will really run from, when it is not the
+    machine's own.
+
+    ``None`` for every pane that inherits the machine's configuration untouched
+    — a plain terminal, a CLI that has no accounts, and the built-in login — and
+    that is the case where a pane is already identical to an ordinary terminal.
+    A path means the CLI has been redirected, which is what everything below has
+    to compensate for.
+    """
+    if not term.account or term.agent not in AGENT_BINARIES:
+        return None
+    from jarvis import agent_accounts
+
+    if not agent_accounts.env_overrides(term.agent, term.account):  # type: ignore[arg-type]
+        return None
+    return agent_accounts.config_dir_for(term.agent, term.account)  # type: ignore[arg-type]
+
+
 def _spawn_env(term: Terminal) -> dict[str, str] | None:
     """The child environment that puts this pane on its own subscription.
 
@@ -336,20 +365,31 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
     opens the switcher gets a spawn byte-for-byte identical to the one this app
     produced before the feature existed.
 
-    Redirecting the CLI's config directory moves its user-level SETTINGS along
-    with its login, and the mode a session starts in is one of them. Without the
-    line below, a pane on an added account opened in the CLI's built-in fallback
-    — manual mode — no matter what the user had equipped globally, and every pane
-    had to be switched over by hand. Carrying those settings across is what makes
-    a pane start the way the same CLI starts in an ordinary terminal.
-    """
-    if not term.account or term.agent not in AGENT_BINARIES:
-        return None
-    from jarvis import agent_accounts
+    Redirecting the CLI's config directory moves the CLI's whole USER LEVEL along
+    with its login: its skills, subagents, slash commands, plugins and
+    connectors, hooks, output styles, user memory file and settings all live in
+    that directory. Left alone, a pane on an added account therefore ran a
+    stripped version of the CLI the user has installed — no skills, no plugins,
+    no global instructions, and the built-in fallback operating mode — while the
+    same CLI in an ordinary terminal had all of it. A pane is supposed to BE that
+    terminal, so the user's own setup is shared into the account's directory
+    before the spawn (:mod:`jarvis.agent_config_parity`), and only what a shared
+    settings file cannot carry falls back to the narrow per-key mode mirror.
 
-    if not agent_accounts.env_overrides(term.agent, term.account):  # type: ignore[arg-type]
+    Filesystem work, so callers run it off the event loop.
+    """
+    if _redirected_home(term) is None:
         return None
-    agent_accounts.inherit_default_mode(term.agent, term.account)  # type: ignore[arg-type]
+    from jarvis import agent_accounts, agent_config_parity
+
+    report = agent_config_parity.ensure_parity(term.agent, term.account)  # type: ignore[arg-type]
+    mode_file = agent_accounts.mode_file_name(term.agent)  # type: ignore[arg-type]
+    # Only when the account's settings file IS the user's file does sharing it
+    # carry the mode too. A file the account has partly written itself was merely
+    # filled in with the keys it lacked, and the mode may well be one of the keys
+    # it already had — so the narrow per-key mirror still has work to do there.
+    if report.shared.get(str(mode_file)) not in {"mirrored", "current"}:
+        agent_accounts.inherit_default_mode(term.agent, term.account)  # type: ignore[arg-type]
     return agent_accounts.spawn_env(term.agent, term.account)  # type: ignore[arg-type]
 
 
@@ -681,6 +721,11 @@ class Registry:
         # Held across reading the state AND writing it — see `_persist` for the
         # interleaving that otherwise loses a freshly discovered conversation id.
         self._persist_lock = asyncio.Lock()
+        # (folder, account config dir) pairs already pre-trusted in this process.
+        # A workspace of eight panes on one account would otherwise parse and
+        # rewrite the same config file eight times — and that file grows to tens
+        # of kilobytes on a heavy user (see jarvis.workspace.trust).
+        self._pre_trusted: set[tuple[str, str]] = set()
 
     # ---------------------------------------------------------------- state
     @property
@@ -1548,6 +1593,9 @@ class Registry:
             if viewer is not None:
                 await viewer(code)
 
+        # Off the event loop: getting the pane's account ready is filesystem
+        # work (a few stat calls once it is in place — see `_prepare_spawn`).
+        env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
         try:
             pty_session = await manager.spawn(
                 shell_argv=argv,
@@ -1576,6 +1624,44 @@ class Registry:
             self._schedule_lookup(session, term, session.folder, term.started_at)
         await self._persist()
         return term
+
+    def _prepare_spawn(self, term: Terminal, folder: str) -> dict[str, str] | None:
+        """Everything this pane's agent needs on disk, then its environment.
+
+        One thread hop for both, because both are filesystem work that has to
+        finish before the process starts, and both exist for the same reason: a
+        pane on an added subscription must open as the same session the user's
+        own terminal opens (:func:`_spawn_env`), and it must not stop on a "do
+        you trust this directory?" dialog on the way there.
+        """
+        self._pre_trust(term, folder)
+        return _spawn_env(term)
+
+    def _pre_trust(self, term: Terminal, folder: str) -> None:
+        """Mark this folder trusted in the config dir THIS pane will run from.
+
+        The workspace open already seeded the machine's own config, which covers
+        every pane on the built-in login. A pane on an added account reads a
+        different directory entirely, so without this it opens on the trust
+        dialog — and a dialog nobody can answer from voice or the prompt bar is
+        an agent that never starts. Once per folder and account per process.
+
+        Never raises: an unseeded pane costs one click, a failed spawn costs the
+        pane.
+        """
+        home = _redirected_home(term)
+        if home is None:
+            return
+        key = (os.path.normcase(folder), os.path.normcase(str(home)))
+        if key in self._pre_trusted:
+            return
+        self._pre_trusted.add(key)
+        try:
+            from jarvis.workspace.trust import ensure_trusted
+
+            ensure_trusted(Path(folder), [term.agent], config_dirs={term.agent: [home]})
+        except Exception as exc:  # noqa: BLE001 - trust is a convenience
+            logger.warning("Agentic IDE: pre-trust for {} failed: {}", term.name, exc)
 
     def _schedule_lookup(
         self, owner: Session, term: Terminal, folder: str, started_at: float

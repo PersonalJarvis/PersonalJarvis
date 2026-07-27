@@ -16,12 +16,22 @@ Both writes are atomic (temp file + ``os.replace``) and idempotent, and never
 clobber unrelated keys. ``~/.claude.json`` is backed up once before the first
 mutation. If a write fails we report it honestly — we never claim "skipped"
 when it wasn't.
+
+``config_dirs`` covers the second place a CLI reads that file from. A terminal
+running on an ADDED subscription resolves its whole configuration from the
+account's own directory (:mod:`jarvis.agent_accounts`), so trust seeded into the
+machine's default config is invisible to it and the pane opens on the very
+dialog this module exists to skip. Callers that know which account a terminal
+will run on pass its directory here; every other caller keeps the old behaviour
+untouched.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,10 +47,19 @@ class TrustResult:
 
 
 def ensure_trusted(
-    repo_root: Path, agents: list[str], *, home: Path | None = None
+    repo_root: Path,
+    agents: list[str],
+    *,
+    home: Path | None = None,
+    config_dirs: Mapping[str, Iterable[Path]] | None = None,
 ) -> list[TrustResult]:
     """Mark ``repo_root`` as trusted for each agent. ``home`` overrides the home
-    dir (tests pass a tmp dir; production uses the real home + ``$CODEX_HOME``)."""
+    dir (tests pass a tmp dir; production uses the real home + ``$CODEX_HOME``).
+
+    ``config_dirs`` names EXTRA config directories per agent — the ones added
+    subscriptions run from (see the module docstring). Each of them is seeded in
+    addition to the machine's default, and contributes its own result, so a
+    caller can see per directory whether the dialog will really be skipped."""
     test_mode = home is not None
     home = home or Path.home()
     claude_cfg = home / ".claude.json"
@@ -48,13 +67,18 @@ def ensure_trusted(
         codex_home = home / ".codex"
     else:
         codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex"))
+    codex_cfg = codex_home / "config.toml"
 
     results: list[TrustResult] = []
     for name in agents:
         if name == "claude":
             results.append(_trust_claude(repo_root, claude_cfg))
+            for extra in _extra_configs(name, ".claude.json", claude_cfg, config_dirs):
+                results.append(_trust_claude(repo_root, extra))
         elif name == "codex":
-            results.append(_trust_codex(repo_root, codex_home / "config.toml"))
+            results.append(_trust_codex(repo_root, codex_cfg))
+            for extra in _extra_configs(name, "config.toml", codex_cfg, config_dirs):
+                results.append(_trust_codex(repo_root, extra))
         elif not _needs_trust(name):
             # A registered entry with no trust dialog to skip — a plain shell,
             # or a CLI that simply never asks. Nothing to write, and saying so
@@ -63,6 +87,34 @@ def ensure_trusted(
         else:  # pragma: no cover - guarded upstream
             results.append(TrustResult(name, False, "error", f"unknown agent: {name}"))
     return results
+
+
+def _extra_configs(
+    agent: str,
+    filename: str,
+    default: Path,
+    config_dirs: Mapping[str, Iterable[Path]] | None,
+) -> list[Path]:
+    """The additional trust files to seed for ``agent``, de-duplicated.
+
+    A workspace can hold several panes on ONE added account, and seeding the
+    same file once per pane would parse and rewrite a config that grows to tens
+    of kilobytes. The machine's default is dropped too — it is already covered
+    by the caller above, and a host started under a profile manager can name it
+    here without meaning "do it twice".
+    """
+    if not config_dirs:
+        return []
+    seen: set[str] = {os.path.normcase(str(default))}
+    extras: list[Path] = []
+    for directory in config_dirs.get(agent, ()):
+        candidate = Path(directory) / filename
+        key = os.path.normcase(str(candidate))
+        if key in seen:
+            continue
+        seen.add(key)
+        extras.append(candidate)
+    return extras
 
 
 def _needs_trust(name: str) -> bool:
@@ -169,10 +221,7 @@ def _trust_codex(repo_root: Path, cfg: Path) -> TrustResult:
             doc["projects"] = projects
 
         existing = projects.get(native)
-        already = (
-            existing is not None
-            and dict(existing).get("trust_level") == "trusted"
-        )
+        already = existing is not None and dict(existing).get("trust_level") == "trusted"
         if already:
             return TrustResult("codex", True, "noop", "already trusted")
 
