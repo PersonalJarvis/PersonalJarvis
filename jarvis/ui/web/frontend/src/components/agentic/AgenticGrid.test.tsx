@@ -21,10 +21,19 @@ vi.mock("@/store/events", () => ({
 
 vi.mock("@/lib/agenticIdeApi", () => ({
   addTerminal: vi.fn(),
+  attachToTerminal: vi.fn(),
   closeTerminal: vi.fn(),
   closeTerminals: vi.fn(),
   composePrompt: vi.fn(),
+  // Polled by the grid so the pane headers keep saying what their agents are
+  // doing. Resolves empty by default; the recap tests give it real rows.
+  fetchTerminalRecaps: vi.fn(async () => ({
+    workspace_id: "ide_test",
+    terminals: [],
+  })),
   promptTerminal: vi.fn(),
+  // Reached from the toolbar's settings panel, which the grid always renders.
+  setIdeActiveAccount: vi.fn(),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -44,6 +53,8 @@ vi.mock("./AgenticTerminal", () => ({
     maximized,
     splitDisabled,
     restartToken,
+    recap,
+    recapDetail,
     onRestart,
     agents,
     onToggleMaximize,
@@ -54,6 +65,8 @@ vi.mock("./AgenticTerminal", () => ({
     maximized?: boolean;
     splitDisabled?: boolean;
     restartToken?: number;
+    recap?: string;
+    recapDetail?: string;
     onRestart?: () => void;
     agents?: Array<{ name: string }>;
     onToggleMaximize?: () => void;
@@ -65,6 +78,8 @@ vi.mock("./AgenticTerminal", () => ({
       data-maximized={maximized ? "yes" : "no"}
       data-agents={(agents ?? []).map((a) => a.name).join(",")}
       data-restart-token={String(restartToken ?? 0)}
+      data-recap={recap ?? ""}
+      data-recap-detail={recapDetail ?? ""}
     >
       {name}
       <button data-testid={`pane-maximize-${name}`} onClick={onToggleMaximize}>
@@ -186,6 +201,24 @@ beforeEach(() => {
     files: [],
     submitted: true,
   });
+  vi.mocked(api.attachToTerminal).mockResolvedValue({
+    terminal: "Mika",
+    references: ["@.jarvis/drops/shot.png"],
+    files: ["shot.png"],
+    copied: 1,
+    submitted: false,
+    delivered: false,
+    analysis: [
+      {
+        name: "shot.png",
+        reference: "@.jarvis/drops/shot.png",
+        kind: "image",
+        detail: "A login dialog whose submit button overflows its container.",
+        described_by: "vision",
+        note: "",
+      },
+    ],
+  });
 });
 
 afterEach(() => {
@@ -268,6 +301,50 @@ describe("pane actions", () => {
     await waitFor(() =>
       expect(screen.getByPlaceholderText(/instruction for Aria/i)).toBeTruthy(),
     );
+  });
+
+  it("keeps a plain terminal out of the prompt bar's targets", () => {
+    // A plain terminal is a shell prompt: Jarvis does not type into one, so
+    // offering it as a target would promise a delivery that is always refused.
+    const session = sessionWith([
+      ["Mika", 0],
+      ["Nova", 1],
+    ]);
+    session.terminals[1] = {
+      ...session.terminals[1],
+      agent: "shell",
+      display_name: "Plain Terminal",
+      accepts_prompts: false,
+    };
+    renderGrid(session);
+
+    expect(screen.getByRole("button", { name: /^Mika/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Nova live$/ })).toBeNull();
+    // The agent pane, not the shell, is what the prompt goes to.
+    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+  });
+
+  it("does not make a new plain terminal the prompt target", async () => {
+    const next = sessionWith([
+      ["Mika", 0],
+      ["Aria", 1],
+      ["Nova", 2],
+    ]);
+    next.terminals[1] = {
+      ...next.terminals[1],
+      agent: "shell",
+      display_name: "Plain Terminal",
+      accepts_prompts: false,
+    };
+    vi.mocked(api.addTerminal).mockResolvedValue(next);
+    renderGrid();
+
+    fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
+
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalled());
+    // The prompt bar stays pointed at the agent it was on — a shell pane that
+    // stole the target would silently swallow the next instruction.
+    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
   });
 
   it("reports a refused split instead of pretending it worked", async () => {
@@ -473,18 +550,32 @@ describe("selecting several terminals", () => {
     expect(screen.getByText("Selected: 0")).toBeTruthy();
   });
 
-  it("right-clicking a pane enters selection mode and marks it immediately", () => {
+  it("never enters selection mode on a right-click", () => {
     renderGrid();
 
-    fireEvent.contextMenu(screen.getByTestId("pane-cell-Nova"));
+    // The pane keeps the right button for the app-wide Cut/Copy/Paste menu, so
+    // the event must also survive untouched rather than being swallowed here.
+    const reached = fireEvent.contextMenu(screen.getByTestId("pane-cell-Nova"));
 
+    expect(reached).toBe(true);
     expect(
       screen.getByTestId("terminal-selection-toggle").getAttribute("aria-pressed"),
-    ).toBe("true");
+    ).toBe("false");
+    expect(screen.queryByTestId("terminal-selection-actions")).toBeNull();
+    expect(screen.queryByTestId("select-terminal-Nova")).toBeNull();
+  });
+
+  it("does nothing at all on a right-click while selection mode is on", () => {
+    renderGrid();
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+
+    const reached = fireEvent.contextMenu(screen.getByTestId("select-terminal-Nova"));
+
+    expect(reached).toBe(false);
     expect(
       screen.getByTestId("select-terminal-Nova").getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(screen.getByText("Selected: 1")).toBeTruthy();
+    ).toBe("false");
+    expect(screen.getByText("Selected: 0")).toBeTruthy();
   });
 
   it("select all marks every terminal with one click", () => {
@@ -556,7 +647,8 @@ describe("selecting several terminals", () => {
 
   it("keeps every selected terminal open when confirmation is cancelled", async () => {
     renderGrid();
-    fireEvent.contextMenu(screen.getByTestId("pane-cell-Mika"));
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+    fireEvent.click(screen.getByTestId("select-terminal-Mika"));
     fireEvent.click(screen.getByTestId("close-selected-terminals"));
 
     fireEvent.click(screen.getByRole("button", { name: "Keep them open" }));
@@ -681,7 +773,9 @@ describe("the prompt bar composes before it sends", () => {
     type("run the tests");
 
     await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-    expect(api.composePrompt).toHaveBeenCalledWith("Mika", "run the tests");
+    // The third argument is the dropped-file list — empty here, because this
+    // instruction was typed with nothing attached.
+    expect(api.composePrompt).toHaveBeenCalledWith("Mika", "run the tests", []);
     expect(api.promptTerminal).not.toHaveBeenCalled();
   });
 
@@ -693,7 +787,13 @@ describe("the prompt bar composes before it sends", () => {
     fireEvent.click(screen.getByTestId("prompt-preview-send"));
 
     await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "## Task\nRun the tests."),
+      expect(api.promptTerminal).toHaveBeenCalledWith(
+        "Mika",
+        "## Task\nRun the tests.",
+        // Nothing carried alongside: the composed text already contains
+        // whatever was dropped, so sending it again would duplicate it.
+        { attachments: [] },
+      ),
     );
   });
 
@@ -705,7 +805,9 @@ describe("the prompt bar composes before it sends", () => {
     fireEvent.click(screen.getByTestId("prompt-preview-verbatim"));
 
     await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        attachments: [],
+      }),
     );
   });
 
@@ -729,8 +831,156 @@ describe("the prompt bar composes before it sends", () => {
     type("run the tests");
 
     await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        attachments: [],
+      }),
     );
+  });
+});
+
+/*
+ * Dropping a screenshot on the prompt bar.
+ *
+ * This is the gesture the whole feature exists for, and its failure mode is
+ * quiet: a user drops a picture of a broken layout, types "fix this", and the
+ * agent — which frequently cannot open an image at all — receives a path and a
+ * pronoun. So what is pinned here is that the CONTENTS of the file reach the
+ * composition, not merely that a drop was accepted.
+ */
+describe("dropping files on the prompt bar", () => {
+  /** A DataTransfer stand-in; jsdom cannot construct a real one. */
+  function transfer(types: string[]) {
+    return {
+      types,
+      files: [],
+      items: [],
+      dropEffect: "none",
+      getData: (kind: string) =>
+        kind === "text/uri-list" ? "file:///C:/work/shot.png" : "",
+    } as unknown as DataTransfer;
+  }
+
+  const drop = (types: string[] = ["Files"]) =>
+    fireEvent.drop(screen.getByTestId("agentic-composer"), {
+      dataTransfer: transfer(types),
+    });
+
+  it("reads the dropped file instead of typing its path into the pane", async () => {
+    renderGrid();
+
+    drop();
+
+    await waitFor(() => expect(api.attachToTerminal).toHaveBeenCalled());
+    const [name, payload] = vi.mocked(api.attachToTerminal).mock.calls[0];
+    expect(name).toBe("Mika");
+    expect(payload.analyze).toBe(true);
+    // Held rather than typed: the user is still writing the sentence that
+    // explains the file, and it goes in with that sentence.
+    expect(payload.deliver).toBe(false);
+    expect(payload.paths).toEqual(["C:/work/shot.png"]);
+  });
+
+  it("shows what was read out of the file, not just its name", async () => {
+    renderGrid();
+
+    drop();
+
+    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
+    const strip = screen.getByTestId("agentic-attachments");
+    expect(strip.textContent).toContain("shot.png");
+    expect(strip.textContent).toContain("described");
+  });
+
+  it("carries the analysis into the composition", async () => {
+    renderGrid();
+    drop();
+    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
+
+    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    fireEvent.change(box, { target: { value: "fix this" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    await waitFor(() => expect(api.composePrompt).toHaveBeenCalled());
+    const attachments = vi.mocked(api.composePrompt).mock.calls[0][2];
+    expect(attachments).toHaveLength(1);
+    expect(attachments?.[0].detail).toContain("submit button overflows");
+  });
+
+  it("keeps the attachment when the user backs out of the rewrite", async () => {
+    // Discarding a proposed wording is not a reason to lose the dropped file.
+    renderGrid();
+    drop();
+    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
+
+    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    fireEvent.change(box, { target: { value: "fix this" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("prompt-preview-cancel"));
+
+    expect(screen.getByTestId("agentic-attachments").textContent).toContain("shot.png");
+  });
+
+  it("lets an attachment be taken back off", async () => {
+    renderGrid();
+    drop();
+    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("agentic-attachment-remove-shot.png"));
+
+    expect(screen.queryByTestId("agentic-attachment-shot.png")).toBeNull();
+  });
+
+  it("clears the attachments once they have been sent", async () => {
+    renderGrid();
+    drop();
+    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
+
+    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    fireEvent.change(box, { target: { value: "fix this" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("prompt-preview-send"));
+
+    // Otherwise the next, unrelated instruction would silently carry the old
+    // screenshot along with it.
+    await waitFor(() => expect(screen.queryByTestId("agentic-attachments")).toBeNull());
+  });
+
+  it("ignores a drag carrying only selected text", async () => {
+    renderGrid();
+
+    drop(["text/plain"]);
+
+    expect(api.attachToTerminal).not.toHaveBeenCalled();
+  });
+
+  it("reports an analysis that came back empty rather than pretending", async () => {
+    vi.mocked(api.attachToTerminal).mockResolvedValue({
+      terminal: "Mika",
+      references: [],
+      files: [],
+      copied: 0,
+      submitted: false,
+      delivered: false,
+      analysis: [],
+    });
+    renderGrid();
+
+    drop();
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalled());
+    expect(pushToast.mock.calls[0][0]).toBe("warning");
+  });
+
+  it("surfaces a failed attach instead of losing the drop silently", async () => {
+    vi.mocked(api.attachToTerminal).mockRejectedValue(new Error("pane is gone"));
+    renderGrid();
+
+    drop();
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "pane is gone"));
   });
 });
 
@@ -848,5 +1098,63 @@ describe("a workspace with far more panes than the window fits", () => {
     // The backend cap; nothing may be silently dropped on the way to the screen.
     renderGrid(manyPanes(100));
     expect(screen.getAllByTestId(/^pane-cell-/)).toHaveLength(100);
+  });
+});
+
+/*
+ * The pane headers say what each session is doing, and that sentence goes stale
+ * in seconds. So the grid polls for it — separately from the workspace state,
+ * which changes only when a pane is opened, closed or moved.
+ */
+describe("session recaps", () => {
+  it("asks the backend what its own workspace's panes are doing", async () => {
+    renderGrid();
+
+    await waitFor(() =>
+      expect(api.fetchTerminalRecaps).toHaveBeenCalledWith("ide_test"),
+    );
+  });
+
+  it("hands each pane the recap that came back for it", async () => {
+    vi.mocked(api.fetchTerminalRecaps).mockResolvedValue({
+      workspace_id: "ide_test",
+      terminals: [
+        {
+          key: "mika",
+          name: "Mika",
+          status: "live",
+          recap: "Running pytest tests/unit/test_login.py",
+          recap_detail:
+            'Last asked to: "Fix the failing login test". Working now: Running pytest.',
+        },
+      ],
+    });
+
+    renderGrid();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-Mika").dataset.recap).toBe(
+        "Running pytest tests/unit/test_login.py",
+      ),
+    );
+    expect(screen.getByTestId("pane-Mika").dataset.recapDetail).toContain(
+      "Fix the failing login test",
+    );
+  });
+
+  it("falls back to the recap the workspace state carried", async () => {
+    // Nothing polled yet (and nothing ever will, here) — a pane must still open
+    // with a sentence in its header rather than with a blank that fills in.
+    vi.mocked(api.fetchTerminalRecaps).mockRejectedValue(new Error("offline"));
+    const session = sessionWith([["Mika", 0]]);
+    session.terminals[0].recap = "Waiting for its first instruction.";
+
+    renderGrid(session);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-Mika").dataset.recap).toBe(
+        "Waiting for its first instruction.",
+      ),
+    );
   });
 });

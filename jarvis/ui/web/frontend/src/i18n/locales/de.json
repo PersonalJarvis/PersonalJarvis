@@ -3347,7 +3347,7 @@
     "selection": {
       "start": "Terminals auswählen",
       "finish": "Auswahl beenden",
-      "hint": "Terminal-Fenster zum Auswählen anklicken. Ein Rechtsklick wählt ein Fenster sofort aus.",
+      "hint": "Terminal-Fenster auswählen. Zuerst einschalten, dann die gewünschten Fenster anklicken.",
       "selected_count": "Ausgewählt: {0}",
       "select_all": "Alle auswählen",
       "clear_all": "Auswahl leeren",
