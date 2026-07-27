@@ -23,8 +23,11 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /interrupted``                → panes that came back and were never restarted
 * ``POST   /interrupted/continue``       → tell them to carry on ("continue")
 * ``PUT    /mode``                       → focused coding mode on/off
+* ``GET    /accounts``                   → which subscription new terminals use
+* ``PUT    /accounts/active``            → switch it (open panes keep theirs)
 * ``POST   /terminals``                  → open one more pane (split)
 * ``POST   /terminals/batch``            → open N more panes at once
+* ``DELETE /terminals/agent/{agent}``    → close every pane of one coding CLI
 * ``POST   /fanout``                     → run ONE task across several agents
   (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
@@ -56,6 +59,8 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import (
+    drop_analysis,
+    drops,
     interrupted,
     native_picker,
     recap_engine,
@@ -64,6 +69,11 @@ from jarvis.agentic_ide import (
 )
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
+from jarvis.agentic_ide.fleet_actions import (
+    close_agent_terminals,
+    terminals_closed_event,
+    wait_for_prompt_ready,
+)
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
 from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
@@ -79,15 +89,24 @@ from jarvis.agentic_ide.session import (
     agent_argv,
     coding_mode_event,
     get_registry,
+    sanitize_prompt,
     terminals_added_event,
 )
-
 from jarvis.agentic_ide.terminal_input import is_terminal_report_only
+
 from .surface_security import credentials_valid, is_loopback_request
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
+
+#: How long a fan-out waits for panes it just opened to start their agents.
+#: Shorter than the shared fleet budget on purpose: this one is spent inside an
+#: HTTP request, and the registry-command tool that a voice turn goes through
+#: gives up at 30 s — a wait that outlives its own caller reports nothing to
+#: anybody. Panes still coming up after this are reported as undelivered rather
+#: than waited for indefinitely.
+SPAWN_READY_TIMEOUT_S = 20.0
 
 
 async def _announce_coding_mode(request: Request) -> None:
@@ -120,6 +139,13 @@ _native_picker_lock = asyncio.Lock()
 # --------------------------------------------------------------------------- #
 # Models                                                                      #
 # --------------------------------------------------------------------------- #
+#: Bounds on the analysed drops one prompt may carry back. Both mirror the
+#: analysis module's own caps rather than restating numbers, so a change there
+#: cannot leave this schema rejecting payloads the analyser legitimately
+#: produces.
+DROP_DETAIL_MAX_CHARS = drop_analysis.MAX_TEXT_CHARS
+MAX_PROMPT_ATTACHMENTS = drops.MAX_FILES
+
 #: Reused wherever a caller may pick which subscription a pane runs on.
 _ACCOUNT_FIELD_DESCRIPTION = (
     "Which stored subscription of that agent to run on (see /api/agent-accounts). "
@@ -219,6 +245,18 @@ class CloseTerminalsRequest(BaseModel):
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
+    )
+
+
+class ActiveAccountRequest(BaseModel):
+    """Which subscription new terminals of one coding CLI should open on."""
+
+    agent: str = Field(description="Coding agent to switch: 'claude' or 'codex'.")
+    account_id: str = Field(
+        description=(
+            "Id of a stored subscription of that agent (see /api/agent-accounts). "
+            "Terminals that are already open keep the account they started with."
+        )
     )
 
 
@@ -324,6 +362,44 @@ class FanOutRequest(BaseModel):
     )
 
 
+class PromptAttachment(BaseModel):
+    """One analysed file the user dropped, on its way back into a prompt.
+
+    Returned by ``POST /terminals/{name}/attach?analyze=true`` and handed back
+    here unchanged. It travels through the caller rather than being held on the
+    server because a drop and the sentence that explains it are one user action
+    split across two requests: parking the analysis server-side would make two
+    browser tabs, the CLI and a voice turn fight over whose attachment is
+    "current".
+    """
+
+    name: str = Field(description="The dropped file's display name.")
+    reference: str = Field(
+        default="",
+        description="How the agent should refer to the file (@path or a quoted path).",
+    )
+    kind: str = Field(
+        default="other",
+        description="What the file is: image, text, pdf, or other.",
+    )
+    detail: str = Field(
+        default="",
+        max_length=DROP_DETAIL_MAX_CHARS,
+        description=(
+            "The vision description of an image, or the extracted text of a "
+            "document. Empty when neither could be produced."
+        ),
+    )
+    described_by: str = Field(
+        default="none",
+        description="Which layer produced 'detail': vision, extraction, or none.",
+    )
+    note: str = Field(
+        default="",
+        description="Why 'detail' is empty or shortened. Empty on the happy path.",
+    )
+
+
 class PromptRequest(BaseModel):
     prompt: str = Field(
         max_length=MAX_PROMPT_CHARS,
@@ -341,6 +417,16 @@ class PromptRequest(BaseModel):
         default=False,
         description="Compose and return the prompt WITHOUT sending it.",
     )
+    attachments: list[PromptAttachment] = Field(
+        default_factory=list,
+        max_length=MAX_PROMPT_ATTACHMENTS,
+        description=(
+            "Files the user dropped with this instruction, as returned by the "
+            "attach endpoint with analyze=true. Their descriptions and extracted "
+            "text are folded into the composed prompt so the coding agent gets "
+            "the content of a screenshot it may not be able to open itself."
+        ),
+    )
 
 
 class AgentStatus(BaseModel):
@@ -349,6 +435,14 @@ class AgentStatus(BaseModel):
     installed: bool
     version: str | None = None
     install_command: str | None = None
+    kind: str = Field(
+        default="cli",
+        description=(
+            "'cli' for a coding agent, 'shell' for a plain terminal. A client uses "
+            "this to say what a pane will be, without hardcoding entry names."
+        ),
+    )
+    description: str = Field(default="", description="One line for a picker.")
 
 
 class AgentsResponse(BaseModel):
@@ -702,8 +796,10 @@ async def get_state() -> dict:
 
 @router.get("/agents", response_model=AgentsResponse, summary="Coding agents available")
 async def get_agents() -> AgentsResponse:
-    """Which coding-agent CLIs this machine can run, and how to install them.
+    """What this machine can open in a terminal, and how to install it.
 
+    Every registered entry (``jarvis.workspace.agents``): the coding-agent CLIs
+    and the plain terminal, which is "installed" whenever this host has a shell.
     Detection reuses the shared CLI prober, then re-checks that the binary is
     resolvable the way the PTY will resolve it — a GUI process starts with a
     minimal PATH, so "installed" and "launchable from here" are not the same
@@ -719,6 +815,8 @@ async def get_agents() -> AgentsResponse:
             installed=bool(info.installed and agent_argv(info.name) is not None),
             version=info.version,
             install_command=info.install_command,
+            kind=info.kind,
+            description=info.description,
         )
         for info in infos
     ]
@@ -945,9 +1043,7 @@ async def get_workspaces() -> WorkspacesResponse:
 
 
 @router.put("/workspaces/active", summary="Switch to another workspace")
-async def activate_workspace(
-    request: Request, req: ActivateWorkspaceRequest
-) -> dict:
+async def activate_workspace(request: Request, req: ActivateWorkspaceRequest) -> dict:
     """Bring one workspace to the front, or clear the front entirely.
 
     Nothing starts, stops or restarts: the agents in every open workspace keep
@@ -1304,8 +1400,54 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    await _announce_coding_mode(request)
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None:
+        try:
+            await bus.publish(
+                coding_mode_event(registry.session, source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - the mode is set either way
+            log.debug("AgenticIdeCodingModeChanged publish failed: %s", exc)
+
     return {"ok": True, "focus_mode": enabled}
+
+
+@router.get("/accounts", summary="Which subscription new terminals use")
+async def get_accounts() -> dict:
+    """The active subscription of every coding CLI, with its display name.
+
+    The workspace's own view of the account switcher: which plan the next
+    terminal will spend, and how many are registered — enough for a surface to
+    stay quiet for everyone holding a single login. The full list, its sign-in
+    state and the CRUD around it live under ``/api/agent-accounts``.
+    """
+    registry = get_registry()
+    return {"ok": True, "accounts": await asyncio.to_thread(registry.active_accounts)}
+
+
+@router.put("/accounts/active", summary="Switch which subscription new terminals use")
+async def set_active_account(req: ActiveAccountRequest) -> dict:
+    """Point new terminals of one coding CLI at another subscription.
+
+    Running panes are deliberately untouched: each carries the account it was
+    opened with, so this can never move an agent mid-conversation onto a plan
+    whose history does not contain that conversation. The choice also becomes
+    the machine's stored default, so it survives a restart.
+    """
+    registry = get_registry()
+    try:
+        account = await registry.set_active_account(req.agent, req.account_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    display = AGENT_DISPLAY.get(req.agent, req.agent)
+    return {
+        "ok": True,
+        "agent": req.agent,
+        "active_account": account.id,
+        "active_label": account.label,
+        "message": f"New {display} terminals will use {account.label}.",
+        "state": registry.state(),
+    }
 
 
 @router.post("/terminals", summary="Open one more terminal")
@@ -1625,6 +1767,8 @@ async def terminal_attach(
     paths: str | None = Form(default=None),  # noqa: B008
     submit: bool = Form(default=False),  # noqa: B008
     note: str | None = Form(default=None),  # noqa: B008
+    analyze: bool = Form(default=False),  # noqa: B008
+    deliver: bool = Form(default=True),  # noqa: B008
 ) -> dict:
     """Put dropped or pasted files in front of the agent in terminal ``name``.
 
@@ -1641,9 +1785,20 @@ async def terminal_attach(
     The resulting references are TYPED into the pane, not submitted, so the user
     can add a sentence before pressing Enter — which is what someone dropping a
     screenshot almost always wants to do. ``submit=true`` sends it as-is.
-    """
-    from jarvis.agentic_ide import drops
 
+    Two flags change what a drop is FOR, and the prompt bar uses both:
+
+    * ``analyze=true`` reads the files' contents — a vision-capable model
+      describes an image, a document has its text extracted — and returns that
+      under ``analysis``. Hand it back to ``/terminals/{name}/prompt`` as
+      ``attachments`` and the composed brief carries the picture's contents,
+      which is what makes dropping a screenshot work against an agent that
+      cannot open one.
+    * ``deliver=false`` stores and analyses without typing anything into the
+      pane, for a caller that is assembling a prompt rather than handing the
+      agent a path right now. The files are on disk and referenced either way,
+      so nothing is lost if the user then walks away.
+    """
     registry = get_registry()
     # Resolved across every open workspace, not just the front one: call-signs
     # are unique across them, and a file dropped on a pane belongs to THAT
@@ -1661,6 +1816,12 @@ async def terminal_attach(
     references: list[str] = []
     stored_names: list[str] = []
     copied = 0
+    # (name, bytes, reference) for everything that ends up attached — collected
+    # only when the caller asked for an analysis, because reading a file the
+    # agent could simply open itself is work nobody is waiting for. The
+    # reference travels with the bytes so the description and the path the agent
+    # opens can never drift apart.
+    readable: list[tuple[str, bytes, str]] = []
 
     # 1. Paths that came with the drag. A path already inside the workspace is
     #    used as it lies; anything else is copied in.
@@ -1671,8 +1832,19 @@ async def terminal_attach(
             continue
         inside = drops.within_workspace(candidate, session.folder)
         if inside is not None:
-            references.append(drops.reference(inside, agent=term.agent))
+            reference = drops.reference(inside, agent=term.agent)
+            references.append(reference)
             stored_names.append(Path(inside).name)
+            if analyze:
+                # Nothing is copied on this route, so the bytes have to be read
+                # here to be described. A failure is not fatal: the reference
+                # still ships, the file simply goes undescribed.
+                try:
+                    body = await asyncio.to_thread((Path(session.folder) / inside).read_bytes)
+                except OSError as exc:
+                    log.info("Agentic IDE attach: %r not readable for analysis (%s)", inside, exc)
+                else:
+                    readable.append((Path(inside).name, body, reference))
             continue
         # expanduser() is string/env work, not a filesystem call; the read
         # itself goes to a worker thread (a dropped file may live on a slow
@@ -1701,15 +1873,25 @@ async def terminal_attach(
         if data:
             to_copy.append((upload.filename or "file", data))
 
+    # ``store`` silently skips empty entries, so they are dropped HERE instead —
+    # that keeps ``stored[i]`` paired with ``to_copy[i]`` positionally. Pairing
+    # by name would be wrong: two files that sanitize to the same name are
+    # stored as two distinct files but would collapse into one key, and one drop
+    # would be referenced twice while the other went missing.
+    to_copy = [(name, data) for name, data in to_copy if data]
+
     if to_copy:
         try:
             stored = await asyncio.to_thread(drops.store, session.folder, to_copy)
         except drops.DropError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         copied = len(stored)
-        for item in stored:
-            references.append(drops.reference(item.relative_path, agent=term.agent))
+        for item, (_original, data) in zip(stored, to_copy, strict=True):
+            reference = drops.reference(item.relative_path, agent=term.agent)
+            references.append(reference)
             stored_names.append(item.name)
+            if analyze:
+                readable.append((item.name, data, reference))
 
     if not references:
         raise HTTPException(
@@ -1717,13 +1899,23 @@ async def terminal_attach(
             detail="That drop carried nothing this pane could use.",
         )
 
+    analysis: list[dict] = []
+    if analyze and readable:
+        analysis = [item.to_dict() for item in await _analyze_drops(readable)]
+
     payload = " ".join(references)
     if note and note.strip():
         payload = f"{payload} {note.strip()}"
 
+    delivered = False
     try:
-        if submit:
+        if not deliver:
+            # Held deliberately: the caller is building a prompt around these
+            # files and will send the whole thing itself.
+            pass
+        elif submit:
             await registry.send_prompt(term.name, payload)
+            delivered = True
         else:
             # Typed, not submitted: the user still wants to say what to DO with
             # the file. A leading space keeps it off whatever they already typed.
@@ -1732,6 +1924,7 @@ async def terminal_attach(
                     status_code=409,
                     detail=f"{term.name} is not accepting input right now.",
                 )
+            delivered = True
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1741,8 +1934,41 @@ async def terminal_attach(
         "references": references,
         "files": stored_names,
         "copied": copied,
-        "submitted": bool(submit),
+        "submitted": bool(submit and delivered),
+        "delivered": delivered,
+        "analysis": analysis,
     }
+
+
+async def _analyze_drops(
+    readable: list[tuple[str, bytes, str]],
+) -> list[drop_analysis.DropAnalysis]:
+    """Describe/extract the dropped files. Never raises — an analysis is a bonus.
+
+    A drop that reached this point is already stored and referenced; the pane
+    works with or without a description, so a provider outage here must cost the
+    description and nothing else.
+    """
+    import mimetypes
+
+    from jarvis.brain.drop_context import DroppedItem
+
+    items = [
+        (
+            DroppedItem(
+                name=name,
+                mime=mimetypes.guess_type(name)[0] or "application/octet-stream",
+                data=data,
+            ),
+            reference,
+        )
+        for name, data, reference in readable
+    ]
+    try:
+        return await drop_analysis.analyze(items)
+    except Exception as exc:  # noqa: BLE001 - the drop itself already succeeded
+        log.info("Agentic IDE attach: analysis failed (%s)", exc)
+        return []
 
 
 @router.post("/fanout", summary="Run one task across several coding agents")
@@ -1794,8 +2020,40 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
                 await bus.publish(
                     terminals_added_event(session, created, source_layer="agentic_ide_routes")
                 )
+                # Bringing the workspace forward is not cosmetic here: a pane's
+                # agent process starts when the VIEW mounts it, so a workspace
+                # sitting behind another section never starts the panes this
+                # call just opened — and briefing them would then be impossible
+                # by construction.
+                from jarvis.core.events import NavigateSidebar
+
+                await bus.publish(
+                    NavigateSidebar(
+                        section="agentic-ide", source_layer="agentic_ide_routes"
+                    )
+                )
             except Exception as exc:  # noqa: BLE001 - notification is not the work
                 log.debug("AgenticIdeTerminalsAdded publish failed: %s", exc)
+
+        if created and session is not None and bus is not None:
+            # Wait for the panes to come up before typing into them. Without
+            # this, "open one and brief it" opened the pane and briefed NOBODY:
+            # a registry entry exists microseconds after the call, its agent
+            # does not, and every delivery came back "not_running" (the known
+            # limit this replaces). Bounded well under the command tool's HTTP
+            # budget, and panes that never make it stay in `undelivered`.
+            ready = await wait_for_prompt_ready(
+                session,
+                [t.name for t in created],
+                timeout_s=SPAWN_READY_TIMEOUT_S,
+            )
+            late = [t.name for t in created if t.name not in ready]
+            if late:
+                log.info(
+                    "Agentic IDE fan-out: panes not ready within %.0fs: %s",
+                    SPAWN_READY_TIMEOUT_S,
+                    ", ".join(late),
+                )
 
     names = list(req.terminals or []) + [t.name for t in created]
     if not names:
@@ -1874,6 +2132,34 @@ def _delivery_payload(delivery: object) -> dict:
     }
 
 
+def _unknown_terminal_detail(registry: object, wanted: str) -> str:
+    """The "no such pane" 404 for a prompt, with the move that RECOVERS it.
+
+    Listing the running panes is not enough on its own. A caller that wanted to
+    brief a pane called "Lee" reads a bare "not found" as "then open one" — and
+    call-signs come from a fixed pool in a fixed order, so the pane it opens is
+    called something else entirely and the very same prompt 404s again. A live
+    voice session on 2026-07-27 went round that loop four times and left four
+    blank panes behind, without ever briefing anyone.
+
+    So the error names the one move that works: brief a pane that exists, or
+    open AND brief a new one in a single fan-out call, which returns the
+    call-sign it was actually given.
+    """
+    running = ", ".join(
+        t.name for s in registry.sessions for t in s.terminals  # type: ignore[attr-defined]
+    )
+    return (
+        f"No terminal called {wanted!r}. Running: {running or 'none'}. "
+        "Call-signs are assigned automatically and cannot be requested, so "
+        "opening another pane will NOT produce this name and retrying this "
+        "prompt after a spawn fails the same way. Either prompt one of the "
+        "panes listed above, or open and brief a new one in ONE call: "
+        "POST /api/agentic-ide/fanout with spawn=[{\"count\": 1}] and the "
+        "instruction."
+    )
+
+
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
 async def terminal_prompt(name: str, req: PromptRequest) -> dict:
     """Type ``prompt`` into the terminal called ``name`` and press Enter.
@@ -1886,14 +2172,33 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
 
     ``dry_run=true`` returns the composed prompt without sending it, so a caller
     can show it for approval first.
+
+    ``attachments`` carries files the user dropped with the instruction, already
+    analysed by the attach endpoint. Their descriptions and extracted text go
+    into the composition, which is the difference between an agent being told
+    "fix the layout in the screenshot" and being told what the screenshot
+    actually shows.
     """
     registry = get_registry()
     if not registry.sessions:
         raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
 
+    # Resolve the pane FIRST, so an unknown call-sign fails identically whether
+    # or not composition was asked for. It used to 404 with composition on and
+    # 409 with it off, which gave a caller two different-looking dead ends for
+    # one cause — and neither of them said what to do about it.
+    found = registry.find_terminal(name)
+    if found is None:
+        raise HTTPException(
+            status_code=404, detail=_unknown_terminal_detail(registry, name)
+        )
+
     text = req.prompt
     composed_by = "raw"
     files: list[str] = []
+    attachments = [
+        drop_analysis.DropAnalysis.from_dict(a.model_dump()) for a in req.attachments
+    ]
     if req.compose:
         from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
 
@@ -1901,23 +2206,29 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         # reads the codebase to attach `@file` references, and taking those
         # from the front workspace while sending to a pane in another one would
         # point the agent at files that are not in its tree.
-        found = registry.find_terminal(name)
-        if found is None:
-            known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
-            raise HTTPException(
-                status_code=404,
-                detail=f"No terminal called {name!r}. Running: {known}.",
-            )
         session, term_for_compose = found
         result = await compose_prompt(
             req.prompt,
             session=session,
             terminal_name=term_for_compose.name,
             agent_display=AGENT_DISPLAY.get(term_for_compose.agent, term_for_compose.agent),
+            attachments=attachments,
         )
         text, composed_by, files = result.text, result.composed_by, result.files
         if not text:
             raise HTTPException(status_code=422, detail="The prompt was empty after composition.")
+    elif attachments:
+        # Attachments without composition still have to reach the agent. Silently
+        # dropping them would be the worst reading of this request: the caller
+        # said "here is what the user dropped" and the agent would receive a
+        # sentence about a screenshot nobody described. The deterministic
+        # renderer is the same one the no-provider path uses.
+        from jarvis.agentic_ide import prompt_blueprint
+
+        text = sanitize_prompt(
+            prompt_blueprint.render_fallback(text, [], attachments), keep_newlines=True
+        )[:MAX_PROMPT_CHARS]
+        composed_by = "fallback"
 
     if req.dry_run:
         return {
@@ -1927,6 +2238,7 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
             "composed": text,
             "composed_by": composed_by,
             "files": files,
+            "attachments": [a.to_dict() for a in attachments],
             "dry_run": True,
         }
 
@@ -2121,11 +2433,17 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 else:
                     registry.write(term.key, data, pane_workspace)
             elif kind == "r":
+                # ``on_output`` identifies THIS socket. A pane open in two
+                # places has two viewers and one pseudo-terminal, so a size
+                # from the viewer that no longer holds the pane would set the
+                # agent's screen to a window nobody is reading — and the viewer
+                # that IS being read has no way to notice or correct it.
                 registry.resize(
                     term.key,
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
                     pane_workspace,
+                    viewer=on_output,
                 )
     finally:
         # The viewer went away — switched tab, reloaded, closed the browser.
@@ -2139,7 +2457,6 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         # and releasing it then would leave a live agent painting into nothing
         # (BUG-113).
         registry.detach(term.key, pane_workspace, viewer=on_output)
-
 
 
 def _safe_int(value: object, default: int) -> int:

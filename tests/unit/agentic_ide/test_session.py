@@ -490,3 +490,51 @@ async def test_report_includes_status_and_folder(
     assert data["name"] == "Alex"
     assert data["folder"] == str(tmp_path)
     assert data["status"] == "pending"
+
+
+async def test_a_displaced_viewer_cannot_resize_the_pane_it_lost(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A pseudo-terminal has one size; only the viewer watching it may set it.
+
+    A pane open in two places — a second window, the browser UI beside the
+    desktop app — used to hand the agent whichever size arrived last. Combined
+    with the pane's own "I already sent this size" memory, the viewer being read
+    then had no reason left to correct it, and the agent kept formatting for a
+    window nobody was looking at: a maximized pane drawing into a narrow strip
+    (reported 2026-07-27).
+    """
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    async def first_viewer(_text: str) -> None: ...
+    async def second_viewer(_text: str) -> None: ...
+
+    await registry.attach("Alex", 80, 24, first_viewer, _noop_exit)
+    term = registry.session.terminals[0]
+    # The second window takes the pane over — the newest viewer always wins.
+    await registry.attach("Alex", 200, 50, second_viewer, _noop_exit)
+    fake_pty.resizes.clear()
+
+    # The displaced viewer keeps measuring its own window and reporting it.
+    assert registry.resize(term.key, 40, 20, viewer=first_viewer) is False
+    assert fake_pty.resizes == [], "a displaced viewer must not move the agent's screen"
+
+    # The viewer that actually holds the pane still can.
+    assert registry.resize(term.key, 200, 50, viewer=second_viewer) is True
+    assert fake_pty.resizes == [(term.pty_id, 200, 50)]
+
+
+async def test_an_internal_resize_needs_no_viewer(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A repaint nudge and a test speak for the pane itself, not for a window."""
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    async def viewer(_text: str) -> None: ...
+
+    await registry.attach("Alex", 80, 24, viewer, _noop_exit)
+    term = registry.session.terminals[0]
+    fake_pty.resizes.clear()
+
+    assert registry.resize(term.key, 120, 40) is True
+    assert fake_pty.resizes == [(term.pty_id, 120, 40)]

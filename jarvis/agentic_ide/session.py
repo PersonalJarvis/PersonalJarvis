@@ -76,6 +76,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from jarvis.workspace import agents as workspace_agents
 
 from . import recap_engine, resume_store
 from .agent_sessions import (
@@ -92,13 +93,76 @@ from .terminal_input import THEME_COLOURS, TerminalQueryResponder
 from .transcript import ReplayBuffer, Transcript
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from jarvis.agent_accounts import AgentAccount
     from jarvis.terminal.pty_manager import PtyManager
 
-# Agents the IDE can run. Kept parallel to jarvis.workspace.agents (same two
-# CLIs, same display names) but with argv built for a one-shot agent process
-# rather than a persistent shell.
+# The coding CLIs a pane can run, and the binary each one is. This table is what
+# "an agent" means to the rest of this module: an account can be pinned to it, a
+# conversation can be resumed in it, and a prompt can be typed into it.
+#
+# argv is built here rather than reused from jarvis.workspace.agents because the
+# IDE runs the agent as the PTY's OWN process, not inside a persistent shell.
 AGENT_BINARIES: dict[str, str] = {"claude": "claude", "codex": "codex"}
-AGENT_DISPLAY: dict[str, str] = {"claude": "Claude Code", "codex": "Codex"}
+
+# A pane that runs the machine's own shell and nothing else — see `agent_argv`.
+# It is NOT in AGENT_BINARIES on purpose: it has no account, no conversation to
+# resume, and (deliberately) no prompt injection, and every one of those falls
+# out of that single membership test instead of needing a special case.
+PLAIN_TERMINAL: str = workspace_agents.PLAIN_TERMINAL
+
+# What each runnable is called on screen. Read from the workspace registry so a
+# newly registered CLI is offerable in the IDE without a second table to keep in
+# step (jarvis.workspace.agents.register_agent).
+AGENT_DISPLAY: dict[str, str] = {a.name: a.display_name for a in workspace_agents.list_agents()}
+
+
+def agent_display(agent: str) -> str:
+    """What ``agent`` is called on screen — the name itself if nothing knows it.
+
+    Asks the registry rather than only the snapshot above, so an entry
+    registered after import still gets its proper label.
+    """
+    spec = workspace_agents.get_agent(agent)
+    if spec is not None:
+        return spec.display_name
+    return AGENT_DISPLAY.get(agent, agent)
+
+
+def is_runnable(agent: str) -> bool:
+    """May a pane run this? Every registered entry, plain terminal included."""
+    return workspace_agents.get_agent(agent) is not None
+
+
+def accepts_prompts(agent: str) -> bool:
+    """May Jarvis type into this pane from the outside (prompt bar, voice, CLI)?
+
+    Only into an AGENT. A plain terminal is a live shell prompt, so an injected
+    line would not be read by a coding agent — it would be EXECUTED, which turns
+    the one keystroke channel this app exposes into arbitrary command execution
+    by voice. That is precisely the boundary the module docstring's rule 1 draws,
+    and it is why a plain terminal is typed into by hand or not at all.
+    """
+    if agent in AGENT_BINARIES:
+        return True
+    spec = workspace_agents.get_agent(agent)
+    return spec is not None and spec.is_coding_agent
+
+
+def _unavailable(agent: str) -> str:
+    """Why this pane cannot open, said in the terms of what it would have run.
+
+    A missing coding CLI is installable and the message says where; a host with
+    no shell at all is not something the user can fix from the CLIs page, and
+    pointing them there would send them looking for a product that does not
+    exist.
+    """
+    pretty = agent_display(agent)
+    if accepts_prompts(agent):
+        return (
+            f"{pretty} is not installed or not on this machine's PATH. "
+            "Install it from the CLIs page, then try again."
+        )
+    return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 # How many panes one workspace may hold.
 #
@@ -455,10 +519,23 @@ def account_home(agent: str, account_id: str | None) -> Path | None:
 
 
 def agent_argv(agent: str) -> tuple[str, ...] | None:
-    """argv that runs ``agent`` as the PTY's own process, or None if missing."""
+    """argv that runs ``agent`` as the PTY's own process, or None if missing.
+
+    A plain terminal resolves to this machine's own interactive shell
+    (``discover_shells()`` order: pwsh > Windows PowerShell > cmd > Git Bash, or
+    ``$SHELL`` first on macOS/Linux) — no agent wrapped around it, and None on a
+    host that has no shell at all, which reads the same as a missing binary.
+    """
     binary = AGENT_BINARIES.get(agent)
     if binary is None:
-        return None
+        spec = workspace_agents.get_agent(agent)
+        if spec is None:
+            return None
+        if not spec.is_coding_agent:
+            return workspace_agents.plain_terminal_argv()
+        # A CLI registered at runtime: run the command it declared, resolved
+        # through the same shim handling the built-in agents get below.
+        binary = spec.launch_command or spec.name
     try:
         from jarvis.core.path_augment import ensure_cli_paths
 
@@ -617,6 +694,11 @@ class Terminal:
             "name": self.name,
             "agent": self.agent,
             "display_name": self.display_name,
+            # Can Jarvis type into this pane at all? False for a plain terminal,
+            # which is a shell prompt rather than an agent — the prompt bar and
+            # the voice path both have to know, or they would offer a target
+            # that refuses every instruction sent to it.
+            "accepts_prompts": accepts_prompts(self.agent),
             "index": self.index,
             "column": self.column,
             "slot": self.slot,
@@ -794,6 +876,11 @@ class Registry:
         # changed.
         self._sessions: dict[str, Session] = {}
         self._active: str | None = None
+        # Which subscription NEW panes of each coding CLI open on, chosen in the
+        # workspace's own settings. Empty means "whatever the stored default
+        # says" — `active_account_id` is the only reader and owns that fallback,
+        # so an untouched install behaves exactly as it did before.
+        self._active_accounts: dict[str, str] = {}
         # Injectable so tests can drive the registry against a fake PTY pool
         # without a real pseudo-terminal (and without a coding agent installed).
         self._pty: PtyManager | None = pty_manager
@@ -811,7 +898,6 @@ class Registry:
         # it is first awaited on, and the registry is also built in tests that
         # run each case on a loop of its own.
         self._cold_start: asyncio.Semaphore | None = None
-
 
     # ---------------------------------------------------------------- state
     @property
@@ -849,7 +935,76 @@ class Registry:
             "max_workspaces": MAX_WORKSPACES,
             "active_id": self._active,
             "workspaces": self.workspaces(),
+            "accounts": self.active_accounts(),
         }
+
+    # ------------------------------------------------------------- accounts
+    def active_account_id(self, agent: str) -> str | None:
+        """Which subscription of ``agent`` the next new pane opens on.
+
+        The workspace's own choice when one was made here, the stored default
+        otherwise — and an id that no longer resolves degrades to the built-in
+        login rather than to nothing (``resolve_account`` owns that fallback).
+        ``None`` only for something that is not a coding CLI with accounts.
+        """
+        if agent not in AGENT_BINARIES:
+            return None
+        return resolve_account(agent, self._active_accounts.get(agent))
+
+    def active_accounts(self) -> list[dict[str, Any]]:
+        """The active subscription of every coding CLI, as the UI shows it.
+
+        Labels rather than ids, because an id is not something anybody can read
+        back — "Work seat" is the answer to "which plan does the next terminal
+        spend?". The count travels with it so a surface can stay quiet for
+        everyone holding a single login and only appear for the few holding two.
+        """
+        from jarvis import agent_accounts
+
+        rows: list[dict[str, Any]] = []
+        for agent in AGENT_BINARIES:
+            account_id = self.active_account_id(agent)
+            rows.append(
+                {
+                    "agent": agent,
+                    "display_name": AGENT_DISPLAY.get(agent, agent),
+                    "active_account": account_id,
+                    "active_label": account_label(account_id),
+                    "account_count": len(agent_accounts.list_accounts(agent)),  # type: ignore[arg-type]
+                }
+            )
+        return rows
+
+    async def set_active_account(self, agent: str, account_id: str) -> AgentAccount:
+        """Point NEW panes of ``agent`` at ``account_id``. This is the switch.
+
+        Nothing that is already open moves. A pane carries the account it was
+        created with (see ``resolve_account``), so switching here can never
+        re-point a running agent onto a plan whose history has never seen its
+        conversation — the same promise the settings surface makes out loud.
+
+        The choice is written through to the stored default as well, so it
+        survives a restart and the app's own account page cannot end up
+        disagreeing with the workspace about which seat is in use.
+        """
+        if agent not in AGENT_BINARIES:
+            raise SessionError(f"Unknown agent: {agent}")
+        from jarvis import agent_accounts
+
+        account = await asyncio.to_thread(agent_accounts.resolve, account_id)
+        if account is None or account.platform != agent:
+            raise SessionError(
+                f"{AGENT_DISPLAY.get(agent, agent)} has no account with id {account_id!r}."
+            )
+        self._active_accounts[agent] = account.id
+        try:
+            await asyncio.to_thread(agent_accounts.set_active, agent, account.id)  # type: ignore[arg-type]
+        except agent_accounts.AccountError as exc:
+            # The pin above already governs this session; only its survival past
+            # a restart is lost, and that is worth a log rather than a failure.
+            logger.warning("Agentic IDE: the active account was not persisted: {}", exc)
+        logger.info("Agentic IDE: new {} terminals will use {!r}", agent, account.label)
+        return account
 
     def _manager(self) -> PtyManager:
         if self._pty is None:
@@ -897,7 +1052,9 @@ class Registry:
                     "before opening another."
                 )
 
-            unknown = {str(r.get("agent")) for r in requested} - set(AGENT_BINARIES)
+            unknown = {
+                str(r.get("agent")) for r in requested if not is_runnable(str(r.get("agent")))
+            }
             if unknown:
                 raise SessionError(f"Unknown agent(s): {', '.join(sorted(unknown))}")
 
@@ -905,11 +1062,7 @@ class Registry:
                 {str(r.get("agent")) for r in requested if agent_argv(str(r.get("agent"))) is None}
             )
             if missing:
-                pretty = ", ".join(AGENT_DISPLAY.get(m, m) for m in missing)
-                raise SessionError(
-                    f"{pretty} is not installed or not on this machine's PATH. "
-                    "Install it from the CLIs page, then try again."
-                )
+                raise SessionError(" ".join(_unavailable(m) for m in missing))
 
             # Call-signs are unique across ALL open workspaces, not just within
             # this one. A name is how the user addresses a pane out loud, and a
@@ -937,7 +1090,7 @@ class Registry:
                         key=normalize(name) or f"t{index}",
                         name=name,
                         agent=agent,
-                        display_name=AGENT_DISPLAY.get(agent, agent),
+                        display_name=agent_display(agent),
                         index=index,
                         # A wizard-opened workspace is one row of columns; the
                         # user's own "split down" is what creates a stack.
@@ -1054,7 +1207,7 @@ class Registry:
         return session
 
     async def restore(self, snapshot: resume_store.Snapshot) -> RestoreResult:
-        """Reopen EVERY workspace a snapshot describes, starting nothing.
+        """Reopen the workspaces that were OPEN last, starting nothing.
 
         The panes come back with their call-signs, their coding CLIs, their grid
         coordinates and their resume handles — and in ``pending``, because
@@ -1203,7 +1356,7 @@ class Registry:
                 key=entry.key or normalize(entry.name) or f"t{index}",
                 name=entry.name,
                 agent=entry.agent,
-                display_name=AGENT_DISPLAY.get(entry.agent, entry.agent),
+                display_name=agent_display(entry.agent),
                 index=index,
                 column=entry.column,
                 slot=entry.slot,
@@ -1756,7 +1909,7 @@ class Registry:
                     rows=rows,
                     on_output=_output,
                     on_closed=_closed,
-                    env=_spawn_env(term),
+                    env=env,
                 )
             except Exception as exc:  # noqa: BLE001 - surfaced to the pane
                 term.status = "error"
@@ -1965,12 +2118,57 @@ class Registry:
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
 
-    def resize(self, key: str, cols: int, rows: int, workspace_id: str | None = None) -> bool:
+    def resize(
+        self,
+        key: str,
+        cols: int,
+        rows: int,
+        workspace_id: str | None = None,
+        viewer: Any = None,
+    ) -> bool:
+        """Tell this pane's agent how big its screen is.
+
+        ``viewer`` is the socket asking, and a pane accepts a size only from the
+        viewer that is actually WATCHING it — the same identity check `detach`
+        makes, for the same reason and one step further.
+
+        **Why a size needs an owner.** A pseudo-terminal has exactly one size,
+        while a pane may be open in more than one place: a second window, the
+        browser UI beside the desktop app, a contributor's `--dev` tab. Those
+        windows are different sizes, and this used to hand the agent whichever
+        one wrote last. That alone would merely be untidy — what made it stick
+        is the other half, in the pane itself: a viewer remembers the size it
+        sent and stays quiet while its own measurement does not change (see
+        `sentSize` in AgenticTerminal.tsx). So the moment a second viewer
+        overwrote the size, the first one had no reason left to speak, and the
+        agent kept formatting for a window nobody was looking at — a maximized
+        pane drawing its interface into a narrow strip down the left-hand side
+        (reported 2026-07-27), for as long as the pane stayed open.
+        `viewer` settles it: the size comes from the viewer holding the slot,
+        and a displaced one cannot move it any more than it can read from it.
+
+        Passing nothing keeps the old unconditional behaviour, which is what an
+        internal caller (a repaint nudge, a test) means by it.
+        """
         found = self._locate(key, workspace_id)
         if found is None:
             return False
         term = found[1]
         if not term.pty_id:
+            return False
+        current = term.viewer_output
+        # Equality, not only identity — a bound method is a fresh object on
+        # every attribute access (see `detach`).
+        if (
+            viewer is not None
+            and current is not None
+            and current is not viewer
+            and current != viewer
+        ):
+            logger.debug(
+                "Agentic IDE: ignored a resize for {} from a viewer that no longer holds it",
+                term.name,
+            )
             return False
         # The replayed screen has to follow the real one; otherwise the
         # transcript keeps wrapping at the old width.
@@ -2044,11 +2242,12 @@ class Registry:
         usually means "another one of these" — but a caller may name any
         installed agent, which is how the UI offers a choice of coding CLI.
 
-        ``account`` names which subscription of that agent to run on; without one
-        the pane inherits the anchor's, falling back to the active account. The
-        inheritance matters more than it looks: splitting a pane that runs the
-        second plan should stay on the second plan, or a "split" would quietly
-        move the work onto a different bill.
+        ``account`` names which subscription of that agent to run on. Without
+        one, a pane split off a NAMED anchor inherits that anchor's account —
+        splitting a pane that runs the second plan should stay on the second
+        plan, or a "split" would quietly move the work onto a different bill —
+        while every other new pane opens on the workspace's active account
+        (``set_active_account``).
         """
         async with self._lock:
             session = self.session
@@ -2068,11 +2267,10 @@ class Registry:
                 base = session.terminals[-1] if session.terminals else None
 
             chosen = agent or (base.agent if base else "claude")
-            if chosen not in AGENT_BINARIES:
+            if not is_runnable(chosen):
                 raise SessionError(f"Unknown agent: {chosen}")
             if agent_argv(chosen) is None:
-                pretty = AGENT_DISPLAY.get(chosen, chosen)
-                raise SessionError(f"{pretty} is not installed or not on this machine's PATH.")
+                raise SessionError(_unavailable(chosen))
 
             # Unused ACROSS every open workspace: a split must not hand this
             # pane a call-sign another tab already answers to.
@@ -2110,14 +2308,30 @@ class Registry:
                     if other.column == column and other.slot >= slot:
                         other.slot += 1
 
-            # Inherit the anchor's account only when the split stays on the same
-            # CLI — a Claude account id means nothing to Codex.
-            inherited = base.account if base is not None and base.agent == chosen else None
+            # Which subscription the new pane opens on, when the caller named
+            # none. Two different questions, so two different answers:
+            #
+            # * **A named anchor is a split** — "another one of these". It
+            #   inherits, and only when the CLI matches (a Claude account id
+            #   means nothing to Codex), so splitting a pane that runs the
+            #   second plan cannot quietly move the work onto a different bill.
+            # * **Everything else is a NEW terminal** — the batch behind "open
+            #   five more", the empty grid's button, the CLI. Those follow the
+            #   workspace's active account, which is exactly the promise the
+            #   account switcher makes: switching applies to new terminals.
+            #
+            # Anchor-less used to inherit from whatever pane happened to be last,
+            # which made the switch reach nothing a user could predict: flipping
+            # to the second seat and opening a terminal still billed the first.
+            if anchor and base is not None and base.agent == chosen:
+                inherited = base.account
+            else:
+                inherited = self.active_account_id(chosen)
             term = Terminal(
                 key=normalize(final) or f"t{len(session.terminals)}",
                 name=final,
                 agent=chosen,
-                display_name=AGENT_DISPLAY.get(chosen, chosen),
+                display_name=agent_display(chosen),
                 index=len(session.terminals),
                 column=column,
                 slot=slot,
@@ -2148,7 +2362,8 @@ class Registry:
         Deliberately a loop over ``add_terminal`` rather than a second placement
         implementation: the anchor, the call-sign pool, and the grid position are
         already decided there, and a batch that placed panes its own way would
-        drift from what the split buttons do.
+        drift from what the split buttons do. No anchor is named, so without an
+        explicit ``account`` every pane opens on the workspace's active one.
 
         The cap is the expected stopping point, so hitting it is not an error.
         A failure with NOTHING opened is — an unknown agent or a vanished binary
@@ -2375,6 +2590,16 @@ class Registry:
         if found is None:
             raise self._unknown_terminal(wanted)
         _session, term = found
+        if not accepts_prompts(term.agent):
+            # A plain terminal is a live SHELL prompt, so an injected line would
+            # not be read by an agent — it would run as a command. This is the
+            # one place the module docstring's rule 1 has to be enforced rather
+            # than merely implied, because such a pane exists on purpose now.
+            raise SessionError(
+                f"{term.name} is a {agent_display(term.agent).lower()}, not a coding agent — "
+                "Jarvis does not type into a shell. Type it there yourself, or send it "
+                "to an agent terminal."
+            )
         if term.status != "live" or not term.pty_id:
             raise SessionError(
                 f"{term.name} is not running right now (status: {term.status}) — nothing was sent."
@@ -2636,6 +2861,31 @@ def coding_mode_active() -> bool:
     return session is not None and bool(session.focus_mode)
 
 
+def running_call_signs() -> list[str]:
+    """Call-signs of the open workspace, or ``[]`` when none is open.
+
+    ONE answer for every layer that has to know which names are currently
+    speakable — the turn planner, the realtime session instructions, and the
+    addressed-terminal detector. They must agree: a layer that reads a
+    different roster than the detector either routes a turn nobody can serve or
+    withholds one the workspace owns.
+
+    Deliberately NOT gated on ``coding_mode_active``. The panes carry their
+    call-signs the moment they exist, and a user who says "what has Dana done"
+    with the focus toggle off means the same terminal they would mean with it
+    on. Callers that need the stricter mode ask ``coding_mode_active`` as well.
+
+    Never raises — an optional surface must not be able to break a caller.
+    """
+    try:
+        session = get_registry().session
+    except Exception:  # noqa: BLE001 - optional surface, never fatal
+        return []
+    if session is None:
+        return []
+    return [term.name for term in session.terminals]
+
+
 def coding_mode_event(session: Session | None, *, source_layer: str) -> Any:
     """The bus event announcing the EFFECTIVE coding mode to every client.
 
@@ -2678,16 +2928,21 @@ __all__ = [
     "MAX_PROMPT_CHARS",
     "MAX_TERMINALS",
     "MAX_WORKSPACES",
+    "PLAIN_TERMINAL",
     "Registry",
     "Session",
     "SessionError",
     "SessionNotReady",
     "Terminal",
+    "accepts_prompts",
     "agent_argv",
+    "agent_display",
     "coding_mode_active",
     "coding_mode_event",
     "get_registry",
+    "is_runnable",
     "reset_registry",
+    "running_call_signs",
     "sanitize_prompt",
     "terminals_added_event",
 ]

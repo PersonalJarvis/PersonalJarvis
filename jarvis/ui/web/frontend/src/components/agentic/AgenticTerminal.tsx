@@ -518,6 +518,15 @@ export function AgenticTerminal({
         return;
       }
       if (term.cols < 2 || term.rows < 2) return;
+      // Resizing a pane is the other half of the un-park story. Maximizing one,
+      // dragging a seam, changing the font — all of them are a user opening up
+      // a pane to READ it, and the pane it opens must not be a parked one still
+      // holding its agent's screen. BEFORE the early return below, deliberately:
+      // whether a size still needs announcing says nothing about whether the
+      // pane is being looked at, and a pane that came back at exactly the size
+      // it left would otherwise stay dark. The measurement inside only un-parks
+      // a pane that really is on screen.
+      revealIfOnScreen();
       const size = { cols: term.cols, rows: term.rows };
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
@@ -526,13 +535,6 @@ export function AgenticTerminal({
         return;
       }
       if (socket?.send({ t: "r", ...size })) sentSize = size;
-      // Resizing a pane is the other half of the un-park story. Maximizing one,
-      // dragging a seam, changing the font — all of them are a user opening up
-      // a pane to READ it, and the pane it opens must not be a parked one still
-      // holding its agent's screen. The measurement above already proved the
-      // container has area, so this only ever un-parks a pane that is really
-      // there; a pane genuinely off screen stays parked.
-      revealIfOnScreen();
     };
     resizeRef.current = sendResize;
 
