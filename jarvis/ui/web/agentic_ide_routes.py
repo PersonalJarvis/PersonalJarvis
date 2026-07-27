@@ -53,7 +53,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import native_picker, recents, resume_store
+from jarvis.agentic_ide import native_picker, recap, recents, resume_store
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
@@ -465,6 +465,21 @@ class ResumeOffer(BaseModel):
         description="Remembered folders from earlier sessions, which resuming does NOT reopen.",
     )
     workspaces: list[ResumeWorkspace] = Field(default_factory=list)
+
+
+class TerminalRecap(BaseModel):
+    """What one pane is doing, in the two lengths its header renders."""
+
+    key: str
+    name: str
+    status: str
+    recap: str = Field(description="One clause for the pane header; the pane's width clips it.")
+    recap_detail: str = Field(description="The one-or-two-sentence version, shown on hover.")
+
+
+class RecapsResponse(BaseModel):
+    workspace_id: str | None = None
+    terminals: list[TerminalRecap] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -1082,6 +1097,39 @@ async def close_terminal(name: str) -> dict:
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True, "closed": term.name, "state": get_registry().state()}
+
+
+@router.get("/recaps", response_model=RecapsResponse, summary="What every terminal is doing")
+async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
+    """A short recap per pane — the header line and its hover tooltip.
+
+    Separate from ``/state`` because the two change at completely different
+    rates. The workspace state changes when a pane is opened, closed or moved,
+    which is rare; a recap changes whenever an agent prints something, which is
+    constantly. Polling ``/state`` fast enough for a live recap would re-send
+    every project profile, resume flag and account label several times a minute
+    to update one sentence — so the cheap half is its own read.
+
+    Without ``workspace_id`` the workspace on screen answers. An unknown or
+    closed one comes back empty rather than as an error: a poll that outlives
+    the workspace it was started for is normal, not a failure worth a red pane.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        return RecapsResponse(workspace_id=None, terminals=[])
+    rows: list[TerminalRecap] = []
+    for term in session.terminals:
+        summary = recap.summarize(term)
+        rows.append(
+            TerminalRecap(
+                key=term.key,
+                name=term.name,
+                status=term.status,
+                recap=summary.headline,
+                recap_detail=summary.detail,
+            )
+        )
+    return RecapsResponse(workspace_id=session.id, terminals=rows)
 
 
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")

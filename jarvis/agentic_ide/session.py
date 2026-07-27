@@ -64,7 +64,8 @@ from uuid import uuid4
 
 from loguru import logger
 
-from . import resume_store
+
+from . import recap, resume_store
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -477,6 +478,11 @@ class Terminal:
     viewer_exit: Any = None
 
     def to_dict(self) -> dict[str, Any]:
+        # Read the replayed screen ONCE. `lines()` walks the whole scrollback,
+        # and both the line count below and the recap want it — asking twice per
+        # pane per poll is a cost with nothing to show for it.
+        lines = self.transcript.lines()
+        summary = recap.summarize(self, tail=lines[-recap.TAIL_LINES :])
         return {
             "key": self.key,
             "name": self.name,
@@ -496,7 +502,13 @@ class Terminal:
             "prompts_sent": self.prompts_sent,
             "last_prompt": self.last_prompt,
             "submitted": self.submitted,
-            "lines_captured": len(self.transcript.lines()),
+            "lines_captured": len(lines),
+            # What this pane is doing, in the two lengths the header needs: one
+            # clause for the label (which the pane's width will clip) and one or
+            # two sentences for the tooltip behind it. Derived, never stored —
+            # see .recap for why it is computed on read.
+            "recap": summary.headline,
+            "recap_detail": summary.detail,
             "resumed": self.resumed,
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
