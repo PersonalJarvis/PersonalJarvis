@@ -26,6 +26,11 @@ export interface AgentAccount {
   message: string;
   email: string | null;
   tier: string | null;
+  /**
+   * Set when this account is signed in as the SAME identity as another one â€”
+   * two rows, one plan's usage. Absent on older backends, hence optional.
+   */
+  warning?: string | null;
 }
 
 export interface AccountPlatformGroup {

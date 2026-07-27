@@ -7733,3 +7733,97 @@ scheduling turns a slow consumer into a compounding delay, and the first thing
 that delay eats is the user's own keystrokes. The same rule governs the far end
 — never render for a surface nobody is looking at, because that thread is
 usually the one holding the keyboard.
+
+## BUG-112: the subscription switcher names the wrong account — panes run on a plan the user never selected (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report, with screenshots).** In *Workspace settings →
+Your subscriptions*, two Claude rows showed the SAME email, and the row marked
+"in use" named a subscription the user was not actually on. The only visible
+evidence was arithmetic: the account named in the switcher had ~9 % of its
+weekly limit left, while the plan the terminals were really spending had ~1 %.
+Nothing in the UI was red — both rows were green, both said "Signed in via
+Claude Max", and the user could only tell something was wrong by comparing the
+usage page against what the switcher claimed.
+
+**Root cause A — a fixed preference over two identity files.** Claude Code can
+keep its signed-in identity in either `~/.claude.json` or
+`~/.claude/.claude.json`, depending on release. `claude_account_identity()`
+built a candidate list and returned the FIRST one that parsed:
+
+```python
+candidates = [config_dir / ".claude.json"]        # ← always won
+if config_dir == Path(os.path.expanduser("~/.claude")):
+    candidates.append(Path(os.path.expanduser("~/.claude.json")))
+for candidate in candidates:
+    ...
+    if email or name:
+        return email, name
+```
+
+On the reporting machine `~/.claude/.claude.json` was an abandoned copy from an
+earlier release, last written **ten days** before the report; the live
+`~/.claude.json` next to it was minutes old and named a different account. The
+list order alone decided, so the switcher confidently displayed the previous
+occupant of that directory and the default login appeared to be someone it had
+not been for a week and a half.
+
+The same ordering bug sat in `ClaudeAuthService._identity_path()`, which
+additionally fell back to `~/.claude.json` for a CUSTOM config dir — so an
+added account with no identity file of its own borrowed the DEFAULT login's
+email and displayed it as its own. That fallback existed to make sure the card
+"still shows an email"; showing the wrong one is worse than showing none.
+
+**Root cause B — a second sign-in silently reuses the first account.** The
+CLI's OAuth flow is a browser redirect. With a live claude.com session, the
+browser approves the new authorization against the account it is already signed
+in with, without an account chooser and without ever reaching the "paste this
+code" step — the sign-in terminal sits at `Paste code here if prompted >`
+while the browser page just says the user is signed in. The result is two
+registered accounts holding ONE subscription. Both rows go green, both name a
+valid plan, and the only symptom is one plan's usage draining twice as fast:
+precisely the feature's whole purpose, inverted, with no signal anywhere.
+
+**Fix.**
+- `jarvis/claude_auth.py` — `claude_account_identity()` now picks the
+  **freshest readable** candidate by mtime instead of the first in a list: the
+  file the installed CLI actually keeps current is the truth, the same
+  "most recently refreshed wins" rule `freshest_claude_oauth()` already applies
+  to credentials. `_identity_path()` follows the same rule, and a custom config
+  dir no longer falls back to the home identity — no email beats a wrong one.
+- `_is_default_config_dir()` builds the comparison from `Path.home()` and
+  compares through `os.path.normcase`, replacing a hand-written `"~/.claude"`
+  string, so the home-level candidate is considered on macOS and Linux too and
+  survives a differently-cased Windows path (CLAUDE.md §3).
+- `jarvis/agent_accounts.py` — `snapshots()` groups connected accounts by email
+  and flags every row after the first as a duplicate of the account it collides
+  with, naming it and saying how to avoid it (sign out at claude.com, or use a
+  private window). Accounts with no readable email are never grouped: "both
+  unknown" is absence of evidence, not evidence of sameness. New display-safe
+  `AccountSnapshot.warning`, carried through `to_dict()` and rendered by
+  `AgentAccountsPanel`.
+- `jarvis/ui/web/agent_accounts_routes.py` — the sign-in response now states
+  the browser-session trap up front, at the moment the user is about to hit it.
+
+**Deliberately NOT done.** An "identity older than its credentials is stale"
+guard reads like the obvious extra safeguard and is wrong: the CLI refreshes
+the bearer in place indefinitely while never rewriting the identity, so on any
+long-lived account the identity is legitimately the older file. That rule would
+blank the email on exactly the accounts that work. It is written into the
+docstring so it does not get "fixed" back in.
+
+**Regression guard.** `tests/unit/test_claude_auth.py` — freshest-wins in both
+directions, a custom dir never borrowing the default's email, a custom dir
+reporting its own, and `_is_default_config_dir` built without a hardcoded
+separator. `tests/unit/test_agent_accounts.py` — two accounts on one
+subscription flagged (naming the collision partner), two genuine subscriptions
+never flagged, no grouping without an email, and the warning surviving
+`to_dict()` while no token does.
+`AgentAccountsPanel.test.tsx` — the warning renders on the colliding row and
+not on the one it duplicates.
+
+**Class rule.** When two files on disk can answer the same question, never let
+declaration order decide — take the freshest, because which one an external
+tool keeps current is that tool's choice and changes between its releases. And
+an identity read for account A must never be satisfied from account B's file:
+a confident wrong name sends work to the wrong plan, where the only feedback is
+a number on a billing page nobody is watching.

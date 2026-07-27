@@ -152,7 +152,13 @@ async def login(account_id: str) -> dict[str, Any]:
         ) from exc
     return {
         "ok": True,
-        "message": f"Sign-in started for {account.label} — finish it in the window that opened.",
+        "message": (
+            f"Sign-in started for {account.label} — finish it in the window that "
+            "opened. If the browser signs you straight in without ever showing a "
+            "code, it reused the account you are already signed in with at "
+            "claude.com: sign out there (or use a private window) and start this "
+            "sign-in again, or both entries end up on the same subscription."
+        ),
     }
 
 

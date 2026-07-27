@@ -190,6 +190,32 @@ describe("AgentAccountsPanel", () => {
     });
   });
 
+  it("shows the duplicate-subscription warning on the row that collides", async () => {
+    // 2026-07-27: a browser with a live claude.com session approved the second
+    // sign-in against the FIRST account without ever showing a code, so two
+    // rows named one plan. Both looked perfectly healthy; the only symptom was
+    // usage draining twice as fast. The backend flags it — the row must show it.
+    const twin = account({
+      id: "claude:abc123",
+      label: "Second seat",
+      builtin: false,
+      warning:
+        "This is the same subscription as 'Default Claude Code login' — both are " +
+        "signed in as the same account, so they share one plan's usage.",
+    });
+    vi.mocked(fetchAgentAccounts).mockResolvedValue(
+      response([account(), twin]) as never,
+    );
+    render(<AgentAccountsPanel />);
+    await waitFor(() => expect(screen.getByText("Second seat")).toBeTruthy());
+
+    const row = screen.getByText("Second seat").closest("li")!;
+    expect(row.textContent).toContain("same subscription");
+    // and the account it duplicates stays clean, or every row cries wolf
+    const original = screen.getByText("Default Claude Code login").closest("li")!;
+    expect(original.textContent).not.toContain("same subscription");
+  });
+
   it("reports a failed load instead of rendering an empty, confident list", async () => {
     vi.mocked(fetchAgentAccounts).mockRejectedValue(new Error("backend is warming up"));
     render(<AgentAccountsPanel />);

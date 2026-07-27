@@ -135,6 +135,9 @@ class AccountSnapshot:
     message: str
     email: str | None = None
     tier: str | None = None
+    #: Set when this account is signed in as the SAME identity as another one.
+    #: Two rows, one subscription — see :func:`snapshots`.
+    warning: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +147,7 @@ class AccountSnapshot:
             "message": self.message,
             "email": self.email,
             "tier": self.tier,
+            "warning": self.warning,
         }
 
 
@@ -612,9 +616,55 @@ def _not_signed_in_message(account: AgentAccount) -> str:
     )
 
 
+def _duplicate_warning(label: str) -> str:
+    return (
+        f"This is the same subscription as {label!r} — both are signed in as the "
+        "same account, so they share one plan's usage. To connect a second "
+        "subscription, sign out at claude.com (or use a private window) before "
+        "signing in here, otherwise the browser silently reuses the account you "
+        "are already signed in with."
+    )
+
+
 def snapshots(platform: Platform) -> list[AccountSnapshot]:
-    """Every account of *platform*, described."""
-    return [describe(account) for account in list_accounts(platform)]
+    """Every account of *platform*, described, with same-identity rows flagged.
+
+    Two accounts holding the SAME login is the failure this feature exists to
+    prevent, and nothing about it looks wrong: both rows go green, both name a
+    valid subscription, and the only visible symptom is a usage figure that
+    drops twice as fast as it should — which is how the 2026-07-27 report
+    surfaced, after the browser's live session auto-approved the second sign-in
+    against the first account without ever showing a code to paste.
+
+    So it is stated on the row rather than left to be inferred. Detection is by
+    email, the one identity the CLI writes down; accounts with no readable email
+    are never grouped, since "both unknown" is not evidence of sameness.
+    """
+    described = [describe(account) for account in list_accounts(platform)]
+    first_seen: dict[str, str] = {}
+    result: list[AccountSnapshot] = []
+    for snapshot in described:
+        email = (snapshot.email or "").strip().lower()
+        if not (snapshot.connected and email):
+            result.append(snapshot)
+            continue
+        owner = first_seen.get(email)
+        if owner is None:
+            first_seen[email] = snapshot.account.label
+            result.append(snapshot)
+            continue
+        result.append(
+            AccountSnapshot(
+                account=snapshot.account,
+                connected=snapshot.connected,
+                mode=snapshot.mode,
+                message=snapshot.message,
+                email=snapshot.email,
+                tier=snapshot.tier,
+                warning=_duplicate_warning(owner),
+            )
+        )
+    return result
 
 
 # ------------------------------------------------------------------- login

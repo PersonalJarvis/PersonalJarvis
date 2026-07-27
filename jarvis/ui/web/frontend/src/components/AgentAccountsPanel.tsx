@@ -20,7 +20,16 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, KeyRound, LogIn, Pencil, Plus, Trash2, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  KeyRound,
+  LogIn,
+  Pencil,
+  Plus,
+  Trash2,
+  Users,
+} from "lucide-react";
 
 import { useT } from "@/i18n";
 import {
@@ -361,6 +370,17 @@ function AccountRow({
         <KeyRound className="mt-0.5 h-3 w-3 shrink-0" />
         <span className="min-w-0 break-words">{account.message}</span>
       </p>
+
+      {/* Two accounts on ONE subscription look completely healthy â€” both rows
+          green, both naming a valid plan â€” and the only symptom is usage
+          draining twice as fast. So it is said out loud, next to the row that
+          duplicates another, rather than left to be deduced from a usage page. */}
+      {account.warning && (
+        <p className="flex items-start gap-1.5 pl-6 text-[11px] text-amber-600">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span className="min-w-0 break-words">{account.warning}</span>
+        </p>
+      )}
     </li>
   );
 }

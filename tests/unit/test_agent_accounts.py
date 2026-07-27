@@ -365,3 +365,94 @@ def test_a_codex_account_holding_only_an_api_key_says_so() -> None:
     snapshot = agent_accounts.describe(account)
     assert snapshot.connected is True
     assert snapshot.mode == "api_key"
+
+
+# ------------------------------------------------- same subscription twice
+
+
+def _sign_in(directory: Path, email: str, *, expires_at: int = 4_102_444_800_000) -> None:
+    """Give *directory* a live Claude login belonging to *email*."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-test",
+                    "subscriptionType": "max",
+                    "expiresAt": expires_at,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (directory / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": email}}), encoding="utf-8"
+    )
+
+
+def test_two_accounts_on_one_subscription_are_flagged_not_shown_as_two_plans() -> None:
+    """The 2026-07-27 report: both rows green, one plan's usage draining twice.
+
+    A browser with a live claude.com session approves the second sign-in against
+    the account already signed in, without ever showing a code — so the user
+    ends up with two entries naming one subscription and no way to tell.
+    """
+    first = agent_accounts.create_account("claude", "Seat A")
+    second = agent_accounts.create_account("claude", "Seat B")
+    _sign_in(first.config_dir, "same@example.com")
+    _sign_in(second.config_dir, "same@example.com")
+
+    by_label = {s.account.label: s for s in agent_accounts.snapshots("claude")}
+    assert by_label["Seat A"].connected and by_label["Seat B"].connected
+    # The first occurrence stays clean; the duplicate names who it collides with.
+    assert by_label["Seat A"].warning is None
+    assert by_label["Seat B"].warning is not None
+    assert "Seat A" in by_label["Seat B"].warning
+    assert "sign out" in by_label["Seat B"].warning.lower()
+
+
+def test_two_genuinely_different_subscriptions_are_never_flagged() -> None:
+    """The whole point of the feature must not trip its own warning."""
+    first = agent_accounts.create_account("claude", "Personal")
+    second = agent_accounts.create_account("claude", "Work")
+    _sign_in(first.config_dir, "one@example.com")
+    _sign_in(second.config_dir, "two@example.com")
+
+    assert all(s.warning is None for s in agent_accounts.snapshots("claude"))
+
+
+def test_accounts_without_a_readable_email_are_never_grouped() -> None:
+    """"Both unknown" is not evidence of sameness — it is absence of evidence."""
+    first = agent_accounts.create_account("claude", "Seat A")
+    second = agent_accounts.create_account("claude", "Seat B")
+    for account in (first, second):
+        (account.config_dir / ".credentials.json").write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-test",
+                        "subscriptionType": "max",
+                        "expiresAt": 4_102_444_800_000,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    snaps = agent_accounts.snapshots("claude")
+    assert all(s.connected for s in snaps if not s.account.builtin)
+    assert all(s.warning is None for s in snaps)
+
+
+def test_the_warning_survives_the_wire_format() -> None:
+    """It has to reach the row that renders it, not stop at the dataclass."""
+    first = agent_accounts.create_account("claude", "Seat A")
+    second = agent_accounts.create_account("claude", "Seat B")
+    _sign_in(first.config_dir, "same@example.com")
+    _sign_in(second.config_dir, "same@example.com")
+
+    payload = [s.to_dict() for s in agent_accounts.snapshots("claude")]
+    duplicate = next(p for p in payload if p["label"] == "Seat B")
+    assert "warning" in duplicate and duplicate["warning"]
+    # And it must never carry the thing it was reading next to.
+    assert not any("sk-ant-oat" in json.dumps(p) for p in payload)
