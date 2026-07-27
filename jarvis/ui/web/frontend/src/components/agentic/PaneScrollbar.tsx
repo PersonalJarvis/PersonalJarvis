@@ -1,94 +1,140 @@
 /**
- * A pane's own scrollbar — hidden until you reach for it.
+ * A pane's scrollbar: there whenever the pointer is on the pane, gone when it
+ * is not, and able to scroll whatever the pane happens to be running.
  *
- * Replaces the native `.xterm-viewport` bar, for two reasons the CSS version
- * could not solve:
+ * ## Why the pane draws its own instead of styling the browser's
  *
- * 1. **It was always there.** `overflow-y: scroll` draws a permanent track down
- *    the side of every pane, and in a grid of eight terminals that is eight
- *    stripes of furniture nobody asked for. This one appears when the pointer
- *    comes within reach of the pane's right edge, and while you are scrolled
- *    back through history — and is otherwise invisible.
- * 2. **It only worked for half the CLIs.** Why, and what this does about it,
- *    is in ./paneScroll and ./paneAppScroll — in short: Claude Code runs on the
- *    alternate screen with mouse tracking, so the terminal holds no scrollback
- *    to read a position from and the wheel belongs to the CLI. That pane's
- *    position is measured from how its screen moves instead, and its thumb is
- *    drawn from that measurement like any other.
+ * Because half the panes have nothing for a browser scrollbar to move. A CLI
+ * that prints line by line (Codex, a shell) leaves its transcript in the
+ * terminal's scrollback, and `.xterm-viewport` scrolls it. A CLI that takes the
+ * whole screen keeps its transcript to itself — measured against Claude Code
+ * 2.1.220, it switches to the alternate buffer and asks for full SGR mouse
+ * tracking within milliseconds of starting, after which the terminal holds no
+ * scrollback at all and the wheel is forwarded to the application. There is
+ * nothing there to style.
  *
- * The bar is an overlay, not a layout box: xterm reserves a gutter on the right
- * for the scrollbar it thinks it has, and the bar sits in that gutter, so
- * nothing is drawn underneath it.
+ * So the bar is drawn here and scrolls whichever of the two it is on:
  *
- * That gutter is real even though ./index.css gives the native bar zero width.
- * Measured against xterm 5.5.0, `Viewport` computes
- * `scrollBarWidth = viewportElement.offsetWidth - scrollArea.offsetWidth || 15`
- * — and a scrollbar hidden by CSS makes that difference 0, so the `|| 15`
- * fallback takes over and `FitAddon.proposeDimensions` drops 15 px of columns.
- * Hence `hostGap`: the bar is placed flush against the terminal host's right
- * edge, INSIDE the reserved strip. Floating it in the pane's own padding instead
- * (the original `right-1`) left dead space on both sides of it — part of the
- * empty right-hand strip reported on 2026-07-27.
+ * * the terminal's viewport, by line, when the terminal owns the history;
+ * * the application itself, by relayed wheel notches, when it does not.
  *
- * And reaching for it is what MAKES it appear in an agent pane: the position of a
- * CLI that holds its own history has to be measured, and until this pane had been
- * scrolled there was nothing measured to draw. See `probeAppHistory` in
- * ./paneAppScroll — the gesture asks the question now.
+ * ## It shows up on hover, and it does not ask permission first
+ *
+ * Reaching a pane makes its bar appear — no measurement, no probe, no proving
+ * that there is a history worth drawing. That rule is the whole point of this
+ * rewrite: the version before it demanded evidence from a CLI that cannot give
+ * any, and every failure to get that evidence looked exactly like "nothing to
+ * scroll here", so the bar never appeared in the panes it was written for. See
+ * ./paneScrollModel for what an application-held pane claims instead.
+ *
+ * A pane with genuinely nothing to scroll — a shell that has printed four lines
+ * — still gets no bar, because its terminal says so exactly.
+ *
+ * ## And it stays off the frame budget
+ *
+ * A grid can hold a dozen live terminals. So: nothing is read from a terminal
+ * while the bar is invisible, everything read while it is visible is coalesced
+ * into one animation frame, the track is measured by a ResizeObserver rather
+ * than during render, and hover is two events (enter, leave) rather than one
+ * per pointer move.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { cn } from "@/lib/utils";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  IDLE_STATE,
-  lineForThumbTop,
-  readScrollState,
-  relayWheelNotch,
-  thumbGeometry,
-  type PaneScrollState,
-} from "./paneScroll";
-import {
-  appTakesWheel,
-  AT_LIVE_END,
-  hasMeasuredHistory,
-  measuredNoHistory,
+  appScroll,
+  backForThumbTop,
+  bufferScroll,
+  LINES_PER_NOTCH,
   notchesForLines,
-  probeAppHistory,
-  PROBE_STALE_MS,
-  PROBE_WAIT_MS,
-  trackAppScroll,
-  type AppScrollPosition,
-} from "./paneAppScroll";
+  scrollable,
+  thumbGeometry,
+  type PaneScroll,
+} from "./paneScrollModel";
 
-/** How close to the pane's right edge the pointer reveals the bar. */
-const HOT_ZONE_PX = 28;
+/** How long the bar lingers after the pointer leaves, so it cannot flicker. */
+const LINGER_MS = 200;
+
+/** How long a wheel turn keeps the bar up when the pointer is elsewhere. */
+const FLASH_MS = 700;
 
 /**
- * Where the bar sits until the real distance has been measured.
+ * Where the bar sits before the pane has been measured.
  *
- * It belongs flush against the xterm host's right edge — the near side of the
- * gutter xterm reserves for the scrollbar it thinks it has (see the file header).
- * That distance is the terminal region's own horizontal padding, and it is
- * MEASURED (`hostGap` below) rather than restated here: this constant used to
- * name the padding as a number, the padding was then changed in ./AgenticTerminal
- * without it, and the bar spent 2 px sitting on top of the agent's output. A
- * layout constant duplicated across two files drifts the moment either one is
- * touched. Used only for the very first paint, before the measurement lands.
+ * xterm reserves a strip on the right for the scrollbar it believes it has, and
+ * the bar belongs inside that strip rather than floating in the pane's padding.
+ * The real distance is measured below; this is only the first paint.
  */
-const BAR_INSET_FALLBACK_PX = 6;
+const INSET_FALLBACK_PX = 6;
 
-/** Grace period before a bar the pointer left disappears again. */
-const HIDE_DELAY_MS = 260;
+/** True when the running application receives wheel events itself. */
+function appTakesWheel(term: Terminal | null): boolean {
+  const tracking = term?.modes?.mouseTrackingMode;
+  return Boolean(tracking) && tracking !== "none";
+}
 
-/** How long the bar stays up after scrolling back through history. */
-const FLASH_MS = 900;
+/**
+ * What this pane can scroll right now.
+ *
+ * `back` is what the component has counted for an application-held pane; it is
+ * ignored for a terminal that can answer the question itself.
+ *
+ * Defensive by design — this runs against whatever xterm the app was bundled
+ * with, and a missing field must mean "no bar" rather than an exception thrown
+ * inside a render.
+ */
+export function readPaneScroll(
+  term: Terminal | null,
+  back: number,
+): PaneScroll | null {
+  const buffer = term?.buffer?.active;
+  const rows = term?.rows ?? 0;
+  if (!term || !buffer || rows < 1) return null;
 
-function sameState(a: PaneScrollState, b: PaneScrollState): boolean {
-  return (
-    a.mode === b.mode &&
-    a.total === b.total &&
-    a.rows === b.rows &&
-    a.top === b.top
+  // The application holds the history in EITHER buffer once it has taken the
+  // mouse, and in the alternate buffer there is no scrollback either way.
+  if (appTakesWheel(term) || buffer.type === "alternate") {
+    return appScroll(back, rows);
+  }
+
+  const scroll = bufferScroll(
+    buffer.length ?? rows,
+    buffer.baseY ?? 0,
+    buffer.viewportY ?? 0,
+    rows,
+  );
+  return scrollable(scroll) ? scroll : null;
+}
+
+/**
+ * Hand one wheel notch to whatever is running in `host`.
+ *
+ * Dispatched as a real wheel event on xterm's screen rather than written to the
+ * socket by hand: xterm already knows which mouse protocol the application
+ * negotiated and encodes the report accordingly, and for a full-screen
+ * application that did NOT take the mouse it sends the cursor keys a real wheel
+ * turn would send. Guessing those bytes here would put junk in the CLI's prompt.
+ *
+ * Line mode with a delta of exactly one, which is what a notch is.
+ */
+export function relayWheelNotch(
+  host: HTMLElement | null,
+  direction: 1 | -1,
+): boolean {
+  if (!host || typeof WheelEvent === "undefined") return false;
+  const screen = host.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen) return false;
+  const box = screen.getBoundingClientRect();
+  return screen.dispatchEvent(
+    new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: box.left + box.width / 2,
+      clientY: box.top + box.height / 2,
+      deltaMode: 1,
+      deltaY: direction,
+    }),
   );
 }
 
@@ -96,20 +142,16 @@ interface PaneScrollbarProps {
   /** Pane call-sign — used for labels and test ids. */
   name: string;
   /**
-   * The pane's terminal area. Hover is measured against THIS element rather
-   * than the xterm host, because the bar itself sits inside it: with the host
-   * as the reference, moving onto the bar would count as leaving the pane and
-   * the bar would vanish under the pointer.
+   * The pane's terminal area. Hover is measured against THIS element, because
+   * the bar sits inside it: with the xterm host as the reference, moving onto
+   * the bar would count as leaving the pane.
    */
   regionRef: React.RefObject<HTMLElement | null>;
   /** The xterm host, where a relayed wheel event is dispatched. */
   hostRef: React.RefObject<HTMLElement | null>;
   /** The live terminal, or null before it is built. */
   getTerminal: () => Terminal | null;
-  /**
-   * Bumped whenever the terminal behind `getTerminal` is replaced, so the
-   * subscriptions below are torn down and rebuilt against the new instance.
-   */
+  /** Bumped whenever the terminal behind `getTerminal` is replaced. */
   epoch: number;
   appearance: TerminalAppearance;
 }
@@ -123,217 +165,112 @@ export function PaneScrollbar({
   appearance,
 }: PaneScrollbarProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const [state, setState] = useState<PaneScrollState>(IDLE_STATE);
+  const [scroll, setScroll] = useState<PaneScroll | null>(null);
   const [trackPx, setTrackPx] = useState(0);
-  // The gap between the pane's right edge and the xterm host's — measured, not
-  // restated from ./AgenticTerminal. See `BAR_INSET_FALLBACK_PX`.
-  const [hostGap, setHostGap] = useState(BAR_INSET_FALLBACK_PX);
-  const [nearEdge, setNearEdge] = useState(false);
+  const [inset, setInset] = useState(INSET_FALLBACK_PX);
+  const [hovering, setHovering] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const [dragging, setDragging] = useState(false);
-  // Where the thumb is while it is held. The application answers a relayed
-  // notch a network round trip later, so a thumb drawn only from the
-  // measurement would lag behind the pointer holding it.
+  // Where the thumb is while it is held. An application answers a relayed
+  // notch a moment later, so a thumb drawn only from what has been counted
+  // would lag behind the pointer holding it.
   const [dragTopPx, setDragTopPx] = useState<number | null>(null);
-  // What ./paneAppScroll has measured of a CLI that holds its own history.
-  const [position, setPosition] = useState<AppScrollPosition>(AT_LIVE_END);
 
-  const shown = nearEdge || flashing || dragging;
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const positionRef = useRef(position);
-  positionRef.current = position;
+  // How far an application-held pane stands back from its newest output, in
+  // lines. Counted from the wheel traffic the pane sees — the user's own turns
+  // and the bar's relays alike, since both scroll the same application.
+  const backRef = useRef(0);
+  const [back, setBack] = useState(0);
+
+  const shown = hovering || flashing || dragging;
+  // The track is in the document only while there is something to scroll, so
+  // anything that measures it has to run again when it appears.
+  const hasBar = scrollable(scroll);
+  const scrollRef = useRef(scroll);
+  scrollRef.current = scroll;
+
+  // A fresh terminal is a fresh transcript.
+  useEffect(() => {
+    backRef.current = 0;
+    setBack(0);
+    setScroll(null);
+  }, [epoch]);
 
   // ------------------------------------------------------------------ hover
+  // Enter and leave, not every pointer move: a grid of a dozen panes must not
+  // pay per pixel to know which one the pointer is on.
   useEffect(() => {
     const region = regionRef.current;
     if (!region) return;
-    let hideTimer: number | undefined;
+    let timer: number | undefined;
 
-    const clearHide = () => {
-      if (hideTimer !== undefined) window.clearTimeout(hideTimer);
-      hideTimer = undefined;
+    const enter = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+      setHovering(true);
     };
     const leave = () => {
-      clearHide();
-      hideTimer = window.setTimeout(() => setNearEdge(false), HIDE_DELAY_MS);
-    };
-    const onMove = (event: MouseEvent) => {
-      const rect = region.getBoundingClientRect();
-      const inside =
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom &&
-        rect.right - event.clientX <= HOT_ZONE_PX &&
-        event.clientX <= rect.right;
-      if (inside) {
-        clearHide();
-        setNearEdge(true);
-      } else {
-        leave();
-      }
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setHovering(false), LINGER_MS);
     };
 
-    region.addEventListener("mousemove", onMove);
+    region.addEventListener("mouseenter", enter);
     region.addEventListener("mouseleave", leave);
     return () => {
-      clearHide();
-      region.removeEventListener("mousemove", onMove);
+      if (timer !== undefined) window.clearTimeout(timer);
+      region.removeEventListener("mouseenter", enter);
       region.removeEventListener("mouseleave", leave);
     };
   }, [regionRef]);
 
-  // -------------------------------------------------- measure an app's scroll
+  // ------------------------------------------------------- follow the wheel
   // Runs whether the bar is visible or not, and costs nothing until a wheel
-  // actually turns: a bar that only started measuring when it appeared would
-  // come up knowing nothing about a pane the user scrolled a minute ago.
+  // actually turns: a pane scrolled a minute ago must come up knowing where it
+  // stands. Capture, so it sees the turn before xterm forwards it, and passive,
+  // so it can never interfere with what xterm does next.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    return trackAppScroll({ host, getTerminal, onChange: setPosition });
-  }, [hostRef, getTerminal, epoch]);
-
-  // A fresh terminal is a fresh transcript — carrying a measured position over
-  // a restart would put the thumb somewhere in a history that no longer exists.
-  useEffect(() => {
-    setPosition(AT_LIVE_END);
-  }, [epoch]);
-
-  // ------------------------------------------------ measure on first reach
-  // Reaching for the bar is itself the request for one, so a pane that has
-  // nothing measured yet gets asked — see `probeAppHistory` in ./paneAppScroll
-  // for why waiting for a wheel turn instead left the bar unreachable in exactly
-  // the panes it exists for.
-  //
-  // Asked only while nothing is known, and only after the pane has been quiet for
-  // `PROBE_WAIT_MS`: a probe moves the application by a notch and back, which is
-  // invisible once but would be a twitch on every pass of the pointer — and a
-  // probe folded into a burst of the user's own scrolling measures neither of
-  // them. `probedAt` rather than the position alone, because the answer lands a
-  // settle period later and a pointer crossing the hot zone twice in that time
-  // must not ask twice.
-  //
-  // Only one answer stands for good: "there IS history here". Everything else
-  // expires. "This pane has no history at all" is true of the moment it was
-  // measured, and a pane that was empty when it opened fills up; a probe that
-  // produced no answer AT ALL — sent while the application was repainting, or
-  // into a terminal that was still being built — leaves the pane in the very
-  // same state, without a bar and with nothing measured. Treating only the
-  // first of those as re-askable is what left a pane one unlucky probe away
-  // from having no scrollbar for the rest of its life. See `measuredNoHistory`
-  // and `PROBE_STALE_MS` in ./paneAppScroll.
-  const probedAt = useRef<{ epoch: number; at: number } | null>(null);
-  useEffect(() => {
-    if (!nearEdge) return;
-    const host = hostRef.current;
-    const term = getTerminal();
-    if (!host || !term || !appTakesWheel(term)) return;
-
-    const stale = () => {
-      const last = probedAt.current;
-      if (!last || last.epoch !== epoch) return true;
-      return Date.now() - last.at >= PROBE_STALE_MS;
-    };
-    // Nothing to ask while a history is known to exist — except when the only
-    // thing known is that there was none, and that reading has gone stale.
-    const settled = () =>
-      hasMeasuredHistory(positionRef.current) &&
-      !measuredNoHistory(positionRef.current);
-    if (settled() || !stale()) return;
-
-    let stopProbe: (() => void) | undefined;
-    let wait: number | undefined;
-
-    const ask = () => {
-      wait = undefined;
-      host.removeEventListener("wheel", defer, { capture: true });
-      // The wait may have been all it took: a wheel turn measures the pane
-      // better than any probe, so if one landed there is nothing left to ask.
-      if (settled()) return;
-      probedAt.current = { epoch, at: Date.now() };
-      stopProbe = probeAppHistory((direction) =>
-        relayWheelNotch(host, direction),
-      );
-    };
-    // A wheel turn while the probe is still pending pushes it back, so the
-    // tracker never has two sources of movement inside one burst.
-    function defer(event: WheelEvent) {
-      if (event.deltaY === 0) return;
-      if (wait !== undefined) window.clearTimeout(wait);
-      wait = window.setTimeout(ask, PROBE_WAIT_MS);
-    }
-
-    host.addEventListener("wheel", defer, { capture: true, passive: true });
-    wait = window.setTimeout(ask, PROBE_WAIT_MS);
-    return () => {
-      if (wait !== undefined) window.clearTimeout(wait);
-      host.removeEventListener("wheel", defer, { capture: true });
-      stopProbe?.();
-    };
-  }, [nearEdge, getTerminal, epoch, hostRef]);
-
-  // ------------------------------------------------- flash while scrolled back
-  // Deliberately NOT "flash on any scroll": a pane pinned to the bottom scrolls
-  // on every line an agent prints, and a bar that lit up for each of them would
-  // be the permanent stripe this replaces. Only a viewport sitting ABOVE the
-  // live end means somebody is reading history.
-  useEffect(() => {
-    const term = getTerminal();
-    if (!term?.onScroll) return;
     let timer: number | undefined;
-    const subscription = term.onScroll(() => {
-      const buffer = term.buffer?.active;
-      if (!buffer || buffer.viewportY >= buffer.baseY) return;
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      const term = getTerminal();
+      if (appTakesWheel(term) || term?.buffer?.active?.type === "alternate") {
+        const next = Math.max(
+          0,
+          backRef.current +
+            (event.deltaY > 0 ? -LINES_PER_NOTCH : LINES_PER_NOTCH),
+        );
+        backRef.current = next;
+        setBack(next);
+      }
       setFlashing(true);
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => setFlashing(false), FLASH_MS);
-    });
+    };
+
+    host.addEventListener("wheel", onWheel, { capture: true, passive: true });
     return () => {
       if (timer !== undefined) window.clearTimeout(timer);
-      subscription.dispose();
+      host.removeEventListener("wheel", onWheel, { capture: true });
     };
-  }, [getTerminal, epoch]);
+  }, [hostRef, getTerminal, epoch]);
 
-  // The same flash for an app-mode pane, which produces no xterm scroll event
-  // at all: the only sign that somebody is reading history is the measurement
-  // moving away from the live end. The timer is held in a ref rather than
-  // cleared per effect run, because a measurement that lands back AT the live
-  // end must let the flash run out — not cancel it and leave the bar up.
-  const flashTimer = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    if (position.offset === 0) return;
-    setFlashing(true);
-    if (flashTimer.current !== undefined)
-      window.clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlashing(false), FLASH_MS);
-  }, [position]);
-  useEffect(
-    () => () => {
-      if (flashTimer.current !== undefined) {
-        window.clearTimeout(flashTimer.current);
-      }
-    },
-    [],
-  );
-
-  // ---------------------------------------------------------------- metrics
-  // Only while the bar is on screen. A hidden bar needs no numbers, and reading
-  // them on every frame of a busy pane is exactly the kind of work the grid
-  // spends its frame budget avoiding.
+  // ---------------------------------------------------------------- reading
+  // Only while the bar is on screen, and never more than once a frame: reading
+  // a terminal's buffer on every render of every pane is exactly the kind of
+  // work a grid of live agents cannot afford.
   useEffect(() => {
     if (!shown) return;
     const term = getTerminal();
     if (!term) return;
-
     let frame: number | undefined;
+
     const sync = () => {
       frame = undefined;
-      const next = readScrollState(term, positionRef.current);
-      if (!sameState(next, stateRef.current)) setState(next);
-      const track = trackRef.current;
-      if (track) {
-        const height = track.clientHeight;
-        setTrackPx((current) => (current === height ? current : height));
-      }
+      const next = readPaneScroll(term, backRef.current);
+      setScroll((current) => (same(current, next) ? current : next));
     };
     const schedule = () => {
       if (frame === undefined) frame = requestAnimationFrame(sync);
@@ -343,6 +280,7 @@ export function PaneScrollbar({
     const subscriptions = [
       term.onRender?.(schedule),
       term.onResize?.(schedule),
+      term.onScroll?.(schedule),
       term.buffer?.onBufferChange?.(schedule),
     ];
     return () => {
@@ -351,45 +289,25 @@ export function PaneScrollbar({
     };
   }, [shown, getTerminal, epoch]);
 
-  // A new measurement moves the thumb even on a pane that renders nothing —
-  // an app scrolled back through its own history repaints once and then sits
-  // still, and the effect above would never hear about it. Only once something
-  // HAS been measured, so an untouched pane keeps the bar out of the document
-  // entirely rather than mounting it invisible.
+  // A counted step moves the thumb even on a pane that repaints nothing.
   useEffect(() => {
+    if (!shown) return;
     const term = getTerminal();
-    if (!term || position === AT_LIVE_END) return;
-    const next = readScrollState(term, position);
-    setState((current) => (sameState(current, next) ? current : next));
-  }, [position, getTerminal, epoch]);
+    if (!term) return;
+    const next = readPaneScroll(term, back);
+    setScroll((current) => (same(current, next) ? current : next));
+  }, [back, shown, getTerminal, epoch]);
 
-  /*
-   * The track's height decides the thumb's, and the bar's distance from the
-   * pane edge decides where it sits. Both are geometry, so both are MEASURED —
-   * and both are measured when the boxes actually change rather than after
-   * every render.
-   *
-   * That distinction is the whole point of this effect. It used to run on every
-   * commit, and reading a box in a commit forces the browser to recompute the
-   * layout there and then — for each pane, on a thread that has just resized
-   * all of them. With a dozen panes and a seam being dragged, those forced
-   * recomputations were the single most expensive thing in the frame, and the
-   * measured height changing then fed a second render per pane on top. A
-   * ResizeObserver answers the same question from outside the render, only when
-   * there is a new answer.
-   *
-   * `state.mode` is in the dependencies because the track is in the document
-   * only while there is something to scroll — the observer has to be attached
-   * to the element that exists now.
-   */
+  // ------------------------------------------------------------- geometry
+  // Measured from outside the render, and only when a box actually changes.
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
 
     const measure = () => {
-      const height = track.clientHeight;
-      setTrackPx((current) => (current === height ? current : height));
-
+      setTrackPx((current) =>
+        current === track.clientHeight ? current : track.clientHeight,
+      );
       const region = regionRef.current;
       const host = hostRef.current;
       if (!region || !host) return;
@@ -400,156 +318,169 @@ export function PaneScrollbar({
             host.getBoundingClientRect().right,
         ),
       );
-      setHostGap((current) => (current === gap ? current : gap));
+      setInset((current) => (current === gap ? current : gap));
     };
 
     measure();
-    // No observer in this environment (older engines, some test setups): the
-    // one measurement above still gives the bar a thumb, which is the
-    // behaviour that matters.
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(track);
     if (regionRef.current) observer.observe(regionRef.current);
     if (hostRef.current) observer.observe(hostRef.current);
     return () => observer.disconnect();
-  }, [state.mode, regionRef, hostRef]);
+  }, [hasBar, regionRef, hostRef]);
 
   // ------------------------------------------------------------------ input
-  const relay = useCallback(
-    (notches: number) => {
-      const direction = notches > 0 ? 1 : -1;
-      for (let i = 0; i < Math.abs(notches); i += 1) {
-        relayWheelNotch(hostRef.current, direction);
+  /** Does this pane's application hold the screen, rather than the terminal? */
+  const appHeld = useCallback(() => {
+    const term = getTerminal();
+    return Boolean(
+      term &&
+      (appTakesWheel(term) || term.buffer?.active?.type === "alternate"),
+    );
+  }, [getTerminal]);
+
+  /** Scroll the pane by `lines` towards older output (negative: newer). */
+  const scrollBy = useCallback(
+    (lines: number) => {
+      const term = getTerminal();
+      if (!term || lines === 0) return;
+      if (appHeld()) {
+        const notches = notchesForLines(lines);
+        for (let i = 0; i < Math.abs(notches); i += 1) {
+          relayWheelNotch(hostRef.current, notches > 0 ? -1 : 1);
+        }
+        return;
       }
+      term.scrollLines?.(-lines);
     },
-    [hostRef],
+    [getTerminal, hostRef, appHeld],
+  );
+
+  /**
+   * Take the pane to `wanted` lines back from its newest output.
+   *
+   * A terminal that owns its scrollback is told the line outright, so a fast
+   * drag cannot overshoot by however far the reading lags behind the pointer.
+   * An application can only be asked in notches, and is: the difference is
+   * counted against `backRef`, which our own relay updates as it dispatches.
+   */
+  const scrollTo = useCallback(
+    (wanted: number) => {
+      const term = getTerminal();
+      if (!term) return;
+      if (appHeld()) {
+        scrollBy(wanted - backRef.current);
+        return;
+      }
+      const base = term.buffer?.active?.baseY ?? 0;
+      term.scrollToLine?.(Math.max(0, base - Math.max(0, wanted)));
+    },
+    [getTerminal, appHeld, scrollBy],
   );
 
   const onThumbPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const term = getTerminal();
       const track = trackRef.current;
-      if (!term || !track) return;
+      const term = getTerminal();
+      if (!track || !term) return;
       event.preventDefault();
       event.stopPropagation();
 
-      const current = stateRef.current;
       const height = track.clientHeight;
-      const startY = event.clientY;
-      const geometry = thumbGeometry(current, height);
+      const start = scrollRef.current;
+      const geometry = thumbGeometry(start, height);
       const startTop = geometry?.topPx ?? 0;
+      const startY = event.clientY;
       const travel = Math.max(0, height - (geometry?.heightPx ?? 0));
-      // Where the drag began in the history, and how many notches have been
-      // relayed towards its target so far. Counted against the START rather
-      // than against the live measurement, so a reading that lands mid-drag
-      // cannot make the same notch be sent twice.
-      const startLine = current.top;
-      const step = positionRef.current.linesPerNotch;
-      let sentNotches = 0;
 
       const target = event.currentTarget;
-      target.setPointerCapture(event.pointerId);
+      // Capture keeps the drag alive when the pointer runs off the thin bar,
+      // but it is not worth losing the drag over: engines and test
+      // environments that do not implement it still get a working thumb.
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        /* no capture — the listeners below carry the drag anyway */
+      }
       setDragging(true);
       setDragTopPx(startTop);
 
+      // The mapping is frozen at the grab. An application-held pane's assumed
+      // span grows as it is scrolled back (see ./paneScrollModel), and a thumb
+      // measured against a span that moves under the pointer slides away from
+      // the hand holding it.
       const onMove = (move: PointerEvent) => {
+        if (!Number.isFinite(move.clientY)) return;
         const topPx = Math.min(
           Math.max(startTop + (move.clientY - startY), 0),
           travel,
         );
         setDragTopPx(topPx);
-        const line = lineForThumbTop(topPx, height, current);
-        if (current.mode === "app") {
-          const wanted = notchesForLines(line - startLine, step);
-          if (wanted !== sentNotches) {
-            relay(wanted - sentNotches);
-            sentNotches = wanted;
-          }
-          return;
-        }
-        term.scrollToLine?.(line);
+        scrollTo(backForThumbTop(topPx, height, start));
       };
-      const onUp = () => {
+      const finish = () => {
         target.releasePointerCapture?.(event.pointerId);
         target.removeEventListener("pointermove", onMove);
-        target.removeEventListener("pointerup", onUp);
-        target.removeEventListener("pointercancel", onUp);
+        target.removeEventListener("pointerup", finish);
+        target.removeEventListener("pointercancel", finish);
         setDragging(false);
         setDragTopPx(null);
       };
 
       target.addEventListener("pointermove", onMove);
-      target.addEventListener("pointerup", onUp);
-      target.addEventListener("pointercancel", onUp);
+      target.addEventListener("pointerup", finish);
+      target.addEventListener("pointercancel", finish);
     },
-    [getTerminal, relay],
+    [getTerminal, scrollBy],
   );
 
-  // A click on the empty part of the track pages towards it, the way every
-  // other scrollbar does.
+  // A click on the empty part of the track pages towards it, as every other
+  // scrollbar does.
   const onTrackPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const term = getTerminal();
       const track = trackRef.current;
-      if (!term || !track) return;
+      const current = scrollRef.current;
+      if (!track || !current) return;
       event.preventDefault();
       event.stopPropagation();
-      const current = stateRef.current;
-      const rect = track.getBoundingClientRect();
-      const geometry = thumbGeometry(current, rect.height);
+      const box = track.getBoundingClientRect();
+      const geometry = thumbGeometry(current, box.height);
       if (!geometry) return;
       const page = Math.max(1, current.rows - 1);
-      const down = event.clientY - rect.top > geometry.topPx;
-      if (current.mode === "app") {
-        relay(
-          notchesForLines(
-            down ? page : -page,
-            positionRef.current.linesPerNotch,
-          ),
-        );
-      } else {
-        term.scrollLines?.(down ? page : -page);
-      }
+      const towardsNewer = event.clientY - box.top > geometry.topPx;
+      scrollBy(towardsNewer ? -page : page);
     },
-    [getTerminal, relay],
+    [scrollBy],
   );
 
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
-      const term = getTerminal();
-      if (!term) return;
-      const current = stateRef.current;
-      const notches = event.deltaY > 0 ? 1 : -1;
-      if (current.mode === "app") relay(notches * 3);
-      else term.scrollLines?.(notches * 3);
+      scrollBy(event.deltaY > 0 ? -LINES_PER_NOTCH : LINES_PER_NOTCH);
     },
-    [getTerminal, relay],
+    [scrollBy],
   );
 
   // ----------------------------------------------------------------- render
-  const geometry = thumbGeometry(state, trackPx);
-  if (state.mode === "none") return null;
+  const geometry = useMemo(
+    () => thumbGeometry(scroll, trackPx),
+    [scroll, trackPx],
+  );
+  if (!hasBar) return null;
 
   const light = appearance === "light";
   const strength = dragging ? 0.95 : 0.62;
-  const maxTop = Math.max(0, state.total - state.rows);
 
   return (
     <div
       ref={trackRef}
       role="scrollbar"
       aria-orientation="vertical"
-      aria-label={
-        state.mode === "app"
-          ? `Scroll ${name} — moves through the agent's own history`
-          : `Scroll ${name}`
-      }
+      aria-label={`Scroll ${name}`}
       aria-valuemin={0}
-      aria-valuemax={maxTop}
-      aria-valuenow={Math.min(state.top, maxTop)}
+      aria-valuemax={scroll?.span ?? 0}
+      aria-valuenow={(scroll?.span ?? 0) - (scroll?.back ?? 0)}
       data-testid={`pane-scrollbar-${name}`}
-      data-mode={state.mode}
       data-shown={shown ? "true" : "false"}
       onPointerDown={onTrackPointerDown}
       onWheel={onWheel}
@@ -559,11 +490,11 @@ export function PaneScrollbar({
         shown ? "opacity-100" : "pointer-events-none opacity-0",
       )}
       style={{
-        right: hostGap,
+        right: inset,
         background: shown
           ? light
             ? "rgba(0,0,0,0.06)"
-            : "rgba(255,255,255,0.06)"
+            : "rgba(255,255,255,0.07)"
           : "transparent",
       }}
     >
@@ -572,16 +503,23 @@ export function PaneScrollbar({
           data-testid={`pane-scrollbar-thumb-${name}`}
           onPointerDown={onThumbPointerDown}
           className={cn(
-            "absolute left-0 w-full cursor-grab rounded-full",
-            dragging ? "cursor-grabbing" : "transition-[top] duration-75",
+            "absolute left-0 w-full rounded-full",
+            dragging ? "cursor-grabbing" : "cursor-grab transition-[top]",
           )}
           style={{
             top: dragTopPx ?? geometry.topPx,
             height: geometry.heightPx,
             background: `rgb(var(--jarvis-yellow) / ${strength})`,
+            transitionDuration: dragging ? undefined : "80ms",
           }}
         />
       )}
     </div>
   );
+}
+
+function same(a: PaneScroll | null, b: PaneScroll | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.span === b.span && a.back === b.back && a.rows === b.rows;
 }
