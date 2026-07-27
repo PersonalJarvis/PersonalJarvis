@@ -43,6 +43,7 @@ import {
   fetchAgentAccounts,
   groupFor,
 } from "@/lib/agentAccountsApi";
+import { TopBarActions } from "@/components/layout/TopBar";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { ResumeCard } from "@/components/agentic/ResumeCard";
 import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
@@ -642,9 +643,18 @@ export function AgenticIdeView() {
       ? { ...workspace, terminals: session.terminals.length }
       : workspace,
   );
+  /*
+   * `actions` only in the standalone bar.
+   *
+   * With a workspace open the grid owns the row and puts the app's actions at
+   * its far right itself; the wizard has no grid, so the bar carries them — and
+   * carries them even with nothing open, which is why it renders at all in that
+   * case. Passing them here as well would put Restart on screen twice.
+   */
   const renderBar = (embedded: boolean) => (
     <WorkspaceBar
       embedded={embedded}
+      actions={embedded ? undefined : <TopBarActions />}
       workspaces={barWorkspaces}
       activeId={session?.id ?? null}
       addingNew={addingNew}
@@ -674,6 +684,7 @@ export function AgenticIdeView() {
             key={session.id}
             session={session}
             workspaceBar={renderBar(true)}
+            appActions={<TopBarActions />}
             focusMode={focusMode}
             onToggleFocus={(v) => void toggleFocus(v)}
             onClose={() => void close()}

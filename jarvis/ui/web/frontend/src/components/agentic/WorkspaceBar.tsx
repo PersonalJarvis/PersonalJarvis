@@ -153,9 +153,23 @@ export function WorkspaceBar({
     }
   };
 
+  /*
+   * With nothing open there are no TABS — only the row that may carry actions.
+   *
+   * The distinction matters twice over. It is what the user sees: a tab strip
+   * offering "New workspace" above a wizard that IS the new workspace is a
+   * second button for the thing already on screen. And it is what the tests
+   * see: the tabs appear only once the workspace list has actually arrived, so
+   * nothing can be clicked or measured in the instant before the first fetch
+   * resolves — a bar that rendered its controls immediately handed those tests
+   * a "New workspace" button that was neither disabled nor still attached by
+   * the time the state landed.
+   */
+  const hasTabs = workspaces.length > 0;
+
   // Nothing open, nothing to add to and no controls to carry: the wizard IS the
   // screen, and an empty bar above it would be furniture.
-  if (workspaces.length === 0 && !actions) return null;
+  if (!hasTabs && !actions) return null;
 
   return (
     <div
@@ -164,6 +178,8 @@ export function WorkspaceBar({
         embedded ? "min-w-0 flex-1" : "border-b border-border px-2 py-1",
       )}
     >
+      {!hasTabs && <div className="min-w-0 flex-1" />}
+      {hasTabs && (
       <div
         data-testid="workspace-bar"
         className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-jarvis"
@@ -353,6 +369,7 @@ export function WorkspaceBar({
         New workspace
       </button>
       </div>
+      )}
 
       {actions && (
         <div

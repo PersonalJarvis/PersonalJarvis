@@ -41,6 +41,21 @@ vi.mock("@/views/ChatsView", () => ({
   ViewHeader: ({ title }: { title: string }) => <header>{title}</header>,
 }));
 
+/*
+ * The IDE carries the app's own Restart/Update actions in its header row, so
+ * this view now mounts the updater hook — which fetches `/api/update/status`
+ * the moment it appears. jsdom has no server behind that, so left real it is an
+ * unhandled request on every render in this file, and the button's visibility
+ * would depend on how that failure happened to land. "No update offered" is
+ * both the deterministic answer and the state of every dev tree.
+ */
+vi.mock("@/hooks/useUpdate", () => ({
+  useUpdate: () => ({
+    status: { managed: false, update_available: false },
+    refresh: vi.fn(),
+  }),
+}));
+
 // xterm.js needs a real canvas, which jsdom has not got — stub the panes.
 vi.mock("@/components/agentic/AgenticTerminal", () => ({
   AgenticTerminal: ({ name }: { name: string }) => (
