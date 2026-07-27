@@ -7906,3 +7906,76 @@ fast attempts still reconnecting half a minute later.
 that gives up permanently needs a reason that is permanent: everything else is a
 delay, so the honest answer to it is a slower retry, not a dead pane in front of
 a live process.
+
+---
+
+## BUG-114: a pane on a second subscription runs a stripped version of the CLI — no skills, no plugins, no user instructions (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "The terminals in the Agentic IDE are not
+real Claude Code sessions." Opening the same folder in an ordinary terminal
+showed 93 user skills, thirteen installed plugins and the user's global
+instructions; a pane opened by Jarvis showed the CLI's built-in skills plus the
+project's own `.claude/` and nothing else. Same machine, same binary, same
+folder, no error anywhere — the pane simply knew less, and the only way to
+notice was to compare it against a terminal.
+
+**Root cause.** Multi-subscription switching (BUG-112's feature) points the
+CLI's own config-dir override — `CLAUDE_CONFIG_DIR` / `CODEX_HOME` — at a
+directory per account. That override does not move a credential: it moves the
+CLI's **entire user level**. `skills/`, `agents/`, `commands/`, `hooks/`,
+`output-styles/`, `plugins/` (marketplaces = the connectors), the user-level
+`CLAUDE.md` / `AGENTS.md`, `rules/`, and `settings.json` / `config.toml` all
+resolve from it. An account directory holds none of those, so every pane on an
+added subscription ran a quieter, emptier build of the CLI the user installed.
+
+`inherit_default_mode` had already patched the narrowest instance of this — a
+pane opened in the CLI's fallback operating mode — one setting at a time,
+without recognising that the missing setting was one symptom of a missing
+directory.
+
+The Agentic IDE is the ONLY spawn path that passes `env=` to the PTY manager,
+which is exactly why the same CLI behaved correctly in every other terminal
+Jarvis opens, and why the report read as "the IDE builds its own broken
+terminals".
+
+**Fix — `jarvis/agent_config_parity.py`.** Before every pane spawn, the user's
+own setup is shared into a redirected directory from an explicit allowlist:
+
+- **directories are linked** — symlink, Windows junction where symlink creation
+  needs a privilege the app does not have (`WinError 1314` on a normal
+  non-elevated install), copy where neither works;
+- **files are mirrored by digest, then merged** — a file the account has
+  written to itself is never overwritten; the keys it is MISSING are filled in
+  recursively. Without that last step the fix was HALF a fix: the plugin trees
+  arrived while `enabledPlugins` stayed absent, so nothing loaded;
+- **`plugins/` is shared whole or not at all** — which plugins are active lives
+  in state files beside the marketplaces they name;
+- **identity is out of reach by construction** — `.credentials.json`,
+  `auth.json`, `secrets/`, `.claude.json`, `projects/`, `sessions/` and
+  `history.jsonl` are not on the list, and Claude Code's user-scope MCP servers
+  are merged out of `.claude.json` one key at a time because that document
+  holds the login too;
+- **one re-entrant lock per account directory** — panes attach concurrently, and
+  the trust entry and the MCP merge are read-modify-write cycles on the same
+  file.
+
+Second defect found on the way: `jarvis/workspace/trust.py` seeded folder trust
+only into the machine's default config, so a pane on an added account met the
+"do you trust this directory?" dialog — which voice and the prompt bar cannot
+answer. `ensure_trusted` takes `config_dirs` now, and the registry pre-trusts
+the directory each pane actually runs from.
+
+**Regression guard.** `tests/unit/test_agent_config_parity.py` — the setup
+arrives and keeps arriving; identity is never shared; an account's own value
+survives while its missing keys are filled; symlink host, junction host,
+copy-only host and a host that can do none of it; eight threads doing what eight
+panes do; and a drift guard that fails when a CLI gains accounts without gaining
+an allowlist. `tests/unit/agentic_ide/test_account_spawn.py` — the spawn
+provisions and pre-trusts under the lock. `tests/unit/workspace/test_trust.py` —
+per-account trust, de-duplicated.
+
+**Class rule.** An environment variable that redirects a tool's "home" moves
+everything that lives there, not the one thing you were thinking about. Before
+redirecting one, enumerate what else resolves from that directory — and when the
+answer is "the user's whole setup", carry it across explicitly instead of
+discovering the loss one setting at a time.

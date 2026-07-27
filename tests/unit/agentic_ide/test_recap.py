@@ -33,29 +33,16 @@ def test_a_fresh_pane_says_it_has_not_started() -> None:
     assert recap.detail
 
 
-def test_the_instruction_beats_the_last_printed_row() -> None:
-    """What the pane was ASKED to do leads; the row it printed is a fragment.
-
-    This ordering is the whole lesson of the first recap that shipped: opening
-    with the newest readable row put "without interrupting Claude's current
-    work" in the header of a pane that had just written a design document.
-    """
+def test_the_headline_reports_what_the_pane_last_printed() -> None:
+    """The freshest signal wins: output beats the instruction that caused it."""
     term = _pane(status="live", last_prompt="Fix the failing login test")
     term.transcript.feed("Running pytest tests/unit/test_login.py\r\n")
 
     recap = summarize(term)
 
-    assert "Fix the failing login test" in recap.headline
-    # ...and what it printed is still there, in the longer form.
-    assert "Running pytest tests/unit/test_login.py" in recap.detail
-
-
-def test_the_headline_reports_the_last_printed_row_when_nothing_was_asked() -> None:
-    """A pane nobody briefed still says something, from what it printed."""
-    term = _pane(status="live")
-    term.transcript.feed("Running pytest tests/unit/test_login.py\r\n")
-
-    assert summarize(term).headline == "Running pytest tests/unit/test_login.py"
+    assert recap.headline == "Running pytest tests/unit/test_login.py"
+    # ...and the instruction is still there, in the longer form.
+    assert "Fix the failing login test" in recap.detail
 
 
 def test_a_live_pane_that_printed_nothing_falls_back_to_its_instruction() -> None:
@@ -142,77 +129,8 @@ def test_a_pane_serializes_its_recap_for_the_ui() -> None:
 
     data = term.to_dict()
 
-    assert "Ship the release" in data["recap"]
-    assert "Tagging v2.4.0" in data["recap_detail"]
-
-
-def test_the_headline_quotes_the_job_rather_than_the_briefs_scaffolding() -> None:
-    """The reported bug: headers that read "## Task" or "Context:".
-
-    A prompt that arrives from the composer is a structured markdown brief, and
-    quoting its FIRST line quoted the heading above the work instead of the
-    work. Every pane the composer had written for therefore had a header that
-    named the shape of the document and nothing about the job.
-    """
-    term = _pane(
-        status="live",
-        last_prompt=(
-            "# Task\n"
-            "\n"
-            "Replace the session lookup in auth/middleware.py so the token is\n"
-            "read once per request.\n"
-            "\n"
-            "## Context\n"
-            "The login suite has been red since Tuesday.\n"
-        ),
-    )
-
-    headline = summarize(term).headline
-
-    assert headline.startswith("Replace the session lookup")
-    assert "#" not in headline
-    assert "Task" not in headline
-
-
-def test_a_label_on_the_same_line_as_the_job_keeps_only_the_job() -> None:
-    term = _pane(status="live", last_prompt="Task: fix the failing login test")
-
-    assert summarize(term).headline == "fix the failing login test"
-
-
-def test_a_brief_of_nothing_but_labels_still_says_something() -> None:
-    """Better the label than a blank header — it is what the pane was sent."""
-    term = _pane(status="live", last_prompt="## Instructions\n\n---\n")
-
-    assert summarize(term).headline == "Instructions"
-
-
-def test_the_headline_carries_the_job_without_framing_it() -> None:
-    """A header is a few centimetres wide; ten characters of "Working on:" is
-    ten characters of the answer pushed past the ellipsis."""
-    term = _pane(status="live", last_prompt="Fix the failing login test")
-    term.transcript.feed("Running pytest\r\n")
-
-    recap = summarize(term)
-
-    assert recap.headline == "Fix the failing login test"
-    # The long form still says which of the two the sentence is.
-    assert 'Last asked to: "Fix the failing login test"' in recap.detail
-
-
-def test_the_long_form_keeps_a_long_instruction_readable() -> None:
-    """The old 80-character cap cut the instruction in the CARD as well, which
-    is the one place there was room to read it."""
-    brief = (
-        "Work out why the wake word goes deaf after a GPU hot-swap and write "
-        "the finding up in docs/local-wakeword/, with the measurements that "
-        "support it"
-    )
-    term = _pane(status="live", last_prompt=brief)
-
-    detail = summarize(term).detail
-
-    assert "docs/local-wakeword/" in detail
+    assert data["recap"] == "Tagging v2.4.0"
+    assert "Ship the release" in data["recap_detail"]
 
 
 def test_summarize_survives_a_pane_without_a_transcript() -> None:

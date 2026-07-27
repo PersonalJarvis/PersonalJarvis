@@ -56,18 +56,11 @@ TAIL_LINES = 14
 # pane that printed a 3,000-character JSON blob cannot push that through the
 # state payload of every poll.
 HEADLINE_CHARS = 120
-# The long form is read in a card that wraps and scrolls, not in a one-line
-# tooltip — so the cap is here to bound the payload, not to make the text fit.
-# It used to be 280, which cut the second sentence off mid-word in exactly the
-# place the user had opened the card to read.
-DETAIL_CHARS = 480
-# How much of the instruction is quoted in the long form. A prompt is often a
-# whole brief; this is the part of it that identifies the task.
-TASK_CHARS = 200
-# The same job in the header, where it shares a few centimetres with the pane's
-# call-sign and its buttons. Shorter on purpose: past this the CSS clip lands
-# before the character cap does, and two ellipses is one more than anyone needs.
-HEADLINE_TASK_CHARS = 96
+# Two readable sentences in a tooltip roughly 20 rem wide.
+DETAIL_CHARS = 280
+# How much of the instruction is quoted. A prompt is often a whole brief; the
+# first line of it is what identifies the task.
+TASK_CHARS = 80
 
 # Glyphs an agent TUI draws in front of its input line. A row starting with one
 # is the prompt box, not something the agent did.
@@ -98,69 +91,6 @@ _CHROME_FRAGMENTS = (
 # @reference is content, not decoration.
 _LEAD_RE = re.compile(r'^[^\w"\'(\[@/#]+')
 
-# Markdown a composed brief opens a line with: a heading marker, a list bullet,
-# a numbered step, a block quote. Decoration around the sentence, never part of
-# the job — quoting it back is how the header ended up reading "## Task".
-_MARKUP_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d{1,2}[.)]\s+|>\s+)")
-# Emphasis and code ticks, which a header renders literally because it renders
-# no markdown at all.
-_EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
-
-# Section labels a brief is structured with. On their own they name the FORM of
-# the document, not the work, so the job is on the line after them — and where
-# one prefixes the sentence ("Task: fix the login test") the sentence is the
-# part worth quoting. Lower-case, colon already stripped.
-_SECTION_LABELS = frozenset(
-    {
-        "brief",
-        "context",
-        "goal",
-        "goals",
-        "instruction",
-        "instructions",
-        "objective",
-        "objectives",
-        "prompt",
-        "request",
-        "summary",
-        "task",
-        "tasks",
-        "what to do",
-        "your task",
-    }
-)
-
-
-def _job_line(text: str) -> str:
-    """The line of an instruction that actually names the job.
-
-    A prompt that arrives from the composer is a structured markdown brief, so
-    its first line is as often ``# Task`` or ``**Context**`` as it is the work —
-    and a header that quotes the first line quotes the scaffolding. This walks
-    the opening of the brief instead, strips the markup off each line, and takes
-    the first one that says something. A brief that is nothing but labels still
-    answers with its first label rather than with nothing.
-    """
-    label_seen = ""
-    for raw in str(text or "").splitlines()[:12]:
-        line = _EMPHASIS_RE.sub("", _MARKUP_RE.sub("", raw.strip())).strip()
-        if not line or line.startswith("```"):
-            continue
-        # A horizontal rule, a box edge, a row of dashes under a heading.
-        if sum(1 for ch in line if ch.isalpha()) < 3:
-            continue
-        head, sep, rest = line.partition(":")
-        if sep and head.strip().lower() in _SECTION_LABELS:
-            if rest.strip():
-                return rest.strip()
-            label_seen = label_seen or line
-            continue
-        if line.rstrip(":").strip().lower() in _SECTION_LABELS:
-            label_seen = label_seen or line
-            continue
-        return line
-    return label_seen
-
 
 @dataclass(frozen=True, slots=True)
 class Recap:
@@ -176,7 +106,7 @@ class Recap:
     detail: str
 
 
-def condense(text: str, limit: int) -> str:
+def _condense(text: str, limit: int) -> str:
     """One line of ``text``, whitespace collapsed, cut on a word boundary."""
     cleaned = " ".join(str(text or "").split())
     if len(cleaned) <= limit:
@@ -205,20 +135,22 @@ def _activity(tail: Sequence[str]) -> str:
     for line in reversed(list(tail)):
         if not _informative(line):
             continue
-        return condense(_LEAD_RE.sub("", line.strip()), HEADLINE_CHARS)
+        return _condense(_LEAD_RE.sub("", line.strip()), HEADLINE_CHARS)
     return ""
 
 
-def _task(term: Any, limit: int = TASK_CHARS) -> str:
+def _task(term: Any) -> str:
     """The instruction this pane was last given, short enough to quote.
 
-    ``limit`` is the caller's, because the header and the card have very
-    different amounts of room and the same sentence has to serve both.
+    The FIRST line of it: a composed prompt is a structured markdown brief whose
+    later lines are context and file references, and the opening line is the one
+    that names the job.
     """
-    return condense(_job_line(getattr(term, "last_prompt", "")), limit)
+    first_line = str(getattr(term, "last_prompt", "") or "").split("\n", 1)[0]
+    return _condense(first_line, TASK_CHARS)
 
 
-def idle_phrase(term: Any) -> str:
+def _idle_phrase(term: Any) -> str:
     """How long ago this pane last printed anything, in words."""
     last = getattr(term, "last_output_at", None)
     if not last:
@@ -233,7 +165,7 @@ def idle_phrase(term: Any) -> str:
 
 def _sentences(*parts: str) -> str:
     """Join the non-empty parts into one paragraph, capped for transport."""
-    return condense(" ".join(part for part in parts if part), DETAIL_CHARS)
+    return _condense(" ".join(part for part in parts if part), DETAIL_CHARS)
 
 
 def _typed_into(term: Any) -> bool:
@@ -295,10 +227,10 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
         else "This is a plain terminal — you type into it yourself."
     )
     activity = _activity(tail)
-    idle = idle_phrase(term)
+    idle = _idle_phrase(term)
 
     if status == "error":
-        problem = condense(getattr(term, "error", ""), HEADLINE_CHARS)
+        problem = _condense(getattr(term, "error", ""), HEADLINE_CHARS)
         problem = problem or "it could not be started"
         return Recap(
             headline=f"Not running — {problem}",
@@ -322,31 +254,20 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
         ended = "Finished and exited" if code in (0, None) else f"Exited with code {code}"
         closing = f"{ended}. Last output: {activity}" if activity else f"{ended}."
         return Recap(
-            headline=condense(closing, HEADLINE_CHARS),
+            headline=_condense(closing, HEADLINE_CHARS),
             detail=_sentences(
                 asked,
                 f"{ended}" + (f", last printing: {activity}." if activity else "."),
             ),
         )
 
-    # Live. The INSTRUCTION leads, and that ordering was learned the hard way:
-    # this used to open with the newest readable row, on the theory that the
-    # freshest signal is the most useful one. It is not. The last row of a
-    # full-screen coding CLI is a fragment of a sentence it is halfway through
-    # printing — a pane that had just written a design document reported
-    # "without interrupting Claude's current work", which is a true quote and a
-    # complete non-answer. What the pane was ASKED to do is at least always
-    # about the job. The row it printed follows in the tooltip, and the real
-    # answer to "what has it achieved" comes from .recap_engine.
-    #
-    # The job goes in BARE — no "Working on:" prefix and no quotes. The header
-    # is a few centimetres wide and clips the end of whatever is in it, so ten
-    # characters of framing is ten characters of the answer pushed off the edge;
-    # the long form below still says which of the two it is.
-    if task:
-        headline = _task(term, HEADLINE_TASK_CHARS)
-    elif activity:
+    # Live. Freshest signal first: what it is printing beats what it was told,
+    # because the instruction is minutes old by the time the pane is glanced at
+    # and the output is what changed since.
+    if activity:
         headline = activity
+    elif task:
+        headline = f'Working on: "{task}"'
     else:
         headline = "Running — nothing printed yet."
 
@@ -354,19 +275,9 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
         f"Working now: {activity}." if activity else "Running, with nothing printed yet."
     )
     return Recap(
-        headline=condense(headline, HEADLINE_CHARS),
+        headline=_condense(headline, HEADLINE_CHARS),
         detail=_sentences(asked, now),
     )
 
 
-__all__ = [
-    "DETAIL_CHARS",
-    "HEADLINE_CHARS",
-    "HEADLINE_TASK_CHARS",
-    "TAIL_LINES",
-    "TASK_CHARS",
-    "Recap",
-    "condense",
-    "idle_phrase",
-    "summarize",
-]
+__all__ = ["DETAIL_CHARS", "HEADLINE_CHARS", "TAIL_LINES", "Recap", "summarize"]

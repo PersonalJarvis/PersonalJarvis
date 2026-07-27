@@ -178,6 +178,46 @@ def test_codex_shares_its_config_skills_rules_and_prompts(tmp_path: Path) -> Non
     assert not (account.config_dir / "secrets").exists()
 
 
+# ------------------------------------------------------------------ drift guard
+
+
+def test_every_cli_that_can_be_redirected_has_a_setup_allowlist() -> None:
+    """A CLI gains accounts, and its panes silently lose the user's setup again.
+
+    That is how this bug arrives a second time: redirecting a config dir is one
+    line in ``agent_accounts.ENV_VAR``, while carrying the user's setup across is
+    a table somebody has to remember. The two must not be able to drift apart —
+    so a platform with an override and no allowlist fails here rather than in
+    somebody's terminal six months from now.
+    """
+    for platform in agent_accounts.PLATFORMS:
+        assert platform in agent_accounts.ENV_VAR
+        entries = agent_config_parity.USER_SETUP.get(platform)
+        assert entries, f"{platform} can be redirected but shares nothing back"
+        # Every entry is one the CLI reads; nothing that identifies the account.
+        names = {entry.name for entry in entries}
+        assert not names & {
+            ".credentials.json",
+            "auth.json",
+            "secrets",
+            ".claude.json",
+            "projects",
+            "sessions",
+            "history.jsonl",
+        }
+
+
+def test_a_merged_key_never_names_a_whole_identity_document() -> None:
+    """Merging is the concession made for documents that hold the login too.
+
+    It stays a concession: one key at a time, never the file, and never a key
+    that carries the identity itself.
+    """
+    for merges in agent_config_parity.MERGED_KEYS.values():
+        for merged in merges:
+            assert merged.key not in {"oauthAccount", "userID", "projects"}
+
+
 # ------------------------------------------------------------- identity is safe
 
 
