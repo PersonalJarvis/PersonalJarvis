@@ -330,3 +330,47 @@ video/*.png
 # Author email map. Its stated purpose is to keep private addresses out of the
 # public index, but the file itself publishes them in plaintext.
 /.mailmap
+
+# ============================================================
+# Pre-1.6.0 release sweep: local tool caches, audit material, and runtime
+# write paths that were reachable from inside the repo tree.
+# ============================================================
+
+# Cloudflare Wrangler cache — stores the signed-in account name (a real email
+# address) and account id in plaintext. Never part of the product.
+/.wrangler/
+
+# Repository audit / deep-dive material. These enumerate unfixed defects with
+# file:line precision and quote local absolute paths — a private working
+# record, not a deliverable. Findings belong in a private tracker.
+/reports/
+/REPOSITORY_DEEP_DIVE_REPORT_*.md
+
+# Ad-hoc scratch dirs used by audit and test tooling.
+/.audit-tmp/
+/.tmp_pytest/
+/.tmp_research/
+
+# Agentic-IDE drop staging: files a user drags onto a pane land here, including
+# screenshots and clipboard images. The runtime writes a child .gitignore
+# (jarvis/agentic_ide/drops.py) but swallows a write failure, so anchor it here
+# too rather than relying on a best-effort side effect.
+/.jarvis/
+
+# Personal knowledge-vault write paths that fill at runtime. The contact mirror
+# and daily-note writers create these on first use; only the empty skeleton
+# ships (see the vault-content block above).
+wiki/obsidian-vault/people/
+wiki/obsidian-vault/10-notes/
+wiki/obsidian-vault/index.md
+wiki/obsidian-vault/attachments/
+# Attachment sink: ignore the contents, keep the tracked folder placeholder.
+wiki/obsidian-vault/90-attachments/*
+!wiki/obsidian-vault/90-attachments/.gitkeep
+
+# UltraWiki Markdown projection + its manifest. The output directory is
+# user-configurable and can resolve inside the tracked wiki/ tree, so ignore
+# both the repo-relative and root-relative spellings.
+/wiki/ultrawiki-vault/
+/ultrawiki-vault/
+.ultrawiki-manifest.json
