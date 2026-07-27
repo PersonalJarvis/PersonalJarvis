@@ -75,7 +75,7 @@ from uuid import uuid4
 from loguru import logger
 
 
-from . import recap, resume_store
+from . import recap_engine, resume_store
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -537,7 +537,11 @@ class Terminal:
         # and both the line count below and the recap want it — asking twice per
         # pane per poll is a cost with nothing to show for it.
         lines = self.transcript.lines()
-        summary = recap.summarize(self, tail=lines[-recap.TAIL_LINES :])
+        # The model-written recap when one has been produced for this pane, the
+        # deterministic one until then. Reading only — the refresh is scheduled
+        # by the /recaps poll, which is the caller that knows a human is
+        # actually looking at this workspace.
+        summary = recap_engine.recap_for(self, lines=lines)
         return {
             "key": self.key,
             "name": self.name,
@@ -2029,6 +2033,10 @@ class Registry:
                 term.viewer_output = None
                 term.viewer_exit = None
                 session.terminals.remove(term)
+                # The recap cache is keyed by pane, and pane keys are reused
+                # (a new "Mika" in the same workspace). Dropping it here is what
+                # stops a fresh pane opening under the last one's sentence.
+                recap_engine.forget(term.key)
             self._renumber(session)
             if resolved:
                 await self._persist()
