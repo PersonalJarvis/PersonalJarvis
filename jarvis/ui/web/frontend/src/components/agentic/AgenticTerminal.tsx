@@ -75,6 +75,8 @@ import { attachToTerminal } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
+import { createKeyEventChain } from "./terminalKeyChain";
+import { installNewlineBridge } from "./terminalNewline";
 import { OffscreenBuffer } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollbar } from "./PaneScrollbar";
@@ -305,16 +307,30 @@ export function AgenticTerminal({
       paste: (text) => term.paste(text),
       focus: () => term.focus(),
     });
+    // Both keyboard bridges below claim keystrokes, and xterm holds exactly ONE
+    // custom key handler — attaching them directly would leave only the last
+    // one working, silently. See ./terminalKeyChain.
+    const keys = createKeyEventChain(term);
     // Make Ctrl+V / Cmd+V paste. Left to itself xterm reads the chord as the
     // terminal control code ^V and CANCELS the keystroke, so the browser never
     // runs its own paste and nothing arrives at all — see ./terminalPaste.
-    const disposePasteBridge = installPasteBridge(term, container, {
-      readClipboard: robustPaste,
-      isMac: /mac|iphone|ipad/i.test(navigator.userAgent),
-      onUnavailable: () =>
-        onAttachErrorRef.current?.(
-          "Could not read the clipboard on this machine.",
-        ),
+    const disposePasteBridge = installPasteBridge(
+      { attachCustomKeyEventHandler: keys.add, paste: (text) => term.paste(text) },
+      container,
+      {
+        readClipboard: robustPaste,
+        isMac: /mac|iphone|ipad/i.test(navigator.userAgent),
+        onUnavailable: () =>
+          onAttachErrorRef.current?.(
+            "Could not read the clipboard on this machine.",
+          ),
+      },
+    );
+    // Make Shift+Enter (and Option/Cmd+Enter) break the line instead of sending
+    // the half-written instruction — see ./terminalNewline.
+    const disposeNewlineBridge = installNewlineBridge({
+      attachCustomKeyEventHandler: keys.add,
+      input: (data) => term.input(data),
     });
     try {
       fit.fit();
@@ -552,6 +568,7 @@ export function AgenticTerminal({
       ro.disconnect();
       io?.disconnect();
       disposePasteBridge();
+      disposeNewlineBridge();
       disposeQuerySuppression();
       try {
         socket?.close();

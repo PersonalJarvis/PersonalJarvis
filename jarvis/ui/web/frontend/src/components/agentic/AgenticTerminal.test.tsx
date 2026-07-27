@@ -11,6 +11,10 @@ const terminalHarness = vi.hoisted(() => ({
   send: vi.fn<(payload: unknown) => boolean>(() => true),
   /** The live socket's handlers, so a test can play a reconnect. */
   handlers: { current: null as Record<string, (...args: never[]) => void> | null },
+  /** Everything the pane types into the terminal on the user's behalf. */
+  input: vi.fn<(data: string) => void>(),
+  /** xterm's single custom key handler, so a test can press a key. */
+  keys: { current: null as ((event: KeyboardEvent) => boolean) | null },
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -36,6 +40,12 @@ vi.mock("@xterm/xterm", () => ({
     }
     focus() {}
     paste() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      terminalHarness.keys.current = handler;
+    }
+    input(data: string) {
+      terminalHarness.input(data);
+    }
     getSelection() {
       return "";
     }
@@ -126,6 +136,61 @@ describe("AgenticTerminal layout", () => {
     expect(host.className).not.toMatch(/(?:^|\s)p[trblxy]?-/);
     expect(terminalHarness.open).toHaveBeenCalledWith(host);
     expect(terminalHarness.observe).toHaveBeenCalledWith(host);
+  });
+});
+
+describe("pane keyboard", () => {
+  beforeEach(() => {
+    terminalHarness.input.mockClear();
+    terminalHarness.keys.current = null;
+    globalThis.ResizeObserver = ResizeObserverHarness;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The reported bug: Shift+Enter sent the half-written instruction, because
+   * every modifier combination of Enter reaches a terminal as the same
+   * carriage return. See ./terminalNewline for the sequence.
+   */
+  it("breaks the line on Shift+Enter instead of sending the instruction", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    const press = terminalHarness.keys.current;
+    expect(press).not.toBeNull();
+    const claimed = press?.(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true }),
+    );
+
+    expect(claimed).toBe(false);
+    expect(terminalHarness.input).toHaveBeenCalledWith("\x1b\r");
+  });
+
+  it("leaves a plain Enter to xterm, so Enter still sends", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    const claimed = terminalHarness.keys.current?.(
+      new KeyboardEvent("keydown", { key: "Enter" }),
+    );
+
+    expect(claimed).toBe(true);
+    expect(terminalHarness.input).not.toHaveBeenCalled();
   });
 });
 

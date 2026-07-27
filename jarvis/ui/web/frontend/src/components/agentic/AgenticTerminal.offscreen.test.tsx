@@ -41,6 +41,11 @@ vi.mock("@xterm/xterm", () => ({
     open() {}
     focus() {}
     paste() {}
+    // The pane claims keystrokes on mount (paste, and the newline chord in
+    // ./terminalNewline) — a stand-in without these is a terminal xterm never
+    // shipped either.
+    attachCustomKeyEventHandler() {}
+    input() {}
     getSelection() {
       return "";
     }
