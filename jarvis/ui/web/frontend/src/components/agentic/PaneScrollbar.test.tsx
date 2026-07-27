@@ -166,17 +166,20 @@ describe("PaneScrollbar", () => {
   });
 
   /*
-   * The second report on this strip, at the level a user meets it. Reaching for
-   * the right edge of a Claude Code pane nobody has scrolled must reveal NOTHING
-   * YET: no measurement has been taken, so there is no history to describe, and
-   * the bar that used to appear here spent half its track on empty space — on
-   * every pane of a workspace that was just opened.
+   * The fourth report, and the one that settled where the burden of proof lies.
    *
-   * "Yet" is the third round (below). Silence is right for the instant the
-   * pointer arrives; leaving it there permanently is what made the bar
-   * unreachable.
+   * For one round this pane showed NOTHING until a measurement had been taken,
+   * so that an unscrolled pane would not spend half its track on an assumed
+   * screenful of history. Every failure to measure then looked exactly like
+   * "this pane cannot scroll", and the bar stayed unreachable in the only kind
+   * of pane it was written for — reported four times, always as "it works in a
+   * Codex pane and nowhere else". A Codex pane never needed a measurement.
+   *
+   * So reaching for the edge of a Claude Code pane gives you a bar you can drag
+   * immediately, sized from the least its history could be. Only a measurement
+   * that positively found nothing takes it away again (below).
    */
-  it("shows nothing on a Claude-Code-style pane nobody has scrolled", () => {
+  it("gives a Claude-Code-style pane a bar the moment you reach for it", () => {
     render(
       <Harness
         term={
@@ -191,7 +194,11 @@ describe("PaneScrollbar", () => {
 
     reachForTheBar();
 
-    expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
+    const bar = screen.getByTestId("pane-scrollbar-Dana");
+    expect(bar.dataset.mode).toBe("app");
+    expect(bar.dataset.shown).toBe("true");
+    // Sitting at the newest output, which is where an unscrolled pane is.
+    expect(thumbTop() + thumbHeight()).toBe(TRACK_PX);
   });
 
   /*
@@ -404,7 +411,6 @@ describe("PaneScrollbar", () => {
         vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
       );
       expect(relayed).toEqual([]);
-      expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
 
       // Pointer away, the terminal arrives, and the question is asked again.
       fireEvent.mouseMove(screen.getByTestId("region"), {

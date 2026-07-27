@@ -99,19 +99,25 @@ describe("readScrollState", () => {
   });
 
   /*
-   * The follow-up report on the same strip: a pane nobody has scrolled yet gets
-   * NO bar. It used to be credited with an assumed screenful of history, which
-   * sized a half-track thumb and left the other half as empty furniture down the
-   * side of every pane in a freshly opened workspace.
+   * A pane nobody has scrolled yet still gets a bar, sized from the least its
+   * history could be — one screenful above the newest output.
+   *
+   * This was the other way round for one round, so that an unscrolled pane
+   * would not spend half its track on an assumption. It made every failed
+   * measurement indistinguishable from "this pane cannot scroll", and left the
+   * bar unreachable in the only kind of pane that needs it. Half a track of
+   * assumption you can drag beats a correct silence you cannot.
    */
-  it("draws no bar for an app-mode pane nothing has been measured on", () => {
+  it("draws a bar for an app-mode pane nothing has been measured on", () => {
     const state = readScrollState(
       fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 30 }),
       AT_LIVE_END,
     );
 
-    expect(state.mode).toBe("none");
-    expect(thumbGeometry(state, 300)).toBeNull();
+    expect(state).toMatchObject({ mode: "app", total: 60, rows: 30, top: 30 });
+    // At the newest output: the thumb sits at the bottom of its track.
+    const geometry = thumbGeometry(state, 300)!;
+    expect(geometry.topPx + geometry.heightPx).toBe(300);
   });
 
   /*
@@ -197,7 +203,9 @@ describe("thumbGeometry", () => {
 
     expect(thumbGeometry(readScrollState(term, measured()), 400)).toEqual(
       thumbGeometry(
-        readScrollState(fakeTerminal({ length: 424, rows: 24, viewportY: 400 })),
+        readScrollState(
+          fakeTerminal({ length: 424, rows: 24, viewportY: 400 }),
+        ),
         400,
       ),
     );
@@ -255,7 +263,9 @@ describe("relayWheelNotch", () => {
   it("dispatches a wheel event xterm can encode for the running CLI", () => {
     const element = host();
     const seen: WheelEvent[] = [];
-    element.addEventListener("wheel", (event) => seen.push(event as WheelEvent));
+    element.addEventListener("wheel", (event) =>
+      seen.push(event as WheelEvent),
+    );
 
     relayWheelNotch(element, -1);
 

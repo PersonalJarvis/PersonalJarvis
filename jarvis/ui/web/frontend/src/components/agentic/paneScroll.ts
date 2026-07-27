@@ -47,9 +47,9 @@
  * * `app` — the application took the mouse, so it holds the history (Claude
  *   Code). Position and extent are MEASURED from how far the screen's content
  *   moves when it is scrolled — see ./paneAppScroll.
- * * `none` — nothing to scroll, or nothing measured yet: a fresh pane, an
- *   application nobody has scrolled, or one measured as having no history at
- *   all. The bar stays away instead of drawing a dead track.
+ * * `none` — nothing to scroll: a terminal whose buffer fits on screen, or an
+ *   application MEASURED as having no history at all. The bar stays away
+ *   instead of drawing a dead track.
  *
  * ## Both modes draw the same thumb, because both now know the same things
  *
@@ -70,21 +70,29 @@
  * relayed wheel notches instead of a viewport call — because that is the only
  * language the application listens in.
  *
- * ## And it says nothing until it has measured something
+ * ## A measurement sizes the bar. It does not decide whether there is one.
  *
- * A real answer is only available once there has been something to measure. Until
- * then `app` mode draws NO bar, rather than sizing one from an assumed screenful
- * of history: that assumption left half the track empty on every pane nobody had
- * scrolled yet — which, in a workspace that was just opened, is all of them.
- * Reported 2026-07-27 as a strip of empty space down the right-hand side of a
- * pane, on the same edge as the position bug above and immediately after it.
+ * For one round it did decide, and `app` mode drew nothing until something had
+ * been measured — so that an unscrolled pane would not spend half its track on
+ * an assumed screenful of history (reported 2026-07-27 as a strip of empty
+ * space down a pane's right-hand side). The cure was worse: EVERY way of
+ * failing to measure — a screen too alike to compare, a probe sent while the
+ * agent repainted, an answer that never came — became indistinguishable from
+ * "this pane cannot scroll", and the bar was unreachable in exactly the panes
+ * it exists for. Reported four times over, always the same way: it works in a
+ * Codex pane and nowhere else. A Codex pane never needed a measurement.
+ *
+ * So an application-held pane now gets a bar as soon as the pointer reaches for
+ * it, sized from the least history it could have and draggable straight away;
+ * the measurement corrects the proportions on the first movement. Only a
+ * measurement that positively found NO history takes the bar away again — see
+ * `measuredNoHistory` in ./paneAppScroll. Silence has to be earned.
  */
 import type { Terminal } from "@xterm/xterm";
 import {
   appScrollExtent,
   appTakesWheel,
   AT_LIVE_END,
-  hasMeasuredHistory,
   type AppScrollPosition,
 } from "./paneAppScroll";
 
@@ -148,13 +156,27 @@ export function readScrollState(
   // holds the history with it, in EITHER buffer, so the viewport it left behind
   // is ignored in favour of what the measurement found.
   if (appTakesWheel(term)) {
-    // Nothing measured yet, so there is nothing to draw. An application that
-    // holds its own history does not reveal how much of it there is until it is
-    // scrolled, and a bar sized from an ASSUMED screenful spends half its track
-    // on empty furniture — down the side of every pane in a fresh workspace,
-    // because a pane nobody has scrolled yet is the normal state of one. See
-    // `hasMeasuredHistory` in ./paneAppScroll.
-    if (!hasMeasuredHistory(position)) return IDLE_STATE;
+    // A bar, unless the pane has been MEASURED as having nothing to scroll.
+    //
+    // It used to be the other way round — no bar until something had been
+    // measured — and that is what kept the whole feature out of reach. Every
+    // way the measurement could come back empty (a screen that could not be
+    // compared, a probe that arrived while the agent was repainting, an answer
+    // that never came) produced the same outcome as "this pane cannot scroll":
+    // nothing at all, in the one kind of pane the bar was written for. Four
+    // rounds of reports said the same thing — it works in a Codex pane and
+    // nowhere else — because a Codex pane needs no measurement to draw a bar.
+    //
+    // So the burden of proof is the other way now. Reaching for the edge of a
+    // pane whose CLI holds its own history gives you a bar you can drag,
+    // sized from the least it could be — one screenful above, which is what
+    // `appScrollExtent` assumes until a measurement says otherwise. Dragging
+    // it relays wheel notches whether anything has been measured or not, and
+    // the first movement replaces the assumption with the truth.
+    //
+    // What still takes the bar away is a real answer: `appScrollExtent`
+    // reports a total of one screen for a pane measured as having no history,
+    // and the check below removes it. That is the only silence left.
     const extent = appScrollExtent(position, rows);
     // A measurement that found no history at all — a dashboard, a pager on a
     // short file — takes the bar away rather than drawing a thumb that fills
