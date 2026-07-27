@@ -26,9 +26,9 @@ from jarvis.brain.cu_gate import (
     llm_computer_use_allowed,
 )
 from jarvis.brain.spawn_gate import (
-    SPAWN_BLOCKED_MODEL_FEEDBACK,
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
+    spawn_blocked_feedback,
 )
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
 from jarvis.core.turn_language import resolve_output_language, resolve_turn_language
@@ -927,7 +927,7 @@ class ToolUseLoop:
                     tool_result_payload = {
                         "success": False,
                         "output": None,
-                        "error": SPAWN_BLOCKED_MODEL_FEEDBACK,
+                        "error": spawn_blocked_feedback(),
                     }
                 elif (
                     tool_name in CU_VEHICLE_TOOL_NAMES

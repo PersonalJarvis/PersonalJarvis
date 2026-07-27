@@ -1606,6 +1606,78 @@ def expects_several(user_text: str) -> bool:
     return bool(_PLURAL_ADDRESS_RE.search(text))
 
 
+def _spawn_words_describe_pane_work(text: str, candidates: list[str]) -> bool:
+    """True when the spawn vocabulary describes what a PANE should do.
+
+    The tie-breaker for the one utterance shape the vehicle stand-down below
+    cannot read: telling a coding agent to fan out. "Sub-agent" is not Jarvis
+    vocabulary in this workspace — it is what every agentic coding CLI calls its
+    own parallel helpers, and asking for them is among the most ordinary things
+    a user says to a pane. Live failure 2026-07-27 (voice session 20:00): "let
+    Alex and Ellis do a deep dive … and they should spawn swarms of sub-agents"
+    named two running panes, was detected as an instruction to both — and was
+    then handed to a background mission worker anyway, because the sentence
+    contained "sub-agents" and "spawn". Both terminals sat idle.
+
+    The signal is WORD ORDER, and it is the same one a listener uses:
+
+    * "spawn an agent that helps Kai" — the vehicle word OPENS the request, the
+      call-sign is what the new agent is for. An order to Jarvis;
+    * "Alex should spawn sub-agents" — the call-sign comes first and the vehicle
+      word sits inside the work being described. An order to Alex.
+
+    So every vehicle word must stand BEHIND the first named pane. One in front
+    is enough to hand the turn back to the spawn path, which keeps the mirror
+    bug — a workspace swallowing a genuine delegation request — shut.
+
+    The name has to be CERTAIN (exact, or a spelling folding to the same sound):
+    this branch decides against a background mission the user may well have
+    wanted, and a merely similar word is not evidence enough to do that.
+    """
+    if not candidates:
+        return False
+    from jarvis.brain.spawn_gate import spawn_vehicle_spans
+
+    # Both positions must be measured in the SAME string: canonicalisation
+    # rewrites a garbled call-sign ("Elis" → "Ellis") and shifts every offset
+    # behind it.
+    working = _canonical_text(text, candidates)
+    mentions = _mentions(working, candidates, fuzzy=False)
+    if not mentions:
+        return False
+    spans = spawn_vehicle_spans(working)
+    if not spans:
+        return False
+    first_name_at = mentions[0][0]
+    return all(start > first_name_at for start, _ in spans)
+
+
+def spawn_vehicle_outranks_workspace(
+    user_text: str, *, names: list[str] | None = None
+) -> bool:
+    """True when explicit spawn vocabulary should beat an addressed pane.
+
+    The vehicle stand-down, as ONE function, because it now has two exceptions
+    and three callers (``owns_turn`` for both routing gates, and the router's
+    Agentic-IDE fast path, which carries its own candidate roster). A caller
+    that re-implemented it would strand precisely the exception turns: the spawn
+    gate refuses the mission, the fast path refuses to type, and the user is
+    left with silence — the failure this whole area exists to end.
+    """
+    from jarvis.brain.spawn_gate import coding_mode_blocks_spawn, names_spawn_vehicle
+
+    text = (user_text or "").strip()
+    if not names_spawn_vehicle(text):
+        return False
+    if coding_mode_blocks_spawn():
+        # No wording reaches a background worker in this mode, so letting the
+        # vocabulary win here would only take the turn away from the pane that
+        # can still serve it.
+        return False
+    candidates = _running_names() if names is None else list(names)
+    return not _spawn_words_describe_pane_work(text, candidates)
+
+
 def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
     """True when the open workspace should handle this turn instead of a spawn.
 
@@ -1619,13 +1691,17 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
        spawn vehicle ("spawne … Terminals"). The mandatory pane noun is what
        makes claiming it safe, and it holds with no workspace open too — the
        feature then opens one, so a background mission would be just as wrong.
-    2. Otherwise an utterance that explicitly names the spawn vehicle is NOT
+    2. Coding mode owns every turn it can serve. While the user is IN the
+       Agentic IDE, Jarvis does not dispatch its own workers at all
+       (``spawn_gate.coding_mode_blocks_spawn``), so an addressed pane must not
+       lose the turn to vocabulary that can no longer reach a spawn anyway —
+       that would strand the work in the gap between the two gates.
+    3. Otherwise an utterance that explicitly names the spawn vehicle is NOT
        owned here — asking for a background agent while a workspace happens to
        be open is a real request, and stealing it would be the mirror image of
-       the bug this module fixes.
+       the bug this module fixes. The one exception is an utterance whose spawn
+       words describe a PANE's work; see ``_spawn_words_describe_pane_work``.
     """
-    from jarvis.brain.spawn_gate import names_spawn_vehicle
-
     text = (user_text or "").strip()
     if not text:
         return False
@@ -1633,7 +1709,7 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
         return True
     if detect_spawn(text, names=names) is not None:
         return True
-    if names_spawn_vehicle(text):
+    if spawn_vehicle_outranks_workspace(text, names=names):
         return False
     return detect(text, names=names) is not None
 
@@ -1652,7 +1728,8 @@ __all__ = [
     "expects_several",
     "owns_turn",
     "references_recent_fleet",
-    "spawn_instruction",
     "spawn_includes_task",
+    "spawn_instruction",
+    "spawn_vehicle_outranks_workspace",
     "wants_split",
 ]

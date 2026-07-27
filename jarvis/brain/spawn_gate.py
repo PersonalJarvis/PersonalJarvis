@@ -185,6 +185,48 @@ def names_spawn_vehicle(user_text: str) -> bool:
     return bool(_DELEGATION_MARKER_RE.search((user_text or "").strip()))
 
 
+def spawn_vehicle_spans(user_text: str) -> list[tuple[int, int]]:
+    """Character spans of every explicit spawn-vehicle mention, in order.
+
+    The positional view of ``names_spawn_vehicle``, for the one caller that
+    needs to know not merely THAT the vehicle was named but WHERE: the
+    Agentic-IDE precedence rule has to tell "spawn an agent that helps Kai"
+    (an order to Jarvis, vehicle word first) from "Alex should spawn
+    sub-agents" (a description of Alex's work, vehicle word behind the
+    call-sign). Both share this ONE pattern so the two answers cannot drift.
+    """
+    return [
+        (match.start(), match.end())
+        for match in _DELEGATION_MARKER_RE.finditer((user_text or "").strip())
+    ]
+
+
+def coding_mode_blocks_spawn() -> bool:
+    """True while the Agentic IDE is the active mode, which forbids a spawn.
+
+    Maintainer mandate 2026-07-27: inside the coding workspace, "sub-agent" is
+    the CLI agent's own fan-out vocabulary — every agentic coding tool has the
+    feature and users ask for it constantly. Reading those words as an order to
+    dispatch a JARVIS mission worker is a collision the user cannot phrase their
+    way out of, so the mode decides instead of the wording: while coding mode is
+    on, work goes to the panes on screen and no internal worker is dispatched.
+
+    The mode is deliberately the toggle a user can see (the app-wide coding-mode
+    badge), not the mere presence of a workspace: an open workspace with the
+    toggle off is "terminals on a screen", and delegation there is a legitimate
+    request. Turning the toggle off restores the background agent in full.
+
+    Never raises — the workspace is an optional surface and must never be able
+    to break spawn routing; a fault answers "does not block".
+    """
+    try:
+        from jarvis.agentic_ide.session import coding_mode_active  # noqa: PLC0415
+
+        return coding_mode_active()
+    except Exception:  # noqa: BLE001 — optional surface, never fatal to routing
+        return False
+
+
 def _agentic_ide_claims_turn(text: str) -> bool:
     """True when an open Agentic-IDE terminal is being addressed instead.
 
@@ -213,6 +255,13 @@ def llm_spawn_allowed(user_text: str) -> bool:
     """
     text = (user_text or "").strip()
     if not text:
+        return False
+    # Coding mode outranks EVERYTHING below, including explicit delegation
+    # vocabulary. See ``coding_mode_blocks_spawn`` — inside the Agentic IDE the
+    # word "sub-agent" belongs to the CLI agent in the pane, so no wording may
+    # unlock an internal worker while that mode is on.
+    if coding_mode_blocks_spawn():
+        log.info("spawn gate: Agentic-IDE coding mode is on — no background agent")
         return False
     if _is_decline_or_feature_talk(text):
         log.info("spawn gate: decline / feature talk — spawn blocked")
@@ -263,11 +312,43 @@ SPAWN_BLOCKED_MODEL_FEEDBACK: str = (
 )
 
 
+# The coding-mode variant. The generic text above would mislead here: it invites
+# the model to OFFER a background agent, and in the Agentic IDE that offer is
+# exactly the wrong next move — the work belongs in a pane the user is looking
+# at. "Sub-agents" in this mode means the CLI agent's own fan-out, which happens
+# inside the terminal once the brief arrives there.
+SPAWN_BLOCKED_CODING_MODE_FEEDBACK: str = (
+    "spawn_worker was not executed: the Agentic-IDE coding mode is ON, and in "
+    "that mode Jarvis never starts its own background workers. The coding "
+    "agents in the named terminals do this work. Send the user's request to the "
+    "right terminal with the agentic-ide-prompt function, in the user's own "
+    "words — including any instruction to spawn sub-agents, which is an "
+    "instruction for the agent IN that terminal to carry out itself. If no "
+    "terminal is addressed, answer inline or ask which one should take it. Do "
+    "not offer a background agent."
+)
+
+
+def spawn_blocked_feedback() -> str:
+    """The tool-error text matching WHY the spawn was blocked.
+
+    One function so the classic and realtime paths cannot teach the model two
+    different next moves for the same block.
+    """
+    if coding_mode_blocks_spawn():
+        return SPAWN_BLOCKED_CODING_MODE_FEEDBACK
+    return SPAWN_BLOCKED_MODEL_FEEDBACK
+
+
 __all__ = [
     "OFFER_WINDOW",
+    "SPAWN_BLOCKED_CODING_MODE_FEEDBACK",
     "SPAWN_BLOCKED_MODEL_FEEDBACK",
     "SPAWN_VEHICLE_TOOL_NAMES",
     "DelegationOfferWindow",
+    "coding_mode_blocks_spawn",
     "llm_spawn_allowed",
     "names_spawn_vehicle",
+    "spawn_blocked_feedback",
+    "spawn_vehicle_spans",
 ]
