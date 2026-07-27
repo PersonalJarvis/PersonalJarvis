@@ -665,9 +665,17 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "Use this whenever the user tells a terminal to do something "
                 "('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') "
                 "— that work belongs to that agent, never to a background "
-                "worker. Pass the user's instruction as the prompt; with "
-                "compose=true it is rewritten into a briefed task with the "
-                "relevant files of this workspace attached. "
+                "worker. Pass the instruction in the USER's words: everything "
+                "they asked for, every constraint and file they named, nothing "
+                "invented and nothing summarised away. Do NOT write the brief "
+                "yourself — a prompt writer that has read this repository turns "
+                "what you pass into a briefed task with the relevant files "
+                "attached, and a headline you composed instead arrives at the "
+                "agent as its whole assignment. "
+                "Only ever names a terminal that is ALREADY running: if the "
+                "call fails with 'no terminal called …', opening a pane will not "
+                "create that name — use 'agentic-ide-fanout' with spawn to open "
+                "and brief one in a single step, and never repeat the spawn. "
                 "CHECK THE REPLY: it carries a 'submitted' flag. True means the "
                 "agent accepted the prompt and started. False means the text is "
                 "only sitting in that terminal's input box — say so plainly and "
@@ -691,9 +699,12 @@ def _build_registry() -> tuple[AppCommand, ...]:
                         "type": "boolean",
                         "default": True,
                         "description": (
-                            "Rewrite a spoken/rough instruction into a precise "
-                            "prompt and attach @file references before sending. "
-                            "Set false only to send text through verbatim."
+                            "Leave this out. On by default: the instruction is "
+                            "rewritten into a briefed task with this "
+                            "workspace's files attached, which is what makes a "
+                            "spoken sentence worth running. Set it false ONLY "
+                            "for a literal keystroke that must reach the agent "
+                            "unchanged, such as 'continue' or 'yes'."
                         ),
                     },
                 },
