@@ -281,6 +281,26 @@ Open one or more additional coding terminals in the open workspace. Use this whe
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "spawn five new claude code terminals"
 
+## `agentic-ide-move-terminal` — Move an Agentic-IDE terminal in the grid
+
+Rearrange the open workspace: put one terminal at another one's place. Nothing is started or stopped — the panes keep their agents and their conversations, only where they are drawn changes. Use it for 'swap Mika and Nova', 'put Mika next to Nova', 'move Mika under Nova'. 'swap' exchanges the two panes and leaves the rest of the grid alone; 'left'/'right' give the moved pane its own column beside the target; 'above'/'below' stack it in the target's column. Both names must be terminals that are already open.
+
+- **Endpoint:** `POST /api/agentic-ide/terminals/{name}/move`
+- **Arguments:** `name` (string; required); `target` (string; required); `position` (one of: swap, left, right, above, below; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "swap mika and nova"
+
+## `agentic-ide-close-agent-terminals` — Close Agentic-IDE terminals by coding agent
+
+Stop and remove every terminal of one coding CLI in the front workspace. Use only when the user explicitly asks to close all Claude Code or all Codex terminals; this is destructive and requires confirmation.
+
+- **Endpoint:** `DELETE /api/agentic-ide/terminals/agent/{agent}`
+- **Arguments:** `agent` (one of: claude, codex; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "close all codex terminals"
+
 ## `agentic-ide-focus` — Toggle Agentic-IDE focus mode
 
 Turn the focused coding mode on or off. While on, answers are given inside the open coding workspace; turning it off returns to normal behaviour without stopping any agent.

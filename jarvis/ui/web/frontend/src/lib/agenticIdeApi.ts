@@ -692,6 +692,37 @@ export async function addTerminal(payload: {
   return body.state.session;
 }
 
+/** Where a dragged pane may land relative to the pane it was dropped on. */
+export type PaneMovePosition = "swap" | "left" | "right" | "above" | "below";
+
+/**
+ * Move a running pane to another place in the grid.
+ *
+ * Nothing is started or stopped — only the two numbers that say where a pane is
+ * drawn change, which is what makes rearranging safe on a grid full of working
+ * agents. The answer carries the whole workspace, so the grid redraws from this
+ * call alone rather than polling for the layout it just asked for.
+ */
+export async function moveTerminal(
+  name: string,
+  target: string,
+  position: PaneMovePosition = "swap",
+): Promise<SessionState> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/move`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, position }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while moving a terminal.");
+  return body.state.session;
+}
+
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
 export async function closeTerminal(name: string): Promise<SessionState> {
   const res = await fetch(

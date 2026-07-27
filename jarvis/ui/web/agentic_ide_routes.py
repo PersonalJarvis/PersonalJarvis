@@ -189,6 +189,23 @@ class AddTerminalsRequest(BaseModel):
     account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
 
 
+class MoveTerminalRequest(BaseModel):
+    """Where an existing pane should be drawn from now on."""
+
+    target: str = Field(
+        min_length=1,
+        description="Call-sign of the pane it was dropped on, e.g. 'Mika'.",
+    )
+    position: str = Field(
+        default="swap",
+        description=(
+            "'swap' exchanges the two panes and keeps the grid's shape; "
+            "'left'/'right' give the moved pane its own column beside the "
+            "target; 'above'/'below' put it in the target's own column."
+        ),
+    )
+
+
 class CloseTerminalsRequest(BaseModel):
     """The terminal panes one destructive batch action should stop."""
 
@@ -1352,6 +1369,81 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
         "requested": req.count,
         "capped": capped,
         "terminals": [t.to_dict() for t in created],
+        "state": registry.state(),
+    }
+
+
+@router.post("/terminals/{name}/move", summary="Move a terminal to another place in the grid")
+async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
+    """Rearrange the workspace: put the pane ``name`` at ``target``'s place.
+
+    Nothing is started or stopped — this only changes where a running pane is
+    drawn, which is what makes rearranging safe on a grid full of working
+    agents. ``position="swap"`` exchanges the two panes and leaves the grid's
+    shape untouched; ``"left"``/``"right"`` give the moved pane a column of its
+    own beside the target; ``"above"``/``"below"`` put it into the target's own
+    column, moving only that stack.
+
+    Dropping a pane onto itself succeeds and changes nothing.
+    """
+    try:
+        term = await get_registry().move_terminal(
+            name, target=req.target, position=req.position
+        )
+    except SessionError as exc:
+        # Three different fixes on the caller's side, so three different codes:
+        # a position this grid cannot express is a bad request, a workspace that
+        # is not open is a conflict, and everything left is an unknown call-sign.
+        message = str(exc)
+        if "Position must be" in message:
+            status = 422
+        elif "No Agentic-IDE session" in message:
+            status = 409
+        else:
+            status = 404
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {
+        "ok": True,
+        "moved": term.name,
+        "target": req.target,
+        "position": req.position,
+        "terminal": term.to_dict(),
+        "state": get_registry().state(),
+    }
+
+
+@router.delete(
+    "/terminals/agent/{agent}",
+    summary="Close every terminal of one coding agent",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def close_terminals_by_agent(request: Request, agent: str) -> dict:
+    """Stop every pane running one thing — a coding CLI, or the plain terminal."""
+    chosen = agent.casefold().strip()
+    if chosen not in AGENT_DISPLAY:
+        known = ", ".join(f"'{name}'" for name in AGENT_DISPLAY)
+        raise HTTPException(status_code=422, detail=f"Agent must be one of {known}.")
+    registry = get_registry()
+    session = registry.session
+    if session is None:
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+    closed = await close_agent_terminals(registry, chosen)
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None and closed:
+        try:
+            await bus.publish(
+                terminals_closed_event(
+                    session,
+                    closed,
+                    source_layer="agentic_ide_routes",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - the panes are already closed
+            log.debug("AgenticIdeTerminalsClosed publish failed: %s", exc)
+    return {
+        "ok": True,
+        "agent": chosen,
+        "closed": [term.name for term in closed],
         "state": registry.state(),
     }
 

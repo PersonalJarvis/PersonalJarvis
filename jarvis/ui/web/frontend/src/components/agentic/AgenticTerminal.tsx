@@ -887,6 +887,9 @@ function PaneHeader({
   /** The agent in this pane has exited or failed — offer to start it again. */
   dead: boolean;
   onRestart?: () => void;
+  /** Press on the header picks the pane up; absent leaves it undraggable. */
+  onArrangeStart?: (event: React.PointerEvent) => void;
+  arranging?: boolean;
 }) {
   const light = appearance === "light";
   // Which split button opened the CLI picker, if any.
@@ -904,10 +907,40 @@ function PaneHeader({
 
   return (
     <header
-      className="group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-1"
+      data-testid={`pane-header-${name}`}
+      // The grip. It is the header itself rather than a separate handle icon,
+      // because that is where the gesture is already expected — every window on
+      // every desktop is dragged by its title bar.
+      //
+      // The press is ignored when it lands on one of the header's own controls:
+      // the buttons stop `mousedown`, which says nothing about `pointerdown`, so
+      // without this check pressing Close would also pick the pane up and a
+      // twitchy hand would move a pane it meant to shut.
+      onPointerDown={
+        onArrangeStart
+          ? (event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest("button, a, input, [role='menuitem']")) return;
+              onArrangeStart(event);
+            }
+          : undefined
+      }
+      title={
+        onArrangeStart
+          ? `Drag ${name} by this bar to move it — drop it on another terminal to swap, or near an edge to place it there`
+          : undefined
+      }
+      className={cn(
+        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-1",
+        onArrangeStart && (arranging ? "cursor-grabbing" : "cursor-grab"),
+      )}
       style={{
         borderColor: PANE_CHROME[appearance].border,
         background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
+        // Claims the touch gesture for the drag. Without it a touch that starts
+        // on the header scrolls the workspace instead of lifting the pane, and
+        // the drag never begins at all.
+        touchAction: onArrangeStart ? "none" : undefined,
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">

@@ -751,6 +751,78 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="agentic-ide-move-terminal",
+            title="Move an Agentic-IDE terminal in the grid",
+            description=(
+                "Rearrange the open workspace: put one terminal at another "
+                "one's place. Nothing is started or stopped — the panes keep "
+                "their agents and their conversations, only where they are "
+                "drawn changes. Use it for 'swap Mika and Nova', 'put Mika "
+                "next to Nova', 'move Mika under Nova'. "
+                "'swap' exchanges the two panes and leaves the rest of the grid "
+                "alone; 'left'/'right' give the moved pane its own column beside "
+                "the target; 'above'/'below' stack it in the target's column. "
+                "Both names must be terminals that are already open."
+            ),
+            method="POST",
+            path="/api/agentic-ide/terminals/{name}/move",
+            params={
+                "type": "object",
+                "properties": {
+                    "name": _str_param(
+                        "Call-sign of the terminal to move, e.g. 'Mika'.",
+                        min_length=1,
+                    ),
+                    "target": _str_param(
+                        "Call-sign of the terminal it should move to, e.g. 'Nova'.",
+                        min_length=1,
+                    ),
+                    "position": _str_param(
+                        "Where it lands relative to the target.",
+                        enum=["swap", "left", "right", "above", "below"],
+                    ),
+                },
+                "required": ["name", "target"],
+            },
+            path_params=("name",),
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("tausche mika und nova",),  # i18n-allow: input vocab
+                "en": ("swap mika and nova",),
+                "es": ("intercambia mika y nova",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-close-agent-terminals",
+            title="Close Agentic-IDE terminals by coding agent",
+            description=(
+                "Stop and remove every terminal of one coding CLI in the front "
+                "workspace. Use only when the user explicitly asks to close all "
+                "Claude Code or all Codex terminals; this is destructive and "
+                "requires confirmation."
+            ),
+            method="DELETE",
+            path="/api/agentic-ide/terminals/agent/{agent}",
+            params={
+                "type": "object",
+                "properties": {
+                    "agent": _str_param(
+                        "Coding agent whose terminals should be closed.",
+                        enum=["claude", "codex"],
+                    ),
+                },
+                "required": ["agent"],
+            },
+            path_params=("agent",),
+            dangerous=True,
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("schließe alle codex terminals",),  # i18n-allow: input vocab
+                "en": ("close all codex terminals",),
+                "es": ("cierra todas las terminales de codex",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="agentic-ide-focus",
             title="Toggle Agentic-IDE focus mode",
             description=(

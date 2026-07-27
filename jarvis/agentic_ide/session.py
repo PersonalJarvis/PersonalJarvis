@@ -113,6 +113,13 @@ AGENT_DISPLAY: dict[str, str] = {"claude": "Claude Code", "codex": "Codex"}
 # Nobody reaches 100 deliberately; anyone who mistypes their way past it gets a
 # sentence instead of a frozen desktop.
 MAX_TERMINALS = 100
+# Where a pane may land when it is dragged onto another one, in the same two
+# axes the grid is built from (columns of stacked panes). "swap" is listed first
+# because it is the one a user reaches for most: two panes are the wrong way
+# round and nothing else about the arrangement should change. The four sides are
+# the same placements the split buttons already express — the difference is that
+# these move a pane that exists instead of opening one.
+MOVE_POSITIONS = ("swap", "left", "right", "above", "below")
 # Transport ceiling for one injected prompt. Raised from 4000 once composed
 # prompts became structured briefs that describe the code they point at: at
 # 4000 the cap, not the writer, was deciding where a brief ended. Bracketed
@@ -2165,6 +2172,84 @@ class Registry:
                 )
                 break
         return created, len(created) < wanted
+
+    async def move_terminal(
+        self, wanted: str, *, target: str, position: str = "swap"
+    ) -> Terminal:
+        """Put an existing pane somewhere else in the grid.
+
+        The rearranging half of the two-axis model ``add_terminal`` builds: no
+        agent is started or stopped here, no PTY is touched, and no pane is
+        remounted — only the two numbers that say where a pane is drawn change.
+        That is precisely why rearranging is safe to offer at all. A workspace of
+        a dozen agents is assembled one split at a time and ends up in an order
+        nobody chose; without this the only way to fix it was to close a working
+        agent and open it again somewhere else.
+
+        ``position`` says what the drop meant, relative to ``target``:
+
+        * ``"swap"`` — the two panes exchange places. The one move that keeps the
+          grid's shape exactly as it was, which is what "these two are the wrong
+          way round" asks for.
+        * ``"left"`` / ``"right"`` — the pane becomes a column of its own on that
+          side of the target; every column from there rightwards shifts over.
+        * ``"above"`` / ``"below"`` — the pane joins the target's OWN column at
+          that place, and only that column's stack moves.
+
+        Dropping a pane on itself is a no-op rather than an error: it is what a
+        user who changed their mind mid-drag does, and refusing it would turn a
+        cancelled gesture into a red banner.
+        """
+        async with self._lock:
+            session = self.session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            if position not in MOVE_POSITIONS:
+                allowed = ", ".join(f"'{item}'" for item in MOVE_POSITIONS)
+                raise SessionError(f"Position must be one of {allowed}.")
+
+            known = ", ".join(t.name for t in session.terminals) or "none"
+            moved = session.find(wanted)
+            if moved is None:
+                raise SessionError(f"No terminal called {wanted!r}. Running: {known}.")
+            anchor = session.find(target)
+            if anchor is None:
+                raise SessionError(f"No terminal called {target!r}. Running: {known}.")
+            if anchor.key == moved.key:
+                return moved
+
+            if position == "swap":
+                moved.column, anchor.column = anchor.column, moved.column
+                moved.slot, anchor.slot = anchor.slot, moved.slot
+            elif position in ("left", "right"):
+                # A column of its own beside the target. The moved pane is left
+                # out of the shift — it is being placed, not pushed — and the
+                # column it vacates is closed by `_renumber` below, so a pane
+                # that was already on that side lands exactly where it started.
+                column = anchor.column if position == "left" else anchor.column + 1
+                for other in session.terminals:
+                    if other is not moved and other.column >= column:
+                        other.column += 1
+                moved.column, moved.slot = column, 0
+            else:
+                # Into the target's own stack. Every other column stays put —
+                # the same property that makes "split down" a real split.
+                column = anchor.column
+                slot = anchor.slot if position == "above" else anchor.slot + 1
+                for other in session.terminals:
+                    if other is not moved and other.column == column and other.slot >= slot:
+                        other.slot += 1
+                moved.column, moved.slot = column, slot
+
+            self._renumber(session)
+            await self._persist()
+            logger.info(
+                "Agentic IDE: moved terminal {} {} {}",
+                moved.name,
+                position,
+                anchor.name,
+            )
+            return moved
 
     async def close_terminal(self, wanted: str) -> Terminal:
         """Stop one terminal's agent and remove its pane from the workspace."""
