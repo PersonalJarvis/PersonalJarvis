@@ -118,6 +118,13 @@ def image_prompt() -> str:
 #: cache thumbnails. Each one would still cost a full model call.
 MIN_IMAGE_BYTES = 20 * 1024
 
+#: Recordings below this hold no speech worth a model call. 16 kB is well
+#: under a second of 16-bit mono PCM at any rate a microphone actually uses,
+#: so it clears notification blips and truncated fragments without reaching
+#: anything a person would call a recording. Deliberately far more permissive
+#: than the image floor: a genuinely short voice note is still a voice note.
+MIN_RECORDING_BYTES = 16 * 1024
+
 #: Path SEGMENTS that mean "this file belongs to a program, not to the user".
 #: Matched segment-wise and case-blind, so ``my-database-notes`` survives while
 #: ``data/`` does not. The measured motivation: one real Desktop held 218,419
@@ -148,6 +155,19 @@ PROGRAM_DIR_NAMES: frozenset[str] = frozenset(
 # reason nothing is ever described.
 
 
+def _program_folder_of(name: str) -> str:
+    """The first program-folder segment in *name*, or ``""``.
+
+    Segment-wise and case-blind, and never the last component, so a file
+    called ``data.wav`` is judged by where it lives rather than by its name.
+    """
+    parts = [p.strip().lower() for p in str(name).replace("\\", "/").split("/")]
+    for segment in parts[:-1]:  # the filename itself is never a folder
+        if segment in PROGRAM_DIR_NAMES:
+            return segment
+    return ""
+
+
 def skip_reason_for_image(name: str, *, size_bytes: int) -> str:
     """Why this picture is not worth a model call, or ``""`` to read it.
 
@@ -160,13 +180,50 @@ def skip_reason_for_image(name: str, *, size_bytes: int) -> str:
             f"the picture is too small to hold readable content "
             f"({size_bytes} bytes); icons and thumbnails are skipped"
         )
-    parts = [p.strip().lower() for p in str(name).replace("\\", "/").split("/")]
-    for segment in parts[:-1]:  # the filename itself is never a folder
-        if segment in PROGRAM_DIR_NAMES:
-            return (
-                f"it sits in a program folder ({segment}/), which holds "
-                "generated files rather than your own pictures"
-            )
+    segment = _program_folder_of(name)
+    if segment:
+        return (
+            f"it sits in a program folder ({segment}/), which holds "
+            "generated files rather than your own pictures"
+        )
+    return ""
+
+
+def skip_reason_for_recording(name: str, *, size_bytes: int) -> str:
+    """Why this recording is not worth a model call, or ``""`` to read it.
+
+    The audio counterpart of :func:`skip_reason_for_image`, and the reason it
+    now exists: the provenance rule above was written FROM the 218 419
+    wake-word debug clips one real machine holds under ``data/wake_debug``,
+    and then applied to pictures only — the exact files that motivated it went
+    on queuing a transcription each, 220 520 model calls deep (measured live
+    2026-07-27). A cheap gate that skips the case it was built for is not a
+    gate.
+
+    Two rules, both decidable offline from the item alone:
+
+    * **Provenance** — a program folder holds a machine's own output. An app's
+      debug dump, a cache, a build directory: none of it is something anyone
+      recorded, and transcribing it produces noise at the cost of the corpus.
+    * **Size** — below :data:`MIN_RECORDING_BYTES` there is less than a second
+      of audio at any sane rate, which is a fragment rather than a recording.
+
+    Deliberately NOT a rule: the file's own name. Real recordings are named
+    anything at all, and a name-shaped filter would be exactly the kind of
+    spelling-based gate that keeps producing both false skips and false
+    passes (AP-27 makes the same argument about wake words).
+    """
+    segment = _program_folder_of(name)
+    if segment:
+        return (
+            f"it sits in a program folder ({segment}/), which holds files a "
+            "program wrote rather than anything you recorded"
+        )
+    if size_bytes < MIN_RECORDING_BYTES:
+        return (
+            f"the recording is too short to hold speech ({size_bytes} bytes); "
+            "clips this small are skipped"
+        )
     return ""
 
 

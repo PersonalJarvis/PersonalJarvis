@@ -140,6 +140,59 @@ NOISE_DIR_NAMES: frozenset[str] = frozenset(
     }
 )
 
+def _own_data_dirs() -> tuple[Path, ...]:
+    """The app's OWN data directories, resolved once per walk. Never raises.
+
+    Why a folder import needs to know this (2026-07-27 forensic). A user
+    pointed the folder connector at the directory the app itself lives in and
+    got a 236 131-item corpus, of which 218 419 were wake-word debug clips
+    from ``data/wake_debug`` — 92 % of everything the knowledge base held was
+    the app's own recordings of itself. Each one was queued for a
+    transcription and a summary, which is a backlog measured in weeks made
+    entirely of noise.
+
+    Matched by resolved PATH rather than by folder name, and that distinction
+    is the whole point: ``data`` is far too common a name to blocklist. Real
+    people keep research data, exports and project files in folders called
+    exactly that, and a name rule would silently swallow them. Only the
+    directory this installation actually writes to is skipped.
+
+    Both candidates are returned because they can genuinely differ: the
+    project-root ``data/`` and the per-user fallback used when that path is
+    read-only (headless installs, site-packages, ``JARVIS_DATA_DIR``).
+    """
+    found: list[Path] = []
+    try:
+        from jarvis.core import config as core_config  # noqa: PLC0415 — lazy (AP-26)
+
+        candidates = [getattr(core_config, "DATA_DIR", None)]
+        resolver = getattr(core_config, "_resolve_writable_data_dir", None)
+        if callable(resolver):
+            candidates.append(resolver())
+    except Exception:  # noqa: BLE001 — an unresolvable data dir must not stop a walk
+        log.debug("%s: could not resolve the app data dir", __name__, exc_info=True)
+        return ()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            found.append(Path(candidate).resolve())
+        except (OSError, ValueError):
+            continue
+    return tuple(dict.fromkeys(found))
+
+
+def _is_own_data_dir(path: Path, own_data: tuple[Path, ...]) -> bool:
+    """Is *path* one of the app's own data directories? Never raises."""
+    if not own_data:
+        return False
+    try:
+        resolved = path.resolve()
+    except (OSError, ValueError):
+        return False
+    return any(resolved == own for own in own_data)
+
+
 #: Text-shaped suffixes read as UTF-8. Deliberately an ALLOWLIST: a folder
 #: full of photos, videos and installers must import as nothing rather than
 #: as megabytes of replacement characters. Grouped for review, flattened
@@ -429,12 +482,17 @@ class LocalFolderConnector:
             if skip_dirs is not None
             else frozenset(name.lower() for name in self.SKIP_DIR_NAMES)
         )
+        own_data = _own_data_dirs()
         matches: list[tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(
-                d for d in dirnames if not d.startswith(".") and d.lower() not in skip
-            )
             base = Path(dirpath)
+            dirnames[:] = sorted(
+                d
+                for d in dirnames
+                if not d.startswith(".")
+                and d.lower() not in skip
+                and not _is_own_data_dir(base / d, own_data)
+            )
             for name in filenames:
                 if name.startswith("."):
                     continue

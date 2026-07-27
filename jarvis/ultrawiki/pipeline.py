@@ -1194,6 +1194,21 @@ class PipelineWorker:
                 data, filename=filename, cfg=self._cfg
             )
         elif kind in ("audio", "video"):
+            # The same gate, which this lane went without. Pictures were
+            # filtered by provenance from the day the rule was written; audio
+            # was not, and the files the rule was written FROM are recordings:
+            # 218 419 wake-word debug clips under data/wake_debug on one live
+            # machine, 220 520 items queued for a transcription each
+            # (2026-07-27). Whichever lane is missing the gate is the lane that
+            # spends the corpus.
+            skip = media_enrich.skip_reason_for_recording(
+                self._media_path_for(item, filename), size_bytes=len(data)
+            )
+            if skip:
+                await self._record_media_outcome(
+                    item, text="", reason=skip, retryable=False
+                )
+                return
             result = await media_enrich.transcribe_recording(
                 data, filename=filename, cfg=self._cfg
             )
