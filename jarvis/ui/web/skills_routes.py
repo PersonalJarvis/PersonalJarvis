@@ -525,6 +525,15 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
             detail=f"Skill '{name}' already exists.",
         )
 
+    # AP-15: an imported skill is third-party content the user has not reviewed
+    # yet. `parse_skill` treats a missing `state:` key as VALIDATED, so writing
+    # the downloaded file verbatim would put a remote skill straight into the
+    # active pool. Stamp DRAFT on the way in — promotion stays an explicit,
+    # human act via POST /api/skills/{name}/enable.
+    from jarvis.skills.registry import _rewrite_state_in_frontmatter
+
+    content = _rewrite_state_in_frontmatter(content, SkillLifecycleState.DRAFT.value)
+
     target_dir = user_skills_dir() / name
     target_file = target_dir / "SKILL.md"
     target_dir.mkdir(parents=True, exist_ok=True)
