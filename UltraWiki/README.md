@@ -56,7 +56,7 @@ D-5). The switch is **role-based, never destructive** (D-9):
 |---|---|
 | D-1 | Design written from scratch; earlier cleared design docs are not a basis. |
 | D-2 | **Bring-your-own everything.** Jarvis bundles and provisions no database and no service. A dedicated UltraWiki settings section (modeled on the API-Keys section) lets the user pick storage, models, and sources — always with at least one local AND one cloud option per slot. |
-| D-3 | The embedding model is a **one-time deliberate choice in the activation wizard** (switching later triggers an explicit, cost-estimated re-embed). |
+| D-3 | The embedding model is a **deliberate choice in the activation wizard**. Switching later triggers an explicit, confirmed rebuild — the new vector space is built in the BACKGROUND alongside the live one, so semantic search never goes dark and switching back before it completes costs nothing. Only the model defines the space: the same model behind a different provider needs no rebuild at all. |
 | D-4 | Source scope is "the whole life": local files (Obsidian, Jarvis conversations, folders), export-file imports (WhatsApp, takeouts), OAuth APIs (Google mail/calendar/drive, GitHub), and a **generic bridge that turns every connected Jarvis plugin/CLI into a data source**. |
 | D-5 | UI is an **either-or mode switch** inside the Wiki section; the active mode replaces the other completely. |
 | D-6 | The distillation model (the LLM that summarizes raw content before storage) is chosen in the same activation wizard — local or cloud, one conscious privacy decision. |
@@ -78,6 +78,7 @@ D-5). The switch is **role-based, never destructive** (D-9):
 | [`05-identity-areas-privacy.md`](05-identity-areas-privacy.md) | Entity resolution, the confirmation queue, areas, privacy and deletion |
 | [`06-roadmap.md`](06-roadmap.md) | Build phases with hard gates |
 | [`07-visual-projection.md`](07-visual-projection.md) | The readable face: topic/moment pages, the entity graph, and the generated Obsidian vault |
+| [`08-universal-ingestion.md`](08-universal-ingestion.md) | Taking in everything from every platform worldwide: one extractor, media enrichment, the platform export guide, the generic custom source |
 
 ## Prior art
 

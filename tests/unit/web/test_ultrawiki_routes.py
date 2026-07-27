@@ -341,7 +341,7 @@ def test_embedding_change_without_confirm_is_409(env) -> None:
     _drive_pipeline(env)
 
     response = env.client.put(
-        "/api/ultrawiki/settings", json={"embedding_provider": "openai"}
+        "/api/ultrawiki/settings", json={"embedding_model": "fake-embed-2"}
     )
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -350,21 +350,50 @@ def test_embedding_change_without_confirm_is_409(env) -> None:
 
     confirmed = env.client.put(
         "/api/ultrawiki/settings",
-        json={"embedding_provider": "openai", "confirm_reembed": True},
+        json={"embedding_model": "fake-embed-2", "confirm_reembed": True},
     )
     assert confirmed.status_code == 200, confirmed.text
     body = confirmed.json()
-    assert body["changed"] == ["embedding_provider"]
+    assert body["changed"] == ["embedding_model"]
     assert body["reembed_started"] is True
-    assert env.cfg.ultrawiki.embedding_provider == "openai"
-    assert 'embedding_provider = "openai"' in env.toml.read_text(encoding="utf-8")
+    assert env.cfg.ultrawiki.embedding_model == "fake-embed-2"
+    assert 'embedding_model = "fake-embed-2"' in env.toml.read_text(encoding="utf-8")
 
-    # The vectors were dropped: items fell back to keyword_indexed and wait
-    # for the (deliberately unconfigured) background embed stage.
+    # The items go through the pipeline again, but their CURRENT vectors were
+    # NOT dropped: semantic search keeps answering while the new space is
+    # built in the background, and the status says so.
+    status = env.client.get("/api/ultrawiki/status").json()
+    assert status["counts"]["keyword_indexed"] == 2
+    assert status["slots"]["storage"]["vector"]["ready"] is True
+    reembed = status["reembed"]
+    assert reembed.get("model") == "fake-embed-2"
+    assert reembed.get("total", 0) > 0
+
+    hits = env.client.get("/api/ultrawiki/search", params={"q": "ledger"}).json()
+    assert hits["total"] >= 1
+
+
+def test_provider_change_keeping_the_model_needs_no_reembed(env) -> None:
+    """The vector space is the MODEL's, not the host's.
+
+    Re-embedding a corpus because the same model is now billed through another
+    provider is pure waste — the geometry is identical, so the existing vectors
+    stay valid and no confirmation is owed to the user either.
+    """
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"embedding_provider": "openai"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["reembed_started"] is False
+
     counts = env.client.get("/api/ultrawiki/status").json()["counts"]
-    assert counts["embedded"] == 0
-    assert counts["distilled"] == 0
-    assert counts["keyword_indexed"] == 2
+    assert counts["keyword_indexed"] == 0
+    assert counts["embedded"] + counts["distilled"] == 2
 
 
 def test_update_settings_without_changes_is_noop(env) -> None:

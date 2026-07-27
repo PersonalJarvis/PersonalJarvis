@@ -24,6 +24,9 @@ The contract:
   from the same point.
 - Files that do not match `NNNN_<slug>.sql` are ignored (this README included).
 
-No migration files exist yet — the base schema is current. The Postgres
-backend applies its DDL idempotently from `PostgresStore.ddl_statements()` and
-receives its own version tracking when its first migration ships.
+Shipped so far: `0001` (multi-chunk documents), `0002` (the shadow embedding
+space — widening the `uw_embeddings` key so a model switch can build the new
+vector space alongside the live one). The Postgres backend applies its DDL
+idempotently from `PostgresStore.ddl_statements()`, including the in-place
+key widening that mirrors `0002`; it receives its own version tracking when a
+change ships that idempotent DDL cannot express.

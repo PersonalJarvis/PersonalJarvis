@@ -352,6 +352,40 @@ describe("SlotsPanel", () => {
     expect(dialog.textContent).toContain("412");
   });
 
+  it("shows the background rebuild instead of looking idle", async () => {
+    // A model switch rebuilds the vector space WITHOUT taking search down, so
+    // the panel would otherwise sit fully green for hours with no sign that
+    // anything is happening.
+    installFetchMock();
+    renderWithClient(
+      <SlotsPanel
+        status={{
+          ...STATUS,
+          reembed: {
+            model: "voyage-3.5",
+            active_model: "bge-m3",
+            done: 120,
+            total: 400,
+          },
+        }}
+        onChanged={() => {}}
+      />,
+    );
+    const banner = await screen.findByTestId("ultrawiki-reembed-progress");
+    expect(banner.textContent).toContain("120");
+    expect(banner.textContent).toContain("400");
+    expect(
+      within(banner).getByRole("progressbar").getAttribute("aria-valuenow"),
+    ).toBe("30");
+  });
+
+  it("stays out of the way when no rebuild is running", async () => {
+    installFetchMock();
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+    await screen.findByTestId("ultrawiki-slots-panel");
+    expect(screen.queryByTestId("ultrawiki-reembed-progress")).toBeNull();
+  });
+
   it("offers the guided Supabase sign-in instead of a raw URI box", async () => {
     renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
     const connect = await screen.findByTestId("ultrawiki-supabase-connect");

@@ -398,6 +398,19 @@ export interface UltraWikiStatus {
     storage?: UltraWikiStorageSlot;
   };
   counts: Partial<UltraWikiCounts>;
+  /**
+   * Mirrors jarvis/ultrawiki/store.py::reembed_status — present only while an
+   * embedding-model switch rebuilds the vector space in the background.
+   * Search answers from the OLD space throughout, so without this the UI would
+   * show an idle, fully-green knowledge base during the whole rebuild.
+   * `done`/`total` count passages, not items.
+   */
+  reembed?: {
+    model?: string;
+    active_model?: string;
+    done?: number;
+    total?: number;
+  };
   progress?: UltraWikiProgress;
   pipeline: UltraWikiPipeline;
   sources: UltraWikiSource[];

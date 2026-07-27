@@ -342,12 +342,21 @@ async def test_embedding_pin_and_dim_mismatch_rejection(store):
     assert await store.get_meta(META_EMBED_MODEL) == "model-a"
     assert await store.get_meta(META_EMBED_DIM) == "4"
 
-    with pytest.raises(UltraStoreError, match="pinned"):
-        await store.store_embedding(doc_id, model="model-a", dim=5, vector=[0] * 5)
+    # An unannounced model is refused: nothing may mix two vector spaces by
+    # accident (D-3). The deliberate path is begin_reembed().
     with pytest.raises(UltraStoreError, match="pinned"):
         await store.store_embedding(doc_id, model="model-b", dim=4, vector=[0] * 4)
     with pytest.raises(UltraStoreError, match="components"):
         await store.store_embedding(doc_id, model="model-a", dim=4, vector=[0] * 3)
+
+    # ...but a KNOWN name answering with a new width is a different model
+    # behind a familiar label. Rejecting it would dead-letter the whole corpus
+    # five attempts at a time, so it starts a background rebuild instead and
+    # the live space keeps serving search.
+    await store.store_embedding(doc_id, model="model-a", dim=5, vector=[0] * 5)
+    assert await store.get_meta(META_EMBED_MODEL) == "model-a"
+    assert await store.get_meta(META_EMBED_DIM) == "4"
+    assert (await store.reembed_status())["model"] == "model-a"
 
 
 async def test_reset_vectors_round_trip(store):
@@ -373,6 +382,163 @@ async def test_reset_vectors_round_trip(store):
     await store.store_embedding(doc_id, model="model-b", dim=8, vector=[0.5] * 8)
     assert await store.get_meta(META_EMBED_MODEL) == "model-b"
     assert await store.get_meta(META_EMBED_DIM) == "8"
+
+
+# ---------------------------------------------------------------------------
+# Model switch — the shadow space (search never goes dark)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not HAS_SQLITE_VEC, reason="sqlite-vec not installed on this host")
+async def test_model_switch_keeps_search_alive_until_the_new_space_is_complete(store):
+    """The point of the whole shadow-space machinery.
+
+    Rebuilding IS unavoidable — vectors of two models are not comparable — but
+    going blind while it runs is not. The old vectors must keep answering right
+    up to the moment the new space is complete.
+    """
+    await add_source(store)
+    item1, doc1 = await _seed_embedded_item(store, 0)
+    item2, doc2 = await _seed_embedded_item(store, 1)
+    await store.store_embedding(doc1, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await store.store_embedding(doc2, model="model-a", dim=4, vector=[0, 1, 0, 0])
+
+    assert await store.begin_reembed("model-b") is True
+
+    # Mid-rebuild: the old space still answers, in its own dimension.
+    results, reason = await store.vector_search([1, 0.05, 0, 0], k=2)
+    assert reason == ""
+    assert [hit.item_id for hit in results] == [item1, item2]
+
+    # First document re-embedded — still not enough to swap.
+    await store.store_embedding(doc1, model="model-b", dim=3, vector=[1, 0, 0])
+    assert await store.promote_pending_space() is False
+    assert await store.get_meta(META_EMBED_MODEL) == "model-a"
+    progress = await store.reembed_status()
+    assert (progress["done"], progress["total"]) == (1, 2)
+    results, _ = await store.vector_search([1, 0.05, 0, 0], k=2)
+    assert [hit.item_id for hit in results] == [item1, item2]
+
+    # Last one lands: the swap happens, in the NEW geometry.
+    await store.store_embedding(doc2, model="model-b", dim=3, vector=[0, 1, 0])
+    assert await store.promote_pending_space() is True
+    assert await store.get_meta(META_EMBED_MODEL) == "model-b"
+    assert await store.get_meta(META_EMBED_DIM) == "3"
+    assert await store.reembed_status() == {}
+    results, reason = await store.vector_search([1, 0.05, 0], k=2)
+    assert reason == ""
+    assert [hit.item_id for hit in results] == [item1, item2]
+
+    # The retired space is gone — steady state holds exactly one.
+    results, reason = await store.vector_search([1, 0, 0, 0], k=2)
+    assert results == []
+    assert "pinned" in reason
+
+
+async def test_existing_database_migrates_to_the_shadow_space_key(tmp_path):
+    """Thousands of installs sit on the single-column key. Migration 0002 has
+    to widen it in place, keeping every vector — losing them would silently
+    blind semantic search on update, the exact outcome this work removes."""
+    import sqlite3
+
+    db_path = tmp_path / "ultrawiki.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE uw_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            doc_type TEXT NOT NULL,
+            text_norm TEXT NOT NULL,
+            distill_json TEXT,
+            distill_version INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE uw_embeddings (
+            document_id INTEGER PRIMARY KEY REFERENCES uw_documents(id)
+                        ON DELETE CASCADE,
+            model TEXT NOT NULL,
+            dim INTEGER NOT NULL,
+            vector BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO uw_documents
+            (id, item_id, doc_type, text_norm, content_hash, created_at)
+            VALUES (7, 1, 'raw', 'kept text', 'h1', '2026-01-01T00:00:00Z');
+        INSERT INTO uw_embeddings VALUES
+            (7, 'model-a', 4, X'0000803F000000000000000000000000',
+             '2026-01-01T00:00:00Z');
+        PRAGMA user_version = 1;
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    migrated = UltraStore(db_path)
+    try:
+        await migrated.set_meta(META_EMBED_MODEL, "model-a")
+        await migrated.set_meta(META_EMBED_DIM, "4")
+        # The vector survived the key change...
+        assert await migrated.reembed_status() == {}
+        # ...and a second space now fits beside it.
+        await migrated.begin_reembed("model-b")
+        await migrated.store_embedding(7, model="model-b", dim=3, vector=[1, 0, 0])
+        status = await migrated.reembed_status()
+        assert (status["model"], status["done"]) == ("model-b", 0)
+    finally:
+        await migrated.close()
+
+
+async def test_switching_back_mid_rebuild_costs_nothing(store):
+    """The reversibility half: an abandoned rebuild must not have damaged the
+    live space, so changing your mind is free rather than a second full run."""
+    await add_source(store)
+    _item, doc = await _seed_embedded_item(store, 0)
+    await store.store_embedding(doc, model="model-a", dim=4, vector=[1, 0, 0, 0])
+
+    await store.begin_reembed("model-b")
+    await store.store_embedding(doc, model="model-b", dim=3, vector=[1, 0, 0])
+
+    # Back to the live model: the half-built shadow is dropped, the pin never
+    # moved, and nothing has to be re-embedded.
+    assert await store.begin_reembed("model-a") is False
+    assert await store.get_meta(META_EMBED_MODEL) == "model-a"
+    assert await store.reembed_status() == {}
+    results, reason = await store.vector_search([1, 0, 0, 0], k=2)
+    if reason == "":  # only when the host has sqlite-vec
+        assert [hit.item_id for hit in results] == [_item]
+
+
+async def test_reembedding_unchanged_content_keeps_the_live_vectors(store):
+    """``replace_documents`` is what the rebuild runs through, and documents
+    cascade to embeddings — so an identical passage set MUST reuse its rows,
+    or the live vectors die on the way to building their replacement."""
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    claimed = await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=10)
+    item = claimed[0]
+    chunks = [SimpleNamespace(index=0, text="passage one", char_start=0, char_end=11)]
+
+    first = await store.replace_documents(
+        item["id"], DocType.RAW, chunks, content_hash=item["content_hash"]
+    )
+    await store.store_embedding(first[0], model="model-a", dim=4, vector=[1, 0, 0, 0])
+
+    again = await store.replace_documents(
+        item["id"], DocType.RAW, chunks, content_hash=item["content_hash"]
+    )
+    assert again == first  # same rows, so the vector below survived
+    await store.begin_reembed("model-b")
+    status = await store.reembed_status()
+    assert status["total"] == 1
+
+    # Changed content still swaps the passage set out.
+    changed = [SimpleNamespace(index=0, text="passage two", char_start=0, char_end=11)]
+    replaced = await store.replace_documents(
+        item["id"], DocType.RAW, changed, content_hash=item["content_hash"]
+    )
+    assert replaced != first
 
 
 # ---------------------------------------------------------------------------

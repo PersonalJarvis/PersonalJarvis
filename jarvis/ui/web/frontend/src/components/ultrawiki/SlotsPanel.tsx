@@ -161,6 +161,8 @@ export function SlotsPanel({
         {t("ultrawiki.slots.title")}
       </h3>
 
+      <ReembedProgress status={status} />
+
       <StorageSection {...shared} />
       <EmbeddingSection {...shared} />
       <DistillSection {...shared} />
@@ -698,6 +700,47 @@ function ReembedDialog({
             )}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The background rebuild after an embedding-model switch.
+ *
+ * It is deliberately calm rather than a warning: search is NOT degraded while
+ * this runs — the old vector space keeps answering until the new one is
+ * complete. Without the line, though, the panel would look idle for hours
+ * after a switch, which is how "did my change do anything?" starts.
+ */
+function ReembedProgress({ status }: { status: UltraWikiStatus }): JSX.Element | null {
+  const t = useT();
+  const reembed = status.reembed;
+  if (!reembed?.model) return null;
+  const total = Number(reembed.total ?? 0);
+  const done = Math.min(Number(reembed.done ?? 0), total);
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  return (
+    <div
+      className="rounded-md border border-border bg-muted/40 px-4 py-3"
+      data-testid="ultrawiki-reembed-progress"
+    >
+      <p className="text-sm text-muted-foreground">
+        {t("ultrawiki.slots.reembed_progress")
+          .replace("{0}", String(done))
+          .replace("{1}", String(total))}
+      </p>
+      <div
+        className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"
+        role="progressbar"
+        aria-valuenow={percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-all"
+          style={{ width: `${percent}%` }}
+        />
       </div>
     </div>
   );

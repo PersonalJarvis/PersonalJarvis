@@ -72,9 +72,18 @@ MAX_ATTEMPTS = 5
 BACKOFF_BASE_S = 60
 BACKOFF_CAP_S = 6 * 3600
 
-#: ``uw_meta`` keys pinning the embedding space (semi-permanent, D-3).
+#: ``uw_meta`` keys pinning the ACTIVE embedding space — the one the derived
+#: ``uw_vec`` index holds and every search answers from (D-3).
 META_EMBED_MODEL = "embed_model"
 META_EMBED_DIM = "embed_dim"
+
+#: ``uw_meta`` keys naming the space currently being built in the background
+#: after a model switch. Vectors accumulate under it while searches keep using
+#: the active space; :meth:`UltraStore.promote_pending_space` swaps them once
+#: the shadow covers everything the live space covers. The dimension is unknown
+#: until the provider answers, so ``PENDING_DIM`` appears with the first vector.
+META_PENDING_EMBED_MODEL = "pending_embed_model"
+META_PENDING_EMBED_DIM = "pending_embed_dim"
 
 _SNIPPET_CHARS = 240
 _IN_CHUNK = 400
@@ -353,6 +362,34 @@ def _item_filter_sql(
         clauses.append(f"state = {mark}")
         params.append(state)
     return (f" WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+
+def _documents_unchanged(
+    rows: Sequence[Any], chunks: Sequence[Any], content_hash: str
+) -> bool:
+    """True when the stored rows ALREADY are the passage set *chunks* describes.
+
+    Why this matters far beyond saving two writes: ``uw_embeddings`` cascades on
+    ``uw_documents``. A delete-and-reinsert therefore destroys every vector the
+    item owns — including the ones of the ACTIVE embedding space, which the
+    shadow rebuild after a model switch depends on keeping. Chunking is
+    deterministic, so a re-embed of unchanged content produces byte-identical
+    passages; recognizing that keeps the document ids (and their live vectors)
+    stable across re-runs.
+    """
+    chunk_list = list(chunks)
+    if len(rows) != len(chunk_list):
+        return False
+    by_index = {int(row["chunk_index"]): row for row in rows}
+    for chunk in chunk_list:
+        row = by_index.get(int(getattr(chunk, "index", 0)))
+        if row is None:
+            return False
+        if str(row["text_norm"]) != str(getattr(chunk, "text", "")):
+            return False
+        if str(row["content_hash"] or "") != str(content_hash or ""):
+            return False
+    return True
 
 
 def _counts_from_pairs(pairs: Iterable[tuple[str, int]]) -> PipelineCounts:
@@ -1418,16 +1455,23 @@ class UltraStore:
         an item with half its passages, and a re-run is idempotent.
 
         Returns the new document ids in passage order, so the caller can pair
-        each with its vector.
+        each with its vector. When the stored passages are already identical
+        (a re-embed of unchanged content), the existing rows are KEPT and their
+        ids returned — see :func:`_documents_unchanged` for why that is load
+        bearing rather than an optimization.
         """
         kind = DocType(doc_type).value
         now = _iso_utc()
         async with self._txn() as conn:
             old_rows = await self._fetchall(
                 conn,
-                "SELECT id FROM uw_documents WHERE item_id = ? AND doc_type = ?",
+                "SELECT id, chunk_index, text_norm, content_hash FROM uw_documents"
+                " WHERE item_id = ? AND doc_type = ?",
                 (item_id, kind),
             )
+            if _documents_unchanged(old_rows, chunks, content_hash):
+                by_index = {int(row["chunk_index"]): int(row["id"]) for row in old_rows}
+                return [by_index[int(getattr(c, "index", 0))] for c in chunks]
             old_ids = [row["id"] for row in old_rows]
             if old_ids and self._vec_state is not None and self._vec_state[0]:
                 for chunk in _chunks(old_ids):
@@ -1469,6 +1513,61 @@ class UltraStore:
         dim_raw = await self.get_meta(META_EMBED_DIM)
         return model, int(dim_raw) if dim_raw else None
 
+    async def _pending_space(self) -> tuple[str | None, int | None]:
+        model = await self.get_meta(META_PENDING_EMBED_MODEL)
+        dim_raw = await self.get_meta(META_PENDING_EMBED_DIM)
+        return model, int(dim_raw) if dim_raw else None
+
+    async def _writes_to_active_space(self, model: str, dim: int) -> bool:
+        """Decide which space a vector of ``(model, dim)`` belongs to.
+
+        ``True`` means the ACTIVE space — the one ``uw_vec`` mirrors and every
+        search answers from. ``False`` means the shadow space of a running
+        rebuild. A pair matching neither raises: that is the D-3 guard, so
+        nothing mixes incompatible vector spaces by accident. A deliberate
+        change goes through :meth:`begin_reembed`.
+        """
+        pinned_model, pinned_dim = await self._pinned_space()
+        if pinned_model is None or pinned_dim is None:
+            await self.set_meta(META_EMBED_MODEL, model)
+            await self.set_meta(META_EMBED_DIM, str(dim))
+            return True
+        if pinned_model == model and pinned_dim == dim:
+            return True
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is not None and pending_model == model:
+            if pending_dim is None:
+                # First vector of the rebuild: the provider just told us the
+                # width of the new space.
+                await self.set_meta(META_PENDING_EMBED_DIM, str(dim))
+            elif pending_dim != dim:
+                raise UltraStoreError(
+                    f"embedding dimension mismatch: the rebuild of {model!r} "
+                    f"started at dim={pending_dim} but got dim={dim}"
+                )
+            return False
+        if pinned_model == model:
+            # Same model NAME, different width — a genuinely different model
+            # behind a familiar name (switching provider onto a same-named
+            # model). It IS a new vector space, so rebuild into it rather than
+            # reject every vector until the corpus dead-letters.
+            log.warning(
+                "UltraWiki: model %r now answers with dim=%d instead of %d — "
+                "rebuilding the vector space in the background",
+                model,
+                dim,
+                pinned_dim,
+            )
+            await self.begin_reembed(model, dim=dim)
+            return False
+        raise UltraStoreError(
+            "embedding space mismatch: the store is pinned to "
+            f"model={pinned_model!r} dim={pinned_dim} but got "
+            f"model={model!r} dim={dim}. Changing the embedding model goes "
+            "through begin_reembed() (rebuilds the corpus in the background "
+            "while search keeps using the current vectors)."
+        )
+
     async def store_embedding(
         self,
         document_id: int,
@@ -1479,27 +1578,21 @@ class UltraStore:
     ) -> None:
         """Store one vector (little-endian float32 BLOB) for a document.
 
-        The first embedding pins ``embed_model``/``embed_dim`` in
-        ``uw_meta`` (semi-permanent, D-3); later writes with a different
-        model or dimension are rejected with a clear error — changing the
-        embedding space goes through :meth:`reset_vectors`.
+        The first embedding pins ``embed_model``/``embed_dim`` in ``uw_meta``
+        (D-3). While a model switch is rebuilding, vectors of the new model
+        land in the shadow space instead and are deliberately kept OUT of
+        ``uw_vec``: the ANN index mirrors the active space alone, so searches
+        keep answering correctly until :meth:`promote_pending_space` swaps
+        them.
         """
         if len(vector) != dim:
             raise UltraStoreError(
                 f"vector has {len(vector)} components but dim={dim} was declared"
             )
-        pinned_model, pinned_dim = await self._pinned_space()
-        if pinned_model is None or pinned_dim is None:
-            await self.set_meta(META_EMBED_MODEL, model)
-            await self.set_meta(META_EMBED_DIM, str(dim))
-        elif pinned_model != model or pinned_dim != dim:
-            raise UltraStoreError(
-                "embedding space mismatch: the store is pinned to "
-                f"model={pinned_model!r} dim={pinned_dim} but got "
-                f"model={model!r} dim={dim}. Changing the embedding model "
-                "requires reset_vectors() (re-embeds the corpus)."
-            )
-        vec_ok, _ = await self._ensure_vec(dim)
+        active = await self._writes_to_active_space(model, dim)
+        vec_ok = False
+        if active:
+            vec_ok, _ = await self._ensure_vec(dim)
         blob = pack_vector(vector)
         now = _iso_utc()
         async with self._txn() as conn:
@@ -1567,6 +1660,11 @@ class UltraStore:
                 self._vec_dim = dim
                 return self._vec_state
             self._vec_ext_loaded = True
+        # The index mirrors the ACTIVE space alone. A shadow rebuild's vectors
+        # answer a different geometry and cover only part of the corpus, so
+        # letting them in would corrupt every search until promotion.
+        active_model, _ = await self._pinned_space()
+        space = (active_model or "", int(dim))
         async with self._lock:
             # Recreate the index when the pinned dimension changed.
             existing = await self._fetchone(
@@ -1587,12 +1685,16 @@ class UltraStore:
             # backfill vectors the index does not hold yet.
             await conn.execute(
                 "DELETE FROM uw_vec WHERE rowid NOT IN"
-                " (SELECT document_id FROM uw_embeddings)"
+                " (SELECT document_id FROM uw_embeddings"
+                "  WHERE model = ? AND dim = ?)",
+                space,
             )
             missing = await self._fetchall(
                 conn,
                 "SELECT document_id, vector FROM uw_embeddings"
-                " WHERE document_id NOT IN (SELECT rowid FROM uw_vec)",
+                " WHERE model = ? AND dim = ?"
+                " AND document_id NOT IN (SELECT rowid FROM uw_vec)",
+                space,
             )
             if missing:
                 # One batch, not one round trip per row: the first search
@@ -1638,11 +1740,15 @@ class UltraStore:
         return await self._ensure_vec(None)
 
     async def reset_vectors(self) -> None:
-        """The embedding-model-change path: wipe the vector index and every
-        stored embedding, clear the ``embed_model``/``embed_dim`` pin, and
-        reset ``embedded``/``distilled`` items to ``keyword_indexed`` so the
-        pipeline re-embeds (re-distillation rides the distill cache).
-        Derived documents keep their text; only vectors are discarded.
+        """Hard reset: wipe the vector index and EVERY stored embedding of
+        every space, clear both pins, and reset ``embedded``/``distilled``
+        items to ``keyword_indexed`` so the pipeline re-embeds
+        (re-distillation rides the distill cache). Derived documents keep
+        their text; only vectors are discarded.
+
+        This blinds semantic search until the corpus is rebuilt, so it is the
+        recovery path, not the model-switch path — a switch uses
+        :meth:`begin_reembed`, which keeps the current vectors answering.
         """
         vec_droppable = self._vec_ext_loaded  # vec0 DDL needs the extension
         async with self._txn() as conn:
@@ -1650,8 +1756,13 @@ class UltraStore:
                 await conn.execute("DROP TABLE IF EXISTS uw_vec")
             await conn.execute("DELETE FROM uw_embeddings")
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (?, ?)",
-                (META_EMBED_MODEL, META_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (?, ?, ?, ?)",
+                (
+                    META_EMBED_MODEL,
+                    META_EMBED_DIM,
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                ),
             )
             await conn.execute(
                 "UPDATE uw_items SET state = ?, updated_at = ? WHERE state IN (?, ?)",
@@ -1664,6 +1775,202 @@ class UltraStore:
             )
         self._vec_state = None
         self._vec_dim = None
+
+    async def begin_reembed(self, model: str, *, dim: int | None = None) -> bool:
+        """Start rebuilding the corpus in *model*'s vector space, in the
+        background, WITHOUT taking semantic search down.
+
+        *dim* is normally unknown until the provider answers and stays ``None``;
+        pass it when the width is already known and distinguishes the target
+        space from the live one (same model name, different geometry).
+
+        The live vectors, the ``uw_vec`` index and every search stay untouched;
+        new vectors accumulate in the shadow space until
+        :meth:`promote_pending_space` finds it complete and swaps it in. An
+        abandoned rebuild costs nothing but the shadow rows, which the next
+        call drops.
+
+        Returns ``True`` when a rebuild actually started. ``False`` means there
+        is nothing to rebuild: either the corpus already sits in that space (a
+        provider change that keeps the model — same geometry, no work) or
+        nothing has been embedded yet, in which case the pipeline's normal
+        backlog already produces the new space.
+        """
+        pinned_model, pinned_dim = await self._pinned_space()
+        same_space = pinned_model == model and (dim is None or pinned_dim == dim)
+        if pinned_model is None or pinned_dim is None or same_space:
+            # Switching back to the live model mid-rebuild lands here too: the
+            # shadow becomes garbage and the live space was never touched.
+            await self.abort_reembed()
+            return False
+        now = _iso_utc()
+        async with self._txn() as conn:
+            # A superseded rebuild leaves half-built rows behind. Everything
+            # outside the ACTIVE space is exactly that.
+            await conn.execute(
+                "DELETE FROM uw_embeddings WHERE model != ? OR dim != ?",
+                (pinned_model, pinned_dim),
+            )
+            await conn.execute(
+                "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+                (META_PENDING_EMBED_MODEL, model),
+            )
+            # The width is normally the provider's answer, not ours — see
+            # _writes_to_active_space.
+            if dim is None:
+                await conn.execute(
+                    "DELETE FROM uw_meta WHERE key = ?", (META_PENDING_EMBED_DIM,)
+                )
+            else:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+                    (META_PENDING_EMBED_DIM, str(int(dim))),
+                )
+            await conn.execute(
+                "UPDATE uw_items SET state = ?, updated_at = ? WHERE state IN (?, ?)",
+                (
+                    ItemState.KEYWORD_INDEXED.value,
+                    now,
+                    ItemState.EMBEDDED.value,
+                    ItemState.DISTILLED.value,
+                ),
+            )
+        return True
+
+    async def abort_reembed(self) -> bool:
+        """Discard a running rebuild and keep the live space. ``True`` when
+        one was actually running. Items already re-embedded stay where the
+        pipeline left them — their live vectors were never removed."""
+        pending_model, _ = await self._pending_space()
+        pinned_model, pinned_dim = await self._pinned_space()
+        if pending_model is None:
+            return False
+        async with self._txn() as conn:
+            if pinned_model is not None and pinned_dim is not None:
+                await conn.execute(
+                    "DELETE FROM uw_embeddings WHERE model != ? OR dim != ?",
+                    (pinned_model, pinned_dim),
+                )
+            await conn.execute(
+                "DELETE FROM uw_meta WHERE key IN (?, ?)",
+                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+            )
+        return True
+
+    async def _shadow_gap(
+        self,
+        conn: aiosqlite.Connection,
+        active: tuple[str, int],
+        pending: tuple[str, int],
+    ) -> int:
+        """How many documents the live space covers and the shadow does not.
+
+        Documents of dead-lettered or tombstoned items are excluded: they will
+        never be re-embedded, and counting them would stall the promotion
+        forever behind a handful of permanently failing items.
+        """
+        row = await self._fetchone(
+            conn,
+            "SELECT count(*) AS n FROM uw_embeddings a"
+            " JOIN uw_documents d ON d.id = a.document_id"
+            " JOIN uw_items i ON i.id = d.item_id"
+            " WHERE a.model = ? AND a.dim = ?"
+            "   AND i.deleted_at IS NULL AND i.state != ?"
+            "   AND NOT EXISTS (SELECT 1 FROM uw_embeddings p"
+            "                   WHERE p.document_id = a.document_id"
+            "                     AND p.model = ? AND p.dim = ?)",
+            (*active, ItemState.FAILED.value, *pending),
+        )
+        return 0 if row is None else int(row["n"])
+
+    async def promote_pending_space(self) -> bool:
+        """Swap a completed shadow space in; a no-op otherwise.
+
+        The pipeline calls this after every pass, so the common case (nothing
+        pending) must stay cheap — it costs one ``uw_meta`` read.
+        """
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is None or pending_dim is None:
+            return False  # no rebuild, or not one vector produced yet
+        active_model, active_dim = await self._pinned_space()
+        if active_model is None or active_dim is None:
+            return False
+        conn = await self._ensure_open()
+        gap = await self._shadow_gap(
+            conn, (active_model, active_dim), (pending_model, pending_dim)
+        )
+        if gap:
+            return False
+        vec_droppable = self._vec_ext_loaded
+        async with self._txn() as txn:
+            await txn.execute(
+                "DELETE FROM uw_embeddings WHERE model = ? AND dim = ?",
+                (active_model, active_dim),
+            )
+            await txn.execute(
+                "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+                (META_EMBED_MODEL, pending_model),
+            )
+            await txn.execute(
+                "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+                (META_EMBED_DIM, str(pending_dim)),
+            )
+            await txn.execute(
+                "DELETE FROM uw_meta WHERE key IN (?, ?)",
+                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+            )
+            if vec_droppable:
+                # The index is derived, so rebuilding it is a local copy, not
+                # a re-embed: _ensure_vec backfills it from the new space.
+                await txn.execute("DROP TABLE IF EXISTS uw_vec")
+        self._vec_state = None
+        self._vec_dim = None
+        await self._ensure_vec(pending_dim)
+        log.info(
+            "UltraWiki embedding space promoted: %s (dim=%d) replaces %s",
+            pending_model,
+            pending_dim,
+            active_model,
+        )
+        return True
+
+    async def reembed_status(self) -> dict[str, Any]:
+        """Honest progress of a running rebuild, for the settings surface.
+
+        ``{}`` when none is running. ``done``/``total`` count DOCUMENTS (the
+        passages actually embedded), so the number moves smoothly rather than
+        jumping per item.
+        """
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is None:
+            return {}
+        active_model, active_dim = await self._pinned_space()
+        if active_model is None or active_dim is None:
+            return {"model": pending_model, "done": 0, "total": 0}
+        conn = await self._ensure_open()
+        row = await self._fetchone(
+            conn,
+            "SELECT count(*) AS n FROM uw_embeddings a"
+            " JOIN uw_documents d ON d.id = a.document_id"
+            " JOIN uw_items i ON i.id = d.item_id"
+            " WHERE a.model = ? AND a.dim = ?"
+            "   AND i.deleted_at IS NULL AND i.state != ?",
+            (active_model, active_dim, ItemState.FAILED.value),
+        )
+        total = 0 if row is None else int(row["n"])
+        gap = (
+            total
+            if pending_dim is None
+            else await self._shadow_gap(
+                conn, (active_model, active_dim), (pending_model, pending_dim)
+            )
+        )
+        return {
+            "model": pending_model,
+            "done": max(0, total - gap),
+            "total": total,
+            "active_model": active_model,
+        }
 
     # -- search legs (SQL only, fusion lives in the read path) --------------
 
@@ -2192,10 +2499,26 @@ class PostgresStore:
             "CREATE INDEX IF NOT EXISTS idx_uw_documents_item"
             " ON uw_documents(item_id)",
             "CREATE TABLE IF NOT EXISTS uw_embeddings ("
-            " document_id BIGINT PRIMARY KEY"
+            " document_id BIGINT NOT NULL"
             "  REFERENCES uw_documents(id) ON DELETE CASCADE,"
             " model TEXT NOT NULL, dim INTEGER NOT NULL,"
-            " vector BYTEA NOT NULL, created_at TEXT NOT NULL)",
+            " vector BYTEA NOT NULL, created_at TEXT NOT NULL,"
+            " PRIMARY KEY (document_id, model, dim))",
+            # Databases created before the shadow-space key: widen the primary
+            # key in place so a model switch can build the new space alongside
+            # the live one (SQLite does the same via migration 0002).
+            "DO $$ BEGIN"
+            "  IF EXISTS (SELECT 1 FROM pg_constraint"
+            "             WHERE conrelid = to_regclass('uw_embeddings')"
+            "               AND contype = 'p'"
+            "               AND array_length(conkey, 1) = 1) THEN"
+            "    ALTER TABLE uw_embeddings DROP CONSTRAINT uw_embeddings_pkey;"
+            "    ALTER TABLE uw_embeddings"
+            "      ADD PRIMARY KEY (document_id, model, dim);"
+            "  END IF;"
+            "END $$",
+            "CREATE INDEX IF NOT EXISTS idx_uw_embeddings_space"
+            " ON uw_embeddings(model, dim)",
             "CREATE TABLE IF NOT EXISTS uw_distill_cache ("
             " content_hash TEXT NOT NULL, prompt_version INTEGER NOT NULL,"
             " model TEXT NOT NULL, result_json TEXT NOT NULL,"
@@ -2936,10 +3259,21 @@ class PostgresStore:
         *,
         content_hash: str = "",
     ) -> list[int]:
-        """Postgres twin of :meth:`UltraStore.replace_documents`."""
+        """Postgres twin of :meth:`UltraStore.replace_documents` — including
+        the keep-identical-passages rule that protects the live vectors of a
+        running rebuild (see :func:`_documents_unchanged`)."""
         kind = DocType(doc_type).value
         now = _iso_utc()
         async with self._txn() as conn:
+            old_rows = await self._fetchall(
+                conn,
+                "SELECT id, chunk_index, text_norm, content_hash FROM uw_documents"
+                " WHERE item_id = %s AND doc_type = %s",
+                (item_id, kind),
+            )
+            if _documents_unchanged(old_rows, chunks, content_hash):
+                by_index = {int(row["chunk_index"]): int(row["id"]) for row in old_rows}
+                return [by_index[int(getattr(c, "index", 0))] for c in chunks]
             await conn.execute(
                 "DELETE FROM uw_documents WHERE item_id = %s AND doc_type = %s",
                 (item_id, kind),
@@ -2973,6 +3307,48 @@ class PostgresStore:
         dim_raw = await self.get_meta(META_EMBED_DIM)
         return model, int(dim_raw) if dim_raw else None
 
+    async def _pending_space(self) -> tuple[str | None, int | None]:
+        model = await self.get_meta(META_PENDING_EMBED_MODEL)
+        dim_raw = await self.get_meta(META_PENDING_EMBED_DIM)
+        return model, int(dim_raw) if dim_raw else None
+
+    async def _writes_to_active_space(self, model: str, dim: int) -> bool:
+        """Postgres twin of :meth:`UltraStore._writes_to_active_space`."""
+        pinned_model, pinned_dim = await self._pinned_space()
+        if pinned_model is None or pinned_dim is None:
+            await self.set_meta(META_EMBED_MODEL, model)
+            await self.set_meta(META_EMBED_DIM, str(dim))
+            return True
+        if pinned_model == model and pinned_dim == dim:
+            return True
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is not None and pending_model == model:
+            if pending_dim is None:
+                await self.set_meta(META_PENDING_EMBED_DIM, str(dim))
+            elif pending_dim != dim:
+                raise UltraStoreError(
+                    f"embedding dimension mismatch: the rebuild of {model!r} "
+                    f"started at dim={pending_dim} but got dim={dim}"
+                )
+            return False
+        if pinned_model == model:
+            log.warning(
+                "UltraWiki: model %r now answers with dim=%d instead of %d — "
+                "rebuilding the vector space in the background",
+                model,
+                dim,
+                pinned_dim,
+            )
+            await self.begin_reembed(model, dim=dim)
+            return False
+        raise UltraStoreError(
+            "embedding space mismatch: the store is pinned to "
+            f"model={pinned_model!r} dim={pinned_dim} but got "
+            f"model={model!r} dim={dim}. Changing the embedding model goes "
+            "through begin_reembed() (rebuilds the corpus in the background "
+            "while search keeps using the current vectors)."
+        )
+
     async def store_embedding(
         self,
         document_id: int,
@@ -2985,34 +3361,24 @@ class PostgresStore:
             raise UltraStoreError(
                 f"vector has {len(vector)} components but dim={dim} was declared"
             )
-        pinned_model, pinned_dim = await self._pinned_space()
-        if pinned_model is None or pinned_dim is None:
-            await self.set_meta(META_EMBED_MODEL, model)
-            await self.set_meta(META_EMBED_DIM, str(dim))
-        elif pinned_model != model or pinned_dim != dim:
-            raise UltraStoreError(
-                "embedding space mismatch: the store is pinned to "
-                f"model={pinned_model!r} dim={pinned_dim} but got "
-                f"model={model!r} dim={dim}. Changing the embedding model "
-                "requires reset_vectors() (re-embeds the corpus)."
-            )
-        vec_ok, _ = await self._ensure_vec(dim)
+        active = await self._writes_to_active_space(model, dim)
+        vec_ok = False
+        if active:
+            vec_ok, _ = await self._ensure_vec(dim)
         now = _iso_utc()
         async with self._txn() as conn:
             await conn.execute(
                 "INSERT INTO uw_embeddings"
                 " (document_id, model, dim, vector, created_at)"
                 " VALUES (%s, %s, %s, %s, %s)"
-                " ON CONFLICT (document_id) DO UPDATE SET model = %s,"
-                " dim = %s, vector = %s, created_at = %s",
+                " ON CONFLICT (document_id, model, dim) DO UPDATE"
+                " SET vector = %s, created_at = %s",
                 (
                     document_id,
                     model,
                     dim,
                     pack_vector(vector),
                     now,
-                    model,
-                    dim,
                     pack_vector(vector),
                     now,
                 ),
@@ -3063,11 +3429,21 @@ class PostgresStore:
             "  REFERENCES uw_documents(id) ON DELETE CASCADE,"
             f" embedding vector({int(dim)}) NOT NULL)"
         )
-        # Backfill vectors stored while the index was unavailable.
+        # Backfill vectors stored while the index was unavailable — from the
+        # ACTIVE space only, never a shadow rebuild's partial one.
+        active_model, _ = await self._pinned_space()
+        await conn.execute(
+            "DELETE FROM uw_vec WHERE document_id NOT IN"
+            " (SELECT document_id FROM uw_embeddings"
+            "  WHERE model = %s AND dim = %s)",
+            (active_model or "", int(dim)),
+        )
         missing = await self._fetchall(
             conn,
             "SELECT document_id, vector FROM uw_embeddings"
-            " WHERE document_id NOT IN (SELECT document_id FROM uw_vec)",
+            " WHERE model = %s AND dim = %s"
+            " AND document_id NOT IN (SELECT document_id FROM uw_vec)",
+            (active_model or "", int(dim)),
         )
         for row in missing:
             literal = self._pgvector_literal(unpack_vector(bytes(row["vector"])))
@@ -3088,8 +3464,13 @@ class PostgresStore:
             await conn.execute("DROP TABLE IF EXISTS uw_vec")
             await conn.execute("DELETE FROM uw_embeddings")
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (%s, %s)",
-                (META_EMBED_MODEL, META_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (%s, %s, %s, %s)",
+                (
+                    META_EMBED_MODEL,
+                    META_EMBED_DIM,
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                ),
             )
             await conn.execute(
                 "UPDATE uw_items SET state = %s, updated_at = %s"
@@ -3103,6 +3484,160 @@ class PostgresStore:
             )
         self._vec_state = None
         self._vec_dim = None
+
+    async def begin_reembed(self, model: str, *, dim: int | None = None) -> bool:
+        """Postgres twin of :meth:`UltraStore.begin_reembed`."""
+        pinned_model, pinned_dim = await self._pinned_space()
+        same_space = pinned_model == model and (dim is None or pinned_dim == dim)
+        if pinned_model is None or pinned_dim is None or same_space:
+            await self.abort_reembed()
+            return False
+        async with self._txn() as conn:
+            await conn.execute(
+                "DELETE FROM uw_embeddings WHERE model != %s OR dim != %s",
+                (pinned_model, pinned_dim),
+            )
+            await conn.execute(
+                "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (META_PENDING_EMBED_MODEL, model, model),
+            )
+            if dim is None:
+                await conn.execute(
+                    "DELETE FROM uw_meta WHERE key = %s", (META_PENDING_EMBED_DIM,)
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+                    " ON CONFLICT (key) DO UPDATE SET value = %s",
+                    (META_PENDING_EMBED_DIM, str(int(dim)), str(int(dim))),
+                )
+            await conn.execute(
+                "UPDATE uw_items SET state = %s, updated_at = %s"
+                " WHERE state IN (%s, %s)",
+                (
+                    ItemState.KEYWORD_INDEXED.value,
+                    _iso_utc(),
+                    ItemState.EMBEDDED.value,
+                    ItemState.DISTILLED.value,
+                ),
+            )
+        return True
+
+    async def abort_reembed(self) -> bool:
+        """Postgres twin of :meth:`UltraStore.abort_reembed`."""
+        pending_model, _ = await self._pending_space()
+        if pending_model is None:
+            return False
+        pinned_model, pinned_dim = await self._pinned_space()
+        async with self._txn() as conn:
+            if pinned_model is not None and pinned_dim is not None:
+                await conn.execute(
+                    "DELETE FROM uw_embeddings WHERE model != %s OR dim != %s",
+                    (pinned_model, pinned_dim),
+                )
+            await conn.execute(
+                "DELETE FROM uw_meta WHERE key IN (%s, %s)",
+                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+            )
+        return True
+
+    async def _shadow_gap(
+        self, conn: Any, active: tuple[str, int], pending: tuple[str, int]
+    ) -> int:
+        """Postgres twin of :meth:`UltraStore._shadow_gap`."""
+        row = await self._fetchone(
+            conn,
+            "SELECT count(*) AS n FROM uw_embeddings a"
+            " JOIN uw_documents d ON d.id = a.document_id"
+            " JOIN uw_items i ON i.id = d.item_id"
+            " WHERE a.model = %s AND a.dim = %s"
+            "   AND i.deleted_at IS NULL AND i.state != %s"
+            "   AND NOT EXISTS (SELECT 1 FROM uw_embeddings p"
+            "                   WHERE p.document_id = a.document_id"
+            "                     AND p.model = %s AND p.dim = %s)",
+            (*active, ItemState.FAILED.value, *pending),
+        )
+        return 0 if row is None else int(row["n"])
+
+    async def promote_pending_space(self) -> bool:
+        """Postgres twin of :meth:`UltraStore.promote_pending_space`."""
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is None or pending_dim is None:
+            return False
+        active_model, active_dim = await self._pinned_space()
+        if active_model is None or active_dim is None:
+            return False
+        conn = await self._ensure_open()
+        gap = await self._shadow_gap(
+            conn, (active_model, active_dim), (pending_model, pending_dim)
+        )
+        if gap:
+            return False
+        async with self._txn() as txn:
+            await txn.execute(
+                "DELETE FROM uw_embeddings WHERE model = %s AND dim = %s",
+                (active_model, active_dim),
+            )
+            await txn.execute(
+                "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (META_EMBED_MODEL, pending_model, pending_model),
+            )
+            await txn.execute(
+                "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (META_EMBED_DIM, str(pending_dim), str(pending_dim)),
+            )
+            await txn.execute(
+                "DELETE FROM uw_meta WHERE key IN (%s, %s)",
+                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+            )
+            # Derived index: dropping it costs a local rebuild, not a re-embed.
+            await txn.execute("DROP TABLE IF EXISTS uw_vec")
+        self._vec_state = None
+        self._vec_dim = None
+        await self._ensure_vec(pending_dim)
+        log.info(
+            "UltraWiki embedding space promoted: %s (dim=%d) replaces %s",
+            pending_model,
+            pending_dim,
+            active_model,
+        )
+        return True
+
+    async def reembed_status(self) -> dict[str, Any]:
+        """Postgres twin of :meth:`UltraStore.reembed_status`."""
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model is None:
+            return {}
+        active_model, active_dim = await self._pinned_space()
+        if active_model is None or active_dim is None:
+            return {"model": pending_model, "done": 0, "total": 0}
+        conn = await self._ensure_open()
+        row = await self._fetchone(
+            conn,
+            "SELECT count(*) AS n FROM uw_embeddings a"
+            " JOIN uw_documents d ON d.id = a.document_id"
+            " JOIN uw_items i ON i.id = d.item_id"
+            " WHERE a.model = %s AND a.dim = %s"
+            "   AND i.deleted_at IS NULL AND i.state != %s",
+            (active_model, active_dim, ItemState.FAILED.value),
+        )
+        total = 0 if row is None else int(row["n"])
+        gap = (
+            total
+            if pending_dim is None
+            else await self._shadow_gap(
+                conn, (active_model, active_dim), (pending_model, pending_dim)
+            )
+        )
+        return {
+            "model": pending_model,
+            "done": max(0, total - gap),
+            "total": total,
+            "active_model": active_model,
+        }
 
     # -- search legs ---------------------------------------------------------
 
@@ -3443,6 +3978,8 @@ __all__ = [
     "MAX_ATTEMPTS",
     "META_EMBED_DIM",
     "META_EMBED_MODEL",
+    "META_PENDING_EMBED_DIM",
+    "META_PENDING_EMBED_MODEL",
     "PG_CONNECT_TIMEOUT_S",
     "PostgresStore",
     "UltraStore",

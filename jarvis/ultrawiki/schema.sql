@@ -131,19 +131,28 @@ CREATE TABLE IF NOT EXISTS uw_documents (
 CREATE INDEX IF NOT EXISTS idx_uw_documents_item ON uw_documents(item_id);
 
 -- Embedding vectors, stored provider-neutral as little-endian float32 BLOBs
--- keyed by document. The sqlite-vec vec0 index (uw_vec) is DERIVED from this
--- table by store.py once the extension loads and the dimension is pinned —
--- so a host without the extension still accumulates vectors and gains
--- semantic search the moment the extension becomes available, without
--- re-embedding anything.
+-- keyed by document AND embedding space. The sqlite-vec vec0 index (uw_vec) is
+-- DERIVED from this table by store.py once the extension loads and the
+-- dimension is pinned — so a host without the extension still accumulates
+-- vectors and gains semantic search the moment the extension becomes
+-- available, without re-embedding anything.
+--
+-- The (model, dim) part of the key is what lets a model switch build the new
+-- space ALONGSIDE the live one (uw_meta: embed_model/embed_dim pin the active
+-- space, pending_embed_model/pending_embed_dim the one being built). Semantic
+-- search keeps answering from the active space until the shadow is complete
+-- and store.py promotes it. Steady state holds exactly one space.
 CREATE TABLE IF NOT EXISTS uw_embeddings (
-    document_id INTEGER PRIMARY KEY
+    document_id INTEGER NOT NULL
                 REFERENCES uw_documents(id) ON DELETE CASCADE,
     model       TEXT NOT NULL,
     dim         INTEGER NOT NULL,
     vector      BLOB NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (document_id, model, dim)
 );
+CREATE INDEX IF NOT EXISTS idx_uw_embeddings_space
+    ON uw_embeddings(model, dim);
 
 -- Distillation results cached on (content_hash, prompt_version, model):
 -- identical input is never paid for twice, and crash re-runs converge

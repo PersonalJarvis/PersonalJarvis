@@ -587,6 +587,7 @@ class UltraWikiService:
         counts = PipelineCounts()
         sources: list[dict[str, Any]] = []
         vector: dict[str, Any] = {"ready": False, "reason": "store not started"}
+        reembed: dict[str, Any] = {}
         if started:
             try:
                 counts = await self._store.counts()
@@ -601,6 +602,16 @@ class UltraWikiService:
                 vector = {"ready": bool(vec_ok), "reason": vec_reason}
             except Exception as exc:  # noqa: BLE001 — status never raises
                 vector = {"ready": False, "reason": f"vector probe failed ({exc})"}
+            # A model switch rebuilds the vector space in the background while
+            # search keeps answering from the old one. Without this the UI
+            # would show a fully-green knowledge base and no hint that half the
+            # corpus is still being re-embedded.
+            status_fn = getattr(self._store, "reembed_status", None)
+            if status_fn is not None:
+                try:
+                    reembed = dict(await status_fn())
+                except Exception as exc:  # noqa: BLE001 — status never raises
+                    self._note_degradation(f"re-embed status query failed ({exc})")
         pipeline_running = (
             self._pipeline_task is not None and not self._pipeline_task.done()
         )
@@ -647,6 +658,9 @@ class UltraWikiService:
             },
             "slots": slots,
             "vector": vector,
+            # Empty unless an embedding-model switch is rebuilding right now:
+            # {model, active_model, done, total} over DOCUMENTS.
+            "reembed": reembed,
             "counts": counts_payload,
             "progress": progress,
             "pipeline": {

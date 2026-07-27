@@ -260,6 +260,7 @@ async def get_status(request: Request) -> dict[str, Any]:
             "db_backend": configured_backend,
             "backend_in_use": "",
             "slots": {},
+            "reembed": {},
             "counts": {},
             # Same shape as a live answer, so no client has to special-case a
             # booting backend into zeros of its own invention.
@@ -298,6 +299,10 @@ async def get_status(request: Request) -> dict[str, Any]:
         "db_backend": str(backend.get("configured") or configured_backend),
         "backend_in_use": str(backend.get("in_use") or ""),
         "slots": slots,
+        # Empty unless an embedding-model switch is rebuilding the vector space
+        # right now. Search keeps answering from the old space meanwhile, so
+        # without this a client would show a green, idle knowledge base.
+        "reembed": data.get("reembed", {}),
         "counts": data.get("counts", {}),
         "progress": data.get("progress") or build_progress(data.get("counts")),
         "pipeline": data.get("pipeline", {}),
@@ -1038,6 +1043,28 @@ class UpdateSettingsBody(BaseModel):
     confirm_reembed: bool = False
 
 
+def _effective_embedding_model(uw: Any, changes: dict[str, str]) -> str:
+    """The model name the embed stage will actually send after *changes*.
+
+    The vector space is defined by the MODEL, not by who hosts it, and an empty
+    model field means "this provider's default". Both matter for the re-embed
+    question: resolving it here is what lets a pure provider switch that keeps
+    the model skip the rebuild entirely.
+    """
+    model = changes.get("embedding_model")
+    if model is None:
+        model = str(getattr(uw, "embedding_model", "") or "")
+    model = model.strip()
+    if model:
+        return model
+    provider = changes.get("embedding_provider")
+    if provider is None:
+        provider = str(getattr(uw, "embedding_provider", "") or "")
+    from jarvis.ultrawiki import embeddings as embeddings_mod  # noqa: PLC0415
+
+    return embeddings_mod.DEFAULT_MODELS.get(provider.strip(), "")
+
+
 @router.put(
     "/settings",
     summary="Change UltraWiki slot settings",
@@ -1111,21 +1138,31 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
         key in changes for key in ("embedding_provider", "embedding_model")
     )
     vector_items = 0
+    target_model = ""
     if embedding_change:
+        from jarvis.ultrawiki.store import META_EMBED_MODEL  # noqa: PLC0415
+
         store = await _store_of(service)
-        counts = await store.counts()
-        vector_items = int(counts.embedded) + int(counts.distilled)
+        target_model = _effective_embedding_model(uw, changes)
+        pinned_model = await store.get_meta(META_EMBED_MODEL)
+        # Same model behind a different provider is the SAME vector space —
+        # nothing to rebuild, so nothing to confirm either.
+        if pinned_model and target_model and pinned_model != target_model:
+            counts = await store.counts()
+            vector_items = int(counts.embedded) + int(counts.distilled)
         if vector_items and not body.confirm_reembed:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "message": (
                         "changing the embedding provider or model switches "
-                        f"vector spaces: the {vector_items} already-embedded "
-                        "items must be re-embedded from scratch. Repeat the "
-                        "request with confirm_reembed=true to drop the "
-                        "existing vectors and re-embed in the background — "
-                        "keyword search keeps working meanwhile."
+                        f"vector spaces, so the {vector_items} embedded items "
+                        "have to be embedded again with the new model — "
+                        "vectors of two models cannot be compared. Repeat the "
+                        "request with confirm_reembed=true to start that "
+                        "rebuild in the background. Semantic search keeps "
+                        "answering from the current vectors the whole time; "
+                        "the new space is swapped in only once it is complete."
                     ),
                     "vector_items": vector_items,
                 },
@@ -1135,13 +1172,12 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
     persisted, persist_error = _persist_slots(applied)
     _apply_live(request, applied)
     reembed_started = False
-    if embedding_change:
+    if embedding_change and target_model:
         store = await _store_of(service)
-        # Drops uw_vec + uw_embeddings, clears the model/dim pin, and resets
-        # embedded/distilled items to keyword_indexed — the running pipeline
-        # re-embeds them in the background with the new slot.
-        await store.reset_vectors()
-        reembed_started = vector_items > 0
+        # Builds the new space ALONGSIDE the live one: the current vectors and
+        # the ANN index stay untouched and keep serving search until the
+        # pipeline has re-embedded everything (store.promote_pending_space).
+        reembed_started = await store.begin_reembed(target_model)
     response: dict[str, Any] = {
         "ok": True,
         "changed": sorted(applied),
