@@ -672,6 +672,62 @@ export function AgenticGrid({
    * machine is the same arrangement at that machine's own sizes.
    */
   const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * The panes and seams as ELEMENTS, so a drag can move them itself.
+   *
+   * A drag re-lays the workspace out sixty times a second, and doing that
+   * through React means re-rendering every terminal in it that often — which is
+   * what made dragging a seam in a full workspace run at a few frames a second
+   * (see `usePaneWeights`). With the nodes in hand a frame costs one layout
+   * computation and a handful of style writes.
+   *
+   * The ref callbacks are memoised per pane and per seam for the reason
+   * `usePaneArrange` memoises its own: a fresh closure each render makes React
+   * detach and re-attach every node, so a drag could lose the element it is
+   * halfway through moving.
+   */
+  const paneNodes = useRef(new Map<string, HTMLElement>());
+  const seamNodes = useRef(new Map<string, HTMLElement>());
+  const paneRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());
+  const seamRefs = useRef(new Map<string, (element: HTMLDivElement | null) => void>());
+
+  const registerSeam = useCallback((id: string) => {
+    const existing = seamRefs.current.get(id);
+    if (existing) return existing;
+    const callback = (element: HTMLDivElement | null) => {
+      if (element) seamNodes.current.set(id, element);
+      else seamNodes.current.delete(id);
+    };
+    seamRefs.current.set(id, callback);
+    return callback;
+  }, []);
+
+  /**
+   * Put every pane and seam where ``next`` says, without telling React.
+   *
+   * Used for the frames of a drag only. The last frame of a gesture writes the
+   * same numbers that are then committed to state, so React's next render
+   * agrees with what is already on screen and nothing flickers on release.
+   */
+  const paintDraggedLayout = useCallback(
+    (next: PaneWeights) => {
+      const live = paneLayout(session.terminals, perBand, next);
+      session.terminals.forEach((term, index) => {
+        const node = paneNodes.current.get(term.name);
+        const box = live.boxes[index];
+        // A pane with no box of its own is a maximized workspace, and a
+        // maximized workspace has no seams to drag in the first place.
+        if (node && box) writePosition(node, paneBoxStyle(box));
+      });
+      for (const seam of live.seams) {
+        const node = seamNodes.current.get(seam.id);
+        if (node) writePosition(node, seamStyle(seam));
+      }
+    },
+    [session.terminals, perBand],
+  );
+
   const sizes = usePaneWeights(
     session.id,
     useCallback(
@@ -681,11 +737,51 @@ export function AgenticGrid({
       }),
       [gridWidth, gridHeight],
     ),
+    paintDraggedLayout,
   );
   const layout = useMemo(
     () => paneLayout(session.terminals, perBand, sizes.weights),
     [session.terminals, perBand, sizes.weights],
   );
+
+  /*
+   * Hold the dragged sizes against anything else that renders mid-gesture.
+   *
+   * A drag deliberately leaves state alone until the pointer is released, so
+   * any OTHER render in that window — the five-second recap poll, a pane
+   * reporting that it went live — would repaint every box at the sizes the
+   * workspace had when the drag started, and the panes would jump back under
+   * the cursor. Re-applying the in-flight layout right after such a commit is
+   * what keeps that from being visible.
+   *
+   * Deliberately without a dependency list, and deliberately cheap: outside a
+   * drag it is one null check per commit and nothing else. It must not MEASURE
+   * anything here — reading geometry in a commit is what forces the browser to
+   * recompute the whole grid, which is half of what this change removes.
+   */
+  useLayoutEffect(() => {
+    if (sizes.dragging === null) return;
+    const inFlight = sizes.liveWeights.current;
+    if (inFlight) paintDraggedLayout(inFlight);
+  });
+
+  /*
+   * Is the workspace's own geometry in motion right now?
+   *
+   * The panes are told, and the reason is the second half of the resize
+   * problem. A pane that notices it has changed size refits its terminal and
+   * announces the new size to the agent behind it, which redraws its entire
+   * screen in response. During a drag that is the wrong trade twice over: the
+   * agent's redraw lands on the same thread that owes the user the next frame,
+   * and it is thrown away by the next pixel of movement anyway. So the panes
+   * hold still while the seam moves and take their new size in one pass when it
+   * stops — which is also when the terminal's contents stop lagging behind the
+   * frame around them.
+   *
+   * The prompt bar counts: dragging it changes the height of every pane above
+   * it just as a seam does.
+   */
+  const layoutBusy = sizes.dragging !== null || composer.isResizing;
 
   /*
    * How tall the workspace is drawn, which is not always how tall it looks.
@@ -783,6 +879,31 @@ export function AgenticGrid({
       },
       [movePane],
     ),
+  );
+
+  /**
+   * One ref per pane cell, serving both things that need the element.
+   *
+   * Rearranging measures it as a drop target, resizing moves it; they are
+   * separate gestures over the same node, and an element carries one ref. The
+   * callback is memoised per pane so neither of them can be handed a node that
+   * React detached and re-attached in between (see `usePaneArrange`).
+   */
+  const { registerCell } = arrange;
+  const registerPaneCell = useCallback(
+    (name: string) => {
+      const existing = paneRefs.current.get(name);
+      if (existing) return existing;
+      const asDropTarget = registerCell(name);
+      const callback = (element: HTMLElement | null) => {
+        if (element) paneNodes.current.set(name, element);
+        else paneNodes.current.delete(name);
+        asDropTarget(element);
+      };
+      paneRefs.current.set(name, callback);
+      return callback;
+    },
+    [registerCell],
   );
 
   /*
@@ -1275,7 +1396,7 @@ export function AgenticGrid({
           return (
             <div
               key={term.key}
-              ref={arrange.registerCell(term.name)}
+              ref={registerPaneCell(term.name)}
               data-testid={`pane-cell-${term.name}`}
               className={cn(
                 "absolute min-h-0 min-w-0 rounded-lg",
@@ -1320,6 +1441,7 @@ export function AgenticGrid({
                 fontSize={fontSize}
                 focused={target === term.name}
                 maximized={isMaximized}
+                layoutBusy={layoutBusy}
                 splitDisabled={atLimit || busy || working}
                 agents={agents}
                 onFocus={() => {
@@ -1444,6 +1566,7 @@ export function AgenticGrid({
           layout.seams.map((seam) => (
             <PaneResizer
               key={seam.id}
+              ref={registerSeam(seam.id)}
               testId={`pane-seam-${seam.id}`}
               orientation={seam.orientation}
               title={seam.label}

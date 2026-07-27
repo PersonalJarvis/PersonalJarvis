@@ -35,13 +35,7 @@
  * scrolled there was nothing measured to draw. See `probeAppHistory` in
  * ./paneAppScroll — the gesture asks the question now.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { cn } from "@/lib/utils";
 import type { TerminalAppearance } from "./terminalThemes";
@@ -366,32 +360,57 @@ export function PaneScrollbar({
     setState((current) => (sameState(current, next) ? current : next));
   }, [position, getTerminal, epoch]);
 
-  // The track's height decides the thumb's, and it is only knowable once the
-  // track is in the document. Measured on every commit rather than from the
-  // metrics effect above, because a pane whose agent is idle emits no render
-  // events at all — and a bar that waited for one would come up thumbless.
-  //
-  // The bar's distance from the pane edge is read in the same pass: one layout
-  // flush covers both, and taking it from the live boxes is what keeps it correct
-  // when the region's padding changes.
-  useLayoutEffect(() => {
+  /*
+   * The track's height decides the thumb's, and the bar's distance from the
+   * pane edge decides where it sits. Both are geometry, so both are MEASURED —
+   * and both are measured when the boxes actually change rather than after
+   * every render.
+   *
+   * That distinction is the whole point of this effect. It used to run on every
+   * commit, and reading a box in a commit forces the browser to recompute the
+   * layout there and then — for each pane, on a thread that has just resized
+   * all of them. With a dozen panes and a seam being dragged, those forced
+   * recomputations were the single most expensive thing in the frame, and the
+   * measured height changing then fed a second render per pane on top. A
+   * ResizeObserver answers the same question from outside the render, only when
+   * there is a new answer.
+   *
+   * `state.mode` is in the dependencies because the track is in the document
+   * only while there is something to scroll — the observer has to be attached
+   * to the element that exists now.
+   */
+  useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
-    const height = track.clientHeight;
-    setTrackPx((current) => (current === height ? current : height));
 
-    const region = regionRef.current;
-    const host = hostRef.current;
-    if (!region || !host) return;
-    const gap = Math.max(
-      0,
-      Math.round(
-        region.getBoundingClientRect().right -
-          host.getBoundingClientRect().right,
-      ),
-    );
-    setHostGap((current) => (current === gap ? current : gap));
-  });
+    const measure = () => {
+      const height = track.clientHeight;
+      setTrackPx((current) => (current === height ? current : height));
+
+      const region = regionRef.current;
+      const host = hostRef.current;
+      if (!region || !host) return;
+      const gap = Math.max(
+        0,
+        Math.round(
+          region.getBoundingClientRect().right -
+            host.getBoundingClientRect().right,
+        ),
+      );
+      setHostGap((current) => (current === gap ? current : gap));
+    };
+
+    measure();
+    // No observer in this environment (older engines, some test setups): the
+    // one measurement above still gives the bar a thumb, which is the
+    // behaviour that matters.
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    if (regionRef.current) observer.observe(regionRef.current);
+    if (hostRef.current) observer.observe(hostRef.current);
+    return () => observer.disconnect();
+  }, [state.mode, regionRef, hostRef]);
 
   // ------------------------------------------------------------------ input
   const relay = useCallback(

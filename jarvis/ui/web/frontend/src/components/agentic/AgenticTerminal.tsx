@@ -207,6 +207,18 @@ interface AgenticTerminalProps {
   /** True while THIS pane is the one being carried — it is drawn as lifted. */
   arranging?: boolean;
   /**
+   * True while the workspace's geometry is actively being dragged.
+   *
+   * The pane then stops refitting itself: a fit reflows xterm's buffer AND
+   * tells the agent its new size, and an agent answers that by redrawing its
+   * whole screen. Sixty of those a second, across every pane a seam touches, is
+   * what turned dragging a boundary into a slideshow — and every one of them is
+   * discarded by the next pixel of movement. The size is taken in a single pass
+   * the moment this goes false, which is also what stops the terminal's
+   * contents from trailing the frame around them for longer than they must.
+   */
+  layoutBusy?: boolean;
+  /**
    * Bump to reconnect this pane.
    *
    * An exited agent leaves a dead pane with no way back: the connect effect runs
@@ -241,6 +253,7 @@ export function AgenticTerminal({
   restartToken = 0,
   onArrangeStart,
   arranging = false,
+  layoutBusy = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // The padded box around the xterm host. The pane's scrollbar overlays it and
@@ -269,9 +282,13 @@ export function AgenticTerminal({
   // when it asks. Read at connect time, hence a ref rather than the prop: the
   // connect effect must not re-run when the user flips the theme.
   const appearanceRef = useRef(appearance);
+  // Read by the connect effect's resize scheduler, which is built once and
+  // therefore cannot see the prop change.
+  const layoutBusyRef = useRef(layoutBusy);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
   appearanceRef.current = appearance;
+  layoutBusyRef.current = layoutBusy;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -568,6 +585,11 @@ export function AgenticTerminal({
     // flicker while resizing.
     let resizeTimer: number | undefined;
     const scheduleResize = () => {
+      // Nothing at all while a seam or the prompt bar is being dragged: the
+      // pane is mid-gesture, every size it could measure is about to be
+      // replaced, and the fit would cost the frame the drag needs. The pane is
+      // refitted from the `layoutBusy` effect the moment the drag ends.
+      if (layoutBusyRef.current) return;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         resizeTimer = undefined;
@@ -681,6 +703,26 @@ export function AgenticTerminal({
       for (const timer of timers) window.clearTimeout(timer);
     };
   }, [maximized]);
+
+  /*
+   * Catch up the instant a drag lets go.
+   *
+   * While `layoutBusy` is true the pane deliberately ignores its own
+   * ResizeObserver (see the prop), so this is where the size it ended up with
+   * is finally taken. Immediately rather than through the observer's 80 ms
+   * coalescing window: this is exactly the moment where the terminal's contents
+   * still occupy the shape the pane had BEFORE the drag — the strip of empty
+   * ground under the agent's last line — and every millisecond of it is
+   * visible. The second pass one frame later is for the layout that settles
+   * after the release (a scrollbar appearing, the prompt bar reflowing); a fit
+   * that lands on the size the terminal already has sends nothing at all.
+   */
+  useEffect(() => {
+    if (layoutBusy) return;
+    resizeRef.current?.();
+    const frame = requestAnimationFrame(() => resizeRef.current?.());
+    return () => cancelAnimationFrame(frame);
+  }, [layoutBusy]);
 
   /*
    * Drag a file onto the pane, or paste a screenshot into it.
@@ -811,6 +853,10 @@ export function AgenticTerminal({
         <div
           ref={containerRef}
           data-testid={`agentic-terminal-host-${name}`}
+          // Read by ./index.css, which anchors the contents to the bottom for
+          // the length of a drag — see the rule there for why that is the side
+          // the unused ground belongs on.
+          data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
         {/* Overlaid rather than laid out, and deliberately not the browser's

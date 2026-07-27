@@ -13,6 +13,19 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
 }
 
+/**
+ * How often each pane has been rendered.
+ *
+ * A pane in the real grid is a live terminal with a header, a recap card and a
+ * scrollbar, so "how often is it re-rendered" is not a detail — it is what
+ * decides whether dragging a boundary runs at sixty frames a second or at
+ * three. Counted here so the drag tests can pin it.
+ *
+ * Through `vi.hoisted` because `vi.mock` factories are lifted above ordinary
+ * module code and would otherwise reach a `const` that does not exist yet.
+ */
+const { paneRenders } = vi.hoisted(() => ({ paneRenders: new Map<string, number>() }));
+
 const pushToast = vi.fn();
 vi.mock("@/store/events", () => ({
   useEventStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -79,6 +92,7 @@ vi.mock("./AgenticTerminal", () => ({
     onClose,
     onArrangeStart,
     arranging,
+    layoutBusy,
   }: {
     name: string;
     maximized?: boolean;
@@ -93,7 +107,10 @@ vi.mock("./AgenticTerminal", () => ({
     onClose?: () => void;
     onArrangeStart?: (event: PointerEventLike) => void;
     arranging?: boolean;
-  }) => (
+    layoutBusy?: boolean;
+  }) => {
+    paneRenders.set(name, (paneRenders.get(name) ?? 0) + 1);
+    return (
     <div
       data-testid={`pane-${name}`}
       data-maximized={maximized ? "yes" : "no"}
@@ -105,6 +122,9 @@ vi.mock("./AgenticTerminal", () => ({
       // currently in hand — the real header draws both; here they are read.
       data-arrangeable={onArrangeStart ? "yes" : "no"}
       data-arranging={arranging ? "yes" : "no"}
+      // The real pane stops refitting its terminal while this is on. Read here
+      // because it is the grid's job to say WHEN the geometry is in motion.
+      data-layout-busy={layoutBusy ? "yes" : "no"}
     >
       {name}
       {/* Stands for the pane header, which is the grip in the real component. */}
@@ -142,7 +162,8 @@ vi.mock("./AgenticTerminal", () => ({
         restart
       </button>
     </div>
-  ),
+    );
+  },
   PaneStatusPill: () => <span>live</span>,
 }));
 
@@ -1265,6 +1286,141 @@ describe("resizing the workspace", () => {
     } finally {
       restore();
     }
+  });
+
+  /** Begin a drag and leave the pointer down, so the gesture can be inspected. */
+  function holdSeam(testId: string, fromX: number) {
+    act(() => {
+      screen
+        .getByTestId(testId)
+        .dispatchEvent(new MouseEvent("pointerdown", { clientX: fromX, bubbles: true }));
+    });
+  }
+
+  /**
+   * Let one animation frame pass.
+   *
+   * A drag paints on FRAMES, not on pointer events — that is the whole point of
+   * it (see `usePaneWeights`), so a test that moves the pointer and looks
+   * immediately would be reading the frame before the one it caused.
+   */
+  async function flushFrame() {
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+  }
+
+  /*
+   * The panes follow the pointer WHILE it is down.
+   *
+   * This is the difference between a boundary you drag and one that jumps when
+   * you let go, and it has to survive the thing that makes it fast: the frames
+   * of a drag are painted straight onto the elements, and state is written once
+   * at the end. Nothing about that may be visible from the outside — so the
+   * width is checked mid-gesture, before any commit could have happened.
+   */
+  it("moves the panes while the pointer is still down, not on release", async () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      holdSeam("pane-seam-column:0:1", 500);
+      act(() => {
+        window.dispatchEvent(new MouseEvent("pointermove", { clientX: 750 }));
+      });
+      await flushFrame();
+
+      expect(widthOf("Mika")).toBe(75);
+      // ...and the workspace has not been told yet: a drag that committed per
+      // frame is what re-rendered every terminal on every pointer move.
+      expect(stored().columns).toEqual([]);
+
+      act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+
+      // The release keeps exactly what was on screen — no snap back to the
+      // frame before it, and no second jump.
+      expect(widthOf("Mika")).toBe(75);
+      expect(stored().columns).toEqual([1.5, 0.5]);
+    } finally {
+      restore();
+    }
+  });
+
+  /*
+   * The frames of a drag do not re-render the terminals.
+   *
+   * This is the fix itself, stated as a test. A pane is a live terminal with a
+   * header, a recap card and a scrollbar; re-rendering a dozen of them on every
+   * pointer move is what dropped the gesture to a few frames a second, and it
+   * fed back — each render resized every pane's box, which woke each pane's own
+   * observer, which refitted the terminal and made the agent behind it redraw.
+   * So the boxes are painted directly and React is told once, at the end.
+   */
+  it("does not re-render the terminals for the frames of a drag", async () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      // Let the mount-time recap poll land first — its answer re-renders every
+      // pane once, and counting that as a frame of the drag would be measuring
+      // the test's own setup.
+      await flushFrame();
+      holdSeam("pane-seam-column:0:1", 500);
+      const before = paneRenders.get("Mika") ?? 0;
+
+      for (const x of [560, 620, 680, 750]) {
+        act(() => window.dispatchEvent(new MouseEvent("pointermove", { clientX: x })));
+        await flushFrame();
+      }
+
+      // Four frames of movement, visible on screen...
+      expect(widthOf("Mika")).toBe(75);
+      // ...and not one render of the pane behind it.
+      expect(paneRenders.get("Mika")).toBe(before);
+
+      act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+      // Letting go is what costs renders: the sizes go into state and the panes
+      // are told the workspace has stopped moving. A couple of commits for the
+      // whole gesture, rather than one per frame — that is the difference.
+      expect(paneRenders.get("Mika")).toBeLessThanOrEqual(before + 2);
+    } finally {
+      restore();
+    }
+  });
+
+  /*
+   * A pane whose size is mid-gesture does not resize its terminal.
+   *
+   * Refitting means telling the agent behind the pane to redraw its whole
+   * screen, and during a drag that answer is stale before it arrives — sixty
+   * times a second, on the thread drawing the drag.
+   */
+  it("tells the panes to hold still while a seam is moving, and to catch up after", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      const busy = () => screen.getByTestId("pane-Mika").getAttribute("data-layout-busy");
+      expect(busy()).toBe("no");
+
+      holdSeam("pane-seam-column:0:1", 500);
+      expect(busy()).toBe("yes");
+
+      act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+      expect(busy()).toBe("no");
+    } finally {
+      restore();
+    }
+  });
+
+  /* The prompt bar changes every pane's height, so it counts as the same kind
+     of motion — a pane must not refit for each frame of that drag either. */
+  it("counts a prompt-bar drag as the workspace moving too", () => {
+    renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+    const busy = () => screen.getByTestId("pane-Mika").getAttribute("data-layout-busy");
+
+    fireEvent.pointerDown(screen.getByTestId("pane-resizer-horizontal"), { clientY: 700 });
+    expect(busy()).toBe("yes");
+
+    act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(busy()).toBe("no");
   });
 
   it("remembers the sizes so a restart brings the workspace back as it was", () => {

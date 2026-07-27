@@ -84,6 +84,31 @@
   height: 0;
 }
 
+/* While a boundary is being dragged, the terminal inside a pane keeps the size
+   it had — a terminal is a grid of whole character cells, and re-cutting that
+   grid means telling the agent to redraw its entire screen, which is far too
+   expensive to do per frame (see AgenticTerminal's `layoutBusy`). So for the
+   length of the gesture the pane is a frame around contents of the old size,
+   and the only question is where the difference shows.
+
+   Anchoring the contents to the BOTTOM is what makes it look right: an agent
+   draws its input box at the bottom of its screen, so the strip of unused
+   ground ends up above the output instead of below the input — a terminal with
+   room over it reads as normal, one with its prompt floating in the middle
+   reads as broken. That was the reported symptom. Dragging the other way trims
+   the oldest rows off the top, which is the direction a terminal grows anyway.
+
+   Only during the drag: the moment it ends the pane refits and the contents
+   fill the frame again. */
+.agentic-terminal-host[data-layout-busy="true"] {
+  display: flex;
+  align-items: flex-end;
+}
+
+.agentic-terminal-host[data-layout-busy="true"] > .xterm {
+  width: 100%;
+}
+
 @layer base {
   :root {
     /* Jarvis — Schwarz/Gelb Theme (matte, signal-yellow) */

@@ -117,12 +117,38 @@ export function useResizablePane({
   useEffect(() => {
     if (!isResizing) return;
 
-    const onMove = (e: PointerEvent) => {
-      const travelled = (axis === "x" ? e.clientX : e.clientY) - startPoint.current;
+    /*
+     * One size change per FRAME, not one per pointer event.
+     *
+     * A pointer emits up to 120 moves a second and this size is a layout: in
+     * the Agentic IDE it decides the height of every terminal above the prompt
+     * bar, so an unthrottled drag re-laid out the whole workspace twice per
+     * frame and then threw the first one away. The pointer's latest position is
+     * kept and read when the frame comes.
+     */
+    let frame: number | undefined;
+    let point = startPoint.current;
+
+    const apply = () => {
+      frame = undefined;
+      const travelled = point - startPoint.current;
       const grown = handle === "end" ? travelled : -travelled;
       setSize(clampSize(startSize.current + grown, min, max));
     };
-    const onUp = () => setIsResizing(false);
+
+    const onMove = (e: PointerEvent) => {
+      point = axis === "x" ? e.clientX : e.clientY;
+      if (frame === undefined) frame = requestAnimationFrame(apply);
+    };
+    const onUp = () => {
+      // Land the last move before the drag is declared over, so the settled
+      // size — the one that gets persisted — is the one under the pointer.
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame);
+        apply();
+      }
+      setIsResizing(false);
+    };
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -133,6 +159,7 @@ export function useResizablePane({
     document.body.style.userSelect = "none";
 
     return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       document.body.style.cursor = prevCursor;

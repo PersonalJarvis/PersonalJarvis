@@ -124,6 +124,38 @@ describe("useResizablePane", () => {
     expect(result.current.size).toBe(34);
   });
 
+  /*
+   * A burst of pointer moves costs ONE size change, not one each.
+   *
+   * This size is a layout — in the Agentic IDE it sets the height of every
+   * terminal above the prompt bar — and a pointer emits far more moves than
+   * there are frames to draw them in. So the moves are coalesced and the last
+   * one wins, which is what the size standing still until the frame arrives
+   * shows here.
+   */
+  it("coalesces a burst of pointer moves into one size change per frame", async () => {
+    const { result } = renderHook(() => useResizablePane(opts));
+    act(() => {
+      result.current.startResize({
+        clientX: 260,
+        clientY: 0,
+        preventDefault: () => {},
+      } as unknown as React.PointerEvent);
+    });
+
+    act(() => {
+      for (const x of [300, 320, 340]) {
+        window.dispatchEvent(new MouseEvent("pointermove", { clientX: x }));
+      }
+    });
+    expect(result.current.size).toBe(260);
+
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    expect(result.current.size).toBe(340);
+  });
+
   it("nudge() moves the seam by whole pixels and stays inside the band", () => {
     const { result } = renderHook(() => useResizablePane(opts));
     act(() => result.current.nudge(16));
