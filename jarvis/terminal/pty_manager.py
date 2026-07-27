@@ -16,7 +16,21 @@ Design decisions:
   daemon-thread read-loop is structurally unchanged — only the handle type
   swapped from a raw ``winpty.PtyProcess`` to a ``PtyHandle``.
 - Lifecycle: close() signals the reader thread via a flag and terminates the
-  process. No join, so a hung PTY never blocks the web server.
+  process TREE. No join, so a hung PTY never blocks the web server.
+
+## Why a session owns a container and not just a process
+
+Terminating a PTY child terminates that child. A coding CLI, though, is the
+smallest part of what it started: every MCP server it connects to is a separate
+process pair that does NOT exit when its client goes away — it waits on a
+stdin nothing will ever write to again. So each closed pane used to leave its
+whole server fleet resident, and every workspace opened added another one.
+Measured with the app already shut down: 102 ``node``, 59 ``cmd`` and 89
+``conhost`` processes, all belonging to panes closed hours earlier.
+
+Every session therefore spawns INTO a kill-on-close container
+(``jarvis.core.process_tree``) — a Win32 Job Object, or the child's process
+group on POSIX — and closing the session reaps the descendants with it.
 
 ## Why output is coalesced instead of forwarded chunk by chunk
 
@@ -64,6 +78,8 @@ from uuid import uuid4
 
 from loguru import logger
 
+from jarvis.core.process_tree import ProcessTree, make_process_tree
+
 from .backend import PtyHandle, make_pty_backend
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
@@ -95,6 +111,10 @@ class PtySession:
     pid: int
     proc: PtyHandle       # normalized PTY handle behind the backend seam (AD-6)
     stop_flag: threading.Event
+    #: Kill-on-close container holding this child AND everything it spawns —
+    #: the MCP servers a coding CLI starts outlive it otherwise (module
+    #: docstring). Assigned right after construction, like ``reader_thread``.
+    tree: ProcessTree | None = field(default=None, init=False)
     #: Assigned right after construction — the thread is handed the session it
     #: feeds, so the two cannot be built in one expression.
     reader_thread: threading.Thread | None = field(default=None, init=False)
@@ -250,6 +270,20 @@ class PtyManager:
             proc=proc,
             stop_flag=stop_flag,
         )
+        # Before the child has produced a byte, so the servers it starts on the
+        # way up are already inside the container. Containment is a safeguard
+        # and never a reason to fail a spawn: a host that cannot provide one
+        # gets a no-op and a terminal that works (module docstring).
+        session.tree = make_process_tree(f"pty:{shell_id}")
+        try:
+            session.tree.assign(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PTY could not be contained — its descendants will survive it",
+                terminal_id=terminal_id,
+                pid=pid,
+                error=str(exc),
+            )
         session.reader_thread = threading.Thread(
             target=self._reader_loop,
             name=f"pty-reader-{terminal_id[:8]}",
@@ -388,6 +422,20 @@ class PtyManager:
             session.proc.terminate(force=True)
         except Exception:  # noqa: BLE001, S110 - terminate is best-effort cleanup
             pass
+        # AFTER the child itself, so a CLI that shuts its servers down cleanly
+        # gets the chance to; the container is what catches the ones that do
+        # not, which for an MCP server over a dead pipe is all of them.
+        tree = session.tree
+        if tree is not None:
+            session.tree = None
+            try:
+                tree.close()
+            except Exception as exc:  # noqa: BLE001 - reaping is best-effort
+                logger.debug(
+                    "PTY tree teardown failed",
+                    terminal_id=session.terminal_id,
+                    error=str(exc),
+                )
         # No join — the reader thread is a daemon and may still be running
         # through one last read(). That's fine; Python exit cleans it up.
         # The pump is deliberately NOT cancelled here: the reader thread is
@@ -455,6 +503,21 @@ class PtyManager:
                 terminal_id=session.terminal_id,
                 error=str(exc),
             )
+        # A child that ended BY ITSELF never goes through ``_terminate``, and
+        # the servers it started are exactly as orphaned as after a kill — a
+        # coding CLI that is quit with /exit leaves its whole MCP fleet behind.
+        # Same container, same reap, one pass either way (it is idempotent).
+        tree = session.tree
+        if tree is not None:
+            session.tree = None
+            try:
+                tree.close()
+            except Exception as exc:  # noqa: BLE001 - reaping is best-effort
+                logger.debug(
+                    "PTY tree teardown after exit failed",
+                    terminal_id=session.terminal_id,
+                    error=str(exc),
+                )
 
     def _reader_loop(
         self,

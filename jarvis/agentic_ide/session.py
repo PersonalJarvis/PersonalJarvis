@@ -67,6 +67,8 @@ import re
 import shutil
 import sys
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -163,6 +165,37 @@ RESUME_FAILED_WINDOW_S = 45.0
 # writes its rollout file a beat after launching, so asking immediately finds
 # nothing; two attempts cover a slow machine without turning into polling.
 DISCOVERY_DELAYS_S = (4.0, 12.0)
+
+# ---------------------------------------------------------------------------
+# How many agent CLIs may be COLD-STARTING at the same moment.
+#
+# Opening a workspace mounts every pane at once, each pane connects at once, and
+# each connection starts a coding CLI — so the grid used to launch all of them
+# in the same instant. A coding CLI's start is not cheap: it loads its plugins
+# and hooks, and then starts one process per MCP server the user has configured,
+# most of them through ``npx``, which resolves a package before it runs one.
+# Measured on this install: eleven user-scope servers, roughly two and a half
+# processes each. Eight panes therefore meant well over two hundred process
+# starts inside a second or two — every core pinned, the machine unresponsive,
+# and the app itself too starved to draw the panes it was starting.
+#
+# The work is the same either way; only its SHAPE changes. Panes past the limit
+# wait for a slot, so the same workspace opens as a rolling start that leaves
+# the machine usable, and the pane the user is looking at is up immediately
+# rather than last-of-eight in a freeze.
+#
+# A quarter of the cores, at least two: enough parallelism that a small
+# workspace (which is most of them) is never held back at all, and a floor that
+# keeps a dual-core VPS from serializing completely.
+COLD_START_LIMIT = max(2, (os.cpu_count() or 4) // 4)
+
+# How long a started pane keeps its slot. The expensive part happens AFTER the
+# process exists — the CLI is loading while ``spawn`` has long returned — so
+# releasing the slot on spawn would let the whole grid pile into the same second
+# regardless of the limit. Roughly the length of a CLI's own boot burst; long
+# enough to stagger, short enough that nobody watches a spinner for it.
+COLD_START_SETTLE_S = 1.2
+
 
 # How long the nudged window size is held before it is put back (see
 # ``_nudge_repaint``). A PTY carries one size, not a queue of them: set twice
@@ -748,6 +781,12 @@ class Registry:
         # rewrite the same config file eight times — and that file grows to tens
         # of kilobytes on a heavy user (see jarvis.workspace.trust).
         self._pre_trusted: set[tuple[str, str]] = set()
+        # Admits a few agent cold starts at a time (see COLD_START_LIMIT).
+        # Created on first use rather than here: a semaphore belongs to the loop
+        # it is first awaited on, and the registry is also built in tests that
+        # run each case on a loop of its own.
+        self._cold_start: asyncio.Semaphore | None = None
+
 
     # ---------------------------------------------------------------- state
     @property
@@ -1418,6 +1457,42 @@ class Registry:
         term = session.find(key)
         return None if term is None else (session, term)
 
+    @asynccontextmanager
+    async def _cold_start_slot(self) -> AsyncIterator[None]:
+        """Hold one of the few slots for starting an agent CLI.
+
+        Waiting here is what turns "open a workspace" from a burst that pins
+        every core into a rolling start (see :data:`COLD_START_LIMIT`). It
+        gates STARTS only: a pane re-joining an agent that never stopped — the
+        common case on every workspace switch — returns long before this, and
+        an agent already running is never made to wait behind one that is
+        booting.
+
+        The slot is released a moment AFTER the block, not at its end. What
+        costs is the CLI loading itself and its servers, and by then ``spawn``
+        has returned; releasing immediately would let the whole grid through in
+        the same instant and the limit would gate nothing. A spawn that FAILED
+        releases at once — nothing is loading, and a broken pane must not hold
+        up the ones behind it.
+        """
+        gate = self._cold_start
+        if gate is None:
+            # No await between the check and the assignment, so two panes
+            # arriving together cannot end up with a semaphore each.
+            gate = self._cold_start = asyncio.Semaphore(COLD_START_LIMIT)
+        await gate.acquire()
+        started = False
+        try:
+            yield
+            started = True
+        finally:
+            if started:
+                asyncio.get_running_loop().call_later(
+                    COLD_START_SETTLE_S, gate.release
+                )
+            else:
+                gate.release()
+
     async def attach(
         self,
         key: str,
@@ -1620,24 +1695,30 @@ class Registry:
             if viewer is not None:
                 await viewer(code)
 
-        # Off the event loop: getting the pane's account ready is filesystem
-        # work (a few stat calls once it is in place — see `_prepare_spawn`).
-        env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
-        try:
-            pty_session = await manager.spawn(
-                shell_argv=argv,
-                shell_id=f"agentic-ide:{term.key}",
-                cwd=session.folder,
-                cols=cols,
-                rows=rows,
-                on_output=_output,
-                on_closed=_closed,
-                env=_spawn_env(term),
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced to the pane
-            term.status = "error"
-            term.error = str(exc)
-            raise SessionError(str(exc)) from exc
+        # One of a few starts at a time (see COLD_START_LIMIT). The wait covers
+        # the account preparation too: that is filesystem work on the same
+        # directory every pane of an account shares, so letting eight of them
+        # queue on its lock while eight CLIs boot is the same pile-up one step
+        # earlier.
+        async with self._cold_start_slot():
+            # Off the event loop: getting the pane's account ready is filesystem
+            # work (a few stat calls once it is in place — see `_prepare_spawn`).
+            env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+            try:
+                pty_session = await manager.spawn(
+                    shell_argv=argv,
+                    shell_id=f"agentic-ide:{term.key}",
+                    cwd=session.folder,
+                    cols=cols,
+                    rows=rows,
+                    on_output=_output,
+                    on_closed=_closed,
+                    env=_spawn_env(term),
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced to the pane
+                term.status = "error"
+                term.error = str(exc)
+                raise SessionError(str(exc)) from exc
 
         term.pty_id = pty_session.terminal_id
         term.status = "live"
