@@ -342,8 +342,18 @@ export function AgenticTerminal({
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
     const writeToPane = (text: string) => {
-      if (paneVisible) term.write(text);
-      else offscreen.push(text);
+      if (paneVisible) {
+        term.write(text);
+        return;
+      }
+      offscreen.push(text);
+      // A pane that has parked all it may hold WRITES rather than forgets. An
+      // agent's TUI is drawn by relative cursor moves, so a stream that lost
+      // its front does not repair itself — the pane would come back showing
+      // the spinner row it rewrote last and blank rows where its prompt box
+      // belongs. Parsing into a surface nobody is painting is the cheap half
+      // of what parking avoids; a permanently broken screen is not.
+      if (offscreen.full) term.write(offscreen.drain());
     };
 
     const sendResize = () => {

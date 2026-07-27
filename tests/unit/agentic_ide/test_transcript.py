@@ -6,7 +6,8 @@ is Alex doing?" gets answered from control codes and repainted frames.
 """
 from __future__ import annotations
 
-from jarvis.agentic_ide.transcript import Transcript, is_noise, strip_ansi
+from jarvis.agentic_ide.screen import ScreenBuffer
+from jarvis.agentic_ide.transcript import ReplayBuffer, Transcript, is_noise, strip_ansi
 
 
 def test_strip_ansi_removes_colour_and_cursor_sequences() -> None:
@@ -119,3 +120,95 @@ def test_is_noise_classifies_blank_and_decoration() -> None:
     assert is_noise("   ")
     assert is_noise("────────")
     assert not is_noise("Running tests…")
+
+
+# --------------------------------------------------------------- replay buffer
+#
+# What a pane that comes back is handed. The property under test is not "the
+# bytes are kept" but "the pane can say whether they are ENOUGH" — a tail that
+# lost its front cannot rebuild a TUI drawn with relative cursor moves, and the
+# viewer has to know that to ask the agent for a fresh paint (2026-07-27).
+
+
+def test_replay_hands_back_the_stream_verbatim() -> None:
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[32mbuilding…\x1b[0m")
+    buffer.feed(" done\r\n")
+
+    assert buffer.text() == "\x1b[32mbuilding…\x1b[0m done\r\n"
+    assert buffer.truncated is False
+
+
+def test_replay_admits_when_it_dropped_the_start() -> None:
+    buffer = ReplayBuffer(limit=32)
+    buffer.feed("\x1b[Hthe frame that drew the prompt box")
+    assert buffer.truncated is False
+
+    buffer.feed("\x1b[Kspinner")
+    assert buffer.truncated is True, "a viewer must be able to tell it lost the start"
+
+
+def test_a_truncated_replay_starts_on_an_escape_boundary() -> None:
+    """PTY reads split anywhere — including mid-sequence.
+
+    Dropping whole chunks can still leave the CONTINUATION of a sequence at the
+    front, and a terminal handed ``[38;5;214m`` without its ``ESC`` prints it as
+    visible text in the middle of the agent's UI.
+    """
+    buffer = ReplayBuffer(limit=24)
+    buffer.feed("first chunk ending in \x1b")
+    buffer.feed("[38;5;214mstill orange, and then some more output")
+
+    replayed = buffer.text()
+    assert "[38;5;214m" not in strip_ansi(replayed), "a half sequence would be printed"
+    assert replayed.startswith("\x1b[0m"), "the starting attributes must be known"
+
+
+def test_clearing_a_replay_forgets_that_it_was_truncated() -> None:
+    # A fresh process draws a fresh screen: the new stream starts at its start.
+    buffer = ReplayBuffer(limit=8)
+    buffer.feed("aaaaaaaaaa")
+    buffer.feed("bbbbbbbbbb")
+    assert buffer.truncated is True
+
+    buffer.clear()
+    assert buffer.truncated is False
+    assert buffer.text() == ""
+
+
+def test_a_truncated_replay_alone_cannot_rebuild_the_screen() -> None:
+    """The reason the flag exists, spelled out as the failure it prevents.
+
+    An Ink-based TUI paints its interface once and afterwards rewrites only the
+    row that changed, addressed by relative cursor moves. Replaying a tail that
+    lost its front therefore reproduces the spinner row and NOTHING it was
+    drawn on top of — which is what put empty rectangles in two live panes.
+    """
+    opening = (
+        "Running 2 shell commands\r\n"
+        "\r\n"
+        "- Scurrying... (0m 01s)\r\n"
+        "\r\n"
+        "------------------------\r\n"
+        "> \r\n"
+        "------------------------\r\n"
+        "  auto mode on\r\n"
+    )
+    # Every later frame: up six rows, erase that row, rewrite it, come back.
+    frames = [f"\x1b[6A\r\x1b[K- Scurrying... (0m {n:02d}s)\x1b[6B\r" for n in range(2, 60)]
+
+    buffer = ReplayBuffer(limit=len(opening) // 2)
+    buffer.feed(opening)
+    for frame in frames:
+        buffer.feed(frame)
+
+    screen = ScreenBuffer(40, 12)
+    screen.feed(buffer.text())
+    rows = [row.rstrip() for row in screen.display() if row.strip()]
+
+    assert any("Scurrying" in row for row in rows), "the last frame does arrive"
+    assert not any(">" in row for row in rows), (
+        "the prompt box is gone — which is why a truncated replay must be "
+        "followed by a repaint rather than trusted on its own"
+    )
+    assert buffer.truncated is True

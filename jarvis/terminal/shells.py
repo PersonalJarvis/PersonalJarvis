@@ -140,19 +140,6 @@ def discover_shells() -> list[ShellInfo]:
     return _unix_shells()
 
 
-def default_shell() -> ShellInfo | None:
-    """The shell to use when nobody named one — ``None`` on a host with none.
-
-    "First in preference order" is the whole rule: ``discover_shells()`` already
-    returns pwsh before Windows PowerShell before cmd, and the user's ``$SHELL``
-    before anything ``/etc/shells`` lists. Callers that only need *a* working
-    shell (a plain terminal pane, wrapping a command in one) ask here instead of
-    each re-deriving that order and drifting apart.
-    """
-    shells = discover_shells()
-    return shells[0] if shells else None
-
-
 def get_shell(shell_id: str) -> ShellInfo | None:
     """Looks up a shell by ID — None if not installed."""
     for shell in discover_shells():

@@ -3332,7 +3332,7 @@
     "selection": {
       "start": "Seleccionar terminales",
       "finish": "Terminar selección",
-      "hint": "Selecciona paneles de terminal. Actívalo primero y luego haz clic en los paneles que quieras.",
+      "hint": "Haz clic en los paneles para seleccionarlos. Haz clic derecho en cualquier panel para seleccionarlo inmediatamente.",
       "selected_count": "Seleccionados: {0}",
       "select_all": "Seleccionar todos",
       "clear_all": "Borrar selección",

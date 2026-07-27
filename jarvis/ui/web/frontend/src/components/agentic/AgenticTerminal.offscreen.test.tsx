@@ -155,6 +155,28 @@ describe("AgenticTerminal off-screen output", () => {
     expect(harness.writes).toEqual(["frame one frame two frame three"]);
   });
 
+  it("writes a flooded hidden pane out rather than losing its frame", () => {
+    // The bytes that DREW the agent's interface sit at the FRONT of the
+    // stream, and an Ink-based TUI never repaints it unprompted. A hidden pane
+    // that overflows must therefore hand what it holds to xterm — discarding
+    // the front is what left panes showing a spinner row over empty space
+    // (2026-07-27). Costly? One parse nobody paints. Correct? Always.
+    mount();
+    act(() => harness.fire?.(false));
+
+    const opening = "THE PROMPT BOX";
+    const flood = "z".repeat(16 * 1024);
+    act(() => {
+      harness.handlers?.onOutput(opening);
+      for (let i = 0; i < 40; i += 1) harness.handlers?.onOutput(flood);
+    });
+    act(() => harness.fire?.(true));
+
+    const replayed = harness.writes.join("");
+    expect(replayed.startsWith(opening)).toBe(true);
+    expect(replayed).toHaveLength(opening.length + 40 * flood.length);
+  });
+
   it("keeps the exit banner BEHIND the output it follows", () => {
     // Writing the banner straight to xterm while output is parked would put
     // "[exited]" above the lines that explain why.

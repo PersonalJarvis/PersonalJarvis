@@ -3333,7 +3333,7 @@
     "selection": {
       "start": "Select terminals",
       "finish": "Done selecting",
-      "hint": "Select terminal panes. Turn this on first, then click the panes you want.",
+      "hint": "Select terminal panes. Right-click any pane to select it immediately.",
       "selected_count": "Selected: {0}",
       "select_all": "Select all",
       "clear_all": "Clear selection",

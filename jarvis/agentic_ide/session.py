@@ -153,6 +153,14 @@ RESUME_FAILED_WINDOW_S = 45.0
 # nothing; two attempts cover a slow machine without turning into polling.
 DISCOVERY_DELAYS_S = (4.0, 12.0)
 
+# How long the nudged window size is held before it is put back (see
+# ``_nudge_repaint``). A PTY carries one size, not a queue of them: set twice
+# within the same event-loop tick, the agent may only ever observe the second
+# value, see no change, and redraw nothing. Long enough that the two sizes are
+# distinct events for a process that polls or debounces its resize handler,
+# short enough that nobody sees a pane one row short.
+REPAINT_NUDGE_S = 0.08
+
 # Bracketed paste. A TUI that has enabled it receives everything between these
 # markers as ONE pasted block rather than as keystrokes, which is the only way
 # a structured prompt survives the trip: a bare "\n" written to a PTY IS the
@@ -1374,6 +1382,13 @@ class Registry:
                 # this the pane comes back blank until the agent happens to
                 # repaint, which looks exactly like a dead terminal.
                 await on_output(replay)
+            if term.replay.truncated:
+                # The tail is all this pane has, and it no longer starts where
+                # the agent started drawing. Replaying it alone brings back the
+                # one row the agent rewrote last and empty space where its
+                # prompt box should be — see ReplayBuffer's docstring. Ask for
+                # a fresh paint instead of hoping one arrives.
+                await self._nudge_repaint(term, cols, rows)
             logger.debug("Agentic IDE: {} re-joined a running agent", term.name)
             return term
 
@@ -1586,6 +1601,37 @@ class Registry:
         if not term.pty_id:
             return False
         return self._manager().write(term.pty_id, data)
+
+    async def _nudge_repaint(self, term: Terminal, cols: int, rows: int) -> None:
+        """Ask the agent in ``term`` to draw its whole interface again.
+
+        A terminal protocol has no "please repaint": the drawing side decides
+        what to redraw and when. A WINDOW SIZE CHANGE is the one event every
+        full-screen TUI answers by rebuilding its frame from scratch — and
+        unlike sending Ctrl+L it is not input, so it cannot land in the agent's
+        prompt, submit anything, or disturb the work in progress.
+
+        Height only, by one row, and put back immediately. Changing the WIDTH
+        would re-wrap the scrollback of an agent that has been running for an
+        hour — a visible mess in exchange for nothing, since the redraw is
+        triggered by the size CHANGING, not by which dimension changed.
+
+        Never fatal: a pane whose PTY refuses to resize is one whose screen
+        could not have been repaired anyway, and that must not cost the user
+        the reconnect itself.
+        """
+        pty_id = term.pty_id
+        if not pty_id:
+            return
+        manager = self._manager()
+        try:
+            # Two is the floor a TUI can still lay out; below it some redraw
+            # into a single row and never recover the frame.
+            manager.resize(pty_id, cols, max(rows - 1, 2))
+            await asyncio.sleep(REPAINT_NUDGE_S)
+            manager.resize(pty_id, cols, rows)
+        except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
+            logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
 
     def resize(self, key: str, cols: int, rows: int, workspace_id: str | None = None) -> bool:
         found = self._locate(key, workspace_id)

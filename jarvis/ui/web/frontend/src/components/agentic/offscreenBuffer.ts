@@ -13,25 +13,37 @@
  * its output is parked here instead and written in one call when the pane comes
  * back — same bytes, same order, one parse instead of hundreds.
  *
- * Bounded, and the OLDEST goes first, for the same reason the server bounds its
- * replay buffer (`jarvis/agentic_ide/transcript.py`): a terminal UI repaints
- * itself continuously, so the newest bytes ARE the screen and stale ones are
- * overwritten within a frame. Keeping the oldest instead would replay a dead
- * screen; keeping everything would trade a bounded delay for unbounded memory
- * across every pane at once.
+ * ## Why nothing is ever thrown away
+ *
+ * This buffer used to drop its oldest output once it grew past a limit, on the
+ * reasoning that a terminal UI repaints itself continuously and the newest
+ * bytes therefore ARE the screen. That reasoning is wrong, and it put empty
+ * rectangles in two panes of a live workspace (reported 2026-07-27): a coding
+ * agent built on Ink paints its interface ONCE and afterwards rewrites only the
+ * row that changed, addressed by RELATIVE cursor moves. A stream missing its
+ * front replays the spinner row the agent wrote last onto rows where the prompt
+ * box it drew twenty minutes ago is simply missing — and nothing later redraws
+ * it, so the pane stays broken until the agent is finished.
+ *
+ * So the limit still bounds MEMORY, but it is answered by writing rather than
+ * by discarding: {@link OffscreenBuffer.full} tells the pane to hand what it
+ * holds to xterm even though nobody is watching. That costs one parse on a
+ * surface the browser is not painting — which is the cheap half of the work
+ * this class exists to avoid, and far cheaper than a screen that never recovers.
  */
 
 /**
- * How much output one hidden pane keeps. Comfortably several full repaints of
- * a full-screen agent UI, and small enough that a hundred hidden panes stay a
- * rounding error.
+ * How much output one hidden pane parks before it stops holding and writes.
+ *
+ * Comfortably several full repaints of a full-screen agent UI, so an ordinary
+ * spell off screen is still one single write on return — and small enough that
+ * a hundred hidden panes stay a rounding error.
  */
 export const OFFSCREEN_LIMIT_CHARS = 256 * 1024;
 
 export class OffscreenBuffer {
   private chunks: string[] = [];
   private size = 0;
-  private droppedChars = 0;
 
   constructor(private readonly limit: number = OFFSCREEN_LIMIT_CHARS) {}
 
@@ -40,11 +52,16 @@ export class OffscreenBuffer {
     if (!text) return;
     this.chunks.push(text);
     this.size += text.length;
-    while (this.size > this.limit && this.chunks.length > 1) {
-      const dropped = this.chunks.shift() as string;
-      this.size -= dropped.length;
-      this.droppedChars += dropped.length;
-    }
+  }
+
+  /**
+   * Has this pane parked as much as it may hold?
+   *
+   * True means "write what you are holding now" — not "discard it". See the
+   * module docstring for why the difference is the whole point.
+   */
+  get full(): boolean {
+    return this.size >= this.limit;
   }
 
   /** Everything kept, oldest first, ready for a single `term.write`. */
@@ -59,10 +76,5 @@ export class OffscreenBuffer {
   /** Characters waiting to be written when this pane is looked at again. */
   get pending(): number {
     return this.size;
-  }
-
-  /** Characters this pane never got to draw because it fell too far behind. */
-  get dropped(): number {
-    return this.droppedChars;
   }
 }

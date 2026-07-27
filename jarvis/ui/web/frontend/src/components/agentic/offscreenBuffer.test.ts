@@ -22,36 +22,50 @@ describe("OffscreenBuffer", () => {
     expect(buffer.drain()).toBe("");
   });
 
-  it("drops the OLDEST output when a hidden pane floods", () => {
-    // A terminal UI repaints continuously, so the newest bytes are the screen.
-    // Keeping the oldest would replay a screen that no longer exists.
+  it("keeps the OLDEST output when a hidden pane floods", () => {
+    // The front of the stream is what DREW the agent's interface; an Ink-based
+    // TUI never repaints it on its own. Dropping it is what left panes showing
+    // a spinner row over empty space (2026-07-27).
     const buffer = new OffscreenBuffer(20);
-    buffer.push("STALE");
+    buffer.push("FRAME");
     buffer.push("0123456789");
     buffer.push("abcdefghij");
     buffer.push("NEWEST");
 
     const held = buffer.drain();
-    expect(held.endsWith("NEWEST")).toBe(true);
-    expect(held).not.toContain("STALE");
-    expect(buffer.dropped).toBeGreaterThan(0);
+    expect(held).toBe("FRAME0123456789abcdefghijNEWEST");
   });
 
-  it("never drops the newest chunk, however large", () => {
-    const buffer = new OffscreenBuffer(10);
-    const huge = "x".repeat(500);
-    buffer.push("old");
-    buffer.push(huge);
+  it("asks to be written out once it is holding its limit", () => {
+    const buffer = new OffscreenBuffer(20);
+    buffer.push("under the limit");
+    expect(buffer.full).toBe(false);
 
-    expect(buffer.drain()).toBe(huge);
+    buffer.push("now well past it");
+    expect(buffer.full).toBe(true);
+
+    // Draining is what answers `full` — and it must clear the condition, or
+    // the pane would write on every single chunk from then on.
+    buffer.drain();
+    expect(buffer.full).toBe(false);
   });
 
-  it("stays bounded across a long flood", () => {
+  it("stays bounded when its user drains on full", () => {
+    // How the pane actually uses it: park, and write out whenever it is full.
+    // Memory stays capped WITHOUT anything being discarded.
     const limit = 1024;
     const buffer = new OffscreenBuffer(limit);
-    for (let i = 0; i < 500; i += 1) buffer.push("y".repeat(64));
+    const written: string[] = [];
+    let high = 0;
 
-    // One chunk of slack: the newest is always kept whole.
-    expect(buffer.pending).toBeLessThanOrEqual(limit + 64);
+    for (let i = 0; i < 500; i += 1) {
+      buffer.push("y".repeat(64));
+      high = Math.max(high, buffer.pending);
+      if (buffer.full) written.push(buffer.drain());
+    }
+    written.push(buffer.drain());
+
+    expect(high).toBeLessThanOrEqual(limit + 64);
+    expect(written.join("").length).toBe(500 * 64);
   });
 });

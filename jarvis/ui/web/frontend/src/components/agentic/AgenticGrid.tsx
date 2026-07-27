@@ -16,11 +16,8 @@ import {
   Brain,
   Check,
   ChevronUp,
-  FileText,
   FolderGit2,
-  Image as ImageIcon,
   ListChecks,
-  Loader2,
   Minus,
   Moon,
   Plus,
@@ -51,29 +48,14 @@ import {
   paneGrid,
 } from "./layout";
 import { PromptPreview } from "./PromptPreview";
-import { WorkspaceSettings } from "./WorkspaceSettings";
-import { usePaneFileDrag } from "./paneFileDrag";
-import {
-  extractPaneDrop,
-  extractPasteFiles,
-  isEmptyPayload,
-  nameClipboardFile,
-  type PaneDropPayload,
-} from "./paneDrop";
 import {
   addTerminal,
-  attachToTerminal,
   closeTerminal,
   closeTerminals,
   composePrompt,
-  fetchTerminalRecaps,
   promptTerminal,
   type ComposedPreview,
-  type DropAttachment,
-  type IdeAccountState,
-  type IdeState,
   type SessionState,
-  type TerminalRecap,
 } from "@/lib/agenticIdeApi";
 
 interface AgenticGridProps {
@@ -88,29 +70,10 @@ interface AgenticGridProps {
   agents?: SplitAgentChoice[];
   /** Adding or closing a pane changes the workspace — the owner re-reads it. */
   onSessionChanged?: (session: SessionState) => void;
-  /**
-   * Which subscription new terminals open on, per coding CLI. Drives the
-   * settings panel; an empty list simply leaves it with nothing to show.
-   */
-  accounts?: IdeAccountState[];
-  /** The settings panel changed the workspace state — the owner applies it. */
-  onStateChanged?: (state: IdeState) => void;
 }
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
-
-/**
- * How often the pane headers re-read what their agents are doing.
- *
- * A recap is a glanceable label, not a live log — five seconds is well below
- * the time it takes to look across a grid, and slow enough that a dozen panes
- * cost one cheap request per pane per minute. The read is deliberately the
- * small `/recaps` one rather than the full workspace state (see the API
- * client), and it is skipped entirely while the window is in the background:
- * nobody is glancing at a header they cannot see.
- */
-const RECAP_POLL_MS = 5000;
 
 /*
  * How tall the prompt bar is — dragged by its top edge, and remembered.
@@ -176,21 +139,6 @@ function writeStored(key: string, value: string): void {
   }
 }
 
-/**
- * May Jarvis type into this pane?
- *
- * False for a plain terminal: that pane is a live SHELL prompt, so a line typed
- * into it from the outside would not be read by an agent — it would run as a
- * command. The prompt bar therefore never offers one as a target, and clicking
- * one does not steal the target from the agent you were writing to.
- *
- * Undefined means a backend that predates the flag, where every pane was an
- * agent — so absent reads as "yes", never as "no".
- */
-function takesPrompts(term: { accepts_prompts?: boolean }): boolean {
-  return term.accepts_prompts !== false;
-}
-
 function storedAppearance(): TerminalAppearance | null {
   return readStored(APPEARANCE_KEY, (raw) =>
     raw === "light" || raw === "dark" ? raw : null,
@@ -213,8 +161,6 @@ export function AgenticGrid({
   maxTerminals = 12,
   agents,
   onSessionChanged,
-  accounts = [],
-  onStateChanged,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -240,15 +186,8 @@ export function AgenticGrid({
     setFontSizeState(next);
     writeStored(FONT_KEY, String(next));
   }, []);
-  const [target, setTarget] = useState(
-    session.terminals.find(takesPrompts)?.name ?? "",
-  );
+  const [target, setTarget] = useState(session.terminals[0]?.name ?? "");
   const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>({});
-  // What each pane is doing, by call-sign, as the header shows it. Kept beside
-  // the session rather than inside it because it changes on a completely
-  // different clock: the layout changes when a pane is opened or closed, a
-  // recap whenever an agent prints a line.
-  const [recaps, setRecaps] = useState<Record<string, TerminalRecap>>({});
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   // The composed prompt waiting for the user's approval, and the wording they
@@ -298,44 +237,16 @@ export function AgenticGrid({
     });
   }, []);
 
-  /*
-   * Keep the pane headers current.
-   *
-   * Bound to the workspace ID, so switching tabs starts a fresh poll for the
-   * workspace now on screen instead of continuing to describe the one behind
-   * it. A failed read keeps whatever the headers already say: the backend
-   * warming up, or a workspace closed in another window, is not a reason to
-   * blank eight labels — and the recap is a convenience, never the pane.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    const pull = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      try {
-        const answer = await fetchTerminalRecaps(session.id);
-        if (cancelled) return;
-        setRecaps(
-          Object.fromEntries(answer.terminals.map((term) => [term.name, term])),
-        );
-      } catch {
-        /* keep the last recaps — a stale sentence beats an empty header */
-      }
-    };
-    void pull();
-    const timer = window.setInterval(() => void pull(), RECAP_POLL_MS);
-    // A window coming back to the foreground has skipped every tick it spent
-    // hidden, so its headers are as old as the time away. Catch up at once
-    // rather than showing minute-old work for another five seconds.
-    const onVisible = () => {
-      if (!document.hidden) void pull();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [session.id]);
+  const markTerminal = useCallback((name: string) => {
+    setMaximized(null);
+    setSelectionMode(true);
+    setSelectedTerminals((current) => {
+      if (current.has(name)) return current;
+      const next = new Set(current);
+      next.add(name);
+      return next;
+    });
+  }, []);
 
   // A terminal can disappear because another client closed it. Keep the local
   // selection honest instead of leaving an invisible name selected.
@@ -452,10 +363,7 @@ export function AgenticGrid({
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
       const added = next.terminals.find((t) => !known.has(t.name));
-      // ...unless it is a plain terminal — that one is typed into by hand, and
-      // stealing the target would silently redirect the next prompt into a pane
-      // that refuses it.
-      if (added && takesPrompts(added)) setTarget(added.name);
+      if (added) setTarget(added.name);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -470,7 +378,7 @@ export function AgenticGrid({
       setPendingClose(null);
       if (maximized === name) setMaximized(null);
       onSessionChanged?.(next);
-      if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
+      if (target === name) setTarget(next.terminals[0]?.name ?? "");
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -488,7 +396,7 @@ export function AgenticGrid({
       const remaining = new Set(result.session.terminals.map((term) => term.name));
       if (maximized && !remaining.has(maximized)) setMaximized(null);
       if (target && !remaining.has(target)) {
-        setTarget(result.session.terminals.find(takesPrompts)?.name ?? "");
+        setTarget(result.session.terminals[0]?.name ?? "");
       }
       if (result.failed.length === 0) setSelectionMode(false);
       else {
@@ -511,78 +419,14 @@ export function AgenticGrid({
     setStatuses((prev) => ({ ...prev, [name]: { status, detail } }));
   }, []);
 
-  /*
-   * Files dropped onto the PROMPT BAR, and what is in them.
-   *
-   * A drop on a pane and a drop here mean different things. The pane types a
-   * path, which is right for "read this file" — the agent opens it. But a
-   * screenshot is the case where that breaks down: several of the coding CLIs
-   * cannot open an image at all, so the user drops a picture of a broken
-   * layout, types "fix this", and the agent receives a path and a pronoun.
-   *
-   * So a drop here is READ first — described if it is an image, extracted if it
-   * is a document — and the result rides along into the composition. The file
-   * is still saved and still referenced; the description is the floor under it,
-   * not a replacement for it.
-   */
-  const [attachments, setAttachments] = useState<DropAttachment[]>([]);
-  const [analyzing, setAnalyzing] = useState(0);
-
-  const attach = useCallback(
-    async (payload: PaneDropPayload) => {
-      if (isEmptyPayload(payload)) return;
-      if (!target) {
-        pushToast("warning", "Pick a terminal first — a dropped file belongs to one.");
-        return;
-      }
-      setAnalyzing((n) => n + 1);
-      try {
-        const result = await attachToTerminal(target, {
-          ...payload,
-          analyze: true,
-          // Held, not typed: the user is still writing the sentence that says
-          // what to do with it, and it goes in with that sentence.
-          deliver: false,
-        });
-        const found = result.analysis ?? [];
-        if (found.length === 0) {
-          pushToast("warning", "That drop carried nothing this prompt could use.");
-          return;
-        }
-        setAttachments((prev) => [...prev, ...found]);
-      } catch (e) {
-        pushToast("error", (e as Error).message);
-      } finally {
-        setAnalyzing((n) => Math.max(0, n - 1));
-      }
-    },
-    [target],
-  );
-
-  const { dragging, handlers: dragHandlers } = usePaneFileDrag(
-    useCallback(
-      (dt: DataTransfer) => {
-        // Read BEFORE any await — a DataTransfer empties the moment this
-        // handler returns (see ./paneDrop).
-        void attach(extractPaneDrop(dt));
-      },
-      [attach],
-    ),
-  );
-
-  const dropAttachment = useCallback((name: string) => {
-    setAttachments((prev) => prev.filter((a) => a.name !== name));
-  }, []);
-
   /** Type `text` into `target` and report honestly if it was not accepted. */
-  const deliver = async (text: string, carry: DropAttachment[] = []) => {
+  const deliver = async (text: string) => {
     setSending(true);
     try {
-      const result = await promptTerminal(target, text, { attachments: carry });
+      const result = await promptTerminal(target, text);
       setPreview(null);
       setPreviewSource("");
       setPrompt("");
-      setAttachments([]);
       // The text is typed either way — but if the agent did not accept it, say
       // so instead of leaving the user to wonder why nothing happened.
       if (result && result.submitted === false) {
@@ -614,18 +458,16 @@ export function AgenticGrid({
     if (!text || !target) return;
     setSending(true);
     try {
-      const composed = await composePrompt(target, text, attachments);
+      const composed = await composePrompt(target, text);
       if (composed.composed && composed.composed !== text) {
         setPreviewSource(text);
         setPreview(composed);
         return;
       }
-      // The composed text already contains the attachments, so it carries none
-      // of its own; this branch did not compose, so they still have to travel.
-      await deliver(text, attachments);
+      await deliver(text);
     } catch (e) {
       pushToast("warning", `Could not prepare the prompt: ${(e as Error).message}`);
-      await deliver(text, attachments);
+      await deliver(text);
     } finally {
       setSending(false);
     }
@@ -722,14 +564,6 @@ export function AgenticGrid({
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
-
-        {/* Which subscription the next terminal spends, and the way to change
-            it without leaving the workspace. */}
-        <WorkspaceSettings
-          accounts={accounts}
-          onStateChanged={onStateChanged}
-          busy={busy || working}
-        />
 
         <button
           ref={selectionToggleRef}
@@ -875,6 +709,11 @@ export function AgenticGrid({
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 maximized !== null && !isMaximized && "hidden",
               )}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                markTerminal(term.name);
+              }}
               style={
                 isMaximized
                   ? { gridColumn: "1 / -1", gridRow: "1 / -1" }
@@ -888,13 +727,6 @@ export function AgenticGrid({
                 name={term.name}
                 workspaceId={session.id}
                 displayName={term.display_name}
-                // The polled recap when one has arrived, the one the workspace
-                // state carried until then — so a pane opens with a sentence in
-                // its header rather than with a blank that fills in later.
-                recap={recaps[term.name]?.recap ?? term.recap}
-                recapDetail={
-                  recaps[term.name]?.recap_detail ?? term.recap_detail
-                }
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
                 // be noise for the many; labelling the odd one out is the whole
@@ -910,9 +742,7 @@ export function AgenticGrid({
                 maximized={isMaximized}
                 splitDisabled={atLimit || busy || working}
                 agents={agents}
-                onFocus={() => {
-                  if (takesPrompts(term)) setTarget(term.name);
-                }}
+                onFocus={() => setTarget(term.name)}
                 onStatus={(status, detail) => setStatus(term.name, status, detail)}
                 onToggleMaximize={() =>
                   setMaximized((current) => (current === term.name ? null : term.name))
@@ -940,14 +770,10 @@ export function AgenticGrid({
                         )
                   }
                   onClick={() => toggleTerminalSelection(term.name)}
-                  // Selection mode owns the right mouse button and does nothing
-                  // with it. Marking a pane on right-click was too easy to
-                  // trigger by accident, and letting the event through would
-                  // open the app-wide Cut/Copy/Paste menu over an overlay that
-                  // has no text to copy. Left-click marks; right-click is inert.
                   onContextMenu={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
+                    markTerminal(term.name);
                   }}
                   className={cn(
                     "absolute inset-0 z-20 cursor-pointer rounded-xl transition-colors",
@@ -1056,38 +882,13 @@ export function AgenticGrid({
         <div
           data-testid="agentic-composer"
           style={{ height: composerHeight }}
-          {...dragHandlers}
-          onPaste={(event) => {
-            // Clipboard IMAGES only. Pasted text belongs to the textarea, and
-            // intercepting it would break ordinary paste into the prompt.
-            const images = extractPasteFiles(event.clipboardData).map((f) =>
-              nameClipboardFile(f, target || "prompt"),
-            );
-            if (images.length === 0) return;
-            event.preventDefault();
-            void attach({ paths: [], files: images });
-          }}
-          className={cn(
-            "relative flex shrink-0 flex-col overflow-hidden px-4 py-3 transition-colors",
-            dragging && "bg-primary/5 ring-1 ring-inset ring-primary/50",
-          )}
+          className="flex shrink-0 flex-col overflow-hidden px-4 py-3"
         >
-          {dragging && (
-            <div
-              data-testid="agentic-composer-dropzone"
-              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 text-xs font-medium text-primary"
-            >
-              Drop a screenshot or document — {target || "the agent"} gets what is in it
-            </div>
-          )}
           <div className="mb-2 flex max-h-24 shrink-0 flex-wrap items-center gap-2 overflow-y-auto scrollbar-jarvis">
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Send to
             </span>
-            {/* Agent panes only. A plain terminal is a shell prompt — it is
-                typed into by hand, so listing it here would offer a target that
-                refuses every instruction sent to it. */}
-            {session.terminals.filter(takesPrompts).map((term) => {
+            {session.terminals.map((term) => {
               const state = statuses[term.name];
               return (
                 <button
@@ -1108,13 +909,6 @@ export function AgenticGrid({
               );
             })}
           </div>
-          {(attachments.length > 0 || analyzing > 0) && (
-            <AttachmentStrip
-              attachments={attachments}
-              analyzing={analyzing}
-              onRemove={dropAttachment}
-            />
-          )}
           {preview && (
             <div className="mb-2 shrink-0 overflow-y-auto scrollbar-jarvis">
               <PromptPreview
@@ -1122,15 +916,10 @@ export function AgenticGrid({
                 composed={preview.composed}
                 files={preview.files}
                 composedBy={preview.composed_by}
-                attachments={attachments}
-                // The composed text already contains the attachments; the
-                // verbatim path does not, so only that one carries them.
                 onSend={() => void deliver(preview.composed)}
-                onSendVerbatim={() => void deliver(previewSource, attachments)}
+                onSendVerbatim={() => void deliver(previewSource)}
                 onCancel={() => {
-                  // Give the user their own words back rather than dropping
-                  // them. The attachments stay too — backing out of a rewrite
-                  // is not a reason to lose the file they dropped.
+                  // Give the user their own words back rather than dropping them.
                   setPrompt(previewSource);
                   setPreview(null);
                   setPreviewSource("");
@@ -1179,86 +968,6 @@ export function AgenticGrid({
             </p>
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * The files waiting to go in with the next prompt.
- *
- * Each chip says what was actually LEARNED from the file, not just that one was
- * attached. That distinction is the whole feature: "screenshot.png" tells the
- * user nothing about whether the agent will be able to see it, while "described"
- * and "not described" are the two outcomes they need to be able to tell apart
- * before they press Send — and the second one happens for real, on any install
- * whose providers cannot see images.
- */
-function AttachmentStrip({
-  attachments,
-  analyzing,
-  onRemove,
-}: {
-  attachments: DropAttachment[];
-  analyzing: number;
-  onRemove: (name: string) => void;
-}) {
-  return (
-    <div
-      data-testid="agentic-attachments"
-      className="mb-2 flex max-h-20 shrink-0 flex-wrap items-center gap-1.5 overflow-y-auto scrollbar-jarvis"
-    >
-      {attachments.map((item) => {
-        const read = item.described_by !== "none" && item.detail.length > 0;
-        return (
-          <span
-            key={item.name}
-            data-testid={`agentic-attachment-${item.name}`}
-            title={
-              read
-                ? `${item.detail.slice(0, 400)}${item.detail.length > 400 ? "…" : ""}`
-                : item.note || "Attached as a file."
-            }
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
-              read
-                ? "border-primary/40 bg-primary/10 text-foreground"
-                : "border-border text-muted-foreground",
-            )}
-          >
-            {item.kind === "image" ? (
-              <ImageIcon className="h-3 w-3 shrink-0" />
-            ) : (
-              <FileText className="h-3 w-3 shrink-0" />
-            )}
-            <span className="max-w-[12rem] truncate font-mono">{item.name}</span>
-            <span className="shrink-0 text-[10px] text-muted-foreground">
-              {read
-                ? item.described_by === "vision"
-                  ? "described"
-                  : "text read"
-                : "not described"}
-            </span>
-            <button
-              type="button"
-              aria-label={`Remove ${item.name}`}
-              data-testid={`agentic-attachment-remove-${item.name}`}
-              onClick={() => onRemove(item.name)}
-              className="shrink-0 rounded text-muted-foreground hover:text-destructive"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        );
-      })}
-      {analyzing > 0 && (
-        <span
-          data-testid="agentic-attachment-working"
-          className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground"
-        >
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Reading {analyzing === 1 ? "the dropped file" : `${analyzing} dropped files`}…
-        </span>
       )}
     </div>
   );

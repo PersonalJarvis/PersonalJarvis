@@ -273,6 +273,59 @@ async def test_coming_back_rejoins_the_running_agent_and_replays_its_screen(
     assert "building…" in "".join(seen), "the screen must come back with the pane"
 
 
+async def test_a_pane_whose_replay_lost_its_start_asks_the_agent_to_repaint(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A truncated tail cannot rebuild a screen, so the agent is asked to.
+
+    An Ink-based TUI paints its interface once and afterwards rewrites only the
+    row that changed. Replaying a tail that lost its front therefore brings the
+    pane back showing one spinner row over empty space — which is exactly what
+    two live panes did (2026-07-27). A window-size change is the one event
+    every TUI answers with a full redraw, and unlike Ctrl+L it is not input.
+    """
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    pty = term.pty_id
+    # Overrun the replay budget without emitting a megabyte through the screen.
+    term.replay.limit = 64
+    await fake_pty.emit(pty, "the frame that drew the prompt box")
+    await fake_pty.emit(pty, "\x1b[Kspinner" * 10)
+    assert term.replay.truncated, "this test needs a tail that lost its front"
+    registry.detach(term.key, session.id)
+
+    fake_pty.resizes.clear()
+    await registry.attach(term.name, 100, 30, _noop_output, _noop_exit)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert (100, 29) in sizes, "the agent was never told its window changed"
+    assert sizes[-1] == (100, 30), "the pane must be left at the size it really is"
+
+
+async def test_an_intact_replay_leaves_the_agent_alone(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """No nudge when the tail is whole — it already rebuilds the screen.
+
+    The redraw is cheap but not free, and it is the common case that must stay
+    untouched: a pane that printed less than its replay budget comes back from
+    its own bytes.
+    """
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    pty = term.pty_id
+    await fake_pty.emit(pty, "\x1b[32mbuilding…\x1b[0m")
+    registry.detach(term.key, session.id)
+
+    fake_pty.resizes.clear()
+    await registry.attach(term.name, 100, 30, _noop_output, _noop_exit)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes == [(100, 30)], "an intact replay must not cost a repaint"
+
+
 async def test_closing_a_workspace_stops_only_its_own_agents(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:

@@ -39,6 +39,16 @@ _MISC_RE = re.compile(r"\x1b[<>=]")
 
 # A row made only of these draws a frame or an animation; it carries no
 # information for a model summarizing the session.
+# One COMPLETE escape sequence, anchored where a match is tried. Used to answer
+# "did this chunk stop in the middle of one?" — see :func:`_ends_mid_escape`.
+_ANY_ESC_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_]|[<>=])"
+)
+# The TAIL of a CSI sequence whose ESC was dropped: parameters, then optional
+# intermediates, then the final byte. The leading "[" is optional because the
+# split may have fallen either side of it.
+_CSI_TAIL_RE = re.compile(r"\[?[0-?]*[ -/]*[@-~]")
+
 _DECORATION_CHARS = set("─│┌┐└┘├┤┬┴┼━┃╭╮╯╰═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓▔▁·.-_=*#~ ")
 _SPINNER_CHARS = set("|/\\-◐◓◑◒✻✽✢·✳✶⣿")
 
@@ -50,6 +60,18 @@ def strip_ansi(text: str) -> str:
     text = _MISC_RE.sub("", text)
     text = _ESC_RE.sub("", text)
     return "".join(ch for ch in text if ch >= " " or ch in "\t\n\r")
+
+
+def _ends_mid_escape(text: str) -> bool:
+    """Does ``text`` stop INSIDE an escape sequence?
+
+    A PTY read ends wherever the kernel filled its buffer, so an escape can be
+    split across two chunks. The last ``ESC`` decides it: if what follows is a
+    complete sequence the chunk is self-contained, and if it is not, the rest is
+    at the front of the NEXT chunk.
+    """
+    esc = text.rfind("\x1b")
+    return esc >= 0 and _ANY_ESC_RE.match(text, esc) is None
 
 
 def _is_decorative(ch: str) -> bool:
@@ -151,15 +173,30 @@ class ReplayBuffer:
     the stream that drew it. Cleaned-up text would come back as a wall of
     prose where a framed, coloured interface used to be.
 
-    Bounded by total characters, dropping whole chunks from the front. A TUI
-    repaints itself constantly, so an old partial escape sequence at the very
-    front is overwritten within a frame; cutting mid-sequence instead would
-    leave the terminal in a broken colour/cursor state.
+    Bounded by total characters, dropping whole chunks from the front — and
+    ``truncated`` then says so, because **a cut stream does not repair
+    itself**. This buffer used to assume it did ("a TUI repaints itself
+    constantly"), and that assumption is what put empty rectangles in two panes
+    of a live workspace (reported 2026-07-27). A coding agent built on Ink
+    paints its interface ONCE and afterwards rewrites only the row that
+    changed, addressed by RELATIVE cursor moves — so a tail that lost its front
+    replays the spinner row the agent wrote last onto rows where the prompt box
+    it drew twenty minutes ago is simply missing. Nothing later redraws it.
+
+    Whoever replays a truncated buffer therefore has to ask the agent for a
+    fresh paint afterwards; :meth:`SessionRegistry.attach` does it with a
+    window-size change, the one request every TUI answers with a full redraw.
     """
 
     limit: int = REPLAY_LIMIT_CHARS
     _chunks: deque[str] = field(default_factory=deque, init=False)
     _size: int = field(default=0, init=False)
+    #: Has anything been dropped since the last :meth:`clear`? Read by the
+    #: viewer path to decide whether the replay alone can be trusted.
+    truncated: bool = field(default=False, init=False)
+    #: Did the last dropped chunk stop inside an escape sequence? Then the rest
+    #: of that sequence is at the front of what remains.
+    _open_escape: bool = field(default=False, init=False)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
@@ -167,15 +204,35 @@ class ReplayBuffer:
         self._chunks.append(chunk)
         self._size += len(chunk)
         while self._size > self.limit and len(self._chunks) > 1:
-            self._size -= len(self._chunks.popleft())
+            dropped = self._chunks.popleft()
+            self._size -= len(dropped)
+            self.truncated = True
+            self._open_escape = _ends_mid_escape(dropped)
 
     def text(self) -> str:
-        """Everything kept, oldest first — ready to be written to a terminal."""
-        return "".join(self._chunks)
+        """Everything kept, oldest first — ready to be written to a terminal.
+
+        A truncated tail is repaired at its front before it goes out. Dropping
+        whole chunks can still leave the CONTINUATION of a sequence there — a
+        terminal handed ``[38;5;214m`` with no ``ESC`` prints it as visible text
+        in the middle of the agent's interface — so that remnant is skipped, and
+        an attribute reset makes the starting colour deterministic rather than
+        inherited from bytes that are gone.
+        """
+        text = "".join(self._chunks)
+        if not self.truncated or not text:
+            return text
+        if self._open_escape:
+            remnant = _CSI_TAIL_RE.match(text)
+            if remnant is not None:
+                text = text[remnant.end() :]
+        return "\x1b[0m" + text
 
     def clear(self) -> None:
         self._chunks.clear()
         self._size = 0
+        self.truncated = False
+        self._open_escape = False
 
 
 __all__ = [
