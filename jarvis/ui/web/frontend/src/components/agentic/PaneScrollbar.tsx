@@ -10,11 +10,11 @@
  *    comes within reach of the pane's right edge, and while you are scrolled
  *    back through history — and is otherwise invisible.
  * 2. **It only worked for half the CLIs.** Why, and what this does about it,
- *    is in ./paneScroll — in short: Claude Code runs on the alternate screen
- *    with mouse tracking, so the terminal holds no scrollback to drag through
- *    and the wheel belongs to the CLI. That pane gets a full-track grip which
- *    relays wheel notches to Claude Code, rather than a short thumb whose very
- *    shape would claim a position nobody can know.
+ *    is in ./paneScroll and ./paneAppScroll — in short: Claude Code runs on the
+ *    alternate screen with mouse tracking, so the terminal holds no scrollback
+ *    to read a position from and the wheel belongs to the CLI. That pane's
+ *    position is measured from how its screen moves instead, and its thumb is
+ *    drawn from that measurement like any other.
  *
  * The bar is an overlay, not a layout box: xterm reserves a gutter on the right
  * for the scrollbar it thinks it has, and the bar sits in that gutter, so
@@ -31,15 +31,19 @@ import type { Terminal } from "@xterm/xterm";
 import { cn } from "@/lib/utils";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  GRIP_MARKER_PX,
   IDLE_STATE,
-  jogNotches,
   lineForThumbTop,
   readScrollState,
   relayWheelNotch,
   thumbGeometry,
   type PaneScrollState,
 } from "./paneScroll";
+import {
+  AT_LIVE_END,
+  notchesForLines,
+  trackAppScroll,
+  type AppScrollPosition,
+} from "./paneAppScroll";
 
 /** How close to the pane's right edge the pointer reveals the bar. */
 const HOT_ZONE_PX = 28;
@@ -49,6 +53,15 @@ const HIDE_DELAY_MS = 260;
 
 /** How long the bar stays up after scrolling back through history. */
 const FLASH_MS = 900;
+
+function sameState(a: PaneScrollState, b: PaneScrollState): boolean {
+  return (
+    a.mode === b.mode &&
+    a.total === b.total &&
+    a.rows === b.rows &&
+    a.top === b.top
+  );
+}
 
 interface PaneScrollbarProps {
   /** Pane call-sign — used for labels and test ids. */
@@ -86,12 +99,18 @@ export function PaneScrollbar({
   const [nearEdge, setNearEdge] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const [dragging, setDragging] = useState(false);
-  // Live grip offset in `app` mode: the grip follows the drag and springs back.
-  const [jogPx, setJogPx] = useState(0);
+  // Where the thumb is while it is held. The application answers a relayed
+  // notch a network round trip later, so a thumb drawn only from the
+  // measurement would lag behind the pointer holding it.
+  const [dragTopPx, setDragTopPx] = useState<number | null>(null);
+  // What ./paneAppScroll has measured of a CLI that holds its own history.
+  const [position, setPosition] = useState<AppScrollPosition>(AT_LIVE_END);
 
   const shown = nearEdge || flashing || dragging;
   const stateRef = useRef(state);
   stateRef.current = state;
+  const positionRef = useRef(position);
+  positionRef.current = position;
 
   // ------------------------------------------------------------------ hover
   useEffect(() => {
@@ -131,6 +150,22 @@ export function PaneScrollbar({
     };
   }, [regionRef]);
 
+  // -------------------------------------------------- measure an app's scroll
+  // Runs whether the bar is visible or not, and costs nothing until a wheel
+  // actually turns: a bar that only started measuring when it appeared would
+  // come up knowing nothing about a pane the user scrolled a minute ago.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    return trackAppScroll({ host, getTerminal, onChange: setPosition });
+  }, [hostRef, getTerminal, epoch]);
+
+  // A fresh terminal is a fresh transcript — carrying a measured position over
+  // a restart would put the thumb somewhere in a history that no longer exists.
+  useEffect(() => {
+    setPosition(AT_LIVE_END);
+  }, [epoch]);
+
   // ------------------------------------------------- flash while scrolled back
   // Deliberately NOT "flash on any scroll": a pane pinned to the bottom scrolls
   // on every line an agent prints, and a bar that lit up for each of them would
@@ -153,6 +188,27 @@ export function PaneScrollbar({
     };
   }, [getTerminal, epoch]);
 
+  // The same flash for an app-mode pane, which produces no xterm scroll event
+  // at all: the only sign that somebody is reading history is the measurement
+  // moving away from the live end. The timer is held in a ref rather than
+  // cleared per effect run, because a measurement that lands back AT the live
+  // end must let the flash run out — not cancel it and leave the bar up.
+  const flashTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (position.offset === 0) return;
+    setFlashing(true);
+    if (flashTimer.current !== undefined) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashing(false), FLASH_MS);
+  }, [position]);
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== undefined) {
+        window.clearTimeout(flashTimer.current);
+      }
+    },
+    [],
+  );
+
   // ---------------------------------------------------------------- metrics
   // Only while the bar is on screen. A hidden bar needs no numbers, and reading
   // them on every frame of a busy pane is exactly the kind of work the grid
@@ -165,16 +221,8 @@ export function PaneScrollbar({
     let frame: number | undefined;
     const sync = () => {
       frame = undefined;
-      const next = readScrollState(term);
-      const previous = stateRef.current;
-      if (
-        next.mode !== previous.mode ||
-        next.total !== previous.total ||
-        next.rows !== previous.rows ||
-        next.top !== previous.top
-      ) {
-        setState(next);
-      }
+      const next = readScrollState(term, positionRef.current);
+      if (!sameState(next, stateRef.current)) setState(next);
       const track = trackRef.current;
       if (track) {
         const height = track.clientHeight;
@@ -196,6 +244,18 @@ export function PaneScrollbar({
       for (const subscription of subscriptions) subscription?.dispose();
     };
   }, [shown, getTerminal, epoch]);
+
+  // A new measurement moves the thumb even on a pane that renders nothing —
+  // an app scrolled back through its own history repaints once and then sits
+  // still, and the effect above would never hear about it. Only once something
+  // HAS been measured, so an untouched pane keeps the bar out of the document
+  // entirely rather than mounting it invisible.
+  useEffect(() => {
+    const term = getTerminal();
+    if (!term || position === AT_LIVE_END) return;
+    const next = readScrollState(term, position);
+    setState((current) => (sameState(current, next) ? current : next));
+  }, [position, getTerminal, epoch]);
 
   // The track's height decides the thumb's, and it is only knowable once the
   // track is in the document. Measured on every commit rather than from the
@@ -232,24 +292,35 @@ export function PaneScrollbar({
       const startY = event.clientY;
       const geometry = thumbGeometry(current, height);
       const startTop = geometry?.topPx ?? 0;
+      const travel = Math.max(0, height - (geometry?.heightPx ?? 0));
+      // Where the drag began in the history, and how many notches have been
+      // relayed towards its target so far. Counted against the START rather
+      // than against the live measurement, so a reading that lands mid-drag
+      // cannot make the same notch be sent twice.
+      const startLine = current.top;
+      const step = positionRef.current.linesPerNotch;
       let sentNotches = 0;
 
       const target = event.currentTarget;
       target.setPointerCapture(event.pointerId);
       setDragging(true);
+      setDragTopPx(startTop);
 
       const onMove = (move: PointerEvent) => {
-        const delta = move.clientY - startY;
+        const topPx = Math.min(
+          Math.max(startTop + (move.clientY - startY), 0),
+          travel,
+        );
+        setDragTopPx(topPx);
+        const line = lineForThumbTop(topPx, height, current);
         if (current.mode === "app") {
-          const wanted = jogNotches(delta);
+          const wanted = notchesForLines(line - startLine, step);
           if (wanted !== sentNotches) {
             relay(wanted - sentNotches);
             sentNotches = wanted;
           }
-          setJogPx(delta);
           return;
         }
-        const line = lineForThumbTop(startTop + delta, height, current);
         term.scrollToLine?.(line);
       };
       const onUp = () => {
@@ -258,7 +329,7 @@ export function PaneScrollbar({
         target.removeEventListener("pointerup", onUp);
         target.removeEventListener("pointercancel", onUp);
         setDragging(false);
-        setJogPx(0);
+        setDragTopPx(null);
       };
 
       target.addEventListener("pointermove", onMove);
@@ -269,8 +340,7 @@ export function PaneScrollbar({
   );
 
   // A click on the empty part of the track pages towards it, the way every
-  // other scrollbar does. In `app` mode there is no "towards it" to aim at, so
-  // one page of wheel notches goes to the CLI instead.
+  // other scrollbar does.
   const onTrackPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const term = getTerminal();
@@ -282,15 +352,18 @@ export function PaneScrollbar({
       const rect = track.getBoundingClientRect();
       const geometry = thumbGeometry(current, rect.height);
       if (!geometry) return;
-      const pages = Math.max(1, current.rows - 1);
-      // In `app` mode the grip covers the whole track, so this is all but
-      // unreachable — and where it is, aiming at the track's own middle is the
-      // only meaningful "up or down": the grip's position holds no answer.
-      const pivot =
-        current.mode === "app" ? rect.height / 2 : geometry.topPx;
-      const down = event.clientY - rect.top > pivot;
-      if (current.mode === "app") relay(down ? pages : -pages);
-      else term.scrollLines?.(down ? pages : -pages);
+      const page = Math.max(1, current.rows - 1);
+      const down = event.clientY - rect.top > geometry.topPx;
+      if (current.mode === "app") {
+        relay(
+          notchesForLines(
+            down ? page : -page,
+            positionRef.current.linesPerNotch,
+          ),
+        );
+      } else {
+        term.scrollLines?.(down ? page : -page);
+      }
     },
     [getTerminal, relay],
   );
@@ -308,7 +381,7 @@ export function PaneScrollbar({
   );
 
   // ----------------------------------------------------------------- render
-  const geometry = thumbGeometry(state, trackPx, jogPx);
+  const geometry = thumbGeometry(state, trackPx);
   if (state.mode === "none") return null;
 
   const light = appearance === "light";
@@ -322,12 +395,12 @@ export function PaneScrollbar({
       aria-orientation="vertical"
       aria-label={
         state.mode === "app"
-          ? `Scroll ${name} — drag to move through the agent's own history`
+          ? `Scroll ${name} — moves through the agent's own history`
           : `Scroll ${name}`
       }
       aria-valuemin={0}
-      aria-valuemax={state.mode === "app" ? 0 : maxTop}
-      aria-valuenow={state.mode === "app" ? 0 : Math.min(state.top, maxTop)}
+      aria-valuemax={maxTop}
+      aria-valuenow={Math.min(state.top, maxTop)}
       data-testid={`pane-scrollbar-${name}`}
       data-mode={state.mode}
       data-shown={shown ? "true" : "false"}
@@ -355,31 +428,11 @@ export function PaneScrollbar({
             dragging ? "cursor-grabbing" : "transition-[top] duration-75",
           )}
           style={{
-            top: geometry.topPx,
+            top: dragTopPx ?? geometry.topPx,
             height: geometry.heightPx,
-            // A full-track bar is the shape for "no position to report", so it
-            // is drawn faintly — the bright part is the marking on it, which
-            // is a handle rather than a claim. See ./paneScroll.
-            background: `rgb(var(--jarvis-yellow) / ${
-              geometry.markerPx === undefined ? strength : dragging ? 0.24 : 0.14
-            })`,
+            background: `rgb(var(--jarvis-yellow) / ${strength})`,
           }}
-        >
-          {geometry.markerPx !== undefined && (
-            <div
-              data-testid={`pane-scrollbar-grip-${name}`}
-              className={cn(
-                "pointer-events-none absolute left-0 w-full rounded-full",
-                dragging ? undefined : "transition-[top] duration-150",
-              )}
-              style={{
-                top: geometry.markerPx,
-                height: Math.min(GRIP_MARKER_PX, geometry.heightPx),
-                background: `rgb(var(--jarvis-yellow) / ${strength})`,
-              }}
-            />
-          )}
-        </div>
+        />
       )}
     </div>
   );

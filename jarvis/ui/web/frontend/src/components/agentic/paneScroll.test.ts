@@ -1,16 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import {
-  GRIP_MARKER_PX,
-  GRIP_TRAVEL_PX,
-  JOG_STEP_PX,
   MIN_THUMB_PX,
-  jogNotches,
   lineForThumbTop,
   readScrollState,
   relayWheelNotch,
   thumbGeometry,
 } from "./paneScroll";
+import { AT_LIVE_END, type AppScrollPosition } from "./paneAppScroll";
 
 interface FakeOptions {
   type?: "normal" | "alternate";
@@ -32,6 +29,19 @@ function fakeTerminal({
     modes: { mouseTrackingMode },
     buffer: { active: { type, length, viewportY, baseY: length - rows } },
   } as unknown as Terminal;
+}
+
+/** An app-mode pane whose history has been measured end to end. */
+function measured(
+  overrides: Partial<AppScrollPosition> = {},
+): AppScrollPosition {
+  return {
+    offset: 0,
+    span: 400,
+    spanKnown: true,
+    linesPerNotch: 3,
+    ...overrides,
+  };
 }
 
 describe("readScrollState", () => {
@@ -56,10 +66,10 @@ describe("readScrollState", () => {
   it("reports app mode for a full-screen CLI that took the mouse", () => {
     const state = readScrollState(
       fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 30 }),
+      measured({ offset: 120 }),
     );
 
-    expect(state.mode).toBe("app");
-    expect(state.rows).toBe(30);
+    expect(state).toEqual({ mode: "app", total: 430, rows: 30, top: 280 });
   });
 
   /*
@@ -80,24 +90,49 @@ describe("readScrollState", () => {
         rows: 24,
         viewportY: 4,
       }),
+      measured({ offset: 200 }),
     );
 
     expect(state.mode).toBe("app");
-    // No leftover position from the frozen viewport: the grip encodes none.
-    expect(state.top).toBe(0);
-    expect(thumbGeometry(state, 400)).toEqual({
-      topPx: 0,
-      heightPx: 400,
-      markerPx: 189,
-    });
+    // Not one number from the frozen viewport: the position is the measured one.
+    expect(state).toMatchObject({ total: 424, rows: 24, top: 200 });
+  });
+
+  /*
+   * The reported bug, in one assertion. A pane showing an agent's newest output
+   * must draw its thumb AT THE BOTTOM — even before anyone has scrolled it, when
+   * the size of the history is still unknown.
+   */
+  it("puts an unscrolled app-mode pane at the live end", () => {
+    const state = readScrollState(
+      fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 30 }),
+      AT_LIVE_END,
+    );
+    const geometry = thumbGeometry(state, 300)!;
+
+    expect(geometry.topPx + geometry.heightPx).toBe(300);
+  });
+
+  /*
+   * A full-screen application with no history of its own — a dashboard, a pager
+   * on a short file — proves it the first time a scroll moves nothing. From then
+   * on it gets no bar rather than a thumb filling its own track.
+   */
+  it("takes the bar away from an app measured as having no history", () => {
+    const state = readScrollState(
+      fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
+      measured({ span: 0 }),
+    );
+
+    expect(state.mode).toBe("none");
   });
 
   it("stays away from a full-screen app that did not take the mouse", () => {
     // Relaying a wheel notch to one of those would arrive in its input as the
     // raw escape sequence, so no bar is the correct answer.
-    expect(
-      readScrollState(fakeTerminal({ type: "alternate" })).mode,
-    ).toBe("none");
+    expect(readScrollState(fakeTerminal({ type: "alternate" })).mode).toBe(
+      "none",
+    );
   });
 
   it("survives a terminal that is not built yet", () => {
@@ -123,58 +158,36 @@ describe("thumbGeometry", () => {
     const state = readScrollState(
       fakeTerminal({ length: 124, rows: 24, viewportY: 100 }),
     );
-    const geometry = thumbGeometry(state, 400);
+    const geometry = thumbGeometry(state, 400)!;
 
-    expect(geometry).not.toBeNull();
-    expect(geometry!.topPx + geometry!.heightPx).toBe(400);
+    expect(geometry.topPx + geometry.heightPx).toBe(400);
   });
 
   /*
-   * The bug this shape exists to prevent: a fixed 44px grip centred in the
-   * track was read — by the only grammar scrollbars have — as "you are halfway
-   * up", while the pane sat at the live end of Claude Code's transcript. A bar
-   * that spans the track cannot be read that way in either direction.
+   * The bug this shape exists to prevent, from the other side. A short bright
+   * shape halfway up a track says "you are in the middle" in the only grammar
+   * scrollbars have — so an app-mode pane draws its thumb from a real measured
+   * position, through this same geometry, rather than parking a marking in the
+   * middle and hoping to be read as saying nothing.
    */
-  it("spans the whole track in app mode — no length of it means a position", () => {
-    const state = readScrollState(
-      fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
-    );
-
-    expect(thumbGeometry(state, 300)).toEqual({
-      topPx: 0,
-      heightPx: 300,
-      markerPx: 139,
+  it("draws an app-mode pane through the very same geometry", () => {
+    const term = fakeTerminal({
+      type: "alternate",
+      mouseTrackingMode: "any",
+      rows: 24,
     });
-  });
 
-  it("lets the app-mode marking follow a drag, within its travel", () => {
-    const state = readScrollState(
-      fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
+    expect(thumbGeometry(readScrollState(term, measured()), 400)).toEqual(
+      thumbGeometry(
+        readScrollState(fakeTerminal({ length: 424, rows: 24, viewportY: 400 })),
+        400,
+      ),
     );
-
-    const dragged = thumbGeometry(state, 300, 40);
-    // The bar itself never moves — only its marking, as drag feedback.
-    expect(dragged?.topPx).toBe(0);
-    expect(dragged?.heightPx).toBe(300);
-    expect(dragged?.markerPx).toBe(179);
-    // A long drag keeps relaying wheel notches, but the marking stops moving:
-    // running it to the track's end would restore the very "you are here" read
-    // the full-track bar is here to refuse.
-    expect(thumbGeometry(state, 300, 9000)?.markerPx).toBe(
-      139 + GRIP_TRAVEL_PX,
-    );
-  });
-
-  it("keeps the app-mode marking inside a track shorter than itself", () => {
-    const state = readScrollState(
-      fakeTerminal({ type: "alternate", mouseTrackingMode: "any" }),
-    );
-
-    expect(thumbGeometry(state, GRIP_MARKER_PX - 8)).toEqual({
-      topPx: 0,
-      heightPx: GRIP_MARKER_PX - 8,
-      markerPx: 0,
-    });
+    // And the top of the history is the top of the track.
+    expect(
+      thumbGeometry(readScrollState(term, measured({ offset: 400 })), 400)
+        ?.topPx,
+    ).toBe(0);
   });
 
   it("draws nothing when there is nothing to scroll", () => {
@@ -199,14 +212,15 @@ describe("lineForThumbTop", () => {
     expect(lineForThumbTop(-500, 400, state)).toBe(0);
     expect(lineForThumbTop(5000, 400, state)).toBe(1000);
   });
-});
 
-describe("jogNotches", () => {
-  it("converts a drag distance into whole wheel notches", () => {
-    expect(jogNotches(0)).toBe(0);
-    expect(jogNotches(JOG_STEP_PX - 1)).toBe(0);
-    expect(jogNotches(JOG_STEP_PX * 3)).toBe(3);
-    expect(jogNotches(-JOG_STEP_PX * 2)).toBe(-2);
+  it("answers for an app-mode pane too, so its thumb can be dragged", () => {
+    const state = readScrollState(
+      fakeTerminal({ type: "alternate", mouseTrackingMode: "any", rows: 24 }),
+      measured({ offset: 400 }),
+    );
+
+    expect(lineForThumbTop(0, 400, state)).toBe(0);
+    expect(lineForThumbTop(400, 400, state)).toBe(400);
   });
 });
 
@@ -230,7 +244,8 @@ describe("relayWheelNotch", () => {
     expect(seen).toHaveLength(1);
     // Lines, not pixels: xterm divides a pixel delta by the row height and
     // carries the remainder, so a synthetic pixel delta can round to no lines
-    // at all and be dropped before it is ever encoded.
+    // at all and be dropped before it is ever encoded. It is also how
+    // ./paneAppScroll recognises a notch it sent itself.
     expect(seen[0].deltaMode).toBe(1);
     expect(seen[0].deltaY).toBe(-1);
   });

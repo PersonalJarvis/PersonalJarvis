@@ -40,35 +40,45 @@
  * looking at, and any proportional thumb drawn from it is a lie. So the check
  * below reads the mouse FIRST and the buffer type second.
  *
- * Hence two modes, and a scrollbar that reads which one it is in:
+ * Hence two sources for one and the same picture:
  *
  * * `scrollback` — the terminal holds the history and the wheel (Codex, a plain
- *   shell). The thumb is proportional and exact, and dragging it moves the
- *   viewport.
+ *   shell). Position and extent are read straight off xterm's buffer.
  * * `app` — the application took the mouse, so it holds the history (Claude
- *   Code). There is no honest position to draw, so the bar becomes a full-track
- *   grip: dragging it relays wheel notches to the CLI, which scrolls itself.
- * * `none` — nothing to scroll (a fresh pane, or a full-screen app that does
- *   not take the mouse). The bar stays away instead of drawing a dead track.
+ *   Code). Position and extent are MEASURED from how far the screen's content
+ *   moves when it is scrolled — see ./paneAppScroll.
+ * * `none` — nothing to scroll (a fresh pane, or a full-screen app measured as
+ *   having no history at all). The bar stays away instead of drawing a dead
+ *   track.
  *
- * ## A short bar in the middle of a track IS a position claim
+ * ## Both modes draw the same thumb, because both now know the same things
  *
- * `app` mode first drew a fixed 44px grip centred in the track, on the reasoning
- * that a grip which never moves cannot be lying. It was — just in a language the
- * code was not reading. Every scrollbar anyone has ever used says "you are here"
- * with exactly that shape, so a pane parked at the live end of Claude Code's
- * transcript showed a thumb halfway up its track and was read, correctly by the
- * only grammar available, as "you are halfway up". Abstaining from a claim is
- * not the same as saying nothing when the shape you abstain with is the shape
- * the claim is made in.
+ * `app` mode used to draw a fixed grip centred in the track instead of a
+ * position, on the reasoning that a shape which never moves cannot lie. It
+ * lied anyway — just in a language the code was not reading. Every scrollbar
+ * anyone has ever used says "you are here" with exactly that shape, so a pane
+ * parked at the live end of Claude Code's transcript showed a marking halfway
+ * up its track and was read, correctly by the only grammar available, as "you
+ * are halfway up" (reported 2026-07-27). Abstaining from a claim is not the
+ * same as saying nothing when the shape you abstain with is the shape the
+ * claim is made in.
  *
- * So the grip now fills the track end to end — the universal "there is no
- * position here" — carrying a small marking that shows it can be grabbed and
- * follows a drag for feedback. The bar occupies the whole track in either
- * direction, which is the one arrangement no scrollbar has ever used to mean
- * "somewhere in the middle".
+ * The fix was not a different shape but a real answer: ./paneAppScroll measures
+ * the application's position from its own screen, so `app` mode has a genuine
+ * line count to report and the geometry below is shared, unconditionally. The
+ * only thing still specific to `app` mode is HOW a drag is carried out —
+ * relayed wheel notches instead of a viewport call — because that is the only
+ * language the application listens in.
  */
 import type { Terminal } from "@xterm/xterm";
+import {
+  appScrollExtent,
+  appTakesWheel,
+  AT_LIVE_END,
+  type AppScrollPosition,
+} from "./paneAppScroll";
+
+export { appTakesWheel };
 
 /** Which of the two scrolling worlds a pane is in — see the file header. */
 export type PaneScrollMode = "scrollback" | "app" | "none";
@@ -86,14 +96,6 @@ export interface PaneScrollState {
 export interface ThumbGeometry {
   topPx: number;
   heightPx: number;
-  /**
-   * `app` mode only: where the grip's marking sits inside the bar. The bar
-   * itself spans the whole track and says nothing about position, so this is
-   * drag feedback and a "you can grab this" hint, never a location in a
-   * history. Absent in `scrollback` mode, where the bar's own position is the
-   * information.
-   */
-  markerPx?: number;
 }
 
 export const IDLE_STATE: PaneScrollState = {
@@ -106,15 +108,6 @@ export const IDLE_STATE: PaneScrollState = {
 /** A thumb shorter than this is impossible to grab in a tall pane. */
 export const MIN_THUMB_PX = 26;
 
-/** Height of the marking on the `app`-mode grip. Encodes no position. */
-export const GRIP_MARKER_PX = 22;
-
-/** How far the `app`-mode marking may travel from centre while dragged. */
-export const GRIP_TRAVEL_PX = 60;
-
-/** Drag distance that relays one wheel notch in `app` mode. */
-export const JOG_STEP_PX = 12;
-
 function clamp(value: number, low: number, high: number): number {
   return value < low ? low : value > high ? high : value;
 }
@@ -122,11 +115,18 @@ function clamp(value: number, low: number, high: number): number {
 /**
  * Read a pane's scroll situation off the live terminal.
  *
+ * `position` is what ./paneAppScroll has measured of an application that holds
+ * its own history; it is ignored for a pane whose terminal holds the scrollback
+ * itself, where xterm's buffer is the better answer.
+ *
  * Defensive by design: this runs against whatever xterm build the app was
  * bundled with, and a missing field must degrade to "nothing to scroll" rather
  * than throw inside a render.
  */
-export function readScrollState(term: Terminal | null): PaneScrollState {
+export function readScrollState(
+  term: Terminal | null,
+  position: AppScrollPosition = AT_LIVE_END,
+): PaneScrollState {
   const buffer = term?.buffer?.active;
   const rows = term?.rows ?? 0;
   if (!term || !buffer || rows < 1) return IDLE_STATE;
@@ -135,9 +135,16 @@ export function readScrollState(term: Terminal | null): PaneScrollState {
   const top = buffer.viewportY ?? 0;
 
   // The mouse first — see the file header. An application holding the wheel
-  // holds the history with it, in EITHER buffer, and the viewport it left
-  // behind must not be drawn as though it were that history.
-  if (appTakesWheel(term)) return { mode: "app", total: rows, rows, top: 0 };
+  // holds the history with it, in EITHER buffer, so the viewport it left behind
+  // is ignored in favour of what the measurement found.
+  if (appTakesWheel(term)) {
+    const extent = appScrollExtent(position, rows);
+    // A measurement that found no history at all — a dashboard, a pager on a
+    // short file — takes the bar away rather than drawing a thumb that fills
+    // its own track.
+    if (extent.total <= rows) return IDLE_STATE;
+    return { mode: "app", total: extent.total, rows, top: extent.top };
+  }
 
   // Alternate buffer without the mouse: the application draws the whole screen
   // and there is nothing to relay a wheel notch to — the escape sequence would
@@ -148,38 +155,13 @@ export function readScrollState(term: Terminal | null): PaneScrollState {
   return IDLE_STATE;
 }
 
-/** True when the running application receives wheel events itself. */
-export function appTakesWheel(term: Terminal | null): boolean {
-  const tracking = term?.modes?.mouseTrackingMode;
-  return Boolean(tracking) && tracking !== "none";
-}
-
-/**
- * Where to draw the thumb inside a track of `trackPx`, or null for no bar.
- *
- * In `app` mode `offsetPx` is the live drag offset: the bar stays put — it
- * spans the whole track — and its marking follows the pointer while it is held,
- * returning to the middle when it is let go.
- */
+/** Where to draw the thumb inside a track of `trackPx`, or null for no bar. */
 export function thumbGeometry(
   state: PaneScrollState,
   trackPx: number,
-  offsetPx = 0,
 ): ThumbGeometry | null {
   if (trackPx <= 0) return null;
-
-  if (state.mode === "app") {
-    const markerHeight = Math.min(GRIP_MARKER_PX, trackPx);
-    const centre = (trackPx - markerHeight) / 2;
-    const travel = clamp(offsetPx, -GRIP_TRAVEL_PX, GRIP_TRAVEL_PX);
-    return {
-      topPx: 0,
-      heightPx: trackPx,
-      markerPx: Math.round(clamp(centre + travel, 0, trackPx - markerHeight)),
-    };
-  }
-
-  if (state.mode !== "scrollback" || state.total <= state.rows) return null;
+  if (state.mode === "none" || state.total <= state.rows) return null;
 
   const heightPx = Math.min(
     trackPx,
@@ -197,16 +179,11 @@ export function lineForThumbTop(
   state: PaneScrollState,
 ): number {
   const geometry = thumbGeometry(state, trackPx);
-  if (!geometry || state.mode !== "scrollback") return state.top;
+  if (!geometry) return state.top;
   const span = trackPx - geometry.heightPx;
   const maxTop = state.total - state.rows;
   if (span <= 0 || maxTop <= 0) return 0;
   return Math.round(clamp(topPx / span, 0, 1) * maxTop);
-}
-
-/** How many wheel notches a drag of `deltaPx` is worth in `app` mode. */
-export function jogNotches(deltaPx: number): number {
-  return Math.trunc(deltaPx / JOG_STEP_PX);
 }
 
 /**
@@ -217,6 +194,9 @@ export function jogNotches(deltaPx: number): number {
  * protocol the application negotiated (X10, VT200, SGR, …) and encodes the
  * report accordingly. Writing the bytes ourselves would mean guessing, and a
  * guess wrong by one protocol arrives in the CLI's prompt as garbage.
+ *
+ * Emitted in LINE mode with a delta of exactly one, which is also how
+ * ./paneAppScroll recognises its own relays and learns what a notch is worth.
  *
  * `direction` is +1 to scroll down (towards newer output), -1 for up.
  */
