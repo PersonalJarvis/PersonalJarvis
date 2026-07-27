@@ -384,6 +384,13 @@ export interface UltraWikiSearchLeg {
   model?: string;
   provider?: string;
   reason?: string;
+  /**
+   * Vector leg only: the backend is reachable, but the index still holds the
+   * space the store is pinned to while queries are already embedded with the
+   * new model. Meaning-based search is off until the swap; keyword search is
+   * unaffected. Set by ultrawiki_routes.py::_apply_reembed_to_legs.
+   */
+  rebuilding?: boolean;
 }
 
 export interface UltraWikiStatus {
@@ -401,15 +408,16 @@ export interface UltraWikiStatus {
   /**
    * Mirrors jarvis/ultrawiki/store.py::reembed_status — present only while an
    * embedding-model switch rebuilds the vector space in the background.
-   * Search answers from the OLD space throughout, so without this the UI would
-   * show an idle, fully-green knowledge base during the whole rebuild.
-   * `done`/`total` count passages, not items.
+   * Without this the UI would show an idle, fully-green knowledge base during
+   * the whole rebuild. `done`/`total`/`remaining` count ITEMS: the ones the
+   * switch invalidated, which the embed queue serves before anything else.
    */
   reembed?: {
     model?: string;
     active_model?: string;
     done?: number;
     total?: number;
+    remaining?: number;
   };
   progress?: UltraWikiProgress;
   pipeline: UltraWikiPipeline;

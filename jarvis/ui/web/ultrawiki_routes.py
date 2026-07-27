@@ -240,6 +240,44 @@ async def _search_legs_async(cfg: Any) -> dict[str, Any]:
     return await asyncio.to_thread(_search_legs, cfg)
 
 
+def _apply_reembed_to_legs(
+    legs: dict[str, Any], reembed: dict[str, Any]
+) -> dict[str, Any]:
+    """Mark the vector leg unavailable while a model switch is rebuilding.
+
+    The leg probe is a CREDENTIAL check by contract (AP-21): it answers "is
+    this backend reachable", which stays true throughout a rebuild. But the
+    ANN index mirrors the space the store is still pinned to, while the query
+    is embedded with the NEW model — so every semantic query is refused on a
+    dimension mismatch and search silently falls back to keyword hits alone.
+    Reporting the leg as available anyway is how the health screen came to say
+    "Both exact words and meaning are searchable" during an outage that lasted
+    as long as the rebuild.
+    """
+    model = str(reembed.get("model") or "")
+    if not model:
+        return legs
+    vector = dict(legs.get("vector") or {})
+    if not vector or vector.get("available") is False:
+        return legs
+    done = int(reembed.get("done") or 0)
+    total = int(reembed.get("total") or 0)
+    progress = f"{done} of {total} item(s) done" if total else "just started"
+    return {
+        **legs,
+        "vector": {
+            **vector,
+            "available": False,
+            "rebuilding": True,
+            "reason": (
+                f"semantic search is rebuilding on {model} ({progress}). Exact "
+                "words are found the whole time; meaning-based search returns "
+                "by itself the moment the rebuild finishes."
+            ),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Status + providers
 # ---------------------------------------------------------------------------
@@ -286,6 +324,7 @@ async def get_status(request: Request) -> dict[str, Any]:
     backend = dict(data.get("backend") or {})
     slots = dict(data.get("slots") or {})
     started = bool(data.get("started"))
+    reembed = dict(data.get("reembed") or {})
     slots["storage"] = {
         "configured": backend.get("configured", configured_backend),
         "in_use": backend.get("in_use", ""),
@@ -300,15 +339,18 @@ async def get_status(request: Request) -> dict[str, Any]:
         "backend_in_use": str(backend.get("in_use") or ""),
         "slots": slots,
         # Empty unless an embedding-model switch is rebuilding the vector space
-        # right now. Search keeps answering from the old space meanwhile, so
-        # without this a client would show a green, idle knowledge base.
-        "reembed": data.get("reembed", {}),
+        # right now. The rebuilt items go to the FRONT of the embed queue, and
+        # the vector leg reports itself unavailable until the swap — without
+        # this a client would show a green, idle knowledge base.
+        "reembed": reembed,
         "counts": data.get("counts", {}),
         "progress": data.get("progress") or build_progress(data.get("counts")),
         "pipeline": data.get("pipeline", {}),
         "sources": data.get("sources", []),
         "jobs": data.get("jobs", []),
-        "search_legs": await _search_legs_async(cfg),
+        "search_legs": _apply_reembed_to_legs(
+            await _search_legs_async(cfg), reembed
+        ),
         "degradations": data.get("degradations", []),
     }
 

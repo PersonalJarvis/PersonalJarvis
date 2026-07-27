@@ -3345,6 +3345,24 @@
     "remove": "Entfernen"
   },
   "agentic_grid": {
+    "continue": {
+      "button": "Fortsetzen",
+      "hint": "Prüfen, welche Coding-Sitzungen unterbrochen wurden, und sie weiterarbeiten lassen.",
+      "title": "Unterbrochene Coding-Sitzungen",
+      "description": "Diese Panes sind mit ihrem Gespräch zurückgekommen, haben aber nie erfahren, was als Nächstes zu tun ist — ein Neustart stoppt einen Agenten mitten in der Arbeit, und eine fortgesetzte CLI wartet an ihrer Eingabezeile.",
+      "none": "Nichts wurde unterbrochen — jedes Pane hat seit dem Start eine Anweisung bekommen.",
+      "one": "Fortsetzen",
+      "all": "Alle fortsetzen ({0})",
+      "close": "Schließen",
+      "last_task": "Zuletzt beauftragt mit: {0}",
+      "no_task": "Die letzte Anweisung wurde direkt ins Pane getippt, deshalb gibt es hier keine Kopie davon.",
+      "summary_one": "1 Pane wird zum Weitermachen aufgefordert.",
+      "summary_many": "{0} Panes werden zum Weitermachen aufgefordert.",
+      "summary_blocked": "{0} können erst fortgesetzt werden, wenn ihre Agenten wieder laufen.",
+      "result_continued": "{0} Pane(s) machen weiter: {1}.",
+      "result_unconfirmed": "Diese Panes bitte selbst prüfen — die Anweisung wurde eingetippt, aber nicht sichtbar abgeschickt: {0}.",
+      "result_failed": "Konnten nicht fortgesetzt werden: {0}."
+    },
     "selection": {
       "start": "Terminals auswählen",
       "finish": "Auswahl beenden",

@@ -3331,6 +3331,24 @@
     "remove": "Remove"
   },
   "agentic_grid": {
+    "continue": {
+      "button": "Continue",
+      "hint": "Check which coding sessions were interrupted and tell them to carry on.",
+      "title": "Interrupted coding sessions",
+      "description": "These panes came back holding their conversation and were never told what to do next — restarting the app stops an agent mid-task, and a resumed CLI waits at its prompt instead of carrying on.",
+      "none": "Nothing was interrupted — every pane has been given something to do since it started.",
+      "one": "Continue",
+      "all": "Continue all ({0})",
+      "close": "Close",
+      "last_task": "Last asked to: {0}",
+      "no_task": "Its last instruction was typed into the pane directly, so there is no copy of it here.",
+      "summary_one": "1 pane will be told to continue.",
+      "summary_many": "{0} panes will be told to continue.",
+      "summary_blocked": "{0} cannot be continued until their agents are running again.",
+      "result_continued": "{0} pane(s) carrying on: {1}.",
+      "result_unconfirmed": "Check these panes yourself — the instruction was typed in but never seen to submit: {0}.",
+      "result_failed": "Could not be continued: {0}."
+    },
     "selection": {
       "start": "Select terminals",
       "finish": "Done selecting",

@@ -80,10 +80,19 @@ META_EMBED_DIM = "embed_dim"
 #: ``uw_meta`` keys naming the space currently being built in the background
 #: after a model switch. Vectors accumulate under it while searches keep using
 #: the active space; :meth:`UltraStore.promote_pending_space` swaps them once
-#: the shadow covers everything the live space covers. The dimension is unknown
-#: until the provider answers, so ``PENDING_DIM`` appears with the first vector.
+#: every item the switch invalidated has been re-embedded. The dimension is
+#: unknown until the provider answers, so ``PENDING_DIM`` appears with the
+#: first vector.
 META_PENDING_EMBED_MODEL = "pending_embed_model"
 META_PENDING_EMBED_DIM = "pending_embed_dim"
+
+#: How many items :meth:`UltraStore.begin_reembed` flagged when the rebuild
+#: started — the denominator of an honest progress report. Counting the WORK
+#: rather than the surviving old vectors is what makes the number monotonic:
+#: re-embedding an item whose passage set changed DELETES its old documents
+#: (and their vectors with them), so any measure defined over those rows reads
+#: 0 % until the very end and then jumps.
+META_REEMBED_TOTAL = "reembed_total"
 
 _SNIPPET_CHARS = 240
 _IN_CHUNK = 400
@@ -422,6 +431,23 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("uw_sync_state", "last_changed", "INTEGER NOT NULL DEFAULT 0"),
     ("uw_sync_state", "last_unchanged", "INTEGER NOT NULL DEFAULT 0"),
     ("uw_sync_state", "last_tombstoned", "INTEGER NOT NULL DEFAULT 0"),
+    # Set by begin_reembed on every item whose vectors the model switch
+    # invalidated, cleared the moment that item is embedded again. Without it
+    # the re-embed backlog is indistinguishable from the ordinary ingest
+    # backlog, and the claim order (newest first, right for ingest) schedules
+    # exactly the items that need re-embedding LAST — on a 236 k-item store
+    # that is the difference between minutes and days.
+    ("uw_items", "reembed_pending", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+#: Indexes that belong to :data:`_ADDITIVE_COLUMNS` — created after the columns
+#: exist, in both backends (``CREATE INDEX IF NOT EXISTS`` is portable).
+_ADDITIVE_INDEXES: tuple[str, ...] = (
+    # The claim query's exact shape: filter by state, take the re-embed
+    # backlog first, newest first within each group. Without it every claim
+    # sorts the whole ~115 k-row keyword_indexed bucket.
+    "CREATE INDEX IF NOT EXISTS idx_uw_items_claim"
+    " ON uw_items(state, reembed_pending DESC, timestamp_utc DESC, id DESC)",
 )
 
 #: The persisted per-source outcome of the last finished sync.
@@ -524,6 +550,7 @@ class UltraStore:
 
             await run_migrations(conn, directory=_MIGRATIONS_DIR)
             await self._apply_column_migrations(conn)
+            await self._adopt_running_reembed(conn)
             self._conn = conn
 
     @staticmethod
@@ -543,6 +570,53 @@ class UltraStore:
             )
             known[table].add(column)
             log.info("UltraStore migration applied — added %s.%s", table, column)
+        for statement in _ADDITIVE_INDEXES:
+            await conn.execute(statement)
+
+    @staticmethod
+    async def _adopt_running_reembed(conn: aiosqlite.Connection) -> None:
+        """Flag the backlog of a rebuild that started before this column existed.
+
+        A switch performed by an older build left a pending pin and a demoted
+        corpus but no way to tell the two backlogs apart, so the rebuild sat
+        behind every never-embedded item in the store. Reconstructing the set
+        is exact rather than a guess: an item that still holds a vector in the
+        ACTIVE space is, by definition, one the switch invalidated.
+
+        Runs at most once per store — the presence of ``reembed_total`` is the
+        marker — and does nothing at all when no rebuild is pending, which is
+        the steady state.
+        """
+        cur = await conn.execute(
+            "SELECT key, value FROM uw_meta WHERE key IN (?, ?, ?)",
+            (META_PENDING_EMBED_MODEL, META_EMBED_MODEL, META_REEMBED_TOTAL),
+        )
+        meta = {str(row[0]): str(row[1]) for row in await cur.fetchall()}
+        await cur.close()
+        if META_PENDING_EMBED_MODEL not in meta or META_REEMBED_TOTAL in meta:
+            return
+        active_model = meta.get(META_EMBED_MODEL)
+        if not active_model:
+            return
+        cur = await conn.execute(
+            "UPDATE uw_items SET reembed_pending = 1"
+            " WHERE deleted_at IS NULL AND state != ?"
+            "   AND EXISTS (SELECT 1 FROM uw_documents d"
+            "               JOIN uw_embeddings e ON e.document_id = d.id"
+            "               WHERE d.item_id = uw_items.id AND e.model = ?)",
+            (ItemState.FAILED.value, active_model),
+        )
+        flagged = int(cur.rowcount or 0)
+        await cur.close()
+        await conn.execute(
+            "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+            (META_REEMBED_TOTAL, str(flagged)),
+        )
+        log.info(
+            "UltraWiki: adopted a rebuild that was already running — %d item(s) "
+            "moved to the front of the embed queue",
+            flagged,
+        )
 
     async def close(self) -> None:
         async with self._lock:
@@ -1126,12 +1200,22 @@ class UltraStore:
         now: str | datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Items ready to advance TO *target_state* (their state is the
-        predecessor in ``STATE_ORDER``), retry-eligible, newest first.
+        predecessor in ``STATE_ORDER``), retry-eligible, re-embed backlog
+        first and newest first within each group.
 
         Claiming is read-only — the single-process pipeline claims, works,
         then commits exactly one transition via :meth:`mark_stage_done` /
         :meth:`mark_retry`, so a crash between claim and commit loses
         nothing (the item is simply claimed again).
+
+        **Why two sort keys.** Newest-first is right for ingest: fresh content
+        becomes searchable while an old backfill drains behind it. It is the
+        worst possible order for a re-embed, because the items a model switch
+        invalidated are by definition the OLDEST in the store — they would be
+        rebuilt only after every never-embedded item, and until then the
+        vector space cannot be promoted and semantic search stays on the old
+        model. ``reembed_pending`` (set by :meth:`begin_reembed`) puts that
+        backlog in front without disturbing the ingest order behind it.
         """
         predecessor = _predecessor_of(target_state)
         now_s = _iso_utc(_coerce_now(now))
@@ -1141,7 +1225,7 @@ class UltraStore:
             "SELECT * FROM uw_items"
             " WHERE state = ? AND deleted_at IS NULL"
             "   AND (next_retry_at IS NULL OR next_retry_at <= ?)"
-            " ORDER BY timestamp_utc DESC, id DESC LIMIT ?",
+            " ORDER BY reembed_pending DESC, timestamp_utc DESC, id DESC LIMIT ?",
             (predecessor.value, now_s, int(limit)),
         )
         return [self._item_row_to_dict(row) for row in rows]
@@ -1184,9 +1268,14 @@ class UltraStore:
                 "stages after 'captured' are worker transitions"
             )
         now = _iso_utc()
+        # Reaching `embedded` is exactly what the re-embed backlog was waiting
+        # for: this item now has a vector in the space being built, so it
+        # leaves the priority lane and the progress counter moves.
+        clear_reembed = ", reembed_pending = 0" if state is ItemState.EMBEDDED else ""
         sql = (
-            "UPDATE uw_items SET state = ?, attempt_count = 0,"
+            "UPDATE uw_items SET state = ?, attempt_count = 0,"  # noqa: S608 — clear_reembed is one of two code-owned literals
             " next_retry_at = NULL, last_error = NULL, updated_at = ?"
+            f"{clear_reembed}"
             " WHERE id = ?"
         )
         params: list[Any] = [state.value, now, item_id]
@@ -1756,16 +1845,18 @@ class UltraStore:
                 await conn.execute("DROP TABLE IF EXISTS uw_vec")
             await conn.execute("DELETE FROM uw_embeddings")
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (?, ?, ?, ?)",
+                "DELETE FROM uw_meta WHERE key IN (?, ?, ?, ?, ?)",
                 (
                     META_EMBED_MODEL,
                     META_EMBED_DIM,
                     META_PENDING_EMBED_MODEL,
                     META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
                 ),
             )
             await conn.execute(
-                "UPDATE uw_items SET state = ?, updated_at = ? WHERE state IN (?, ?)",
+                "UPDATE uw_items SET state = ?, reembed_pending = 0, updated_at = ?"
+                " WHERE state IN (?, ?)",
                 (
                     ItemState.KEYWORD_INDEXED.value,
                     _iso_utc(),
@@ -1790,11 +1881,18 @@ class UltraStore:
         abandoned rebuild costs nothing but the shadow rows, which the next
         call drops.
 
-        Returns ``True`` when a rebuild actually started. ``False`` means there
-        is nothing to rebuild: either the corpus already sits in that space (a
-        provider change that keeps the model — same geometry, no work) or
-        nothing has been embedded yet, in which case the pipeline's normal
-        backlog already produces the new space.
+        Returns ``True`` when a rebuild is running for *model* afterwards.
+        ``False`` means there is nothing to rebuild: either the corpus already
+        sits in that space (a provider change that keeps the model — same
+        geometry, no work) or nothing has been embedded yet, in which case the
+        pipeline's normal backlog already produces the new space.
+
+        **Idempotent.** Called again for the SAME target — a second settings
+        save, a provider change and a model change arriving as two requests —
+        it reports the running rebuild and returns without touching anything.
+        Re-running the body would delete every shadow vector built so far and
+        re-demote the items that had already been rebuilt, throwing away hours
+        of provider time for a request that changed nothing.
         """
         pinned_model, pinned_dim = await self._pinned_space()
         same_space = pinned_model == model and (dim is None or pinned_dim == dim)
@@ -1803,6 +1901,16 @@ class UltraStore:
             # shadow becomes garbage and the live space was never touched.
             await self.abort_reembed()
             return False
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model == model and (
+            dim is None or pending_dim is None or pending_dim == dim
+        ):
+            log.info(
+                "UltraWiki: a rebuild into %r is already running — keeping its "
+                "progress instead of restarting it",
+                model,
+            )
+            return True
         now = _iso_utc()
         async with self._txn() as conn:
             # A superseded rebuild leaves half-built rows behind. Everything
@@ -1826,8 +1934,37 @@ class UltraStore:
                     "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
                     (META_PENDING_EMBED_DIM, str(int(dim))),
                 )
+            # A superseded rebuild's flags describe work for a space that no
+            # longer exists; the fresh set below is the whole truth.
             await conn.execute(
-                "UPDATE uw_items SET state = ?, updated_at = ? WHERE state IN (?, ?)",
+                "UPDATE uw_items SET reembed_pending = 0 WHERE reembed_pending != 0"
+            )
+            # What the promotion must wait for is "holds a vector in the space
+            # being replaced" — derived from the vectors themselves, not from
+            # the state column alone, so an item parked outside embedded/
+            # distilled by a concurrent content change is not silently left
+            # behind in the old space.
+            cur = await conn.execute(
+                "UPDATE uw_items SET reembed_pending = 1"
+                " WHERE deleted_at IS NULL AND state != ?"
+                "   AND (state IN (?, ?)"
+                "        OR EXISTS (SELECT 1 FROM uw_documents d"
+                "                   JOIN uw_embeddings e ON e.document_id = d.id"
+                "                   WHERE d.item_id = uw_items.id"
+                "                     AND e.model = ? AND e.dim = ?))",
+                (
+                    ItemState.FAILED.value,
+                    ItemState.EMBEDDED.value,
+                    ItemState.DISTILLED.value,
+                    pinned_model,
+                    pinned_dim,
+                ),
+            )
+            flagged = int(cur.rowcount or 0)
+            await cur.close()
+            await conn.execute(
+                "UPDATE uw_items SET state = ?, updated_at = ?"
+                " WHERE state IN (?, ?) AND deleted_at IS NULL",
                 (
                     ItemState.KEYWORD_INDEXED.value,
                     now,
@@ -1835,6 +1972,16 @@ class UltraStore:
                     ItemState.DISTILLED.value,
                 ),
             )
+            await conn.execute(
+                "INSERT OR REPLACE INTO uw_meta (key, value) VALUES (?, ?)",
+                (META_REEMBED_TOTAL, str(flagged)),
+            )
+        log.info(
+            "UltraWiki: rebuilding the vector space in %r — %d item(s) moved to "
+            "the front of the embed queue",
+            model,
+            flagged,
+        )
         return True
 
     async def abort_reembed(self) -> bool:
@@ -1852,34 +1999,39 @@ class UltraStore:
                     (pinned_model, pinned_dim),
                 )
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (?, ?)",
-                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (?, ?, ?)",
+                (
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
+                ),
+            )
+            await conn.execute(
+                "UPDATE uw_items SET reembed_pending = 0 WHERE reembed_pending != 0"
             )
         return True
 
-    async def _shadow_gap(
-        self,
-        conn: aiosqlite.Connection,
-        active: tuple[str, int],
-        pending: tuple[str, int],
-    ) -> int:
-        """How many documents the live space covers and the shadow does not.
+    async def _reembed_remaining(self, conn: aiosqlite.Connection) -> int:
+        """How many items the running rebuild has still not re-embedded.
 
-        Documents of dead-lettered or tombstoned items are excluded: they will
-        never be re-embedded, and counting them would stall the promotion
-        forever behind a handful of permanently failing items.
+        Counting the flagged WORK rather than the surviving old vectors is
+        what makes this both correct and monotonic. The natural-looking
+        alternative — "old-space documents without a twin in the new space" —
+        is unmeasurable whenever the passage set changes underneath a rebuild:
+        re-embedding such an item REPLACES its documents (new ids, the old
+        vectors cascade away with the old rows), so no document ever holds
+        both spaces, the count reads 0 % throughout, and the promotion can
+        only ever fire once the live space has been destroyed row by row.
+
+        Dead-lettered and tombstoned items are excluded: they will never be
+        re-embedded, and waiting for them would stall the promotion forever
+        behind a handful of permanently failing items.
         """
         row = await self._fetchone(
             conn,
-            "SELECT count(*) AS n FROM uw_embeddings a"
-            " JOIN uw_documents d ON d.id = a.document_id"
-            " JOIN uw_items i ON i.id = d.item_id"
-            " WHERE a.model = ? AND a.dim = ?"
-            "   AND i.deleted_at IS NULL AND i.state != ?"
-            "   AND NOT EXISTS (SELECT 1 FROM uw_embeddings p"
-            "                   WHERE p.document_id = a.document_id"
-            "                     AND p.model = ? AND p.dim = ?)",
-            (*active, ItemState.FAILED.value, *pending),
+            "SELECT count(*) AS n FROM uw_items"
+            " WHERE reembed_pending = 1 AND deleted_at IS NULL AND state != ?",
+            (ItemState.FAILED.value,),
         )
         return 0 if row is None else int(row["n"])
 
@@ -1896,10 +2048,7 @@ class UltraStore:
         if active_model is None or active_dim is None:
             return False
         conn = await self._ensure_open()
-        gap = await self._shadow_gap(
-            conn, (active_model, active_dim), (pending_model, pending_dim)
-        )
-        if gap:
+        if await self._reembed_remaining(conn):
             return False
         vec_droppable = self._vec_ext_loaded
         async with self._txn() as txn:
@@ -1916,8 +2065,12 @@ class UltraStore:
                 (META_EMBED_DIM, str(pending_dim)),
             )
             await txn.execute(
-                "DELETE FROM uw_meta WHERE key IN (?, ?)",
-                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (?, ?, ?)",
+                (
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
+                ),
             )
             if vec_droppable:
                 # The index is derived, so rebuilding it is a local copy, not
@@ -1937,39 +2090,27 @@ class UltraStore:
     async def reembed_status(self) -> dict[str, Any]:
         """Honest progress of a running rebuild, for the settings surface.
 
-        ``{}`` when none is running. ``done``/``total`` count DOCUMENTS (the
-        passages actually embedded), so the number moves smoothly rather than
-        jumping per item.
+        ``{}`` when none is running. ``done``/``total`` count ITEMS — the ones
+        :meth:`begin_reembed` flagged and the ones that have since been
+        embedded again. See :meth:`_reembed_remaining` for why the obvious
+        document-level measure cannot work.
         """
-        pending_model, pending_dim = await self._pending_space()
+        pending_model, _pending_dim = await self._pending_space()
         if pending_model is None:
             return {}
-        active_model, active_dim = await self._pinned_space()
-        if active_model is None or active_dim is None:
-            return {"model": pending_model, "done": 0, "total": 0}
+        active_model, _active_dim = await self._pinned_space()
         conn = await self._ensure_open()
-        row = await self._fetchone(
-            conn,
-            "SELECT count(*) AS n FROM uw_embeddings a"
-            " JOIN uw_documents d ON d.id = a.document_id"
-            " JOIN uw_items i ON i.id = d.item_id"
-            " WHERE a.model = ? AND a.dim = ?"
-            "   AND i.deleted_at IS NULL AND i.state != ?",
-            (active_model, active_dim, ItemState.FAILED.value),
-        )
-        total = 0 if row is None else int(row["n"])
-        gap = (
-            total
-            if pending_dim is None
-            else await self._shadow_gap(
-                conn, (active_model, active_dim), (pending_model, pending_dim)
-            )
-        )
+        remaining = await self._reembed_remaining(conn)
+        total_raw = await self.get_meta(META_REEMBED_TOTAL)
+        # A rebuild started before the counter existed reports its remaining
+        # work rather than inventing a denominator it cannot know.
+        total = int(total_raw) if total_raw else remaining
         return {
             "model": pending_model,
-            "done": max(0, total - gap),
+            "done": max(0, total - remaining),
             "total": total,
-            "active_model": active_model,
+            "remaining": remaining,
+            "active_model": active_model or "",
         }
 
     # -- search legs (SQL only, fusion lives in the read path) --------------
@@ -2453,13 +2594,6 @@ class PostgresStore:
             " last_changed INTEGER NOT NULL DEFAULT 0,"
             " last_unchanged INTEGER NOT NULL DEFAULT 0,"
             " last_tombstoned INTEGER NOT NULL DEFAULT 0)",
-            # The same additive columns for databases created before the
-            # visibility package. Postgres HAS `ADD COLUMN IF NOT EXISTS`, so
-            # the SQLite pragma dance is unnecessary here.
-            *(
-                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}"
-                for table, column, declaration in _ADDITIVE_COLUMNS
-            ),
             "CREATE TABLE IF NOT EXISTS uw_items ("
             " id BIGSERIAL PRIMARY KEY,"
             " source_id TEXT NOT NULL REFERENCES uw_sources(id) ON DELETE CASCADE,"
@@ -2524,6 +2658,16 @@ class PostgresStore:
             " model TEXT NOT NULL, result_json TEXT NOT NULL,"
             " created_at TEXT NOT NULL,"
             " PRIMARY KEY (content_hash, prompt_version, model))",
+            # The same additive columns for databases created before the
+            # feature that introduced them. Postgres HAS `ADD COLUMN IF NOT
+            # EXISTS`, so the SQLite pragma dance is unnecessary here — but the
+            # statements must run AFTER every CREATE TABLE, or a fresh database
+            # alters a table that does not exist yet.
+            *(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}"
+                for table, column, declaration in _ADDITIVE_COLUMNS
+            ),
+            *_ADDITIVE_INDEXES,
         ]
 
     # -- lifecycle -----------------------------------------------------------
@@ -2583,7 +2727,41 @@ class PostgresStore:
             async with conn.transaction():
                 for statement in self.ddl_statements():
                     await conn.execute(statement)
+                await self._adopt_running_reembed(conn)
             self._conn = conn
+
+    @staticmethod
+    async def _adopt_running_reembed(conn: Any) -> None:
+        """Postgres twin of :meth:`UltraStore._adopt_running_reembed`."""
+        cur = await conn.execute(
+            "SELECT key, value FROM uw_meta WHERE key IN (%s, %s, %s)",
+            (META_PENDING_EMBED_MODEL, META_EMBED_MODEL, META_REEMBED_TOTAL),
+        )
+        meta = {str(row["key"]): str(row["value"]) for row in await cur.fetchall()}
+        if META_PENDING_EMBED_MODEL not in meta or META_REEMBED_TOTAL in meta:
+            return
+        active_model = meta.get(META_EMBED_MODEL)
+        if not active_model:
+            return
+        cur = await conn.execute(
+            "UPDATE uw_items SET reembed_pending = 1"
+            " WHERE deleted_at IS NULL AND state != %s"
+            "   AND EXISTS (SELECT 1 FROM uw_documents d"
+            "               JOIN uw_embeddings e ON e.document_id = d.id"
+            "               WHERE d.item_id = uw_items.id AND e.model = %s)",
+            (ItemState.FAILED.value, active_model),
+        )
+        flagged = max(0, int(getattr(cur, "rowcount", 0) or 0))
+        await conn.execute(
+            "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+            " ON CONFLICT (key) DO UPDATE SET value = %s",
+            (META_REEMBED_TOTAL, str(flagged), str(flagged)),
+        )
+        log.info(
+            "UltraWiki: adopted a rebuild that was already running — %d item(s) "
+            "moved to the front of the embed queue",
+            flagged,
+        )
 
     async def close(self) -> None:
         async with self._lock:
@@ -3012,7 +3190,7 @@ class PostgresStore:
             "SELECT * FROM uw_items"
             " WHERE state = %s AND deleted_at IS NULL"
             "   AND (next_retry_at IS NULL OR next_retry_at <= %s)"
-            " ORDER BY timestamp_utc DESC, id DESC LIMIT %s",
+            " ORDER BY reembed_pending DESC, timestamp_utc DESC, id DESC LIMIT %s",
             (predecessor.value, now_s, int(limit)),
         )
         return [self._item_row_to_dict(row) for row in rows]
@@ -3036,9 +3214,13 @@ class PostgresStore:
                 f"mark_stage_done cannot set {state.value!r} — only forward "
                 "stages after 'captured' are worker transitions"
             )
+        # See the SQLite twin: reaching `embedded` is what releases the item
+        # from the re-embed priority lane.
+        clear_reembed = ", reembed_pending = 0" if state is ItemState.EMBEDDED else ""
         sql = (
-            "UPDATE uw_items SET state = %s, attempt_count = 0,"
+            "UPDATE uw_items SET state = %s, attempt_count = 0,"  # noqa: S608 — clear_reembed is one of two code-owned literals
             " next_retry_at = NULL, last_error = NULL, updated_at = %s"
+            f"{clear_reembed}"
             " WHERE id = %s"
         )
         params: list[Any] = [state.value, _iso_utc(), item_id]
@@ -3464,16 +3646,17 @@ class PostgresStore:
             await conn.execute("DROP TABLE IF EXISTS uw_vec")
             await conn.execute("DELETE FROM uw_embeddings")
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (%s, %s, %s, %s)",
+                "DELETE FROM uw_meta WHERE key IN (%s, %s, %s, %s, %s)",
                 (
                     META_EMBED_MODEL,
                     META_EMBED_DIM,
                     META_PENDING_EMBED_MODEL,
                     META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
                 ),
             )
             await conn.execute(
-                "UPDATE uw_items SET state = %s, updated_at = %s"
+                "UPDATE uw_items SET state = %s, reembed_pending = 0, updated_at = %s"
                 " WHERE state IN (%s, %s)",
                 (
                     ItemState.KEYWORD_INDEXED.value,
@@ -3486,12 +3669,24 @@ class PostgresStore:
         self._vec_dim = None
 
     async def begin_reembed(self, model: str, *, dim: int | None = None) -> bool:
-        """Postgres twin of :meth:`UltraStore.begin_reembed`."""
+        """Postgres twin of :meth:`UltraStore.begin_reembed` — including its
+        idempotency: a second call for the same target keeps the running
+        rebuild instead of restarting it."""
         pinned_model, pinned_dim = await self._pinned_space()
         same_space = pinned_model == model and (dim is None or pinned_dim == dim)
         if pinned_model is None or pinned_dim is None or same_space:
             await self.abort_reembed()
             return False
+        pending_model, pending_dim = await self._pending_space()
+        if pending_model == model and (
+            dim is None or pending_dim is None or pending_dim == dim
+        ):
+            log.info(
+                "UltraWiki: a rebuild into %r is already running — keeping its "
+                "progress instead of restarting it",
+                model,
+            )
+            return True
         async with self._txn() as conn:
             await conn.execute(
                 "DELETE FROM uw_embeddings WHERE model != %s OR dim != %s",
@@ -3513,8 +3708,28 @@ class PostgresStore:
                     (META_PENDING_EMBED_DIM, str(int(dim)), str(int(dim))),
                 )
             await conn.execute(
+                "UPDATE uw_items SET reembed_pending = 0 WHERE reembed_pending != 0"
+            )
+            cur = await conn.execute(
+                "UPDATE uw_items SET reembed_pending = 1"
+                " WHERE deleted_at IS NULL AND state != %s"
+                "   AND (state IN (%s, %s)"
+                "        OR EXISTS (SELECT 1 FROM uw_documents d"
+                "                   JOIN uw_embeddings e ON e.document_id = d.id"
+                "                   WHERE d.item_id = uw_items.id"
+                "                     AND e.model = %s AND e.dim = %s))",
+                (
+                    ItemState.FAILED.value,
+                    ItemState.EMBEDDED.value,
+                    ItemState.DISTILLED.value,
+                    pinned_model,
+                    pinned_dim,
+                ),
+            )
+            flagged = max(0, int(getattr(cur, "rowcount", 0) or 0))
+            await conn.execute(
                 "UPDATE uw_items SET state = %s, updated_at = %s"
-                " WHERE state IN (%s, %s)",
+                " WHERE state IN (%s, %s) AND deleted_at IS NULL",
                 (
                     ItemState.KEYWORD_INDEXED.value,
                     _iso_utc(),
@@ -3522,6 +3737,17 @@ class PostgresStore:
                     ItemState.DISTILLED.value,
                 ),
             )
+            await conn.execute(
+                "INSERT INTO uw_meta (key, value) VALUES (%s, %s)"
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (META_REEMBED_TOTAL, str(flagged), str(flagged)),
+            )
+        log.info(
+            "UltraWiki: rebuilding the vector space in %r — %d item(s) moved to "
+            "the front of the embed queue",
+            model,
+            flagged,
+        )
         return True
 
     async def abort_reembed(self) -> bool:
@@ -3537,26 +3763,25 @@ class PostgresStore:
                     (pinned_model, pinned_dim),
                 )
             await conn.execute(
-                "DELETE FROM uw_meta WHERE key IN (%s, %s)",
-                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (%s, %s, %s)",
+                (
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
+                ),
+            )
+            await conn.execute(
+                "UPDATE uw_items SET reembed_pending = 0 WHERE reembed_pending != 0"
             )
         return True
 
-    async def _shadow_gap(
-        self, conn: Any, active: tuple[str, int], pending: tuple[str, int]
-    ) -> int:
-        """Postgres twin of :meth:`UltraStore._shadow_gap`."""
+    async def _reembed_remaining(self, conn: Any) -> int:
+        """Postgres twin of :meth:`UltraStore._reembed_remaining`."""
         row = await self._fetchone(
             conn,
-            "SELECT count(*) AS n FROM uw_embeddings a"
-            " JOIN uw_documents d ON d.id = a.document_id"
-            " JOIN uw_items i ON i.id = d.item_id"
-            " WHERE a.model = %s AND a.dim = %s"
-            "   AND i.deleted_at IS NULL AND i.state != %s"
-            "   AND NOT EXISTS (SELECT 1 FROM uw_embeddings p"
-            "                   WHERE p.document_id = a.document_id"
-            "                     AND p.model = %s AND p.dim = %s)",
-            (*active, ItemState.FAILED.value, *pending),
+            "SELECT count(*) AS n FROM uw_items"
+            " WHERE reembed_pending = 1 AND deleted_at IS NULL AND state != %s",
+            (ItemState.FAILED.value,),
         )
         return 0 if row is None else int(row["n"])
 
@@ -3569,10 +3794,7 @@ class PostgresStore:
         if active_model is None or active_dim is None:
             return False
         conn = await self._ensure_open()
-        gap = await self._shadow_gap(
-            conn, (active_model, active_dim), (pending_model, pending_dim)
-        )
-        if gap:
+        if await self._reembed_remaining(conn):
             return False
         async with self._txn() as txn:
             await txn.execute(
@@ -3590,8 +3812,12 @@ class PostgresStore:
                 (META_EMBED_DIM, str(pending_dim), str(pending_dim)),
             )
             await txn.execute(
-                "DELETE FROM uw_meta WHERE key IN (%s, %s)",
-                (META_PENDING_EMBED_MODEL, META_PENDING_EMBED_DIM),
+                "DELETE FROM uw_meta WHERE key IN (%s, %s, %s)",
+                (
+                    META_PENDING_EMBED_MODEL,
+                    META_PENDING_EMBED_DIM,
+                    META_REEMBED_TOTAL,
+                ),
             )
             # Derived index: dropping it costs a local rebuild, not a re-embed.
             await txn.execute("DROP TABLE IF EXISTS uw_vec")
@@ -3608,35 +3834,20 @@ class PostgresStore:
 
     async def reembed_status(self) -> dict[str, Any]:
         """Postgres twin of :meth:`UltraStore.reembed_status`."""
-        pending_model, pending_dim = await self._pending_space()
+        pending_model, _pending_dim = await self._pending_space()
         if pending_model is None:
             return {}
-        active_model, active_dim = await self._pinned_space()
-        if active_model is None or active_dim is None:
-            return {"model": pending_model, "done": 0, "total": 0}
+        active_model, _active_dim = await self._pinned_space()
         conn = await self._ensure_open()
-        row = await self._fetchone(
-            conn,
-            "SELECT count(*) AS n FROM uw_embeddings a"
-            " JOIN uw_documents d ON d.id = a.document_id"
-            " JOIN uw_items i ON i.id = d.item_id"
-            " WHERE a.model = %s AND a.dim = %s"
-            "   AND i.deleted_at IS NULL AND i.state != %s",
-            (active_model, active_dim, ItemState.FAILED.value),
-        )
-        total = 0 if row is None else int(row["n"])
-        gap = (
-            total
-            if pending_dim is None
-            else await self._shadow_gap(
-                conn, (active_model, active_dim), (pending_model, pending_dim)
-            )
-        )
+        remaining = await self._reembed_remaining(conn)
+        total_raw = await self.get_meta(META_REEMBED_TOTAL)
+        total = int(total_raw) if total_raw else remaining
         return {
             "model": pending_model,
-            "done": max(0, total - gap),
+            "done": max(0, total - remaining),
             "total": total,
-            "active_model": active_model,
+            "remaining": remaining,
+            "active_model": active_model or "",
         }
 
     # -- search legs ---------------------------------------------------------

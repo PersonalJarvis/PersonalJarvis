@@ -365,3 +365,41 @@ def test_the_checklist_never_raises_on_a_partial_status(status_kwargs):
     for check in health["checks"]:
         assert check["title"].strip()
         assert check["detail"].strip()
+
+
+def test_a_rebuilding_vector_leg_is_not_reported_as_working_search():
+    """The health row that lied for the whole length of a model switch.
+
+    The leg probe is a CREDENTIAL check by contract (AP-21) and stays green
+    during a rebuild, while the ANN index still mirrors the space the store is
+    pinned to and the query is already embedded with the NEW model — so every
+    semantic query is refused on a dimension mismatch. The checklist printed
+    "Both exact words and meaning are searchable" throughout.
+    ``ultrawiki_routes._apply_reembed_to_legs`` is what turns the leg off; this
+    pins the consequence the user actually reads.
+    """
+    from jarvis.ui.web.ultrawiki_routes import _apply_reembed_to_legs
+
+    legs = _apply_reembed_to_legs(
+        {
+            "keyword": {"available": True},
+            "vector": {"available": True, "backend": "ollama", "model": "bge-m3"},
+        },
+        {"model": "bge-m3", "done": 300, "total": 4712},
+    )
+    assert legs["vector"]["available"] is False
+    assert legs["vector"]["rebuilding"] is True
+    assert "300 of 4712" in legs["vector"]["reason"]
+
+    check = _check(build_health(_status(search_legs=legs), []), "search")
+    assert check["state"] == "attention"
+    assert "rebuilding" in check["detail"]
+
+
+def test_no_rebuild_leaves_the_vector_leg_exactly_as_probed():
+    """The steady state must not pay for the rebuild path."""
+    from jarvis.ui.web.ultrawiki_routes import _apply_reembed_to_legs
+
+    legs = {"keyword": {"available": True}, "vector": {"available": True}}
+    assert _apply_reembed_to_legs(legs, {}) is legs
+    assert _check(build_health(_status(search_legs=legs), []), "search")["state"] == "ok"

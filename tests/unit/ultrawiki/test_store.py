@@ -410,8 +410,13 @@ async def test_model_switch_keeps_search_alive_until_the_new_space_is_complete(s
     assert reason == ""
     assert [hit.item_id for hit in results] == [item1, item2]
 
-    # First document re-embedded — still not enough to swap.
+    # First ITEM re-embedded — the vector alone is not the signal, because an
+    # item is many passages and the first one landing says nothing about the
+    # rest. `mark_stage_done(EMBEDDED)` is the pipeline's atomic "this item is
+    # done", so that is what releases it and moves the counter.
     await store.store_embedding(doc1, model="model-b", dim=3, vector=[1, 0, 0])
+    assert await store.promote_pending_space() is False
+    await store.mark_stage_done(item1, ItemState.EMBEDDED)
     assert await store.promote_pending_space() is False
     assert await store.get_meta(META_EMBED_MODEL) == "model-a"
     progress = await store.reembed_status()
@@ -421,6 +426,7 @@ async def test_model_switch_keeps_search_alive_until_the_new_space_is_complete(s
 
     # Last one lands: the swap happens, in the NEW geometry.
     await store.store_embedding(doc2, model="model-b", dim=3, vector=[0, 1, 0])
+    await store.mark_stage_done(item2, ItemState.EMBEDDED)
     assert await store.promote_pending_space() is True
     assert await store.get_meta(META_EMBED_MODEL) == "model-b"
     assert await store.get_meta(META_EMBED_DIM) == "3"
@@ -1282,3 +1288,140 @@ async def test_additive_columns_are_added_to_a_pre_existing_database(tmp_path):
 
     assert source["last_notice"] is None
     assert state["last_new"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Model switch — the re-embed backlog is scheduled FIRST
+# ---------------------------------------------------------------------------
+
+
+async def test_reembed_backlog_is_claimed_before_the_ingest_backlog(store):
+    """The fix for a rebuild that never finished.
+
+    Claim order is newest-first, which is right for ingest and catastrophic
+    for a re-embed: the items a model switch invalidates are by definition the
+    OLDEST in the store, so they were rebuilt only after every never-embedded
+    item. On a real corpus (4 712 items to rebuild behind 231 000 fresh ones)
+    that meant the vector space could not be promoted for days, the progress
+    meter read 0 %, and semantic search stayed on the old model the whole time.
+    """
+    await add_source(store)
+    # An old item that already carries a vector...
+    old_item, old_doc = await _seed_embedded_item(store, 0)
+    await store.store_embedding(old_doc, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await store.mark_stage_done(old_item, ItemState.EMBEDDED)
+    # ...and a newer one that has never been embedded. Newest-first alone
+    # would serve this one first and leave the rebuild waiting behind it.
+    await store.upsert_items("src1", [make_item(500)])
+    fresh = next(
+        c
+        for c in await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=10)
+        if c["external_id"] == "ext-0500"
+    )
+    await index_keyword(store, fresh)
+
+    assert await store.begin_reembed("model-b") is True
+    claimed = await store.claim_batch(ItemState.EMBEDDED, limit=10)
+    assert [row["id"] for row in claimed][0] == old_item
+    assert {row["id"] for row in claimed} == {old_item, fresh["id"]}
+
+    status = await store.reembed_status()
+    assert (status["done"], status["total"], status["remaining"]) == (0, 1, 1)
+
+
+async def test_reembed_progress_moves_while_the_passage_set_changes(store):
+    """Progress must survive the case that made the old measure unusable.
+
+    Re-embedding an item whose chunking changed REPLACES its documents, and
+    ``uw_embeddings`` cascades — so the old vectors leave with the old rows and
+    no document ever holds both spaces. A measure defined over those documents
+    reads 0 % until the live space has been destroyed row by row; counting the
+    flagged items instead moves with the actual work.
+    """
+    await add_source(store)
+    item_id, doc_id = await _seed_embedded_item(store, 0)
+    await store.store_embedding(doc_id, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+
+    assert await store.begin_reembed("model-b") is True
+    assert (await store.reembed_status())["done"] == 0
+
+    # The rebuild splits the item into two passages: new rows, new ids, and
+    # the old vector cascades away with the document it belonged to.
+    chunks = [
+        SimpleNamespace(index=0, text="passage one", char_start=0, char_end=11),
+        SimpleNamespace(index=1, text="passage two", char_start=11, char_end=22),
+    ]
+    new_ids = await store.replace_documents(item_id, DocType.RAW, chunks)
+    assert doc_id not in new_ids
+    for new_id in new_ids:
+        await store.store_embedding(new_id, model="model-b", dim=3, vector=[1, 0, 0])
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+
+    status = await store.reembed_status()
+    assert (status["done"], status["total"]) == (1, 1)
+    assert await store.promote_pending_space() is True
+    assert await store.get_meta(META_EMBED_MODEL) == "model-b"
+
+
+async def test_begin_reembed_is_idempotent_for_the_same_target(store):
+    """A second settings save must not throw the rebuild away.
+
+    ``begin_reembed`` opens by deleting every vector outside the ACTIVE space
+    — the half-built shadow included — and re-demotes the corpus. Running that
+    body again for a target that is already being built discards hours of
+    provider time for a request that changed nothing.
+    """
+    await add_source(store)
+    item_id, doc_id = await _seed_embedded_item(store, 0)
+    await store.store_embedding(doc_id, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+    await store.begin_reembed("model-b")
+    await store.store_embedding(doc_id, model="model-b", dim=3, vector=[1, 0, 0])
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+
+    assert await store.begin_reembed("model-b") is True
+
+    conn = await store._ensure_open()  # noqa: SLF001 — the assertion is about rows
+    cur = await conn.execute(
+        "SELECT count(*) FROM uw_embeddings WHERE model = 'model-b'"
+    )
+    assert (await cur.fetchone())[0] == 1  # the shadow vector survived
+    await cur.close()
+    status = await store.reembed_status()
+    assert (status["done"], status["total"]) == (1, 1)
+
+
+async def test_a_rebuild_started_by_an_older_build_is_adopted_on_open(tmp_path):
+    """Installs that switched the model before the priority lane existed.
+
+    They sit on a pending pin, a demoted corpus and no way to tell the two
+    backlogs apart. The set is reconstructible exactly — an item still holding
+    a vector in the ACTIVE space is one the switch invalidated — so the first
+    open under the new build adopts the rebuild instead of stranding it.
+    """
+    import aiosqlite
+
+    db_path = tmp_path / "ultrawiki.db"
+    seeded = UltraStore(db_path)
+    await add_source(seeded)
+    item_id, doc_id = await _seed_embedded_item(seeded, 0)
+    await seeded.store_embedding(doc_id, model="model-a", dim=4, vector=[1, 0, 0, 0])
+    await seeded.begin_reembed("model-b")
+    await seeded.close()
+
+    # Rewind to what the older build left behind: a pending pin, no flags.
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("UPDATE uw_items SET reembed_pending = 0")
+        await conn.execute("DELETE FROM uw_meta WHERE key = 'reembed_total'")
+        await conn.commit()
+
+    adopted = UltraStore(db_path)
+    try:
+        status = await adopted.reembed_status()
+        claimed = await adopted.claim_batch(ItemState.EMBEDDED, limit=10)
+    finally:
+        await adopted.close()
+
+    assert (status["done"], status["total"]) == (0, 1)
+    assert [row["id"] for row in claimed] == [item_id]

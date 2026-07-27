@@ -3330,6 +3330,24 @@
     "remove": "Eliminar"
   },
   "agentic_grid": {
+    "continue": {
+      "button": "Continuar",
+      "hint": "Comprueba qué sesiones de programación se interrumpieron y pídeles que sigan.",
+      "title": "Sesiones de programación interrumpidas",
+      "description": "Estos paneles volvieron con su conversación pero nunca supieron qué hacer a continuación: reiniciar la aplicación detiene a un agente a mitad de tarea, y una CLI reanudada espera en su línea de entrada.",
+      "none": "No se interrumpió nada: todos los paneles han recibido una instrucción desde que arrancaron.",
+      "one": "Continuar",
+      "all": "Continuar todos ({0})",
+      "close": "Cerrar",
+      "last_task": "Última petición: {0}",
+      "no_task": "Su última instrucción se escribió directamente en el panel, así que aquí no hay copia.",
+      "summary_one": "Se pedirá a 1 panel que continúe.",
+      "summary_many": "Se pedirá a {0} paneles que continúen.",
+      "summary_blocked": "{0} no se pueden continuar hasta que sus agentes vuelvan a ejecutarse.",
+      "result_continued": "{0} panel(es) continúan: {1}.",
+      "result_unconfirmed": "Revisa estos paneles tú mismo: la instrucción se escribió pero no se vio enviarse: {0}.",
+      "result_failed": "No se pudieron continuar: {0}."
+    },
     "selection": {
       "start": "Seleccionar terminales",
       "finish": "Terminar selección",
