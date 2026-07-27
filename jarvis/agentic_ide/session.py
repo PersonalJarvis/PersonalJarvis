@@ -196,6 +196,14 @@ COLD_START_LIMIT = max(2, (os.cpu_count() or 4) // 4)
 # enough to stagger, short enough that nobody watches a spinner for it.
 COLD_START_SETTLE_S = 1.2
 
+# How long a deferred "carry on" waits after its pane's process appears.
+#
+# The process existing is not the same as its prompt box being on screen: a
+# coding CLI spends a second or two loading, and text typed into that window is
+# swallowed whole rather than queued (measured on a real Codex — see
+# `_await_arrival`). Long enough to clear that boot burst, short enough that
+# nobody watches a pane sit there.
+CONTINUE_AFTER_START_S = 2.5
 
 # How long the nudged window size is held before it is put back (see
 # ``_nudge_repaint``). A PTY carries one size, not a queue of them: set twice
@@ -550,12 +558,22 @@ class Terminal:
     # CLI sits at its prompt waiting rather than carrying on by itself — so the
     # work simply stops, silently, and looks exactly like a pane that finished.
     #
-    # Set only where a process is SPAWNED onto an existing conversation (see
-    # `attach`), and cleared by anything that counts as "somebody is driving
-    # this pane again": a prompt from Jarvis, or a line the user typed into the
-    # pane themselves. Never persisted — it is a fact about the process that is
-    # running now, not about the workspace.
+    # Raised where a restore establishes that this pane's conversation really
+    # exists, and again where a process is SPAWNED onto one (see `attach`, which
+    # also clears it when a resume failed and the pane came back empty). Cleared
+    # by anything that counts as "somebody is driving this pane again": a prompt
+    # from Jarvis, or a line the user typed into the pane themselves. Never
+    # persisted — it describes the pane on screen, not the workspace on disk.
     continuation_pending: bool = False
+    # "Continue this one as soon as it can be typed into."
+    #
+    # Cold starts are staggered (COLD_START_LIMIT), so in a workspace of a dozen
+    # panes most are still waiting for a slot when the user presses Continue.
+    # Sending only to the ones that happen to be up already is what made the
+    # button look like it skipped terminals; refusing them would be the same
+    # answer worn differently. So the wish is REMEMBERED here and spent by
+    # `attach` the moment that pane's agent exists.
+    continue_when_ready: bool = False
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -1192,6 +1210,24 @@ class Registry:
             )
             for index, entry in enumerate(space.terminals)
         ]
+        # Which of them will come back mid-task, decided HERE rather than when
+        # each pane's agent happens to start.
+        #
+        # **The bug this fixes.** `continuation_pending` used to be raised in
+        # `attach`, which is the moment a pane's process is spawned — and cold
+        # starts are deliberately staggered (see COLD_START_LIMIT), so in a
+        # workspace of a dozen panes most of them are still `pending` seconds
+        # after the grid appears. Anybody pressing "Continue" in that window got
+        # the handful that had started and silently no others, which is exactly
+        # the "it skips terminals that should have carried on" report.
+        #
+        # A restored pane's answer does not depend on its process at all: it
+        # depends on whether the coding CLI's history really holds the
+        # conversation the handle points at. That is knowable now, so it is
+        # answered now — one thread hop for the whole workspace, since each
+        # check is a filename lookup. `attach` still corrects it either way when
+        # the process really starts (a resume that fails clears it).
+        await asyncio.to_thread(_mark_restored_continuations, terminals)
         # A snapshot remembers the call-signs each workspace had. Another one may
         # hold them now, and two panes answering to one name would make every
         # spoken instruction ambiguous — so a collision is renamed here. Only the
@@ -1730,8 +1766,48 @@ class Registry:
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
             self._schedule_lookup(session, term, session.folder, term.started_at)
+        if term.continue_when_ready:
+            # Somebody pressed "Continue" while this pane was still waiting for
+            # a cold-start slot. The wish outlives the wait — see
+            # `continue_when_ready` — and is spent HERE, once the agent exists
+            # and can be typed into. As a task, because the pane's socket is
+            # waiting on this call: the nudge itself watches the pane's screen
+            # for a few seconds, and holding the attach open for that would
+            # leave the terminal blank while it ran.
+            term.continue_when_ready = False
+            self._schedule_continue(session, term)
         await self._persist()
         return term
+
+    def _schedule_continue(self, session: Session, term: Terminal) -> None:
+        """Send the deferred "carry on" to a pane that has just come up.
+
+        Kept on the session's own task set, like the conversation-id lookups, so
+        closing that workspace cancels it rather than leaving a nudge in flight
+        for a pane that no longer exists.
+        """
+        from .interrupted import CONTINUE_PROMPT
+
+        async def _nudge() -> None:
+            try:
+                # The agent's CLI needs a moment after its process exists before
+                # its prompt box is on screen; typing into the boot sequence is
+                # how a paste gets swallowed whole (see `_await_arrival`, which
+                # then waits for text that never appears).
+                await asyncio.sleep(CONTINUE_AFTER_START_S)
+                await self.send_prompt(term.name, CONTINUE_PROMPT)
+            except SessionError as exc:
+                logger.warning(
+                    "Agentic IDE: {} came up but could not be continued: {}", term.name, exc
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a nudge must not kill the pane
+                logger.warning("Agentic IDE: deferred continue for {} failed: {}", term.name, exc)
+
+        task = asyncio.create_task(_nudge())
+        session.lookups.add(task)
+        task.add_done_callback(session.lookups.discard)
 
     def _prepare_spawn(self, term: Terminal, folder: str) -> dict[str, str] | None:
         """Everything this pane's agent needs on disk, then its environment.
@@ -2403,6 +2479,32 @@ class Registry:
             return SessionError("No Agentic-IDE session is running.")
         known = ", ".join(term.name for s in self._sessions.values() for term in s.terminals)
         return SessionError(f"No terminal called {wanted!r}. Running: {known or 'none'}.")
+
+
+def _mark_restored_continuations(terminals: list[Terminal]) -> None:
+    """Flag the restored panes that will come back in the middle of a job.
+
+    Runs off the event loop (each check stats the coding CLI's history) and
+    never raises: a pane whose history cannot be read is left unflagged, which
+    costs an offer to continue it and nothing else.
+
+    Holding a handle is not the same as having a conversation — a pane that was
+    opened and never used holds an id that points at nothing — so this asks the
+    CLI's own history, exactly as the resume offer does.
+    """
+    for term in terminals:
+        if term.resume is None or not accepts_prompts(term.agent):
+            continue
+        try:
+            term.continuation_pending = has_conversation(
+                term.agent, term.resume, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - a restore must never fail on this
+            logger.debug(
+                "Agentic IDE: could not tell whether {} has work to continue: {}",
+                term.name,
+                exc,
+            )
 
 
 def terminals_added_event(session: Session, created: list[Terminal], *, source_layer: str) -> Any:

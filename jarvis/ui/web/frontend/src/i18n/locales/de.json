@@ -3366,7 +3366,18 @@
       "summary_blocked": "{0} können erst fortgesetzt werden, wenn ihre Agenten wieder laufen.",
       "result_continued": "{0} Pane(s) machen weiter: {1}.",
       "result_unconfirmed": "Diese Panes bitte selbst prüfen — die Anweisung wurde eingetippt, aber nicht sichtbar abgeschickt: {0}.",
-      "result_failed": "Konnten nicht fortgesetzt werden: {0}."
+      "result_failed": "Konnten nicht fortgesetzt werden: {0}.",
+      "sending": "Wird gesendet …",
+      "starting": "Der Agent startet noch — er wird fortgesetzt, sobald er läuft.",
+      "result_queued": "{0} starten noch; sie machen weiter, sobald sie laufen: {1}."
+    },
+    "arrange": {
+      "carrying": "auf ein Terminal ziehen",
+      "swap": "Mit {0} tauschen",
+      "left": "Links von {0}",
+      "right": "Rechts von {0}",
+      "above": "Über {0}",
+      "below": "Unter {0}"
     },
     "selection": {
       "start": "Terminals auswählen",

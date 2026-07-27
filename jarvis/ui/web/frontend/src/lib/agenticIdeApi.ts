@@ -288,8 +288,21 @@ export interface InterruptedPane {
   agent: string;
   display_name: string;
   status: string;
-  /** False when its agent is not running: an instruction cannot be typed into it. */
+  /**
+   * Will a "continue" reach it? False only when its agent is DEAD — a pane that
+   * is merely still starting IS continuable, the instruction just waits for it.
+   */
   continuable: boolean;
+  /**
+   * Its agent is still coming up.
+   *
+   * Cold starts are staggered on purpose, so most of a big workspace is in this
+   * state for the first seconds after it appears — which is exactly when this
+   * button gets pressed. Those panes are queued, never skipped.
+   */
+  starting?: boolean;
+  /** A "continue" is already on its way to this pane. */
+  queued?: boolean;
   /** Why not, in one sentence. Empty when it can be continued. */
   blocked_reason: string;
   /** What it was last asked to do. Empty when that instruction was typed in by hand. */
@@ -310,6 +323,11 @@ export interface ContinueResult {
   ok: boolean;
   /** Panes that accepted the instruction and started. */
   continued: string[];
+  /**
+   * Panes whose agent had not started yet. The instruction is held and delivered
+   * when each comes up — "shortly", never "done".
+   */
+  queued: string[];
   /**
    * Panes the text was typed into without a confirmed submit — the prompt may be
    * sitting in the input box. Reporting these as running is the one wrong thing
@@ -744,6 +762,7 @@ export async function continueInterrupted(
   return {
     ok: body.ok ?? false,
     continued: body.continued ?? [],
+    queued: body.queued ?? [],
     unconfirmed: body.unconfirmed ?? [],
     failed: body.failed ?? [],
     remaining: body.remaining ?? 0,

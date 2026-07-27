@@ -67,6 +67,7 @@ function result(over: Partial<ContinueResult> = {}): ContinueResult {
   return {
     ok: true,
     continued: [],
+    queued: [],
     unconfirmed: [],
     failed: [],
     remaining: 0,
@@ -202,6 +203,53 @@ describe("ContinueInterrupted", () => {
     fireEvent.click(screen.getByTestId("continue-interrupted-all"));
 
     await waitFor(() => expect(screen.queryByTestId("continue-interrupted")).toBeNull());
+  });
+
+  it("cannot be pressed twice while the first instruction is in flight", async () => {
+    // A delivery takes seconds — the submit is verified against the pane's own
+    // screen — and a live button in that window is a button somebody presses
+    // again. Two presses used to mean the agent got "continue" twice.
+    asked().mockResolvedValue(offer([pane()]));
+    let release: (value: ContinueResult) => void = () => {};
+    told().mockReturnValue(
+      new Promise<ContinueResult>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    await openDialog();
+    fireEvent.click(screen.getByTestId("continue-interrupted-all"));
+
+    await waitFor(() => expect(disabled("continue-interrupted-all")).toBe(true));
+    expect(disabled("continue-pane-Alex")).toBe(true);
+    fireEvent.click(screen.getByTestId("continue-interrupted-all"));
+    fireEvent.click(screen.getByTestId("continue-pane-Alex"));
+
+    expect(told()).toHaveBeenCalledTimes(1);
+    release(result({ continued: ["Alex"] }));
+  });
+
+  it("says a still-starting pane will carry on, rather than claiming it did", async () => {
+    asked().mockResolvedValue(offer([pane({ starting: true, status: "pending" })]));
+    told().mockResolvedValue(result({ queued: ["Alex"], remaining: 1 }));
+
+    await openDialog();
+    expect(screen.getByTestId("interrupted-starting-Alex")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("continue-interrupted-all"));
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalled());
+    const [, message] = pushToast.mock.calls.at(-1) as [string, string];
+    expect(message).toContain("Alex");
+    expect(message).not.toContain("carrying on");
+  });
+
+  it("leaves a pane alone once its continue is already queued", async () => {
+    // The backend is holding one for it. A second press would queue a second.
+    asked().mockResolvedValue(offer([pane({ starting: true, queued: true })]));
+
+    await openDialog();
+
+    expect(disabled("continue-pane-Alex")).toBe(true);
   });
 
   it("keeps its last count when the check fails", async () => {
