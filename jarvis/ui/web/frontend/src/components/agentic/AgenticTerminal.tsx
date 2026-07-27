@@ -544,7 +544,22 @@ export function AgenticTerminal({
         onClose={onClose}
         splitDisabled={splitDisabled}
       />
-      <div ref={containerRef} className="flex-1 overflow-hidden px-2 pb-1 pt-1" />
+      {/*
+        Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
+        host's border-box but does not subtract padding on that host, so putting
+        the inset there made it report one row more than the pane could show.
+        The last terminal line was consequently clipped after a vertical resize.
+
+        `min-h-0` is equally load-bearing: this is a shrinking flex child, and
+        xterm's canvas must not become its implicit minimum height.
+      */}
+      <div className="min-h-0 flex-1 overflow-hidden px-2 pb-1 pt-1">
+        <div
+          ref={containerRef}
+          data-testid={`agentic-terminal-host-${name}`}
+          className="h-full min-h-0 w-full overflow-hidden"
+        />
+      </div>
       {(dragging || attaching) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
           <div className="flex items-center gap-2 rounded-xl border border-primary/50 bg-card px-4 py-2.5 text-sm shadow-lg">
