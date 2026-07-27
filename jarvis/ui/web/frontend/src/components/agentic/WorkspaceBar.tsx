@@ -19,11 +19,17 @@
  *
  * Closing is deliberately a two-step: the X reveals a confirm, because it is the
  * one control in this bar that stops work — every other one is reversible.
+ *
+ * The tabs are also file targets. Dropping a screenshot on a workspace tab is
+ * the natural way to say "this belongs to THAT project" while looking at
+ * another one — it addresses the workspace by name instead of making the user
+ * switch first, drop second, and remember which pane had focus.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, FolderGit2, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WorkspaceCard } from "@/lib/agenticIdeApi";
+import { dragCarriesFiles, extractPaneDrop, type PaneDropPayload } from "./paneDrop";
 
 interface WorkspaceBarProps {
   workspaces: WorkspaceCard[];
@@ -36,8 +42,28 @@ interface WorkspaceBarProps {
   onAdd: () => void;
   onRename: (id: string, name: string) => Promise<boolean>;
   onClose: (id: string) => void;
+  /**
+   * A file was dropped on a workspace TAB. Left out, the tabs refuse drags and
+   * the cursor says so rather than accepting a file nothing would do anything
+   * with.
+   */
+  onDropFiles?: (workspaceId: string, payload: PaneDropPayload) => void;
   /** Disable every control while a switch or a close is in flight. */
   busy?: boolean;
+  /**
+   * The workspace's own controls, pinned to the right of this same row.
+   *
+   * They used to sit in a second bar directly underneath, which cost a whole
+   * line of the window to hold half a dozen buttons — in a view whose entire
+   * job is showing terminal output. The tabs rarely fill their half of the row,
+   * so the controls ride along in the space that was already there.
+   */
+  actions?: React.ReactNode;
+  /**
+   * Rendered INSIDE another bar rather than as its own — drops the frame (its
+   * border and outer padding) so the host row draws exactly one line.
+   */
+  embedded?: boolean;
 }
 
 export function WorkspaceBar({
@@ -49,14 +75,69 @@ export function WorkspaceBar({
   onAdd,
   onRename,
   onClose,
+  onDropFiles,
   busy = false,
+  actions,
+  embedded = false,
 }: WorkspaceBarProps) {
   // Which tab has its close button armed. One at a time, and cleared on every
   // other interaction, so an armed X can never be clicked by accident later.
   const [confirming, setConfirming] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Which tab a file drag is currently over. One at a time — a drag has one
+  // position — so this is an id rather than a set.
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const full = workspaces.length >= maxWorkspaces;
+
+  // A drag that ends anywhere else owes this bar no `dragleave`, and a tab left
+  // highlighted over a workspace nobody dropped on is a lie about what will
+  // happen next. Watched globally, and only while something is actually armed.
+  useEffect(() => {
+    if (dropTarget === null) return;
+    const clear = () => setDropTarget(null);
+    window.addEventListener("drop", clear);
+    window.addEventListener("dragend", clear);
+    return () => {
+      window.removeEventListener("drop", clear);
+      window.removeEventListener("dragend", clear);
+    };
+  }, [dropTarget]);
+
+  /** Drag-drop handlers for one tab. Empty when the owner takes no drops. */
+  const dropHandlersFor = (workspace: WorkspaceCard) => {
+    if (!onDropFiles) return {};
+    return {
+      onDragEnter: (event: React.DragEvent) => {
+        // Claimed even for payloads this tab will not take: the default action
+        // for a dropped link is to NAVIGATE, which would replace the whole IDE
+        // — every running agent in it with it.
+        event.preventDefault();
+        if (!dragCarriesFiles(event.dataTransfer)) return;
+        setDropTarget(workspace.id);
+      },
+      onDragOver: (event: React.DragEvent) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = dragCarriesFiles(event.dataTransfer)
+          ? "copy"
+          : "none";
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        // A drag crossing the tab's own children fires leave for each of them;
+        // only a leave that actually exits the tab counts.
+        const next = event.relatedTarget as Node | null;
+        if (next && event.currentTarget.contains(next)) return;
+        setDropTarget((current) => (current === workspace.id ? null : current));
+      },
+      onDrop: (event: React.DragEvent) => {
+        event.preventDefault();
+        setDropTarget(null);
+        if (!dragCarriesFiles(event.dataTransfer)) return;
+        // Read SYNCHRONOUSLY — a DataTransfer empties the moment this returns.
+        onDropFiles(workspace.id, extractPaneDrop(event.dataTransfer));
+      },
+    };
+  };
 
   const beginRename = (workspace: WorkspaceCard) => {
     setConfirming(null);
@@ -72,29 +153,45 @@ export function WorkspaceBar({
     }
   };
 
-  // Nothing open and nothing to add to: the wizard IS the screen, and an empty
-  // bar above it would be furniture.
-  if (workspaces.length === 0) return null;
+  // Nothing open, nothing to add to and no controls to carry: the wizard IS the
+  // screen, and an empty bar above it would be furniture.
+  if (workspaces.length === 0 && !actions) return null;
 
   return (
     <div
-      data-testid="workspace-bar"
-      className="flex items-center gap-1 overflow-x-auto border-b border-border px-3 py-1.5 scrollbar-jarvis"
-      role="tablist"
-      aria-label="Open workspaces"
+      className={cn(
+        "flex items-center gap-2",
+        embedded ? "min-w-0 flex-1" : "border-b border-border px-2 py-1",
+      )}
     >
+      <div
+        data-testid="workspace-bar"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-jarvis"
+        role="tablist"
+        aria-label="Open workspaces"
+      >
       {workspaces.map((workspace) => {
         const selected = !addingNew && workspace.id === activeId;
         const armed = confirming === workspace.id;
         const renaming = editing === workspace.id;
+        const dropping = dropTarget === workspace.id;
         return (
           <div
             key={workspace.id}
+            data-testid={`workspace-tab-drop-${workspace.id}`}
+            {...dropHandlersFor(workspace)}
+            title={
+              onDropFiles
+                ? `${workspace.folder} — drop a screenshot or document here to send it to this workspace`
+                : workspace.folder
+            }
             className={cn(
-              "group/tab flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors",
-              selected
-                ? "border-primary/50 bg-primary/10"
-                : "border-transparent hover:border-border hover:bg-muted/40",
+              "group/tab flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors",
+              dropping
+                ? "border-primary border-dashed bg-primary/15"
+                : selected
+                  ? "border-primary/50 bg-primary/10"
+                  : "border-transparent hover:border-border hover:bg-muted/40",
             )}
           >
             {renaming ? (
@@ -246,7 +343,7 @@ export function WorkspaceBar({
           onAdd();
         }}
         className={cn(
-          "flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+          "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
           addingNew
             ? "border-primary/50 bg-primary/10 text-primary"
             : "border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
@@ -255,6 +352,16 @@ export function WorkspaceBar({
         <Plus className="h-3.5 w-3.5" />
         New workspace
       </button>
+      </div>
+
+      {actions && (
+        <div
+          data-testid="workspace-bar-actions"
+          className="flex shrink-0 items-center gap-1"
+        >
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

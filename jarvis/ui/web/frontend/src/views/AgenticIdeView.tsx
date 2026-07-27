@@ -47,7 +47,12 @@ import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { ResumeCard } from "@/components/agentic/ResumeCard";
 import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
 import {
+  isEmptyPayload,
+  type PaneDropPayload,
+} from "@/components/agentic/paneDrop";
+import {
   activateWorkspace,
+  attachToTerminal,
   closeWorkspace,
   endIdeSession,
   fetchIdeAgents,
@@ -60,6 +65,7 @@ import {
   startIdeSession,
   type AgentStatus,
   type AgentsResponse,
+  type IdeAccountState,
   type IdeState,
   type ResumeOffer,
   type SessionState,
@@ -120,6 +126,10 @@ export function AgenticIdeView() {
   // these are the others, still running, one click away.
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
   const [maxWorkspaces, setMaxWorkspaces] = useState(6);
+  // Which subscription new terminals open on, per coding CLI. Carried on the
+  // workspace state rather than fetched separately, so the toolbar and the
+  // panes can never disagree about which plan the next one will spend.
+  const [ideAccounts, setIdeAccounts] = useState<IdeAccountState[]>([]);
   /*
    * The wizard is showing for an ADDITIONAL workspace.
    *
@@ -155,6 +165,7 @@ export function AgenticIdeView() {
       setSession(state.session);
       setWorkspaces(state.workspaces ?? []);
       setMaxWorkspaces(state.max_workspaces ?? 6);
+      setIdeAccounts(state.accounts ?? []);
       setFocus(Boolean(state.session?.focus_mode));
       // The backend is the authority on whether a workspace is on screen. It
       // says so by carrying one in `session`, so a fetch that finds one ends
@@ -187,6 +198,9 @@ export function AgenticIdeView() {
     setWorkspaces(state.workspaces ?? []);
     setMaxWorkspaces(state.max_workspaces ?? 6);
     setFocus(Boolean(state.session?.focus_mode));
+    // Absent on a backend that predates the switcher — keeping what we had
+    // beats blanking the toolbar over a field that simply was not sent.
+    if (state.accounts) setIdeAccounts(state.accounts);
   }, []);
 
   useEffect(() => {
@@ -201,6 +215,24 @@ export function AgenticIdeView() {
       .then(setAccounts)
       .catch(() => setAccounts(null));
   }, []);
+
+  /*
+   * A state the workspace's settings panel handed back.
+   *
+   * Same as `applyState`, plus a re-read of the subscription list: that panel
+   * can ADD an account, and the wizard's per-pane picker was loaded once on
+   * mount — without this the next workspace would be offered a list one account
+   * short until the app is reloaded.
+   */
+  const applyStateFromSettings = useCallback(
+    (state: IdeState) => {
+      applyState(state);
+      fetchAgentAccounts()
+        .then(setAccounts)
+        .catch(() => undefined);
+    },
+    [applyState],
+  );
 
   /** The registered subscriptions of one CLI, for the wizard's per-pane picker. */
   const accountsFor = useCallback(
@@ -303,14 +335,23 @@ export function AgenticIdeView() {
   const defaultAgent = installed[0]?.name ?? "claude";
   const maxTerminals = meta?.max_terminals ?? 12;
 
-  // What the grid's split menus offer. Uninstalled CLIs stay in the list but
-  // disabled, so their absence is visible rather than silently missing.
+  // What the grid's split menus offer — every entry the backend registered, so
+  // the coding CLIs and the plain terminal, and anything registered later
+  // without a change here. Uninstalled entries stay in the list but disabled,
+  // so their absence is visible rather than silently missing.
   const splitChoices = useMemo(
     () =>
       agents.map((a) => ({
         name: a.name,
         displayName: a.display_name,
         installed: a.installed,
+        kind: a.kind ?? "cli",
+        // For a plain terminal the useful second line is WHICH shell opens; a
+        // CLI's name already says what it is, so it gets no line of its own.
+        description:
+          a.kind === "shell" && a.version
+            ? `${a.version} — no agent, just a prompt`
+            : (a.description ?? ""),
       })),
     [agents],
   );
@@ -431,6 +472,48 @@ export function AgenticIdeView() {
     }
   };
 
+  /*
+   * A file dropped on a workspace TAB.
+   *
+   * It goes to that workspace's first pane, and the pane types the reference
+   * rather than swallowing it: a tab is a coarse target — it names a project,
+   * not an agent — so the honest reading is "put this in front of the agents
+   * over there", and the user finishes the thought when they switch to it.
+   * That is why this does not analyse or compose: the prompt bar is where a
+   * dropped file becomes part of an instruction, and this is not that.
+   *
+   * Dropping on the tab you are already on is the same gesture, so it is not
+   * special-cased away; switching to the target afterwards is what makes the
+   * result visible rather than something the user has to go looking for.
+   */
+  const dropOnWorkspace = async (id: string, payload: PaneDropPayload) => {
+    if (isEmptyPayload(payload)) return;
+    const label = workspaces.find((w) => w.id === id)?.name ?? "that workspace";
+    try {
+      // Switch FIRST, and not as a courtesy: a workspace card carries no pane
+      // names, so activating it is how the target pane becomes knowable at all.
+      // It also puts the user in front of the result instead of leaving the
+      // file somewhere they would have to go and find.
+      let active = session;
+      if (id !== session?.id || addingNew) {
+        const state = await activateWorkspace(id);
+        applyState(state);
+        setAddingNew(false);
+        setOffer(null);
+        active = state.session;
+      }
+      const pane = active?.terminals[0]?.name;
+      if (!pane) {
+        pushToast("warning", `${label} has no agent running to give the file to.`);
+        return;
+      }
+      const result = await attachToTerminal(pane, payload);
+      pushToast("success", `${result.files.join(", ")} → ${pane} in ${label}.`);
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  };
+
   const startAdding = async () => {
     if (busy) return;
     setBusy(true);
@@ -544,6 +627,11 @@ export function AgenticIdeView() {
    * the wizard is below it. A bar that moved (or vanished while adding one)
    * would leave the user without a way back to the workspaces still running.
    *
+   * With a workspace open it is handed to the grid rather than rendered here,
+   * so the tabs and that workspace's controls share ONE row (see the grid's
+   * `workspaceBar` prop). Same bar, same place on screen — one line instead of
+   * two, which in a view full of terminals is a pane's worth of output.
+   *
    * Pane actions return the updated session, while the compact workspace cards
    * remain the snapshot from the last full-state request. Replace the active
    * card's count from that live session so closing or adding a terminal updates
@@ -554,8 +642,9 @@ export function AgenticIdeView() {
       ? { ...workspace, terminals: session.terminals.length }
       : workspace,
   );
-  const bar = (
+  const renderBar = (embedded: boolean) => (
     <WorkspaceBar
+      embedded={embedded}
       workspaces={barWorkspaces}
       activeId={session?.id ?? null}
       addingNew={addingNew}
@@ -564,6 +653,7 @@ export function AgenticIdeView() {
       onAdd={() => void startAdding()}
       onRename={renameOne}
       onClose={(id) => void closeOne(id)}
+      onDropFiles={(id, payload) => void dropOnWorkspace(id, payload)}
       busy={busy}
     />
   );
@@ -572,7 +662,6 @@ export function AgenticIdeView() {
   if (session && !addingNew) {
     return (
       <div className="flex h-full flex-col">
-        {bar}
         <div className="min-h-0 flex-1">
           {/*
             Keyed by workspace, so switching tabs REPLACES the grid instead of
@@ -584,6 +673,7 @@ export function AgenticIdeView() {
           <AgenticGrid
             key={session.id}
             session={session}
+            workspaceBar={renderBar(true)}
             focusMode={focusMode}
             onToggleFocus={(v) => void toggleFocus(v)}
             onClose={() => void close()}
@@ -591,6 +681,8 @@ export function AgenticIdeView() {
             maxTerminals={maxTerminals}
             agents={splitChoices}
             onSessionChanged={setSession}
+            accounts={ideAccounts}
+            onStateChanged={applyStateFromSettings}
           />
         </div>
         {modeIntroFor === session.id && (
@@ -615,7 +707,7 @@ export function AgenticIdeView() {
 
   return (
     <div className="flex h-full flex-col" ref={shellRef}>
-      {bar}
+      {renderBar(false)}
       <ViewHeader
         icon={<Sparkles className="h-4 w-4 text-primary" />}
         title={

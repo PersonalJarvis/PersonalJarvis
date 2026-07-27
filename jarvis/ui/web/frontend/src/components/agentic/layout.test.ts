@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  GRID_HORIZONTAL_PADDING_PX,
   MAX_PANES_PER_BAND,
   MIN_PANE_WIDTH_PX,
   bandCapacityFor,
@@ -11,15 +12,31 @@ import {
   workspaceBandCapacityFor,
 } from "./layout";
 
+/*
+ * The thresholds are expressed as "content width + the grid's own padding"
+ * rather than as the literal pixel numbers they came to.
+ *
+ * Those literals were what made this file break when the grid was tightened
+ * from 12 px of padding a side to 4 — a purely visual change that has no
+ * business moving a column threshold, and did not: only the OUTER width at
+ * which it is crossed moved, by exactly the padding. Written this way the tests
+ * still pin the real contract (both helpers answer for the same window) and
+ * stop failing over the frame around it.
+ */
+const FOUR_COLUMNS_AT = 4 * MIN_PANE_WIDTH_PX;
+const SIX_COLUMNS_AT = 6 * MIN_PANE_WIDTH_PX;
+
 describe("workspaceBandCapacityFor", () => {
   it("uses the grid content width on both sides of the four-column threshold", () => {
-    expect(workspaceBandCapacityFor(1543)).toBe(3);
-    expect(workspaceBandCapacityFor(1544)).toBe(4);
+    const outer = FOUR_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(workspaceBandCapacityFor(outer - 1)).toBe(3);
+    expect(workspaceBandCapacityFor(outer)).toBe(4);
   });
 
   it("uses the grid content width on both sides of the six-column threshold", () => {
-    expect(workspaceBandCapacityFor(2303)).toBe(5);
-    expect(workspaceBandCapacityFor(2304)).toBe(6);
+    const outer = SIX_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(workspaceBandCapacityFor(outer - 1)).toBe(5);
+    expect(workspaceBandCapacityFor(outer)).toBe(6);
   });
 });
 
@@ -27,14 +44,21 @@ describe("the two width helpers say which width they take", () => {
   it("separates the grid's own content width from the outer width", () => {
     // The defect they exist to prevent: the running grid measures its CONTENT
     // box (padding already excluded) while the wizard measures an unpadded
-    // element. Feeding both to one helper made the grid lay itself out 24 px
-    // narrower than it is, so the preview and the workspace changed column
-    // count at different window widths and the preview looked like a liar.
-    expect(bandCapacityFor(1520)).toBe(4);
-    expect(workspaceBandCapacityFor(1520 + 24)).toBe(4);
+    // element. Feeding both to one helper made the grid lay itself out a
+    // padding's width narrower than it is, so the preview and the workspace
+    // changed column count at different window widths and the preview looked
+    // like a liar.
+    expect(bandCapacityFor(FOUR_COLUMNS_AT)).toBe(4);
+    expect(
+      workspaceBandCapacityFor(FOUR_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX),
+    ).toBe(4);
     // Same physical window, same answer — which is the whole point.
-    expect(bandCapacityFor(1519)).toBe(3);
-    expect(workspaceBandCapacityFor(1519 + 24)).toBe(3);
+    expect(bandCapacityFor(FOUR_COLUMNS_AT - 1)).toBe(3);
+    expect(
+      workspaceBandCapacityFor(
+        FOUR_COLUMNS_AT - 1 + GRID_HORIZONTAL_PADDING_PX,
+      ),
+    ).toBe(3);
   });
 });
 
@@ -73,7 +97,9 @@ describe("widthForOneBand", () => {
   it("names the width at which a count stops wrapping", () => {
     // What the readout tells the user so a maximise cannot turn the preview
     // into a broken promise: eight panes need 8 × 380 px plus the grid padding.
-    expect(widthForOneBand(8)).toBe(8 * MIN_PANE_WIDTH_PX + 24);
+    expect(widthForOneBand(8)).toBe(
+      8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX,
+    );
     // And it agrees with the helper the wizard measures through, rather than
     // being a second opinion about the same threshold.
     expect(workspaceBandCapacityFor(widthForOneBand(8) as number)).toBe(8);

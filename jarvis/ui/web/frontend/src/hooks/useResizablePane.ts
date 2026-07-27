@@ -40,6 +40,15 @@ export interface ResizablePane {
   reset: () => void;
   /** Move the seam by ``delta`` px — the keyboard equivalent of a drag. */
   nudge: (delta: number) => void;
+  /**
+   * Jump straight to ``px``.
+   *
+   * For the controls that name ONE size rather than nudge the current one — a
+   * "show the prompt bar" button, a collapse toggle. Those cannot use `reset`
+   * once the default IS the collapsed size, which is exactly the case for a
+   * pane that starts shut.
+   */
+  resize: (px: number) => void;
 }
 
 /**
@@ -99,6 +108,11 @@ export function useResizablePane({
     [min, max],
   );
 
+  const resize = useCallback(
+    (px: number) => setSize(clampSize(px, min, max)),
+    [min, max],
+  );
+
   // Global pointer listeners are armed only while dragging.
   useEffect(() => {
     if (!isResizing) return;
@@ -137,7 +151,7 @@ export function useResizablePane({
     }
   }, [size, isResizing, storageKey]);
 
-  return { size, isResizing, startResize, reset, nudge };
+  return { size, isResizing, startResize, reset, nudge, resize };
 }
 
 function loadSize(key: string, fallback: number): number {

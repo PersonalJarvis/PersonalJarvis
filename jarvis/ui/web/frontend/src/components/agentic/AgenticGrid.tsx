@@ -99,6 +99,19 @@ interface AgenticGridProps {
   accounts?: IdeAccountState[];
   /** The settings panel changed the workspace state — the owner applies it. */
   onStateChanged?: (state: IdeState) => void;
+  /**
+   * The row of open workspaces, rendered INSIDE this workspace's toolbar.
+   *
+   * It arrives as a node rather than being rendered above the grid because the
+   * two belonged on one line all along: the tabs say which workspace you are
+   * in, the toolbar acts on it, and neither fills a row on its own. Kept apart
+   * they cost two lines of a view whose whole point is terminal output — with a
+   * third above them for the app's own bar, the chrome was taller than a pane's
+   * usable header area on a laptop screen.
+   *
+   * Left out (the wizard, tests) the toolbar simply names the project itself.
+   */
+  workspaceBar?: React.ReactNode;
 }
 
 const FONT_MIN = 10;
@@ -127,10 +140,17 @@ const RECAP_POLL_MS = 5000;
  * Pulled all the way down the bar COLLAPSES to a thin strip instead of
  * vanishing. A control that can be dragged out of existence has no way back —
  * the strip keeps both the seam and a one-click reopen on screen.
+ *
+ * It now STARTS collapsed (see `defaultSize` below), which is the honest default
+ * for what this view is: a wall of running terminals you mostly watch. A 176 px
+ * writing surface held open under twelve panes cost each of them a sixth of
+ * their height for an input box that is empty most of the time — and everything
+ * typed there can be said out loud instead. One drag, one double-click on the
+ * seam, or the strip's own button opens it, and that choice is remembered.
  */
 const COMPOSER_DEFAULT_PX = 176;
 /** Height of the collapsed strip: its reopen button and nothing else. */
-const COMPOSER_COLLAPSED_PX = 34;
+const COMPOSER_COLLAPSED_PX = 28;
 /** Below this dragged height the bar snaps shut rather than half-showing. */
 const COMPOSER_COLLAPSE_AT_PX = 96;
 /** Below this it is too short for the "you can also say this out loud" note. */
@@ -143,6 +163,23 @@ const COMPOSER_HINT_AT_PX = 190;
  * terminal to no columns — the workspace would look frozen rather than small.
  */
 const GRID_RESERVED_PX = 200;
+
+/*
+ * How tightly the panes are packed.
+ *
+ * The first version used `gap-3 p-3`, which put 12 px between neighbours and
+ * another 12 px around the outside. On a workspace of a dozen panes that is
+ * ~60 px of window spent on nothing at all, and — the actual complaint — it
+ * makes the grid read as a scattered set of cards rather than one wall of
+ * terminals, which is what a tiling terminal looks like everywhere else.
+ *
+ * 4 px is enough to keep each pane's own border legible as its edge, and no
+ * more. It is stated as a constant because the horizontal half of it also has
+ * to reach `layout.ts`: the column count is computed from the grid's CONTENT
+ * width, so a padding change the layout module does not know about would make
+ * the wizard's preview and the running grid disagree about how many panes fit.
+ */
+const GRID_GAP_PX = 4;
 
 /*
  * Terminal appearance and text size are remembered, and the appearance follows
@@ -219,6 +256,7 @@ export function AgenticGrid({
   onSessionChanged,
   accounts = [],
   onStateChanged,
+  workspaceBar,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -446,8 +484,11 @@ export function AgenticGrid({
     (frameHeight || COMPOSER_DEFAULT_PX + GRID_RESERVED_PX) - GRID_RESERVED_PX,
   );
   const composer = useResizablePane({
-    storageKey: "jarvis.agenticIde.composerHeight.v1",
-    defaultSize: COMPOSER_DEFAULT_PX,
+    // v2: the default changed from "open at 176 px" to "collapsed", and a key
+    // people already have a value under would have kept the old behaviour for
+    // every existing install — which is precisely who asked for the change.
+    storageKey: "jarvis.agenticIde.composerHeight.v2",
+    defaultSize: COMPOSER_COLLAPSED_PX,
     min: COMPOSER_COLLAPSED_PX,
     max: composerMax,
     axis: "y",
@@ -462,6 +503,20 @@ export function AgenticGrid({
   const composerHeight = composerCollapsed
     ? COMPOSER_COLLAPSED_PX
     : requestedComposer;
+
+  /*
+   * Double-clicking the seam TOGGLES rather than resets.
+   *
+   * `reset` means "back to the default", and the default is now the closed
+   * strip — so wiring the seam to it would give a shut bar a double-click that
+   * visibly does nothing, which reads as a dead control. Toggling keeps one
+   * gesture for both directions, which is what a double-click on a collapsed
+   * splitter does in every editor.
+   */
+  const { resize: resizeComposer } = composer;
+  const toggleComposer = useCallback(() => {
+    resizeComposer(composerCollapsed ? COMPOSER_DEFAULT_PX : COMPOSER_COLLAPSED_PX);
+  }, [composerCollapsed, resizeComposer]);
 
   const perBand = useMemo(() => bandCapacityFor(gridWidth), [gridWidth]);
   const grid = useMemo(
@@ -671,19 +726,41 @@ export function AgenticGrid({
   return (
     <div ref={frameRef} className="relative flex h-full flex-col">
       {/* ---------------------------------------------------------- toolbar */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
-          <span className="font-display text-sm font-semibold">{project.name}</span>
-          {branchLabel && (
-            <span className="chip shrink-0 text-[10px] uppercase tracking-wide">
-              {branchLabel}
+      {/*
+        ONE row: the workspace tabs on the left, this workspace's controls on
+        the right. See the `workspaceBar` prop for why they were merged.
+
+        `flex-nowrap` rather than the old `flex-wrap` is deliberate. Wrapping
+        was what made this bar able to become two or three lines tall on a
+        narrow window — silently taking the height back off the panes. Now the
+        labels drop away at narrow widths (the icons and their hover text stay)
+        and the row keeps its single line whatever happens.
+      */}
+      <div
+        data-testid="agentic-toolbar"
+        className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border px-2 py-1"
+      >
+        {workspaceBar ?? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
+            <span className="truncate font-display text-sm font-semibold">
+              {project.name}
             </span>
-          )}
-          <code className="hidden min-w-0 truncate font-mono text-[11px] text-muted-foreground lg:block">
-            {session.folder}
-          </code>
-        </div>
+          </div>
+        )}
+
+        {/* Which branch the agents are on. It stays even in the merged row —
+            the workspace tab names the folder, not the checkout, and "which
+            branch am I about to let a dozen agents commit to" is not a
+            question worth answering from memory. */}
+        {branchLabel && (
+          <span
+            className="chip hidden shrink-0 text-[10px] uppercase tracking-wide xl:inline-flex"
+            title={session.folder}
+          >
+            {branchLabel}
+          </span>
+        )}
 
         {/* Focus mode — the explicit switch into "Jarvis codes with me here". */}
         <button
@@ -697,24 +774,26 @@ export function AgenticGrid({
               : "Turn on focused coding mode — Jarvis answers inside this workspace until you switch back."
           }
           className={cn(
-            "flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
             focusMode
               ? "border-primary/60 bg-primary/15 text-primary"
               : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
           )}
         >
-          <Brain className="h-4 w-4" />
-          {focusMode ? "Coding mode ON" : "Coding mode OFF"}
+          <Brain className="h-4 w-4 shrink-0" />
+          <span className="hidden lg:inline">
+            {focusMode ? "Coding mode ON" : "Coding mode OFF"}
+          </span>
         </button>
 
-        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border p-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5">
           <button
             type="button"
             aria-label="Light terminals"
             aria-pressed={appearance === "light"}
             onClick={() => setAppearance("light")}
             className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
               appearance === "light" ? "bg-primary/20 text-primary" : "text-muted-foreground",
             )}
           >
@@ -726,7 +805,7 @@ export function AgenticGrid({
             aria-pressed={appearance === "dark"}
             onClick={() => setAppearance("dark")}
             className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
               appearance === "dark" ? "bg-primary/20 text-primary" : "text-muted-foreground",
             )}
           >
@@ -734,12 +813,12 @@ export function AgenticGrid({
           </button>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border p-0.5">
+        <div className="hidden shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5 md:flex">
           <button
             type="button"
             aria-label="Smaller text"
             onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             <Minus className="h-3.5 w-3.5" />
           </button>
@@ -748,7 +827,7 @@ export function AgenticGrid({
             type="button"
             aria-label="Larger text"
             onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -776,16 +855,18 @@ export function AgenticGrid({
           onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
           title={t("agentic_grid.selection.hint")}
           className={cn(
-            "flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
             selectionMode
               ? "border-primary/60 bg-primary/15 text-primary"
               : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
           )}
         >
-          <ListChecks className="h-4 w-4" />
-          {selectionMode
-            ? t("agentic_grid.selection.finish")
-            : t("agentic_grid.selection.start")}
+          <ListChecks className="h-4 w-4 shrink-0" />
+          <span className="hidden xl:inline">
+            {selectionMode
+              ? t("agentic_grid.selection.finish")
+              : t("agentic_grid.selection.start")}
+          </span>
         </button>
 
         {selectionMode && (
@@ -847,12 +928,12 @@ export function AgenticGrid({
           <Dialog.Trigger asChild>
             <button
               type="button"
-              className="btn-ghost shrink-0"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-40"
               disabled={busy}
               title="Close the workspace and stop every agent in it"
             >
-              <Power className="h-4 w-4" />
-              Close
+              <Power className="h-4 w-4 shrink-0" />
+              <span className="hidden xl:inline">Close</span>
             </button>
           </Dialog.Trigger>
           <ConfirmWorkspaceClose
@@ -884,13 +965,17 @@ export function AgenticGrid({
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "grid min-h-0 flex-1 gap-3 p-3",
+          "grid min-h-0 flex-1",
           // Scrolls only once the panes would be squeezed below a readable
           // height. With a workspace that fits, this is `overflow-hidden`
           // behaviour and nothing moves.
           maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
         )}
         style={{
+          // Inline rather than a utility class so ONE number drives both the
+          // rendered gap and the width the column count is computed from.
+          gap: GRID_GAP_PX,
+          padding: GRID_GAP_PX,
           // While one pane is maximized the grid IS that pane: a single track
           // filling exactly what the window shows. Spanning the full template
           // instead was wrong in a workspace large enough to scroll — the
@@ -921,7 +1006,7 @@ export function AgenticGrid({
               key={term.key}
               data-testid={`pane-cell-${term.name}`}
               className={cn(
-                "relative min-h-0 min-w-0 rounded-xl",
+                "relative min-h-0 min-w-0 rounded-lg",
                 selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 maximized !== null && !isMaximized && "hidden",
@@ -1012,7 +1097,7 @@ export function AgenticGrid({
                     event.stopPropagation();
                   }}
                   className={cn(
-                    "absolute inset-0 z-20 cursor-pointer rounded-xl transition-colors",
+                    "absolute inset-0 z-20 cursor-pointer rounded-lg transition-colors",
                     selectedTerminals.has(term.name)
                       ? "bg-primary/10"
                       : "bg-transparent hover:bg-primary/5",
@@ -1083,35 +1168,40 @@ export function AgenticGrid({
       {/* ------------------------------------------------- prompt bar + seam */}
       {/*
         The seam replaces the bar's top border, so there is exactly one line
-        there — and that line is the control. Double-click restores 176 px.
+        there — and that line is the control. Hovering it lights it up; dragging
+        it up opens the bar to whatever height you pull, and a double-click
+        toggles between shut and the designed 176 px.
       */}
       <PaneResizer
         orientation="horizontal"
         onPointerDown={composer.startResize}
-        onDoubleClick={composer.reset}
+        onDoubleClick={toggleComposer}
         onNudge={composer.nudge}
         active={composer.isResizing}
-        title="Drag to resize the prompt bar — double-click to reset, drag all the way down to collapse"
+        title={
+          composerCollapsed
+            ? "Drag up to open the prompt bar — double-click to open it fully"
+            : "Drag to resize the prompt bar — double-click to close it, drag all the way down to collapse"
+        }
       />
 
       {composerCollapsed ? (
         <div
           data-testid="agentic-composer-collapsed"
           style={{ height: COMPOSER_COLLAPSED_PX }}
-          className="flex shrink-0 items-center justify-between px-4"
+          className="flex shrink-0 items-center justify-between gap-2 px-3"
         >
           <span className="truncate text-[11px] text-muted-foreground">
-            Prompt bar hidden — {target || "no terminal"} still receives what you
-            say out loud.
+            {target || "No terminal"} hears whatever you say out loud.
           </span>
           <button
             type="button"
             data-testid="agentic-composer-reopen"
-            onClick={composer.reset}
-            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() => composer.resize(COMPOSER_DEFAULT_PX)}
+            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <ChevronUp className="h-3.5 w-3.5" />
-            Show prompt bar
+            Write instead
           </button>
         </div>
       ) : (
@@ -1130,7 +1220,7 @@ export function AgenticGrid({
             void attach({ paths: [], files: images });
           }}
           className={cn(
-            "relative flex shrink-0 flex-col overflow-hidden px-4 py-3 transition-colors",
+            "relative flex shrink-0 flex-col overflow-hidden px-3 py-2 transition-colors",
             dragging && "bg-primary/5 ring-1 ring-inset ring-primary/50",
           )}
         >
@@ -1142,8 +1232,8 @@ export function AgenticGrid({
               Drop a screenshot or document — {target || "the agent"} gets what is in it
             </div>
           )}
-          <div className="mb-2 flex max-h-24 shrink-0 flex-wrap items-center gap-2 overflow-y-auto scrollbar-jarvis">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <div className="mb-1.5 flex max-h-16 shrink-0 flex-wrap items-center gap-1 overflow-y-auto scrollbar-jarvis">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Send to
             </span>
             {/* Agent panes only. A plain terminal is a shell prompt — it is
@@ -1158,7 +1248,7 @@ export function AgenticGrid({
                   onClick={() => setTarget(term.name)}
                   aria-pressed={target === term.name}
                   className={cn(
-                    "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                    "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
                     target === term.name
                       ? "border-primary/60 bg-primary/10 text-primary"
                       : "border-border text-muted-foreground hover:border-primary/40",

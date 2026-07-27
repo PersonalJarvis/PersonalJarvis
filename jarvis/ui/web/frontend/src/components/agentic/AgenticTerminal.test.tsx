@@ -128,9 +128,13 @@ describe("AgenticTerminal layout", () => {
 
     expect(viewport).not.toBeNull();
     expect(viewport?.className).toContain("min-h-0");
-    expect(viewport?.className).toContain("px-2");
-    expect(viewport?.className).toContain("pb-1");
-    expect(viewport?.className).toContain("pt-1");
+    // The inset is on the VIEWPORT, whatever it currently measures — the pane
+    // frame has been tightened more than once and the exact values are a visual
+    // decision. What must not change is WHICH element carries it: padding on
+    // the host below would make FitAddon report a row the pane cannot show.
+    expect(viewport?.className).toMatch(/(?:^|\s)px-[\d.]+/);
+    expect(viewport?.className).toMatch(/(?:^|\s)pb-[\d.]+/);
+    expect(viewport?.className).toMatch(/(?:^|\s)pt-[\d.]+/);
     expect(host.className).toContain("h-full");
     expect(host.className).toContain("min-h-0");
     expect(host.className).not.toMatch(/(?:^|\s)p[trblxy]?-/);
@@ -222,7 +226,7 @@ describe("pane header recap", () => {
     expect(screen.queryByTestId("pane-agent-Dana")).toBeNull();
   });
 
-  it("offers the longer recap in a tooltip the clipped line points at", () => {
+  it("opens the longer recap in a card the header line controls", async () => {
     render(
       <AgenticTerminal
         name="Dana"
@@ -235,16 +239,39 @@ describe("pane header recap", () => {
     );
 
     const line = screen.getByTestId("pane-recap-Dana");
-    const tooltip = screen.getByTestId("pane-recap-tooltip-Dana");
+    expect(screen.queryByTestId("pane-recap-card-Dana")).toBeNull();
 
-    expect(tooltip.textContent).toContain("Fix the failing login test");
-    // Which CLI runs here stays one hover away rather than being lost.
-    expect(tooltip.textContent).toContain("Claude Code");
-    expect(tooltip.getAttribute("role")).toBe("tooltip");
-    // The clipped line names its own explanation, so a screen reader reaches
-    // the full sentence the same way a mouse does.
-    expect(line.getAttribute("aria-describedby")).toBe(tooltip.id);
-    expect(line.getAttribute("tabindex")).toBe("0");
+    fireEvent.click(line);
+    const card = screen.getByTestId("pane-recap-card-Dana");
+
+    expect(card.textContent).toContain("Fix the failing login test");
+    // Which CLI runs here is named in the card rather than lost.
+    expect(card.textContent).toContain("Claude Code");
+    // A dialog, not a tooltip: it can be clicked into, its text selected, and
+    // its buttons pressed — none of which the tooltip it replaces allowed.
+    expect(card.getAttribute("role")).toBe("dialog");
+    expect(line.getAttribute("aria-controls")).toBe(card.id);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes the card again on Escape", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        recap="Running pytest tests/unit/test_login.py"
+        recapDetail="Where the work stands."
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-recap-Dana"));
+    expect(screen.getByTestId("pane-recap-card-Dana")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByTestId("pane-recap-card-Dana")).toBeNull();
   });
 
   it("falls back to the agent name while a pane has no recap yet", () => {
@@ -260,10 +287,10 @@ describe("pane header recap", () => {
     expect(screen.getByTestId("pane-agent-Dana").textContent).toBe(
       "Claude Code",
     );
-    expect(screen.queryByTestId("pane-recap-tooltip-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-recap-Dana")).toBeNull();
   });
 
-  it("adds no tooltip when the recap already says everything", () => {
+  it("repeats nothing when the long form says what the header line says", () => {
     render(
       <AgenticTerminal
         name="Dana"
@@ -275,9 +302,12 @@ describe("pane header recap", () => {
       />,
     );
 
-    // jsdom measures no widths, so nothing is clipped here — with an identical
-    // detail there is genuinely nothing more to reveal.
-    expect(screen.queryByTestId("pane-recap-tooltip-Dana")).toBeNull();
+    fireEvent.click(screen.getByTestId("pane-recap-Dana"));
+
+    expect(screen.getByTestId("pane-recap-headline-Dana").textContent).toBe(
+      "Not started yet.",
+    );
+    expect(screen.queryByTestId("pane-recap-detail-Dana")).toBeNull();
   });
 });
 

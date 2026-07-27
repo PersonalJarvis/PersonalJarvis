@@ -77,8 +77,15 @@ export const MIN_PANE_WIDTH_PX = 380;
  */
 export const MIN_PANE_HEIGHT_PX = 240;
 
-/** Horizontal padding of the rendered grid (`p-3`: 12 px on each side). */
-export const GRID_HORIZONTAL_PADDING_PX = 24;
+/**
+ * Horizontal padding of the rendered grid — 4 px on each side.
+ *
+ * It mirrors `GRID_GAP_PX` in AgenticGrid, and the two must not drift: the
+ * column count is computed from the grid's CONTENT width, so a padding the
+ * layout module does not know about makes the wizard's preview and the running
+ * grid disagree about how many panes fit at a given window width.
+ */
+export const GRID_HORIZONTAL_PADDING_PX = 8;
 
 /**
  * How many columns fit in ``widthPx`` without starving them.

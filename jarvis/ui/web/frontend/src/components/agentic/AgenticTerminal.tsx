@@ -195,6 +195,18 @@ interface AgenticTerminalProps {
   /** Called when the user asks a dead pane to start a fresh agent. */
   onRestart?: () => void;
   /**
+   * Press on the pane's header — the grip that picks this pane up.
+   *
+   * The header rather than the whole pane, because the rest of the pane is a
+   * live terminal: a drag started there would be a text selection inside the
+   * agent's output, which is a thing people do all day. Omitted, the header is
+   * an ordinary header and the pane cannot be dragged (a maximized pane, or one
+   * in selection mode, has nowhere to be dropped).
+   */
+  onArrangeStart?: (event: React.PointerEvent) => void;
+  /** True while THIS pane is the one being carried — it is drawn as lifted. */
+  arranging?: boolean;
+  /**
    * Bump to reconnect this pane.
    *
    * An exited agent leaves a dead pane with no way back: the connect effect runs
@@ -227,6 +239,8 @@ export function AgenticTerminal({
   onAttachError,
   onRestart,
   restartToken = 0,
+  onArrangeStart,
+  arranging = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // The padded box around the xterm host. The pane's scrollbar overlays it and
@@ -746,11 +760,15 @@ export function AgenticTerminal({
       onMouseDown={onFocus}
       {...dragHandlers}
       className={cn(
-        "relative flex h-full w-full flex-col overflow-hidden rounded-xl border transition-shadow",
+        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border transition-shadow",
         focused
           ? "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.35),0_8px_24px_-12px_rgba(0,0,0,0.5)]"
           : "shadow-[0_4px_16px_-10px_rgba(0,0,0,0.4)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
+        // Lifted out of the grid while it is being carried: the pane stays where
+        // it is (moving it under the cursor would tear down nothing but would
+        // reflow every other pane on every mouse move) and says so by fading.
+        arranging && "opacity-45",
       )}
       style={{
         background: chrome.shell,
@@ -761,6 +779,8 @@ export function AgenticTerminal({
       <PaneHeader
         dead={visibleStatus === "exited" || visibleStatus === "error"}
         onRestart={onRestart}
+        onArrangeStart={onArrangeStart}
+        arranging={arranging}
         name={name}
         displayName={displayName}
         recap={recap}
@@ -786,7 +806,7 @@ export function AgenticTerminal({
       */}
       <div
         ref={scrollRegionRef}
-        className="relative min-h-0 flex-1 overflow-hidden px-2 pb-1 pt-1"
+        className="relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5"
       >
         <div
           ref={containerRef}
@@ -846,6 +866,8 @@ function PaneHeader({
   splitDisabled,
   dead,
   onRestart,
+  onArrangeStart,
+  arranging = false,
 }: {
   name: string;
   displayName: string;
@@ -882,7 +904,7 @@ function PaneHeader({
 
   return (
     <header
-      className="group/header relative flex items-center justify-between gap-2 border-b px-3 py-2"
+      className="group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-1"
       style={{
         borderColor: PANE_CHROME[appearance].border,
         background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",

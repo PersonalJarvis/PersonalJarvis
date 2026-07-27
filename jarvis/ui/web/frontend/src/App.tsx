@@ -3,7 +3,11 @@ import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { useCodingMode } from "@/hooks/useCodingMode";
-import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "@/components/layout/Sidebar";
+import {
+  Sidebar,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_RAIL_WIDTH,
+} from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
@@ -30,13 +34,18 @@ export default function App() {
    * It matters most in the Agentic IDE — every pixel taken from the nav is a
    * pixel of agent output — but the seam belongs to the shell rather than to
    * one view: a width that snapped back the moment you left the IDE would be a
-   * different bug. The bounds keep the nav labels legible at one end and stop
-   * it from eating the workspace at the other; a double-click restores 280 px.
+   * different bug.
+   *
+   * The lower bound is the icon RAIL, not the narrowest width labels survive at.
+   * Stopping at 200 px meant a workspace of a dozen terminals still gave a fifth
+   * of the window to a nav list nobody was reading; the sidebar now collapses to
+   * its icons instead (see `SIDEBAR_RAIL_AT_WIDTH`), and a double-click on the
+   * seam brings the full 280 px back.
    */
   const sidebar = useResizablePane({
     storageKey: "jarvis.sidebar.width.v1",
     defaultSize: SIDEBAR_DEFAULT_WIDTH,
-    min: 200,
+    min: SIDEBAR_RAIL_WIDTH,
     max: 520,
   });
 

@@ -167,6 +167,26 @@ export interface SidebarProps {
 /** Width the sidebar was designed at, and the one a double-click restores. */
 export const SIDEBAR_DEFAULT_WIDTH = 280;
 
+/**
+ * Narrowest the sidebar goes: the nav icons, and nothing else.
+ *
+ * The seam used to stop at 200 px, which is wide enough to still read every
+ * label — so in the Agentic IDE, where a workspace of a dozen terminals wants
+ * every pixel, a fifth of the window stayed spent on a list nobody was reading.
+ * The rail keeps navigation one click away (the icons are still there, each
+ * with its label on hover) while giving that space back to the panes.
+ */
+export const SIDEBAR_RAIL_WIDTH = 64;
+
+/**
+ * Below this dragged width the sidebar SNAPS to the rail rather than clipping.
+ *
+ * Between the two there is no useful layout: a 120 px sidebar shows half a word
+ * per row, which reads as a broken column rather than a deliberate one. So the
+ * band is skipped — pull past it and you get icons, pull back and you get text.
+ */
+export const SIDEBAR_RAIL_AT_WIDTH = 168;
+
 export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
@@ -254,22 +274,40 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
 
   const [logoRetry, setLogoRetry] = useState(0);
 
+  // Dragged past the snap point the sidebar becomes a rail of icons. Everything
+  // that only makes sense with a label beside it — the wake-word hint, the
+  // realtime control, the brain card's provider and model — steps aside; the
+  // navigation itself never does, because losing it would make the rail a dead
+  // end rather than a narrow sidebar.
+  const railed = width < SIDEBAR_RAIL_AT_WIDTH;
+
   return (
     // No right border: the draggable seam beside it draws that line now, and
     // two 1px lines three pixels apart read as a rendering fault.
     <aside
-      style={{ width }}
+      style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
+      data-testid="sidebar"
+      data-railed={railed ? "true" : "false"}
       className="flex h-full shrink-0 flex-col bg-card/40 backdrop-blur"
     >
-      <div className="border-b border-border px-4 py-4">
-        <div className="flex items-center gap-3">
+      <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
+        <div
+          className={cn(
+            "flex items-center gap-3",
+            railed && "flex-col justify-center gap-1.5",
+          )}
+        >
           {/* The original Personal Jarvis logo — the ghost mascot. A snapshot
               had swapped the header avatar for a bar glyph / gold-spark mark;
               this is the canonical brand identity (jarvis-gigi). */}
           <span
             data-testid="sidebar-style-avatar"
             data-variant="logo"
-            className="flex h-11 w-11 shrink-0 items-center justify-center"
+            title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
+            className={cn(
+              "flex shrink-0 items-center justify-center",
+              railed ? "h-9 w-9" : "h-11 w-11",
+            )}
           >
             <img
               src={
@@ -277,8 +315,8 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
                   ? "/jarvis-logo.png"
                   : `/jarvis-logo.png?retry=${logoRetry}`
               }
-              width={40}
-              height={40}
+              width={railed ? 32 : 40}
+              height={railed ? 32 : 40}
               alt={PRODUCT_NAME}
               className="shrink-0"
               onError={() => {
@@ -291,14 +329,16 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
               }}
             />
           </span>
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="font-display text-sm font-semibold tracking-tight">
-              {assistantName}
-            </span>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              {voiceLabel}
-            </span>
-          </div>
+          {!railed && (
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="font-display text-sm font-semibold tracking-tight">
+                {assistantName}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {voiceLabel}
+              </span>
+            </div>
+          )}
           {showSpinner ? (
             <Loader2
               className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
@@ -316,19 +356,30 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
             />
           )}
         </div>
-        <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
-          {transcription ? (
-            <span className={cn("font-mono", !transcriptionFinal && "italic")}>
-              {truncate(transcription, 48)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/50">{t("sidebar.wake_hint")}</span>
-          )}
-        </div>
-        <BrowserRealtimeControl />
+        {!railed && (
+          <>
+            <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
+              {transcription ? (
+                <span className={cn("font-mono", !transcriptionFinal && "italic")}>
+                  {truncate(transcription, 48)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/50">
+                  {t("sidebar.wake_hint")}
+                </span>
+              )}
+            </div>
+            <BrowserRealtimeControl />
+          </>
+        )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
+      <nav
+        className={cn(
+          "flex-1 overflow-y-auto scrollbar-jarvis",
+          railed ? "px-1.5 py-2" : "p-2",
+        )}
+      >
         {NAV_GROUPS.map((group, groupIndex) => (
           <ul
             key={groupIndex}
@@ -342,6 +393,7 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
               <NavRow
                 key={item.id}
                 item={item}
+                railed={railed}
                 label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
@@ -363,14 +415,25 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
         ))}
       </nav>
 
-      <div className="border-t border-border p-3">
+      <div className={cn("border-t border-border", railed ? "p-1.5" : "p-3")}>
         <button
           type="button"
           onClick={() => setActive("apikeys")}
-          className="group flex w-full items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-background/60"
-          title={footerTooltip}
+          className={cn(
+            "group flex w-full items-center rounded-lg border border-border bg-background/40 text-left transition-colors hover:border-primary/40 hover:bg-background/60",
+            railed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
+          )}
+          // On the rail the card shrinks to its status dot, so everything it
+          // would have said moves into the hover text — otherwise the dot is a
+          // button with no stated purpose.
+          title={
+            railed
+              ? `${footerLabel}: ${footerProvider}${footerModel ? ` · ${footerModel}` : ""} — ${footerTooltip}`
+              : footerTooltip
+          }
         >
-          <div className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]" />
+          <div className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]" />
+          {!railed && (
           <div className="flex-1 min-w-0">
             <div
               className="text-[10px] uppercase tracking-wider text-muted-foreground"
@@ -392,7 +455,10 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
               </div>
             )}
           </div>
-          <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+          )}
+          {!railed && (
+            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+          )}
         </button>
       </div>
     </aside>
@@ -408,6 +474,7 @@ function NavRow({
   alertTitle,
   warn = false,
   warnTitle,
+  railed = false,
   onClick,
 }: {
   item: NavItem;
@@ -424,17 +491,25 @@ function NavRow({
   warn?: boolean;
   /** Plain-language hover text for the warn dot. */
   warnTitle?: string;
+  /** Icon-only row — the sidebar has been dragged down to its rail. */
+  railed?: boolean;
   onClick: () => void;
 }) {
   const Icon = item.icon;
+  // On the rail the label is gone from the screen, so it has to survive
+  // somewhere: as the hover text and as the accessible name. Without both, the
+  // narrow sidebar would be a column of unlabelled glyphs.
+  const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   return (
     <li>
       <button
         type="button"
         onClick={onClick}
-        title={alert ? alertTitle : warn ? warnTitle : undefined}
+        aria-label={railed ? label : undefined}
+        title={railed ? (hint ? `${label} — ${hint}` : label) : hint}
         className={cn(
-          "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
+          "group relative flex w-full items-center rounded-lg text-sm transition-all",
+          railed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
           "hover:bg-background/60",
           active
             ? "bg-background text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
@@ -447,13 +522,18 @@ function NavRow({
             active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
           )}
         />
-        <span className="flex-1 text-left">{label}</span>
+        {!railed && <span className="flex-1 text-left">{label}</span>}
+        {/* On the rail the status dots ride ON the icon rather than after the
+            label there is no room for — the signal is the point, not the row. */}
         {alert && (
           <span
             data-testid={`nav-alert-${item.id}`}
             role="status"
             aria-label={alertTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background",
+              railed && "absolute right-1.5 top-1.5",
+            )}
           />
         )}
         {!alert && warn && (
@@ -461,10 +541,13 @@ function NavRow({
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background"
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background",
+              railed && "absolute right-1.5 top-1.5",
+            )}
           />
         )}
-        {badge !== undefined && badge > 0 && (
+        {badge !== undefined && badge > 0 && !railed && (
           <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
             {badge}
           </span>

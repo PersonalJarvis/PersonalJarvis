@@ -185,7 +185,18 @@ const BASE = sessionWith([
   ["Nova", 1],
 ]);
 
+/*
+ * Open the prompt bar for the suites that are ABOUT the prompt bar.
+ *
+ * A fresh workspace now opens with it collapsed (the panes are what the user
+ * came for — see the seam suite at the bottom), so every test that types an
+ * instruction, picks a target or drops a file has to open it first. Doing that
+ * through the remembered height rather than a click keeps those tests about
+ * what they are testing; the seam suite clears the key again and drives the
+ * collapse/reopen behaviour itself.
+ */
 beforeEach(() => {
+  window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   vi.mocked(api.addTerminal).mockResolvedValue(
     sessionWith([
       ["Mika", 0],
@@ -1018,8 +1029,14 @@ describe("dropping files on the prompt bar", () => {
  * the choice. Growing it is verified live in the browser.
  */
 describe("prompt bar seam", () => {
-  const HEIGHT_KEY = "jarvis.agenticIde.composerHeight.v1";
+  const HEIGHT_KEY = "jarvis.agenticIde.composerHeight.v2";
+  /** The height the strip collapses to, and the one it opens back up to. */
+  const SHUT = "28";
+  const OPEN = "176";
 
+  // This suite owns the remembered height — drop what the file-wide setup put
+  // there so each test below starts from the state it actually describes.
+  beforeEach(() => window.localStorage.removeItem(HEIGHT_KEY));
   afterEach(() => window.localStorage.clear());
 
   /** Drag the seam from `fromY` to `toY`, start to finish. */
@@ -1041,7 +1058,25 @@ describe("prompt bar seam", () => {
     expect(seam.getAttribute("aria-orientation")).toBe("horizontal");
   });
 
-  it("dragging the seam to the bottom collapses the bar to a strip", () => {
+  /*
+   * A workspace this view has never been sized in opens with the bar SHUT.
+   *
+   * The panes are what the user came for; a 176 px writing surface held open
+   * under a dozen of them took a sixth of each pane's height for an input box
+   * that is empty most of the time — and everything typed there can be said out
+   * loud instead. The strip below it is what keeps that recoverable.
+   */
+  it("starts collapsed, with the way to open it on screen", () => {
+    renderGrid();
+
+    expect(screen.queryByTestId("agentic-composer")).toBeNull();
+    expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
+    expect(screen.getByTestId("agentic-composer-reopen")).toBeTruthy();
+    expect(screen.getByTestId("pane-resizer-horizontal")).toBeTruthy();
+  });
+
+  it("dragging the seam to the bottom collapses an opened bar to a strip", () => {
+    window.localStorage.setItem(HEIGHT_KEY, OPEN);
     renderGrid();
     expect(screen.getByTestId("agentic-composer")).toBeTruthy();
 
@@ -1056,34 +1091,54 @@ describe("prompt bar seam", () => {
   });
 
   it("the reopen button brings the prompt bar back at its designed height", () => {
-    window.localStorage.setItem(HEIGHT_KEY, "34");
     renderGrid();
     expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("agentic-composer-reopen"));
 
     const composer = screen.getByTestId("agentic-composer");
-    expect(composer.style.height).toBe("176px");
+    expect(composer.style.height).toBe(`${OPEN}px`);
     expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
   });
 
+  it("remembers an opened bar across a remount", () => {
+    // The stored height is the whole reason the default can be "shut": someone
+    // who wants the writing surface opens it once and keeps it.
+    renderGrid();
+    fireEvent.click(screen.getByTestId("agentic-composer-reopen"));
+    expect(window.localStorage.getItem(HEIGHT_KEY)).toBe(OPEN);
+
+    cleanup();
+    renderGrid();
+    expect(screen.getByTestId("agentic-composer")).toBeTruthy();
+  });
+
   it("remembers a collapsed bar across a remount", () => {
+    window.localStorage.setItem(HEIGHT_KEY, OPEN);
     renderGrid();
     dragSeam(700, 1400);
-    expect(window.localStorage.getItem(HEIGHT_KEY)).toBe("34");
+    expect(window.localStorage.getItem(HEIGHT_KEY)).toBe(SHUT);
 
     cleanup();
     renderGrid();
     expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
   });
 
-  it("double-clicking the seam restores the designed height", () => {
-    window.localStorage.setItem(HEIGHT_KEY, "34");
+  /*
+   * Double-click TOGGLES rather than resets.
+   *
+   * `reset` means "back to the default", and the default is now the shut strip
+   * — so wiring the seam to it would give a closed bar a double-click that
+   * visibly does nothing, which reads as a dead control.
+   */
+  it("double-clicking the seam opens a shut bar and shuts an open one", () => {
     renderGrid();
 
     fireEvent.doubleClick(screen.getByTestId("pane-resizer-horizontal"));
+    expect(screen.getByTestId("agentic-composer").style.height).toBe(`${OPEN}px`);
 
-    expect(screen.getByTestId("agentic-composer").style.height).toBe("176px");
+    fireEvent.doubleClick(screen.getByTestId("pane-resizer-horizontal"));
+    expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
   });
 });
 

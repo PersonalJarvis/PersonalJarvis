@@ -70,10 +70,19 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeWorkspace: vi.fn(),
   fetchNativePickerSupport: vi.fn(),
   openNativePicker: vi.fn(),
+  // The grid polls this to keep the pane headers current.
+  fetchTerminalRecaps: vi.fn(async () => ({
+    workspace_id: null,
+    terminals: [],
+  })),
 }));
 
 import { AgenticIdeView } from "./AgenticIdeView";
 import * as api from "@/lib/agenticIdeApi";
+import {
+  GRID_HORIZONTAL_PADDING_PX,
+  MIN_PANE_WIDTH_PX,
+} from "@/components/agentic/layout";
 
 const AGENTS: api.AgentsResponse = {
   terminal_available: true,
@@ -232,6 +241,10 @@ function sessionWith(names: string[], focus = false): api.SessionState {
 }
 
 beforeEach(() => {
+  // A workspace now opens with its prompt bar collapsed — the panes are what
+  // the user came for. The tests below that type an instruction want it open,
+  // and the remembered height is how a user who wants it open gets it.
+  window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   vi.mocked(api.fetchIdeAgents).mockResolvedValue(AGENTS);
   vi.mocked(api.fetchIdeState).mockResolvedValue(EMPTY_STATE);
   vi.mocked(api.fetchFolders).mockResolvedValue({
@@ -459,12 +472,19 @@ describe("Agentic IDE wizard", () => {
     const readout = screen.getByTestId("workspace-stage-readout");
     expect(readout.textContent).toContain("2 across");
     expect(readout.textContent).toContain("4 down");
-    // 8 × 380 px + the grid's padding — the width at which they all fit on one
-    // line, stated so a maximise cannot turn the preview into a broken promise.
+    // 8 panes × the readable minimum + the grid's own padding — the width at
+    // which they all fit on one line, stated so a maximise cannot turn the
+    // preview into a broken promise. Computed rather than written out, because
+    // tightening the grid's padding moves this number without changing
+    // anything the test is actually about.
+    //
     // `grouped` spells out the narrow no-break space the readout separates
     // thousands with: an invisible literal here reads as a plain space,
     // passes review, and fails the run.
-    expect(readout.textContent).toContain(grouped("3 064"));
+    const oneBandWidth = 8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+    expect(readout.textContent).toContain(
+      grouped(String(oneBandWidth).replace(/\B(?=(\d{3})+(?!\d))/g, " ")),
+    );
     // 1 056, not 1 050: the view rounds the measured width to 16 px steps so a
     // one-pixel drift cannot churn the layout, and the readout reports the width
     // the arrangement was actually decided from rather than a truer-looking one.
@@ -553,7 +573,11 @@ describe("Agentic IDE running workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
     await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
+      // The third argument carries files dropped on the prompt bar — empty
+      // here, because this instruction was typed with nothing attached.
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        attachments: [],
+      }),
     );
   });
 
