@@ -20,6 +20,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /resume``                     → the last workspace, offered back
 * ``POST   /resume``                     → reopen it (same panes, same places)
 * ``DELETE /resume``                     → forget it and start fresh
+* ``GET    /interrupted``                → panes that came back and were never restarted
+* ``POST   /interrupted/continue``       → tell them to carry on ("continue")
 * ``PUT    /mode``                       → focused coding mode on/off
 * ``POST   /terminals``                  → open one more pane (split)
 * ``POST   /terminals/batch``            → open N more panes at once
@@ -53,7 +55,13 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import native_picker, recap_engine, recents, resume_store
+from jarvis.agentic_ide import (
+    interrupted,
+    native_picker,
+    recap_engine,
+    recents,
+    resume_store,
+)
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
@@ -493,6 +501,90 @@ class ResumeOffer(BaseModel):
         description="Remembered folders from earlier sessions, which resuming does NOT reopen.",
     )
     workspaces: list[ResumeWorkspace] = Field(default_factory=list)
+
+
+class InterruptedPane(BaseModel):
+    """One pane that came back with its conversation and was never restarted."""
+
+    workspace_id: str = ""
+    workspace: str = Field(default="", description="The workspace tab this pane belongs to.")
+    folder: str = ""
+    key: str
+    name: str
+    agent: str
+    display_name: str
+    status: str
+    continuable: bool = Field(
+        description=(
+            "Can it be told to continue right now? False when its agent is not "
+            "running — an instruction cannot be typed into a dead terminal."
+        )
+    )
+    blocked_reason: str = Field(
+        default="", description="Why not, in one sentence. Empty when it can."
+    )
+    last_task: str = Field(
+        default="",
+        description=(
+            "What this pane was last asked to do, shortened. Empty when its last "
+            "instruction was typed into the pane directly rather than sent by Jarvis."
+        ),
+    )
+    prompts_sent: int = 0
+    started_at: float | None = Field(
+        default=None, description="When the resumed agent process started."
+    )
+
+
+class InterruptedResponse(BaseModel):
+    """Every pane, in every open workspace, that is waiting to be told to carry on."""
+
+    count: int = 0
+    continuable_count: int = Field(
+        default=0, description="How many of them can be continued right now."
+    )
+    prompt: str = Field(
+        default="", description="The instruction the continue action would send."
+    )
+    panes: list[InterruptedPane] = Field(default_factory=list)
+
+
+class ContinueInterruptedRequest(BaseModel):
+    names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Call-signs to continue. Empty continues every interrupted pane in "
+            "every open workspace. A name that is not waiting to be continued is "
+            "reported in 'failed' rather than silently ignored."
+        ),
+    )
+    prompt: str = Field(
+        default="",
+        description=(
+            "What to send instead of the default 'continue'. The agent still "
+            "holds its whole conversation, so short beats elaborate."
+        ),
+    )
+
+
+class ContinueInterruptedResponse(BaseModel):
+    ok: bool = True
+    continued: list[str] = Field(
+        default_factory=list, description="Panes that accepted the instruction and started."
+    )
+    unconfirmed: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Panes the text was typed into without a confirmed submit. Their prompt "
+            "may be sitting in the input box — say so rather than claiming they ran."
+        ),
+    )
+    failed: list[dict] = Field(
+        default_factory=list, description="Panes that could not be continued, with the reason."
+    )
+    remaining: int = Field(
+        default=0, description="Interrupted panes still waiting after this call."
+    )
 
 
 class TerminalRecap(BaseModel):
@@ -1055,6 +1147,68 @@ async def resume_workspace() -> dict:
         # Workspaces that could not come back, with the reason for each.
         "skipped": [{"folder": folder, "detail": detail} for folder, detail in result.skipped],
     }
+
+
+@router.get(
+    "/interrupted",
+    response_model=InterruptedResponse,
+    summary="Coding sessions that were interrupted and never restarted",
+)
+async def get_interrupted() -> InterruptedResponse:
+    """Which panes came back holding a conversation and have been told nothing since.
+
+    The state a restart leaves behind. Resuming reconnects each pane to the
+    conversation it was having, but a coding CLI launched on an old transcript
+    reads it and then waits — so an agent that was halfway through a job comes
+    back knowing everything about it and doing nothing, looking exactly like a
+    pane that finished.
+
+    ``continuable`` is per pane and answered against the machine as it is now: a
+    pane whose agent is not running cannot be typed into, and ``blocked_reason``
+    says why. An empty list is the normal answer — nothing was interrupted.
+    """
+    panes = interrupted.scan(get_registry())
+    return InterruptedResponse(
+        count=len(panes),
+        continuable_count=sum(1 for pane in panes if pane.continuable),
+        prompt=interrupted.CONTINUE_PROMPT,
+        panes=[InterruptedPane(**pane.to_dict()) for pane in panes],
+    )
+
+
+@router.post(
+    "/interrupted/continue",
+    response_model=ContinueInterruptedResponse,
+    summary="Tell interrupted coding sessions to carry on",
+)
+async def continue_interrupted(req: ContinueInterruptedRequest) -> ContinueInterruptedResponse:
+    """Type ``continue`` into the panes a restart left standing still.
+
+    With no ``names``, every interrupted pane in every open workspace — which is
+    the shape of the problem, since a restart interrupts them all at once. The
+    instruction goes through the ordinary prompt path, so the same guarantees
+    hold: control characters stripped, the submit verified against the pane's own
+    screen, and three honest outcomes rather than two.
+
+    **Read ``unconfirmed``.** Those panes were typed into without a confirmed
+    submit: the text may be sitting in the input box waiting for a keypress.
+    Reporting them as running is the one wrong thing to do with this answer.
+
+    ``409`` only when no workspace is open at all. Nothing to continue is a
+    normal, empty success.
+    """
+    registry = get_registry()
+    if not registry.sessions:
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+    report = await interrupted.continue_panes(
+        registry, names=req.names, prompt=req.prompt or interrupted.CONTINUE_PROMPT
+    )
+    return ContinueInterruptedResponse(
+        **report.to_dict(),
+        # Re-scanned rather than subtracted: a pane the user drove themselves
+        # while this call was in flight has left the list too.
+        remaining=len(interrupted.scan(registry)),
+    )
 
 
 @router.post(

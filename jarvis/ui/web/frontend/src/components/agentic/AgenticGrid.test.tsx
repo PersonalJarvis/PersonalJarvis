@@ -34,6 +34,16 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   promptTerminal: vi.fn(),
   // Reached from the toolbar's settings panel, which the grid always renders.
   setIdeActiveAccount: vi.fn(),
+  // Polled by the toolbar's "Continue" control, which the grid also always
+  // renders. Answers "nothing was interrupted" so these tests see the ordinary
+  // toolbar rather than a badge none of them are about.
+  fetchInterrupted: vi.fn(async () => ({
+    count: 0,
+    continuable_count: 0,
+    prompt: "continue",
+    panes: [],
+  })),
+  continueInterrupted: vi.fn(),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render

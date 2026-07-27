@@ -50,6 +50,7 @@ import {
   MIN_PANE_HEIGHT_PX,
   paneGrid,
 } from "./layout";
+import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PromptPreview } from "./PromptPreview";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
@@ -752,6 +753,12 @@ export function AgenticGrid({
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/* Work a restart stopped: which panes came back holding a conversation
+            and were never told to carry on, and the one click that tells them.
+            The pane headers catch up on their own — a continued agent starts
+            printing, and the recap poll above is already watching for that. */}
+        <ContinueInterrupted busy={busy || working} />
 
         {/* Which subscription the next terminal spends, and the way to change
             it without leaving the workspace. */}

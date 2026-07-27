@@ -511,6 +511,18 @@ class Terminal:
     # picked up an old transcript, "still running" means the same process has
     # been working the whole time you were looking somewhere else.
     reattached: bool = False
+    # This pane picked its old conversation back up, and NOBODY has told it what
+    # to do since. That is the state a restart leaves behind: the agent is alive
+    # and holds the whole transcript, but it was killed mid-task and a resumed
+    # CLI sits at its prompt waiting rather than carrying on by itself — so the
+    # work simply stops, silently, and looks exactly like a pane that finished.
+    #
+    # Set only where a process is SPAWNED onto an existing conversation (see
+    # `attach`), and cleared by anything that counts as "somebody is driving
+    # this pane again": a prompt from Jarvis, or a line the user typed into the
+    # pane themselves. Never persisted — it is a fact about the process that is
+    # running now, not about the workspace.
+    continuation_pending: bool = False
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -569,6 +581,12 @@ class Terminal:
             "recap": summary.headline,
             "recap_detail": summary.detail,
             "resumed": self.resumed,
+            # Continued its old conversation and has had no instruction since —
+            # the pane a restart left standing still. Carried in the ordinary
+            # state so a client can mark it without a second request; the list
+            # of them, with the reason each one can or cannot be nudged, is
+            # `GET /interrupted`.
+            "continuation_pending": self.continuation_pending,
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
             "has_resume": self.resume is not None,
@@ -1519,6 +1537,11 @@ class Registry:
             term.resumed = False
             if minted is not None:
                 term.resume = minted
+        # A process that inherits a conversation inherits whatever it was in the
+        # middle of, and then waits. That is the whole reason this flag exists —
+        # see the field. A fresh start clears it, so a pane that failed its
+        # resume and came back empty is not reported as waiting to be nudged.
+        term.continuation_pending = term.resumed
 
         term.transcript.resize(cols, rows)
         # A fresh process draws a fresh screen: anything the previous one left
@@ -1737,6 +1760,14 @@ class Registry:
         term = found[1]
         if not term.pty_id:
             return False
+        if term.continuation_pending and ("\r" in data or "\n" in data):
+            # The user submitted something in the pane themselves, so this one
+            # is being driven again and is no longer waiting to be nudged.
+            # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow
+            # keys and a half-typed line are not an instruction, and dropping
+            # the pane off the list for those would hide a stalled agent behind
+            # an accidental keypress.
+            term.continuation_pending = False
         return self._manager().write(term.pty_id, data)
 
     async def _nudge_repaint(self, term: Terminal, cols: int, rows: int) -> None:
@@ -2135,6 +2166,11 @@ class Registry:
         term.last_prompt = payload
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
+        # Somebody is driving this pane again, whatever the prompt said. Cleared
+        # even when the pane did not submit the text: the instruction is sitting
+        # in its input box in full, so offering to type "continue" behind it
+        # would append a second line to a prompt the user still has to send.
+        term.continuation_pending = False
         logger.info(
             "Agentic IDE prompt -> {} ({}, {}): {}",
             term.name,

@@ -802,6 +802,74 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("restaura mis terminales",),  # i18n-allow: input vocab
             },
         ),
+        AppCommand(
+            id="agentic-ide-interrupted",
+            title="List interrupted Agentic-IDE sessions",
+            description=(
+                "Which coding terminals came back holding their conversation "
+                "and have been told nothing since. That is what a restart "
+                "leaves behind: reopening a workspace reconnects each pane to "
+                "the conversation it was having, but the coding CLI reads that "
+                "transcript and then WAITS at its prompt — so an agent stopped "
+                "mid-task looks exactly like one that finished. Use this to "
+                "answer 'what was interrupted?' before continuing anything. "
+                "'continuable' is per pane: a pane whose agent is not running "
+                "cannot be typed into, and 'blocked_reason' says why."
+            ),
+            method="GET",
+            path="/api/agentic-ide/interrupted",
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("was wurde unterbrochen",),  # i18n-allow: input vocab
+                "en": ("which coding sessions were interrupted",),
+                "es": ("qué sesiones se interrumpieron",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-continue-interrupted",
+            title="Continue interrupted Agentic-IDE sessions",
+            description=(
+                "Tell the coding terminals a restart left standing still to "
+                "carry on: 'continue' is typed into each one and submitted. "
+                "With no names, every interrupted pane in every open workspace "
+                "— which is the shape of the problem, since a restart stops "
+                "them all at once. CHECK THE REPLY: 'continued' really started, "
+                "'unconfirmed' had the text typed in without a confirmed "
+                "submit (it may be sitting in the input box — tell the user to "
+                "look at that pane), and 'failed' names what refused and why. "
+                "Reporting an unconfirmed pane as running is the one wrong "
+                "thing to do with this answer."
+            ),
+            method="POST",
+            path="/api/agentic-ide/interrupted/continue",
+            params={
+                "type": "object",
+                "properties": {
+                    "names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Call-signs to continue. Omit or leave empty to "
+                            "continue every interrupted pane."
+                        ),
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "What to send instead of the default 'continue'. "
+                            "The agent still holds its whole conversation, so "
+                            "short beats elaborate."
+                        ),
+                    },
+                },
+            },
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("mach mit den unterbrochenen sitzungen weiter",),  # i18n-allow: input vocab
+                "en": ("continue the interrupted coding sessions",),
+                "es": ("continúa las sesiones interrumpidas",),  # i18n-allow: input vocab
+            },
+        ),
     )
 
 
