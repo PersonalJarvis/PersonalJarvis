@@ -158,6 +158,7 @@ const PREVIOUS_WORKSPACE: api.ResumeOffer = {
       session_id: "ide_old",
       folder: "/work/project",
       folder_name: "project",
+      name: "",
       folder_exists: true,
       available: true,
       resumable_count: 1,

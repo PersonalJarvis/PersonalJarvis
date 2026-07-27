@@ -425,6 +425,78 @@ async def test_restoring_a_folder_that_is_still_open_adds_the_remembered_workspa
     assert len(registry.sessions) == 2
 
 
+async def test_a_folder_from_an_earlier_session_is_not_reopened_beside_todays(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """The reported bug, end to end: yesterday's folder must stay put.
+
+    The store remembers a folder you closed days ago on purpose, so opening one
+    new workspace cannot erase it. Reopening that archive wholesale is what made
+    a restart come back with old folders beside the current one — and, because
+    every workspace draws call-signs from the same pool, with a screen full of
+    "Alex" and "Alex 2".
+    """
+    old, today = tmp_path / "last-week", tmp_path / "today"
+    old.mkdir()
+    today.mkdir()
+    await registry.start(str(old), [{"agent": "claude"}, {"agent": "claude"}])
+    await registry.end()
+    await registry.start(str(today), [{"agent": "claude"}])
+
+    stored = resume_store.load()
+    assert stored is not None
+    # Both are still remembered — the offer keeps them.
+    assert len(stored.workspaces) == 2
+
+    fresh = ide.Registry(pty_manager=FakePtyManager())
+    result = await fresh.restore(stored)
+
+    assert [s.folder for s in result.sessions] == [str(today)]
+    assert [t.name for s in result.sessions for t in s.terminals] == ["Alex"]
+
+
+async def test_workspaces_closed_one_by_one_still_come_back_together(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """Closing for the day is not "an earlier session" — all of it comes back."""
+    folders = [tmp_path / "one", tmp_path / "two", tmp_path / "three"]
+    for folder in folders:
+        folder.mkdir()
+        await registry.start(str(folder), [{"agent": "claude"}])
+    while await registry.end():
+        pass
+
+    stored = resume_store.load()
+    assert stored is not None
+    fresh = ide.Registry(pty_manager=FakePtyManager())
+    result = await fresh.restore(stored)
+
+    assert {s.folder for s in result.sessions} == {str(f) for f in folders}
+
+
+async def test_restoring_the_same_restore_point_twice_opens_nothing_new(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """A stale offer card in a second window must not duplicate the workspace."""
+    await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
+
+    stored = resume_store.load()
+    assert stored is not None
+    fresh = ide.Registry(pty_manager=FakePtyManager())
+    await fresh.restore(stored)
+    names = [t.name for t in fresh.sessions[0].terminals]
+
+    # Once more, with the file as it stands after the first restore rewrote it.
+    with pytest.raises(ide.SessionError, match="already open"):
+        await fresh.restore(resume_store.load())
+    # And once more with the file as the second window still remembers it.
+    with pytest.raises(ide.SessionError, match="already open"):
+        await fresh.restore(stored)
+
+    assert len(fresh.sessions) == 1
+    assert [t.name for t in fresh.sessions[0].terminals] == names
+
+
 async def test_restoring_another_folder_opens_it_beside_the_running_one(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:

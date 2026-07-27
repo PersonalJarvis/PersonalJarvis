@@ -143,6 +143,58 @@ def test_the_offer_reports_each_workspace_separately(tmp_path: Path) -> None:
     assert view["workspaces"][1]["folder_exists"] is False
 
 
+def _stamped(folder: str, when: float) -> resume_store.SnapshotWorkspace:
+    space = _workspace(folder)
+    space.saved_at = when
+    return space
+
+
+def test_the_last_session_is_what_the_newest_stamp_says(tmp_path: Path) -> None:
+    """A remembered folder is not part of the session being offered back."""
+    now, earlier = 1000.0, 900.0
+    snapshot = resume_store.Snapshot(
+        saved_at=now,
+        workspaces=[
+            _stamped(str(tmp_path / "a"), now),
+            _stamped(str(tmp_path / "b"), now),
+            _stamped(str(tmp_path / "old"), earlier),
+        ],
+    )
+    assert [w.folder for w in snapshot.last_session()] == [
+        str(tmp_path / "a"),
+        str(tmp_path / "b"),
+    ]
+
+
+def test_a_file_without_stamps_counts_entirely_as_the_last_session(tmp_path: Path) -> None:
+    """Older files cannot be split, so nothing is silently dropped from them."""
+    snapshot = resume_store.Snapshot(
+        saved_at=0.0,
+        workspaces=[_workspace(str(tmp_path / "a")), _workspace(str(tmp_path / "b"))],
+    )
+    assert len(snapshot.last_session()) == 2
+
+
+def test_the_offer_counts_only_what_resuming_will_reopen(tmp_path: Path) -> None:
+    """The card must not promise an archive's worth of folders."""
+    alive, old = tmp_path / "alive", tmp_path / "old"
+    alive.mkdir()
+    old.mkdir()
+    view = resume_store.offer(
+        resume_store.Snapshot(
+            saved_at=1000.0,
+            workspaces=[_stamped(str(alive), 1000.0), _stamped(str(old), 900.0)],
+        ),
+        installed={"claude", "codex"},
+    )
+    assert view["workspace_count"] == 1
+    assert view["terminal_count"] == 2
+    assert view["earlier_count"] == 1
+    # Both are still listed — an old folder is worth seeing, just not resuming.
+    assert [w["in_last_session"] for w in view["workspaces"]] == [True, False]
+    assert [w["saved_at"] for w in view["workspaces"]] == [1000.0, 900.0]
+
+
 def test_a_pane_without_a_name_is_dropped_not_fatal(tmp_path: Path) -> None:
     """One damaged entry must not cost the whole workspace."""
     resume_store.save(_snapshot(str(tmp_path)))

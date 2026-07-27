@@ -417,11 +417,27 @@ class ResumeWorkspace(BaseModel):
         default=0,
         description="How many of its panes bring their conversation back.",
     )
+    saved_at: float = Field(
+        default=0.0,
+        description="When this workspace was last open, which is NOT the file's stamp.",
+    )
+    in_last_session: bool = Field(
+        default=True,
+        description=(
+            "True when this workspace was open at the last save, so resuming reopens it. "
+            "False for a folder that is only remembered from an earlier session."
+        ),
+    )
     terminals: list[ResumeTerminal] = Field(default_factory=list)
 
 
 class ResumeOffer(BaseModel):
-    """Everything that was open, re-checked against this machine as it is now."""
+    """Everything that was open, re-checked against this machine as it is now.
+
+    The counts describe what resuming will actually reopen — the LAST session,
+    not every folder the store still remembers. ``workspaces`` lists both, each
+    flagged with ``in_last_session``.
+    """
 
     available: bool = Field(
         description="False when there is nothing to reopen, or nothing that could run."
@@ -432,6 +448,10 @@ class ResumeOffer(BaseModel):
     resumable_count: int = Field(
         default=0,
         description="How many panes across all workspaces continue their conversation.",
+    )
+    earlier_count: int = Field(
+        default=0,
+        description="Remembered folders from earlier sessions, which resuming does NOT reopen.",
     )
     workspaces: list[ResumeWorkspace] = Field(default_factory=list)
 

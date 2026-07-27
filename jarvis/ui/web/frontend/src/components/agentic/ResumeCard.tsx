@@ -24,6 +24,15 @@
  * With many panes the list is summarised instead of printed in full: a hundred
  * chips is not information, it is wallpaper. The call-signs of the first few are
  * what someone recognises their workspace by; the rest are a count.
+ *
+ * ## Why the list is in two parts
+ *
+ * The store remembers folders from earlier sessions too, so that opening one new
+ * workspace cannot erase the twelve panes you shut down an hour ago. Resuming
+ * reopens the LAST session only — reopening the whole archive is what once
+ * brought last week's folders back beside today's. So what the button will do
+ * comes first, and what is merely remembered sits below it, plainly labelled and
+ * reopened from the folder picker one deliberate click at a time.
  */
 import { AlertCircle, FolderGit2, RotateCcw, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -82,6 +91,7 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
   const shown = space.terminals.slice(0, NAMES_SHOWN);
   const hidden = space.terminals.length - shown.length;
   const fresh = space.terminals.length - space.resumable_count;
+  const when = savedAgo(space.saved_at ?? 0);
   return (
     <li
       data-testid={`resume-workspace-${space.folder_name}`}
@@ -90,6 +100,7 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
         space.available
           ? "border-border bg-card/60"
           : "border-amber-500/40 bg-amber-500/10",
+        space.in_last_session === false && "opacity-70",
       )}
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -101,6 +112,12 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
           {space.terminals.length} terminal{space.terminals.length === 1 ? "" : "s"}
           {space.resumable_count > 0 && ` · ${space.resumable_count} continuing`}
           {fresh > 0 && ` · ${fresh} starting fresh`}
+          {/*
+            Per workspace, not per file. A card that says "last open 2 minutes
+            ago" over a folder nobody has touched since last week is exactly the
+            misreport that made resuming feel broken.
+          */}
+          {when && ` · ${when}`}
         </span>
       </div>
       <code className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
@@ -148,6 +165,10 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
 
 export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps) {
   const when = savedAgo(offer.saved_at);
+  // An older backend sends neither flag and reopened everything, so a missing
+  // one reads as "part of the last session" rather than as "earlier".
+  const coming = offer.workspaces.filter((w) => w.in_last_session !== false);
+  const earlier = offer.workspaces.filter((w) => w.in_last_session === false);
   return (
     <section
       data-testid="resume-card"
@@ -168,13 +189,38 @@ export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps
         </div>
       </div>
 
+      {/*
+        Keyed by session id, not by folder: two workspaces may point at the same
+        folder on purpose, and a duplicated React key renders one of them
+        unpredictably.
+      */}
       <ul className="mt-4 space-y-2">
-        {offer.workspaces.map((space) => (
-          <WorkspaceRow key={space.folder} space={space} />
+        {coming.map((space, index) => (
+          <WorkspaceRow key={space.session_id || `${space.folder}#${index}`} space={space} />
         ))}
       </ul>
 
       <p className="mt-3 text-xs text-muted-foreground">{resumeSummary(offer)}</p>
+
+      {earlier.length > 0 && (
+        <div className="mt-4" data-testid="resume-earlier">
+          <p className="text-xs font-medium text-muted-foreground">
+            Also remembered, from earlier sessions
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Resuming does not reopen these — open one from the folder picker when
+            you want it back.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {earlier.map((space, index) => (
+              <WorkspaceRow
+                key={space.session_id || `${space.folder}#${index}`}
+                space={space}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button

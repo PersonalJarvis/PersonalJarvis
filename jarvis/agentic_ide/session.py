@@ -306,6 +306,18 @@ def _requested_account(entry: dict[str, Any]) -> str | None:
     return str(value).strip() or None if isinstance(value, str) else None
 
 
+def _restore_key(space: resume_store.SnapshotWorkspace) -> str:
+    """Stable identity of ONE remembered workspace, for "did I already reopen it?".
+
+    Folder alone is not it: two workspaces may share a folder on purpose, and
+    collapsing them would silently drop one. The id alone is not it either —
+    older snapshots carry none. Together they identify the record, and the
+    folder is compared in the store's own normalized form so a symlinked or
+    differently-cased path cannot read as a second folder.
+    """
+    return f"{space.session_id}|{resume_store.folder_key(space.folder)}"
+
+
 def _spawn_env(term: Terminal) -> dict[str, str] | None:
     """The child environment that puts this pane on its own subscription.
 
@@ -524,6 +536,12 @@ class Session:
     # loop cannot garbage-collect one mid-flight, and per session rather than
     # per registry so closing one workspace cannot cancel another's.
     lookups: set[asyncio.Task[None]] = field(default_factory=set)
+    # Which remembered workspace this one came back from, empty when it was
+    # opened rather than restored. It is what makes restoring idempotent: a
+    # second "Resume all sessions" (a stale offer card in another window, a
+    # double-submit) recognises what is already on screen instead of opening a
+    # second copy of it with every call-sign renamed around the collision.
+    restored_from: str = ""
 
     def find(self, wanted: str) -> Terminal | None:
         """Terminal by key, call-sign, or a spoken phrase containing one."""
@@ -868,15 +886,31 @@ class Registry:
         workspaces is cheap: none of them launches anything until a pane
         connects, and only the workspace on screen has panes mounted.
 
-        All of them rather than the front one, because "resume all sessions" is
-        what was asked for and somebody with four folders open had four.
+        All of the last session rather than the front one, because "resume all
+        sessions" is what was asked for and somebody with four folders open had
+        four — but the LAST SESSION, not the whole file. The store deliberately
+        remembers folders closed days ago so a new workspace cannot erase them
+        (``resume_store._merged_with_stored``); reopening that archive wholesale
+        is what made a restart come back with Tuesday's folders beside today's,
+        every one of them carrying the same call-signs out of the same pool, so
+        the deduplicator renamed the collisions into "Alex 2" / "Alex 3" and the
+        result read as "it duplicated my terminals". ``last_session`` is the
+        line between the two; the older folders stay on offer and are reopened
+        from the picker, one deliberate click at a time.
+
+        Restoring the same restore point TWICE is a no-op for whatever it
+        already brought back. A workspace remembers which record it came from,
+        so a stale offer card in a second window cannot open a duplicate of a
+        workspace that is on screen right now.
 
         A workspace that cannot come back does not stop the others: a deleted
-        folder is reported, an already-open folder is left running (reopening it
-        would kill live agents to replace them with restarted ones), and the
-        workspace limit stops the rest with a reason. What could not be restored
-        comes back in ``skipped`` so the caller can say so out loud instead of
-        quietly returning less than it promised.
+        folder is reported, and the workspace limit stops the rest with a
+        reason. What could not be restored comes back in ``skipped`` so the
+        caller can say so out loud instead of quietly returning less than it
+        promised. A folder that is already open in a workspace opened by hand is
+        NOT one of those cases — two workspaces may share a folder deliberately,
+        and the remembered one comes back beside the live one rather than
+        replacing agents that are working.
 
         A pane whose CLI is no longer installed IS restored. It shows up as an
         error the moment it tries to connect, which is a far better outcome than
@@ -885,11 +919,14 @@ class Registry:
         async with self._lock:
             if not snapshot.workspaces:
                 raise SessionError("There is nothing in that restore point.")
+            wanted = self._restore_set_locked(snapshot)
+            if not wanted:
+                raise SessionError("Everything in that restore point is already open.")
 
             restored: list[Session] = []
             skipped: list[tuple[str, str]] = []
             was_on_screen: Session | None = None
-            for space in snapshot.workspaces:
+            for space in wanted:
                 try:
                     session = await self._restore_one_locked(space)
                 except SessionError as exc:
@@ -920,6 +957,51 @@ class Registry:
                 len(skipped),
             )
             return RestoreResult(sessions=restored, skipped=skipped)
+
+    def _restore_set_locked(
+        self, snapshot: resume_store.Snapshot
+    ) -> list[resume_store.SnapshotWorkspace]:
+        """Which remembered workspaces this restore should actually reopen.
+
+        Three things are dropped here, and each of them showed up on screen as a
+        duplicated terminal:
+
+        1. **Folders that were merely remembered**, not open at the last save.
+           See ``Snapshot.last_session`` for why the file holds both.
+        2. **Records already restored in this process** — a second click on a
+           stale offer card must recognise what is on screen, not open it again.
+           Two checks, because restoring rewrites the file: right after a
+           restore the record still names the id it was restored FROM, and once
+           the workspace has saved itself it names the live workspace's own id.
+        3. **The same record twice inside one file**, which a merge could leave
+           behind. Two workspaces sharing a folder are legitimate and keep
+           distinct ids, so only a genuinely identical record collapses.
+
+        Caller holds ``self._lock``.
+        """
+        already = {s.restored_from for s in self._sessions.values() if s.restored_from}
+        wanted: list[resume_store.SnapshotWorkspace] = []
+        seen: set[str] = set()
+        for space in snapshot.last_session():
+            key = _restore_key(space)
+            if key in already or space.session_id in self._sessions:
+                logger.info(
+                    "Agentic IDE: {} is already open from this restore point — not reopening it",
+                    space.folder,
+                )
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            wanted.append(space)
+        earlier = len(snapshot.workspaces) - len(snapshot.last_session())
+        if earlier:
+            logger.info(
+                "Agentic IDE: {} remembered workspace(s) predate the last session — "
+                "left on offer instead of reopened",
+                earlier,
+            )
+        return wanted
 
     async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
         """Reopen one remembered workspace. Caller holds the lock."""
@@ -962,6 +1044,9 @@ class Registry:
         # label moves; the resume handle underneath it continues the conversation.
         self._dedupe_names(terminals)
         session = await self._open_locked(root, terminals, name=space.name or None)
+        # Which record this came back from, so a second restore of the same file
+        # recognises it rather than opening a duplicate.
+        session.restored_from = _restore_key(space)
         # Pack the grid: a snapshot can carry gaps if it was written between a
         # close and its renumbering, and a gap renders as a blank stripe.
         self._renumber(session)

@@ -181,6 +181,13 @@ class SnapshotWorkspace:
         )
 
 
+# Two workspaces belong to the same save when their stamps are this close.
+# `snapshot_now` gives every LIVE workspace one identical timestamp, so this is
+# an exact-match test in practice; the tolerance only guards against a float
+# surviving a JSON round trip a hair off.
+_SAME_SAVE_EPSILON = 0.001
+
+
 @dataclass(slots=True)
 class Snapshot:
     """Everything that was open, ready to be offered back.
@@ -194,6 +201,12 @@ class Snapshot:
     agent. Panes only launch when a pane connects, and only the workspace on
     screen has panes mounted, so five workspaces in the bar are five folders
     waiting, not five folders' worth of coding agents.
+
+    **The file holds MORE than the last session** — see ``_merged_with_stored``:
+    folders closed days ago stay remembered so a new workspace cannot erase
+    them. Which of them was actually open last is therefore a question the
+    consumer has to ask, not something the list answers by existing:
+    :meth:`last_session` is that question.
     """
 
     saved_at: float
@@ -207,6 +220,40 @@ class Snapshot:
     @property
     def terminal_count(self) -> int:
         return sum(len(w.terminals) for w in self.workspaces)
+
+    def last_session(self) -> list[SnapshotWorkspace]:
+        """Only the workspaces that were OPEN when this file was last written.
+
+        **The bug this exists for.** Remembering closed folders (so opening one
+        new workspace could not wipe out the twelve panes you shut down an hour
+        ago) turned the restore point into an archive of the last ten folders
+        ever opened — and "Resume all sessions" reopened all ten. Restarting
+        therefore brought back Tuesday's folders beside today's, each one
+        carrying the same call-signs out of the same pool, so the deduplicator
+        renamed the collisions and the screen filled with "Alex", "Alex 2",
+        "Alex 3". Reported as "it duplicates my terminals and restores stuff
+        from days ago" — one root cause, both symptoms.
+
+        Telling the two apart needs no extra bookkeeping: ``snapshot_now``
+        stamps every live workspace with ONE instant, and a workspace that was
+        merely remembered keeps the older stamp it had when it was last open.
+        So "was open at the last save" is exactly "carries the newest stamp".
+
+        A file whose workspaces carry no stamp at all (written before per
+        workspace stamps existed, or hand-built in a test) cannot be split, so
+        all of it counts as the last session — the old behaviour, unchanged.
+        """
+        newest = max((w.saved_at for w in self.workspaces), default=0.0)
+        if newest <= 0.0:
+            return list(self.workspaces)
+        return [w for w in self.workspaces if newest - w.saved_at <= _SAME_SAVE_EPSILON]
+
+    def is_from_last_session(self, workspace: SnapshotWorkspace) -> bool:
+        """Was ``workspace`` open at the last save (rather than just remembered)?"""
+        newest = max((w.saved_at for w in self.workspaces), default=0.0)
+        if newest <= 0.0:
+            return True
+        return newest - workspace.saved_at <= _SAME_SAVE_EPSILON
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -339,13 +386,13 @@ def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
     stamped = [
         w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces
     ]
-    live_folders = {_folder_key(w.folder) for w in stamped}
+    live_folders = {folder_key(w.folder) for w in stamped}
     try:
         stored = load()
     except Exception:  # noqa: BLE001 - a broken file must not block the write
         stored = None
     kept = (
-        [w for w in stored.workspaces if _folder_key(w.folder) not in live_folders]
+        [w for w in stored.workspaces if folder_key(w.folder) not in live_folders]
         if stored is not None
         else []
     )
@@ -371,8 +418,13 @@ def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
     )
 
 
-def _folder_key(folder: str) -> str:
-    """Comparable form of a folder path — the same one twice must not be two."""
+def folder_key(folder: str) -> str:
+    """Comparable form of a folder path — the same one twice must not be two.
+
+    Public because the registry compares the same paths when it decides whether
+    a remembered workspace is already open; two different notions of "the same
+    folder" would be a second bug waiting for a symlinked checkout.
+    """
     try:
         return os.path.normcase(str(Path(folder).expanduser().resolve()))
     except OSError:
@@ -428,6 +480,13 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
     an instruction has the first and not the second — and promising twelve
     restored conversations that all turn out to be empty is exactly the lie this
     screen is meant to prevent.
+
+    **The counts describe what resuming will actually do**, which is the LAST
+    SESSION and not the whole file (see :meth:`Snapshot.last_session`). Every
+    remembered workspace is still listed — a folder from Tuesday is worth
+    seeing, and each carries ``in_last_session`` plus its own ``saved_at`` so
+    the screen can separate "what you had open" from "also remembered" instead
+    of presenting a ten-folder archive as one restart's worth of work.
     """
     if snapshot is None:
         return {
@@ -436,6 +495,7 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
             "workspace_count": 0,
             "terminal_count": 0,
             "resumable_count": 0,
+            "earlier_count": 0,
             "workspaces": [],
         }
 
@@ -482,16 +542,26 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
                 "folder_exists": folder_exists,
                 "available": folder_exists and any(p["available"] for p in panes),
                 "resumable_count": sum(1 for p in panes if p["resumable"]),
+                # When this workspace was last open, and whether that was the
+                # session being offered back. Both belong on screen: a card that
+                # says "last open 2 minutes ago" over a folder nobody has
+                # touched since Tuesday is the misreport this feature was
+                # accused of.
+                "saved_at": space.saved_at,
+                "in_last_session": snapshot.is_from_last_session(space),
                 "terminals": panes,
             }
         )
 
+    coming_back = [w for w in workspaces if w["in_last_session"]]
     return {
-        "available": any(w["available"] for w in workspaces),
+        "available": any(w["available"] for w in coming_back),
         "saved_at": snapshot.saved_at,
-        "workspace_count": len(workspaces),
-        "terminal_count": sum(len(w["terminals"]) for w in workspaces),
-        "resumable_count": sum(w["resumable_count"] for w in workspaces),
+        "workspace_count": len(coming_back),
+        "terminal_count": sum(len(w["terminals"]) for w in coming_back),
+        "resumable_count": sum(w["resumable_count"] for w in coming_back),
+        # Remembered, but NOT part of what resuming reopens.
+        "earlier_count": len(workspaces) - len(coming_back),
         "workspaces": workspaces,
     }
 
@@ -530,6 +600,7 @@ __all__ = [
     "SnapshotTerminal",
     "SnapshotWorkspace",
     "clear",
+    "folder_key",
     "load",
     "offer",
     "save",

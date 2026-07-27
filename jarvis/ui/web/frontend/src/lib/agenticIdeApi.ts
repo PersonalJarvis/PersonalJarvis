@@ -175,15 +175,26 @@ export interface ResumeWorkspaceOffer {
   available: boolean;
   /** How many of its panes bring their conversation back. */
   resumable_count: number;
+  /** When THIS workspace was last open — not the file's stamp. Absent on an older backend. */
+  saved_at?: number;
+  /**
+   * True when it was open at the last save, so resuming reopens it. False for a
+   * folder that is only remembered from an earlier session. Absent on an older
+   * backend, which reopened everything — so absent reads as true.
+   */
+  in_last_session?: boolean;
   terminals: ResumeTerminalOffer[];
 }
 
 export interface ResumeOffer {
   available: boolean;
   saved_at: number;
+  /** Counts describe the LAST session — what resuming actually reopens. */
   workspace_count: number;
   terminal_count: number;
   resumable_count: number;
+  /** Remembered folders from earlier sessions, which resuming does NOT reopen. */
+  earlier_count?: number;
   workspaces: ResumeWorkspaceOffer[];
 }
 
