@@ -5,6 +5,7 @@ import { useEventStore } from "@/store/events";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 
 /**
  * Global top bar rendered above every view (see App.tsx). It carries the app-
@@ -124,6 +125,9 @@ export function TopBar() {
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/70 px-4 backdrop-blur-sm">
+      {/* Status, not an action — carries its own `mr-auto` so it sits at the
+          left end of this right-aligned bar and never crowds the buttons. */}
+      <CodingModeBadge />
       <UpdateButton />
       <button
         type="button"

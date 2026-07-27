@@ -38,6 +38,11 @@
     "dropped": "Added to conversation"
   },
   "topbar": {
+    "coding_mode_on": "Coding mode ON",
+    "coding_mode_off": "Coding mode OFF",
+    "coding_mode_on_hint": "Focused coding mode is on — Jarvis answers inside your open workspace. Click to go there.",
+    "coding_mode_on_hint_named": "Focused coding mode is on for “{0}” — Jarvis answers inside that workspace. Click to go there.",
+    "coding_mode_off_hint": "A coding workspace is open, but focused coding mode is off — Jarvis answers normally. Click to go there.",
     "restart": "Restart",
     "restart_confirm": "Confirm restart?",
     "restart_hint": "Restart {name}",

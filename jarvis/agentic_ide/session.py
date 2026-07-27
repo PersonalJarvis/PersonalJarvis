@@ -2308,6 +2308,49 @@ def terminals_added_event(session: Session, created: list[Terminal], *, source_l
     )
 
 
+def coding_mode_active() -> bool:
+    """Is Jarvis an Agentic IDE right now?
+
+    ONE answer to that question, for every layer that needs it. A workspace has
+    to be open AND its focused coding mode has to be on — either half alone is
+    not the mode: a workspace with the mode off is just terminals on a screen,
+    and the flag without a workspace addresses nothing.
+
+    It exists as a named predicate rather than as an inline
+    ``session is not None and session.focus_mode`` in each caller because the
+    two halves are exactly the kind of rule that drifts: the global indicator,
+    the context block and (in future) the routing gates must agree, and three
+    hand-written copies of a two-part condition are three chances to disagree
+    about whether the user is in coding mode.
+
+    Never raises — an optional surface must not be able to break a caller.
+    """
+    try:
+        session = get_registry().session
+    except Exception:  # noqa: BLE001 - optional surface, never fatal
+        return False
+    return session is not None and bool(session.focus_mode)
+
+
+def coding_mode_event(session: Session | None, *, source_layer: str) -> Any:
+    """The bus event announcing the EFFECTIVE coding mode to every client.
+
+    Built here, next to the predicate it reports, so the payload can never claim
+    a mode the predicate would deny. ``session`` is the workspace the switch
+    happened in, or ``None`` when there is none left to be in coding mode.
+    """
+    from jarvis.core.events import AgenticIdeCodingModeChanged
+
+    enabled = session is not None and bool(session.focus_mode)
+    return AgenticIdeCodingModeChanged(
+        session_id=session.id if session is not None else "",
+        enabled=enabled,
+        folder=session.folder if (session is not None and enabled) else "",
+        workspace=session.name if (session is not None and enabled) else "",
+        source_layer=source_layer,
+    )
+
+
 _REGISTRY: Registry | None = None
 
 
@@ -2337,6 +2380,8 @@ __all__ = [
     "SessionNotReady",
     "Terminal",
     "agent_argv",
+    "coding_mode_active",
+    "coding_mode_event",
     "get_registry",
     "reset_registry",
     "sanitize_prompt",

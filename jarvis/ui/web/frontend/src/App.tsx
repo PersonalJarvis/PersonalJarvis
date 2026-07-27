@@ -2,6 +2,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
+import { useCodingMode } from "@/hooks/useCodingMode";
 import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -21,6 +22,7 @@ export default function App() {
   useBrainStatus();
   useVoiceStatus();
   useAssistantNameSeed();
+  useCodingMode();
 
   /*
    * The sidebar is draggable, app-wide.

@@ -38,6 +38,11 @@
     "dropped": "Añadido a la conversación"
   },
   "topbar": {
+    "coding_mode_on": "Modo programación ACTIVO",
+    "coding_mode_off": "Modo programación INACTIVO",
+    "coding_mode_on_hint": "El modo de programación enfocado está activo: Jarvis responde dentro de tu espacio de trabajo abierto. Haz clic para ir allí.",
+    "coding_mode_on_hint_named": "El modo de programación enfocado está activo para «{0}»: Jarvis responde dentro de ese espacio de trabajo. Haz clic para ir allí.",
+    "coding_mode_off_hint": "Hay un espacio de trabajo abierto, pero el modo de programación enfocado está inactivo: Jarvis responde con normalidad. Haz clic para ir allí.",
     "restart": "Reiniciar",
     "restart_confirm": "¿Confirmar reinicio?",
     "restart_hint": "Reiniciar {name}",

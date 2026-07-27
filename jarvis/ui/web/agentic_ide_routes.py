@@ -69,6 +69,7 @@ from jarvis.agentic_ide.session import (
     Terminal,
     account_home,
     agent_argv,
+    coding_mode_event,
     get_registry,
     terminals_added_event,
 )
@@ -79,6 +80,30 @@ from .surface_security import credentials_valid, is_loopback_request
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
+
+
+async def _announce_coding_mode(request: Request) -> None:
+    """Tell every connected client what the coding mode is NOW.
+
+    Called from each route that can change the answer — the explicit toggle, and
+    the three workspace transitions that change it as a side effect (closing the
+    front workspace, closing a specific one, switching to another). The mode is
+    read back from the registry rather than passed in, so a caller cannot
+    announce a mode that did not happen.
+
+    Best-effort by design: the mode is already set, and no client notification is
+    worth failing a request over (AP-18). A missed event costs a stale badge
+    until the next navigation, never a wrong workspace state.
+    """
+    bus = getattr(request.app.state, "bus", None)
+    if bus is None:
+        return
+    try:
+        await bus.publish(
+            coding_mode_event(get_registry().session, source_layer="agentic_ide_routes")
+        )
+    except Exception as exc:  # noqa: BLE001 - notification is not the work
+        log.debug("AgenticIdeCodingModeChanged publish failed: %s", exc)
 
 # One system folder window at a time — see ``open_native_picker``.
 _native_picker_lock = asyncio.Lock()
@@ -792,7 +817,9 @@ async def get_workspaces() -> WorkspacesResponse:
 
 
 @router.put("/workspaces/active", summary="Switch to another workspace")
-async def activate_workspace(req: ActivateWorkspaceRequest) -> dict:
+async def activate_workspace(
+    request: Request, req: ActivateWorkspaceRequest
+) -> dict:
     """Bring one workspace to the front, or clear the front entirely.
 
     Nothing starts, stops or restarts: the agents in every open workspace keep
@@ -809,6 +836,9 @@ async def activate_workspace(req: ActivateWorkspaceRequest) -> dict:
         session = await get_registry().activate(req.id)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Each workspace carries its own coding mode, so bringing a different one to
+    # the front can change the answer without anyone touching the toggle.
+    await _announce_coding_mode(request)
     return {
         "ok": True,
         "active_id": session.id if session else None,
@@ -870,7 +900,7 @@ async def start_session(req: StartSessionRequest) -> dict:
     summary="Close the Agentic-IDE workspace",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def end_session() -> dict:
+async def end_session(request: Request) -> dict:
     """Close the workspace on screen and stop every agent running in it.
 
     Other open workspaces are untouched; the most recently used of them takes
@@ -878,6 +908,9 @@ async def end_session() -> dict:
     one instead of whichever is showing.
     """
     closed = await get_registry().end()
+    # Closing the front workspace ends its coding mode — or hands it to whichever
+    # workspace takes the front, which may have a different one.
+    await _announce_coding_mode(request)
     return {"ok": True, "closed": closed, "state": get_registry().state()}
 
 
@@ -886,7 +919,7 @@ async def end_session() -> dict:
     summary="Close one Agentic-IDE workspace",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_workspace(workspace_id: str) -> dict:
+async def close_workspace(request: Request, workspace_id: str) -> dict:
     """Close the workspace with this id and stop every agent inside it.
 
     The only action that stops an agent on the user's behalf. Switching away
@@ -900,6 +933,7 @@ async def close_workspace(workspace_id: str) -> dict:
     if registry.get(workspace_id) is None:
         raise HTTPException(status_code=404, detail="That workspace is not open.")
     await registry.end(workspace_id)
+    await _announce_coding_mode(request)
     return {"ok": True, "closed": workspace_id, "state": registry.state()}
 
 
@@ -1061,18 +1095,26 @@ async def forget_resume_offer() -> dict:
 
 
 @router.put("/mode", summary="Toggle focused coding mode")
-async def set_mode(req: ModeRequest) -> dict:
+async def set_mode(request: Request, req: ModeRequest) -> dict:
     """Turn the focused coding mode on or off.
 
     While on, Jarvis answers inside the open workspace — it knows the folder,
     the codebase, and what each named terminal is doing. Turning it off returns
     the assistant to its normal, whole-machine behaviour; the terminals keep
     running either way.
+
+    The switch is announced on the bus because coding mode is NOT local to this
+    view: it changes how Jarvis answers on every screen, so the app-wide
+    indicator has to hear about a switch made anywhere — including one made by
+    voice or by the CLI while the user is looking at a different section.
     """
+    registry = get_registry()
     try:
-        enabled = get_registry().set_focus_mode(req.enabled)
+        enabled = registry.set_focus_mode(req.enabled)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await _announce_coding_mode(request)
     return {"ok": True, "focus_mode": enabled}
 
 

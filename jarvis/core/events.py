@@ -408,6 +408,42 @@ class AgenticIdeTerminalsAdded(Event):
     folder: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class AgenticIdeTerminalsClosed(Event):
+    """Panes were closed outside the Agentic-IDE workspace view."""
+
+    session_id: str = ""
+    names: tuple[str, ...] = ()
+    folder: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeCodingModeChanged(Event):
+    """The focused coding mode was switched on or off.
+
+    Coding mode is not a property of the workspace view — it changes how Jarvis
+    answers EVERY turn, on every screen. So the one surface that must never be
+    wrong about it is the app shell, and the shell does not mount the workspace
+    view. Without this event the global indicator would only learn about a
+    switch by being on the screen where the switch happened, which is precisely
+    the screen where it is not needed.
+
+    Carries the EFFECTIVE mode, not merely the flag: ``enabled`` is true only
+    when a workspace is actually open AND its focus mode is on — the same
+    predicate the routing side asks. A client must be able to render the badge
+    straight from this payload without re-deriving that rule and drifting away
+    from it.
+
+    ``folder`` and ``workspace`` let a client name the workspace the mode
+    belongs to; both are empty when the mode went off.
+    """
+
+    session_id: str = ""
+    enabled: bool = False
+    folder: str = ""
+    workspace: str = ""
+
+
 # ----------------------------------------------------------------------
 # UI / Chat
 # ----------------------------------------------------------------------

@@ -267,6 +267,16 @@ export function useWebSocket(): void {
           );
         }
 
+        if (env.event_name === "AgenticIdeCodingModeChanged") {
+          // Coding mode changes how Jarvis answers on EVERY screen, so the
+          // app-wide indicator has to hear about a switch made anywhere — by
+          // voice, by the CLI, or in a workspace view the user is not looking
+          // at. Trigger only; useCodingMode re-reads the authoritative state.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:agentic-ide-mode", { detail: env.payload }),
+          );
+        }
+
         // Live interface-language switch (voice / Control API / another client):
         // the whole app re-renders in the new language with no reload. push:false
         // so receiving the broadcast does not echo a PUT back.

@@ -38,6 +38,11 @@
     "dropped": "Zur Unterhaltung hinzugefügt"
   },
   "topbar": {
+    "coding_mode_on": "Coding-Modus AN",
+    "coding_mode_off": "Coding-Modus AUS",
+    "coding_mode_on_hint": "Der fokussierte Coding-Modus ist an — Jarvis antwortet in deinem offenen Workspace. Klicken, um dorthin zu wechseln.",
+    "coding_mode_on_hint_named": "Der fokussierte Coding-Modus ist an für „{0}“ — Jarvis antwortet in diesem Workspace. Klicken, um dorthin zu wechseln.",
+    "coding_mode_off_hint": "Ein Coding-Workspace ist offen, aber der fokussierte Coding-Modus ist aus — Jarvis antwortet normal. Klicken, um dorthin zu wechseln.",
     "restart": "Neu starten",
     "restart_confirm": "Wirklich neu starten?",
     "restart_hint": "{name} neu starten",
