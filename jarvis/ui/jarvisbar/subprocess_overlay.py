@@ -4,9 +4,12 @@
 ``OrbBusBridge`` drives, but renders nothing itself: it spawns
 ``python -m jarvis.ui.jarvisbar.host`` — whose MAIN thread may legally own
 Aqua-Tk — and forwards every surface call as one JSON line on the child's
-stdin. Child events (talk, hang-up, mute toggle, feedback, show-window) stream
-back on stdout. Voice actions are executed against the live parent-process
-pipeline; bridge-owned actions are dispatched to its registered callbacks.
+stdin. Child events (talk, hang-up, mute toggle, feedback, show-window, drop)
+stream back on stdout. Voice actions are executed against the live
+parent-process pipeline; bridge-owned actions are dispatched to its registered
+callbacks. A forwarded drop is replayed onto THIS process's drop bridge (the
+brain lives here, not in the host) and its verdict is sent back down so the
+hosted bar can confirm the drop on screen.
 
 Failure contract: while the host is down, every method degrades to a one-log
 no-op (``NullOverlay`` behavior) — the bar is cosmetic and must never take
@@ -176,6 +179,14 @@ class SubprocessBarOverlay:
         # is this flag — it must be set even when there is no live process
         # to tear down right now.
         self._stopping = True
+        # Release the drop return leg: a swap to another surface installs its
+        # own sink, and a stale one would write to a host that is going away.
+        try:
+            from jarvis.overlay.drop_bridge import set_drop_result_sink
+
+            set_drop_result_sink(None)
+        except Exception:  # noqa: BLE001 — teardown must never raise
+            log.debug("drop result sink release failed", exc_info=True)
         proc = self._proc
         if proc is None:
             return
@@ -469,8 +480,38 @@ class SubprocessBarOverlay:
                 cb_show = self._on_show_window
                 if cb_show is not None:
                     cb_show()
+            elif event == "drop":
+                self._dispatch_drop_event(msg)
         except Exception:  # noqa: BLE001 — a bad callback must not kill the pump
             log.exception("bar host event callback failed: %r", event)
+
+    def _dispatch_drop_event(self, msg: dict[str, Any]) -> None:
+        """Re-dispatch a drop the hosted bar received, here in the parent.
+
+        The child process has no brain and no asyncio loop — its bridge only
+        forwards. This process has the real handler (installed by the desktop
+        app), so the drop is replayed onto the parent-side bridge and the
+        verdict is sent back down as a ``drop_result`` command, which the host
+        turns into the bar's visible confirmation.
+        """
+        from jarvis.overlay.drop_bridge import dispatch_drop, set_drop_result_sink
+
+        paths = [str(p) for p in (msg.get("paths") or [])]
+        text = str(msg.get("text") or "")
+        # Install the return leg lazily and idempotently: it can only be
+        # answered while a host is alive, and binding it here keeps it on the
+        # instance that actually received the drop.
+        set_drop_result_sink(self._send_drop_result)
+        if not dispatch_drop(paths, text):
+            # No handler in this process either (headless embedder, or a drop
+            # that beat the desktop wiring). Say so rather than leaving the bar
+            # waiting on a confirmation that will never come.
+            log.debug("bar host drop had no parent-side handler")
+            self._send_drop_result(False)
+
+    def _send_drop_result(self, accepted: bool) -> None:
+        """Send a drop verdict down to the hosted bar (never raises)."""
+        self._send({"op": "drop_result", "accepted": bool(accepted)})
 
     def _dispatch_talk_action(self) -> None:
         """Start a voice session in the parent process.

@@ -1558,23 +1558,40 @@ class DesktopApp:
         # (build error) → ingest_drop degrades to a text-only turn.
         try:
             from jarvis.brain.drop_context import ingest_drop, items_from_paths
-            from jarvis.overlay.drop_bridge import set_drop_handler
+            from jarvis.overlay.drop_bridge import (
+                report_drop_result,
+                set_drop_handler,
+            )
 
             def _on_overlay_drop(paths: list[str], text: str) -> None:
                 items = items_from_paths(paths) if paths else []
                 dragged = (text or "").strip() or None
                 if not items and dragged is None:
+                    # A drop the user definitely made, carrying nothing we can
+                    # use (an empty folder, an unreadable path). Say so — this
+                    # is precisely the case where silence leaves them guessing
+                    # whether the bar even noticed.
+                    report_drop_result(False)
                     return
 
                 async def _handle_drop() -> None:
-                    current_brain = await _await_brain_ready()
-                    await ingest_drop(
-                        bus=server.bus,
-                        brain=current_brain,
-                        thread_id="default",
-                        items=items,
-                        dragged_text=dragged,
-                    )
+                    accepted = False
+                    try:
+                        current_brain = await _await_brain_ready()
+                        accepted = bool(
+                            await ingest_drop(
+                                bus=server.bus,
+                                brain=current_brain,
+                                thread_id="default",
+                                items=items,
+                                dragged_text=dragged,
+                            )
+                        )
+                    finally:
+                        # The overlay gets an honest answer either way: a
+                        # confirmation tick that appears when the content never
+                        # reached the context would be worse than none at all.
+                        report_drop_result(accepted)
 
                 asyncio.run_coroutine_threadsafe(_handle_drop(), loop)
 

@@ -60,6 +60,43 @@ def _manager() -> tuple[BrainManager, _RecordingDispatcher]:
 
 def teardown_function() -> None:
     drop_bridge.set_drop_handler(None)
+    drop_bridge.set_drop_result_sink(None)
+
+
+def _wire_desktop_app_drop(manager, loop, done: asyncio.Event) -> None:
+    """Wire the overlay drop EXACTLY as jarvis/ui/desktop_app.py does.
+
+    Including the return leg: the bar's visible confirmation is driven by the
+    verdict reported here, so a test that omitted it would prove a chain the
+    app no longer has.
+    """
+
+    def _on_overlay_drop(paths: list[str], text: str) -> None:
+        items = items_from_paths(paths) if paths else []
+        dragged = (text or "").strip() or None
+        if not items and dragged is None:
+            drop_bridge.report_drop_result(False)
+            done.set()
+            return
+
+        async def _run() -> None:
+            accepted = False
+            try:
+                accepted = bool(
+                    await ingest_drop(
+                        brain=manager,
+                        thread_id="default",
+                        items=items,
+                        dragged_text=dragged,
+                    )
+                )
+            finally:
+                drop_bridge.report_drop_result(accepted)
+                done.set()
+
+        asyncio.run_coroutine_threadsafe(_run(), loop)
+
+    drop_bridge.set_drop_handler(_on_overlay_drop)
 
 
 @pytest.mark.asyncio
@@ -67,23 +104,9 @@ async def test_bar_drop_reaches_brain_and_next_turn_uses_it(tmp_path) -> None:
     manager, rec = _manager()
     loop = asyncio.get_running_loop()
     done = asyncio.Event()
-
-    # Wire the overlay drop EXACTLY as jarvis/ui/desktop_app.py does.
-    def _on_overlay_drop(paths: list[str], text: str) -> None:
-        items = items_from_paths(paths) if paths else []
-        dragged = (text or "").strip() or None
-        if not items and dragged is None:
-            return
-
-        async def _run() -> None:
-            await ingest_drop(
-                brain=manager, thread_id="default", items=items, dragged_text=dragged
-            )
-            done.set()
-
-        asyncio.run_coroutine_threadsafe(_run(), loop)
-
-    drop_bridge.set_drop_handler(_on_overlay_drop)
+    verdicts: list[bool] = []
+    drop_bridge.set_drop_result_sink(verdicts.append)
+    _wire_desktop_app_drop(manager, loop, done)
 
     # A real dropped file, as the bar would hand over a path.
     f = tmp_path / "report.txt"
@@ -98,7 +121,34 @@ async def test_bar_drop_reaches_brain_and_next_turn_uses_it(tmp_path) -> None:
     assert rec.calls == []
     assert any("BAR_TOKEN_777" in str(m.content) for m in manager._history)
 
+    # ...and the bar is told so, which is what raises its confirmation tick.
+    assert verdicts == [True]
+
     # The user's NEXT real turn (voice or chat → generate) USES it.
     await manager.generate("what is the marker?", trace_id=uuid4(), use_history=True)
     hist = " ".join(str(getattr(m, "content", "")) for m in (rec.calls[0]["history"] or []))
     assert "BAR_TOKEN_777" in hist
+
+
+@pytest.mark.asyncio
+async def test_a_drop_with_nothing_usable_tells_the_bar_so(tmp_path) -> None:
+    """Silence here is what left the user guessing whether the bar noticed.
+
+    A directory, a vanished path, an empty payload — the drop happened, it just
+    carried nothing we can hold. The bar has to say that rather than nothing.
+    """
+    manager, _rec = _manager()
+    loop = asyncio.get_running_loop()
+    done = asyncio.Event()
+    verdicts: list[bool] = []
+    drop_bridge.set_drop_result_sink(verdicts.append)
+    _wire_desktop_app_drop(manager, loop, done)
+
+    folder = tmp_path / "a-folder"
+    folder.mkdir()
+
+    assert drop_bridge.dispatch_drop([str(folder)], "") is True
+    await asyncio.wait_for(done.wait(), timeout=5)
+
+    assert verdicts == [False]
+    assert manager._history == []

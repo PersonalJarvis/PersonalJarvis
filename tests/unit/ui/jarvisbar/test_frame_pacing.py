@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pytest
 
+from jarvis.ui.jarvisbar import renderer
 from jarvis.ui.jarvisbar.overlay import (
     _IDLE_SETTLE_TICKS,
     MIN_FRAME_DELAY_MS,
@@ -94,6 +95,10 @@ def _bare_bar(
     bar._last_frame_ns = 0
     bar._static_tick_key = None
     bar._static_tick_count = 0
+    # Drag-drop feedback state. It participates in the tick key and vetoes the
+    # idle skip, so the frame loop reads it on every tick.
+    bar._drop_visual = renderer.DROP_STATE_NONE
+    bar._drop_visual_t0 = 0.0
     root = _FakeRoot()
     canvas = _FakeCanvas()
     bar._root = root
@@ -219,6 +224,54 @@ def test_active_mode_never_skips_render():
 
     assert renderer_obj.calls == _IDLE_SETTLE_TICKS + 5, (
         "an active (thinking) pill skipped rendering — animation would freeze"
+    )
+
+
+def test_a_drag_over_a_settled_idle_bar_starts_painting_again():
+    """The trap the drop confirmation would otherwise have died in.
+
+    An idle bar has almost always been settled for far longer than
+    _IDLE_SETTLE_TICKS by the time a file is dragged onto it — and the
+    confirmation (a pulsing rim, a tick that strokes on and fades) lives
+    entirely inside frames the skip would swallow. So a drop has to both change
+    the tick key and veto the skip outright.
+    """
+    renderer_obj = _CountingRenderer()
+    bar, _root, _canvas = _bare_bar(renderer_obj, mode="idle")
+
+    for _ in range(_IDLE_SETTLE_TICKS + 5):
+        bar._schedule_frame()
+    calls_while_settled = renderer_obj.calls
+
+    bar._set_drop_visual(renderer.DROP_STATE_ARMED)
+    for _ in range(10):
+        bar._schedule_frame()
+
+    assert renderer_obj.calls == calls_while_settled + 10, (
+        "a settled idle bar kept skipping frames while a file hovered it — "
+        "the drop feedback would never be drawn"
+    )
+
+
+def test_the_bar_settles_again_once_the_confirmation_has_run_out():
+    """The veto must be temporary: a permanent one would burn the DWM
+    compositing tax on every tick forever after the first drop."""
+    renderer_obj = _CountingRenderer()
+    bar, _root, _canvas = _bare_bar(renderer_obj, mode="idle")
+
+    bar._set_drop_visual(renderer.DROP_STATE_OK)
+    # Backdate the verdict so its animation has fully elapsed.
+    bar._drop_visual_t0 -= renderer.DROP_CONFIRM_TOTAL_S + 1.0
+
+    for _ in range(_IDLE_SETTLE_TICKS + 5):
+        bar._schedule_frame()
+    calls_before = renderer_obj.calls
+
+    for _ in range(10):
+        bar._schedule_frame()
+
+    assert renderer_obj.calls == calls_before, (
+        "the bar never returned to the idle fast path after a drop"
     )
 
 
