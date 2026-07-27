@@ -184,6 +184,41 @@ def _is_public_knowledge_question(text: str) -> bool:
     return bool(_PUBLIC_KNOWLEDGE_QUESTION_RE.search(str(text or "").strip()))
 
 
+def _dictionary_corrected(text: str) -> str:
+    """The user's STT dictionary, applied to a realtime input transcript.
+
+    A realtime provider transcribes INSIDE the model, so no ``STTProvider`` is
+    ever built for this audio and the pipeline's ``DictionaryCorrectingSTT``
+    decorator — which is what makes the dictionary work at all — never sees the
+    text. The user's own vocabulary therefore silently did not apply in realtime
+    mode, and on 2026-07-27 that cost a pane: "one Claude Code terminal" was
+    transcribed "one Cloude code terminal", the spawn parser matched no CLI in
+    it, and the group was dropped without a word. ``claude`` was in the user's
+    dictionary the whole time.
+
+    Correcting here is the one place every consumer reads from: the echo judge,
+    the language resolver, the turn plan, the delegate, the tool bridge, the
+    hang-up matcher and the transcript published to the UI all take this string,
+    so none of them can disagree about what was said.
+
+    Provider-agnostic on purpose (AP-21): it repairs whatever the model heard
+    rather than asking a provider for a decoder-bias hook only some of them
+    offer. Pure regex plus a bounded edit distance — no model call, no network,
+    nothing that belongs off a hot path (AP-11 doctrine). A dictionary that
+    cannot be read returns the transcript untouched: a custom word is never
+    worth a lost turn.
+    """
+    if not text:
+        return text
+    try:
+        from jarvis.speech.stt_dictionary import get_corrector
+
+        return get_corrector().correct(text)
+    except Exception:  # noqa: BLE001 - the dictionary is an add-on, never a gate
+        log.debug("realtime: STT dictionary unavailable", exc_info=True)
+        return text
+
+
 class _LoopLagProbe:
     """Sample event-loop scheduling lag so audio-stall logs can tell a
     silent provider from a starved receive loop.
@@ -1862,7 +1897,7 @@ class RealtimeVoiceSession:
         try:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
-                    transcript = str(event.text or "").strip()
+                    transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
                     input_observed = bool(transcript or transcription_failed)
                     if event.is_final and transcript:
