@@ -102,6 +102,58 @@ def test_transcript_filter_keeps_content_and_open_sessions(tmp_path) -> None:
         store.close()
 
 
+def test_a_session_whose_only_content_was_spoken_stays_listed(tmp_path) -> None:
+    """A voiced mission readback is a transcript, not an empty attempt.
+
+    The session carries no turn text (the readback arrives after hangup and is
+    persisted on the spoken track), yet the detail view and all three exports
+    render it in full. Hiding the row made a conversation the user had heard
+    unreachable.
+    """
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        _finalize_session(store, session_id="spoken-only", started_ms=1_000)
+        store.append_event(
+            session_id="spoken-only",
+            turn_id=None,
+            ts_ms=1_500,
+            kind="SpeechSpoken",
+            payload={
+                "text": "Done. The file is in your Outputs folder.",
+                "language": "en",
+                "spoken_kind": "completion",
+            },
+        )
+        _finalize_session(store, session_id="really-empty", started_ms=2_000)
+
+        visible = store.list_sessions(limit=10, include_empty=False)
+
+        assert [session.id for session in visible] == ["spoken-only"]
+        assert visible[0].preview == "Done. The file is in your Outputs folder."
+    finally:
+        store.close()
+
+
+def test_a_silent_spoken_event_does_not_resurrect_an_empty_attempt(tmp_path) -> None:
+    """An event whose text is blank carries nothing to show."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        _finalize_session(store, session_id="blank-spoken", started_ms=1_000)
+        store.append_event(
+            session_id="blank-spoken",
+            turn_id=None,
+            ts_ms=1_500,
+            kind="SpeechSpoken",
+            payload={"text": "   ", "language": "en", "spoken_kind": "reply"},
+        )
+
+        assert store.list_sessions(limit=10, include_empty=False) == []
+    finally:
+        store.close()
+
+
 def test_empty_attempts_do_not_consume_the_visible_limit(tmp_path) -> None:
     store = SessionStore(tmp_path / "sessions.db")
     store.open()

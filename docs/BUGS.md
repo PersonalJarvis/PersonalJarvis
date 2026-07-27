@@ -8054,3 +8054,79 @@ worst stall the process actually produces, and measure that instead of assuming
 the remote end is at fault. What the third cause shows is the other half of the
 rule: log an attributable cause at the boundary, or an intermittent gap stays
 unfalsifiable forever.
+
+## BUG-116: the Transcription view drops whole utterances and hides entire conversations (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "I don't think my last transcription is
+11 minutes old, and I'm fairly sure I had more than just two turns."  <!-- i18n-allow: quoted maintainer report, translated -->
+The list looked stale and sessions read short.
+
+**What the recording actually lost.** An audit of the live store (842 sessions,
+32 079 events) found three separate holes, all silent:
+
+- **18 turns swallowed a user utterance.** A turn received two DIFFERENT final
+  transcripts and only one survived. 07-17 19:21:03 "Wie viel Kilometer sind es  <!-- i18n-allow: quoted user utterance from the forensic session -->
+  im Schnitt?" and 07-15 19:56:11 "Ich möchte Business Class fliegen." appear  <!-- i18n-allow: quoted user utterance from the forensic session -->
+  nowhere in their transcripts.
+- **18 sessions carried duplicate turn indices**, so `get_turns` (ORDER BY idx)
+  returned them in arbitrary order and the view numbered the same turn twice.
+- **12 finished sessions were invisible in the list** although speech was
+  recorded in them — including four whose user utterance had been swallowed by
+  the first defect, and eight whose only content was a voiced mission readback
+  ("Done. The file is in your Outputs folder.").
+
+**Root cause — a final transcript was bound to `VoiceTurnStarted`.**
+`SessionRecorder._on_transcription_update` returned unless an OPEN turn with an
+explicit lifecycle existed. Realtime does not always announce its turns: the
+layer opens one silently while an out-of-band readback is speaking and
+withholds `VoiceTurnStarted` (`_ensure_turn_started` publishes only when
+`_external_update is None`), and the BUG-103 recovery only re-announces it
+while the readback is still silent. Once the readback had audio out, the user's
+next utterance arrived at a recorder whose current turn was already finalized —
+and was dropped on the floor, taking the turn count with it. The bus can
+produce the same gap on its own: the recorder is a wildcard subscriber, so a
+dispatch past `_WILDCARD_HANDLER_TIMEOUT_S` is abandoned (seen once on
+2026-07-27 15:21:32). The classic path had solved this long ago —
+`_on_transcript_final` invents a turn via `_ensure_turn_open` — realtime simply
+never got the same treatment. The duplicate indices were the second half of the
+same split: explicit turns numbered from `event.turn_index`, invented ones from
+`turn_count`, two counters that collide as soon as both kinds occur in one
+session.
+
+**Fix.**
+
+- `jarvis/sessions/recorder.py` — a final transcript arriving with no open turn
+  now opens one instead of returning (logged as a recovered turn). An open
+  explicit turn still takes the whole-utterance snapshot, and the classic
+  pipeline still lets `TranscriptFinal` own `user_text`, gated on a new
+  `explicit_turn_lifecycle` flag so a stray STT partial can never invent a turn.
+- One monotonic index allocator (`_allocate_idx`) serves both turn kinds:
+  provider numbering is honoured while it leads, anything at or behind the
+  high-water mark is bumped past it. A turn announced twice keeps its row.
+- `jarvis/sessions/store.py` — "has content" now includes the SPOKEN track, and
+  a session with no user text previews its first voiced phrase. JSON1 is probed
+  once at `open()` (optional before SQLite 3.38) and the lookup degrades to
+  turn text where it is missing. `schema.sql` gains
+  `idx_events_session_kind`; the list query measures 1-5 ms on the real store.
+
+**Verified on production data.** The recorded events of four real sessions were
+replayed through the fixed recorder: 07-17 19:17 went from 13 turn rows (two
+blank, two duplicate indices, two utterances missing) to 14 correct ones,
+07-15 19:54 regained "Ich möchte Business Class fliegen.", 07-20 08:21 filled  <!-- i18n-allow: quoted user utterance from the forensic session -->
+its blank last turn, and the unaffected 07-27 19:08 session came out
+byte-identical.
+
+**Regression guard.** `tests/unit/sessions/test_recorder_realtime.py` — an
+unannounced final becomes its own turn with its own reply, recovered and
+announced turns never share an index, and a classic-pipeline partial still
+invents nothing. `tests/unit/sessions/test_empty_session_visibility.py` — a
+spoken-only session stays listed and previews its phrase, while a blank spoken
+event does not resurrect an empty attempt.
+
+**Class rule.** A recorder must never make the RECORD conditional on a
+lifecycle event it does not control. Every producer of turn boundaries
+eventually skips one — deliberately (a silent readback turn), or because the
+bus abandoned the subscriber — and the honest fallback is to open a turn from
+the evidence in hand, not to discard the evidence. The corollary bit the list
+query too: "did anything happen here?" must be asked of every track the detail
+view renders, or a conversation the user definitely heard becomes unreachable.

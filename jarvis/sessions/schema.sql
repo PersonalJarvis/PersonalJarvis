@@ -90,3 +90,7 @@ CREATE TABLE IF NOT EXISTS voice_events (
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON voice_events(session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_events_turn ON voice_events(turn_id, seq);
+-- The list view asks "did this session voice anything?" per candidate row
+-- (see SessionStore.list_sessions). Without a kind-aware index that probe
+-- walks every event of every session on the way to the newest 100.
+CREATE INDEX IF NOT EXISTS idx_events_session_kind ON voice_events(session_id, kind);
