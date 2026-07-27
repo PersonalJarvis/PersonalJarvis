@@ -51,6 +51,64 @@ def test_knowledge_question_blocks_computer_use(utterance: str) -> None:
     assert llm_computer_use_allowed(utterance) is False
 
 
+# ── tech proper names are not on-screen commands ──────────────────────────
+#
+# Live incident 2026-07-27 11:52 (voice session 57cc5f5f, flight recorder
+# ActionProposed dispatch_to_harness/screenshot): a model-comparison question
+# naming "Open AI Embedding 3 Large" matched the bare ``open\w*`` vehicle verb,
+# the gate allowed, and computer_use screenshotted the desktop and started
+# driving it until the user hit Escape. Same defect class the local-action gate
+# fixed on 2026-07-10 for "OpenRouter" — it had never reached this gate.
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The live utterance, verbatim from the flight recorder.
+        "Hey, kannst du mal einen Vergleich machen von den "  # i18n-allow: live
+        "beiden Modellen und zwar von den beiden Embedding "  # i18n-allow: live
+        "Modellen? Einmal von dem Embedding Modell ähm aus "  # i18n-allow: live
+        "Olama. Ich glaube, das nennt sich ähm BGE ähm "  # i18n-allow: live
+        "{gedankenstrich} M3 und Gemini oder ähm Open AI "  # i18n-allow: live
+        "Embedding 3 Large, was der Unterschied?",  # i18n-allow: live
+        # "open" as a brand/license prefix — spaced and unspaced.
+        "Was ist der Unterschied zwischen OpenAI Embedding 3 "  # i18n-allow: DE
+        "Large und BGE-M3?",  # i18n-allow: DE fixture
+        "Was kostet OpenRouter pro Million Token?",  # i18n-allow: DE fixture
+        "Ist Open Source hier die bessere Wahl?",  # i18n-allow: DE fixture
+        "Was hältst du von Open Weights Modellen?",  # i18n-allow: DE fixture
+        "How does OpenCV compare to a vision model?",
+        # "window" as a model term, never the desktop object.
+        "Erklär mir das Context Window von Gemini 3 Pro",  # i18n-allow: DE
+        "What is sliding window attention?",
+        # "edge" as an engineering term, never the browser.
+        "Ist das ein Edge Case oder ein echter Bug?",  # i18n-allow: DE fixture
+        "Lohnt sich Edge Computing für uns?",  # i18n-allow: DE fixture
+        "Is that library still cutting edge?",
+    ],
+)
+def test_tech_proper_names_never_read_as_a_desktop_command(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Masking a product name must not disarm a real command in the SAME turn.
+        "Mach mal ein Fenster auf und such nach Open AI Preisen.",  # i18n-allow: DE trigger
+        "Open Chrome and check the OpenRouter status page.",
+        # The vehicle nouns themselves stay vehicles.
+        "Mach den Edge zu.",  # i18n-allow: DE trigger
+        "Schließ das Fenster.",  # i18n-allow: DE trigger
+        # Real English open-verb conjugations still count.
+        "Opening Notepad, please.",
+        "He opened the wrong tab, fix it.",
+    ],
+)
+def test_product_name_masking_leaves_real_commands_intact(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is True
+
+
 # ── explicit desktop asks keep passing ────────────────────────────────────
 
 
