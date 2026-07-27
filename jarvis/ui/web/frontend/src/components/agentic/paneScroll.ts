@@ -20,14 +20,35 @@
  * tracking means the wheel is no longer the terminal's to handle: xterm
  * forwards it and Claude Code scrolls its own transcript.
  *
+ * ## The mouse, not the buffer, is what decides
+ *
+ * The alternate buffer is the loud symptom, but it is not the cause, and gating
+ * on it alone was wrong. A CLI may keep its transcript to itself while staying
+ * on the NORMAL buffer — measured against Claude Code 2.1.195 running here, the
+ * viewport reported `scrollHeight 286 / clientHeight 242 / scrollTop 44`: a
+ * handful of stale lines behind a live screen, permanently pinned to the end.
+ * That is the worst of both worlds, because it looks like honest scrollback:
+ * the bar drew a thumb filling 85% of its track and parked it at the bottom,
+ * announcing "you are at the end" to somebody reading the middle of Claude
+ * Code's own history.
+ *
+ * What actually settles it is mouse tracking. Once a CLI asks for the mouse,
+ * xterm hands it every wheel event and stops scrolling its viewport at all
+ * (`Terminal._bindMouse`: the viewport only sees a wheel the application did
+ * not take). From that moment the viewport is frozen furniture in whatever
+ * buffer it happens to be, its position says nothing about what the user is
+ * looking at, and any proportional thumb drawn from it is a lie. So the check
+ * below reads the mouse FIRST and the buffer type second.
+ *
  * Hence two modes, and a scrollbar that reads which one it is in:
  *
- * * `scrollback` — the terminal holds the history (Codex, a plain shell). The
- *   thumb is proportional and exact, and dragging it moves the viewport.
- * * `app` — a full-screen application holds the history and accepts wheel
- *   events (Claude Code). There is no honest position to draw, so the bar
- *   becomes a centred grip: dragging it relays wheel notches to the CLI, which
- *   scrolls itself. It springs back rather than pretending to know where it is.
+ * * `scrollback` — the terminal holds the history and the wheel (Codex, a plain
+ *   shell). The thumb is proportional and exact, and dragging it moves the
+ *   viewport.
+ * * `app` — the application took the mouse, so it holds the history (Claude
+ *   Code). There is no honest position to draw, so the bar becomes a centred
+ *   grip: dragging it relays wheel notches to the CLI, which scrolls itself. It
+ *   springs back rather than pretending to know where it is.
  * * `none` — nothing to scroll (a fresh pane, or a full-screen app that does
  *   not take the mouse). The bar stays away instead of drawing a dead track.
  */
@@ -89,14 +110,17 @@ export function readScrollState(term: Terminal | null): PaneScrollState {
   const total = buffer.length ?? rows;
   const top = buffer.viewportY ?? 0;
 
-  if (buffer.type !== "alternate") {
-    if (total > rows) return { mode: "scrollback", total, rows, top };
-    return IDLE_STATE;
-  }
-  // Alternate buffer: the application draws the screen. It can only be
-  // scrolled if it asked for the mouse, because relaying a wheel notch to a CLI
-  // that did not would inject the escape sequence as if it had been typed.
+  // The mouse first — see the file header. An application holding the wheel
+  // holds the history with it, in EITHER buffer, and the viewport it left
+  // behind must not be drawn as though it were that history.
   if (appTakesWheel(term)) return { mode: "app", total: rows, rows, top: 0 };
+
+  // Alternate buffer without the mouse: the application draws the whole screen
+  // and there is nothing to relay a wheel notch to — the escape sequence would
+  // land in its input as if it had been typed.
+  if (buffer.type === "alternate") return IDLE_STATE;
+
+  if (total > rows) return { mode: "scrollback", total, rows, top };
   return IDLE_STATE;
 }
 

@@ -62,6 +62,32 @@ describe("readScrollState", () => {
     expect(state.rows).toBe(30);
   });
 
+  /*
+   * The follow-up regression, and the reason the check reads the mouse before
+   * the buffer type. Claude Code 2.1.195 was measured holding the mouse while
+   * still on the NORMAL buffer, leaving a viewport of `scrollHeight 286 /
+   * clientHeight 242 / scrollTop 44` behind it: a few stale lines, pinned to
+   * the end forever. Read as scrollback that draws a thumb filling 85% of the
+   * track, parked at the bottom — telling somebody halfway up the agent's own
+   * transcript that they are at the very end of it.
+   */
+  it("reports app mode for a CLI that took the mouse on the normal buffer", () => {
+    const state = readScrollState(
+      fakeTerminal({
+        type: "normal",
+        mouseTrackingMode: "any",
+        length: 28,
+        rows: 24,
+        viewportY: 4,
+      }),
+    );
+
+    expect(state.mode).toBe("app");
+    // No leftover position from the frozen viewport: the grip encodes none.
+    expect(state.top).toBe(0);
+    expect(thumbGeometry(state, 400)).toEqual({ topPx: 178, heightPx: GRIP_PX });
+  });
+
   it("stays away from a full-screen app that did not take the mouse", () => {
     // Relaying a wheel notch to one of those would arrive in its input as the
     // raw escape sequence, so no bar is the correct answer.
