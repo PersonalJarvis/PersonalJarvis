@@ -1082,6 +1082,9 @@ class RealtimeVoiceSession:
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
+        # True once the surface TTS spoke anything in THIS turn, so the turn is
+        # answered and the no-audio rescue must not speak over it.
+        self._surface_spoke_this_turn = False
         self._drop_provider_output_until_new_response = False
         # Set when a surface fallback already spoke a delegate reply: a very
         # late provider rendering of that same reply may arrive AFTER its turn
@@ -2508,6 +2511,7 @@ class RealtimeVoiceSession:
                         self._turn_id not in self._delegate_turns
                         and self._output_transcript
                         and not self._scrub_cancelled_for_turn
+                        and not self._surface_spoke_this_turn
                         and not self._output_active
                         and self._output_samples_sent == 0
                     ):
@@ -3207,6 +3211,11 @@ class RealtimeVoiceSession:
         # apologies are exactly what the Mac loop transcribed back as "user"
         # input (BUG-089).
         self._register_spoken_reference(text, estimate_playback=True)
+        # This turn is no longer silent. The no-audio rescue at ``turn_complete``
+        # reads ``_output_transcript``, which a surface line joins to keep the
+        # exported transcript honest — so without this the rescue speaks the
+        # same sentence a second time.
+        self._surface_spoke_this_turn = True
         message: dict[str, Any] = {
             "type": "error_spoken",
             "text": text,
@@ -3974,6 +3983,7 @@ class RealtimeVoiceSession:
         self._executed_tool_names.clear()
         self._direct_tool_results.clear()
         self._turn_final_text = ""
+        self._surface_spoke_this_turn = False
         self._delegate_required_for_turn = False
         self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
@@ -4190,6 +4200,66 @@ class RealtimeVoiceSession:
             for turn_id, tasks in self._delegate_tasks_by_turn.items()
         )
 
+    def _workspace_owns_turn(self, text: str) -> bool:
+        """True when THIS utterance addresses an open Agentic-IDE pane itself.
+
+        The workspace's own precedence rule (``intent.owns_turn``), reused
+        rather than re-derived, so a turn that really does name another pane
+        ("Blake soll das auch machen")  # i18n-allow: quoted spoken example
+        can never be mistaken for an earlier order coming back around. It is
+        a regex sweep over an in-memory roster: no
+        IO and no model call, so it is free on the hot path (AP-9/AP-11), and
+        any fault answers "no" — the coding surface is optional and must never
+        decide a live call by failing.
+        """
+        if not str(text or "").strip():
+            return False
+        try:
+            from jarvis.agentic_ide.intent import owns_turn
+
+            return owns_turn(text, names=list(self._workspace_call_signs()))
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return False
+
+    def _order_already_executing(self, local_plan: TurnPlan) -> bool:
+        """True when a provider action call can only repeat a running order.
+
+        The live 2026-07-27 20:12 failure in one line: ONE spoken order reached
+        the coding workspace twice. The orchestrator dispatched it
+        deterministically at 20:12:09 because the shared planner wanted an
+        action; the provider then finished its own pass over the same audio,
+        opened a FRESH turn, and called ``jarvis_action`` for it at 20:12:20 —
+        so pane Ellis was briefed with two different tasks 42 s apart while two
+        idle panes got nothing. Pane Grace collected the same duplicate at
+        11:47 that morning. This is a shape, not an accident.
+
+        Nothing about it is workspace-specific: an order executed twice sends
+        two emails or curates the Wiki twice just as readily. The existing
+        de-duplication keys on the TURN (``_delegate_turns``), which is exactly
+        what a provider answering one turn late steps around.
+
+        The session instructions already forbid it (``_DELEGATE_PENDING_DIRECTIVE``)
+        and the model called anyway — prompt compliance is not a correctness
+        boundary. Enforced here instead, and deliberately narrow: the refusal
+        needs THREE independent probes to agree that this turn asked for
+        nothing of its own — the orchestrator did not claim it, the shared
+        planner finds no action in the user's own words, and the utterance
+        addresses no open pane. Only then can the provider's request have come
+        out of the conversation rather than out of the user's mouth, and the
+        only order in that conversation is the one already running.
+        """
+        if self._delegate_required_for_turn or local_plan.requires_orchestrator:
+            return False
+        if self._workspace_owns_turn(self._last_user_text):
+            return False
+        # A produced-but-unspoken result counts as much as a running task: the
+        # action HAS happened, so calling it again is a second execution rather
+        # than a retry of one that never landed.
+        return bool(
+            self._has_pending_delegate_from_earlier_turn()
+            or self._late_delegate_results
+        )
+
     def _queue_late_delegate_result(self, turn_state: _DelegateTurnState) -> None:
         """Keep a trusted result whose turn closed before the action finished.
 
@@ -4311,17 +4381,19 @@ class RealtimeVoiceSession:
         return True
 
     async def _speak_pending_action_status(self) -> None:
-        """Answer a bare presence check deterministically while an action runs.
+        """Answer a turn deterministically while an earlier action still runs.
 
-        A thin are-you-there probe spoken into the silent wait for a
-        still-running delegated action needs exactly one honest answer: still
+        Two callers, one situation: a thin are-you-there probe spoken into the
+        silent wait, and a provider action call refused as a repeat of the
+        order already executing. Both need exactly one honest answer — still
         working on it. The provider cannot be trusted to give it (live
         forensic 2026-07-17 09:23: it greeted like a fresh conversation
-        instead), so the orchestrator speaks a progress line from the closed
-        bridge pool through the surface TTS and drops the provider's
-        freestyle response for this turn. The late-result flush still
-        delivers the real answer once the session is at rest — both drop
-        flags are cleared by that injection path.
+        instead) and its output is being withheld anyway while a delegate is
+        in flight, so a turn left to it is a SILENT turn. The orchestrator
+        speaks a progress line from the closed bridge pool through the surface
+        TTS and drops the provider's freestyle response for this turn. The
+        late-result flush still delivers the real answer once the session is
+        at rest — both drop flags are cleared by that injection path.
         """
         status_text = _pick_delegate_bridge_text(self._language)
         self._response_requested_for_turn = True
@@ -4331,7 +4403,7 @@ class RealtimeVoiceSession:
         # re-dispatching the interjection as a brain turn.
         self._output_transcript.append(status_text)
         log.info(
-            "realtime[%s] presence check while an earlier action is still "
+            "realtime[%s] turn spoken while an earlier action is still "
             "running — answering with the deterministic progress line",
             self.session_id,
         )
@@ -4399,6 +4471,33 @@ class RealtimeVoiceSession:
                         ),
                     },
                 )
+                return
+            if self._order_already_executing(local_plan):
+                log.info(
+                    "realtime[%s] refused a delegate call that repeats an "
+                    "order already executing",
+                    self.session_id,
+                )
+                await self._session.send_tool_result(
+                    call_id,
+                    wire_name,
+                    {
+                        "success": False,
+                        "error": (
+                            "The user's request is already being executed by "
+                            "the Jarvis orchestrator and has no result yet. Do "
+                            "not start it again. Say only that you are still "
+                            "working on it; the trusted result will be "
+                            "injected as soon as it is ready."
+                        ),
+                    },
+                )
+                # Refusing alone would trade the duplicate for a SILENT turn:
+                # provider output is withheld while a delegate is in flight, so
+                # whatever the model says about the refusal never reaches the
+                # user. The orchestrator answers this turn itself, and the real
+                # outcome follows from the late-result flush.
+                await self._speak_pending_action_status()
                 return
             turn_id = self._turn_id
             turn_state = self._delegate_turns.setdefault(
