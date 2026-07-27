@@ -1,24 +1,25 @@
-"""The spoken bridge line between "prompt Finn" and Finn actually being briefed.
+"""Handing an order to a coding pane says nothing until it has actually landed.
 
 Writing a pane's prompt is a deliberate quality-tier call — 10-21 s measured,
 chosen over a fast rewrite because the coding agent then works from that prompt
-for minutes. Until 2026-07-27 that window was silent: the maintainer said
-"prompt Finn", heard nothing at all, and read the pause as a hung assistant.
-The delivery readback ("Sent to Finn") is correct but arrives a quarter of a
-minute too late to be feedback.
+for minutes. On 2026-07-27 a spoken bridge line was added to fill that window,
+and it failed the same day in the worst available way: the realtime provider
+re-voiced the interim sentence as a completed action ("I have forwarded the bug
+to Alex") while nothing had reached the pane yet, and on a turn whose delivery
+then did not happen at all, that false sentence was the only thing the
+maintainer ever heard.
 
-So the hand-off now speaks first. What is pinned here is the part that makes it
-worth anything:
+The lesson is not "word the interim line more carefully" — a downstream model is
+free to re-tense whatever it is handed, so any statement made before the work is
+done is a claim that can become a lie. What this file pins is therefore the
+absence of that statement:
 
-* it is said BEFORE the slow work starts, not alongside it — a confirmation
-  that races the thing it confirms is not a confirmation;
-* it is COMPOSED for the request, so it names the topic back instead of reading
-  a stock line out of a table (the maintainer's explicit ask: a fixed phrase
-  tells you nothing about whether the right thing was understood);
-* it degrades to the localized canned phrase with no provider, so a downloader
-  with no key hears a sentence rather than the silence this fixes (§3);
-* control still comes back to the voice session afterwards with the real
-  per-pane verdict — the bridge line never becomes the answer.
+* the hand-off emits NO announcement of any kind before the prompt is written,
+  while it is written, or while it is being typed;
+* the one and only sentence it produces is the returned per-pane verdict,
+  derived from what actually reached which terminal;
+* a delivery that did not happen says so, instead of a success being implied by
+  an earlier line nobody corrected.
 """
 from __future__ import annotations
 
@@ -130,29 +131,31 @@ def _names(registry: Registry) -> list[str]:
     return [t.name for t in registry.session.terminals]
 
 
-class _FakeFlashProvider:
-    """Stands in for the flash ack provider the readback composer calls.
+class _LoudProvider:
+    """A composer provider that would speak if anything ever asked it to.
 
-    Echoes a topic-fitting sentence built from the facts it was handed, which is
-    what a real provider does here — and lets the test prove the request
-    actually reached the composer instead of only that *something* was spoken.
+    Its presence is the point: with a reachable provider wired, an interim line
+    would be composed and published. Silence with this in place proves nothing
+    is asking for one, rather than that a fallback path happened to be empty.
     """
 
     def __init__(self) -> None:
-        self.personas: list[str] = []
+        self.calls: list[str] = []
 
     async def run(
         self, content: str, language: str, *, persona_prompt: str = ""
     ) -> str:
-        self.personas.append(persona_prompt)
-        return "Passing the wake word timeout over now."
+        self.calls.append(persona_prompt)
+        return "I have passed that on already."
 
 
-async def test_the_handoff_line_is_spoken_before_the_prompt_is_written(
+async def test_nothing_is_spoken_while_the_prompt_is_still_being_written(
     manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole point: feedback lands ahead of the slow part, not with it."""
+    """The regression itself: no claim exists while the claim is not yet true."""
+    provider = _LoudProvider()
+    manager._readback_composer = ReadbackComposer(provider=provider)
     await _open(registry, tmp_path, 1)
     (only,) = _names(registry)
     announced_when_composing: list[bool] = []
@@ -167,86 +170,56 @@ async def test_the_handoff_line_is_spoken_before_the_prompt_is_written(
         f"Tell {only} to fix the wake word timeout"
     )
 
-    assert announced_when_composing == [True]
+    assert announced_when_composing == [False]
+    assert provider.calls == []
     assert reply is not None
 
 
-async def test_the_line_is_composed_for_this_request_not_a_stock_phrase(
+async def test_the_only_statement_is_the_verdict_returned_after_delivery(
     manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path
 ) -> None:
-    provider = _FakeFlashProvider()
-    manager._readback_composer = ReadbackComposer(provider=provider)
+    """One turn, one sentence — and it is the one derived from what happened."""
+    manager._readback_composer = ReadbackComposer(provider=_LoudProvider())
     await _open(registry, tmp_path, 1)
     (only,) = _names(registry)
 
-    await manager._run_agentic_ide_fast_path(
+    reply = await manager._run_agentic_ide_fast_path(
         f"Tell {only} to fix the wake word timeout"
     )
 
-    assert spy.texts[0] == "Passing the wake word timeout over now."
-    # The composer was handed the user's actual words and the call-sign — that
-    # is what makes the sentence about THIS request rather than about nothing.
-    persona = provider.personas[0]
-    assert "wake word timeout" in persona
-    assert only in persona
+    assert spy.events == []
+    assert reply is not None
+    assert only in reply
 
 
-async def test_the_handoff_line_is_a_preamble_on_its_own_source_layer(
+async def test_a_fleet_hand_off_stays_silent_too(
     manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path
 ) -> None:
-    """``brain.router.ack`` is dropped wholesale while the Flash-Brain is wired.
-
-    Publishing under that layer would make the bridge line disappear on exactly
-    the installs that have the most voice machinery turned on, which is the
-    silence this feature exists to remove.
-    """
-    await _open(registry, tmp_path, 1)
-    (only,) = _names(registry)
-
-    await manager._run_agentic_ide_fast_path(f"Tell {only} to run the test suite")
-
-    assert spy.events[0].kind == "preamble"
-    assert spy.events[0].source_layer == "brain.agentic_ide.handoff"
-    assert spy.events[0].language == "en"
-
-
-async def test_without_a_provider_the_canned_line_is_spoken_instead_of_silence(
-    manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path
-) -> None:
-    """The keyless install (§3) still hears something, and it names the pane."""
-    assert getattr(manager, "_readback_composer", None) is None
-    await _open(registry, tmp_path, 1)
-    (only,) = _names(registry)
-
-    await manager._run_agentic_ide_fast_path(f"Tell {only} to run the test suite")
-
-    assert only in spy.texts[0]
-
-
-async def test_a_fleet_hand_off_names_every_addressed_pane(
-    manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path
-) -> None:
+    """Several panes take longer still — and are still not worth a false claim."""
+    manager._readback_composer = ReadbackComposer(provider=_LoudProvider())
     await _open(registry, tmp_path, 2)
     first, second = _names(registry)
 
-    await manager._run_agentic_ide_fast_path(
+    reply = await manager._run_agentic_ide_fast_path(
         f"Tell {first} and {second} to analyse the whole codebase"
     )
 
-    assert first in spy.texts[0]
-    assert second in spy.texts[0]
+    assert spy.events == []
+    assert reply is not None
+    assert first in reply
+    assert second in reply
 
 
-async def test_control_returns_with_the_real_verdict_after_the_run(
+async def test_a_delivery_that_did_not_happen_is_reported_as_not_happened(
     manager: BrainManager, registry: Registry, spy: _Spy, tmp_path: Path
 ) -> None:
-    """The bridge line must never become the answer.
+    """The failure mode this file exists for, seen from the other end.
 
-    Two separate statements at two separate times: the announcement says the
-    request is on its way, the returned reply says what actually happened to
-    each pane. A turn that returned the ack instead would report a delivery it
-    never saw.
+    With an interim line in place, an undelivered pane left the user holding a
+    spoken "passing it on" and nothing after it. The verdict is now the first
+    and only thing said, so a pane that was never reached is named as such.
     """
+    manager._readback_composer = ReadbackComposer(provider=_LoudProvider())
     await _open(registry, tmp_path, 2)
     first, second = _names(registry)
     assert registry.session is not None
@@ -259,8 +232,8 @@ async def test_control_returns_with_the_real_verdict_after_the_run(
         f"Tell {first} and {second} to analyse the whole codebase"
     )
 
+    assert spy.events == []
     assert reply is not None
-    assert reply not in spy.texts
     lowered = reply.lower()
     assert second in reply
     assert any(word in lowered for word in ("not", "could not", "n't"))

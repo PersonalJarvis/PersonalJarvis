@@ -302,23 +302,11 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I am not sure what to write to the wiki. Please say it again with the content.",
         "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
     },
-    # Handing an order to a pane takes 10-21 s (the prompt is WRITTEN by a
-    # quality-tier model before it is typed), and until 2026-07-27 that whole
-    # window was silent — the maintainer read the pause as a hung assistant.
-    # These are the INSTANT fallbacks for that bridge line; the spoken sentence
-    # is normally composed for the actual topic (see
-    # ``BrainManager._announce_ide_handoff``). Deliberately in-progress wording:
-    # nothing has reached the agent yet when this is said.
-    "ide_prompt_handoff": {
-        "de": "Ich schreibe {terminal} gerade die Aufgabe.",  # i18n-allow
-        "en": "I'm writing up the task for {terminal} now.",
-        "es": "Estoy redactando la tarea para {terminal}.",
-    },
-    "ide_prompt_handoff_many": {
-        "de": "Ich schreibe {names} gerade die Aufgaben.",  # i18n-allow
-        "en": "I'm writing up the tasks for {names} now.",
-        "es": "Estoy redactando las tareas para {names}.",
-    },
+    # No "I am writing the task now" phrase belongs here. One existed for a few
+    # hours on 2026-07-27 to fill the prompt writer's 10-21 s, and the realtime
+    # provider re-voiced it as a finished action; the only sentence the pane
+    # hand-off may speak is the delivery verdict below, which reports what was
+    # actually typed where.
     # Agentic-IDE terminal delivery (deterministic fast path). Naming the pane
     # back is the whole confirmation the user gets that the right agent was
     # addressed — a spoken "sent" without the call-sign would be useless in a
