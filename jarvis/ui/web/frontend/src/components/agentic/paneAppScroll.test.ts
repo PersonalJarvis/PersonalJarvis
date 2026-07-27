@@ -4,6 +4,7 @@ import {
   AT_LIVE_END,
   BURST_MS,
   MAX_LINES_PER_NOTCH,
+  PROBE_RETURN_MS,
   SETTLE_MS,
   appScrollExtent,
   appTakesWheel,
@@ -11,6 +12,7 @@ import {
   detectShift,
   hasMeasuredHistory,
   notchesForLines,
+  probeAppHistory,
   trackAppScroll,
   visibleRows,
   type AppScrollPosition,
@@ -445,6 +447,137 @@ describe("trackAppScroll", () => {
       pane.stop();
 
       expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * What the probe is FOR: a CLI that holds its own history reveals it, and the
+   * user ends up back where they started. Measured through the real tracker,
+   * because keeping the two notches in separate bursts is the whole point.
+   */
+  it("makes an untouched pane's history measurable without moving the user", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = stage(transcript(10, 10));
+      expect(hasMeasuredHistory(pane.position)).toBe(false);
+
+      const stop = probeAppHistory((direction) => {
+        wheel(pane.host, direction);
+        // What the CLI repaints in answer: one line of older output on the way
+        // back, the live screen again on the way home.
+        pane.show(
+          direction < 0
+            ? [...transcript(9, 1), ...transcript(10, 9)]
+            : transcript(10, 10),
+        );
+      });
+      vi.advanceTimersByTime(PROBE_RETURN_MS);
+      vi.advanceTimersByTime(SETTLE_MS);
+      stop();
+
+      // A history is now known to exist — so the bar has something to describe.
+      expect(hasMeasuredHistory(pane.position)).toBe(true);
+      // And the user is where they were: at the agent's newest output.
+      expect(pane.position.offset).toBe(0);
+      pane.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * And the honest negative: an application with nothing above its screen does
+   * not move, which is the one exact answer this measurement gets — so the pane
+   * keeps no bar rather than being given a fake one.
+   */
+  it("reports no history for an application that does not scroll", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = stage(transcript(10, 10));
+
+      const stop = probeAppHistory((direction) => wheel(pane.host, direction));
+      vi.advanceTimersByTime(PROBE_RETURN_MS);
+      vi.advanceTimersByTime(SETTLE_MS);
+      stop();
+
+      expect(pane.position.spanKnown).toBe(true);
+      expect(pane.position.span).toBe(0);
+      expect(appScrollExtent(pane.position, 10).total).toBe(10);
+      pane.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("probeAppHistory", () => {
+  it("goes one notch back and comes straight back", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: number[] = [];
+      probeAppHistory((direction) => sent.push(direction));
+
+      // Asked immediately, so the answer is on its way the moment the user
+      // reaches for the bar.
+      expect(sent).toEqual([-1]);
+
+      vi.advanceTimersByTime(PROBE_RETURN_MS);
+
+      expect(sent).toEqual([-1, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * The two notches must be measured SEPARATELY. Sent inside one burst they
+   * cancel out into an intent of zero, `trackAppScroll` measures nothing, and the
+   * probe would move the screen twice for no answer at all.
+   */
+  it("waits out a settle period before returning", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: number[] = [];
+      probeAppHistory((direction) => sent.push(direction));
+
+      vi.advanceTimersByTime(SETTLE_MS);
+
+      expect(sent).toEqual([-1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("brings the application back when the probe is abandoned early", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: number[] = [];
+      const stop = probeAppHistory((direction) => sent.push(direction));
+
+      // The pointer left the hot zone a frame later. A pane parked one line into
+      // its history would be the probe showing through.
+      stop();
+
+      expect(sent).toEqual([-1, 1]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns exactly once, however it is torn down", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: number[] = [];
+      const stop = probeAppHistory((direction) => sent.push(direction));
+
+      vi.advanceTimersByTime(PROBE_RETURN_MS);
+      stop();
+      stop();
+
+      expect(sent).toEqual([-1, 1]);
     } finally {
       vi.useRealTimers();
     }

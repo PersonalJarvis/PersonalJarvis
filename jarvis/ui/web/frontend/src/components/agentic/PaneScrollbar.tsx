@@ -25,10 +25,15 @@
  * `scrollBarWidth = viewportElement.offsetWidth - scrollArea.offsetWidth || 15`
  * — and a scrollbar hidden by CSS makes that difference 0, so the `|| 15`
  * fallback takes over and `FitAddon.proposeDimensions` drops 15 px of columns.
- * Hence `GUTTER_PX`: the bar is placed flush against the terminal host's right
+ * Hence `hostGap`: the bar is placed flush against the terminal host's right
  * edge, INSIDE the reserved strip. Floating it in the pane's own padding instead
  * (the original `right-1`) left dead space on both sides of it — part of the
  * empty right-hand strip reported on 2026-07-27.
+ *
+ * And reaching for it is what MAKES it appear in an agent pane: the position of a
+ * CLI that holds its own history has to be measured, and until this pane had been
+ * scrolled there was nothing measured to draw. See `probeAppHistory` in
+ * ./paneAppScroll — the gesture asks the question now.
  */
 import {
   useCallback,
@@ -49,8 +54,12 @@ import {
   type PaneScrollState,
 } from "./paneScroll";
 import {
+  appTakesWheel,
   AT_LIVE_END,
+  hasMeasuredHistory,
   notchesForLines,
+  probeAppHistory,
+  PROBE_WAIT_MS,
   trackAppScroll,
   type AppScrollPosition,
 } from "./paneAppScroll";
@@ -59,16 +68,18 @@ import {
 const HOT_ZONE_PX = 28;
 
 /**
- * How far the bar sits from the pane's right edge.
+ * Where the bar sits until the real distance has been measured.
  *
- * Equal to the terminal region's own horizontal padding (`px-2` in
- * ./AgenticTerminal), which lands the bar flush against the xterm host's right
- * edge — the near side of the gutter xterm reserves for the scrollbar it thinks
- * it has (see the file header). The earlier `right-1` put it 4 px from the
- * region edge instead, i.e. half in the pane's visual padding, with dead space
- * on both sides of it.
+ * It belongs flush against the xterm host's right edge — the near side of the
+ * gutter xterm reserves for the scrollbar it thinks it has (see the file header).
+ * That distance is the terminal region's own horizontal padding, and it is
+ * MEASURED (`hostGap` below) rather than restated here: this constant used to
+ * name the padding as a number, the padding was then changed in ./AgenticTerminal
+ * without it, and the bar spent 2 px sitting on top of the agent's output. A
+ * layout constant duplicated across two files drifts the moment either one is
+ * touched. Used only for the very first paint, before the measurement lands.
  */
-const BAR_INSET_PX = 8;
+const BAR_INSET_FALLBACK_PX = 6;
 
 /** Grace period before a bar the pointer left disappears again. */
 const HIDE_DELAY_MS = 260;
@@ -118,6 +129,9 @@ export function PaneScrollbar({
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<PaneScrollState>(IDLE_STATE);
   const [trackPx, setTrackPx] = useState(0);
+  // The gap between the pane's right edge and the xterm host's — measured, not
+  // restated from ./AgenticTerminal. See `BAR_INSET_FALLBACK_PX`.
+  const [hostGap, setHostGap] = useState(BAR_INSET_FALLBACK_PX);
   const [nearEdge, setNearEdge] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -188,6 +202,63 @@ export function PaneScrollbar({
     setPosition(AT_LIVE_END);
   }, [epoch]);
 
+  // ------------------------------------------------ measure on first reach
+  // Reaching for the bar is itself the request for one, so a pane that has
+  // nothing measured yet gets asked — see `probeAppHistory` in ./paneAppScroll
+  // for why waiting for a wheel turn instead left the bar unreachable in exactly
+  // the panes it exists for.
+  //
+  // Asked once per terminal, only while nothing is known, and only after the pane
+  // has been quiet for `PROBE_WAIT_MS`: a probe moves the application by a notch
+  // and back, which is invisible once but would be a twitch on every pass of the
+  // pointer — and a probe folded into a burst of the user's own scrolling measures
+  // neither of them. `probedEpoch` rather than the position alone, because the
+  // answer lands a settle period later and a pointer crossing the hot zone twice
+  // in that time must not ask twice.
+  const probedEpoch = useRef<number | null>(null);
+  useEffect(() => {
+    if (!nearEdge) return;
+    const host = hostRef.current;
+    const term = getTerminal();
+    if (!host || !term || !appTakesWheel(term)) return;
+    if (
+      hasMeasuredHistory(positionRef.current) ||
+      probedEpoch.current === epoch
+    ) {
+      return;
+    }
+
+    let stopProbe: (() => void) | undefined;
+    let wait: number | undefined;
+
+    const ask = () => {
+      wait = undefined;
+      host.removeEventListener("wheel", defer, { capture: true });
+      // The wait may have been all it took: a wheel turn measures the pane
+      // better than any probe, so if one landed there is nothing left to ask.
+      if (hasMeasuredHistory(positionRef.current)) return;
+      probedEpoch.current = epoch;
+      stopProbe = probeAppHistory((direction) =>
+        relayWheelNotch(host, direction),
+      );
+    };
+    // A wheel turn while the probe is still pending pushes it back, so the
+    // tracker never has two sources of movement inside one burst.
+    function defer(event: WheelEvent) {
+      if (event.deltaY === 0) return;
+      if (wait !== undefined) window.clearTimeout(wait);
+      wait = window.setTimeout(ask, PROBE_WAIT_MS);
+    }
+
+    host.addEventListener("wheel", defer, { capture: true, passive: true });
+    wait = window.setTimeout(ask, PROBE_WAIT_MS);
+    return () => {
+      if (wait !== undefined) window.clearTimeout(wait);
+      host.removeEventListener("wheel", defer, { capture: true });
+      stopProbe?.();
+    };
+  }, [nearEdge, getTerminal, epoch, hostRef]);
+
   // ------------------------------------------------- flash while scrolled back
   // Deliberately NOT "flash on any scroll": a pane pinned to the bottom scrolls
   // on every line an agent prints, and a bar that lit up for each of them would
@@ -219,7 +290,8 @@ export function PaneScrollbar({
   useEffect(() => {
     if (position.offset === 0) return;
     setFlashing(true);
-    if (flashTimer.current !== undefined) window.clearTimeout(flashTimer.current);
+    if (flashTimer.current !== undefined)
+      window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlashing(false), FLASH_MS);
   }, [position]);
   useEffect(
@@ -283,11 +355,27 @@ export function PaneScrollbar({
   // track is in the document. Measured on every commit rather than from the
   // metrics effect above, because a pane whose agent is idle emits no render
   // events at all — and a bar that waited for one would come up thumbless.
+  //
+  // The bar's distance from the pane edge is read in the same pass: one layout
+  // flush covers both, and taking it from the live boxes is what keeps it correct
+  // when the region's padding changes.
   useLayoutEffect(() => {
     const track = trackRef.current;
     if (!track) return;
     const height = track.clientHeight;
     setTrackPx((current) => (current === height ? current : height));
+
+    const region = regionRef.current;
+    const host = hostRef.current;
+    if (!region || !host) return;
+    const gap = Math.max(
+      0,
+      Math.round(
+        region.getBoundingClientRect().right -
+          host.getBoundingClientRect().right,
+      ),
+    );
+    setHostGap((current) => (current === gap ? current : gap));
   });
 
   // ------------------------------------------------------------------ input
@@ -434,7 +522,7 @@ export function PaneScrollbar({
         shown ? "opacity-100" : "pointer-events-none opacity-0",
       )}
       style={{
-        right: BAR_INSET_PX,
+        right: hostGap,
         background: shown
           ? light
             ? "rgba(0,0,0,0.06)"

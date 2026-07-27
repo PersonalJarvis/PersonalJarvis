@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import { PaneScrollbar } from "./PaneScrollbar";
-import { SETTLE_MS } from "./paneAppScroll";
+import { PROBE_RETURN_MS, PROBE_WAIT_MS, SETTLE_MS } from "./paneAppScroll";
 
 const REGION = { top: 0, bottom: 300, left: 0, right: 400 };
 const TRACK_PX = 300;
@@ -162,10 +162,14 @@ describe("PaneScrollbar", () => {
 
   /*
    * The second report on this strip, at the level a user meets it. Reaching for
-   * the right edge of a Claude Code pane nobody has scrolled must reveal NOTHING:
-   * no measurement has been taken, so there is no history to describe, and the
-   * bar that used to appear here spent half its track on empty space — on every
-   * pane of a workspace that was just opened.
+   * the right edge of a Claude Code pane nobody has scrolled must reveal NOTHING
+   * YET: no measurement has been taken, so there is no history to describe, and
+   * the bar that used to appear here spent half its track on empty space — on
+   * every pane of a workspace that was just opened.
+   *
+   * "Yet" is the third round (below). Silence is right for the instant the
+   * pointer arrives; leaving it there permanently is what made the bar
+   * unreachable.
    */
   it("shows nothing on a Claude-Code-style pane nobody has scrolled", () => {
     render(
@@ -183,6 +187,135 @@ describe("PaneScrollbar", () => {
     reachForTheBar();
 
     expect(screen.queryByTestId("pane-scrollbar-Dana")).toBeNull();
+  });
+
+  /*
+   * The third report, and the one that made the bar unusable rather than merely
+   * wrong: in a Claude Code pane there was NO WAY to bring it up. The measurement
+   * only ever happened as a side effect of a wheel turn, so reaching for the edge
+   * — the gesture the bar is revealed by — left the pane silent forever, and the
+   * one input that did work is the one that makes a scrollbar unnecessary.
+   *
+   * So reaching for it now ASKS: a notch back, a settle period, a notch home. The
+   * bar arrives describing a real measurement, and the pointer never moved the
+   * user anywhere.
+   */
+  it("asks the CLI for its history when the pointer reaches for the bar", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      const relayed: number[] = [];
+      render(<Harness term={pane.term} />);
+      document
+        .querySelector(".xterm-screen")!
+        .addEventListener("wheel", (event) => {
+          const delta = (event as WheelEvent).deltaY;
+          relayed.push(delta);
+          // The CLI answers the probe: one line of older output, then home.
+          pane.show(
+            delta < 0
+              ? [...transcript(0, 1), ...transcript(1, 23)]
+              : transcript(1, 24),
+          );
+        });
+
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+
+      // Asked, and brought back — the user is still at the newest output.
+      expect(relayed).toEqual([-1, 1]);
+      // And the bar is there now, describing what was measured.
+      const bar = screen.getByTestId("pane-scrollbar-Dana");
+      expect(bar.dataset.mode).toBe("app");
+      expect(bar.dataset.shown).toBe("true");
+      expect(thumbTop() + thumbHeight()).toBe(TRACK_PX);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * The probe is a one-off. It moves the application by a notch and back, which
+   * nobody notices once — and would be a visible twitch on every pass of the
+   * pointer along the pane's edge.
+   */
+  it("asks only once per terminal", () => {
+    vi.useFakeTimers();
+    try {
+      const pane = fakeTerminal({
+        type: "alternate",
+        length: 24,
+        mouseTrackingMode: "any",
+      });
+      const relayed: number[] = [];
+      render(<Harness term={pane.term} />);
+      document
+        .querySelector(".xterm-screen")!
+        .addEventListener("wheel", (event) => {
+          relayed.push((event as WheelEvent).deltaY);
+          pane.show(
+            (event as WheelEvent).deltaY < 0
+              ? [...transcript(0, 1), ...transcript(1, 23)]
+              : transcript(1, 24),
+          );
+        });
+
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+      // Pointer leaves and comes back.
+      fireEvent.mouseMove(screen.getByTestId("region"), {
+        clientX: 40,
+        clientY: 150,
+      });
+      act(() => vi.advanceTimersByTime(1000));
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+
+      expect(relayed).toEqual([-1, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * And it is only for panes whose application holds the history. A terminal that
+   * owns its scrollback already reports the truth, and a relayed notch there would
+   * scroll the user's view for no reason at all.
+   */
+  it("asks nothing of a pane whose terminal owns its scrollback", () => {
+    vi.useFakeTimers();
+    try {
+      render(<Harness term={fakeTerminal({ length: 1000 }).term} />);
+      const relayed: number[] = [];
+      document
+        .querySelector(".xterm-screen")!
+        .addEventListener("wheel", (event) =>
+          relayed.push((event as WheelEvent).deltaY),
+        );
+
+      reachForTheBar();
+      act(() =>
+        vi.advanceTimersByTime(PROBE_WAIT_MS + PROBE_RETURN_MS + SETTLE_MS * 2),
+      );
+
+      expect(relayed).toEqual([]);
+      // It needed no asking: the bar is up on its own.
+      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe(
+        "scrollback",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /*
@@ -218,7 +351,9 @@ describe("PaneScrollbar", () => {
       pane.show(transcript(1, 24));
       act(() => vi.advanceTimersByTime(SETTLE_MS));
 
-      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe("app");
+      expect(screen.getByTestId("pane-scrollbar-Dana").dataset.mode).toBe(
+        "app",
+      );
       expect(thumbTop() + thumbHeight()).toBe(TRACK_PX);
       // And nothing is drawn on the thumb that could be read as a position of
       // its own.
@@ -332,7 +467,9 @@ describe("PaneScrollbar", () => {
     render(<Harness term={term} />);
     reachForTheBar();
 
-    fireEvent.wheel(screen.getByTestId("pane-scrollbar-Dana"), { deltaY: -120 });
+    fireEvent.wheel(screen.getByTestId("pane-scrollbar-Dana"), {
+      deltaY: -120,
+    });
 
     expect(term.scrollLines).toHaveBeenCalledWith(-3);
   });

@@ -32,7 +32,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertCircle, FolderGit2, Loader2, PlayCircle, Terminal, X } from "lucide-react";
+import { AlertCircle, FolderGit2, PlayCircle, Terminal, X } from "lucide-react";
 
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -92,16 +92,6 @@ export function continueOutcome(
         .replace("{1}", result.continued.join(", ")),
     );
   }
-  // Held, not sent: their agents are still starting. Said separately because
-  // "carrying on" would be a claim about panes that have not been typed into
-  // yet — they are a promise the backend keeps a few seconds later.
-  if (result.queued.length > 0) {
-    parts.push(
-      t("agentic_grid.continue.result_queued")
-        .replace("{0}", String(result.queued.length))
-        .replace("{1}", result.queued.join(", ")),
-    );
-  }
   // Its own sentence, never folded into the success count: those panes were
   // typed into without a confirmed submit, so the text may be sitting in the
   // input box waiting for a keypress the user has to make.
@@ -130,20 +120,13 @@ export function continueOutcome(
 function PaneRow({
   pane,
   busy,
-  sending,
   onContinue,
 }: {
   pane: InterruptedPane;
   busy: boolean;
-  /** This pane's own instruction is in flight — its button is spent. */
-  sending: boolean;
   onContinue: () => void;
 }) {
   const t = useT();
-  // Already spoken for: in flight from this window, or held by the backend
-  // until its agent comes up. Either way a second press would be a second
-  // "continue" into the same conversation.
-  const spent = sending || Boolean(pane.queued);
   return (
     <li
       data-testid={`interrupted-pane-${pane.name}`}
@@ -178,28 +161,16 @@ function PaneRow({
               {pane.blocked_reason}
             </p>
           )}
-          {pane.continuable && pane.starting && (
-            <p
-              data-testid={`interrupted-starting-${pane.name}`}
-              className="mt-1.5 text-xs text-muted-foreground"
-            >
-              {t("agentic_grid.continue.starting")}
-            </p>
-          )}
         </div>
         <button
           type="button"
           data-testid={`continue-pane-${pane.name}`}
           className="btn-ghost shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={busy || spent || !pane.continuable}
+          disabled={busy || !pane.continuable}
           onClick={onContinue}
         >
-          {sending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <PlayCircle className="h-4 w-4" />
-          )}
-          {spent ? t("agentic_grid.continue.sending") : t("agentic_grid.continue.one")}
+          <PlayCircle className="h-4 w-4" />
+          {t("agentic_grid.continue.one")}
         </button>
       </div>
     </li>
@@ -212,10 +183,6 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
   const [offer, setOffer] = useState<InterruptedOffer>(EMPTY);
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
-  // Call-signs whose instruction is in flight from THIS window. Per pane rather
-  // than one global flag, so continuing one pane does not freeze the buttons of
-  // the others while it waits for its screen to change.
-  const [sending, setSending] = useState<Set<string>>(() => new Set());
 
   const refresh = useCallback(async (): Promise<InterruptedOffer> => {
     try {
@@ -252,16 +219,6 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
   }, [refresh]);
 
   const run = async (names?: string[]) => {
-    // Which panes this press owns, marked BEFORE the request goes out.
-    //
-    // Delivering a "continue" takes seconds — the submit is verified against
-    // the pane's own screen — and a button that stays live for that whole time
-    // is a button somebody presses again. The backend refuses the duplicate
-    // too (it claims each pane synchronously), but a control that looks
-    // clickable and silently does nothing is its own bug: this makes the wait
-    // visible where the click happened.
-    const claimed = names ?? offer.panes.filter((p) => p.continuable).map((p) => p.name);
-    setSending((current) => new Set([...current, ...claimed]));
     setWorking(true);
     try {
       const result = await continueInterrupted(names);
@@ -274,11 +231,6 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
-      setSending((current) => {
-        const rest = new Set(current);
-        for (const name of claimed) rest.delete(name);
-        return rest;
-      });
       setWorking(false);
     }
   };
@@ -366,8 +318,7 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
                   <PaneRow
                     key={`${pane.workspace_id}:${pane.key}`}
                     pane={pane}
-                    busy={busy}
-                    sending={sending.has(pane.name)}
+                    busy={busy || working}
                     onContinue={() => void run([pane.name])}
                   />
                 ))}
@@ -390,17 +341,11 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
                 disabled={busy || working || offer.continuable_count === 0}
                 onClick={() => void run()}
               >
-                {working ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <PlayCircle className="h-4 w-4" />
+                <PlayCircle className="h-4 w-4" />
+                {t("agentic_grid.continue.all").replace(
+                  "{0}",
+                  String(offer.continuable_count),
                 )}
-                {working
-                  ? t("agentic_grid.continue.sending")
-                  : t("agentic_grid.continue.all").replace(
-                      "{0}",
-                      String(offer.continuable_count),
-                    )}
               </button>
             </div>
           </div>

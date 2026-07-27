@@ -13,13 +13,12 @@ a false one offers to type "continue" behind a prompt the user is still writing.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from jarvis.agentic_ide import interrupted, resume_store
+from jarvis.agentic_ide import interrupted
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 from jarvis.agentic_ide.session import Registry
@@ -42,9 +41,6 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.02)
     monkeypatch.setattr(session_mod, "_ARRIVAL_POLL_S", 0.01)
     monkeypatch.setattr(session_mod, "_ARRIVAL_WINDOW_S", 0.04)
-    # A deferred continue waits for the CLI's boot burst to clear before typing.
-    # Real length, no value to a test that owns a fake terminal.
-    monkeypatch.setattr(session_mod, "CONTINUE_AFTER_START_S", 0.01)
     return Registry(pty_manager=fake_pty)
 
 
@@ -267,124 +263,6 @@ async def test_a_dead_pane_fails_with_its_reason(
 
     assert report.continued == []
     assert report.failed == [(term.name, "claude is not on PATH.")]
-
-
-# ------------------------------------------------------ pressing twice, big grids
-# Three live complaints, one test group. All of them are about a workspace with
-# more than a couple of panes, which is the only size where any of them shows up.
-
-
-async def test_pressing_continue_twice_sends_it_once(
-    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, existing_conversation: Any
-) -> None:
-    """A second press while the first is in flight must not repeat the word.
-
-    Delivering a prompt takes seconds — the submit is verified against the pane's
-    own screen — and the pane used to stay on the waiting list for all of it. So
-    two presses put "continue" into the agent twice and three put it in three
-    times, which is what the user saw.
-    """
-    fake_pty.tui_echo = True
-    _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
-
-    first, second = await asyncio.gather(
-        interrupted.continue_panes(registry),
-        interrupted.continue_panes(registry),
-    )
-
-    assert fake_pty.typed.count(interrupted.CONTINUE_PROMPT) == 1, fake_pty.typed
-    assert sorted([*first.continued, *second.continued]) == [term.name]
-    # The press that lost the race says nothing happened rather than claiming it
-    # continued a pane it never touched.
-    assert not (first.failed or second.failed)
-
-
-async def test_a_pane_still_starting_is_continued_when_it_comes_up(
-    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, existing_conversation: Any
-) -> None:
-    """The big-workspace bug: cold starts are staggered, so most panes are `pending`.
-
-    Pressing Continue in that window used to reach only the handful that had
-    already started — reported as "some terminals are skipped". The instruction
-    is now held and delivered when the pane's agent appears.
-    """
-    fake_pty.tui_echo = True
-    session = await registry.start(
-        str(tmp_path), [{"agent": "claude", "name": "Alex"}, {"agent": "claude", "name": "Blake"}]
-    )
-    existing_conversation("conv-late")
-    late = session.terminals[1]
-    late.resume = ResumeHandle(kind="claude_session", id="conv-late", captured_at=1.0)
-    late.continuation_pending = True  # what a restore establishes before any spawn
-
-    report = await interrupted.continue_panes(registry)
-
-    assert report.queued == ["Blake"], "a pane that has not started yet is queued, not skipped"
-    assert report.continued == []
-    assert late.continue_when_ready is True
-
-    # Now the grid gets round to it — the pane connects and its agent starts.
-    await registry.attach("Blake", 100, 30, _noop, _noop_exit)
-    await _settle()
-
-    assert fake_pty.typed.count(interrupted.CONTINUE_PROMPT) == 1, fake_pty.typed
-    assert late.continue_when_ready is False
-    assert interrupted.scan(registry) == []
-
-
-async def test_a_restored_pane_is_listed_before_its_agent_starts(
-    registry: Registry, tmp_path: Path, existing_conversation: Any
-) -> None:
-    """A restore knows what has work to continue — it does not need the spawn.
-
-    This is the other half of the same bug: the list itself used to fill up only
-    as the panes started, so a user who pressed the button early was shown three
-    of twelve and told that was all of them.
-    """
-    existing_conversation("conv-restored")
-    resume_store.save(
-        resume_store.Snapshot(
-            saved_at=100.0,
-            workspaces=[
-                resume_store.SnapshotWorkspace(
-                    session_id="ide_old",
-                    folder=str(tmp_path),
-                    terminals=[
-                        resume_store.SnapshotTerminal(
-                            key="alex",
-                            name="Alex",
-                            agent="claude",
-                            resume=ResumeHandle(
-                                kind="claude_session", id="conv-restored", captured_at=1.0
-                            ),
-                            prompts_sent=2,
-                        ),
-                        # No handle at all: nothing to continue, so it must NOT
-                        # be offered — that would be a promise with nothing
-                        # behind it.
-                        resume_store.SnapshotTerminal(key="blake", name="Blake", agent="claude"),
-                    ],
-                )
-            ],
-        )
-    )
-
-    await registry.restore(resume_store.load())
-
-    waiting = interrupted.scan(registry)
-    assert [pane.name for pane in waiting] == ["Alex"]
-    assert waiting[0].status == "pending", "listed before anything spawned"
-    assert waiting[0].continuable is True
-    assert waiting[0].starting is True
-
-
-async def _settle() -> None:
-    """Wait for the deferred continue task, rather than sleeping a guessed span."""
-    for _ in range(200):
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        if not pending:
-            return
-        await asyncio.wait(pending, timeout=1.0)
 
 
 # ----------------------------------------------------------------- the routes

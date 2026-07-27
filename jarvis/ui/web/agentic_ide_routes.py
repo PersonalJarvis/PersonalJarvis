@@ -516,21 +516,9 @@ class InterruptedPane(BaseModel):
     status: str
     continuable: bool = Field(
         description=(
-            "Will a 'continue' reach it? False only when its agent is DEAD — an "
-            "instruction cannot be typed into a terminal that exited. A pane "
-            "that is merely still starting IS continuable; see 'starting'."
+            "Can it be told to continue right now? False when its agent is not "
+            "running — an instruction cannot be typed into a dead terminal."
         )
-    )
-    starting: bool = Field(
-        default=False,
-        description=(
-            "Its agent is still coming up (cold starts are staggered). Continuing "
-            "it is a promise kept a few seconds later, not a refusal."
-        ),
-    )
-    queued: bool = Field(
-        default=False,
-        description="A 'continue' is already waiting to be delivered to this pane.",
     )
     blocked_reason: str = Field(
         default="", description="Why not, in one sentence. Empty when it can."
@@ -583,13 +571,6 @@ class ContinueInterruptedResponse(BaseModel):
     ok: bool = True
     continued: list[str] = Field(
         default_factory=list, description="Panes that accepted the instruction and started."
-    )
-    queued: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Panes whose agent had not started yet. The instruction is held and "
-            "delivered the moment each one comes up — say 'shortly', not 'done'."
-        ),
     )
     unconfirmed: list[str] = Field(
         default_factory=list,

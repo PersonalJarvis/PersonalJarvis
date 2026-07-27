@@ -313,7 +313,7 @@ Which coding terminals came back holding their conversation and have been told n
 
 ## `agentic-ide-continue-interrupted` — Continue interrupted Agentic-IDE sessions
 
-Tell the coding terminals a restart left standing still to carry on: 'continue' is typed into each one and submitted. With no names, every interrupted pane in every open workspace — which is the shape of the problem, since a restart stops them all at once. CHECK THE REPLY: 'continued' really started, 'queued' had not finished starting yet and will carry on by itself within seconds (say 'shortly', not 'done'), 'unconfirmed' had the text typed in without a confirmed submit (it may be sitting in the input box — tell the user to look at that pane), and 'failed' names what refused and why. Reporting an unconfirmed or queued pane as running is the one wrong thing to do with this answer. Pressing twice is safe: each pane is claimed before anything is typed, so a repeat call cannot send a second 'continue' into the same agent.
+Tell the coding terminals a restart left standing still to carry on: 'continue' is typed into each one and submitted. With no names, every interrupted pane in every open workspace — which is the shape of the problem, since a restart stops them all at once. CHECK THE REPLY: 'continued' really started, 'unconfirmed' had the text typed in without a confirmed submit (it may be sitting in the input box — tell the user to look at that pane), and 'failed' names what refused and why. Reporting an unconfirmed pane as running is the one wrong thing to do with this answer.
 
 - **Endpoint:** `POST /api/agentic-ide/interrupted/continue`
 - **Arguments:** `names` (array; optional); `prompt` (string; optional)

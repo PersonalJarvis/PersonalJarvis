@@ -172,10 +172,7 @@ export function visibleRows(term: Terminal | null): string[] {
  * else, so they raise every candidate's floor equally and never decide the
  * outcome as long as the scrolling region is the larger part of the screen.
  */
-export function detectShift(
-  before: string[],
-  after: string[],
-): number | null {
+export function detectShift(before: string[], after: string[]): number | null {
   const anchors = before.filter(identifiable).length;
   if (before.length < MIN_COMPARABLE_ROWS || anchors < MIN_COMPARABLE_ROWS) {
     return null;
@@ -275,15 +272,75 @@ export function appScrollExtent(
 }
 
 /** Wheel notches that move an application `lines` towards newer output. */
-export function notchesForLines(
-  lines: number,
-  linesPerNotch: number,
-): number {
+export function notchesForLines(lines: number, linesPerNotch: number): number {
   return Math.round(lines / Math.max(1, linesPerNotch));
 }
 
 /** Quiet time after the last wheel event before the screen is re-measured. */
 export const SETTLE_MS = 120;
+
+/**
+ * How long a probe stays one notch back before it returns.
+ *
+ * One settle period plus a margin: the two notches must land in SEPARATE bursts
+ * or {@link trackAppScroll} folds them into one intent of zero and measures
+ * nothing at all.
+ */
+export const PROBE_RETURN_MS = SETTLE_MS + 60;
+
+/**
+ * Quiet time a pane must have before it is probed at all.
+ *
+ * Longer than one settle period on purpose. A user who is turning the wheel is
+ * already measuring the pane far better than a probe could, and two sources of
+ * movement folded into one burst measure neither — so the probe waits for the
+ * tracker to fall silent, by which time a real scroll has answered the question
+ * and no probe is sent.
+ */
+export const PROBE_WAIT_MS = SETTLE_MS + 40;
+
+/**
+ * Ask a full-screen CLI whether it has a history — without moving the user.
+ *
+ * The measurement above only ever happened as a side effect of somebody turning
+ * the wheel, and that left the scrollbar unreachable in exactly the panes it was
+ * written for. A CLI that holds its own history draws NO bar until something has
+ * been measured (see {@link hasMeasuredHistory}, and the reasoning in the file
+ * header) — so reaching for the right edge of an untouched Claude Code pane
+ * revealed nothing, and the only way to make the bar appear was the wheel, which
+ * is the one input that makes the bar unnecessary. Reported 2026-07-27, third
+ * round on this strip, and the first two rounds are why the empty bar is not an
+ * option: the fix cannot be "draw something anyway".
+ *
+ * So the question gets asked instead of waited for. One notch towards older
+ * output, one settle period for the tracker to see what the screen did, one notch
+ * back — a round trip the user does not end up anywhere different from, and after
+ * which the answer is real: either a history exists and the bar can describe it,
+ * or the screen did not move and the pane honestly keeps no bar.
+ *
+ * `relay` hands over one notch in the direction given (-1 towards older output),
+ * i.e. `relayWheelNotch` in ./paneScroll. Returns a teardown that brings the
+ * application back immediately if the probe is abandoned early — a pane left one
+ * line into its history because the pointer moved away would be the probe
+ * showing through.
+ */
+export function probeAppHistory(
+  relay: (direction: 1 | -1) => void,
+): () => void {
+  let returned = false;
+  const comeBack = () => {
+    if (returned) return;
+    returned = true;
+    relay(1);
+  };
+
+  relay(-1);
+  const timer = window.setTimeout(comeBack, PROBE_RETURN_MS);
+  return () => {
+    window.clearTimeout(timer);
+    comeBack();
+  };
+}
 
 /**
  * Longest a burst may run before it is measured anyway.
@@ -340,7 +397,9 @@ export function trackAppScroll({
       // A notch's size may only be learned from notches we sent ourselves: a
       // mouse wheel reports whatever its driver feels like, so counting its
       // events as notches would teach the drag the wrong step.
-      return synthetic ? next : { ...next, linesPerNotch: previous.linesPerNotch };
+      return synthetic
+        ? next
+        : { ...next, linesPerNotch: previous.linesPerNotch };
     });
   };
 

@@ -3352,18 +3352,7 @@
       "summary_blocked": "{0} cannot be continued until their agents are running again.",
       "result_continued": "{0} pane(s) carrying on: {1}.",
       "result_unconfirmed": "Check these panes yourself — the instruction was typed in but never seen to submit: {0}.",
-      "result_failed": "Could not be continued: {0}.",
-      "sending": "Sending …",
-      "starting": "Its agent is still starting — it will be continued as soon as it is up.",
-      "result_queued": "{0} still starting; they carry on the moment they are up: {1}."
-    },
-    "arrange": {
-      "carrying": "drop it on a terminal",
-      "swap": "Swap with {0}",
-      "left": "Left of {0}",
-      "right": "Right of {0}",
-      "above": "Above {0}",
-      "below": "Below {0}"
+      "result_failed": "Could not be continued: {0}."
     },
     "selection": {
       "start": "Select terminals",

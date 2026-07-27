@@ -3351,18 +3351,7 @@
       "summary_blocked": "{0} no se pueden continuar hasta que sus agentes vuelvan a ejecutarse.",
       "result_continued": "{0} panel(es) continúan: {1}.",
       "result_unconfirmed": "Revisa estos paneles tú mismo: la instrucción se escribió pero no se vio enviarse: {0}.",
-      "result_failed": "No se pudieron continuar: {0}.",
-      "sending": "Enviando …",
-      "starting": "Su agente todavía está arrancando: continuará en cuanto esté listo.",
-      "result_queued": "{0} aún arrancan; seguirán en cuanto estén listos: {1}."
-    },
-    "arrange": {
-      "carrying": "suéltalo sobre un terminal",
-      "swap": "Intercambiar con {0}",
-      "left": "A la izquierda de {0}",
-      "right": "A la derecha de {0}",
-      "above": "Encima de {0}",
-      "below": "Debajo de {0}"
+      "result_failed": "No se pudieron continuar: {0}."
     },
     "selection": {
       "start": "Seleccionar terminales",
