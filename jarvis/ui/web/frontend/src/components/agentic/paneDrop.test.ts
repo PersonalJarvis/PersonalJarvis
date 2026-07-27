@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dragCarriesFiles,
   extractPaneDrop,
   extractPasteFiles,
   isEmptyPayload,
@@ -83,6 +84,39 @@ describe("reading a drop onto a terminal pane", () => {
   it("survives a drop with nothing in it", () => {
     expect(isEmptyPayload(extractPaneDrop(null))).toBe(true);
     expect(isEmptyPayload(extractPaneDrop(dt({})))).toBe(true);
+  });
+});
+
+describe("deciding whether a drag in flight is worth offering a pane for", () => {
+  /** A drag mid-flight exposes only its TYPES — never the data. */
+  const inFlight = (types: string[]) =>
+    ({ types }) as unknown as DataTransfer;
+
+  it("recognises a file drag out of Explorer or Finder", () => {
+    expect(dragCarriesFiles(inFlight(["Files"]))).toBe(true);
+    expect(dragCarriesFiles(inFlight(["Files", "text/plain"]))).toBe(true);
+  });
+
+  it("recognises the uri-list some Linux file managers send instead", () => {
+    expect(dragCarriesFiles(inFlight(["text/uri-list"]))).toBe(true);
+  });
+
+  it("ignores dragged TEXT — nobody holding a selection is offering a file", () => {
+    // BUG-110: brushing over terminal output with the mouse down lifts the
+    // selection into a drag, and the pane announced "drop your file here" to a
+    // user holding nothing.
+    expect(dragCarriesFiles(inFlight(["text/plain"]))).toBe(false);
+  });
+
+  it("ignores an internal mission card tossed across the grid", () => {
+    expect(dragCarriesFiles(inFlight(["application/x-jarvis-mission"]))).toBe(
+      false,
+    );
+  });
+
+  it("survives a drag with no DataTransfer at all", () => {
+    expect(dragCarriesFiles(null)).toBe(false);
+    expect(dragCarriesFiles({} as DataTransfer)).toBe(false);
   });
 });
 

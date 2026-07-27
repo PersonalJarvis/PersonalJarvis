@@ -70,6 +70,7 @@ import {
   nameClipboardFile,
   type PaneDropPayload,
 } from "./paneDrop";
+import { usePaneFileDrag } from "./paneFileDrag";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
@@ -449,10 +450,12 @@ export function AgenticTerminal({
    *
    * Deliberately typed and NOT submitted: someone dropping a screenshot wants to
    * say what to do with it. The reference appears, the cursor sits after it.
+   *
+   * WHEN the pane arms for a drop — and when it must stay quiet — lives in
+   * ./paneFileDrag, because getting that wrong is what made a pane offer itself
+   * to a user who was holding nothing at all (BUG-110).
    */
-  const [dragging, setDragging] = useState(false);
   const [attaching, setAttaching] = useState(false);
-  const dragDepth = useRef(0);
 
   const attach = useCallback(
     async (payload: PaneDropPayload) => {
@@ -471,6 +474,17 @@ export function AgenticTerminal({
       }
     },
     [name, onAttachError],
+  );
+
+  const { dragging, handlers: dragHandlers } = usePaneFileDrag(
+    useCallback(
+      (dt: DataTransfer) => {
+        onFocus?.();
+        // Read BEFORE any await — the DataTransfer is gone after this returns.
+        void attach(extractPaneDrop(dt));
+      },
+      [attach, onFocus],
+    ),
   );
 
   // Clipboard images only — pasted TEXT belongs to xterm, which turns it into a
@@ -501,29 +515,7 @@ export function AgenticTerminal({
   return (
     <div
       onMouseDown={onFocus}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        // Counted, not a boolean: dragging across the xterm canvas fires
-        // enter/leave for every child element, and a boolean flickers.
-        dragDepth.current += 1;
-        setDragging(true);
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      }}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        dragDepth.current = 0;
-        setDragging(false);
-        onFocus?.();
-        // Read BEFORE any await — the DataTransfer is gone after this returns.
-        void attach(extractPaneDrop(e.dataTransfer));
-      }}
+      {...dragHandlers}
       className={cn(
         "relative flex h-full w-full flex-col overflow-hidden rounded-xl border transition-shadow",
         focused

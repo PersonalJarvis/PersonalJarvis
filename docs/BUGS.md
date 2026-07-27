@@ -7590,3 +7590,58 @@ normal-privilege client can see in the Jarvis window went from **1 to 22**.
 **Meta-lesson.** A fail-open diagnostic can perfectly disguise its own breakage.
 Any probe whose "I don't know" path is silent needs a cross-check against an
 independent implementation, or it will report "nothing to see here" forever.
+
+## BUG-110: a terminal pane in the Agentic IDE offers "Drop to put it in front of Dana" to a user holding nothing (LOW, FIXED 2026-07-27)
+
+**Symptom (desktop field report, screenshot).** In the Agentic IDE, one pane
+suddenly dimmed behind a blurred overlay reading "Drop to put it in front of
+**Dana**" with a paperclip icon — while the user was dragging no file, and had
+no file anywhere in hand. The overlay cleared on its own moments later. Nothing
+was lost and no agent was disturbed; it read as the UI hallucinating a
+drag-and-drop that was not happening.
+
+**Root cause — two independent halves, both in the pane's drop arming**
+(`jarvis/ui/web/frontend/src/components/agentic/AgenticTerminal.tsx`):
+
+1. **The pane armed on ANY drag, never asking what it carried.** `onDragEnter`
+   set `dragging = true` unconditionally and `onDragOver` reported
+   `dropEffect = "copy"` to match. A browser fires `dragenter` for every drag
+   that crosses an element, and the cheapest way to start one by accident is a
+   TEXT selection: brush across terminal output or a header label with the
+   mouse held down and the browser lifts the selection into a native drag. An
+   internal Outputs mission card tossed across the grid did the same. Every one
+   of them lit the file overlay of whichever pane it flew over.
+2. **Disarming depended on a `dragleave` that is not owed.** The enter/leave
+   counter (`dragDepth`) is the correct answer to child-element flicker, but it
+   only balances when every enter gets its leave. A drag released over another
+   element, dropped outside the window, or cancelled with Escape sends this pane
+   nothing at all — the overlay then sits over a live agent until some later
+   drag happens to balance the count.
+
+Half 1 explains what the user saw; half 2 is the same defect's worse outcome —
+an overlay that never clears — and was fixed with it.
+
+**Fix.** The arming logic moved into
+`jarvis/ui/web/frontend/src/components/agentic/paneFileDrag.ts`:
+
+- `dragCarriesFiles()` (`paneDrop.ts`) gates the overlay on the drag's TYPES —
+  the only thing a browser exposes mid-flight, by design. `Files` (Explorer,
+  Finder) and `text/uri-list` (some Linux file managers) arm the pane;
+  `text/plain` alone does not, and neither does the internal mission MIME.
+- `dropEffect` follows the same gate, so the cursor stops promising a copy
+  where a drop would do nothing.
+- `dragenter`/`dragover` still call `preventDefault()` for payloads the pane
+  refuses — otherwise a dropped link would NAVIGATE the window and take every
+  agent in the grid with it.
+- A window-level backstop (`drop`, `dragend`, and a viewport-edge `dragleave`
+  with `relatedTarget === null`) disarms the pane whenever the drag ends
+  anywhere else — the same pattern `JarvisDock` already uses.
+
+**Guards.** `paneDrop.test.ts` (types gate: files vs. dragged text vs. mission
+card) and `paneFileDrag.test.ts` (arming, child-element flicker, copy-cursor
+honesty, and all three disarm paths).
+
+**Class rule.** A drop target may only announce itself for a payload it can
+actually accept, and must never rely on a matching `dragleave` to take that
+announcement down. `dragenter` is a "something is moving over you" signal, not
+a "the user is offering you a file" signal.

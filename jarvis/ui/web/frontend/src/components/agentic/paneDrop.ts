@@ -35,6 +35,33 @@ export function isEmptyPayload(payload: PaneDropPayload): boolean {
 }
 
 /**
+ * Is there a FILE in this drag — the only question a pane may ask while a drag
+ * is still in flight?
+ *
+ * A browser deliberately seals a drag's contents until it is dropped: during
+ * `dragenter`/`dragover` only `DataTransfer.types` is readable, never the data
+ * itself. So this is a type check, and it has to be, but it is enough to tell
+ * the two cases apart that matter:
+ *
+ * * `Files` — a real drag out of Explorer, Finder, or a file manager.
+ * * `text/uri-list` — the one shape some Linux file managers send instead, so
+ *   dropping a file there keeps working.
+ * * **`text/plain` ALONE is not a file.** That is what selected TEXT looks
+ *   like, and text is what a user drags by accident: brush over terminal
+ *   output with the mouse held down and the browser lifts the selection into a
+ *   drag nobody asked for. A pane that arms on this announces "drop your file
+ *   here" at someone holding nothing (BUG-110).
+ *
+ * An internal mission card carries neither type, so tossing one across the grid
+ * stays invisible to the panes it flies over.
+ */
+export function dragCarriesFiles(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  const types = Array.from(dt.types ?? []);
+  return types.includes("Files") || types.includes("text/uri-list");
+}
+
+/**
  * A `file://` URI as a native path; anything else unchanged.
  *
  * Windows URIs carry a leading slash before the drive letter
