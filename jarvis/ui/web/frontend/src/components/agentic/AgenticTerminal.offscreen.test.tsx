@@ -238,6 +238,40 @@ describe("AgenticTerminal off-screen output", () => {
     expect(harness.writes).toEqual(["held while away"]);
   });
 
+  it("un-parks itself when output arrives and the pane is on screen", () => {
+    // The backstop for every state the observer never reports its way out of.
+    // Two were found one live incident at a time (a hidden document, a pane
+    // that came back at the size it left), and the symptom of the next one
+    // would be identical: an agent working behind an empty rectangle while the
+    // user is told the prompt was handed over. A parked pane that is still
+    // being written to measures itself instead of waiting for a callback.
+    mount();
+    act(() => harness.fire?.(false));
+
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 10, bottom: 400, left: 10, right: 400, width: 390, height: 390,
+      x: 10, y: 10, toJSON: () => ({}),
+    } as DOMRect);
+
+    act(() => harness.handlers?.onOutput("the prompt Jarvis just typed"));
+    expect(harness.writes.join("")).toContain("the prompt Jarvis just typed");
+  });
+
+  it("keeps withholding from a pane that is genuinely off screen", () => {
+    // The measurement must not become a way back for a pane scrolled out of a
+    // tall grid — that pane is exactly what parking exists for.
+    mount();
+    act(() => harness.fire?.(false));
+
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 4000, bottom: 4400, left: 10, right: 400, width: 390, height: 390,
+      x: 10, y: 4000, toJSON: () => ({}),
+    } as DOMRect);
+
+    act(() => harness.handlers?.onOutput("nobody is looking at this"));
+    expect(harness.writes).toEqual([]);
+  });
+
   it("stays visible where IntersectionObserver does not exist", () => {
     // Old engines and bare test environments: the pane must keep drawing
     // rather than go permanently silent.

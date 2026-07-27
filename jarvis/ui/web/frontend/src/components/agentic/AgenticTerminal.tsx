@@ -83,6 +83,7 @@ import {
   boxOnScreen,
   OffscreenBuffer,
   OFFSCREEN_MARGIN_PX,
+  PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollbar } from "./PaneScrollbar";
@@ -447,12 +448,21 @@ export function AgenticTerminal({
      */
     let paneVisible = true;
     const offscreen = new OffscreenBuffer();
+    /** When this pane last measured itself while parked (see `recheckParked`). */
+    let parkedCheckedAt = 0;
 
     const showPane = () => {
       if (paneVisible) return;
       paneVisible = true;
       const held = offscreen.drain();
       if (held) term.write(held);
+    };
+
+    const parkPane = () => {
+      paneVisible = false;
+      // The next chunk of output measures immediately rather than waiting out
+      // an interval that started before this pane was even parked.
+      parkedCheckedAt = 0;
     };
 
     /**
@@ -473,10 +483,37 @@ export function AgenticTerminal({
       if (boxOnScreen(box, viewport)) showPane();
     };
 
+    /**
+     * A parked pane that is still being talked to, asking the only question
+     * that matters: can the user see me right now?
+     *
+     * The observer answers that for every state it reports. The failure this
+     * guards is the state it does NOT report — and the two known ones
+     * (`visibilitychange`, resize) were found one live incident at a time, so
+     * assuming they are the last two is how the next one costs another
+     * afternoon. The symptom is always identical and always severe: Jarvis
+     * types a prompt into a pane, the agent starts work, and the user watches
+     * an empty rectangle and concludes nothing was sent (reported 2026-07-27,
+     * where the prompt reached the agent 1.4 s BEFORE it was announced and the
+     * pane showed its boot screen for another minute).
+     *
+     * Throttled, because output arrives in frames and a rectangle measurement
+     * forces layout: at most one per {@link PARKED_RECHECK_MS} per parked pane,
+     * and none at all for a parked pane whose agent has gone quiet — nobody
+     * misses a screen that is not changing.
+     */
+    const recheckParked = () => {
+      const now = Date.now();
+      if (now - parkedCheckedAt < PARKED_RECHECK_MS) return;
+      parkedCheckedAt = now;
+      revealIfOnScreen();
+    };
+
     // Everything this pane draws goes through here, not just the agent's
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
     const writeToPane = (text: string) => {
+      if (!paneVisible) recheckParked();
       if (paneVisible) {
         term.write(text);
         return;
@@ -682,7 +719,7 @@ export function AgenticTerminal({
           // nothing, so there is no frame budget being defended. The whole
           // reason this exists is panes competing for the main thread WHILE the
           // user watches another one.
-          if (!documentHidden()) paneVisible = false;
+          if (!documentHidden()) parkPane();
         },
         { rootMargin: `${OFFSCREEN_MARGIN_PX}px` },
       );

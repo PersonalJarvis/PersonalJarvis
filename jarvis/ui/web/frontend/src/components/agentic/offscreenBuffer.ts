@@ -42,6 +42,25 @@
 export const OFFSCREEN_LIMIT_CHARS = 256 * 1024;
 
 /**
+ * How often a parked pane re-measures itself while its agent keeps talking.
+ *
+ * The two moments {@link boxOnScreen} is asked about — the document becoming
+ * visible, the pane being resized — are the ones we KNOW the observer cannot
+ * report its way out of. They are not a proof that no third one exists: the
+ * observer lives in the browser engine, an embedded WebView is not a browser
+ * tab, and every state it fails to report looks identical from here (a pane
+ * holding its agent's screen while the user watches an empty rectangle and is
+ * told the work was handed over).
+ *
+ * So a parked pane that is still RECEIVING output — the only parked pane whose
+ * silence a user can notice — checks for itself, at most this often. It costs
+ * one rectangle measurement per second per parked, chatty pane, and it bounds
+ * every unknown member of this bug class at one second instead of "until the
+ * agent finishes".
+ */
+export const PARKED_RECHECK_MS = 1000;
+
+/**
  * How far outside the window a pane still counts as worth drawing.
  *
  * Generous on purpose: a pane one flick of the wheel away catches up before it
