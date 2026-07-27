@@ -29,6 +29,22 @@
  * All three are bounded: a pane never hammers a backend that is genuinely
  * gone — it falls back to knocking every half minute — and whatever it ends up
  * believing, it says out loud.
+ *
+ * **Every one of those waits is measured by a timer, and a timer is the one
+ * thing a hidden window does not honour.** Chromium clamps `setTimeout` in a
+ * document that is not visible to roughly once per second, and to once per
+ * minute after a few minutes of that — so a 500 ms retry becomes a second, and
+ * the half-minute knock becomes a minute or more. Measured live 2026-07-27
+ * 20:11: five panes reconnecting into a workspace that was still opening
+ * knocked at 10.174, 11.174, 12.162, 13.170 — a flat one-second grid where the
+ * backoff asked for 0.5 s, 1 s, 2 s, 4 s. The workspace opened at 20:11:24 and
+ * the panes, by then deep in the slow schedule, surfaced their agents around
+ * two minutes later with the work long since running. The agents were fine and
+ * the prompts had gone out on time; only the screen was late.
+ *
+ * So the reconnect does not rely on the timer alone: coming back into view
+ * retries immediately (see `onDocumentVisible`). The user looking at the pane
+ * is the most reliable signal there is that the wait should end now.
  */
 
 import { mintWsTicket } from "@/lib/ws";
@@ -165,6 +181,32 @@ export function openPaneSocket(
       if (!stopped) open();
     }, delay);
   };
+
+  /**
+   * The window came back — stop waiting and try now.
+   *
+   * A hidden document's timers are clamped, so whatever delay was scheduled has
+   * been stretched by an unknown amount and may still be minutes out. Worse,
+   * the streak counters kept growing while the clamp made every attempt look
+   * slow, so a pane can arrive here believing the backend is gone when it was
+   * merely unwatched. Being looked at is fresh evidence: the counters go back to
+   * zero and the pending attempt happens immediately.
+   *
+   * Only ever pulls a retry FORWARD. A pane with no attempt scheduled is either
+   * connected or finished, and neither wants a socket opened underneath it.
+   */
+  const onDocumentVisible = () => {
+    if (stopped || typeof document === "undefined" || document.hidden) return;
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+    attempts = 0;
+    waits = 0;
+    open();
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onDocumentVisible);
+  }
 
   const giveUp = (message: string) => {
     stopped = true;
@@ -320,6 +362,9 @@ export function openPaneSocket(
     },
     close(): void {
       stopped = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onDocumentVisible);
+      }
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;

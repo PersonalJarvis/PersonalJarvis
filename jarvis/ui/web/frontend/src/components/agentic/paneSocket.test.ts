@@ -44,6 +44,14 @@ class MockWebSocket {
   }
 }
 
+/** Put the document in or out of view, the way a window switch does. */
+function hidden(value: boolean) {
+  Object.defineProperty(document, "hidden", {
+    configurable: true,
+    get: () => value,
+  });
+}
+
 function handlers() {
   return {
     onOpen: vi.fn(),
@@ -210,6 +218,67 @@ describe("openPaneSocket", () => {
     MockWebSocket.last!.deliver({ t: "ready", resumed: true, reattached: false });
     expect(cb.onReady).toHaveBeenCalledTimes(1);
     socket.close();
+  });
+
+  it("retries at once when the window comes back, without waiting out the clamp", async () => {
+    /*
+     * The live 2026-07-27 20:11 failure. A hidden document has its timers
+     * clamped to about once a second, and to once a minute after a few minutes
+     * of that — so five panes whose backoff asked for 0.5/1/2/4 s knocked on a
+     * flat one-second grid, ran their streak down while the workspace was
+     * opening, and surfaced their agents around two minutes later. The prompts
+     * had gone out on time; only the screen was late.
+     *
+     * Being looked at ends the wait. No timer is advanced in this test on
+     * purpose: that is the whole point — the retry must not depend on one.
+     */
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+
+    for (let i = 0; i < 10; i += 1) {
+      MockWebSocket.last!.dropped(4503);
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    const spent = MockWebSocket.opened.length;
+
+    hidden(true);
+    MockWebSocket.last!.dropped(4503);
+    hidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(MockWebSocket.opened.length).toBe(spent + 1);
+
+    MockWebSocket.last!.fire("open");
+    MockWebSocket.last!.deliver({ t: "ready", resumed: true, reattached: false });
+    expect(cb.onReady).toHaveBeenCalledTimes(1);
+    socket.close();
+  });
+
+  it("does not open a second socket for a pane that is already connected", async () => {
+    /* Coming back into view may only ever pull a PENDING retry forward. */
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+    MockWebSocket.last!.deliver({ t: "ready", resumed: false, reattached: false });
+    const spent = MockWebSocket.opened.length;
+
+    hidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(MockWebSocket.opened.length).toBe(spent);
+    socket.close();
+  });
+
+  it("stops listening for visibility once the pane is closed", async () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.dropped(4503);
+    socket.close();
+    const spent = MockWebSocket.opened.length;
+
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(MockWebSocket.opened.length).toBe(spent);
   });
 
   it("treats an agent exit as final, not as a dropped connection", async () => {
