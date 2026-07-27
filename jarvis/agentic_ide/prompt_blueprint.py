@@ -1,24 +1,41 @@
 """What a composed prompt looks like, and what it is allowed to say.
 
-Every rule here is traceable to the Claude 5 prompting documentation, because
-the thing this module replaces was a plausible-sounding prompt that made the
-receiving agent behave *worse*:
+Every rule here is traceable to the vendors' own prompting documentation,
+because the thing this module replaces was a plausible-sounding prompt that
+made the receiving agent behave *worse*:
 
-* **Full specification up front.** Opus 5 "performs best when given the
-  complete task specification up front and left to run" — the old 1200-char
-  cap worked directly against that.
-* **The reason, not only the request.** Fable 5 connects a task to the right
+* **Goal and constraints, never the implementation.** The single most
+  load-bearing rule, and the one the first version got backwards. Measured
+  live 2026-07-27: asked to make composition faster, the composer wrote "use
+  non-blocking background tasks for writer resolution" — it handed the agent a
+  solution that was *already implemented*, so the agent's task became
+  re-doing finished work. Every current frontier guide converges here: state
+  what good looks like and the bounds, and let the model choose the route.
+  Enumerated steps measurably REDUCE output quality on Fable 5, and leaner
+  system prompts score higher on agentic coding evaluations while costing a
+  fraction of the tokens.
+* **Full specification up front.** Complete does not mean prescriptive: the
+  agent should not have to come back with questions, which is a statement
+  about the CONTEXT it was handed, not about how many steps were dictated.
+* **The reason, not only the request.** A model connects a task to the right
   context when it knows the intent behind it, so ``## Why this matters`` earns
   its place whenever the intent is actually known.
-* **An explicit scope bound.** Both models widen tasks — surrounding
-  refactors, unrequested abstractions, defensive code for impossible cases —
-  unless told not to.
+* **Scope as intent, not as a prohibition list.** The first version listed
+  what the agent must not do (no surrounding cleanup, no unrequested
+  refactors, no speculative abstractions, no defensive handling). Anthropic's
+  own measured replacement for exactly that failure mode is an intent
+  instruction — deliver what was asked at the scope intended, make routine
+  judgement calls, flag rather than silently widen — which in testing cut
+  scope drift to near zero without producing extra clarifying questions.
 * **No verification ritual.** "If your prompt contains explicit verification
   instructions … remove them: instructions like these cause over-verification
   … and removing them reduces wasted tokens with no loss in quality." Success
   *criteria* stay; "double-check afterwards" is banned.
 * **No reasoning echo.** Asking an agent to reproduce its internal reasoning
   can trigger the ``reasoning_extraction`` refusal category on Fable 5.
+* **Say each thing exactly once.** A rule repeated in two sections is not
+  twice as followed; it is noise that dilutes the rules that matter, and it is
+  paid for on every composition in latency the user waits through.
 * **Per-kind guardrails.** The clearest case: on a review, "only report
   high-severity issues" is followed literally and suppresses real findings. On
   an investigation the opposite steer is right — report, do not fix. One
@@ -44,41 +61,50 @@ from .task_kind import (
 )
 
 # The hard ceiling. MAX_PROMPT_CHARS is the transport cap above this.
-# Set above what real briefs measure (2865-3713 across three live runs) rather
-# than at it: a limit the writer breaches on every ordinary composition teaches
-# it that the limits in this prompt are approximate, and the ones that matter —
-# invent nothing, never end on a reference — are not.
-MAX_BODY_CHARS = 4500
+# Set above what real briefs measure rather than at it: a limit the writer
+# breaches on every ordinary composition teaches it that the limits in this
+# prompt are approximate, and the ones that matter — invent nothing, never end
+# on a reference — are not.
+MAX_BODY_CHARS = 3600
 
 # What a GOOD prompt weighs, which is a different question from what is allowed.
-# The first version stated only the ceiling, and three live compositions came
-# back at 549 / 865 / 904 characters — under a third of the budget. A model
-# reads "keep it under N" as "be brief", so the target has to be said out loud.
-# The floor is the load-bearing half: below it, context the agent will have to
-# rediscover for itself has almost certainly been left out.
-TARGET_MIN_CHARS = 1800
-TARGET_MAX_CHARS = 3200
+# Both bounds were learned the hard way and BOTH are load-bearing:
+#
+# * Without a stated target the writer is brief — three live compositions came
+#   back at 549 / 865 / 904 characters, and a lean-prompt A/B on 2026-07-27
+#   produced a `## Done when` reading "the time taken is reduced", which is not
+#   an acceptance criterion at all. A model reads "keep it under N" as "be
+#   brief", so the target has to be said out loud.
+# * The old 1800-3200 target then bought length from the wrong place. The brief
+#   it produced measured 3801 characters — over its own ceiling — and spent the
+#   surplus dictating an implementation the agent should have chosen itself.
+#
+# So the target came down and the rules changed what the words are spent ON:
+# describing the code that exists, not prescribing the code to write. Every
+# character also costs the user real waiting time — 3801 characters took 21.8 s
+# against 16.0 s for a leaner brief on the same writer.
+TARGET_MIN_CHARS = 1400
+TARGET_MAX_CHARS = 2400
 
 _SKELETON = """\
 ## Task
-<what to do, in the imperative - two to five sentences. Name the concrete
-symbols, files and behaviours involved; do not compress it to a headline>
+<what must be achieved, in the imperative - two to four sentences naming the
+concrete symbols, files and behaviours involved>
 
 ## Why this matters
 <the intent behind the request, and what breaks or improves for the user -
-ONLY when it is known or clearly derivable>
+ONLY when known or clearly derivable>
 
 ## How it works today
-<the current behaviour of the code being changed, in real symbol names: which
-function does what, who calls it, which state it keeps. This is the part that
-saves the agent an entire round of rediscovery>
+<the current behaviour in real symbol names: which function does what, who
+calls it, which state it keeps>
 
 ## Key files
-- `@path/to/file` - what lives here and which part of it matters, named
+- `@path/to/file` - what lives here and which symbol in it matters
 - `@path/to/other` - same, specifically
 
 ## Scope
-<what is in, what is explicitly out, and the constraints that apply>
+<the bound the user actually drew>
 
 ## Done when
 - <an observable outcome>
@@ -86,54 +112,45 @@ saves the agent an entire round of rediscovery>
 """
 
 _SHARED_RULES = f"""\
-You turn a spoken instruction into a prompt for a coding agent (Claude Code or \
-Codex) that is already running inside the user's repository. The agent will act \
-on what you write, so write the brief you would want to receive.
+You turn a spoken instruction into a brief for a coding agent (Claude Code or \
+Codex) already running inside the user's repository. The agent will act on what \
+you write, so write the brief you would want to receive.
 
-Output format - Markdown, using exactly this skeleton:
+Give the agent the GOAL, the CONTEXT and the CONSTRAINTS - never the \
+implementation. Which approach, which mechanism, which order are its decisions, \
+made against code it can see and you cannot; a solution you guess at gets built \
+even when it is wrong or already there. Say what must be true when it is done, \
+and leave the route open.
+
+Markdown, exactly this skeleton:
 
 {_SKELETON}
 
-Rules for the skeleton:
-- Output ONLY the prompt. No preamble, no commentary, no surrounding code \
-fence, no quotes.
-- `## Task` is mandatory. Every other section is OPTIONAL: omit a section \
-entirely when you have nothing grounded to put in it. Never pad a section to \
-fill the shape.
+- Output ONLY the brief: no preamble, no code fence, no quotes.
+- `## Task` is mandatory; every other section is OPTIONAL. Omit any you cannot \
+ground rather than padding it.
 
-DESCRIBING is not INVENTING, and the difference decides how good this prompt \
-is. Keep these apart:
-- INVENTING is forbidden: a requirement, a constraint, a scope boundary or a \
-success criterion the user did not state and the workspace does not establish. \
-`## Done when` may only contain what the user asked for or what the repository \
-itself determines (its test command, its lint gate). If neither gives you \
-anything, omit the section.
-- DESCRIBING is wanted, in detail: what the code in the file outlines actually \
-does, which function is called from where, what the workspace profile says \
-about the stack and conventions, which constraint the repository's own house \
-rules impose. None of that is invention - it is context you were given and the \
-agent would otherwise spend its first minutes rediscovering. Spend words here.
-
-Be thorough. Aim for {TARGET_MIN_CHARS}-{TARGET_MAX_CHARS} characters. A prompt \
-under 800 characters has almost certainly dropped context you were handed: go \
-back and say what the relevant code does today, name the symbols involved, and \
-state the constraints that apply. Length must come from substance - concrete \
-file, symbol and behaviour detail - never from filler, restating the task in \
-other words, or hedging.
-- Reference files with `@path` inside a `## Key files` list item, using ONLY \
-paths from the candidate list you are given. Say what each file holds and \
-which function or class in it is the relevant one - "the ranking pipeline" is \
-worth far less to the agent than "`_fuse_ranked()`, which merges the ranked \
-lists before the relevance gate". Omit the section when no candidate is \
-clearly relevant.
-- Never end the prompt on an `@path` or a `/command`: a trailing reference \
-leaves the agent's completion popup open and the prompt is never submitted.
-- Write in ENGLISH, whatever language the user spoke. The agent works in a \
-repository whose code, comments and commits are English.
-- Preserve every constraint, file, symbol and intent the user expressed. \
-Remove speech artefacts: filler words, false starts, self-corrections, and the \
-clause addressing the agent by name.
-- Never exceed {MAX_BODY_CHARS} characters.
+DESCRIBING is not INVENTING, and the difference decides how good this brief is:
+- INVENTING is forbidden: a requirement, constraint, boundary or success \
+criterion the user did not state and the workspace does not establish. `## Done \
+when` holds only what the user asked for or what the repository itself \
+determines (its test command, its lint gate); `## Scope` only a line the user \
+actually drew. Omit either otherwise.
+- DESCRIBING is wanted, in detail: what the code in the outlines does, which \
+function is called from where, what the workspace profile and house rules \
+impose. That is context you were handed and the agent would otherwise rediscover.
+- Aim for {TARGET_MIN_CHARS}-{TARGET_MAX_CHARS} characters, never over \
+{MAX_BODY_CHARS}. Under 800 you have dropped context you were given. Length \
+comes from concrete file, symbol and behaviour detail - never from filler, \
+restatement, hedging or dictated steps.
+- `@path` references only inside `## Key files`, only from the candidate list, \
+each naming the symbol that matters ("`_fuse_ranked()`, which merges the ranked \
+lists before the relevance gate" beats "the ranking pipeline"). Never end the \
+prompt on an `@path` or `/command` - a trailing reference holds the agent's \
+completion popup open and the prompt is never submitted.
+- ENGLISH, whatever language the user spoke.
+- Preserve every constraint, file, symbol and intent expressed; drop speech \
+artefacts and the clause addressing the agent by name.
 
 Two subjects must not appear in the prompt AT ALL - not as a requirement and \
 not as a prohibition. Say nothing about either; the agent handles both \
@@ -151,17 +168,18 @@ prompt is this rule being LEAKED instead of followed - it is a defect.)\
 _KIND_RULES: dict[str, str] = {
     KIND_IMPLEMENT: """\
 This is an IMPLEMENTATION task. Specific to it:
-- Give the COMPLETE specification up front, so the agent can work start to \
-finish without coming back with questions. This is the kind that most deserves \
-length: describe the behaviour that must exist afterwards, the shape it should \
-take, where it belongs in the existing code, and how it should behave when \
-things go wrong.
-- `## How it works today` is close to mandatory here. Name the function the \
-change lands in, what it currently does, and who calls it - the agent cannot \
-fit a change into code it has to find first.
-- `## Scope` matters here. Bound the work: name what is out of scope, and say \
-that surrounding cleanup, unrequested refactors, speculative abstractions and \
-defensive handling for impossible cases are not wanted.
+- Specify the OUTCOME completely, so the agent can work start to finish without \
+coming back with questions: the behaviour that must exist afterwards, how it \
+should behave when things go wrong, and any constraint it has to respect. \
+Complete means the agent lacks no context - not that you dictated the steps.
+- `## How it works today` is close to mandatory here: the function the change \
+lands in, what it currently does, and who calls it - the agent cannot fit a \
+change into code it has to find first. Give it the MAP, not every path; the \
+helpers it will meet on its own do not need listing.
+- `## Scope` only when the user actually drew a line. Do not fill it with \
+generic don'ts - "no unrequested refactors", "no speculative abstractions", "no \
+surrounding cleanup" are things the agent already gets right, and spending the \
+section on them costs the place a real boundary would have gone.
 - `## Done when` states observable outcomes, not activities.\
 """,
     KIND_REVIEW: """\
@@ -203,8 +221,9 @@ user set a real boundary.\
 """,
     KIND_NEUTRAL: """\
 The kind of work is not clearly determined. Stay with what the user said:
-- State the task as they framed it, and bound the scope to it - no \
-surrounding cleanup, no unrequested refactors.
+- State the task as they framed it, at the scope they framed it. Do not \
+sharpen an open request into a specific one - if they were broad, the agent \
+gets to decide where to start.
 - Still describe the relevant code as it stands today. Being unsure which KIND \
 of work this is is no reason to hand over less context.
 - If they described a problem rather than asking for a change, say that the \
@@ -216,6 +235,57 @@ deliverable is the assessment.\
 def system_prompt(kind: str) -> str:
     """The composer's system prompt for one task kind."""
     return f"{_SHARED_RULES}\n\n{_KIND_RULES.get(kind, _KIND_RULES[KIND_NEUTRAL])}"
+
+
+def attachment_block(attachments: list) -> str:
+    """The dropped files' contents, laid out for the writer. ``""`` when none.
+
+    Each entry is a ``drop_analysis.DropAnalysis``. The description of a
+    screenshot and the text of a document are the whole reason the drop was
+    analysed: without them the writer can only say "the file the user dropped",
+    which is exactly the empty prompt this feature exists to prevent.
+
+    The reference travels WITH the content so the writer can cite the file the
+    agent will open, rather than inventing a path for a picture that only exists
+    as a description.
+    """
+    usable = [a for a in attachments or [] if getattr(a, "name", "")]
+    if not usable:
+        return ""
+    parts: list[str] = []
+    for item in usable:
+        kind = getattr(item, "kind", "") or "file"
+        header = f'<attachment name="{item.name}" kind="{kind}" reference="{item.reference}">'
+        if item.detail and getattr(item, "described_by", "") == "vision":
+            body = f"Description of what this image shows:\n{item.detail}"
+        elif item.detail:
+            body = f"Contents:\n{item.detail}"
+        else:
+            body = item.note or "No content could be read from this file."
+        parts.append(f"{header}\n{body}\n</attachment>")
+    return "\n\n".join(parts)
+
+
+# What the writer must do with a dropped file, appended only when there is one.
+# Stated as its own rule set rather than folded into the shared rules: on a
+# prompt with no attachment these lines are noise, and a rule that applies to
+# nothing teaches the model that the rules are approximate.
+_ATTACHMENT_RULES = """\
+The user DROPPED one or more files into this instruction, and their contents \
+are given above. Specific to that:
+- Carry the substance across. The agent may not be able to open an image at \
+all, so the description is its only view of it: put what the image actually \
+shows into `## How it works today` or `## Task`, in detail, rather than \
+writing "the screenshot the user dropped".
+- Quote the exact strings. Error messages, stack traces, labels and code from \
+an attachment go into the prompt VERBATIM — those are what the agent will \
+search the repository for, and a paraphrase cannot be grepped.
+- Reference the file as well, using the reference given in its attachment tag, \
+so an agent that CAN open it does. The description is the floor, not a \
+replacement.
+- The attachment is context, not the task. What the user asked for still \
+decides what the prompt asks the agent to do.\
+"""
 
 
 def user_block(

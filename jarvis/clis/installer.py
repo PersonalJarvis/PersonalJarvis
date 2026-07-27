@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -63,17 +64,35 @@ _PS_FETCH = "i" + "wr -useb"
 _PS_PIPE = " | i" + "ex"
 
 
-def _build_ps_download_command(url: str) -> list[str]:
-    """PowerShell wrapper that downloads and executes an install script.
+def _build_script_download_command(url: str) -> list[str]:
+    """Download-and-run wrapper for an official install script, per platform.
 
-    Follows the official installer pattern used by many CLIs (Fly.io, Bun, etc.).
-    The PowerShell one-liner is assembled here from fragments.
+    Follows the installer pattern most CLIs publish (Fly.io, Bun, OpenCode, ...):
+    fetch a script over HTTPS and execute it. The two worlds spell that
+    differently and neither spelling runs on the other, so the platform decides —
+    a PowerShell one-liner on Windows, a POSIX pipeline everywhere else.
+
+    That branch is not a nicety. Until it existed, ``script`` was the ONLY
+    install method a CLI could declare whose command was PowerShell-only, so a
+    tool whose official installer is ``curl -fsSL … | sh`` had no install path at
+    all on macOS or Linux — the CLI was simply unofferable there, which is
+    exactly the "the maintainer's OS is the baseline" failure the project
+    forbids.
+
+    The Windows one-liner stays assembled from fragments: written out whole it
+    matches the ``iwr … | iex`` pattern that anti-virus heuristics flag on sight.
     """
-    inner = f"{_PS_FETCH} '{url}'{_PS_PIPE}"
-    return [
-        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-Command", inner,
-    ]
+    if sys.platform == "win32":
+        inner = f"{_PS_FETCH} '{url}'{_PS_PIPE}"
+        return [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-Command", inner,
+        ]
+    # POSIX: curl if present, otherwise wget — a slim container often has only
+    # one of the two, and failing over inside the shell keeps this a single
+    # command rather than a probe plus a decision.
+    fetch = f"(curl -fsSL '{url}' || wget -qO- '{url}')"
+    return ["sh", "-c", f"{fetch} | sh"]
 
 
 class CliInstaller:
@@ -96,7 +115,7 @@ class CliInstaller:
         if method == "cargo" and i.cargo_package:
             return ["cargo", "install", i.cargo_package]
         if method == "script" and i.script_url:
-            return _build_ps_download_command(i.script_url)
+            return _build_script_download_command(i.script_url)
         return None
 
     def start(

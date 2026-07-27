@@ -27,11 +27,21 @@ from jarvis.workspace.agents import (
 )
 
 
-def test_coding_agents_are_claude_and_codex() -> None:
-    assert set(coding_agent_names()) == {"claude", "codex"}
+# The entries this build promises. A SUPERSET assertion, deliberately: pinning
+# the exact set is what froze the registry at two providers and turned every
+# later addition into a test edit, which is the opposite of what an open
+# registry is for. What must not break is that a shipped provider silently
+# disappears.
+REQUIRED_CODING_AGENTS = frozenset({"claude", "codex", "opencode", "kimi", "glm"})
+
+
+def test_every_promised_coding_agent_is_registered() -> None:
+    assert REQUIRED_CODING_AGENTS <= set(coding_agent_names())
     # The historical constant keeps meaning "the coding agents": every existing
     # caller (the Make-It-Yours launcher, its PTY route) reads it that way.
-    assert set(AGENT_NAMES) == {"claude", "codex"}
+    assert set(AGENT_NAMES) == set(coding_agent_names())
+    # The plain terminal is not one of them.
+    assert PLAIN_TERMINAL not in coding_agent_names()
 
 
 def test_the_registry_also_holds_a_plain_terminal() -> None:
@@ -48,23 +58,46 @@ def test_the_registry_also_holds_a_plain_terminal() -> None:
 
 
 def test_cli_specs_are_valid_clispecs() -> None:
+    """A property every coding entry must hold — not a list of the two we had.
+
+    The binary is deliberately NOT compared against a fixed set: one entry (the
+    GLM coding plan) is a launch PROFILE over another entry's binary, which is
+    the whole reason a provider with no CLI of its own can be offered at all.
+    """
     for agent in list_agents():
         if not agent.is_coding_agent:
             continue
         assert isinstance(agent.spec, CliSpec)
-        assert agent.spec.binary_name in ("claude", "codex")
+        assert agent.spec.binary_name
         assert agent.spec.check_command[-1] == "--version"
+        # The name to resolve on PATH always agrees with what detection probed;
+        # a disagreement means a pane launches something the status card never
+        # checked.
+        assert agent.executable == agent.spec.binary_name
 
 
-def test_install_commands_use_npm() -> None:
+def test_install_commands_are_runnable_or_honestly_absent() -> None:
+    """Every entry either yields a usable command or says it has none."""
+    for name in coding_agent_names():
+        command = install_command(name)
+        assert command is None or command.strip()
+    # The built-ins keep their exact commands: these are what the user is shown
+    # and what gets run in a terminal, so a silent change is a real change.
     assert install_command("claude") == "npm install -g @anthropic-ai/claude-code"
     assert install_command("codex") == "npm install -g @openai/codex"
+    assert install_command("opencode") == "npm install -g opencode-ai"
+    assert install_command("kimi") == "npm install -g @moonshot-ai/kimi-code"
+    # A launch profile installs the binary it borrows.
+    assert install_command("glm") == "npm install -g @anthropic-ai/claude-code"
     assert install_command("nope") is None
 
 
 def test_launch_command_is_bare_binary() -> None:
     assert get_agent("claude").launch_command == "claude"
     assert get_agent("codex").launch_command == "codex"
+    assert get_agent("opencode").launch_command == "opencode"
+    # The profile runs the borrowed binary, not a command named after itself.
+    assert get_agent("glm").launch_command == "claude"
 
 
 def test_build_agent_argv_wraps_command_in_a_shell() -> None:
@@ -103,11 +136,22 @@ def test_pty_available_is_true_on_a_host_with_a_shell() -> None:
 
 
 class FakeProber:
+    """A prober that answers for the entries a test names and no others.
+
+    Missing names default to "not installed" rather than raising. A test about
+    Claude Code has no business failing because a THIRD provider was registered
+    since it was written — that turned every new entry into an edit of unrelated
+    tests, which is exactly the friction an open registry is meant to remove.
+    """
+
     def __init__(self, statuses: dict[str, CliStatus]) -> None:
         self._statuses = statuses
 
     async def probe_all(self, specs) -> dict[str, CliStatus]:  # noqa: ANN001
-        return {s.name: self._statuses[s.name] for s in specs}
+        return {
+            s.name: self._statuses.get(s.name, CliStatus(installed=False))
+            for s in specs
+        }
 
 
 @pytest.mark.asyncio

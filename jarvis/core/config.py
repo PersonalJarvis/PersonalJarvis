@@ -2530,11 +2530,72 @@ class Phase6Config(BaseModel):
     safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
 
 
+class GlmCodingPlanConfig(BaseModel):
+    """Where a GLM pane sends its traffic, and which model ids it asks for.
+
+    The GLM Coding Plan has no CLI of its own: the vendor's own instructions are
+    to run the ordinary Claude Code binary against a different endpoint. So a
+    "GLM" pane is that binary plus this environment — which makes every value
+    here load-bearing, and every one of them a *setting* rather than a constant.
+
+    Why nothing is hardcoded:
+
+    * ``base_url`` — accounts registered in mainland China use a different host
+      from the international ones, and the two are not interchangeable. A fixed
+      URL simply locks out whichever half of the world it is not.
+    * the model ids — vendor documentation disagrees with itself about the
+      current names, and a wrong id fails at request time in a way that reads
+      like our bug. Empty means "send no model override at all" and let the
+      endpoint apply its own mapping, which is the only default that cannot be
+      wrong. Fill them in to pin a specific model.
+    * ``request_timeout_ms`` — the CLI's stock timeout is tuned for a different
+      backend and expires mid-answer here, which surfaces as a hang rather than
+      as an error.
+
+    The API key is deliberately NOT in this model: it lives in the credential
+    store under ``zai_api_key`` (ENV fallback ``ZAI_API_KEY``), because a key in
+    ``jarvis.toml`` is a key in a file that gets copied, shared and pasted into
+    bug reports (AP-12).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    base_url: str = Field(
+        default="https://api.z.ai/api/anthropic",
+        description=(
+            "Anthropic-compatible endpoint a GLM pane talks to. Use "
+            "https://open.bigmodel.cn/api/anthropic for a mainland-China account."
+        ),
+    )
+    opus_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'opus' tier. Empty = let the endpoint decide.",
+    )
+    sonnet_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'sonnet' tier. Empty = let the endpoint decide.",
+    )
+    haiku_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'haiku' tier. Empty = let the endpoint decide.",
+    )
+    request_timeout_ms: int = Field(
+        default=3_000_000,
+        ge=60_000,
+        description=(
+            "Per-request timeout handed to the CLI. The stock value is far too "
+            "short for this backend's long agentic runs and expires mid-answer."
+        ),
+    )
+
+
 class AgenticIdeConfig(BaseModel):
     """Agentic IDE behaviour that is not per-workspace state."""
 
     # AP-16: a key written by a NEWER install must not fail this one's boot.
     model_config = ConfigDict(extra="allow")
+
+    glm: GlmCodingPlanConfig = Field(default_factory=GlmCodingPlanConfig)
 
     prompt_writer: str = Field(
         default="auto",

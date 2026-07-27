@@ -3,19 +3,28 @@
 Detached external terminals can't be answered programmatically, so the robust
 way to "skip the trust prompt" is to mark the project folder as trusted in each
 CLI's own config BEFORE launching — exactly what the CLI writes when the user
-clicks "trust" once:
+clicks "trust" once.
 
-- **Claude Code** keeps per-project trust in ``~/.claude.json`` under
-  ``projects[<path>].hasTrustDialogAccepted = true``. Claude keys by the cwd
-  string, and the form (drive case / slash style) matters, so we seed both the
-  native and forward-slash variants.
-- **Codex** keeps it in ``$CODEX_HOME/config.toml`` (default ``~/.codex``) under
+**Which file, and what to put in it, is registry data** — a
+:class:`~jarvis.workspace.agents.TrustSpec` on the agent entry — not a chain of
+``if name == ...`` here. Two things fall out of that. A CLI whose config happens
+to have the same shape as another's (a launch profile over the same binary)
+reuses the writer instead of earning a fourth branch, and a newly registered CLI
+gets trust seeding by declaring where its file lives, with no edit to this
+module at all. Only two *shapes* exist, and they are the two file formats:
+
+- a **JSON** object with a per-project entry — Claude Code's ``~/.claude.json``,
+  ``projects[<path>].hasTrustDialogAccepted = true``. It keys by the cwd string
+  as it saw it, and the form (drive case / slash style) matters, so a spec may
+  ask for both the native and forward-slash variants to be seeded.
+- a **TOML** table — Codex's ``$CODEX_HOME/config.toml``,
   ``[projects.'<path>'] trust_level = "trusted"``.
 
 Both writes are atomic (temp file + ``os.replace``) and idempotent, and never
-clobber unrelated keys. ``~/.claude.json`` is backed up once before the first
-mutation. If a write fails we report it honestly — we never claim "skipped"
-when it wasn't.
+clobber unrelated keys. A spec may ask for a one-time backup before the first
+mutation — worth it for a file the user's own CLI configuration shares, and
+pointless for one we created. If a write fails we report it honestly — we never
+claim "skipped" when it wasn't.
 
 ``config_dirs`` covers the second place a CLI reads that file from. A terminal
 running on an ADDED subscription resolves its whole configuration from the
@@ -31,9 +40,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from .agents import TrustSpec
 
 log = logging.getLogger(__name__)
 
@@ -60,33 +72,64 @@ def ensure_trusted(
     subscriptions run from (see the module docstring). Each of them is seeded in
     addition to the machine's default, and contributes its own result, so a
     caller can see per directory whether the dialog will really be skipped."""
+    from .agents import get_agent
+
     test_mode = home is not None
     home = home or Path.home()
-    claude_cfg = home / ".claude.json"
-    if test_mode:
-        codex_home = home / ".codex"
-    else:
-        codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex"))
-    codex_cfg = codex_home / "config.toml"
 
     results: list[TrustResult] = []
     for name in agents:
-        if name == "claude":
-            results.append(_trust_claude(repo_root, claude_cfg))
-            for extra in _extra_configs(name, ".claude.json", claude_cfg, config_dirs):
-                results.append(_trust_claude(repo_root, extra))
-        elif name == "codex":
-            results.append(_trust_codex(repo_root, codex_cfg))
-            for extra in _extra_configs(name, "config.toml", codex_cfg, config_dirs):
-                results.append(_trust_codex(repo_root, extra))
-        elif not _needs_trust(name):
-            # A registered entry with no trust dialog to skip — a plain shell,
-            # or a CLI that simply never asks. Nothing to write, and saying so
-            # is not the same answer as "I do not know this agent".
-            results.append(TrustResult(name, True, "noop", "nothing to pre-trust"))
-        else:  # pragma: no cover - guarded upstream
-            results.append(TrustResult(name, False, "error", f"unknown agent: {name}"))
+        entry = get_agent(name)
+        spec = entry.trust if entry is not None else None
+        if spec is None:
+            if entry is None:  # pragma: no cover - guarded upstream
+                results.append(
+                    TrustResult(name, False, "error", f"unknown agent: {name}")
+                )
+            elif entry.needs_trust:
+                # The entry says a dialog exists but never said where the answer
+                # goes. The pane still opens — the user just answers the dialog
+                # once — but this must be loud rather than indistinguishable
+                # from "nothing to do": a silent noop here is exactly how a
+                # provider ships looking finished and greets every new folder
+                # with a prompt nobody expected.
+                log.warning(
+                    "%s wants folder trust but declares no trust spec; "
+                    "the CLI will ask in the pane.", name,
+                )
+                results.append(
+                    TrustResult(name, True, "noop", "no trust spec — CLI will ask")
+                )
+            else:
+                # A registered entry with no trust dialog to skip — a plain
+                # shell, or a CLI that simply never asks. Nothing to write, and
+                # saying so is not the same answer as "I do not know this agent".
+                results.append(
+                    TrustResult(name, True, "noop", "nothing to pre-trust")
+                )
+            continue
+        cfg = _config_path(spec, home, test_mode=test_mode)
+        write = _WRITERS[spec.fmt]
+        results.append(write(name, repo_root, cfg, spec))
+        for extra in _extra_configs(name, spec.filename, cfg, config_dirs):
+            results.append(write(name, repo_root, extra, spec))
     return results
+
+
+def _config_path(spec: TrustSpec, home: Path, *, test_mode: bool) -> Path:
+    """Where this CLI's trust file lives on this machine.
+
+    The CLI's own "move my config elsewhere" variable wins when it is set, which
+    is the whole reason the variable is on the spec: seeding the default
+    location for a CLI the user has redirected writes a file nothing reads, and
+    the dialog this module exists to skip appears anyway. Tests pass an explicit
+    home and are deliberately kept away from the real environment.
+    """
+    if spec.home_env and not test_mode:
+        if raw := os.environ.get(spec.home_env):
+            return Path(raw).expanduser() / spec.filename
+    base = home / spec.subdir if spec.subdir else home
+    return base / spec.filename
 
 
 def _extra_configs(
@@ -117,14 +160,6 @@ def _extra_configs(
     return extras
 
 
-def _needs_trust(name: str) -> bool:
-    """Does the registry know this entry, and does it want folder trust seeded?"""
-    from .agents import get_agent
-
-    agent = get_agent(name)
-    return agent is None or agent.needs_trust
-
-
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -132,46 +167,63 @@ def _atomic_write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _trust_claude(repo_root: Path, cfg: Path) -> TrustResult:
+def _project_keys(repo_root: Path, spec: TrustSpec) -> set[str]:
+    """The cwd spellings to seed — one, or both slash forms when asked."""
     native = str(repo_root)
-    forward = repo_root.as_posix()
+    if not spec.both_path_forms:
+        return {native}
+    return {native, repo_root.as_posix()}
+
+
+def _trust_json(
+    agent: str, repo_root: Path, cfg: Path, spec: TrustSpec
+) -> TrustResult:
+    """Seed trust into a JSON config with a per-project object."""
+    native = str(repo_root)
     try:
         if cfg.exists():
             raw = cfg.read_text(encoding="utf-8")
             data = json.loads(raw)  # dup keys: last wins, no error
-            backup = cfg.with_name(cfg.name + ".jarvis-bak")
-            if not backup.exists():
-                backup.write_text(raw, encoding="utf-8")
+            if spec.backup:
+                backup = cfg.with_name(cfg.name + ".jarvis-bak")
+                if not backup.exists():
+                    backup.write_text(raw, encoding="utf-8")
         else:
             data = {}
         if not isinstance(data, dict):
-            return TrustResult("claude", False, "error", "config root is not an object")
+            return TrustResult(agent, False, "error", "config root is not an object")
 
-        projects = data.setdefault("projects", {})
-        if not isinstance(projects, dict):
-            return TrustResult("claude", False, "error", "'projects' is not an object")
+        projects: Any = data
+        for step in spec.section:
+            nested = projects.setdefault(step, {})
+            if not isinstance(nested, dict):
+                return TrustResult(
+                    agent, False, "error", f"{step!r} is not an object"
+                )
+            projects = nested
 
         changed = False
-        for key in {native, forward}:
+        for key in _project_keys(repo_root, spec):
             entry = projects.get(key)
             if not isinstance(entry, dict):
                 entry = {}
-            if entry.get("hasTrustDialogAccepted") is not True:
-                entry["hasTrustDialogAccepted"] = True
+            if entry.get(spec.key) != spec.value:
+                entry[spec.key] = spec.value
                 changed = True
-            entry.setdefault("hasCompletedProjectOnboarding", True)
+            for extra_key, extra_value in spec.extra_defaults:
+                entry.setdefault(extra_key, extra_value)
             projects[key] = entry
 
         if changed or not cfg.exists():
             _atomic_write_text(cfg, json.dumps(data, indent=2, ensure_ascii=False))
-            return TrustResult("claude", True, "config", f"trusted {native}")
-        return TrustResult("claude", True, "noop", "already trusted")
+            return TrustResult(agent, True, "config", f"trusted {native}")
+        return TrustResult(agent, True, "noop", "already trusted")
     except Exception as exc:  # noqa: BLE001
-        log.warning("claude trust pre-seed failed: %s", exc)
-        return TrustResult("claude", False, "error", str(exc))
+        log.warning("%s trust pre-seed failed: %s", agent, exc)
+        return TrustResult(agent, False, "error", str(exc))
 
 
-def _already_trusted_by_codex(text: str, native: str) -> bool:
+def _already_trusted_in_toml(text: str, native: str, spec: TrustSpec) -> bool:
     """Read-only "is this folder already trusted?" — the fast path.
 
     Deliberately ``tomllib`` and not ``tomlkit``. Both parse the same file, but
@@ -189,21 +241,28 @@ def _already_trusted_by_codex(text: str, native: str) -> bool:
     import tomllib
 
     try:
-        projects = tomllib.loads(text).get("projects")
+        section: Any = tomllib.loads(text)
     except (ValueError, TypeError):
         return False
-    if not isinstance(projects, dict):
+    for step in spec.section:
+        if not isinstance(section, dict):
+            return False
+        section = section.get(step)
+    if not isinstance(section, dict):
         return False
-    entry = projects.get(native)
-    return isinstance(entry, dict) and entry.get("trust_level") == "trusted"
+    entry = section.get(native)
+    return isinstance(entry, dict) and entry.get(spec.key) == spec.value
 
 
-def _trust_codex(repo_root: Path, cfg: Path) -> TrustResult:
+def _trust_toml(
+    agent: str, repo_root: Path, cfg: Path, spec: TrustSpec
+) -> TrustResult:
+    """Seed trust into a TOML config with a per-project table."""
     native = str(repo_root)
     try:
         existing_text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
-        if existing_text and _already_trusted_by_codex(existing_text, native):
-            return TrustResult("codex", True, "noop", "already trusted")
+        if existing_text and _already_trusted_in_toml(existing_text, native, spec):
+            return TrustResult(agent, True, "noop", "already trusted")
 
         # Only now, when something actually has to change, is the
         # formatting-preserving parser worth its cost.
@@ -215,24 +274,36 @@ def _trust_codex(repo_root: Path, cfg: Path) -> TrustResult:
             cfg.parent.mkdir(parents=True, exist_ok=True)
             doc = tomlkit.document()
 
-        projects = doc.get("projects")
-        if projects is None:
-            projects = tomlkit.table()
-            doc["projects"] = projects
+        section: Any = doc
+        for step in spec.section:
+            nested = section.get(step)
+            if nested is None:
+                nested = tomlkit.table()
+                section[step] = nested
+            section = nested
 
-        existing = projects.get(native)
-        already = existing is not None and dict(existing).get("trust_level") == "trusted"
-        if already:
-            return TrustResult("codex", True, "noop", "already trusted")
+        existing = section.get(native)
+        if existing is not None and dict(existing).get(spec.key) == spec.value:
+            return TrustResult(agent, True, "noop", "already trusted")
 
         entry = tomlkit.table()
-        entry["trust_level"] = "trusted"
-        projects[native] = entry
+        entry[spec.key] = spec.value
+        for extra_key, extra_value in spec.extra_defaults:
+            entry.setdefault(extra_key, extra_value)
+        section[native] = entry
         _atomic_write_text(cfg, tomlkit.dumps(doc))
-        return TrustResult("codex", True, "config", f"trusted {native}")
+        return TrustResult(agent, True, "config", f"trusted {native}")
     except Exception as exc:  # noqa: BLE001
-        log.warning("codex trust pre-seed failed: %s", exc)
-        return TrustResult("codex", False, "error", str(exc))
+        log.warning("%s trust pre-seed failed: %s", agent, exc)
+        return TrustResult(agent, False, "error", str(exc))
+
+
+#: One writer per FILE FORMAT — never per product. A CLI that stores trust the
+#: way another already does reuses the writer by declaring the same ``fmt``.
+_WRITERS: dict[str, Callable[[str, Path, Path, TrustSpec], TrustResult]] = {
+    "json": _trust_json,
+    "toml": _trust_toml,
+}
 
 
 __all__ = ["TrustResult", "ensure_trusted"]

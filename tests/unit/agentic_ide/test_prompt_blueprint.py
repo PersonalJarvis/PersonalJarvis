@@ -109,11 +109,25 @@ def test_investigate_makes_the_diagnosis_the_deliverable():
     assert "not apply a fix" in text.lower()
 
 
-def test_implement_demands_a_scope_bound():
+def test_implement_specifies_the_outcome_without_dictating_the_route():
+    """Complete is a statement about CONTEXT, not about enumerated steps.
+
+    The first version paired "give the COMPLETE specification" with a list of
+    generic prohibitions to put in `## Scope` — no surrounding cleanup, no
+    unrequested refactors, no speculative abstractions. Measured live
+    2026-07-27, that combination produced a brief telling the agent to "use
+    non-blocking background tasks for writer resolution": a solution the
+    composer had ALREADY implemented, so the agent's task became re-doing
+    finished work. Specify the outcome; leave the route to the agent, which can
+    read the code the writer only saw an outline of.
+    """
     text = system_prompt(KIND_IMPLEMENT)
     assert "IMPLEMENTATION task" in text
-    assert "out of scope" in text.lower()
-    assert "complete specification" in text.lower()
+    assert "Specify the OUTCOME completely" in text
+    # Complete must be defined as context, not as dictated steps.
+    assert "not that you dictated the steps" in text
+    # And the generic prohibition list must stay OUT of `## Scope`.
+    assert "only when the user actually drew a line" in text
 
 
 def test_question_forbids_changing_anything():
@@ -233,10 +247,17 @@ def test_the_target_length_sits_inside_the_hard_ceiling():
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
 def test_every_kind_states_the_target_length_not_only_the_ceiling(kind):
+    """Both bounds, and a floor that names what a too-short brief dropped.
+
+    "Be thorough" used to carry the floor and it bought length from the wrong
+    place — the writer padded with dictated implementation steps rather than
+    with description. The floor is now stated as the thing actually missing
+    from a thin brief: context the writer was handed and did not pass on.
+    """
     text = system_prompt(kind)
     assert str(TARGET_MIN_CHARS) in text
     assert str(TARGET_MAX_CHARS) in text
-    assert "Be thorough" in text
+    assert "Under 800 you have dropped context you were given" in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
@@ -246,6 +267,22 @@ def test_every_kind_separates_describing_from_inventing(kind):
     assert "DESCRIBING is not INVENTING" in text
     assert "INVENTING is forbidden" in text
     assert "DESCRIBING is wanted" in text
+
+
+@pytest.mark.parametrize("kind", _ALL_KINDS)
+def test_every_kind_asks_for_the_goal_and_not_the_implementation(kind):
+    """The rule the whole blueprint turns on, so it is pinned for every kind.
+
+    The writer sees bounded file OUTLINES; the agent sees the code. A route
+    chosen from the outline is a guess, and a guessed route gets built even
+    when it is wrong or already there — measured live 2026-07-27, a brief
+    asked for concurrency that the target module already had. Every current
+    frontier prompting guide converges on the same instruction: state the
+    goal and the bounds, leave the route to the model.
+    """
+    text = system_prompt(kind)
+    assert "never the implementation" in text
+    assert "leave the route open" in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
