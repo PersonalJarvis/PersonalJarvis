@@ -53,7 +53,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import native_picker, recap, recents, resume_store
+from jarvis.agentic_ide import native_picker, recap_engine, recents, resume_store
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
@@ -63,8 +63,10 @@ from jarvis.agentic_ide.session import (
     MAX_PROMPT_CHARS,
     MAX_TERMINALS,
     MAX_WORKSPACES,
+    Session,
     SessionError,
     SessionNotReady,
+    Terminal,
     account_home,
     agent_argv,
     get_registry,
@@ -475,12 +477,65 @@ class TerminalRecap(BaseModel):
     name: str
     status: str
     recap: str = Field(description="One clause for the pane header; the pane's width clips it.")
-    recap_detail: str = Field(description="The one-or-two-sentence version, shown on hover.")
+    recap_detail: str = Field(description="The several-sentence version, shown in the recap card.")
+    source: str = Field(
+        default="heuristic",
+        description=(
+            "Who wrote this recap: 'user' when the user wrote it themselves, "
+            "'model' when a brain summarized the pane, 'heuristic' when it was "
+            "derived from the transcript by rule — which is what an install with "
+            "no reachable provider always gets."
+        ),
+    )
+    reason: str = Field(
+        default="",
+        description=(
+            "Why this recap and not a better one: 'pinned', 'summarized', "
+            "'disabled', 'not_started', 'warming', 'working', 'queued' or "
+            "'unavailable'. The UI turns it into a sentence, so a thin recap "
+            "explains itself instead of looking broken."
+        ),
+    )
+    writer: str = Field(
+        default="",
+        description="The model that wrote it, when one did. Empty otherwise.",
+    )
+    note: str = Field(
+        default="",
+        description=(
+            "What went wrong the last time this pane was summarized, scrubbed of "
+            "anything credential-shaped. Empty whenever nothing has."
+        ),
+    )
+    generated_at: float = Field(
+        default=0.0,
+        description=(
+            "When the model wrote it, or when the user did. 0 for the "
+            "transcript-derived recap, which is recomputed on every read."
+        ),
+    )
 
 
 class RecapsResponse(BaseModel):
     workspace_id: str | None = None
     terminals: list[TerminalRecap] = Field(default_factory=list)
+
+
+class RecapEdit(BaseModel):
+    """A recap the user is writing for one pane themselves."""
+
+    recap: str = Field(
+        description=(
+            "The header line. Empty clears a hand-written recap and hands the "
+            "pane back to the automatic one."
+        ),
+        max_length=recap_engine.MAX_EDIT_HEADLINE * 4,
+    )
+    recap_detail: str = Field(
+        default="",
+        description="The longer version behind it. Optional; the header line stands alone.",
+        max_length=recap_engine.MAX_EDIT_DETAIL * 2,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1120,17 +1175,131 @@ async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
         return RecapsResponse(workspace_id=None, terminals=[])
     rows: list[TerminalRecap] = []
     for term in session.terminals:
-        summary = recap.summarize(term)
-        rows.append(
-            TerminalRecap(
-                key=term.key,
-                name=term.name,
-                status=term.status,
-                recap=summary.headline,
-                recap_detail=summary.detail,
-            )
-        )
+        # The replayed screen, read ONCE per pane: the summarizer wants it and
+        # so does the deterministic floor underneath it.
+        lines = term.transcript.lines()
+        # This poll is the app's only evidence that somebody is actually looking
+        # at this workspace, which is why the refresh is scheduled here rather
+        # than wherever a pane happens to be serialized. It returns immediately;
+        # a summary that is due runs in the background and lands in the next
+        # poll's answer.
+        recap_engine.refresh_soon(term, lines=lines, folder=session.folder)
+        rows.append(_recap_row(term, recap_engine.recap_for(term, lines=lines)))
     return RecapsResponse(workspace_id=session.id, terminals=rows)
+
+
+def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalRecap:
+    """One pane's recap as every recap route reports it.
+
+    One builder for all four, so the poll and the three actions can never drift
+    into describing the same pane differently — the drift class §5 calls out,
+    on a payload that is read four times a minute.
+    """
+    return TerminalRecap(
+        key=term.key,
+        name=term.name,
+        status=term.status,
+        recap=summary.headline,
+        recap_detail=summary.detail,
+        source=summary.source,
+        reason=summary.reason,
+        writer=summary.writer,
+        note=summary.note,
+        generated_at=summary.generated_at,
+    )
+
+
+def _pane_for_recap(name: str, workspace_id: str | None) -> tuple[Terminal, Session]:
+    """The pane called ``name`` and the workspace holding it.
+
+    Without a ``workspace_id`` the search widens to every OPEN workspace rather
+    than stopping at the one on screen: a recap is edited from a pane that is
+    visible, and "visible" and "active" come apart the moment a second window is
+    open on a second workspace.
+    """
+    registry = get_registry()
+    if workspace_id is not None:
+        session = registry.get(workspace_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="That workspace is not open.")
+        term = session.find(name)
+        if term is None:
+            raise HTTPException(status_code=404, detail=f"No terminal called {name!r}.")
+        return term, session
+    for session in registry.sessions:
+        term = session.find(name)
+        if term is not None:
+            return term, session
+    raise HTTPException(status_code=404, detail=f"No terminal called {name!r}.")
+
+
+@router.put(
+    "/terminals/{name}/recap",
+    response_model=TerminalRecap,
+    summary="Write a terminal's recap yourself",
+)
+async def set_terminal_recap(
+    name: str, payload: RecapEdit, workspace_id: str | None = None
+) -> TerminalRecap:
+    """Replace what the header of terminal ``name`` says with your own words.
+
+    The one thing neither the model nor the string rules can know is what YOU
+    are using a pane for — "the branch I'm about to demo", "leave this one
+    alone", "the rewrite, second attempt". A recap written here wins over both,
+    and the background summarizer stops re-describing that pane until it is
+    cleared with ``DELETE``.
+
+    An empty ``recap`` clears it, which is what selecting the text and deleting
+    it plainly means.
+    """
+    term, _session = _pane_for_recap(name, workspace_id)
+    summary = recap_engine.pin(term.key, payload.recap, payload.recap_detail)
+    if not summary.headline:
+        # Cleared rather than written: answer with whatever the pane says now.
+        summary = recap_engine.recap_for(term, lines=term.transcript.lines())
+    return _recap_row(term, summary)
+
+
+@router.delete(
+    "/terminals/{name}/recap",
+    response_model=TerminalRecap,
+    summary="Drop a hand-written recap",
+)
+async def clear_terminal_recap(name: str, workspace_id: str | None = None) -> TerminalRecap:
+    """Hand terminal ``name`` back to the automatic recap.
+
+    Also clears the back-off, so a pane whose summaries were failing an hour ago
+    tries again on the next poll instead of sitting out the rest of its quiet
+    window.
+    """
+    term, _session = _pane_for_recap(name, workspace_id)
+    recap_engine.unpin(term.key)
+    return _recap_row(term, recap_engine.recap_for(term, lines=term.transcript.lines()))
+
+
+@router.post(
+    "/terminals/{name}/recap/refresh",
+    response_model=TerminalRecap,
+    summary="Summarize a terminal again now",
+)
+async def refresh_terminal_recap(name: str, workspace_id: str | None = None) -> TerminalRecap:
+    """Read terminal ``name`` again and write a fresh recap, waiting for it.
+
+    The background summarizer is deliberately lazy — one summary per pane per
+    75 seconds, and only when something material has changed — which is right
+    for a header nobody is looking at and wrong the moment somebody is. This
+    skips every one of those gates and returns the new sentence.
+
+    Never fails because of the model: an install with no key, a depleted
+    provider or a timeout comes back with the transcript-derived recap and a
+    ``reason`` of ``unavailable`` plus a ``note`` saying what happened. Missing
+    a summary is not an error worth a red pane (§3).
+    """
+    term, session = _pane_for_recap(name, workspace_id)
+    summary = await recap_engine.summarize_now(
+        term, lines=term.transcript.lines(), folder=session.folder
+    )
+    return _recap_row(term, summary)
 
 
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")

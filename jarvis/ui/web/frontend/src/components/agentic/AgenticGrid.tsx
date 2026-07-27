@@ -66,7 +66,10 @@ import {
   closeTerminal,
   closeTerminals,
   composePrompt,
+  clearTerminalRecap,
   fetchTerminalRecaps,
+  refreshTerminalRecap,
+  setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
   type DropAttachment,
@@ -336,6 +339,33 @@ export function AgenticGrid({
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [session.id]);
+
+  /*
+   * The three things a user may do about a pane's recap.
+   *
+   * Each answers with the pane's new recap, and it is written into the polled
+   * map straight away rather than waited for on the next tick: the poll runs
+   * every five seconds, and a header that keeps the old sentence for four of
+   * them after you pressed Save reads as a save that did not work.
+   */
+  const applyRecap = useCallback((row: TerminalRecap) => {
+    setRecaps((current) => ({ ...current, [row.name]: row }));
+  }, []);
+
+  const recapActionsFor = useCallback(
+    (name: string) => ({
+      onSave: async (headline: string, detail: string) => {
+        applyRecap(await setTerminalRecap(name, headline, detail, session.id));
+      },
+      onClear: async () => {
+        applyRecap(await clearTerminalRecap(name, session.id));
+      },
+      onRefresh: async () => {
+        applyRecap(await refreshTerminalRecap(name, session.id));
+      },
+    }),
+    [applyRecap, session.id],
+  );
 
   // A terminal can disappear because another client closed it. Keep the local
   // selection honest instead of leaving an invisible name selected.
@@ -909,6 +939,17 @@ export function AgenticGrid({
                 recapDetail={
                   recaps[term.name]?.recap_detail ?? term.recap_detail
                 }
+                // Who wrote it and why — only the polled read knows, so a pane
+                // still on its opening recap gets an empty meta and a card that
+                // simply says less rather than one that guesses.
+                recapMeta={{
+                  source: recaps[term.name]?.source,
+                  reason: recaps[term.name]?.reason,
+                  writer: recaps[term.name]?.writer,
+                  note: recaps[term.name]?.note,
+                  generatedAt: recaps[term.name]?.generated_at,
+                }}
+                recapActions={recapActionsFor(term.name)}
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
                 // be noise for the many; labelling the odd one out is the whole

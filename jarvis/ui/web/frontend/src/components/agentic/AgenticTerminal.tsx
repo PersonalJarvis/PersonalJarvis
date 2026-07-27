@@ -71,7 +71,9 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { usePaneFileDrag } from "./paneFileDrag";
+import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
+import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
@@ -103,6 +105,31 @@ export interface SplitAgentChoice {
 
 export type SplitDirection = "right" | "down";
 
+/**
+ * Where a pane's recap came from, kept together rather than as five more props.
+ *
+ * None of it changes what the header SAYS — it changes what the card behind the
+ * header can explain about it, which is the difference between a thin recap and
+ * a thin recap that tells you no model could be reached to write a better one.
+ */
+export interface PaneRecapMeta {
+  source?: RecapSource;
+  reason?: RecapReason;
+  /** The model that wrote it, when one did. */
+  writer?: string;
+  /** What went wrong the last time this pane was summarized. */
+  note?: string;
+  /** Unix seconds; 0 for the recap derived from the pane's own output. */
+  generatedAt?: number;
+}
+
+/** What the recap card may do about the recap. Absent leaves it read-only. */
+export interface PaneRecapActions {
+  onSave?: (headline: string, detail: string) => Promise<void>;
+  onClear?: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
+}
+
 interface AgenticTerminalProps {
   /** Terminal call-sign — also the WS path segment. */
   name: string;
@@ -126,8 +153,12 @@ interface AgenticTerminalProps {
    * badge never moves.
    */
   recap?: string;
-  /** The one-or-two-sentence version of `recap`, revealed on hover. */
+  /** The several-sentence version of `recap`, read in the recap card. */
   recapDetail?: string;
+  /** Who wrote the recap and why — the card's footer and its explanation. */
+  recapMeta?: PaneRecapMeta;
+  /** Rewriting, resetting and re-summarizing it. Absent = read-only card. */
+  recapActions?: PaneRecapActions;
   /**
    * Which subscription this pane runs on ("Work seat"), when that is worth
    * saying. Undefined for everyone with a single login — the header must not
@@ -802,6 +833,8 @@ function PaneHeader({
   displayName,
   recap,
   recapDetail,
+  recapMeta,
+  recapActions,
   accountLabel,
   appearance,
   focused,
@@ -818,6 +851,8 @@ function PaneHeader({
   displayName: string;
   recap?: string;
   recapDetail?: string;
+  recapMeta?: PaneRecapMeta;
+  recapActions?: PaneRecapActions;
   accountLabel?: string | null;
   appearance: TerminalAppearance;
   focused: boolean;
@@ -872,7 +907,15 @@ function PaneHeader({
           displayName={displayName}
           recap={recap}
           detail={recapDetail}
+          source={recapMeta?.source}
+          reason={recapMeta?.reason}
+          writer={recapMeta?.writer}
+          note={recapMeta?.note}
+          generatedAt={recapMeta?.generatedAt}
           light={light}
+          onSave={recapActions?.onSave}
+          onClear={recapActions?.onClear}
+          onRefresh={recapActions?.onRefresh}
         />
         {/* Which of several subscriptions this pane is spending. Only rendered
             when the user actually has more than one, so the header stays quiet
@@ -965,135 +1008,6 @@ function PaneHeader({
         />
       )}
     </header>
-  );
-}
-
-/**
- * Is this element showing all of its text, or has CSS clipped it?
- *
- * `scrollWidth > clientWidth` is the only honest answer: whether a sentence fits
- * depends on the pane's width, the font that ended up loading and how long the
- * agent's last line happened to be — none of which can be guessed from the
- * string. Re-measured whenever the text changes or the element is resized, which
- * in a draggable grid of terminals is constantly.
- *
- * Environments without a ResizeObserver (jsdom, very old engines) simply keep
- * the first measurement, which is the behaviour this replaces rather than a
- * regression.
- */
-function useIsTruncated(
-  ref: React.RefObject<HTMLElement | null>,
-  text: string,
-): boolean {
-  const [truncated, setTruncated] = useState(false);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) {
-      setTruncated(false);
-      return;
-    }
-    // A one-pixel slack: sub-pixel font metrics make scrollWidth exceed
-    // clientWidth on text that visibly fits, and a tooltip that appears for
-    // nothing is worse than one that occasionally does not.
-    const measure = () => setTruncated(node.scrollWidth > node.clientWidth + 1);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [ref, text]);
-  return truncated;
-}
-
-/**
- * The pane header's headline: what this session is doing, in one line.
- *
- * Two things happen here and both matter for a grid of eight terminals:
- *
- * 1. **The recap replaces the agent name.** "CLAUDE CODE" is identical on every
- *    pane, so as a label it answers nothing; the recap is the part that differs
- *    pane to pane. Without one — a pane that has just been opened, or a backend
- *    that predates the field — the agent name is shown exactly as before.
- * 2. **The clipped part is one hover away.** A header is a few centimetres wide
- *    and a recap is a sentence, so it WILL be cut. The tooltip carries the
- *    longer form, and it is offered when the line is actually clipped or when
- *    the longer form says more than the line does — never merely because there
- *    is text.
- *
- * A native `title` would have been free, but it appears after a browser-chosen
- * delay, renders as unstyled OS chrome, and cannot show the two-part layout
- * (which CLI, then the recap) that makes this readable at a glance.
- */
-function PaneRecap({
-  name,
-  displayName,
-  recap,
-  detail,
-  light,
-}: {
-  name: string;
-  displayName: string;
-  recap?: string;
-  detail?: string;
-  light: boolean;
-}) {
-  const lineRef = useRef<HTMLSpanElement | null>(null);
-  const headline = (recap ?? "").trim();
-  const clipped = useIsTruncated(lineRef, headline);
-
-  if (!headline) {
-    return (
-      <span
-        className="truncate text-[11px] uppercase tracking-wider"
-        style={{ color: light ? "#77777f" : "#8a8a95" }}
-        data-testid={`pane-agent-${name}`}
-      >
-        {displayName}
-      </span>
-    );
-  }
-
-  const body = (detail ?? "").trim() || headline;
-  const showsTooltip = clipped || body !== headline;
-  const tipId = `pane-recap-tip-${name}`;
-
-  return (
-    <span className="group/recap min-w-0 flex-1">
-      <span
-        ref={lineRef}
-        // Reachable without a mouse: the tooltip opens on focus too, so the
-        // clipped half of the sentence is not mouse-only information.
-        tabIndex={showsTooltip ? 0 : undefined}
-        aria-describedby={showsTooltip ? tipId : undefined}
-        className="block truncate rounded-sm text-[11px] leading-tight outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
-        style={{ color: light ? "#5f5f68" : "#9b9ba6" }}
-        data-testid={`pane-recap-${name}`}
-      >
-        {headline}
-      </span>
-      {showsTooltip && (
-        /*
-         * Positioned against the HEADER, not against this span: the header is
-         * the only positioned ancestor that spans the pane, so the card can be
-         * wide enough to read without hanging off a narrow pane's edge. The
-         * pane clips its own overflow, so a card anchored to a 60 px label
-         * would be cut in half.
-         */
-        <span
-          role="tooltip"
-          id={tipId}
-          data-testid={`pane-recap-tooltip-${name}`}
-          className="pointer-events-none absolute left-3 top-full z-50 mt-1 hidden w-max max-w-[calc(100%-1.5rem)] flex-col gap-1 rounded-lg border border-border bg-card p-2.5 text-left shadow-xl group-focus-within/recap:flex group-hover/recap:flex"
-        >
-          <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
-            {displayName} · {name}
-          </span>
-          <span className="block text-[11px] leading-relaxed text-foreground">
-            {body}
-          </span>
-        </span>
-      )}
-    </span>
   );
 }
 
