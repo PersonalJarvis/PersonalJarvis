@@ -281,6 +281,40 @@ describe("pane header recap", () => {
   });
 });
 
+describe("pane header actions", () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver = ResizeObserverHarness;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps every action visible when the pane is not focused", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        focused={false}
+        onToggleMaximize={() => undefined}
+        onSplit={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    const actions = screen.getByTestId("pane-maximize-Dana").parentElement;
+
+    expect(actions).not.toBeNull();
+    expect(actions?.className).toContain("opacity-100");
+    expect(actions?.className).not.toContain("opacity-0");
+    expect(screen.getByTestId("pane-split-right-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-split-down-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
+  });
+});
+
 describe("pane split menu", () => {
   const CHOICES = [
     { name: "claude", displayName: "Claude Code", installed: true, kind: "cli" },

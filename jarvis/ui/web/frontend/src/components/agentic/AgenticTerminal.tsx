@@ -893,17 +893,9 @@ function PaneHeader({
         )}
       </div>
 
-      {/* Pane actions. Kept quiet until the pane is hovered or focused, so a
-          grid of eight terminals is not a wall of icons — but always reachable
-          by keyboard, and always visible on the pane you are working in. */}
-      <div
-        className={cn(
-          "flex shrink-0 items-center gap-0.5 transition-opacity",
-          focused || maximized
-            ? "opacity-100"
-            : "opacity-0 focus-within:opacity-100 group-hover/header:opacity-100",
-        )}
-      >
+      {/* Pane actions stay visible in every terminal, including panes that are
+          not focused, so the controls can be found without probing by hover. */}
+      <div className="flex shrink-0 items-center gap-0.5 opacity-100">
         {dead && (
           <button
             type="button"
