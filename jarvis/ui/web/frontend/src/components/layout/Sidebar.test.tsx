@@ -2,7 +2,12 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { Sidebar } from "@/components/layout/Sidebar";
+import {
+  Sidebar,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_RAIL_AT_WIDTH,
+  SIDEBAR_RAIL_WIDTH,
+} from "@/components/layout/Sidebar";
 import { useEventStore } from "@/store/events";
 
 // The sidebar header avatar must mirror the chosen on-screen display style:
@@ -64,7 +69,7 @@ function resetVoiceModeMock() {
   };
 }
 
-function renderSidebar() {
+function renderSidebar(width?: number) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -73,7 +78,7 @@ function renderSidebar() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <Sidebar />
+      <Sidebar width={width} />
     </QueryClientProvider>,
   );
 }
@@ -449,5 +454,94 @@ describe("Sidebar voice-boot indicator", () => {
     expect(screen.getByText("Starting…")).toBeTruthy();
     expect(screen.queryByText("Offline")).toBeNull();
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).not.toBeNull();
+  });
+});
+
+/*
+ * The icon rail — what the sidebar becomes when it is dragged in.
+ *
+ * The seam used to stop at 200 px, which is still wide enough to read every
+ * label; in the Agentic IDE that meant a fifth of the window stayed spent on a
+ * nav list nobody was reading while a dozen terminals fought over the rest. Two
+ * things have to hold for the rail to be a sidebar rather than a broken one:
+ * every destination is still REACHABLE, and every icon still SAYS what it is.
+ * A refactor that quietly drops either turns the rail into a column of mystery
+ * glyphs, and nothing else on screen would look wrong.
+ *
+ * Anchored on the row's test id rather than its text: the label is translated,
+ * so asserting on it would make these pass or fail with the active locale.
+ */
+describe("Sidebar icon rail", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      activeSection: "chats",
+    });
+  });
+
+  afterEach(() => cleanup());
+
+  test("shows its labels at the designed width", () => {
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
+    // The label is ON the row, which is the whole point of the wide layout.
+    expect(
+      screen.getByTestId("nav-row-agentic-ide").textContent?.trim(),
+    ).not.toBe("");
+  });
+
+  test("drops to icons once dragged past the snap point", () => {
+    renderSidebar(SIDEBAR_RAIL_AT_WIDTH - 1);
+
+    const aside = screen.getByTestId("sidebar");
+    expect(aside.dataset.railed).toBe("true");
+    // Snapped, not clipped: the band between the rail and a readable sidebar
+    // shows half a word per row and reads as a rendering fault, so it is
+    // skipped rather than rendered at the dragged width.
+    expect(aside.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+    expect(screen.getByTestId("nav-row-agentic-ide").textContent?.trim()).toBe(
+      "",
+    );
+  });
+
+  test("keeps every destination named once its label is off the screen", () => {
+    renderSidebar(SIDEBAR_RAIL_WIDTH);
+
+    // The label survives as the accessible name and as the hover text — it is
+    // off the screen, not gone. Both non-empty is the assertion; WHAT they say
+    // is the locale's business.
+    const row = screen.getByTestId("nav-row-agentic-ide");
+    expect(row.getAttribute("aria-label")).toBeTruthy();
+    expect(row.getAttribute("title")).toBeTruthy();
+  });
+
+  test("still switches section on a click", () => {
+    renderSidebar(SIDEBAR_RAIL_WIDTH);
+
+    act(() => {
+      screen.getByTestId("nav-row-agentic-ide").click();
+    });
+
+    expect(useEventStore.getState().activeSection).toBe("agentic-ide");
+  });
+
+  test("keeps the wake-word hint and realtime control off the rail", () => {
+    // Both are label-shaped controls that cannot say anything useful in 64 px.
+    // They step aside rather than being clipped into unreadable stubs.
+    useEventStore.setState({
+      voiceState: "listening",
+      transcription: "auflegen",
+      transcriptionFinal: false,
+    });
+
+    renderSidebar(SIDEBAR_RAIL_WIDTH);
+
+    expect(screen.queryByText("auflegen")).toBeNull();
+    // …and the navigation, which is the reason the rail exists, is still there.
+    expect(screen.getByTestId("nav-row-chats")).toBeTruthy();
   });
 });

@@ -504,6 +504,7 @@ function NavRow({
     <li>
       <button
         type="button"
+        data-testid={`nav-row-${item.id}`}
         onClick={onClick}
         aria-label={railed ? label : undefined}
         title={railed ? (hint ? `${label} — ${hint}` : label) : hint}
