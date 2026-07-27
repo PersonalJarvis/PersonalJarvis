@@ -1746,30 +1746,67 @@ class Registry:
 
     async def close_terminal(self, wanted: str) -> Terminal:
         """Stop one terminal's agent and remove its pane from the workspace."""
+        closed, failed = await self.close_terminals([wanted])
+        if failed:
+            raise SessionError(failed[0]["detail"])
+        return closed[0]
+
+    async def close_terminals(
+        self, wanted: list[str]
+    ) -> tuple[list[Terminal], list[dict[str, str]]]:
+        """Stop several panes under one registry lock and persist once.
+
+        Unknown and duplicate names are reported individually while every valid
+        terminal is closed. Resolving the complete selection before teardown
+        keeps concurrent callers from changing which pane a name refers to
+        halfway through the batch.
+        """
         async with self._lock:
             session = self.session
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
-            term = session.find(wanted)
-            if term is None:
-                known = ", ".join(t.name for t in session.terminals) or "none"
-                raise SessionError(f"No terminal called {wanted!r}. Running: {known}.")
+            known = ", ".join(t.name for t in session.terminals) or "none"
+            resolved: list[Terminal] = []
+            failed: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for name in wanted:
+                term = session.find(name)
+                if term is None:
+                    failed.append(
+                        {
+                            "name": name,
+                            "detail": f"No terminal called {name!r}. Running: {known}.",
+                        }
+                    )
+                    continue
+                if term.key in seen:
+                    failed.append(
+                        {"name": name, "detail": "The terminal was selected more than once."}
+                    )
+                    continue
+                seen.add(term.key)
+                resolved.append(term)
 
-            term.stopping = True  # a deliberate kill, not a crashed resume
-            if term.pty_id and self._pty is not None:
-                try:
-                    self._pty.close(term.pty_id)
-                except Exception:  # noqa: BLE001, S110 - best-effort teardown
-                    pass
-            term.pty_id = None
-            term.status = "exited"
-            term.viewer_output = None
-            term.viewer_exit = None
-            session.terminals.remove(term)
+            for term in resolved:
+                term.stopping = True  # a deliberate kill, not a crashed resume
+                if term.pty_id and self._pty is not None:
+                    try:
+                        self._pty.close(term.pty_id)
+                    except Exception:  # noqa: BLE001, S110 - best-effort teardown
+                        pass
+                term.pty_id = None
+                term.status = "exited"
+                term.viewer_output = None
+                term.viewer_exit = None
+                session.terminals.remove(term)
             self._renumber(session)
-            await self._persist()
-            logger.info("Agentic IDE: closed terminal {}", term.name)
-            return term
+            if resolved:
+                await self._persist()
+                logger.info(
+                    "Agentic IDE: closed terminals {}",
+                    ", ".join(term.name for term in resolved),
+                )
+            return resolved, failed
 
     @staticmethod
     def _renumber(session: Session) -> None:

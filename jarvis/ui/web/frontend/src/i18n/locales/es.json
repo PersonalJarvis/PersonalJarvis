@@ -3327,5 +3327,24 @@
     "sign_in": "Iniciar sesión",
     "rename": "Renombrar",
     "remove": "Eliminar"
+  },
+  "agentic_grid": {
+    "selection": {
+      "start": "Seleccionar terminales",
+      "finish": "Terminar selección",
+      "hint": "Haz clic en los paneles para seleccionarlos. Haz clic derecho en cualquier panel para seleccionarlo inmediatamente.",
+      "selected_count": "Seleccionados: {0}",
+      "select_all": "Seleccionar todos",
+      "clear_all": "Borrar selección",
+      "close_selected": "Cerrar seleccionados",
+      "select_terminal": "Seleccionar terminal {0}",
+      "deselect_terminal": "Deseleccionar terminal {0}",
+      "confirm_title": "¿Cerrar los terminales seleccionados?",
+      "confirm_description": "Cada agente de programación seleccionado se detendrá y su sesión de terminal se cerrará. Los archivos ya guardados permanecerán intactos.",
+      "will_close": "Se cerrarán ({0}):",
+      "cancel": "Mantenerlos abiertos",
+      "confirm": "Cerrar seleccionados",
+      "close_failed": "No se pudieron cerrar estos terminales: {0}"
+    }
   }
 }

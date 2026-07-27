@@ -98,6 +98,10 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis frontier ack --yes --dry-run` — Acknowledge (dismiss) the pending frontier proposals.
 - `jarvis frontier pending` — List proposed model upgrades awaiting acknowledgement.
 
+## ide
+
+- `jarvis ide close-terminals <names> --yes --dry-run` — Stop several coding agents and close their terminal panes.
+
 ## marketplace
 
 - `jarvis marketplace connect-pat <plugin_id> --token --yes --dry-run` — Connect a plugin with a personal access token.

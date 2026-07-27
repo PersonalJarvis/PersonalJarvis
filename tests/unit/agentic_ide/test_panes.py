@@ -224,6 +224,39 @@ async def test_closing_an_unknown_pane_names_the_real_ones(
         await registry.close_terminal("Gandalf")
 
 
+async def test_closing_several_panes_is_one_canonical_batch(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    await _open(registry, tmp_path, 3)
+    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("Casey", 80, 24, _noop, _noop_exit)
+    pty_ids = {registry.session.find(name).pty_id for name in ("Alex", "Casey")}
+
+    closed, failed = await registry.close_terminals(["Alex", "Casey"])
+
+    assert [term.name for term in closed] == ["Alex", "Casey"]
+    assert failed == []
+    assert set(fake_pty.closed) >= pty_ids
+    assert [term.name for term in registry.session.terminals] == ["Blake"]
+
+
+async def test_a_batch_reports_unknown_names_but_closes_valid_ones(
+    registry: Registry, tmp_path: Path
+) -> None:
+    await _open(registry, tmp_path, 2)
+
+    closed, failed = await registry.close_terminals(["Alex", "Gandalf"])
+
+    assert [term.name for term in closed] == ["Alex"]
+    assert failed == [
+        {
+            "name": "Gandalf",
+            "detail": "No terminal called 'Gandalf'. Running: Alex, Blake.",
+        }
+    ]
+    assert [term.name for term in registry.session.terminals] == ["Blake"]
+
+
 async def test_a_closed_pane_refuses_further_prompts(
     registry: Registry, tmp_path: Path
 ) -> None:

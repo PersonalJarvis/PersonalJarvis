@@ -14,16 +14,21 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowUp,
   Brain,
+  Check,
   ChevronUp,
   FolderGit2,
+  ListChecks,
   Minus,
   Moon,
   Plus,
   Power,
   Sun,
+  Trash2,
   Type,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
@@ -46,6 +51,7 @@ import { PromptPreview } from "./PromptPreview";
 import {
   addTerminal,
   closeTerminal,
+  closeTerminals,
   composePrompt,
   promptTerminal,
   type ComposedPreview,
@@ -156,6 +162,7 @@ export function AgenticGrid({
   agents,
   onSessionChanged,
 }: AgenticGridProps) {
+  const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const theme = useThemeValue();
   // No stored choice → follow the app. A stored one wins and keeps winning.
@@ -198,8 +205,59 @@ export function AgenticGrid({
 
   const [maximized, setMaximized] = useState<string | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [pendingSelectionClose, setPendingSelectionClose] = useState<
+    string[] | null
+  >(null);
+  const selectionToggleRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
   const [working, setWorking] = useState(false);
+
+  const enterSelectionMode = useCallback(() => {
+    // A maximized pane hides its neighbours, which makes multi-selection
+    // impossible to understand. Restore the grid as selection begins.
+    setMaximized(null);
+    setSelectionMode(true);
+  }, []);
+
+  const leaveSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedTerminals(new Set());
+  }, []);
+
+  const toggleTerminalSelection = useCallback((name: string) => {
+    setSelectedTerminals((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const markTerminal = useCallback((name: string) => {
+    setMaximized(null);
+    setSelectionMode(true);
+    setSelectedTerminals((current) => {
+      if (current.has(name)) return current;
+      const next = new Set(current);
+      next.add(name);
+      return next;
+    });
+  }, []);
+
+  // A terminal can disappear because another client closed it. Keep the local
+  // selection honest instead of leaving an invisible name selected.
+  useEffect(() => {
+    const live = new Set(session.terminals.map((terminal) => terminal.name));
+    setSelectedTerminals((current) => {
+      if (current.size === 0) return current;
+      const next = new Set([...current].filter((name) => live.has(name)));
+      return next.size === current.size ? current : next;
+    });
+  }, [session.terminals]);
 
   // Where each pane sits in the one grid below — coordinates, not nested
   // lists, so a layout change never re-parents a pane (see ./layout).
@@ -323,6 +381,35 @@ export function AgenticGrid({
       if (target === name) setTarget(next.terminals[0]?.name ?? "");
     } catch (e) {
       pushToast("error", (e as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const closeSelection = async (names: string[]) => {
+    setWorking(true);
+    try {
+      const result = await closeTerminals(names);
+      setPendingSelectionClose(null);
+      setSelectedTerminals(new Set(result.failed.map((item) => item.name)));
+      onSessionChanged?.(result.session);
+      const remaining = new Set(result.session.terminals.map((term) => term.name));
+      if (maximized && !remaining.has(maximized)) setMaximized(null);
+      if (target && !remaining.has(target)) {
+        setTarget(result.session.terminals[0]?.name ?? "");
+      }
+      if (result.failed.length === 0) setSelectionMode(false);
+      else {
+        pushToast(
+          "error",
+          t("agentic_grid.selection.close_failed").replace(
+            "{0}",
+            result.failed.map((item) => `${item.name}: ${item.detail}`).join("; "),
+          ),
+        );
+      }
+    } catch (error) {
+      pushToast("error", (error as Error).message);
     } finally {
       setWorking(false);
     }
@@ -478,6 +565,76 @@ export function AgenticGrid({
           </button>
         </div>
 
+        <button
+          ref={selectionToggleRef}
+          type="button"
+          data-testid="terminal-selection-toggle"
+          aria-pressed={selectionMode}
+          onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
+          title={t("agentic_grid.selection.hint")}
+          className={cn(
+            "flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+            selectionMode
+              ? "border-primary/60 bg-primary/15 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+          )}
+        >
+          <ListChecks className="h-4 w-4" />
+          {selectionMode
+            ? t("agentic_grid.selection.finish")
+            : t("agentic_grid.selection.start")}
+        </button>
+
+        {selectionMode && (
+          <div
+            data-testid="terminal-selection-actions"
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/35 bg-primary/5 p-1"
+          >
+            <span
+              role="status"
+              aria-live="polite"
+              className="px-2 text-xs font-semibold text-primary"
+            >
+              {t("agentic_grid.selection.selected_count").replace(
+                "{0}",
+                String(selectedTerminals.size),
+              )}
+            </span>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() =>
+                setSelectedTerminals(
+                  new Set(session.terminals.map((terminal) => terminal.name)),
+                )
+              }
+              disabled={session.terminals.length === 0}
+            >
+              {t("agentic_grid.selection.select_all")}
+            </button>
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              aria-label={t("agentic_grid.selection.clear_all")}
+              title={t("agentic_grid.selection.clear_all")}
+              onClick={() => setSelectedTerminals(new Set())}
+              disabled={selectedTerminals.size === 0}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-testid="close-selected-terminals"
+              className="flex items-center gap-1.5 rounded-md bg-destructive px-2.5 py-1.5 text-xs font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+              disabled={selectedTerminals.size === 0 || busy || working}
+              onClick={() => setPendingSelectionClose([...selectedTerminals])}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t("agentic_grid.selection.close_selected")}
+            </button>
+          </div>
+        )}
+
         <Dialog.Root
           open={workspaceCloseRequested}
           onOpenChange={(open) => {
@@ -547,9 +704,16 @@ export function AgenticGrid({
               key={term.key}
               data-testid={`pane-cell-${term.name}`}
               className={cn(
-                "min-h-0 min-w-0",
+                "relative min-h-0 min-w-0 rounded-xl",
+                selectedTerminals.has(term.name) &&
+                  "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 maximized !== null && !isMaximized && "hidden",
               )}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                markTerminal(term.name);
+              }}
               style={
                 isMaximized
                   ? { gridColumn: "1 / -1", gridRow: "1 / -1" }
@@ -589,6 +753,48 @@ export function AgenticGrid({
                 restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
               />
+              {selectionMode && (
+                <button
+                  type="button"
+                  data-testid={`select-terminal-${term.name}`}
+                  aria-pressed={selectedTerminals.has(term.name)}
+                  aria-label={
+                    selectedTerminals.has(term.name)
+                      ? t("agentic_grid.selection.deselect_terminal").replace(
+                          "{0}",
+                          term.name,
+                        )
+                      : t("agentic_grid.selection.select_terminal").replace(
+                          "{0}",
+                          term.name,
+                        )
+                  }
+                  onClick={() => toggleTerminalSelection(term.name)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    markTerminal(term.name);
+                  }}
+                  className={cn(
+                    "absolute inset-0 z-20 cursor-pointer rounded-xl transition-colors",
+                    selectedTerminals.has(term.name)
+                      ? "bg-primary/10"
+                      : "bg-transparent hover:bg-primary/5",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border shadow-md transition-colors",
+                      selectedTerminals.has(term.name)
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-card/90 text-transparent",
+                    )}
+                    aria-hidden="true"
+                  >
+                    <Check className="h-5 w-5" />
+                  </span>
+                </button>
+              )}
             </div>
           );
         })}
@@ -620,6 +826,23 @@ export function AgenticGrid({
           onConfirm={() => void closeOne(pendingClose)}
         />
       )}
+
+      <Dialog.Root
+        open={pendingSelectionClose !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy && !working) setPendingSelectionClose(null);
+        }}
+      >
+        {pendingSelectionClose && (
+          <ConfirmSelectionClose
+            names={pendingSelectionClose}
+            busy={busy || working}
+            onCancel={() => setPendingSelectionClose(null)}
+            onConfirm={() => void closeSelection(pendingSelectionClose)}
+            restoreFocus={() => selectionToggleRef.current?.focus()}
+          />
+        )}
+      </Dialog.Root>
 
       {/* ------------------------------------------------- prompt bar + seam */}
       {/*
@@ -747,6 +970,82 @@ export function AgenticGrid({
         </div>
       )}
     </div>
+  );
+}
+
+function ConfirmSelectionClose({
+  names,
+  busy,
+  onCancel,
+  onConfirm,
+  restoreFocus,
+}: {
+  names: string[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  restoreFocus: () => void;
+}) {
+  const t = useT();
+  return (
+    <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+      <Dialog.Content
+        data-testid="confirm-close-selection"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-xl"
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          // Radix removes the modal's inert/aria-hidden state after this event.
+          // Focusing synchronously would therefore be ignored by the browser.
+          window.setTimeout(restoreFocus, 0);
+        }}
+      >
+        <Dialog.Title className="font-display text-base font-semibold">
+          {t("agentic_grid.selection.confirm_title")}
+        </Dialog.Title>
+        <Dialog.Description className="mt-2 text-sm text-muted-foreground">
+          {t("agentic_grid.selection.confirm_description")}
+        </Dialog.Description>
+        <p className="mt-3 text-xs font-semibold text-foreground">
+          {t("agentic_grid.selection.will_close").replace("{0}", String(names.length))}
+        </p>
+        <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto scrollbar-jarvis">
+          {names.map((name) => (
+            <span key={name} className="chip text-xs">
+              {name}
+            </span>
+          ))}
+        </div>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <Dialog.Close asChild>
+            <button
+              type="button"
+              className="btn-ghost"
+              autoFocus
+              disabled={busy}
+              onClick={onCancel}
+            >
+              {t("agentic_grid.selection.cancel")}
+            </button>
+          </Dialog.Close>
+          <button
+            type="button"
+            data-testid="confirm-close-selection-confirm"
+            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {t("agentic_grid.selection.confirm")}
+          </button>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
   );
 }
 

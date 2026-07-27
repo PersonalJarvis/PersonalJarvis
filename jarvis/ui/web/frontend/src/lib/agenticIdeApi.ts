@@ -499,6 +499,33 @@ export async function closeTerminal(name: string): Promise<SessionState> {
   return body.state.session;
 }
 
+export interface CloseTerminalsResult {
+  closed: string[];
+  failed: Array<{ name: string; detail: string }>;
+  session: SessionState;
+}
+
+/** Stop several agents through the dangerous batch route and return canonical state. */
+export async function closeTerminals(names: string[]): Promise<CloseTerminalsResult> {
+  const res = await fetch("/api/agentic-ide/terminals/close-batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as {
+    closed: string[];
+    failed: Array<{ name: string; detail: string }>;
+    state: IdeState;
+  };
+  if (!body.state.session) throw new Error("The workspace is no longer open.");
+  return {
+    closed: body.closed ?? [],
+    failed: body.failed ?? [],
+    session: body.state.session,
+  };
+}
+
 export async function setFocusMode(enabled: boolean): Promise<boolean> {
   const res = await fetch("/api/agentic-ide/mode", {
     method: "PUT",

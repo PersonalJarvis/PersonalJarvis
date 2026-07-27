@@ -152,6 +152,16 @@ class AddTerminalsRequest(BaseModel):
     account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
 
 
+class CloseTerminalsRequest(BaseModel):
+    """The terminal panes one destructive batch action should stop."""
+
+    names: list[str] = Field(
+        min_length=1,
+        max_length=MAX_TERMINALS,
+        description="Call-signs of the terminals to close.",
+    )
+
+
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
@@ -938,6 +948,26 @@ async def resume_workspace() -> dict:
         "started_fresh": total_panes - resumable,
         # Workspaces that could not come back, with the reason for each.
         "skipped": [{"folder": folder, "detail": detail} for folder, detail in result.skipped],
+    }
+
+
+@router.post(
+    "/terminals/close-batch",
+    summary="Close several terminals",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def close_terminals(req: CloseTerminalsRequest) -> dict:
+    """Stop selected coding agents in one locked batch and return canonical state."""
+    registry = get_registry()
+    try:
+        closed, failed = await registry.close_terminals(req.names)
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "ok": not failed,
+        "closed": [term.name for term in closed],
+        "failed": failed,
+        "state": registry.state(),
     }
 
 

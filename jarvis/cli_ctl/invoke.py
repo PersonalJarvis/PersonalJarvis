@@ -28,7 +28,7 @@ def run(
     dangerous: bool | None = None,
     before_request: Callable[[], None] | None = None,
     request_timeout_s: float | None = None,
-) -> None:
+) -> Any | None:
     """Resolve client, gate mutations, send the request, render the result.
 
     ``dangerous`` lets a curated command state its risk explicitly (e.g. a
@@ -55,7 +55,7 @@ def run(
             as_json=json_out,
         )
         if not proceed:
-            return  # dry run: preview already printed, nothing sent
+            return None  # dry run: preview already printed, nothing sent
         if before_request is not None:
             before_request()
         try:
@@ -78,5 +78,6 @@ def run(
                 render.error(exc.message)
             raise typer.Exit(code=1) from exc
         render.emit(out, as_json=json_out)
+        return out
     finally:
         client.close()

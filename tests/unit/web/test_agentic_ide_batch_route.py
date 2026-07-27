@@ -131,3 +131,46 @@ async def test_no_bus_still_opens_the_panes(
     )
     assert result["ok"] is True
     assert len(result["terminals"]) == 1
+
+
+class FakeClosingRegistry:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def close_terminals(self, names: list[str]):
+        self.calls.append(names)
+        return (
+            [_terminal("Juno")],
+            [{"name": "Missing", "detail": "No terminal called 'Missing'."}],
+        )
+
+    def state(self) -> dict:
+        return {"active": True, "session": {"terminals": [{"name": "Milo"}]}}
+
+
+async def test_close_batch_returns_closed_failed_and_canonical_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeClosingRegistry()
+    monkeypatch.setattr(routes, "get_registry", lambda: registry)
+
+    result = await routes.close_terminals(
+        routes.CloseTerminalsRequest(names=["Juno", "Missing"])
+    )
+
+    assert registry.calls == [["Juno", "Missing"]]
+    assert result == {
+        "ok": False,
+        "closed": ["Juno"],
+        "failed": [{"name": "Missing", "detail": "No terminal called 'Missing'."}],
+        "state": {"active": True, "session": {"terminals": [{"name": "Milo"}]}},
+    }
+
+
+def test_close_batch_route_is_marked_dangerous() -> None:
+    route = next(
+        route
+        for route in routes.router.routes
+        if getattr(route, "path", "") == "/api/agentic-ide/terminals/close-batch"
+    )
+    assert route.openapi_extra == {"x-jarvis-dangerous": True}

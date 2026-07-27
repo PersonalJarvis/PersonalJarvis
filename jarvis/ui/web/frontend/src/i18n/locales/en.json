@@ -3328,5 +3328,24 @@
     "sign_in": "Sign in",
     "rename": "Rename",
     "remove": "Remove"
+  },
+  "agentic_grid": {
+    "selection": {
+      "start": "Select terminals",
+      "finish": "Done selecting",
+      "hint": "Select terminal panes. Right-click any pane to select it immediately.",
+      "selected_count": "Selected: {0}",
+      "select_all": "Select all",
+      "clear_all": "Clear selection",
+      "close_selected": "Close selected",
+      "select_terminal": "Select terminal {0}",
+      "deselect_terminal": "Deselect terminal {0}",
+      "confirm_title": "Close selected terminals?",
+      "confirm_description": "Every selected coding agent is stopped and its terminal session is closed. Anything already written to disk stays.",
+      "will_close": "Will close ({0}):",
+      "cancel": "Keep them open",
+      "confirm": "Close selected",
+      "close_failed": "These terminals could not be closed: {0}"
+    }
   }
 }

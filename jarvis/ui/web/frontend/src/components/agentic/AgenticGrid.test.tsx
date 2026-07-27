@@ -22,6 +22,7 @@ vi.mock("@/store/events", () => ({
 vi.mock("@/lib/agenticIdeApi", () => ({
   addTerminal: vi.fn(),
   closeTerminal: vi.fn(),
+  closeTerminals: vi.fn(),
   composePrompt: vi.fn(),
   promptTerminal: vi.fn(),
 }));
@@ -168,6 +169,11 @@ beforeEach(() => {
     ]),
   );
   vi.mocked(api.closeTerminal).mockResolvedValue(sessionWith([["Nova", 0]]));
+  vi.mocked(api.closeTerminals).mockResolvedValue({
+    closed: ["Mika", "Nova"],
+    failed: [],
+    session: sessionWith([]),
+  });
   vi.mocked(api.composePrompt).mockResolvedValue({
     composed: "## Task\nRun the tests.",
     composed_by: "llm",
@@ -446,6 +452,125 @@ describe("closing a pane", () => {
     renderGrid(sessionWith([]));
     expect(screen.getByText(/Every terminal in this workspace is closed/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /open a terminal/i })).toBeTruthy();
+  });
+});
+
+describe("selecting several terminals", () => {
+  it("shows a clear selection mode in the toolbar and lets clicks mark panes", () => {
+    renderGrid();
+
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+    expect(screen.getByTestId("terminal-selection-actions")).toBeTruthy();
+    expect(screen.getByText("Selected: 0")).toBeTruthy();
+
+    const mika = screen.getByTestId("select-terminal-Mika");
+    fireEvent.click(mika);
+    expect(mika.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Selected: 1")).toBeTruthy();
+
+    fireEvent.click(mika);
+    expect(mika.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Selected: 0")).toBeTruthy();
+  });
+
+  it("right-clicking a pane enters selection mode and marks it immediately", () => {
+    renderGrid();
+
+    fireEvent.contextMenu(screen.getByTestId("pane-cell-Nova"));
+
+    expect(
+      screen.getByTestId("terminal-selection-toggle").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("select-terminal-Nova").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getByText("Selected: 1")).toBeTruthy();
+  });
+
+  it("select all marks every terminal with one click", () => {
+    renderGrid();
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+    expect(screen.getByText("Selected: 2")).toBeTruthy();
+    expect(
+      screen.getByTestId("select-terminal-Mika").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("select-terminal-Nova").getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("asks once, then closes every selected terminal in one batch", async () => {
+    const { onSessionChanged } = renderGrid();
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+    fireEvent.click(screen.getByTestId("close-selected-terminals"));
+    const confirmation = screen.getByTestId("confirm-close-selection");
+    expect(confirmation.textContent).toContain("Mika");
+    expect(confirmation.textContent).toContain("Nova");
+    expect(api.closeTerminals).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("confirm-close-selection-confirm"));
+    await waitFor(() =>
+      expect(api.closeTerminals).toHaveBeenCalledWith(["Mika", "Nova"]),
+    );
+    expect(api.closeTerminal).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(onSessionChanged).toHaveBeenCalledWith(sessionWith([])),
+    );
+    expect(screen.queryByTestId("confirm-close-selection")).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("terminal-selection-toggle"),
+      ),
+    );
+  });
+
+  it("keeps a failed terminal selected and targeted after a partial close", async () => {
+    vi.mocked(api.closeTerminals).mockResolvedValue({
+      closed: ["Mika"],
+      failed: [{ name: "Nova", detail: "Still stopping." }],
+      session: sessionWith([["Nova", 0]]),
+    });
+    renderGrid();
+    fireEvent.click(screen.getByRole("button", { name: /Nova live/i }));
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("close-selected-terminals"));
+    fireEvent.click(screen.getByTestId("confirm-close-selection-confirm"));
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/instruction for Nova/i)).toBeTruthy(),
+    );
+    expect(
+      screen.getByTestId("select-terminal-Nova").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(pushToast).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("Nova: Still stopping."),
+    );
+  });
+
+  it("keeps every selected terminal open when confirmation is cancelled", async () => {
+    renderGrid();
+    fireEvent.contextMenu(screen.getByTestId("pane-cell-Mika"));
+    fireEvent.click(screen.getByTestId("close-selected-terminals"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep them open" }));
+
+    expect(screen.queryByTestId("confirm-close-selection")).toBeNull();
+    expect(api.closeTerminals).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("select-terminal-Mika").getAttribute("aria-pressed"),
+    ).toBe("true");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("terminal-selection-toggle"),
+      ),
+    );
   });
 });
 

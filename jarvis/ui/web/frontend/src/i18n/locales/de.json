@@ -3342,5 +3342,24 @@
     "sign_in": "Anmelden",
     "rename": "Umbenennen",
     "remove": "Entfernen"
+  },
+  "agentic_grid": {
+    "selection": {
+      "start": "Terminals auswählen",
+      "finish": "Auswahl beenden",
+      "hint": "Terminal-Fenster zum Auswählen anklicken. Ein Rechtsklick wählt ein Fenster sofort aus.",
+      "selected_count": "Ausgewählt: {0}",
+      "select_all": "Alle auswählen",
+      "clear_all": "Auswahl leeren",
+      "close_selected": "Ausgewählte schließen",
+      "select_terminal": "Terminal {0} auswählen",
+      "deselect_terminal": "Auswahl von Terminal {0} aufheben",
+      "confirm_title": "Ausgewählte Terminals schließen?",
+      "confirm_description": "Jeder ausgewählte Coding-Agent wird beendet und seine Terminal-Sitzung geschlossen. Bereits gespeicherte Dateien bleiben erhalten.",
+      "will_close": "Wird geschlossen ({0}):",
+      "cancel": "Offen lassen",
+      "confirm": "Ausgewählte schließen",
+      "close_failed": "Diese Terminals konnten nicht geschlossen werden: {0}"
+    }
   }
 }
