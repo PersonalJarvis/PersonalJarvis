@@ -46,7 +46,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from jarvis.ultrawiki.types import DocType, ItemState
@@ -81,6 +81,26 @@ EMBED_COOLDOWN_S = 600.0
 #: "this item is poisoned": rate limit, out of credit, service unavailable.
 _RATE_LIMIT_MARKERS = ("HTTP 429", "HTTP 402", "HTTP 503")
 
+#: ...and the words that mark the subset which will NOT clear by waiting. A
+#: rate limit ends on its own; an exhausted quota or an unpaid bill ends only
+#: when someone adds credit or points the slot at another backend. Both keep
+#: retrying — a topped-up account has to resume by itself — but only this one
+#: is worth putting in front of the user, because patience is not the fix.
+#:
+#: Matched against the provider's own failure SLUG
+#: (:func:`jarvis.ultrawiki.embeddings._error_code`), never against a provider
+#: name or model id (AP-21): any backend with a billing state names it with one
+#: of these words, and one without simply never matches.
+_QUOTA_WORDS = (
+    "quota",
+    "billing",
+    "credit",
+    "payment",
+    "insufficient",
+    "exhausted",
+    "suspended",
+)
+
 
 def _rate_limited_embed(exc: BaseException) -> bool:
     """True for an EmbeddingError carrying a rate/quota/unavailable status.
@@ -92,6 +112,19 @@ def _rate_limited_embed(exc: BaseException) -> bool:
         return False
     message = str(exc)
     return any(marker in message for marker in _RATE_LIMIT_MARKERS)
+
+
+def _embed_block_needs_attention(message: str) -> bool:
+    """Does this rejection require a human, or will it clear by itself?
+
+    ``HTTP 402`` (payment required) always does. ``HTTP 429`` does only when
+    the provider's code slug says the problem is the account rather than the
+    pace — otherwise it is an ordinary rate limit and the cooldown handles it.
+    """
+    lowered = message.lower()
+    if "http 402" in lowered:
+        return True
+    return "http 429" in lowered and any(word in lowered for word in _QUOTA_WORDS)
 
 #: Media enrichment claims ONE item per pass, and only when every other stage
 #: found nothing to do. Describing a picture costs a model call, and a photo
@@ -154,6 +187,13 @@ def _summary_text(
     return "\n".join(parts)
 
 
+def _utc_now_iso() -> str:
+    """Wall-clock UTC stamp for the embed block. Deliberately NOT the
+    monotonic clock the cooldown uses: this one is shown to a person, and
+    "since 2026-07-26T18:14Z" is what makes a standstill legible."""
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _string_field(mapping: dict[str, Any], key: str) -> str:
     return str(mapping.get(key) or "").strip()
 
@@ -203,12 +243,38 @@ class PipelineWorker:
         #: monotonic deadline until which the embedding-dependent stages rest
         #: after a rate/quota rejection (0.0 = no cooldown).
         self._embed_cooldown_until = 0.0
+        #: The live provider-level embedding block, or ``None`` while vectors
+        #: are coming back. Survives the individual cooldown naps: what matters
+        #: to a reader is "this has been refused since yesterday evening", not
+        #: "the current ten-minute rest has four minutes left".
+        self._embed_block: dict[str, Any] | None = None
 
     # -- public surface ------------------------------------------------------
 
     def processed_counts(self) -> dict[str, int]:
         """Copy of the per-stage processed counters."""
         return dict(self.processed)
+
+    def embed_block(self) -> dict[str, Any] | None:
+        """The live provider-level embedding block, or ``None``.
+
+        ``reason`` (the provider's honest answer), ``needs_attention`` (waiting
+        will not fix it), ``since`` (UTC ISO of the FIRST rejection in this
+        streak) and ``rejections`` (how many since).
+
+        The service reads this so ``/api/ultrawiki/status`` can report what the
+        worker already knows. Without it the two disagreed in the worst
+        possible direction: the embedding SLOT probe is a credential check by
+        contract (AP-21), so a key that exists but is out of quota probes
+        ``ready`` — and the overview kept saying "still filling up, you do not
+        have to wait" over a queue that had not advanced past keyword indexing
+        in fifteen hours, with "Nothing needs your attention" underneath
+        (observed live 2026-07-27). One concept, known in one layer, never
+        carried to the layer that speaks: the drift class of BUG-008 again.
+
+        A copy, so a status reader cannot mutate the worker's state.
+        """
+        return dict(self._embed_block) if self._embed_block is not None else None
 
     async def run(self, cancel_event: asyncio.Event) -> None:
         """The worker loop: run passes until *cancel_event* is set.
@@ -276,10 +342,19 @@ class PipelineWorker:
                 "UltraWiki: mark_retry failed for item %s", item.get("id")
             )
 
-    def _note_stage_pause(self, stage: str, reason: str) -> None:
-        """Log an honest 'stage paused' line once per reason change."""
-        if self._pause_reasons.get(stage) != reason:
-            self._pause_reasons[stage] = reason
+    def _note_stage_pause(self, stage: str, reason: str, *, key: str = "") -> None:
+        """Log an honest 'stage paused' line once per reason change.
+
+        *key* is what "the same reason" means for deduplication, defaulting to
+        the sentence itself. The cooldown reason carries a live countdown, so
+        deduplicating on the text logged the identical standstill every time
+        the remaining minute ticked over — 2 614 lines of it in one session's
+        log, which is precisely how a real, permanent block hides in plain
+        sight.
+        """
+        marker = key or reason
+        if self._pause_reasons.get(stage) != marker:
+            self._pause_reasons[stage] = marker
             log.info("UltraWiki %s stage paused: %s", stage, reason)
 
     def _clear_stage_pause(self, stage: str) -> None:
@@ -294,13 +369,53 @@ class PipelineWorker:
         cooldown ends.
         """
         self._embed_cooldown_until = time.monotonic() + EMBED_COOLDOWN_S
-        log.warning(
-            "UltraWiki embedding provider rejected with a rate/quota answer "
-            "(%s) — resting the embed and distill stages for %.0f minutes "
-            "instead of hammering it per item",
-            exc,
-            EMBED_COOLDOWN_S / 60.0,
-        )
+        message = str(exc)
+        previous = self._embed_block or {}
+        first = bool(not previous)
+        self._embed_block = {
+            "reason": message,
+            "needs_attention": _embed_block_needs_attention(message),
+            # The streak's START, never the current nap's — a reader needs to
+            # know this has been refused since yesterday, not that the latest
+            # ten-minute rest began a moment ago.
+            "since": str(previous.get("since") or _utc_now_iso()),
+            "rejections": int(previous.get("rejections") or 0) + 1,
+        }
+        # Only the FIRST rejection of a streak warns. A permanent block would
+        # otherwise write a fresh warning every ten minutes forever, and a log
+        # that repeats itself is a log nobody reads.
+        if first:
+            log.warning(
+                "UltraWiki embedding provider rejected with a rate/quota answer "
+                "(%s) — resting the embed and distill stages for %.0f minutes "
+                "instead of hammering it per item%s",
+                exc,
+                EMBED_COOLDOWN_S / 60.0,
+                (
+                    ". This will not clear by waiting: add credit to that "
+                    "provider or choose another embedding backend"
+                    if self._embed_block["needs_attention"]
+                    else ""
+                ),
+            )
+
+    def _note_embed_success(self) -> None:
+        """A vector came back — whatever the provider was refusing is over.
+
+        Called on every successful embed call rather than only after a block,
+        so a topped-up account or a passing rate limit clears the standstill
+        report by itself. Nothing about recovery may require a restart.
+        """
+        block = self._embed_block
+        if block is not None:
+            log.info(
+                "UltraWiki embedding provider recovered after %d rejection(s) "
+                "since %s — the embed and distill stages resume",
+                int(block.get("rejections") or 0),
+                block.get("since"),
+            )
+            self._embed_block = None
+        self._embed_cooldown_until = 0.0
 
     def _embed_cooldown_reason(self) -> str:
         """Honest pause reason while the cooldown runs, else ``""``."""
@@ -536,7 +651,8 @@ class PipelineWorker:
             return 0
         cooldown = self._embed_cooldown_reason()
         if cooldown:
-            self._note_stage_pause("embed", cooldown)
+            # A stable dedup key, because the sentence carries a countdown.
+            self._note_stage_pause("embed", cooldown, key="embed-cooldown")
             return 0
         self._clear_stage_pause("embed")
         items = await self._store.claim_batch(
@@ -555,6 +671,7 @@ class PipelineWorker:
                 raise RuntimeError(
                     f"backend returned {len(vectors)} vectors for {len(texts)} texts"
                 )
+            self._note_embed_success()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — fall back to per-item embedding
@@ -611,6 +728,7 @@ class PipelineWorker:
                         f"backend returned {len(vectors)} vectors for "
                         f"{len(chunks)} passages"
                     )
+                self._note_embed_success()
                 await self._store_embedded(item, chunks, vectors, model)
             except asyncio.CancelledError:
                 raise
@@ -675,7 +793,7 @@ class PipelineWorker:
         if cooldown:
             # The distilled summary must be embedded too, so this stage rests
             # through the same provider cooldown as the embed pass.
-            self._note_stage_pause("distill", cooldown)
+            self._note_stage_pause("distill", cooldown, key="embed-cooldown")
             return 0
         distill_ok, distill_reason = await self._distill_ready()
         if not distill_ok:
@@ -779,6 +897,7 @@ class PipelineWorker:
         vectors = await backend.embed([text], model=model)
         if not vectors:
             raise RuntimeError("backend returned no vector for the summary text")
+        self._note_embed_success()
         await self._store.store_embedding(
             doc_id, model=model, dim=len(vectors[0]), vector=vectors[0]
         )

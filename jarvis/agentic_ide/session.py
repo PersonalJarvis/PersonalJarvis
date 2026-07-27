@@ -77,6 +77,7 @@ from .folders import ProjectProfile, probe_project
 from .names import default_names, normalize, resolve
 from .transcript import ReplayBuffer, Transcript
 
+from .terminal_input import THEME_COLOURS, TerminalQueryResponder
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from jarvis.terminal.pty_manager import PtyManager
 
@@ -544,6 +545,13 @@ class Session:
     restored_from: str = ""
 
     def find(self, wanted: str) -> Terminal | None:
+    # Answers the emulator queries the agent's CLI asks on startup. It lives on
+    # the TERMINAL rather than on the viewer's socket for two reasons: the PTY
+    # outlives its viewers, and the replay handed to a re-joining viewer carries
+    # the original queries — answering those a second time would write the reply
+    # into a prompt the agent has long since opened, which is the corruption
+    # this exists to prevent. Only live output reaches it.
+    queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
         """Terminal by key, call-sign, or a spoken phrase containing one."""
         if not wanted:
             return None
@@ -1424,7 +1432,17 @@ class Registry:
         # that is what makes switching workspaces safe — so a closure pinned to
         # the viewer that happened to start the agent would keep writing into a
         # dead socket forever, and the viewer that came later would see nothing.
-        async def _output(_tid: str, text: str) -> None:
+        async def _output(tid: str, text: str) -> None:
+            # FIRST, before anything that could yield: a CLI asking its terminal
+            # for the device type or the screen colours reads the answer within
+            # milliseconds of asking. Answering here rather than in the browser
+            # keeps the whole exchange inside this process — a reply that has to
+            # cross two WebSocket hops arrives after the CLI stopped listening,
+            # and then appears as pasted-looking junk in its prompt. Addressed to
+            # `tid` rather than `term.pty_id`, which is assigned a moment later.
+            replies = term.queries.feed(text)
+            if replies:
+                manager.write(tid, replies)
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
@@ -1485,6 +1503,7 @@ class Registry:
         except Exception as exc:  # noqa: BLE001 - surfaced to the pane
             term.status = "error"
             term.error = str(exc)
+        appearance: str | None = None,
             raise SessionError(str(exc)) from exc
 
         term.pty_id = pty_session.terminal_id
@@ -1492,6 +1511,12 @@ class Registry:
         term.error = ""
         term.exit_code = None
         term.started_at = time.time()
+        ``appearance`` is the light/dark ground the viewer draws this pane on.
+        It is answered to the agent's CLI when it asks for the screen colours,
+        so a CLI on a light pane picks a palette for paper rather than for
+        slate. Omitted (an internal re-attach), whatever the last viewer said
+        stands.
+
         term.last_output_at = time.time()
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
@@ -1521,6 +1546,8 @@ class Registry:
                     await asyncio.sleep(delay)
                     if term not in owner.terminals or owner.id not in self._sessions:
                         return  # the pane (or the workspace) is gone
+        if appearance in THEME_COLOURS:
+            term.queries.appearance = appearance
                     session = owner
                     if term.resume is not None:
                         return

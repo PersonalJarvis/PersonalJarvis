@@ -76,6 +76,7 @@ import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
 import { OffscreenBuffer } from "./offscreenBuffer";
+import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollbar } from "./PaneScrollbar";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
@@ -216,8 +217,14 @@ export function AgenticTerminal({
       // and the text under it accumulate different sub-pixel offsets and the
       // frame visibly bends. Monospace legibility comes from the line height.
       letterSpacing: 0,
+  // The ground this pane draws on, as of NOW — the socket tells the backend, so
+  // that the agent's CLI is answered with the colours it is actually drawing on
+  // when it asks. Read at connect time, hence a ref rather than the prop: the
+  // connect effect must not re-run when the user flips the theme.
+  const appearanceRef = useRef(appearance);
       cursorBlink: true,
       cursorStyle: "bar",
+  appearanceRef.current = appearance;
       scrollback: 10000,
       // Required by the Unicode 11 width provider below.
       allowProposedApi: true,
@@ -255,6 +262,12 @@ export function AgenticTerminal({
     // the mounted element. A failure here is not fatal — xterm falls back to
     // the DOM renderer, which draws correctly, just less crisply.
     try {
+    // Before anything is written to this terminal: the agent's CLI asks what
+    // its terminal is and which colours it draws on within milliseconds of
+    // starting, and an answer produced HERE has to cross the socket twice
+    // before reaching it — too late, and then visible as junk in its prompt.
+    // The backend answers those instead. See ./terminalQueries.
+    const disposeQuerySuppression = installQuerySuppression(term.parser);
       term.loadAddon(new CanvasAddon());
     } catch {
       /* no canvas in this environment — the DOM renderer still works */
@@ -350,7 +363,13 @@ export function AgenticTerminal({
     resizeRef.current = sendResize;
 
     socket = openPaneSocket(
-      { name, workspaceId, cols: term.cols || 80, rows: term.rows || 24 },
+      {
+        name,
+        workspaceId,
+        cols: term.cols || 80,
+        rows: term.rows || 24,
+        appearance: appearanceRef.current,
+      },
       {
         onOpen: () => {
           report("connecting");
@@ -503,6 +522,7 @@ export function AgenticTerminal({
     term.clearTextureAtlas?.();
     // Changing the font size changes the COLUMN COUNT. Fitting locally without
     // telling the terminal process leaves the agent formatting for the old
+      disposeQuerySuppression();
     // width — it keeps wrapping at 100 columns in a pane that now holds 80, and
     // every line breaks in the wrong place. The two must move together, so this
     // goes through the same resize path the observer uses.

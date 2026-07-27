@@ -506,6 +506,74 @@ async def test_pipeline_state_is_paused_when_the_embedding_slot_blocks(
     assert status["slots"]["embedding"]["ready"] is False
 
 
+async def test_a_refusing_embedding_provider_is_reported_even_while_keywords_flow(
+    service, monkeypatch
+):
+    """The forensic case of 2026-07-27, end to end.
+
+    An OpenAI key with no credit answered ``HTTP 429 (insufficient_quota)``
+    for fifteen hours. The keyword lane needs no model, so it kept ticking —
+    and because it did, the strip reported "processing", the checklist said
+    "you do not have to wait", and the problem list said "Nothing needs your
+    attention" over a corpus where not one item had gained a summary since the
+    previous evening.
+
+    The slot probe cannot see this by contract: it is a CREDENTIAL check
+    (AP-21), and the key exists. Only the worker holds the provider's actual
+    answer, so the test that matters is that the answer reaches the payload.
+    """
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+    from jarvis.ultrawiki.health import build_health
+
+    patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(6), [])})
+    source = await service.add_source("fake-conn", "Fake Source")
+    await service.approve_source(source["id"], auto_sync=False)
+    await wait_for_job(service, await service.start_sync(source["id"]))
+
+    # Half the corpus past the keyword gate, half still behind it — exactly
+    # the live shape, where the free stage still has work to show.
+    store = service._require_store()
+    for item in await store.claim_batch("keyword_indexed", limit=3):
+        await store.mark_stage_done(
+            item["id"],
+            "keyword_indexed",
+            fts_title=item["title"],
+            fts_body=item["body_raw"],
+        )
+
+    # A credential-ready slot, so nothing but the worker's knowledge can
+    # produce the honest verdict.
+    service._cfg.ultrawiki.embedding_provider = "fake-ready"
+    monkeypatch.setattr(
+        service,
+        "_embedding_slot_status",
+        lambda: {"provider": "fake-ready", "model": "m", "ready": True, "reason": ""},
+    )
+    service._pipeline._begin_embed_cooldown(
+        EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+
+    status = await service.status()
+
+    assert status["pipeline"]["state"] == "paused", "a refused lane is not progress"
+    assert status["pipeline"]["blocked"] is True
+    assert status["pipeline"]["blocked_needs_attention"] is True
+    reason = status["pipeline"]["reason"]
+    assert "insufficient_quota" in reason
+    assert "will not clear" in reason, "it has to say waiting is not the fix"
+    assert "Keyword indexing" in reason, "and what IS still moving"
+    # The slot stops claiming to be usable, whatever the credential says.
+    assert status["slots"]["embedding"]["ready"] is False
+    assert status["slots"]["embedding"]["needs_attention"] is True
+
+    # ...and the row that used to say "you do not have to wait" now asks.
+    processing = next(
+        c for c in build_health(status)["checks"] if c["id"] == "processing"
+    )
+    assert processing["state"] == "attention"
+    assert "insufficient_quota" in processing["detail"]
+
+
 async def test_pipeline_state_is_processing_with_a_claimable_backlog(
     service, monkeypatch
 ):

@@ -77,6 +77,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 
 # One system folder window at a time — see ``open_native_picker``.
+from jarvis.agentic_ide.terminal_input import is_terminal_report_only
 _native_picker_lock = asyncio.Lock()
 
 
@@ -1504,7 +1505,13 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
 
     try:
         term = await registry.attach(
-            name, cols, rows, on_output, on_exit, workspace_id=pane_workspace
+            name,
+            cols,
+            rows,
+            on_output,
+            on_exit,
+            workspace_id=pane_workspace,
+            appearance=appearance,
         )
     except SessionError as exc:
         # The reason used to travel to the browser and nowhere else, where it
@@ -1551,7 +1558,22 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 continue
             kind = msg.get("t")
             if kind == "i":
-                registry.write(term.key, str(msg.get("d", "")), pane_workspace)
+                data = str(msg.get("d", ""))
+                # A browser that answers the terminal's protocol queries itself
+                # is answering a question this process already answered, at PTY
+                # speed and correctly — so its copy is a duplicate whenever it
+                # arrives, and lands in whatever the agent has open by then.
+                # Current clients suppress those replies at the source; this
+                # holds the line for a stale cached bundle and for the replayed
+                # screen, which re-triggers a query from minutes ago. Nobody
+                # types these sequences, so no keystroke is at risk.
+                if is_terminal_report_only(data):
+                    log.debug(
+                        "Agentic IDE: dropped a terminal protocol reply echoed by the pane for %s",
+                        term.name,
+                    )
+                else:
+                    registry.write(term.key, data, pane_workspace)
             elif kind == "r":
                 registry.resize(
                     term.key,
@@ -1724,3 +1746,10 @@ async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
 
 
 __all__ = ["router"]
+
+    The optional ``appearance`` parameter (``light`` / ``dark``) is the ground
+    this pane is drawn on. It is what the agent's CLI is told when it asks the
+    terminal for its colours — a question answered in the backend rather than
+    by xterm, so the reply cannot arrive after the CLI stopped waiting for it
+    (see ``jarvis.agentic_ide.terminal_input``).
+    appearance = (qp.get("appearance") or "").strip().lower() or None

@@ -29,6 +29,13 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: Record<string, unknown> = {};
     unicode = { activeVersion: "" };
+    // A pane takes over the terminal's protocol replies on mount, because the
+    // backend answers those instead (see ./terminalQueries). A stand-in without
+    // a parser is a terminal xterm never shipped.
+    parser = {
+      registerOscHandler: () => ({ dispose() {} }),
+      registerCsiHandler: () => ({ dispose() {} }),
+    };
 
     loadAddon() {}
     open() {}

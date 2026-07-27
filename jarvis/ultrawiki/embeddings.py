@@ -24,6 +24,7 @@ backend's own adapter.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -78,6 +79,48 @@ _GEMINI_KEY_CANDIDATES: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Body keys that may carry a provider's machine-readable failure code. Every
+#: supported backend answers an error as a JSON object with a short slug under
+#: one of these, usually nested in an ``error`` object. Nothing here names a
+#: provider or a model (AP-21) — it is the shape of an error body, not a brand.
+_ERROR_CODE_KEYS: tuple[str, ...] = ("code", "type", "status", "reason")
+
+#: A failure code is a SLUG, not prose. Anything longer or wordier is a human
+#: message, and a message can quote the submitted text straight back — which
+#: must never reach a log line or the ``last_error`` column of an item row.
+_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}$")
+
+
+def _error_code(response: httpx.Response) -> str:
+    """The provider's short failure code, or ``""`` when it did not send one.
+
+    Why this exists: an embeddings endpoint answers ``HTTP 429`` both for "you
+    are sending too fast, wait a moment" and for "this account is out of
+    credit, nothing changes until someone acts". For a backlog those are
+    opposite situations — the first clears itself, the second never does — and
+    the status code alone cannot tell them apart. The body's code slug can
+    (``rate_limit_exceeded`` vs ``insufficient_quota``), so the pipeline is
+    given the chance to see it and stop presenting a dead queue as a busy one.
+
+    Only a slug is ever returned, never the human-readable message beside it:
+    this string is logged and stored on the item, and a provider is free to
+    echo the submitted text back inside a message.
+    """
+    try:
+        body = response.json()
+    except (ValueError, TypeError):
+        return ""
+    scopes = [body] if isinstance(body, dict) else []
+    if scopes and isinstance(body.get("error"), dict):
+        scopes.insert(0, body["error"])
+    for scope in scopes:
+        for key in _ERROR_CODE_KEYS:
+            value = scope.get(key)
+            if isinstance(value, str) and _CODE_PATTERN.match(value.strip()):
+                return value.strip().lower()
+    return ""
+
+
 def _chunks(texts: list[str], size: int) -> Iterator[list[str]]:
     for start in range(0, len(texts), size):
         yield texts[start : start + size]
@@ -123,9 +166,12 @@ class _HttpEmbedding:
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as exc:
+            # The code slug rides along so the pipeline can tell a wait-and-
+            # retry rejection from one that needs the user (see _error_code).
+            code = _error_code(exc.response)
             raise EmbeddingError(
                 f"{self.name}: embedding request failed with "
-                f"HTTP {exc.response.status_code}"
+                f"HTTP {exc.response.status_code}" + (f" ({code})" if code else "")
             ) from exc
         except httpx.HTTPError as exc:
             raise EmbeddingError(

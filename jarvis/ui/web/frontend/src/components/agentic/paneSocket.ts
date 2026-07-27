@@ -62,6 +62,16 @@ export interface PaneSocketOptions {
    * different folder.
    */
   workspaceId?: string | null;
+  /**
+   * The ground this pane draws on — `"light"` or `"dark"`.
+   *
+   * Sent because the SERVER answers the agent's "what colour is your screen?"
+   * query, not this browser: the reply has to reach the CLI within a
+   * millisecond or two of it asking, and one produced here would arrive a full
+   * round trip late — as visible junk in the agent's prompt. The server can
+   * only answer correctly if it knows what the pane looks like.
+   */
+  appearance?: string | null;
 }
 
 export interface PaneSocketHandlers {
@@ -92,6 +102,7 @@ function paneUrl(opts: PaneSocketOptions, ticket: string | null): string {
     rows: String(opts.rows),
   });
   if (opts.workspaceId) query.set("workspace", opts.workspaceId);
+  if (opts.appearance) query.set("appearance", opts.appearance);
   if (ticket) query.set("ticket", ticket);
   return `${proto}://${window.location.host}/api/agentic-ide/pty/${encodeURIComponent(
     opts.name,

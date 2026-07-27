@@ -362,3 +362,69 @@ def test_available_backends_uses_configured_ollama_endpoint(monkeypatch, no_secr
         "reason": "",
         "default_model": DEFAULT_MODELS["ollama"],
     }
+
+
+# ---------------------------------------------------------------------------
+# The failure CODE beside the status (jarvis.ultrawiki.embeddings._error_code)
+# ---------------------------------------------------------------------------
+
+
+def test_an_exhausted_quota_is_distinguishable_from_a_rate_limit(fake_secrets):
+    """Both answer HTTP 429, and for a backlog they are opposites: one clears
+    itself, the other never does. Only the body's code slug can tell them
+    apart, so it has to survive into the error text the pipeline reads."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "message": "You exceeded your current quota, please check "
+                    "your plan and billing details.",
+                    "type": "insufficient_quota",
+                    "code": "insufficient_quota",
+                }
+            },
+        )
+
+    backend = OpenAIEmbedding(transport=httpx.MockTransport(refuse))
+    with pytest.raises(EmbeddingError) as excinfo:
+        import asyncio
+
+        asyncio.run(backend.embed(["hello"], model="text-embedding-3-small"))
+
+    message = str(excinfo.value)
+    assert "HTTP 429" in message
+    assert "insufficient_quota" in message
+
+
+def test_the_error_text_never_carries_the_providers_prose(fake_secrets):
+    """A message can quote the submitted text straight back, and this string
+    is logged and stored on the item row. Only a slug is ever taken."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "Invalid input: 'my private note text'"}},
+        )
+
+    backend = OpenAIEmbedding(transport=httpx.MockTransport(refuse))
+    with pytest.raises(EmbeddingError) as excinfo:
+        import asyncio
+
+        asyncio.run(backend.embed(["my private note text"], model="m"))
+
+    message = str(excinfo.value)
+    assert "HTTP 400" in message
+    assert "private note" not in message
+
+
+def test_a_body_without_a_code_still_yields_an_honest_error(fake_secrets):
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream unavailable")
+
+    backend = OpenAIEmbedding(transport=httpx.MockTransport(refuse))
+    with pytest.raises(EmbeddingError, match="HTTP 503"):
+        import asyncio
+
+        asyncio.run(backend.embed(["hello"], model="m"))

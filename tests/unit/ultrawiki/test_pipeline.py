@@ -447,6 +447,131 @@ async def test_distill_pass_rests_through_the_embed_cooldown(store):
     assert await worker._distill_pass() == 0  # noqa: SLF001
 
 
+async def test_an_exhausted_quota_is_reported_as_needing_a_human(store):
+    """The forensic case of 2026-07-27.
+
+    An OpenAI key with no credit answers ``HTTP 429 (insufficient_quota)``
+    forever. The cooldown handled it correctly and silently, so the worker
+    napped ten minutes at a time for fifteen hours while every surface above
+    reported a healthy import. The block is now visible, and it says whether
+    waiting is the fix.
+    """
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    worker._begin_embed_cooldown(  # noqa: SLF001 — drive the branch deliberately
+        EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+
+    block = worker.embed_block()
+    assert block is not None
+    assert block["needs_attention"] is True, "no amount of waiting adds credit"
+    assert "insufficient_quota" in block["reason"]
+    assert block["rejections"] == 1
+    assert block["since"].endswith("Z")
+
+
+async def test_an_ordinary_rate_limit_does_not_cry_for_help(store):
+    """The other half of the same 429: going too fast fixes itself, and a
+    surface that shouts about it teaches people to ignore the shouting."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("fake: embedding request failed with HTTP 429 (rate_limit_exceeded)")
+    )
+
+    block = worker.embed_block()
+    assert block is not None
+    assert block["needs_attention"] is False
+
+
+async def test_the_block_dates_from_the_first_refusal_not_the_latest_nap(store):
+    """What a reader needs is "refused since yesterday evening", not "this
+    ten-minute rest started a moment ago"."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    error = EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    worker._begin_embed_cooldown(error)  # noqa: SLF001
+    first_seen = worker.embed_block()["since"]
+    worker._begin_embed_cooldown(error)  # noqa: SLF001
+    worker._begin_embed_cooldown(error)  # noqa: SLF001
+
+    block = worker.embed_block()
+    assert block["since"] == first_seen, "the streak keeps its start"
+    assert block["rejections"] == 3
+
+
+async def test_a_vector_coming_back_clears_the_block_without_a_restart(store):
+    """Recovery is the provider's to announce, and it announces it by
+    answering. A topped-up account must resume on its own."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    await store.upsert_items("src1", [make_item(1)])
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+    assert worker.embed_block() is not None
+
+    worker._embed_cooldown_until = 0.0  # noqa: SLF001 — cooldown elapsed
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001 — the provider answers again
+
+    assert worker.embed_block() is None
+    assert worker.processed_counts()["embed"] == 1
+
+
+async def test_a_standstill_is_logged_once_not_every_countdown_tick(store, caplog):
+    """The pause sentence carries a live countdown, so deduplicating on the
+    text logged the same standstill every time the minute changed — 2 614
+    identical lines in one session, which is how a real block hides."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    worker._begin_embed_cooldown(  # noqa: SLF001
+        EmbeddingError("fake: embedding request failed with HTTP 429 (insufficient_quota)")
+    )
+    with caplog.at_level("INFO", logger="jarvis.ultrawiki.pipeline"):
+        for _ in range(5):
+            await worker._embed_pass()  # noqa: SLF001
+
+    paused = [r for r in caplog.records if "embed stage paused" in r.getMessage()]
+    assert len(paused) == 1, "one standstill, one line"
+
+
 async def test_a_long_item_is_embedded_as_many_passages_not_truncated(store):
     """The change that makes full-depth ingestion mean anything.
 

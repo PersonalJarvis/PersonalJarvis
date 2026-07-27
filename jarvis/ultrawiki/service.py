@@ -610,13 +610,31 @@ class UltraWikiService:
         # Every slot probe walks credentials (keyring / .env) or an endpoint —
         # all three go to a worker thread together, never on the event loop.
         slots = await asyncio.to_thread(self._slot_statuses)
+        # What the WORKER has actually been told by the provider. The slot
+        # probe above is a credential check by contract (AP-21), so it cannot
+        # see a key that exists and is refused; only the worker can, and
+        # without carrying it here the status route reported a busy pipeline
+        # over a lane that had been dead for fifteen hours.
+        embed_block = (
+            self._pipeline.embed_block() if self._pipeline is not None else None
+        )
+        if embed_block:
+            embedding_slot = dict(slots.get("embedding") or {})
+            slots["embedding"] = {
+                **embedding_slot,
+                "ready": False,
+                "reason": str(embed_block.get("reason") or "")
+                or str(embedding_slot.get("reason") or ""),
+                "blocked_since": embed_block.get("since"),
+                "needs_attention": bool(embed_block.get("needs_attention")),
+            }
         # ONE derivation of "how far along" for every surface that asks (the
         # strip, the checklist, the overview). See jarvis/ultrawiki/progress.py
         # for the screenshot that made a second derivation unacceptable.
         counts_payload = _counts_dict(counts)
         progress = build_progress(counts_payload)
         state, reason = self._pipeline_state(
-            progress, sources, slots, running=pipeline_running
+            progress, sources, slots, running=pipeline_running, embed_block=embed_block
         )
         return {
             "enabled": self._uw_enabled(),
@@ -636,6 +654,14 @@ class UltraWikiService:
                 "state": state,
                 "reason": reason,
                 "processed": processed,
+                # Shipped separately from the sentence so a surface can style a
+                # standstill that needs the user differently from one that
+                # clears itself, without parsing prose.
+                "blocked": bool(embed_block),
+                "blocked_needs_attention": bool(
+                    (embed_block or {}).get("needs_attention")
+                ),
+                "blocked_since": (embed_block or {}).get("since"),
             },
             "sources": sources,
             "jobs": _list_job_snapshots(10),
@@ -658,15 +684,21 @@ class UltraWikiService:
         slots: dict[str, Any],
         *,
         running: bool,
+        embed_block: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """``(state, honest English reason)`` for the import-progress strip.
 
         "Pipeline running" on a fresh activation with zero approved sources
         read as "something is already pulling my data" — the exact opposite of
         the consent contract. A live worker LOOP is not the same thing as work
-        being done, so the strip states which of the four situations holds:
-        nothing approved yet, nothing left to do, actually processing, or
-        blocked on a slot. ``running`` is still reported separately.
+        being done, so the strip states which of the five situations holds:
+        nothing approved yet, nothing left to do, actually processing, blocked
+        on a slot, or — *embed_block* — refused by a provider that answers but
+        will not serve. ``running`` is still reported separately.
+
+        The last one has to be passed in because it cannot be derived here: a
+        slot probe is a credential check by contract (AP-21) and reports a
+        depleted key as ``ready``. Only the worker has been told otherwise.
 
         Takes the shared progress model rather than raw counts: the backlog
         this function reports and the backlog the checklist reports must be
@@ -708,6 +740,35 @@ class UltraWikiService:
         embed_reason = str((slots.get("embedding") or {}).get("reason") or "")
         distill_ready = bool((slots.get("distill") or {}).get("ready"))
         distill_reason = str((slots.get("distill") or {}).get("reason") or "")
+
+        # A provider that is REFUSING outranks every other reading of the
+        # queue, including a keyword lane that is still moving. The lane that
+        # is standing still is the one carrying summaries and semantic search,
+        # and reporting "processing" because the free stage still ticks is how
+        # a fifteen-hour standstill kept rendering as a healthy import with
+        # "Nothing needs your attention" underneath it.
+        if embed_block and (pending_embed or pending_distill):
+            still_running = (
+                f" Keyword indexing is unaffected and still running "
+                f"({pending_keyword} item(s) to go), so new items keep "
+                "becoming findable by exact words."
+                if pending_keyword
+                else ""
+            )
+            advice = (
+                " Waiting will not clear this: add credit to that provider, or "
+                "switch the embedding backend in the UltraWiki settings."
+                if embed_block.get("needs_attention")
+                else " The pipeline retries on its own."
+            )
+            return "paused", (
+                f"{pending_embed + pending_distill} item(s) are waiting for the "
+                "embedding stage, which the provider is refusing: "
+                f"{embed_block.get('reason') or embed_reason}."
+                + advice
+                + still_running
+                + failed_note
+            )
 
         if pending_keyword > 0:
             blocked = ""

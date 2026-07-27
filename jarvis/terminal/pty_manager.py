@@ -86,6 +86,10 @@ _EMPTY_READ_BACKOFF_S = 0.005
 class PtySession:
     """Holds state for a running PTY session."""
 
+    #: The id this process currently answers to. Not a constant: reordering a
+    #: workspace's panes swaps two routes (``PtyManager.swap_sessions``), and
+    #: this field is what a consumer sends its replies back through, so it has
+    #: to move with the route rather than with the process.
     terminal_id: str
     shell_id: str
     pid: int
@@ -295,6 +299,63 @@ class PtyManager:
             logger.warning("PTY resize failed", terminal_id=terminal_id, error=str(exc))
             return False
 
+    def swap_sessions(self, id_a: str, id_b: str) -> bool:
+        """Exchange which running PTY each of two terminal ids addresses.
+
+        After this returns ``True``, everything that reaches a session through
+        its id — ``write``, ``resize``, ``close``, ``has`` — reaches the OTHER
+        process: ``write(id_a, ...)`` types into the child that was spawned for
+        ``id_b``. Nothing about either child changes; only the routing does,
+        which is what lets a workspace reorder its panes without restarting the
+        agents living in them.
+
+        Both ids must currently name a live session. If either does not, the
+        swap is refused and the pool is left exactly as it was — a half-applied
+        swap would leave one id pointing at a process the other still believes
+        it owns. Swapping an id with itself is a no-op and reports success.
+
+        Two things travel with the process and two do not, and the split is
+        deliberate:
+
+        * The session's own ``terminal_id`` DOES move, because it is what a
+          consumer routes its replies back through: the pump hands it to
+          ``on_output``, and the Agentic IDE answers a CLI's terminal queries by
+          writing to exactly that id. Left behind, an agent's "what colour is
+          your screen?" would be answered into its neighbour's prompt.
+        * The output callbacks do NOT move. They were registered by the viewer
+          that started this child and belong to it — the pump keeps delivering
+          this process's output to the surface already showing it. A caller that
+          wants the two panes to trade PICTURES as well as keystrokes swaps its
+          own viewer slots; this layer has no idea a viewer exists.
+
+        A reader that samples ``session.terminal_id`` at the same moment as a
+        swap may see one of the two ids briefly stale — the pool lock cannot
+        cover an attribute read it does not mediate. The consequence is bounded
+        to one terminal-query reply landing in the wrong pane in the instant a
+        user drags a tab, and never affects a keystroke, which routes through
+        the locked dictionary.
+        """
+        with self._lock:
+            session_a = self._sessions.get(id_a)
+            session_b = self._sessions.get(id_b)
+            if session_a is None or session_b is None:
+                logger.debug(
+                    "PTY swap refused — unknown terminal",
+                    terminal_id=id_a,
+                    other_terminal_id=id_b,
+                    a_known=session_a is not None,
+                    b_known=session_b is not None,
+                )
+                return False
+            if id_a == id_b:
+                return True
+            self._sessions[id_a] = session_b
+            self._sessions[id_b] = session_a
+            session_a.terminal_id = id_b
+            session_b.terminal_id = id_a
+        logger.info("PTY sessions swapped", terminal_id=id_a, other_terminal_id=id_b)
+        return True
+
     def close(self, terminal_id: str) -> bool:
         with self._lock:
             session = self._sessions.pop(terminal_id, None)
@@ -351,8 +412,12 @@ class PtyManager:
         gone or broken, and neither is a reason to stop draining a PTY that is
         still producing — the transcript on the other side keeps filling and the
         next viewer replays it.
+
+        The id is read from the session on every pass rather than captured once,
+        because ``swap_sessions`` can rename this process's route while the pump
+        is running and the consumer routes its replies back through whatever id
+        it is handed.
         """
-        terminal_id = session.terminal_id
         while True:
             await session._wake.wait()
             session._wake.clear()
@@ -361,13 +426,13 @@ class PtyManager:
                 if not text:
                     break
                 try:
-                    await on_output(terminal_id, text)
+                    await on_output(session.terminal_id, text)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - the PTY outlives its viewer
                     logger.debug(
                         "PTY output callback failed",
-                        terminal_id=terminal_id,
+                        terminal_id=session.terminal_id,
                         error=str(exc),
                     )
             if session._finished:
@@ -376,18 +441,18 @@ class PtyManager:
         if session._dropped_chars:
             logger.warning(
                 "PTY viewer could not keep up — dropped the oldest output",
-                terminal_id=terminal_id,
+                terminal_id=session.terminal_id,
                 dropped_chars=session._dropped_chars,
             )
         code = session._exit_code
         try:
-            await on_closed(terminal_id, -1 if code is None else code)
+            await on_closed(session.terminal_id, -1 if code is None else code)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the viewer may be gone
             logger.debug(
                 "PTY close callback failed",
-                terminal_id=terminal_id,
+                terminal_id=session.terminal_id,
                 error=str(exc),
             )
 
@@ -403,7 +468,6 @@ class PtyManager:
         cost this module exists to avoid, and it is also what let a slow viewer
         build an unbounded queue.
         """
-        terminal_id = session.terminal_id
         proc = session.proc
         stop_flag = session.stop_flag
         exit_code = -1
@@ -417,7 +481,7 @@ class PtyManager:
                     # Process closed / pipe broken — normal end of life.
                     logger.debug(
                         "PTY read exception (process presumably dead)",
-                        terminal_id=terminal_id,
+                        terminal_id=session.terminal_id,
                         error=str(exc),
                     )
                     break
@@ -445,6 +509,6 @@ class PtyManager:
             session.finish(exit_code, loop)
             logger.info(
                 "PTY reader terminated",
-                terminal_id=terminal_id,
+                terminal_id=session.terminal_id,
                 exit_code=exit_code,
             )
