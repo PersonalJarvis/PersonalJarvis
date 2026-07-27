@@ -526,7 +526,73 @@ _NUMBER_WORDS: dict[str, int] = {
 # says a product name in full while talking. Everything else (including no
 # mention at all) leaves the choice to the registry, which inherits the last
 # pane's agent: "noch drei davon" is the common intent.
-_AGENT_RE = re.compile(r"\b(claude(?:\s+code)?|codex)\b", re.IGNORECASE)
+#
+# The spellings below are matching DATA, not prose: speech recognition writes a
+# product name by ear, and every one of these is something a transcript has
+# actually said or is one keystroke away from it. A name this parser could not
+# spell used to cost a whole pane — "two new Codex terminals and one Cloude code
+# terminal" opened two panes and dropped the third in silence, because one
+# unmatched word takes the entire group with it (maintainer report 2026-07-27).
+# The user's STT dictionary repairs this too, but only for the words that user
+# thought to add; an arbitrary downloader with an empty dictionary gets the same
+# request and must get the same three panes.
+_AGENT_SPELLINGS: dict[str, tuple[str, ...]] = {
+    "claude": ("claude", "cloude", "claud", "clode", "klaude", "kloude"),
+    "codex": ("codex", "kodex", "codecs", "codeks"),
+}
+
+# Spellings that are ordinary words in their own right, so on their own they
+# mean nothing here — "in the cloud" is not a request for a pane. They count
+# only with the product's second word behind them: "cloud code" is unmistakable.
+_AGENT_SPELLINGS_REQUIRING_CODE: dict[str, tuple[str, ...]] = {
+    "claude": ("cloud", "clawed", "clod", "loud"),
+}
+
+_AGENT_BY_SPELLING: dict[str, str] = {
+    spelling: canonical
+    for table in (_AGENT_SPELLINGS, _AGENT_SPELLINGS_REQUIRING_CODE)
+    for canonical, spellings in table.items()
+    for spelling in spellings
+}
+
+
+def _agent_alternation() -> str:
+    """The regex fragment matching every accepted spelling of a CLI's name.
+
+    Longest first so a spelling that is the prefix of another (``claud`` of
+    ``claude``) can never shadow it.
+    """
+    parts = [
+        rf"{re.escape(spelling)}(?:\s+code)?"
+        for table in (_AGENT_SPELLINGS,)
+        for spellings in table.values()
+        for spelling in spellings
+    ]
+    parts += [
+        rf"{re.escape(spelling)}\s+code"
+        for spellings in _AGENT_SPELLINGS_REQUIRING_CODE.values()
+        for spelling in spellings
+    ]
+    return "|".join(sorted(parts, key=len, reverse=True))
+
+
+_AGENT_ALTERNATION = _agent_alternation()
+
+_AGENT_RE = re.compile(rf"\b(?P<agent>{_AGENT_ALTERNATION})\b", re.IGNORECASE)
+
+
+def _canonical_agent(raw: str) -> str | None:
+    """The CLI a matched name means, or ``None`` for one this parser cannot place.
+
+    ``None`` is unreachable through the pattern above — every alternative it
+    offers is a key of the table — and callers still handle it, because a
+    spelling added to one and not the other must degrade to "no CLI named"
+    rather than to a wrong one.
+    """
+    name = " ".join(str(raw or "").casefold().split())
+    if name.endswith(" code"):
+        name = name[: -len(" code")].strip()
+    return _AGENT_BY_SPELLING.get(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,7 +656,7 @@ _COUNT_AGENT_RE = re.compile(
     r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
     r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|additional|de|del|"  # i18n-allow: input vocab
     r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
-    r"(?P<agent>claude(?:\s+code)?|codex)\b",
+    rf"(?P<agent>{_AGENT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 
@@ -618,9 +684,9 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
             if cleaned not in _NUMBER_WORDS:
                 continue
             count = _NUMBER_WORDS[cleaned]
-        agent = (
-            "codex" if match.group("agent").casefold().startswith("codex") else "claude"
-        )
+        agent = _canonical_agent(match.group("agent"))
+        if agent is None:
+            continue
         found.append(SpawnGroup(count=max(1, count), agent=agent))
 
     if len(found) < 2:
@@ -732,7 +798,7 @@ def detect_spawn(
     agent_match = _AGENT_RE.search(text)
     agent: str | None = None
     if agent_match is not None:
-        agent = "codex" if agent_match.group(1).lower().startswith("codex") else "claude"
+        agent = _canonical_agent(agent_match.group("agent"))
     count = _spoken_count(text)
     return SpawnTerminalsRequest(
         count=count,
