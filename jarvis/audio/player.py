@@ -898,6 +898,16 @@ class AudioPlayer:
         # write still provides back-pressure. ~60 ms blocks are large enough to
         # never starve the buffer.
         feed_level = level_tap.has_subscribers()
+        # Visual sync: write() returns when PortAudio ACCEPTS a block; the
+        # device makes it audible one output latency later (hundreds of ms on
+        # Bluetooth). Deliver each block's level with that delay so the bar
+        # moves WITH the heard voice — including the final ~latency of every
+        # sentence, which previously played with the bars already collapsed.
+        # The uniform shift preserves the ~60 ms inter-sample cadence, so the
+        # overlay's audible-hold window is latency-independent. Read ONCE per
+        # buffer: the property takes the stream-state lock stop() also uses —
+        # bounded, benign contention, deliberately not per sub-block.
+        level_delay_s = self.output_latency_s if feed_level else 0.0
         # Master output volume: scale the whole buffer once via the shared gain
         # helper (makeup boost + soft limiter above unity, plain attenuation
         # below), then write it in sub-blocks. ``arr_out is arr_f`` when the knob
@@ -949,7 +959,10 @@ class AudioPlayer:
             if feed_level:
                 pre = arr_f[start:start + block]  # PRE-gain RMS for the visualizer
                 if pre.size:
-                    level_tap.feed(float(np.sqrt(np.mean(np.square(pre)))))
+                    level_tap.feed(
+                        float(np.sqrt(np.mean(np.square(pre)))),
+                        delay_s=level_delay_s,
+                    )
             # Echo-reference envelope (BUG-101): the barge-in detector needs
             # what the speakers actually emit, so record the POST-gain block.
             # One RMS + deque append per ~60 ms block — no model, no OS API.

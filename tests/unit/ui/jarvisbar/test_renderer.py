@@ -372,3 +372,27 @@ def test_idle_pill_is_empty_no_standby_dots():
 def test_active_bars_are_slim_not_chunky():
     # Slim-bar style: the equalizer strokes are thin, not the old chunky ~6px bars.
     assert R.bar_half_w_for(R.ACTIVE_W) <= 2.0
+
+
+def test_effective_ext_level_passes_fresh_samples_through():
+    # A sample younger than the stale window renders as-is: live sound moves
+    # the bars with no attenuation.
+    assert R.effective_ext_level(0.7, 0.0) == 0.7
+    assert R.effective_ext_level(0.7, R.LEVEL_STALE_S) == 0.7
+
+
+def test_effective_ext_level_decays_a_stopped_feed_to_silence():
+    # When a feeder stops without sending zero (bridge state gate, echo
+    # suppression, turn commit), the last sample must NOT keep animating the
+    # bars — the 2026-07-21 "still shows me speaking for 3-4 s after I
+    # stopped" defect. Past the stale window the level reads as dead silence.
+    assert R.effective_ext_level(0.7, R.LEVEL_STALE_S + 0.01) == 0.0
+    assert R.effective_ext_level(1.0, 5.0) == 0.0
+
+
+def test_level_stale_window_covers_the_slowest_healthy_feed_cadence():
+    # Mic feeds arrive per captured chunk (~30-100 ms), TTS per ~60 ms write
+    # block. The stale window must sit clearly above both so live sound can
+    # never flicker stale between samples, yet far below one second so a
+    # stopped feed collapses promptly.
+    assert 0.2 <= R.LEVEL_STALE_S <= 0.6

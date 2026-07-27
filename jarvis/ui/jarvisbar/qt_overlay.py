@@ -431,6 +431,11 @@ class QtJarvisBarOverlay:
         self._mode = "idle"
         self._ext_level = 0.0
         self._last_audible_t = 0.0
+        # Receipt stamp of the last set_level of ANY value: the frame loop
+        # renders the sample only while fresh (renderer.LEVEL_STALE_S), so a
+        # feed that stops without a zero reads as silence instead of bars
+        # frozen dancing on the last forwarded level.
+        self._last_level_rx_t = 0.0
         self._muted = False
         self._hovered = False
         self._static_tick_key: tuple[str, bool, bool, str] | None = None
@@ -538,8 +543,9 @@ class QtJarvisBarOverlay:
     def set_level(self, level: float) -> None:
         lv = max(0.0, min(1.0, float(level)))
         self._ext_level = lv
+        self._last_level_rx_t = time.perf_counter()
         if lv >= AUDIBLE_LEVEL:
-            self._last_audible_t = time.perf_counter()
+            self._last_audible_t = self._last_level_rx_t
 
     def set_muted(self, muted: bool) -> None:
         self._muted = bool(muted)
@@ -762,7 +768,10 @@ class QtJarvisBarOverlay:
             pil_frame = bar_renderer.render(
                 now - self._t0,
                 effective_mode,
-                self._ext_level,
+                renderer.effective_ext_level(
+                    self._ext_level,
+                    now - getattr(self, "_last_level_rx_t", 0.0),
+                ),
                 hovered=self._hovered,
                 muted=self._muted,
                 drop_state=drop_visual,

@@ -89,72 +89,48 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
 
 
 def _is_thinking_config_rejected_error(exc: Exception) -> bool:
-    """True when the API rejected the ``thinking_config`` itself.
+    """True when the API rejected the ``thinking_config`` BY NAME — definitive.
 
     Thinking-mandatory models answer 400 when asked to disable thinking
-    (``thinking_budget=0``), in two message shapes both seen live:
+    (``thinking_budget=0``) with a message that names it: "Budget 0 is invalid.
+    This model only works in thinking mode." (thinking-mandatory Pro class,
+    2026-07-16). Because the message points straight at the budget, the caller
+    may retire it immediately — no further evidence needed.
 
-    * The SPECIFIC form — "Budget 0 is invalid. This model only works in
-      thinking mode." (thinking-mandatory Pro class, 2026-07-16).
-    * The GENERIC form — a bare "Request contains an invalid argument." /
-      INVALID_ARGUMENT with NO "thinking" or "budget" token at all (live
-      forensic 2026-07-23: ``gemini-3.6-flash`` 400'd every Computer-Use step
-      this way; the vision chain then fell through to a blind last-resort
-      brain that burned ~68 s and the user heard the misleading "couldn't get
-      a valid screen-control response"). Matching only the specific form left
-      the generic one unrecovered.
+    The bare, parameterless "Request contains an invalid argument." 400 — no
+    "thinking"/"budget" token at all (live forensic 2026-07-23:
+    ``gemini-3.6-flash`` 400'd every Computer-Use step this way) — is
+    deliberately NOT matched here. It is ambiguous: it could equally be a
+    dead-cache or an unrelated rejection. That shape is caught by
+    ``_is_generic_invalid_argument_error`` and STILL recovered, but blame is
+    assigned by the retry itself — dropping the field and having the request
+    accepted is the proof. Keeping the two apart is what lets an unrelated 400
+    (or a two-variable cache+budget retry) blame nothing permanently.
 
     The concrete exception class differs across ``google-genai`` versions, so
-    we match on the message. The caller consults this ONLY when a
-    ``thinking_config`` is actually on the wire and no delta has been emitted
-    yet, so treating a pre-stream INVALID_ARGUMENT as a thinking rejection is
-    safe: the retry merely drops ``thinking_config``; an unrelated
-    invalid-argument still fails the retry and degrades normally. A capability
-    probe, never a model-name pin (AP-21).
+    we match on the message. A capability probe, never a model-name pin (AP-21).
     """
     msg = str(exc).lower()
-    if "thinking" in msg:
-        return "budget" in msg or "invalid" in msg or "thinking mode" in msg
+    if "thinking" not in msg:
+        return False
+    return "budget" in msg or "invalid" in msg or "thinking mode" in msg
+
+
+def _is_generic_invalid_argument_error(exc: Exception) -> bool:
+    """True for Gemini's parameterless 400 INVALID_ARGUMENT rejection.
+
+    Some models reject ``thinking_config.thinking_budget=0`` with the bare
+    "Request contains an invalid argument." — no field name, no "thinking"
+    token — so the targeted predicate above never matches (live 2026-07-21:
+    ``gemini-3.6-flash`` answered every delegated realtime turn this way and
+    the whole tier died unrecovered). The message names nothing, so blame is
+    assigned by the retry itself: dropping ``thinking_config`` and having the
+    request accepted is the capability probe (AP-21).
+    """
+    msg = str(exc).lower()
+    if "400" not in msg:
+        return False
     return "invalid_argument" in msg or "invalid argument" in msg
-
-
-# Models PROVEN to reject ``thinking_config``: the field was dropped and the
-# very next attempt then succeeded. Without this the recovery above is taken on
-# EVERY request — live forensic 2026-07-25: 154 rejections across 4 desktop
-# logs, ~8 s of added turn latency on 48 of 169 turns (28 %), because a correct
-# recovery path with no memory becomes the main path.
-#
-# Two deliberate design constraints:
-#
-# * Entry requires PROOF, never suspicion. The rejection arrives as a bare
-#   "Request contains an invalid argument." with no "thinking" token at all
-#   (the generic form documented above), so the error alone cannot tell a
-#   thinking rejection from an unrelated bad argument — a malformed tool
-#   schema, an oversized context. Caching on the error would permanently
-#   strip a thinking budget from a model that supports it, degrading answers
-#   with no diagnosable trace. We therefore record the model only after the
-#   retry WITHOUT the field actually completed.
-# * Process-local, never persisted. A provider that gains thinking support (or
-#   a transient server-side quirk) is re-probed on the next start, so a bad
-#   observation can never outlive the process. This is a learned capability,
-#   not a model-name pin (AP-21).
-_THINKING_CONFIG_REJECTED: set[str] = set()
-
-
-def _thinking_config_is_rejected(model: str) -> bool:
-    """True when *model* has already proven it rejects ``thinking_config``."""
-    return model in _THINKING_CONFIG_REJECTED
-
-
-def _remember_thinking_config_rejected(model: str) -> None:
-    """Record that dropping ``thinking_config`` is what made *model* work."""
-    if model and model not in _THINKING_CONFIG_REJECTED:
-        _THINKING_CONFIG_REJECTED.add(model)
-        log.info(
-            "Gemini model %s confirmed to reject thinking_config — omitting it "
-            "for the rest of this process instead of re-probing every request",
-            model,
-        )
 
 
 def _to_gemini_contents(
@@ -575,6 +551,16 @@ class GeminiBrain:
         # thinking" Gemini 3.x does. ``None`` = SDK default (auto, higher
         # latency). ``0`` = off, ``-1`` = dynamic, ``>0`` = fixed cap.
         self._thinking_budget = thinking_budget
+        # 2026-07-21: some models reject ``thinking_config`` with a
+        # parameterless 400 ("Request contains an invalid argument."). Once
+        # a retry without the field proves that blame, remember the REJECTED
+        # BUDGET VALUE so later turns skip the doomed extra round trip.
+        # Scoped per budget, not a whole-instance kill switch: brain
+        # instances are cached per (provider, model) and shared across
+        # tiers, so a rejection of the router's forced ``budget=0`` must
+        # not disable a different tier's positive budget on the same
+        # instance.
+        self._rejected_thinking_budgets: set[int] = set()
         # Latency-Sprint-2: context-cache name (lazily created on the first
         # call with system+tools). Key: (system_hash, tools_hash) → cache_name.
         # ``_cached_content_name``/``_cache_signature`` hold the most recently
@@ -791,8 +777,9 @@ class GeminiBrain:
             # step failed "unterminated JSON" with thoughts=304 of
             # max_tokens=320. An explicit constructor budget always wins.
             effective_thinking_budget = 0
-        if effective_thinking_budget is not None and not _thinking_config_is_rejected(
-            self._model
+        if (
+            effective_thinking_budget is not None
+            and effective_thinking_budget not in self._rejected_thinking_budgets
         ):
             try:
                 from google.genai import types as _genai_types
@@ -902,11 +889,13 @@ class GeminiBrain:
         # the from-scratch retry yields no duplicate chunks.
         attempt = 0
         yielded_delta = False
-        # Set when THIS call dropped ``thinking_config`` to recover. Promoted to
-        # the process-wide set only if the following attempt then succeeds, so a
-        # generic INVALID_ARGUMENT from an unrelated cause is never mistaken for
-        # a missing thinking capability.
-        dropped_thinking_config = False
+        # The budget value stripped by a parameterless-400 retry; promoted
+        # into ``_rejected_thinking_budgets`` only once the retried request
+        # is accepted (that acceptance IS the blame proof). The probe
+        # assumes Gemini request validation is deterministic for a fixed
+        # payload — a flaky 400 that clears on the retry for unrelated
+        # reasons would mis-blame, but validation errors are not transient.
+        pending_rejected_budget: int | None = None
         while True:
             attempt += 1
             try:
@@ -997,11 +986,18 @@ class GeminiBrain:
                         }
                 if final_usage is not None:
                     yield BrainDelta(usage=final_usage)
-                if dropped_thinking_config:
-                    # The attempt without ``thinking_config`` completed, so the
-                    # field WAS the cause. Only now is it safe to stop sending
-                    # it (see _THINKING_CONFIG_REJECTED).
-                    _remember_thinking_config_rejected(self._model)
+                if pending_rejected_budget is not None:
+                    # The retry without ``thinking_config`` was accepted, so
+                    # the parameterless 400 is attributed to it. Later turns
+                    # on this instance skip that budget (and the extra 400)
+                    # entirely.
+                    self._rejected_thinking_budgets.add(pending_rejected_budget)
+                    log.info(
+                        "Gemini model %s rejects thinking_budget=%d — "
+                        "omitting it from now on",
+                        self._model,
+                        pending_rejected_budget,
+                    )
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
                 if (
@@ -1020,22 +1016,63 @@ class GeminiBrain:
                     if tools_payload:
                         config_dict["tools"] = tools_payload
                     continue
+                thinking_config_blamed = _is_thinking_config_rejected_error(exc)
                 if (
                     not yielded_delta
                     and "thinking_config" in config_dict
-                    and _is_thinking_config_rejected_error(exc)
+                    and (
+                        thinking_config_blamed
+                        or _is_generic_invalid_argument_error(exc)
+                    )
                 ):
                     # Some models REQUIRE thinking mode and 400 on budget=0
                     # ("Budget 0 is invalid. This model only works in thinking
-                    # mode."). Capability recovery, not a model-name pin
-                    # (AP-21): drop the config and retry once. Safe: the
-                    # rejection fires before any token is generated.
+                    # mode."); others answer the bare "Request contains an
+                    # invalid argument." (live 2026-07-21: gemini-3.6-flash —
+                    # it bricked every delegated realtime fallback turn).
+                    # Capability recovery, not a model-name pin (AP-21): drop
+                    # the config and retry once. Safe: the rejection fires
+                    # before any token is generated. If something else caused
+                    # the parameterless 400, the retry fails the same way and
+                    # the error still propagates — one extra round trip, no
+                    # behavior change.
                     log.info(
                         "Gemini model %s rejected thinking_config — retrying "
                         "once without it: %s", self._model, exc,
                     )
+                    rejected_budget = getattr(
+                        config_dict.get("thinking_config"),
+                        "thinking_budget",
+                        None,
+                    )
                     config_dict.pop("thinking_config", None)
-                    dropped_thinking_config = True
+                    # A generic 400 while a context-cache reference is on the
+                    # wire could ALSO be a differently-worded dead-cache
+                    # rejection this branch would otherwise consume — and the
+                    # ``attempt == 1`` gate above would then keep the poisoned
+                    # cache name forever (BUG-019's exact symptom). Clear it
+                    # alongside, and skip blame promotion: with two variables
+                    # changed the retry proves nothing about the budget.
+                    dropped_cache = False
+                    if (
+                        not thinking_config_blamed
+                        and cache_name
+                        and "cached_content" in config_dict
+                    ):
+                        self.invalidate_cache()
+                        config_dict.pop("cached_content", None)
+                        if system_text:
+                            config_dict["system_instruction"] = system_text
+                        if tools_payload:
+                            config_dict["tools"] = tools_payload
+                        dropped_cache = True
+                    if isinstance(rejected_budget, int):
+                        if thinking_config_blamed:
+                            # The message names the thinking config — no
+                            # further evidence needed.
+                            self._rejected_thinking_budgets.add(rejected_budget)
+                        elif not dropped_cache:
+                            pending_rejected_budget = rejected_budget
                     continue
                 if (
                     not yielded_delta
