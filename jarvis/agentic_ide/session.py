@@ -1633,11 +1633,26 @@ class Registry:
         pane on an added subscription must open as the same session the user's
         own terminal opens (:func:`_spawn_env`), and it must not stop on a "do
         you trust this directory?" dialog on the way there.
-        """
-        self._pre_trust(term, folder)
-        return _spawn_env(term)
 
-    def _pre_trust(self, term: Terminal, folder: str) -> None:
+        Both under ONE lock on the account's directory, because panes attach
+        concurrently: a restored workspace re-attaches all of them at once, and
+        the two steps below are read-modify-write cycles on the same file — the
+        trust entry and the user's MCP servers both live in Claude Code's
+        ``.claude.json``. Unserialized, the second write is built on a document
+        read before the first one landed and drops it silently.
+        """
+        home = _redirected_home(term)
+        if home is None:
+            # Nothing was redirected: this pane already inherits the machine's
+            # own configuration, which is exactly what a terminal does.
+            return None
+        from jarvis import agent_config_parity
+
+        with agent_config_parity.setup_lock(home):
+            self._pre_trust(term, folder, home)
+            return _spawn_env(term)
+
+    def _pre_trust(self, term: Terminal, folder: str, home: Path) -> None:
         """Mark this folder trusted in the config dir THIS pane will run from.
 
         The workspace open already seeded the machine's own config, which covers
@@ -1647,11 +1662,8 @@ class Registry:
         an agent that never starts. Once per folder and account per process.
 
         Never raises: an unseeded pane costs one click, a failed spawn costs the
-        pane.
+        pane. Caller holds that directory's setup lock.
         """
-        home = _redirected_home(term)
-        if home is None:
-            return
         key = (os.path.normcase(folder), os.path.normcase(str(home)))
         if key in self._pre_trusted:
             return

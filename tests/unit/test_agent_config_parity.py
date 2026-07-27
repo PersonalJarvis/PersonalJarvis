@@ -388,6 +388,57 @@ def test_a_dangling_link_is_repaired_rather_than_inherited(
     assert (native / "skills").is_dir()
 
 
+def test_panes_provisioning_one_account_at_once_do_not_race(native: Path) -> None:
+    """Panes attach CONCURRENTLY — a restored workspace re-attaches all of them.
+
+    Eight threads on one account directory, doing the very thing eight panes do.
+    Every one must come back with the same answer and the directory must end up
+    whole, rather than two of them half-writing the same file.
+    """
+    import threading
+
+    account = _account()
+    results: list[dict[str, str]] = []
+    errors: list[BaseException] = []
+    start = threading.Barrier(8)
+
+    def _provision() -> None:
+        try:
+            start.wait(timeout=5)
+            results.append(ensure_parity("claude", account.id).shared)
+        except BaseException as exc:  # noqa: BLE001 - the assertion is below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_provision) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert len(results) == 8
+    # Same entries every time — no thread saw a half-provisioned directory.
+    assert {tuple(sorted(r)) for r in results} == {tuple(sorted(results[0]))}
+    assert (account.config_dir / "skills" / "git-rescue" / "SKILL.md").is_file()
+    assert json.loads(
+        (account.config_dir / agent_config_parity.STATE_FILE).read_text(encoding="utf-8")
+    )["version"] == agent_config_parity.STATE_VERSION
+
+
+def test_the_setup_lock_is_one_per_account_and_re_entrant(tmp_path: Path) -> None:
+    """One account serializes; two accounts still prepare in parallel.
+
+    Re-entrant because the registry holds it across the trust seeding AND the
+    parity run, and the parity run takes it again on the same thread.
+    """
+    first, second = tmp_path / "one", tmp_path / "two"
+    assert agent_config_parity.setup_lock(first) is agent_config_parity.setup_lock(first)
+    assert agent_config_parity.setup_lock(first) is not agent_config_parity.setup_lock(second)
+    lock = agent_config_parity.setup_lock(first)
+    with lock, lock:
+        pass  # a plain Lock would deadlock here
+
+
 def test_it_never_raises_on_a_host_that_refuses_everything(
     native: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

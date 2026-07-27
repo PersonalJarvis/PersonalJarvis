@@ -339,6 +339,41 @@ async def test_a_pane_pre_trusts_the_folder_in_its_own_account_directory(
     assert len([call for call in seen if call[2]]) == 1
 
 
+async def test_the_trust_seeding_and_the_setup_run_under_one_lock(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both write Claude Code's .claude.json, and panes attach concurrently.
+
+    Held apart, the second read-modify-write is built on a document read before
+    the first one landed and drops it — a lost trust entry is a dialog the user
+    has to click, a lost merge is a pane without its connectors.
+    """
+    from jarvis import agent_config_parity
+    from jarvis.workspace import trust
+
+    real_lock = agent_config_parity.setup_lock
+    events: list[str] = []
+
+    def _tracking_lock(path: Path) -> object:
+        events.append("lock")
+        return real_lock(path)
+
+    def _record(_root: Path, _agents: list[str], **kwargs: object) -> list[object]:
+        # The workspace open seeds the machine's own config; only the per-account
+        # seeding is the one that has to happen under the lock.
+        events.append("trust:account" if kwargs.get("config_dirs") else "trust:machine")
+        return []
+
+    monkeypatch.setattr(agent_config_parity, "setup_lock", _tracking_lock)
+    monkeypatch.setattr(trust, "ensure_trusted", _record)
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude", "account": second.id}])
+    await _attach(registry, registry.session.terminals[0].name)
+
+    assert "trust:account" in events
+    assert events.index("lock") < events.index("trust:account")
+
+
 async def test_a_pane_on_the_builtin_login_is_not_pre_trusted_twice(
     registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

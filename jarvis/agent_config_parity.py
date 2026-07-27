@@ -68,6 +68,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -91,6 +92,41 @@ STATE_FILE = "jarvis-shared-setup.json"
 #: Appended to an account-local folder that the user's own tree replaces. Kept
 #: beside it rather than deleted — see :func:`_supersede`.
 SUPERSEDED_SUFFIX = ".jarvis-superseded"
+
+#: One lock per account directory. See :func:`setup_lock`.
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def setup_lock(config_dir: Path) -> threading.RLock:
+    """The lock every writer into ONE account's config dir must hold.
+
+    Panes attach CONCURRENTLY — a restored workspace re-attaches all of them at
+    once, deliberately, so that eight agents do not start one after the other.
+    Several of them can therefore prepare the same account's directory in
+    different threads at the same moment, and two of the things that happen
+    there are read-modify-write cycles on the SAME file: Claude Code's
+    ``.claude.json`` receives the folder's trust entry (via
+    :mod:`jarvis.workspace.trust`) and the user's MCP servers (via
+    :func:`ensure_parity`). Unserialized, the later write is built on a document
+    read before the earlier one landed, and it silently drops it — a lost trust
+    entry is a dialog the user has to click, a lost merge is a pane without its
+    connectors.
+
+    Re-entrant on purpose: the registry holds this across BOTH steps, and the
+    parity run inside it takes the same lock again on the same thread.
+
+    Per directory rather than global, so two accounts still prepare in parallel;
+    the map is bounded by how many accounts exist (a handful, capped at
+    :data:`jarvis.agent_accounts.MAX_ACCOUNTS_PER_PLATFORM`).
+    """
+    key = os.path.normcase(str(config_dir))
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _LOCKS[key] = lock
+        return lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,14 +664,34 @@ def ensure_parity(platform: Platform, account_id: str | None) -> ParityReport:
         logger.warning("Agent setup: {} is not usable: {}", account.config_dir, exc)
         return ParityReport(redirected=True, skipped=((str(account.config_dir), str(exc)),))
 
-    state = _read_state(account.config_dir)
+    with setup_lock(account.config_dir):
+        shared, skipped = _provision(platform, native, account.config_dir)
+
+    fresh = {name: how for name, how in shared.items() if how != "current"}
+    if fresh:
+        logger.info(
+            "Agent setup: {!r} now shares your own {} setup ({})",
+            account.label,
+            platform,
+            ", ".join(f"{name} [{how}]" for name, how in fresh.items()),
+        )
+    for name, why in skipped:
+        logger.info("Agent setup: {} stayed the account's own — {}", name, why)
+    return ParityReport(shared=shared, skipped=tuple(skipped), redirected=True)
+
+
+def _provision(
+    platform: Platform, native: Path, config_dir: Path
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Share every allowlisted entry into ``config_dir``. Caller holds its lock."""
+    state = _read_state(config_dir)
     before = dict(state)
     shared: dict[str, str] = {}
     skipped: list[tuple[str, str]] = []
 
     for entry in USER_SETUP.get(platform, ()):
         source = native / entry.name
-        target = account.config_dir / entry.name
+        target = config_dir / entry.name
         try:
             if entry.kind == "dir":
                 if not source.is_dir():
@@ -659,7 +715,7 @@ def ensure_parity(platform: Platform, account_id: str | None) -> ParityReport:
 
     for merged in MERGED_KEYS.get(platform, ()):
         source = native / merged.name
-        target = account.config_dir / merged.name
+        target = config_dir / merged.name
         label = f"{merged.name}#{merged.key}"
         try:
             how, why = _merge_key(source, target, merged.key, state_key=label, state=state)
@@ -671,19 +727,8 @@ def ensure_parity(platform: Platform, account_id: str | None) -> ParityReport:
             skipped.append((label, why))
 
     if state != before:
-        _write_state(account.config_dir, state)
-
-    fresh = {name: how for name, how in shared.items() if how != "current"}
-    if fresh:
-        logger.info(
-            "Agent setup: {!r} now shares your own {} setup ({})",
-            account.label,
-            platform,
-            ", ".join(f"{name} [{how}]" for name, how in fresh.items()),
-        )
-    for name, why in skipped:
-        logger.info("Agent setup: {} stayed the account's own — {}", name, why)
-    return ParityReport(shared=shared, skipped=tuple(skipped), redirected=True)
+        _write_state(config_dir, state)
+    return shared, skipped
 
 
 __all__ = [
@@ -696,4 +741,5 @@ __all__ = [
     "ParityReport",
     "Shared",
     "ensure_parity",
+    "setup_lock",
 ]
