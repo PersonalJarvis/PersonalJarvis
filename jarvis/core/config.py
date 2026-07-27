@@ -2168,6 +2168,17 @@ class UltraWikiConfig(BaseModel):
     rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
     ollama_endpoint: str = "http://localhost:11434"
 
+    # Share of ONE core the ingest pipeline may occupy (0.01-1.0).
+    #
+    # Indexing a corpus is real work, but it is work nobody is waiting for,
+    # and it used to take whatever it could get: a full core, permanently,
+    # with the whole machine sluggish behind it. The worker now sleeps in
+    # proportion to how long each pass ran, so this is an honest ceiling on
+    # any CPU — the same guarantee on a headless VPS as on a workstation.
+    # Raise it to index faster on a machine nobody is sitting at; lower it if
+    # even this is noticeable. See jarvis.ultrawiki.pipeline.
+    cpu_share: float = 0.05
+
     # How hard the background lane works at turning pictures into words and
     # recordings into transcripts:
     #   "frugal" (default) - one item at a time, and only while every other
@@ -2603,6 +2614,16 @@ class AgenticIdeConfig(BaseModel):
             "Who writes Agentic IDE task briefs: 'auto' (a connected coding "
             "subscription if there is one, else the API-billed quality tier), "
             "'subscription', 'api', or a specific brain provider id."
+        ),
+    )
+
+    smart_recaps: bool = Field(
+        default=True,
+        description=(
+            "Let a model write each pane's header recap — what the pane set out "
+            "to do, where it stands, what is outstanding. Off falls back to the "
+            "transcript-derived one, which costs nothing and says much less. An "
+            "install with no reachable provider gets the fallback either way."
         ),
     )
 

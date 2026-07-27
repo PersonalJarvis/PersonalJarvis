@@ -1079,6 +1079,84 @@ async def reindex_wiki(
     }
 
 
+@router.post(
+    "/search-aliases/backfill",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def backfill_search_aliases(
+    request: Request,
+    dry_run: bool = Query(default=True),
+    overwrite: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1),
+) -> dict[str, Any]:
+    """Add search aliases to vault pages so questions in the user's own
+    language reach pages written in another one.
+
+    The fact extractor writes pages in English while the user may ask in any
+    language, and a keyword index cannot bridge that on its own. This walks the
+    vault and gives each page the words its owner would actually say, stored in
+    the ``search_aliases`` frontmatter list.
+
+    ``dry_run`` defaults to TRUE and is the safe direction: the field lands in
+    the user's own Obsidian files, so writing is opt-in. Pages that already
+    carry aliases are skipped unless ``overwrite`` is set, and even then
+    existing terms are merged rather than replaced — a hand-curated alias is
+    never lost. Marked dangerous because a non-dry run edits user files.
+
+    Reindexes automatically after a real run, so the new aliases are
+    immediately searchable.
+    """
+    import sqlite3
+
+    from jarvis.brain.provider_registry import BrainProviderRegistry
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+    from jarvis.memory.wiki.fts_index import ensure_schema, index_vault
+    from jarvis.memory.wiki.search_aliases import backfill_vault, target_languages
+
+    vault_root = _resolve_vault_root(request)
+    if vault_root is None or not vault_root.is_dir():
+        return {"ok": False, "error": "vault unavailable"}
+
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return {"ok": False, "error": "config unavailable"}
+
+    summary = await backfill_vault(
+        vault_root=vault_root,
+        cfg=config,
+        registry=BrainProviderRegistry(),
+        dry_run=dry_run,
+        overwrite=overwrite,
+        limit=limit,
+    )
+
+    reindexed = 0
+    if not dry_run and summary.get("updated"):
+        data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+        db_path = resolve_wiki_db_path(data_dir)
+
+        def _reindex() -> int:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            try:
+                ensure_schema(conn)
+                count = index_vault(vault_root, conn)
+                conn.commit()
+                return count
+            finally:
+                conn.close()
+
+        reindexed = await asyncio.to_thread(_reindex)
+
+    return {
+        "ok": True,
+        "vault_root": str(vault_root),
+        "languages": list(target_languages(config)),
+        "reindexed_pages": reindexed,
+        **summary,
+    }
+
+
 @router.get("/health")
 async def wiki_health(request: Request) -> dict[str, Any]:
     """Wiki subsystem health for the Wiki tab status panel (spec A5).

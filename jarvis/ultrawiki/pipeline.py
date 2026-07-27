@@ -63,6 +63,9 @@ __all__ = [
     "MAX_MEDIA_BYTES",
     "IDLE_SLEEP_S",
     "BUSY_SLEEP_S",
+    "DEFAULT_CPU_SHARE",
+    "MIN_CPU_SHARE",
+    "MAX_PACING_SLEEP_S",
     "PipelineWorker",
 ]
 
@@ -164,8 +167,28 @@ MAX_MEDIA_BYTES = 24 * 1024 * 1024
 MAX_EMBED_CHARS = 8000
 
 #: Loop pacing: quick follow-up while there is work, gentle poll when idle.
+#: ``BUSY_SLEEP_S`` is now the FLOOR of the proportional pause, not the pause
+#: itself — see :meth:`PipelineWorker.run`.
 IDLE_SLEEP_S = 2.0
 BUSY_SLEEP_S = 0.1
+
+#: Share of ONE core the ingest lane may occupy, when the config names none.
+#:
+#: Five percent, because this lane competes with the thing the user is actually
+#: doing. Ingestion is background work by definition: nobody is waiting for the
+#: 200 000th document to become searchable this second, while everybody notices
+#: a machine that has gone sluggish. At this setting a corpus takes longer to
+#: come online and the app stays responsive throughout, which is the right way
+#: round — and the knob exists for anyone who would rather trade it back.
+DEFAULT_CPU_SHARE = 0.05
+
+#: Floor for the same knob. Zero would be indistinguishable from "UltraWiki is
+#: broken", and that is a support question, not a setting.
+MIN_CPU_SHARE = 0.01
+
+#: Longest proportional pause, so one pathological pass (a huge media file, a
+#: provider timing out inside the window) cannot park the lane for an hour.
+MAX_PACING_SLEEP_S = 30.0
 
 #: The embedding ``ready()`` probe may hit the network (Ollama) and the distill
 #: probe walks the keyring; cache both verdicts briefly so an idle loop does
@@ -331,15 +354,44 @@ class PipelineWorker:
         """
         return dict(self._embed_block) if self._embed_block is not None else None
 
+    def _duty_cycle(self) -> float:
+        """Share of one core the ingest lane may take, from the config.
+
+        Clamped to a sane band rather than trusted: 0 would stop ingestion
+        entirely (a config typo must not silently disable the product), and
+        above 1.0 means nothing — the loop is single-threaded either way.
+        """
+        ultrawiki = getattr(self._cfg, "ultrawiki", None)
+        try:
+            raw = float(getattr(ultrawiki, "cpu_share", DEFAULT_CPU_SHARE))
+        except (TypeError, ValueError):
+            return DEFAULT_CPU_SHARE
+        return min(1.0, max(MIN_CPU_SHARE, raw))
+
     async def run(self, cancel_event: asyncio.Event) -> None:
         """The worker loop: run passes until *cancel_event* is set.
 
         A failed pass is logged and the loop continues; ``CancelledError``
         (hard task cancel) is always re-raised.
+
+        **Pacing is proportional, not fixed.** Indexing a corpus is real work
+        — tokenizing 236 k documents into FTS5 and embedding them is not a bug
+        to be optimized away — but it is work nobody is waiting for, and a
+        fixed 100 ms pause between passes does not bound it: a pass that takes
+        900 ms still gets 90 % of a core, which is exactly what it took
+        (observed live 2026-07-27, with the whole machine slowed down behind
+        it). Sleeping in PROPORTION to how long the pass ran caps the lane at a
+        known share of one core no matter how big the corpus, how slow the
+        disk, or how fast the CPU — the same guarantee on a Raspberry Pi and on
+        an M4, with no per-machine tuning and no platform-specific API.
         """
-        log.info("UltraWiki pipeline worker started")
+        log.info(
+            "UltraWiki pipeline worker started (cpu_share=%.0f%%)",
+            self._duty_cycle() * 100.0,
+        )
         try:
             while not cancel_event.is_set():
+                started = time.monotonic()
                 try:
                     attempted = await self.run_once()
                 except asyncio.CancelledError:
@@ -347,7 +399,16 @@ class PipelineWorker:
                 except Exception:
                     log.exception("UltraWiki pipeline pass failed; continuing")
                     attempted = 0
-                delay = BUSY_SLEEP_S if attempted else IDLE_SLEEP_S
+                if attempted:
+                    # Worked for `elapsed` -> rest until that is only `duty` of
+                    # the window. Read per pass, so changing the knob in the
+                    # settings takes effect without a restart.
+                    elapsed = max(0.0, time.monotonic() - started)
+                    duty = self._duty_cycle()
+                    delay = max(BUSY_SLEEP_S, elapsed * (1.0 / duty - 1.0))
+                    delay = min(delay, MAX_PACING_SLEEP_S)
+                else:
+                    delay = IDLE_SLEEP_S
                 if cancel_event.is_set():
                     break
                 try:
