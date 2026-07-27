@@ -163,6 +163,112 @@ describe("WikiSearch", () => {
     expect(items[1].getAttribute("data-slug")).toBe("harald");
   });
 
+  it("renders every server hit, even when the slug does not match the query", async () => {
+    // Regression: the palette let cmdk re-filter the results a second time,
+    // scoring the query against the item value (`hit:<slug>`) instead of the
+    // page text the backend actually matched. A multi-word search therefore
+    // returned hits over the API and showed an empty list to the user.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            query: "birthday party",
+            hits: [
+              {
+                slug: "harald",
+                title: "Harald",
+                path: "entities/harald.md",
+                snippet: "Plans the birthday party every year.",
+                score: 1,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = makeClient();
+    seedTreeCache(client);
+    render(
+      <Wrapper client={client}>
+        <WikiSearch onResultClick={() => {}} />
+      </Wrapper>,
+    );
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    });
+    const input = await screen.findByTestId("wiki-search-input");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "birthday party" } });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+
+    await waitFor(() => {
+      const hits = screen.getAllByTestId("wiki-search-hit");
+      expect(hits).toHaveLength(1);
+      expect(hits[0].getAttribute("data-slug")).toBe("harald");
+    });
+  });
+
+  it("marks every occurrence of the query term in a snippet", async () => {
+    // Regression: highlighting used `pattern.test(part)` with a /g regex,
+    // whose `lastIndex` carried over between calls — so it alternated
+    // true/false and marked plain words while leaving real matches plain.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            query: "pizza",
+            hits: [
+              {
+                slug: "pizza",
+                title: "Pizza",
+                path: "concepts/pizza.md",
+                snippet: "pizza on Friday and pizza on Sunday",
+                score: 1,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = makeClient();
+    seedTreeCache(client);
+    const { container } = render(
+      <Wrapper client={client}>
+        <WikiSearch onResultClick={() => {}} />
+      </Wrapper>,
+    );
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    });
+    const input = await screen.findByTestId("wiki-search-input");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "pizza" } });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("wiki-search-hit")).toHaveLength(1);
+    });
+    // cmdk renders the palette in a portal, so query the document body.
+    const marks = Array.from(
+      (container.ownerDocument ?? document).querySelectorAll("mark"),
+    );
+    expect(marks.map((m) => m.textContent)).toEqual(["pizza", "pizza"]);
+  });
+
   it("clicking a result calls onResultClick(slug)", async () => {
     const client = makeClient();
     seedTreeCache(client);

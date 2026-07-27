@@ -14,7 +14,7 @@
 //   * Enter or click → `onResultClick(slug)` and closes the dialog.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { Command } from "cmdk";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { colourForKind } from "@/lib/wikiGraph";
 import { useT } from "@/i18n";
@@ -96,23 +96,40 @@ function selectRecentPages(tree: TreeResponse | undefined): RecentEntry[] {
 }
 
 /**
- * Render a snippet with `<mark>` highlight wrapping for the matched terms.
- * Best-effort: case-insensitive word match, escapes HTML.
+ * Build the highlight matcher for one query. Returns `null` when there is
+ * nothing to highlight. Built once per query in the component rather than
+ * once per snippet per render.
  */
-function highlightSnippet(snippet: string, query: string): JSX.Element {
+function buildHighlightPattern(query: string): RegExp | null {
   const trimmed = query.trim();
-  if (!trimmed || !snippet) return <>{snippet}</>;
+  if (!trimmed) return null;
   const terms = trimmed
     .split(/\s+/)
     .filter(Boolean)
     .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (terms.length === 0) return <>{snippet}</>;
-  const pattern = new RegExp(`(${terms.join("|")})`, "ig");
+  if (terms.length === 0) return null;
+  return new RegExp(`(${terms.join("|")})`, "ig");
+}
+
+/**
+ * Render a snippet with `<mark>` highlight wrapping for the matched terms.
+ * Best-effort: case-insensitive word match; React escapes the text for us.
+ */
+function highlightSnippet(snippet: string, pattern: RegExp | null): JSX.Element {
+  if (!pattern || !snippet) return <>{snippet}</>;
+  // `String.split` with exactly ONE capture group puts every captured
+  // delimiter — i.e. every match — at an ODD index. Deriving the highlight
+  // from the index is exact and free.
+  //
+  // It replaces a `pattern.test(part)` check that was quietly wrong: `test()`
+  // on a /g regex advances `lastIndex` and resumes from there on the next
+  // call, so consecutive calls alternated true/false. Real matches were left
+  // unhighlighted and plain words got marked instead.
   const parts = snippet.split(pattern);
   return (
     <>
       {parts.map((part, idx) =>
-        pattern.test(part) ? (
+        idx % 2 === 1 ? (
           <mark key={idx} className="bg-amber-400/30 text-foreground">
             {part}
           </mark>
@@ -177,13 +194,32 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
     queryFn: () => fetchSearch(debouncedQuery),
     enabled,
     staleTime: 10_000,
+    // Keep the previous query's hits on screen while the next one is in
+    // flight. Without this every keystroke tore the list down to a
+    // "Searching…" placeholder and rebuilt it, which read as typing lag even
+    // though the request itself was fast.
+    placeholderData: keepPreviousData,
   });
 
-  const queryClient = useQueryClient();
-  const recent = useMemo(() => {
-    const tree = queryClient.getQueryData<TreeResponse>(["wiki", "tree"]);
-    return selectRecentPages(tree);
-  }, [queryClient, open]);
+  const highlightPattern = useMemo(
+    () => buildHighlightPattern(debouncedQuery),
+    [debouncedQuery],
+  );
+
+  // Read the tree through the query cache rather than `getQueryData` so the
+  // palette re-renders when the tree lands. `enabled: false` means this
+  // component never triggers the (expensive) vault walk itself — it only
+  // shows the recents once some other view has fetched the tree.
+  const { data: tree } = useQuery<TreeResponse>({
+    queryKey: ["wiki", "tree"],
+    queryFn: async () => {
+      const res = await fetch("/api/wiki/tree");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: false,
+  });
+  const recent = useMemo(() => selectRecentPages(tree), [tree]);
 
   const handlePick = useCallback(
     (slug: string) => {
@@ -200,6 +236,13 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
       open={open}
       onOpenChange={setOpen}
       label={t("wiki_search.dialog_label")}
+      // The backend already ranked these hits (FTS5/BM25 over full page
+      // bodies). cmdk's built-in filter would score them a SECOND time
+      // against the item `value` — which is `hit:<slug>`, not the page text —
+      // and hide every hit whose slug does not contain the query as a
+      // subsequence. That is why a multi-word search looked broken: the API
+      // returned results and the palette showed an empty list.
+      shouldFilter={false}
       data-testid="wiki-search-dialog"
       contentClassName="fixed left-1/2 top-[20vh] z-50 w-[min(640px,90vw)] -translate-x-1/2 rounded-xl border border-border bg-background shadow-2xl"
       overlayClassName="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
@@ -256,7 +299,9 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
               ))
             )}
           </Command.Group>
-        ) : isFetching ? (
+        ) : isFetching && !data ? (
+          // Only the very first search shows a placeholder. Later keystrokes
+          // keep the previous hits visible until the new ones arrive.
           <div className="px-2 py-3 text-muted-foreground" data-testid="wiki-search-loading">
             {t("wiki_search.searching")}
           </div>
@@ -294,7 +339,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
                   <span className="text-muted-foreground">— {hit.path}</span>
                 </span>
                 <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {highlightSnippet(hit.snippet, debouncedQuery)}
+                  {highlightSnippet(hit.snippet, highlightPattern)}
                 </span>
               </Command.Item>
             ))}

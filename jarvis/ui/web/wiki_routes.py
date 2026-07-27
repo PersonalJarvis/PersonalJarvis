@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC
@@ -217,61 +218,170 @@ def _visible_path_sort_key(relative_path: Path) -> tuple[int, str]:
     return rank, relative_path.as_posix().casefold()
 
 
+# Parsed-page cache, keyed by vault root and then by vault-relative path.
+#
+# ``/tree``, ``/graph`` and ``/backlinks/{slug}`` all project the same vault
+# walk, and each one used to READ AND PARSE every Markdown file in the vault
+# on every single request. Opening the Wiki tab fires all three at once and
+# every page click fires two more, so a vault with a few hundred pages spent
+# whole seconds of disk + parse work per navigation — the user-visible "the
+# wiki feels laggy" symptom.
+#
+# An entry is reused only when the file's ``(mtime_ns, size)`` is unchanged,
+# which the walk has to stat for the response payload anyway. So a warm scan
+# of an untouched vault costs one stat per file and zero reads/parses, while
+# any external edit (Obsidian, the curator, a git pull) invalidates exactly
+# the files it touched. Entries not seen in a scan are dropped, which bounds
+# the cache by the vault itself; only the few most recent roots are kept.
+_PARSE_CACHE_LOCK = threading.Lock()
+_PARSE_CACHE: dict[str, dict[str, tuple[int, int, _VisiblePage]]] = {}
+_PARSE_CACHE_MAX_ROOTS = 4
+
+
+def invalidate_visible_page_cache(vault_root: Path | None = None) -> None:
+    """Drop cached page parses for one vault root, or for all of them.
+
+    The ``(mtime_ns, size)`` check already covers every real edit; this exists
+    for tests and for callers that rewrite a vault in place fast enough to
+    land inside a filesystem's timestamp granularity.
+    """
+    with _PARSE_CACHE_LOCK:
+        if vault_root is None:
+            _PARSE_CACHE.clear()
+        else:
+            _PARSE_CACHE.pop(str(vault_root.resolve()), None)
+
+
+def _walk_page_files(root: Path) -> list[tuple[Path, Path, os.stat_result]]:
+    """Yield ``(path, vault-relative path, stat)`` for every visible page.
+
+    Built on ``os.scandir`` rather than ``os.walk``: the directory entry
+    already carries the file type and, on Windows, the full stat block, so the
+    type check and the ``(mtime, size)`` the cache validates against come for
+    free instead of costing a syscall each.
+
+    Hidden trees, frozen archive history, and attachment stores are pruned
+    before files are opened. Symlinked files that resolve outside the vault are
+    ignored so a crafted vault cannot expose unrelated host files — and only a
+    symlink can point outside, so the expensive ``resolve()`` is paid for links
+    alone instead of for every page.
+    """
+    out: list[tuple[Path, Path, os.stat_result]] = []
+    stack: list[str] = [str(root)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                listing = list(entries)
+        except OSError as exc:
+            log.warning("wiki_route_walk_failed: %s - %s", current, exc)
+            continue
+        for entry in listing:
+            name = entry.name
+            if name.startswith("."):
+                continue
+            try:
+                # A symlinked directory reports False here, which is exactly
+                # the old ``os.walk(followlinks=False)`` behaviour: listed,
+                # never descended into.
+                if entry.is_dir(follow_symlinks=False):
+                    if name.casefold() not in _EXCLUDED_PAGE_DIRS:
+                        stack.append(entry.path)
+                    continue
+                if not name.casefold().endswith(".md"):
+                    continue
+                path = Path(entry.path)
+                if entry.is_symlink():
+                    resolved = path.resolve()
+                    resolved.relative_to(root)
+                    if not resolved.is_file():
+                        continue
+                elif not entry.is_file(follow_symlinks=False):
+                    continue
+                stat = entry.stat()
+            except (OSError, ValueError):
+                continue
+            out.append((path, path.relative_to(root), stat))
+    return out
+
+
 def _scan_visible_pages_sync(vault_root: Path) -> list[_VisiblePage]:
     """Parse every user-visible Markdown page below ``vault_root``.
 
-    Hidden trees, frozen archive history, and attachment stores are pruned
-    before files are opened. Symlinked files that resolve outside the vault
-    are also ignored so a crafted vault cannot expose unrelated host files.
+    Unchanged files are served from the parse cache above; the walk itself is
+    described in :func:`_walk_page_files`.
     """
     root = vault_root.resolve()
-    paths: list[tuple[Path, Path]] = []
-    for current, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(
-            (
-                name
-                for name in dirnames
-                if not name.startswith(".")
-                and name.casefold() not in _EXCLUDED_PAGE_DIRS
-            ),
-            key=str.casefold,
-        )
-        current_path = Path(current)
-        for filename in sorted(filenames, key=str.casefold):
-            if filename.startswith(".") or Path(filename).suffix.casefold() != ".md":
-                continue
-            path = current_path / filename
-            try:
-                resolved = path.resolve()
-                resolved.relative_to(root)
-                relative = path.relative_to(root)
-            except (OSError, ValueError):
-                continue
-            paths.append((path, relative))
+    cache_key = str(root)
+    found = _walk_page_files(root)
+    # One total-order sort at the end — the intermediate per-directory sorts
+    # the old walk did could not change this result.
+    found.sort(key=lambda item: _visible_path_sort_key(item[1]))
 
-    paths.sort(key=lambda item: _visible_path_sort_key(item[1]))
+    with _PARSE_CACHE_LOCK:
+        cached = _PARSE_CACHE.get(cache_key, {})
+
+    fresh: dict[str, tuple[int, int, _VisiblePage]] = {}
     visible: list[_VisiblePage] = []
-    for path, relative in paths:
-        try:
-            raw = path.read_text(encoding="utf-8", errors="replace")
-            stat = path.stat()
-        except OSError as exc:
-            log.warning("wiki_route_walk_failed: %s - %s", path, exc)
-            continue
-        visible.append(
-            _VisiblePage(
+    for path, relative, stat in found:
+        rel_key = relative.as_posix()
+        signature = (stat.st_mtime_ns, stat.st_size)
+        hit = cached.get(rel_key)
+        if hit is not None and (hit[0], hit[1]) == signature:
+            entry = hit[2]
+        else:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                log.warning("wiki_route_walk_failed: %s - %s", path, exc)
+                continue
+            entry = _VisiblePage(
                 page=parse_markdown(raw, path),
                 relative_path=relative,
                 mtime=stat.st_mtime,
                 size=stat.st_size,
             )
-        )
+        fresh[rel_key] = (*signature, entry)
+        visible.append(entry)
+
+    with _PARSE_CACHE_LOCK:
+        # Re-insert so this root counts as the most recently used one.
+        _PARSE_CACHE.pop(cache_key, None)
+        _PARSE_CACHE[cache_key] = fresh
+        while len(_PARSE_CACHE) > _PARSE_CACHE_MAX_ROOTS:
+            del _PARSE_CACHE[next(iter(_PARSE_CACHE))]
+
     return visible
 
 
+# One shared scan per vault root while it is running. Mounting the Wiki tab
+# fires /tree, /graph and /backlinks simultaneously; without this they queued
+# three identical walks against the same thread pool, so the slowest response
+# waited for all three. Now the first request does the work and the others
+# await its result.
+_SCAN_INFLIGHT: dict[str, asyncio.Task[list[_VisiblePage]]] = {}
+
+
+def _release_inflight(key: str, task: asyncio.Task[list[_VisiblePage]]) -> None:
+    """Drop a finished scan task unless a newer one already replaced it."""
+    if _SCAN_INFLIGHT.get(key) is task:
+        _SCAN_INFLIGHT.pop(key, None)
+
+
 async def _scan_visible_pages(vault_root: Path) -> list[_VisiblePage]:
-    """Build a fresh, non-blocking projection of the active Obsidian vault."""
-    return await asyncio.to_thread(_scan_visible_pages_sync, vault_root)
+    """Build a non-blocking projection of the active Obsidian vault."""
+    key = str(vault_root)
+    loop = asyncio.get_running_loop()
+    task = _SCAN_INFLIGHT.get(key)
+    if task is None or task.done() or task.get_loop() is not loop:
+        task = loop.create_task(
+            asyncio.to_thread(_scan_visible_pages_sync, vault_root)
+        )
+        _SCAN_INFLIGHT[key] = task
+        task.add_done_callback(lambda done, k=key: _release_inflight(k, done))
+    # Shielded: a client that disconnects mid-scan must not cancel the walk
+    # the other waiters are riding on.
+    return await asyncio.shield(task)
 
 
 def _folder_name(relative_path: Path) -> str:

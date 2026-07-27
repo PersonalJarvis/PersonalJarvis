@@ -216,6 +216,13 @@ class Consolidator:
         # In-memory by design: bounds the burn within one process life while
         # a restart (usually carrying a fix) retries parked-adjacent rows.
         self._judge_rejections: dict[int, tuple[int, float]] = {}
+        # Page bodies read during ONE run, keyed by vault-relative target.
+        # Validation re-reads the same residence/profile pages once per
+        # decision item AND once per provider attempt; a cycle-scoped memo
+        # turns that repeated disk traffic into one read per page. Cleared
+        # at the start of every judge/execute cycle so no cached body can
+        # outlive a write. ``None`` records "unreadable/absent".
+        self._page_body_cache: dict[str, str | None] = {}
 
     # ------------------------------------------------------------------
     # public API
@@ -223,7 +230,12 @@ class Consolidator:
 
     async def run_once(self, *, review_keys: Sequence[str] | None = None) -> str:
         """Drain one batch, optionally scoped to exact capture reviews."""
-        rows = self._journal.pending(
+        # Every blocking step of a run (SQLite, vault reads, FTS) is pushed
+        # to a worker thread. A run is triggered from the app's event loop,
+        # which also serves the Desktop UI, the WebSocket stream, and the
+        # voice path — a synchronous batch there stalls all of them (AP-9).
+        rows = await asyncio.to_thread(
+            self._journal.pending,
             limit=self._batch_limit,
             review_keys=review_keys,
         )
@@ -249,7 +261,7 @@ class Consolidator:
             row for row in rows if row.review_key and not row.evidence_excerpt
         ]
         if ungrounded:
-            self._journal.mark(
+            await self._mark(
                 [row.id for row in ungrounded],
                 status="rejected",
             )
@@ -289,7 +301,15 @@ class Consolidator:
         """Judge rows, bisecting capacity failures without losing candidates."""
         if not rows:
             return _BatchOutcome()
-        neighbours = self._collect_neighbours(rows)
+        # Fresh page reads per judge/execute cycle. Every read in a cycle
+        # happens before that cycle's writes, so the memo can never serve a
+        # body this run already replaced — and the bisection recursion starts
+        # each half with a clean slate.
+        self._page_body_cache.clear()
+        # Retrieval is FTS5 plus up to ``k_nearest * len(rows)`` full page
+        # reads — hundreds of milliseconds of disk work that must never run
+        # on the event loop.
+        neighbours = await asyncio.to_thread(self._collect_neighbours, rows)
         decisions = await self._judge(rows, neighbours)
         if decisions is None:
             # Provider timeout/unavailability is not a content verdict. Keep
@@ -302,7 +322,7 @@ class Consolidator:
                 # data loss. Retryable is still bounded: repeat rejections
                 # back off, then park the row (see _note_judge_rejection).
                 if decisions == "rejected":
-                    self._note_judge_rejection(rows[0])
+                    await self._note_judge_rejection(rows[0])
                     return _BatchOutcome(rejected=1)
                 return _BatchOutcome(truncated=True)
             midpoint = len(rows) // 2
@@ -324,6 +344,28 @@ class Consolidator:
             transient=transient,
         )
 
+    async def _mark(
+        self,
+        ids: Sequence[int],
+        *,
+        status: str,
+        decision: str | None = None,
+        target_path: str | None = None,
+    ) -> None:
+        """Close journal rows off the event loop.
+
+        Each ``mark`` is a SQLite write transaction, and a batch closes up to
+        ``batch_limit`` rows one call at a time. On the loop that is a visible
+        stall in the UI and the voice path for every run.
+        """
+        await asyncio.to_thread(
+            self._journal.mark,
+            list(ids),
+            status=status,  # type: ignore[arg-type]
+            decision=decision,  # type: ignore[arg-type]
+            target_path=target_path,
+        )
+
     def _in_rejection_backoff(self, row_id: int) -> bool:
         """True while a judge-rejected row waits out its escalating backoff."""
         history = self._judge_rejections.get(row_id)
@@ -332,7 +374,7 @@ class Consolidator:
         rounds, last_ts = history
         return (time.monotonic() - last_ts) < self._JUDGE_REJECTION_BACKOFF_S * rounds
 
-    def _note_judge_rejection(self, row: JournalRow) -> None:
+    async def _note_judge_rejection(self, row: JournalRow) -> None:
         """Record one all-provider judge rejection; park the row at the cap.
 
         ``skipped`` (not ``rejected``) because the JUDGE never produced a
@@ -342,7 +384,7 @@ class Consolidator:
         rounds = self._judge_rejections.get(row.id, (0, 0.0))[0] + 1
         if rounds >= self._MAX_JUDGE_REJECTION_ROUNDS:
             self._judge_rejections.pop(row.id, None)
-            self._journal.mark([row.id], status="skipped")
+            await self._mark([row.id], status="skipped")
             telemetry.inc("wiki_consolidator_parked_judge_wedge")
             log.warning(
                 "Consolidator: parking candidate %d as skipped after %d "
@@ -810,36 +852,36 @@ class Consolidator:
             if cid in deferred_ids:
                 continue
             if cid in duplicate_target_ids:
-                self._journal.mark([cid], status="skipped")
+                await self._mark([cid], status="skipped")
                 log.warning(
                     "Consolidator: candidate %d proposed the same target twice; skipped",
                     cid,
                 )
                 continue
             if cid in noop_ids:
-                self._journal.mark([cid], status="consolidated", decision="noop")
+                await self._mark([cid], status="consolidated", decision="noop")
                 telemetry.inc("wiki_consolidator_noop")
                 continue
             plan = write_plan.get(cid)
             if plan is None:
                 # Judge returned nothing usable for this candidate.
-                self._journal.mark([cid], status="skipped")
+                await self._mark([cid], status="skipped")
                 log.debug("Consolidator: candidate %d unjudged — skipped", cid)
                 continue
             decision, target = plan
             if decision is None or target is None:
-                self._journal.mark([cid], status="skipped")
+                await self._mark([cid], status="skipped")
                 continue
             required = required_targets.get(cid, {target})
             if required and required.issubset(applied_rel):
-                self._journal.mark(
+                await self._mark(
                     [cid], status="consolidated",
-                    decision=decision,  # type: ignore[arg-type]
+                    decision=decision,
                     target_path=target,
                 )
                 telemetry.inc(f"wiki_consolidator_{decision}")
             elif required & rejected_rel:
-                self._journal.mark([cid], status="rejected", target_path=target)
+                await self._mark([cid], status="rejected", target_path=target)
                 log.warning(
                     "Consolidator: write for candidate %d rejected "
                     "(secret guard / validation) — %s", cid, target,
@@ -971,15 +1013,32 @@ class Consolidator:
             (graph_target, user_slug),
             (profile_target, topic_slug),
         ):
-            path = self._vault_root / target
-            try:
-                body = path.read_text(encoding="utf-8")
-            except OSError:
+            body = self._read_page(target)
+            if body is None:
                 required.add(target)
                 continue
             if not self._body_links_to_slug(body, linked_slug):
                 required.add(target)
         return required
+
+    def _read_page(self, target: str) -> str | None:
+        """Read a vault-relative page once per run; ``None`` when unreadable.
+
+        ``_validate_decisions`` runs once per provider attempt and again in
+        ``_execute``, and probes the same residence/profile pages for every
+        decision item — without the memo one batch re-read the same handful
+        of files a dozen times.
+        """
+        if target in self._page_body_cache:
+            return self._page_body_cache[target]
+        try:
+            body: str | None = (self._vault_root / target).read_text(
+                encoding="utf-8"
+            )
+        except OSError:
+            body = None
+        self._page_body_cache[target] = body
+        return body
 
     def _is_required_place_secondary_update(
         self,
