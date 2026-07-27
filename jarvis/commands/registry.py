@@ -89,6 +89,24 @@ def _provider_ids(tier: str, *, brain_switchable_only: bool = False) -> list[str
     return sorted(ids)
 
 
+def _coding_agent_ids() -> list[str]:
+    """Coding CLIs a workspace pane can run, from the ONE agent registry.
+
+    Never a literal list. A registered CLI that the voice schema does not know
+    about is unreachable by voice while being fully supported everywhere else —
+    the pane opens from the UI, resumes, accepts prompts, and is simply absent
+    from the one surface that is supposed to drive it. Reading the registry is
+    what lets a newly registered agent be spawned the day it lands, without a
+    second table remembering to agree (the same rule §5 sets for providers:
+    gate on the capability, never on a name someone typed twice).
+    """
+    try:
+        from jarvis.workspace.agents import coding_agent_names
+    except Exception:  # pragma: no cover - defensive: registry must not crash
+        return []
+    return sorted(coding_agent_names())
+
+
 def _all_provider_ids() -> list[str]:
     try:
         from jarvis.ui.web.provider_spec import PROVIDERS
@@ -719,16 +737,104 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="agentic-ide-fanout",
+            title="Open and brief Agentic-IDE terminals in one step",
+            description=(
+                "Give ONE task to coding terminals — existing ones, brand-new "
+                "ones, or both — in a single call. This is the ONLY correct way "
+                "to handle 'if no terminal is called that, open one and prompt "
+                "it' and 'spawn N terminals and let them do X': pass the work as "
+                "'instruction', the panes to brief as 'terminals', and the panes "
+                "to open first as 'spawn'. Never emulate it by opening panes and "
+                "then prompting — call-signs are assigned automatically, so a "
+                "pane you open is NOT called the name you had in mind, and "
+                "re-spawning after a failed prompt just leaves blank panes "
+                "behind. Set 'split' true only when the user asked for the work "
+                "to be DIVIDED between the agents. "
+                "CHECK THE REPLY: 'delivered' names the agents that really got "
+                "the task and 'undelivered' those that did not — report both, "
+                "and use the call-signs the reply gives you."
+            ),
+            method="POST",
+            path="/api/agentic-ide/fanout",
+            params={
+                "type": "object",
+                "properties": {
+                    "instruction": _str_param(
+                        "The work the agents should do, in plain words.",
+                        min_length=1,
+                        max_length=4000,
+                    ),
+                    "terminals": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Call-signs of running terminals to brief. Leave "
+                            "empty to brief only the newly opened panes."
+                        ),
+                    },
+                    "spawn": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "count": {
+                                    "type": "integer",
+                                    "description": "Panes to open in this group.",
+                                },
+                                "agent": {
+                                    "type": "string",
+                                    "enum": _coding_agent_ids() or None,
+                                    "description": (
+                                        "Coding agent for this group; omit to "
+                                        "inherit the last pane's."
+                                    ),
+                                },
+                            },
+                            "required": ["count"],
+                        },
+                        "description": (
+                            "Panes to open before briefing, group by group. "
+                            "Only the newly opened panes are briefed, so agents "
+                            "already working are not interrupted."
+                        ),
+                    },
+                    "split": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Divide the instruction into one distinct assignment "
+                            "per agent instead of giving all of them the same "
+                            "brief."
+                        ),
+                    },
+                },
+                "required": ["instruction"],
+            },
+            ui_section="agentic-ide",
+            voice_aliases={
+                # i18n-allow: input vocab
+                "de": ("spawne ein terminal und lass es die tests fixen",),
+                "en": ("open a terminal and have it fix the tests",),
+                "es": ("abre una terminal y que arregle las pruebas",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="agentic-ide-spawn-terminals",
             title="Open more Agentic-IDE terminals",
             description=(
                 "Open one or more additional coding terminals in the open "
-                "workspace. Use this when the user asks for MORE TERMINALS / "
-                "panes ('spawn five new Claude Code terminals', 'open two more "
-                "Codex terminals') — that is a request for workspace panes, "
-                "never for a background worker. Pass count, and agent only when "
-                "the user named one ('claude' or 'codex'); omitted, the new "
-                "panes run whatever the last pane runs. "
+                "workspace, WITHOUT giving them work. Use this only when the "
+                "user asks for bare panes ('spawn five new Claude Code "
+                "terminals', 'open two more Codex terminals') — that is a "
+                "request for workspace panes, never for a background worker. "
+                "When the new panes are also meant to DO something, use "
+                "'agentic-ide-fanout' instead, which opens and briefs them in "
+                "one step. Pass count, and agent only when the user named one "
+                "('claude' or 'codex'); omitted, the new panes run whatever the "
+                "last pane runs. Their call-signs are assigned automatically — "
+                "the reply's names are the only way to address them, and calling "
+                "this again never produces a name you picked. "
                 "CHECK THE REPLY: 'capped' true means the workspace maximum cut "
                 "the request short — say how many actually opened and name them, "
                 "never report the full number as done."
@@ -745,7 +851,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
                     },
                     "agent": {
                         "type": "string",
-                        "enum": ["claude", "codex"],
+                        "enum": _coding_agent_ids() or None,
                         "description": (
                             "Coding agent for the new panes; omit to inherit "
                             "the last pane's."
@@ -819,7 +925,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "properties": {
                     "agent": _str_param(
                         "Coding agent whose terminals should be closed.",
-                        enum=["claude", "codex"],
+                        enum=_coding_agent_ids() or None,
                     ),
                 },
                 "required": ["agent"],

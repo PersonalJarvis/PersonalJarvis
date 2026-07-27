@@ -29,7 +29,9 @@ rather than handing the PTY an argv that cannot start.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from jarvis.clis.prober import CliStatusProber
 from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
@@ -40,6 +42,15 @@ log = logging.getLogger(__name__)
 # A semver anywhere in the --version output. Matches both
 # "2.1.195 (Claude Code)" and "codex-cli 0.142.3".
 _SEMVER_RE = r"(\d+\.\d+\.\d+)"
+
+# The same, with the patch component optional. Not every CLI ships three parts:
+# the Python-generation Kimi answers ``kimi, version 1.3``, which the strict
+# pattern above misses entirely — and a missed version is not a cosmetic loss.
+# It reads downstream as ``version=None``, which the wizard and the resume offer
+# render as a blank field next to an installed binary, i.e. exactly what a
+# broken install looks like. Entries whose CLI numbers itself in two parts opt
+# into this instead.
+_LOOSE_SEMVER_RE = r"(\d+\.\d+(?:\.\d+)?)"
 
 # The registry key of the plain-shell entry. A name rather than a literal
 # everywhere, because several layers (the IDE session registry, the pane split
@@ -163,7 +174,26 @@ def register_agent(agent: WorkspaceAgent, *, replace: bool = False) -> Workspace
     if agent.name in _AGENTS and not replace:
         raise ValueError(f"A workspace agent called {agent.name!r} is already registered.")
     _AGENTS[agent.name] = agent
+    _forget_command_catalog()
     return agent
+
+
+def _forget_command_catalog() -> None:
+    """Drop the cached command catalog, which spells this registry out.
+
+    The voice/LLM schema for "open a pane running X" lists the registered
+    coding CLIs by name, and that catalog is built once and cached. An agent
+    registered after the first build would therefore be openable from the UI,
+    resumable, promptable — and invisible to the one surface meant to drive it.
+    Never raises: the catalog is optional to this module, and a registration
+    that fails because of it would be the worse outcome.
+    """
+    try:
+        from jarvis.commands.registry import get_registry
+
+        get_registry.cache_clear()
+    except Exception:  # noqa: BLE001 - the catalog is not this module's job
+        return
 
 
 def list_agents() -> list[WorkspaceAgent]:

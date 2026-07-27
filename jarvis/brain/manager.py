@@ -5810,6 +5810,48 @@ class BrainManager:
             conversation_language=self._conversation_language,
         )
 
+        # A clarified pane is briefed with the ORIGINAL utterance — the sentence
+        # that actually carried the work — not with the "yes" that confirmed it.
+        if answered is not None:
+            panes, original = answered
+            # Every pane the answer confirmed, not the first one: "Alex und
+            # Blaike, macht beide …" is ONE instruction for two agents, and a
+            # single "yes" has to brief both of them. Answering it with one
+            # pane is how the second agent of an addressed pair was lost (live
+            # 2026-07-27 19:07).
+            live = [name for name in panes if session.find(name) is not None]
+            if live:
+                log.info(
+                    "Agentic IDE: clarified call-sign(s) resolved to %s",
+                    ", ".join(live),
+                )
+                return await self._deliver_agentic_ide_prompt(
+                    session=session,
+                    names=live,
+                    utterance=original,
+                    instruction="",
+                    language=out_lang,
+                )
+
+        if not addressed:
+            # No pane was named with certainty — but the turn may still have
+            # MEANT one. A call-sign arrives through speech recognition, and the
+            # live 2026-07-27 failure was exactly this: "Ellis" came back as
+            # "Ilies", scored just under the acting threshold, and this path
+            # returned None without a word. Nothing reached the pane, nothing
+            # was said, and the live model — which never learns any of this —
+            # filled the silence by claiming an agent was working.
+            #
+            # Asking costs the user one word and cannot type a stranger's
+            # sentence into a coding agent, so uncertainty resolves to a
+            # question. ``detect_clarification`` decides when there is one to
+            # ask; it stands down for anything that is not addressing the
+            # workspace.
+            return self._ask_which_agentic_ide_terminal(
+                user_text, candidates=candidates, language=out_lang
+            )
+        found = addressed[0]
+
         # A question about a pane is read-only: answer it from what that pane
         # printed, and let the normal brain path phrase the answer with the
         # focus-context block (which already carries the transcript tail).
@@ -5817,6 +5859,17 @@ class BrainManager:
             return None
 
         names = [item.terminal for item in addressed]
+
+        # A turn addresses a FLEET, and speech recognition may have carried
+        # only part of it across. "Alex und Blaike, macht beide einen Deep
+        # Dive" resolves Alex and mangles Blake, and this path used to brief
+        # Alex and say nothing at all about the rest — so the user heard one
+        # agent confirmed and believed two were working (live 2026-07-27
+        # 19:07). The pane that WAS understood still gets its brief; the one
+        # that was not becomes a question appended to the same answer.
+        leftover = self._agentic_ide_leftover_question(
+            user_text, candidates=candidates, claimed=names, language=out_lang
+        )
 
         # NOTHING is spoken between here and the delivery verdict below, and that
         # silence is the feature. A bridge line lived here for a few hours on
@@ -5860,28 +5913,334 @@ class BrainManager:
                 log.warning("Agentic IDE work split failed", exc_info=True)
                 assignments = None
 
-        # No brain is pinned for the composer on purpose. An earlier version
-        # handed it this turn's FAST router model to save 4-5 s, but that
-        # optimised the wrong axis: the prompt is what the coding agent then
-        # works from for minutes, and the maintainer's decision on 2026-07-25
-        # was explicitly for the better prompt over the quicker handoff. The
-        # composer resolves a quality-tier model itself and degrades to its
-        # deterministic prompt when none is reachable.
+        verdict = await self._deliver_agentic_ide_prompt(
+            session=session,
+            names=names,
+            utterance=user_text,
+            instruction=found.instruction,
+            language=out_lang,
+            assignments=assignments,
+        )
+        if leftover is not None:
+            # Armed only now: a question about the rest of the fleet is worth
+            # asking once the panes that WERE understood are actually briefed,
+            # and a delivery that failed on the way there should not leave a
+            # question standing about work nobody received.
+            need, question = leftover
+            ide_clarify.WINDOW.arm(need, question=question)
+            log.info(
+                "Agentic IDE: briefed %s, asking about %s",
+                ", ".join(names),
+                " / ".join(need.offered),
+            )
+            return f"{verdict} {question}" if verdict else question
+        return verdict
+
+    async def _deliver_agentic_ide_prompt(
+        self,
+        *,
+        session: Any,
+        names: list[str],
+        utterance: str,
+        instruction: str,
+        language: str,
+        assignments: dict[str, str] | None = None,
+    ) -> str | None:
+        """Compose and type one instruction into the addressed panes.
+
+        Shared by the addressed-terminal path and by the answer to a "did you
+        mean …?" question, so a clarified pane is briefed through exactly the
+        same composer and reported by exactly the same verdict line. A second
+        delivery site would be free to drift into announcing something it did
+        not do, which is the failure class this whole area exists to prevent.
+
+        No brain is pinned for the composer on purpose. An earlier version
+        handed it this turn's FAST router model to save 4-5 s, but that
+        optimised the wrong axis: the prompt is what the coding agent then
+        works from for minutes, and the maintainer's decision on 2026-07-25
+        was explicitly for the better prompt over the quicker handoff. The
+        composer resolves a quality-tier model itself and degrades to its
+        deterministic prompt when none is reachable.
+        """
+        from jarvis.agentic_ide import fanout as ide_fanout
+
+        # Returning None here would hand the turn to the model with nothing to
+        # go on, and a model asked about a pane it cannot see answers from the
+        # user's own question — which is precisely how "I have let Alex know"
+        # was spoken over a terminal that had received nothing (2026-07-27).
+        # A delivery that did not happen is a fact worth saying out loud, so
+        # every exit below carries one; ``deliver`` itself never raises for a
+        # single pane, so reaching these means the whole fan-out fell over.
         try:
             result = await ide_fanout.deliver(
                 session=session,
                 terminals=names,
-                utterance=user_text,
-                instruction=found.instruction,
+                utterance=utterance,
+                instruction=instruction,
                 assignments=assignments,
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)
-            return None
+            return action_phrase(
+                "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
+            )
 
         if not result.deliveries:
+            log.warning(
+                "Agentic IDE fast-path: fan-out returned no verdicts for %s",
+                ", ".join(names),
+            )
+            return action_phrase(
+                "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
+            )
+        return _fanout_reply_line(result, language)
+
+    def _ask_which_agentic_ide_terminal(
+        self,
+        user_text: str,
+        *,
+        candidates: list[str],
+        language: str,
+    ) -> str | None:
+        """Ask which pane was meant, or ``None`` when there is nothing to ask.
+
+        The question is armed as a one-shot window: the user's next turn ("ja",
+        "Ellis") delivers the ORIGINAL instruction to the confirmed pane, so
+        clarifying costs one word rather than a repeated sentence.
+        """
+        try:
+            from jarvis.agentic_ide import clarify as ide_clarify
+        except Exception:  # noqa: BLE001 - optional surface
             return None
-        return _fanout_reply_line(result, out_lang)
+        try:
+            need = ide_clarify.detect_clarification(user_text, names=candidates)
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+        if need is None:
+            return None
+
+        question = self._agentic_ide_clarify_question(need, language)
+        ide_clarify.WINDOW.arm(need, question=question)
+        log.info(
+            "Agentic IDE: heard %r, asking whether %s was meant",
+            " / ".join(item.spoken for item in need.uncertain),
+            " / ".join(need.offered),
+        )
+        return question
+
+    @staticmethod
+    def _agentic_ide_clarify_question(
+        need: Any, language: str, *, also: bool = False
+    ) -> str:
+        """The spoken question for one uncertain call-sign, or for a list.
+
+        Three shapes, because they mean three different things and a user has
+        to be able to answer each with one word: one pane offered ("did you
+        mean Blake?"), one word that could be several panes ("Max OR
+        Maggie?"), and several garbled names in one list ("Alex AND Blake?").
+        Joining the last one with "or" would ask the user to pick between two
+        agents they had just addressed together.
+        """
+        spoken = need.spoken
+        if len(need.uncertain) > 1:
+            heard = [item.spoken for item in need.uncertain]
+            spoken = action_phrase("join_and", language).join(
+                (", ".join(heard[:-1]), heard[-1])
+            )
+
+        offered = need.offered
+        if len(need.uncertain) == 1 and len(offered) == 1:
+            if also:
+                return action_phrase(
+                    "ide_terminal_clarify_also",
+                    language,
+                    spoken=spoken,
+                    names=offered[0],
+                )
+            return action_phrase(
+                "ide_terminal_clarify_one", language, spoken=spoken, name=offered[0]
+            )
+        # Alternatives for ONE word are offered with "or"; a list of separate
+        # names is joined with "and", because both were meant.
+        joiner = "join_and" if len(need.uncertain) > 1 else "join_or"
+        joined = action_phrase(joiner, language).join(
+            (", ".join(offered[:-1]), offered[-1])
+        )
+        return action_phrase(
+            "ide_terminal_clarify_also" if also else "ide_terminal_clarify_many",
+            language,
+            spoken=spoken,
+            names=joined,
+        )
+
+    def _agentic_ide_leftover_question(
+        self,
+        user_text: str,
+        *,
+        candidates: list[str],
+        claimed: list[str],
+        language: str,
+    ) -> tuple[Any, str] | None:
+        """A question about the addressees this turn named but did not resolve.
+
+        Returns ``(need, question)`` when the utterance addressed panes BEYOND
+        the ones about to be briefed, else ``None``. The caller arms it after
+        the delivery, so the user hears which agents really got the work before
+        being asked about the rest.
+
+        Nothing is asked when every uncertain word points at a pane that is
+        already being briefed — that is the same addressee reached twice, not a
+        second one.
+        """
+        try:
+            from jarvis.agentic_ide import clarify as ide_clarify
+            from jarvis.agentic_ide import intent as ide_intent
+
+            need = ide_clarify.detect_clarification(user_text, names=candidates)
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+
+        already = {name.casefold() for name in claimed}
+        if need is not None and not all(
+            all(name.casefold() in already for name in item.candidates)
+            for item in need.uncertain
+        ):
+            return need, self._agentic_ide_clarify_question(need, language, also=True)
+
+        # No word came close enough to name a pane — and a call-sign can be
+        # mangled past every threshold there is ("Dave" for a pool that holds
+        # none). What survives that is the COUNT the user stated out loud:
+        # "both of you" says two agents were addressed however badly the names
+        # travelled. Briefing one and saying nothing is the failure this
+        # catches — the user hears one name confirmed and believes two are
+        # working (live 2026-07-27 19:07).
+        try:
+            if not ide_intent.expects_several(user_text):
+                return None
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+        if len(claimed) > 1:
+            return None
+        rest = tuple(name for name in candidates if name.casefold() not in already)
+        if not rest:
+            return None
+        # Armed over every OTHER pane, so the next word ("Blake") delivers the
+        # original task. A bare "yes" decides nothing here and must not: there
+        # is no candidate to confirm, only panes to choose between.
+        unresolved = ide_clarify.ClarificationNeeded(
+            uncertain=(ide_clarify.UncertainName(spoken="", candidates=rest),),
+            utterance=user_text,
+            certain=tuple(claimed),
+        )
+        return unresolved, action_phrase(
+            "ide_terminal_who_else", language, names=", ".join(claimed)
+        )
+
+    async def _brief_spawned_agentic_ide_fleet(
+        self,
+        session: Any,
+        names: list[str],
+        user_text: str,
+    ) -> None:
+        """Brief newly mounted Codex panes once their real input lines exist."""
+        from jarvis.agentic_ide import fanout as ide_fanout
+        from jarvis.agentic_ide import intent as ide_intent
+        from jarvis.agentic_ide.fleet_actions import wait_for_prompt_ready
+
+        instruction = ide_intent.spawn_instruction(user_text)
+        assignments: dict[str, str] | None = None
+        if len(names) > 1 and ide_intent.wants_split(user_text):
+            try:
+                from jarvis.agentic_ide import work_split as ide_split
+
+                plan = await ide_split.split(
+                    instruction,
+                    session=session,
+                    count=len(names),
+                )
+                assignments = {
+                    name: item.task
+                    for name, item in zip(names, plan.assignments, strict=False)
+                }
+            except Exception:  # noqa: BLE001 - the common brief is still usable
+                log.warning("Agentic IDE spawned-fleet split failed", exc_info=True)
+
+        ready = await wait_for_prompt_ready(session, names)
+        missing = [name for name in names if name not in ready]
+        if missing:
+            log.warning(
+                "Agentic IDE spawned-fleet briefing: panes never became ready: %s",
+                ", ".join(missing),
+            )
+        if not ready:
+            return
+
+        result = await ide_fanout.deliver(
+            session=session,
+            terminals=ready,
+            utterance=user_text,
+            instruction=instruction,
+            assignments=assignments,
+        )
+        log.info(
+            "Agentic IDE spawned-fleet briefing: %d of %d prompts delivered",
+            len(result.delivered),
+            len(names),
+        )
+
+    async def _run_agentic_ide_close_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Close an explicitly requested terminal fleet without model routing."""
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.fleet_actions import (
+                close_agent_terminals,
+                terminals_closed_event,
+            )
+            from jarvis.agentic_ide.session import get_registry
+
+            request = ide_intent.detect_close_fleet(user_text)
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+        if request is None:
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        registry = get_registry()
+        session = registry.session
+        if session is None:
+            return action_phrase("ide_terminals_none_to_close", out_lang)
+        closed = await close_agent_terminals(registry, request.agent)
+        if not closed:
+            return action_phrase("ide_terminals_none_to_close", out_lang)
+        if self._bus is not None:
+            try:
+                await self._bus.publish(
+                    terminals_closed_event(
+                        session,
+                        closed,
+                        source_layer="brain.agentic_ide_close",
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the terminals are already closed
+                log.warning("Agentic IDE close: UI notification failed", exc_info=True)
+        names = [term.name for term in closed]
+        return action_phrase(
+            "ide_terminals_closed",
+            out_lang,
+            count=len(names),
+            names=_join_names(names, out_lang),
+        )
 
     async def _run_agentic_ide_spawn_fast_path(
         self,

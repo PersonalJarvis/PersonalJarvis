@@ -874,6 +874,45 @@ def wants_split(user_text: str) -> bool:
     )
 
 
+#: "both of you", "you two", "all three of them", "die zwei Terminals". What
+#: these have in common is a COUNT the utterance states out loud, which is the
+#: only evidence that survives a call-sign speech recognition mangled beyond
+#: recognition. Matching *input vocabulary*, not prose.
+_PLURAL_ADDRESS_RE = re.compile(
+    r"\b(?:"
+    # explicit "both" / "all of you", in every supported language
+    r"beide[nsr]?|alle\s+beide|ihr\s+(?:beide[nr]?|zwei|drei|vier)|euch\s+beide[nr]?|"
+    r"both(?:\s+of\s+(?:you|them))?|all\s+(?:of\s+)?(?:you|them)|you\s+(?:two|three|four)|"
+    r"ambos|ambas|los\s+dos|las\s+dos|ustedes\s+dos|"
+    # a spoken count next to what is being counted
+    r"(?:zwei|drei|vier|f[üu]nf|two|three|four|five|dos|tres|cuatro|cinco|[2-9])\s+"
+    r"(?:der\s+|die\s+|von\s+den\s+|of\s+the\s+|de\s+los\s+)?"
+    r"(?:terminals?|terminales|panes?|agent(?:s|en)?|instanz\w*|instances?)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def expects_several(user_text: str) -> bool:
+    """True when the utterance says out loud that MORE THAN ONE pane is meant.
+
+    The one signal that outlives a garbled call-sign. Live 2026-07-27 19:07:
+    "Alexa and Dave should both do a deep dive" — "Alexa" was recoverable as
+    Alex, "Dave" matched no pane at any threshold, and the turn quietly briefed
+    one agent while the user watched for two. Nothing in the name resolver can
+    fix that; the word "both" can, because it says the count independently of
+    whether either name survived transcription.
+
+    Deliberately narrow: an explicit "both/all of you/you two", or a spoken
+    number standing next to the thing being counted. A bare plural noun does
+    NOT qualify — "look at the terminals" states no count.
+    """
+    text = (user_text or "").strip()
+    if len(text) < 6:
+        return False
+    return bool(_PLURAL_ADDRESS_RE.search(text))
+
+
 def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
     """True when the open workspace should handle this turn instead of a spawn.
 
@@ -907,12 +946,18 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
 __all__ = [
     "KIND_PROMPT",
     "KIND_REPORT",
+    "CloseTerminalsRequest",
     "SpawnGroup",
     "SpawnTerminalsRequest",
     "TerminalIntent",
     "detect",
     "detect_all",
+    "detect_close_fleet",
     "detect_spawn",
+    "expects_several",
     "owns_turn",
+    "references_recent_fleet",
+    "spawn_instruction",
+    "spawn_includes_task",
     "wants_split",
 ]
