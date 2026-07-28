@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Keyboard,
   Loader2,
   Mic,
+  Search,
   Square,
   Trash2,
 } from "lucide-react";
@@ -11,6 +12,8 @@ import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useDictation, type DictationEntry } from "@/hooks/useDictation";
+import { DictationStatsBar } from "@/views/voice/DictationStatsBar";
+import { DictationHistoryGroup } from "@/views/voice/DictationHistoryGroup";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
@@ -18,7 +21,7 @@ import { useT } from "@/i18n";
  * "Dictation" section — hold a key, speak, and the text lands in whatever text
  * field currently has focus.
  *
- * Two things this view deliberately makes visible rather than hiding:
+ * Four things this view deliberately makes visible rather than hiding:
  *
  * 1. **Whether insertion can work at all.** On Wayland, on a headless host, or
  *    while an elevated window is in front, the OS blocks one program from
@@ -27,8 +30,14 @@ import { useT } from "@/i18n";
  * 2. **What the filler cleanup changed.** Every entry keeps the raw transcript
  *    next to the inserted one, so a wrong rule is findable instead of merely
  *    suspected.
+ * 3. **What actually became of each dictation.** The outcome badge is
+ *    translated from a fixed vocabulary — "Could not insert" is a different
+ *    story from "Nothing heard", and the row says which one happened.
+ * 4. **That deleting is recoverable.** The trash icon discards; the entry stays
+ *    listed, restorable, until the second, explicit "Delete permanently" step.
  *
- * Backed by /api/dictation (status/start/stop/settings/history) via useDictation.
+ * Backed by /api/dictation (status/start/stop/settings/history/stats) via
+ * useDictation.
  */
 export interface DictationViewProps {
   /**
@@ -48,16 +57,23 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
     settings,
     choices,
     entries,
+    stats,
     loading,
     error,
     start,
     stop,
     saveSettings,
+    copyEntry,
+    discardEntry,
+    restoreEntry,
     deleteEntry,
     clearHistory,
   } = useDictation();
   const pushToast = useEventStore((s) => s.pushToast);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   async function onToggle() {
     setBusy(true);
@@ -86,7 +102,60 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
     }
   }
 
+  /** Marks one row busy for the duration of its request. */
+  async function withRowBusy(id: string, run: () => Promise<void>) {
+    setBusyIds((prev) => new Set(prev).add(id));
+    try {
+      await run();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  async function onCopy(entry: DictationEntry) {
+    const ok = await copyEntry(entry.id);
+    if (!ok) return;
+    setCopiedId(entry.id);
+    pushToast("success", t("dictation.copied"));
+    window.setTimeout(
+      () => setCopiedId((current) => (current === entry.id ? null : current)),
+      1500,
+    );
+  }
+
+  async function onRestore(entry: DictationEntry) {
+    await withRowBusy(entry.id, async () => {
+      const result = await restoreEntry(entry.id);
+      // A restore that could not re-transcribe still un-discards the entry —
+      // say which of the two happened instead of claiming the better one.
+      if (result.retranscribed || !result.detail) {
+        pushToast("success", t("dictation.restored"));
+      } else {
+        pushToast("warning", result.detail);
+      }
+    });
+  }
+
   const blocked = status?.insertion && !status.insertion.can_insert;
+
+  // Case-insensitive substring over both the delivered and the raw transcript:
+  // a word the cleanup removed is exactly the kind of thing you search for.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(
+      (e) =>
+        e.text.toLowerCase().includes(q) || e.raw_text.toLowerCase().includes(q),
+    );
+  }, [entries, query]);
+
+  const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
   return (
     <div className="flex h-full flex-col">
@@ -181,6 +250,9 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
             )}
           </div>
 
+          {/* --- How much you dictate, honestly windowed. --- */}
+          {stats && <DictationStatsBar stats={stats} />}
+
           {/* --- Settings. --- */}
           {settings && choices && (
             <div className="rounded-lg border border-border bg-card/60 p-4">
@@ -270,33 +342,116 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
                 </Button>
               )}
             </div>
+            {entries.length > 0 && (
+              <>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {t("dictation.clear_history_hint")}
+                </p>
+                <div className="relative mt-3">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t("dictation.search_placeholder")}
+                    aria-label={t("dictation.search_placeholder")}
+                    data-testid="dictation-search"
+                    className="w-full rounded-md border border-input bg-background py-1.5 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </>
+            )}
             {entries.length === 0 ? (
               <p className="mt-3 text-xs text-muted-foreground">
                 {t("dictation.history_empty")}
               </p>
-            ) : (
-              <ul
-                className="mt-3 divide-y divide-border/60"
-                data-testid="dictation-history"
+            ) : filtered.length === 0 ? (
+              /* Shared "nothing matched your search" string — the Dictionary
+                 tab owns it and it is already localized everywhere. */
+              <p
+                className="mt-3 text-xs text-muted-foreground"
+                data-testid="dictation-no-matches"
               >
-                {entries.map((entry) => (
-                  <HistoryRow
-                    key={entry.id}
-                    entry={entry}
-                    onDelete={() => {
-                      void deleteEntry(entry.id).catch((e) =>
-                        pushToast("error", (e as Error).message),
-                      );
+                {t("dictionary.no_matches")}
+              </p>
+            ) : (
+              <div className="mt-3" data-testid="dictation-history">
+                {groups.map((group) => (
+                  <DictationHistoryGroup
+                    key={group.key}
+                    label={dayLabel(t, group.key)}
+                    entries={group.entries}
+                    busyIds={busyIds}
+                    copiedId={copiedId}
+                    onCopy={(entry) => void onCopy(entry)}
+                    onRestore={(entry) => void onRestore(entry)}
+                    onDiscard={(entry) => {
+                      void withRowBusy(entry.id, () => discardEntry(entry.id));
+                    }}
+                    onDelete={(entry) => {
+                      void withRowBusy(entry.id, () => deleteEntry(entry.id));
                     }}
                   />
                 ))}
-              </ul>
+              </div>
             )}
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+interface DayGroup {
+  /** Local calendar date, ISO `YYYY-MM-DD`. */
+  key: string;
+  entries: DictationEntry[];
+}
+
+/**
+ * Groups entries into local calendar days, newest day first and newest entry
+ * first inside each day.
+ *
+ * Local, not UTC: bucketing by UTC moves an evening dictation into "tomorrow"
+ * for everyone east of Greenwich, which makes the day headers read wrong for
+ * most of the world.
+ */
+function groupByDay(entries: DictationEntry[]): DayGroup[] {
+  const byKey = new Map<string, DictationEntry[]>();
+  for (const entry of [...entries].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  )) {
+    const key = localDateKey(entry.created_at);
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(entry);
+    else byKey.set(key, [entry]);
+  }
+  return [...byKey.entries()]
+    .map(([key, groupEntries]) => ({ key, entries: groupEntries }))
+    .sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+}
+
+/** `YYYY-MM-DD` in the viewer's own timezone. */
+function dateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Same, from a wire timestamp; an unparsable stamp gets its own bucket. */
+function localDateKey(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : dateKey(date);
+}
+
+/** "Today" / "Yesterday" / a locale-formatted date for everything older. */
+function dayLabel(t: (key: string) => string, key: string): string {
+  const now = new Date();
+  if (key === dateKey(now)) return t("dictation.group.today");
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (key === dateKey(yesterday)) return t("dictation.group.yesterday");
+  const parsed = new Date(`${key}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? key : parsed.toLocaleDateString();
 }
 
 function SelectRow({
@@ -355,52 +510,5 @@ function SwitchRow({
       </div>
       <Switch checked={checked} onCheckedChange={onChange} data-testid={testId} />
     </div>
-  );
-}
-
-function HistoryRow({
-  entry,
-  onDelete,
-}: {
-  entry: DictationEntry;
-  onDelete: () => void;
-}) {
-  const t = useT();
-  const cleaned = entry.text !== entry.raw_text;
-  return (
-    <li className="group flex items-start gap-2 py-2.5">
-      <div className="min-w-0 flex-1">
-        <p className="break-words text-sm">{entry.text || entry.raw_text}</p>
-        {cleaned && (
-          <p className="mt-0.5 break-words text-[11px] text-muted-foreground">
-            {t("dictation.raw_prefix")} {entry.raw_text}
-          </p>
-        )}
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-          <span>{new Date(entry.created_at).toLocaleString()}</span>
-          {entry.outcome && (
-            <span className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5">
-              {entry.outcome}
-            </span>
-          )}
-          {entry.removed_words > 0 && (
-            <span>
-              {t("dictation.removed_words").replace(
-                "{0}",
-                String(entry.removed_words),
-              )}
-            </span>
-          )}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label={t("dictation.delete_entry")}
-        className="rounded p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
-    </li>
   );
 }

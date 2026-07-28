@@ -1,5 +1,31 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { robustCopy } from "@/lib/clipboard";
+
+/**
+ * The complete outcome vocabulary of one dictation, mirroring
+ * `jarvis.dictation.outcomes.DICTATION_OUTCOMES`.
+ *
+ * This array is the TypeScript half of a cross-layer parity test — the Python
+ * tuple and this list must stay set-equal, and every entry must have a
+ * `dictation.outcome.{name}` key in every locale. Never render a raw outcome
+ * string in the UI; always translate through that key.
+ */
+export const DICTATION_OUTCOMES = [
+  "inserted",
+  "clipboard_only",
+  "unavailable",
+  "chat",
+  "empty",
+  "cancelled",
+  "failed",
+] as const;
+
+export type DictationOutcome = (typeof DICTATION_OUTCOMES)[number];
+
+/** Languages dictation can be pinned to; `auto` lets the provider decide. */
+export type DictationLanguage = "auto" | "de" | "en" | "es";
+
 /**
  * Live state of dictation mode from GET /api/dictation/status.
  *
@@ -13,6 +39,8 @@ export interface DictationStatus {
   active: boolean;
   reason: string;
   hotkey: string;
+  /** Hands-free (press once to start, again to stop) combo, "" when unbound. */
+  hotkey_toggle?: string;
   mode: string;
   target: string;
   insertion: {
@@ -30,10 +58,38 @@ export interface DictationEntry {
   text: string;
   language: string;
   duration_s: number;
-  outcome: string;
+  /**
+   * One of DICTATION_OUTCOMES. Typed as a union *or* string on purpose: a
+   * newer backend must never crash an older bundle, so an unknown value falls
+   * through to a neutral badge instead of a type error.
+   */
+  outcome: DictationOutcome | string;
   method: string;
   removed_words: number;
   cleanup_reason: string;
+  word_count: number;
+  /** Soft-deleted: hidden from the default list, still restorable. */
+  discarded: boolean;
+  /** Audio was kept for this entry, so Restore can transcribe it again. */
+  audio_available: boolean;
+  error: string | null;
+}
+
+/**
+ * Aggregate dictation numbers from GET /api/dictation/stats.
+ *
+ * `source` decides the panel's honesty: `"lifetime"` means the never-pruned
+ * sidecar answered and the totals really are all-time; `"window"` means they
+ * were derived from the rolling history window, and the UI must say so rather
+ * than calling a 30-day slice "all time".
+ */
+export interface DictationStats {
+  source: "lifetime" | "window";
+  window: { days: number; max_entries: number };
+  totals: { dictations: number; words: number; seconds: number; wpm: number };
+  today: { dictations: number; words: number };
+  streak: { current_days: number; longest_days: number };
+  by_day: { date: string; dictations: number; words: number; seconds: number }[];
 }
 
 export interface DictationSettings {
@@ -52,6 +108,10 @@ export interface DictationSettings {
   history_enabled: boolean;
   history_max_entries: number;
   history_retention_days: number;
+  language: DictationLanguage | string;
+  keep_failed_audio: boolean;
+  audio_retention_days: number;
+  audio_max_files: number;
 }
 
 export interface DictationChoices {
@@ -59,6 +119,15 @@ export interface DictationChoices {
   target: string[];
   insert_method: string[];
   paste_chord: string[];
+  language: string[];
+}
+
+/** Result of POST /api/dictation/history/{id}/restore. */
+export interface DictationRestoreResult {
+  ok: boolean;
+  entry: DictationEntry;
+  retranscribed: boolean;
+  detail: string | null;
 }
 
 async function unwrap<T>(res: Response): Promise<T> {
@@ -70,14 +139,16 @@ async function unwrap<T>(res: Response): Promise<T> {
 }
 
 /**
- * Loads dictation status, settings and history, and exposes start/stop plus a
- * partial settings save. Mirrors useDictionary's fetch/error/loading shape.
+ * Loads dictation status, settings, history and stats, and exposes start/stop,
+ * a partial settings save, and the four per-entry actions (copy, discard,
+ * restore, hard delete). Mirrors useDictionary's fetch/error/loading shape.
  */
 export function useDictation() {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [settings, setSettings] = useState<DictationSettings | null>(null);
   const [choices, setChoices] = useState<DictationChoices | null>(null);
   const [entries, setEntries] = useState<DictationEntry[]>([]);
+  const [stats, setStats] = useState<DictationStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,12 +165,28 @@ export function useDictation() {
 
   const refetchHistory = useCallback(async () => {
     try {
+      // Discarded entries stay in the list: they are the ones the Restore
+      // button exists for, and filtering them out would make Restore
+      // unreachable from the UI that owns it.
       const data = await unwrap<{ entries: DictationEntry[] }>(
-        await fetch("/api/dictation/history?limit=50"),
+        await fetch("/api/dictation/history?limit=50&include_discarded=true"),
       );
       setEntries(data.entries ?? []);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }, []);
+
+  const refetchStats = useCallback(async () => {
+    // Stats are an informational strip. A backend that cannot answer must not
+    // blank the whole view with a red error line — the strip just stays away.
+    try {
+      const data = await unwrap<DictationStats>(
+        await fetch("/api/dictation/stats"),
+      );
+      setStats(data);
+    } catch {
+      setStats(null);
     }
   }, []);
 
@@ -112,13 +199,13 @@ export function useDictation() {
       }>(await fetch("/api/dictation/settings"));
       setSettings(data.settings);
       setChoices(data.choices);
-      await Promise.all([refetchStatus(), refetchHistory()]);
+      await Promise.all([refetchStatus(), refetchHistory(), refetchStats()]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [refetchStatus, refetchHistory]);
+  }, [refetchStatus, refetchHistory, refetchStats]);
 
   useEffect(() => {
     void refetch();
@@ -142,7 +229,8 @@ export function useDictation() {
     await unwrap(await fetch("/api/dictation/stop", { method: "POST" }));
     await refetchStatus();
     await refetchHistory();
-  }, [refetchStatus, refetchHistory]);
+    await refetchStats();
+  }, [refetchStatus, refetchHistory, refetchStats]);
 
   const saveSettings = useCallback(
     async (patch: Partial<DictationSettings>) => {
@@ -159,6 +247,40 @@ export function useDictation() {
     [refetchStatus],
   );
 
+  /**
+   * Soft delete. The entry stays in the list wearing a "Discarded" badge —
+   * filtering it out here would strand the Restore button that is the whole
+   * point of a recoverable delete.
+   */
+  const discardEntry = useCallback(async (id: string) => {
+    const data = await unwrap<{ entry: DictationEntry }>(
+      await fetch(`/api/dictation/history/${encodeURIComponent(id)}/discard`, {
+        method: "POST",
+      }),
+    );
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === id ? (data.entry ?? { ...e, discarded: true }) : e,
+      ),
+    );
+  }, []);
+
+  /** Un-discards, and re-transcribes from the kept audio when there is text to win back. */
+  const restoreEntry = useCallback(async (id: string) => {
+    const data = await unwrap<DictationRestoreResult>(
+      await fetch(`/api/dictation/history/${encodeURIComponent(id)}/restore`, {
+        method: "POST",
+      }),
+    );
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === id ? (data.entry ?? { ...e, discarded: false }) : e,
+      ),
+    );
+    return data;
+  }, []);
+
+  /** Hard delete — gone from disk, audio sidecar included. */
   const deleteEntry = useCallback(async (id: string) => {
     await unwrap(
       await fetch(`/api/dictation/history/${encodeURIComponent(id)}`, {
@@ -171,22 +293,42 @@ export function useDictation() {
   const clearHistory = useCallback(async () => {
     await unwrap(await fetch("/api/dictation/history", { method: "DELETE" }));
     setEntries([]);
-  }, []);
+    await refetchStats();
+  }, [refetchStats]);
+
+  /**
+   * Copies one entry's delivered text (falling back to the raw transcript).
+   * Returns false when every clipboard path failed, so the caller can say so
+   * instead of claiming a copy that never happened.
+   */
+  const copyEntry = useCallback(
+    async (id: string) => {
+      const entry = entries.find((e) => e.id === id);
+      if (!entry) return false;
+      return robustCopy(entry.text || entry.raw_text);
+    },
+    [entries],
+  );
 
   return {
     status,
     settings,
     choices,
     entries,
+    stats,
     loading,
     error,
     start,
     stop,
     saveSettings,
+    copyEntry,
+    discardEntry,
+    restoreEntry,
     deleteEntry,
     clearHistory,
     refetch,
     refetchStatus,
     refetchHistory,
+    refetchStats,
   };
 }
