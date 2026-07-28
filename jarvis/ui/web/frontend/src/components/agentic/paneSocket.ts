@@ -63,6 +63,34 @@ const CLOSE_NO_SUCH_PANE = 4404;
  * workspace of terminals gave up for good (BUG-113).
  */
 const CLOSE_NOT_READY = 4503;
+/**
+ * Server close code: this pane's workspace is closed, and another one is open.
+ *
+ * The third verdict, and the one that used to be missing. "Not here" and "not
+ * yet" both assume the client's picture of the world is right; this one says it
+ * is out of date. Retrying cannot fix that and neither can waiting — the answer
+ * is to go and re-read which workspace is open, which is what
+ * {@link WORKSPACE_CHANGED_EVENT} asks the view to do.
+ */
+const CLOSE_STALE_WORKSPACE = 4409;
+
+/**
+ * The window event the Agentic-IDE view re-fetches its whole state on.
+ *
+ * Dispatched from here as well as from the app's WebSocket, because a pane is
+ * often the FIRST place a divergence shows up: the view still believes in a
+ * grid the backend no longer has, and the only component that finds out is the
+ * socket being turned away.
+ */
+const WORKSPACE_CHANGED_EVENT = "jarvis:agentic-ide-changed";
+
+/** Ask the view to re-read the workspace state. Safe to call more than once. */
+function askForFreshState(reason: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(WORKSPACE_CHANGED_EVENT, { detail: { reason } }),
+  );
+}
 
 const MIN_BACKOFF = 500;
 const MAX_BACKOFF = 8_000;
@@ -117,12 +145,47 @@ export interface PaneSocketOptions {
   appearance?: string | null;
 }
 
+/**
+ * A pane was handed a prompt: what was sent, when, and whether it started.
+ *
+ * Carried on its own frame rather than left to be recognised in the agent's
+ * output, because the output is what goes missing in every case where this
+ * matters — see the server's `on_prompt` for the list. `text` is an excerpt;
+ * the unabridged prompt is one request away (`getLastPrompt`), which keeps a
+ * multi-thousand-character brief off a channel that is otherwise keystrokes.
+ */
+export interface PromptDelivery {
+  /** Epoch SECONDS, as the server stamps it. */
+  at: number | null;
+  /** Full length of the delivered prompt, not of `text`. */
+  chars: number;
+  /** The opening of the prompt — enough for a receipt line. */
+  text: string;
+  /** True = the agent started; false = still in its input box; null = unknown. */
+  submitted: boolean | null;
+  prompts_sent: number;
+}
+
 export interface PaneSocketHandlers {
   /** The socket is up; the pane may send its measured size. */
   onOpen?: () => void;
   onOutput: (text: string) => void;
-  /** The agent is attached — freshly started, resumed, or re-joined. */
-  onReady: (info: { resumed: boolean; reattached: boolean }) => void;
+  /**
+   * The agent is attached — freshly started, resumed, or re-joined.
+   *
+   * `lastPrompt` is what this pane was told to do BEFORE this socket existed,
+   * handed over with the handshake. It is what lets a reload, a reconnect or a
+   * second window show the receipt for a prompt they were not connected for —
+   * which is the viewer that most needs it, since the one who watched it
+   * arrive never doubted it.
+   */
+  onReady: (info: {
+    resumed: boolean;
+    reattached: boolean;
+    lastPrompt: PromptDelivery | null;
+  }) => void;
+  /** This pane was handed a prompt just now. */
+  onPrompt?: (delivery: PromptDelivery) => void;
   /** The agent itself finished. Final: nothing reconnects after this. */
   onExit: (code: number) => void;
   /**
@@ -246,10 +309,26 @@ export function openPaneSocket(
   };
 
   const handleDrop = (code: number) => {
+    if (code === CLOSE_STALE_WORKSPACE) {
+      // Not this pane's fault and not worth a red badge: the view is simply
+      // showing a workspace that has been closed. Stop, and ask for the real
+      // one — the grid that comes back brings its own panes with it.
+      stopped = true;
+      handlers.onTrouble("This workspace was closed — reloading…", true);
+      askForFreshState("stale-workspace");
+      return;
+    }
     if (code === CLOSE_NO_SUCH_PANE) {
       // The server is not saying "not right now", it is saying "not here".
       // No number of retries turns that into a terminal.
       giveUp("This terminal is no longer part of the open workspace.");
+      // A pane that the open workspace does not have means the grid on screen
+      // is out of date — one pane is merely where that became visible. Left
+      // alone it stays visible as a dead rectangle for the rest of the session
+      // (measured 2026-07-28: two panes from a six-pane workspace kept knocking
+      // at a four-pane one for minutes). Re-reading the state is what removes
+      // it, and it costs one request.
+      askForFreshState("no-such-pane");
       return;
     }
     if (code === CLOSE_NOT_READY) {
@@ -261,6 +340,13 @@ export function openPaneSocket(
       // of an hour later still finds its panes waiting.
       waits += 1;
       handlers.onTrouble("Waiting for the workspace to come back…", true);
+      // Before settling into the slow knock, ask once whether the world still
+      // looks the way this pane thinks it does. A workspace that opened while
+      // the panes were waiting announces itself, but a pane that has already
+      // dropped to one attempt every half minute would take that long to
+      // notice — and an announcement missed for any reason (a socket that was
+      // reconnecting, a window that was hidden) would never be noticed at all.
+      if (waits === MAX_ATTEMPTS + 1) askForFreshState("waited-out");
       schedule(
         waits > MAX_ATTEMPTS
           ? IDLE_BACKOFF
@@ -300,7 +386,22 @@ export function openPaneSocket(
     });
 
     socket.addEventListener("message", (ev) => {
-      let msg: { t?: string; d?: string; code?: number; message?: string; resumed?: boolean; reattached?: boolean };
+      let msg: {
+        t?: string;
+        d?: string;
+        code?: number;
+        message?: string;
+        resumed?: boolean;
+        reattached?: boolean;
+        at?: number | null;
+        chars?: number;
+        preview?: string;
+        submitted?: boolean | null;
+        prompts_sent?: number;
+        last_prompt_at?: number | null;
+        last_prompt_chars?: number;
+        last_prompt_preview?: string;
+      };
       try {
         msg = JSON.parse((ev as MessageEvent).data as string);
       } catch {
@@ -317,6 +418,27 @@ export function openPaneSocket(
         handlers.onReady({
           resumed: Boolean(msg.resumed),
           reattached: Boolean(msg.reattached),
+          // Only when this pane has actually been sent something. A null here
+          // means "nothing was ever delivered", which the receipt must not
+          // render as a delivery with a missing timestamp.
+          lastPrompt:
+            typeof msg.last_prompt_at === "number"
+              ? {
+                  at: msg.last_prompt_at,
+                  chars: msg.last_prompt_chars ?? 0,
+                  text: msg.last_prompt_preview ?? "",
+                  submitted: msg.submitted ?? null,
+                  prompts_sent: 0,
+                }
+              : null,
+        });
+      } else if (msg.t === "prompt") {
+        handlers.onPrompt?.({
+          at: typeof msg.at === "number" ? msg.at : null,
+          chars: msg.chars ?? 0,
+          text: msg.preview ?? "",
+          submitted: msg.submitted ?? null,
+          prompts_sent: msg.prompts_sent ?? 0,
         });
       } else if (msg.t === "exit") {
         agentExited = true;

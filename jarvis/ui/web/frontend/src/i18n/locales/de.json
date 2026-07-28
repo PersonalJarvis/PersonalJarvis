@@ -2556,7 +2556,9 @@
     "no_tools_explainer": "Sobald der {name}-Agent-Worker ein Tool triggert (z. B. dispatch_to_harness, run_shell, screenshot), erscheint es hier als Icon-Node."
   },
   "use_web_socket": {
-    "jarvis_opened": "{name} öffnete"
+    "jarvis_opened": "{name} öffnete",
+    "prompt_sent": "Prompt gesendet an",
+    "prompt_not_submitted": "der Prompt steht im Eingabefeld, abgeschickt wurde er nicht"
   },
   "chat_thread": {
     "message_to": "Nachricht an",

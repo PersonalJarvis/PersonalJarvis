@@ -59,6 +59,7 @@ function handlers() {
     onReady: vi.fn(),
     onExit: vi.fn(),
     onTrouble: vi.fn(),
+    onPrompt: vi.fn(),
   };
 }
 
@@ -323,6 +324,178 @@ describe("openPaneSocket", () => {
     MockWebSocket.last!.readyState = MockWebSocket.CLOSED;
     socket.send({ t: "i", d: "ignored" });
     expect(MockWebSocket.last!.send).toHaveBeenCalledTimes(1);
+    socket.close();
+  });
+});
+
+/*
+ * A delivered prompt travels on a frame of its own instead of being left to be
+ * recognised in the agent's output. The output is exactly what goes missing in
+ * the cases that matter — a parked pane, an unpainted emulator, a socket that
+ * was reconnecting — and each time the user was told a brief had been sent and
+ * had no way to check.
+ */
+describe("openPaneSocket delivery receipts", () => {
+  const originalWs = globalThis.WebSocket;
+
+  beforeEach(() => {
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
+    (globalThis as unknown as { window: unknown }).window = globalThis;
+    (window as unknown as { location: unknown }).location = {
+      protocol: "http:",
+      host: "localhost:5173",
+    };
+    MockWebSocket.last = null;
+    MockWebSocket.opened = [];
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWs;
+  });
+
+  it("reports a prompt the moment the server says it landed", () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({
+      t: "prompt",
+      at: 1_700_000_000,
+      chars: 2_400,
+      preview: "## Task\nReview the ranking pipeline",
+      submitted: true,
+      prompts_sent: 2,
+    });
+
+    expect(cb.onPrompt).toHaveBeenCalledWith({
+      at: 1_700_000_000,
+      chars: 2_400,
+      text: "## Task\nReview the ranking pipeline",
+      submitted: true,
+      prompts_sent: 2,
+    });
+    socket.close();
+  });
+
+  it("hands over the prompt that arrived BEFORE this socket existed", () => {
+    // The viewer with real reason to doubt a delivery is the one that was not
+    // connected when it happened — a reload, a reconnect, a second window.
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({
+      t: "ready",
+      resumed: false,
+      reattached: true,
+      last_prompt_at: 1_700_000_000,
+      last_prompt_chars: 900,
+      last_prompt_preview: "Refactor the parser",
+      submitted: false,
+    });
+
+    expect(cb.onReady).toHaveBeenCalledWith({
+      resumed: false,
+      reattached: true,
+      lastPrompt: {
+        at: 1_700_000_000,
+        chars: 900,
+        text: "Refactor the parser",
+        submitted: false,
+        prompts_sent: 0,
+      },
+    });
+    socket.close();
+  });
+
+  it("reports no prior prompt as null rather than as a delivery at time zero", () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({ t: "ready", resumed: false, reattached: false });
+
+    expect(cb.onReady).toHaveBeenCalledWith({
+      resumed: false,
+      reattached: false,
+      lastPrompt: null,
+    });
+    socket.close();
+  });
+
+  it("survives a client that registered no prompt handler", () => {
+    // `onPrompt` is optional so an older embedder keeps working; an unhandled
+    // frame must not take the pane's whole message loop down with it.
+    const cb = handlers();
+    const socket = openPaneSocket(
+      { name: "Mika", cols: 80, rows: 24 },
+      { ...cb, onPrompt: undefined },
+    );
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({ t: "prompt", at: 1, chars: 3, preview: "hi" });
+    MockWebSocket.last!.deliver({ t: "o", d: "still alive" });
+
+    expect(cb.onOutput).toHaveBeenCalledWith("still alive");
+    socket.close();
+  });
+  it("asks the view to re-read when its workspace has been closed", () => {
+    // The leftover-window case (2026-07-28). Retrying cannot help and waiting
+    // is waiting for nothing: what the pane is holding no longer exists, so the
+    // only useful move is to make the view fetch the grid that does.
+    const asked = vi.fn();
+    window.addEventListener("jarvis:agentic-ide-changed", asked);
+    const cb = handlers();
+    const socket = openPaneSocket(
+      { name: "T1", cols: 80, rows: 24, workspaceId: "ide_gone" },
+      cb,
+    );
+
+    MockWebSocket.last!.dropped(4409);
+    vi.advanceTimersByTime(60_000);
+
+    expect(asked).toHaveBeenCalled();
+    expect(MockWebSocket.opened).toHaveLength(1);
+    window.removeEventListener("jarvis:agentic-ide-changed", asked);
+    socket.close();
+  });
+
+  it("asks the view to re-read when the open workspace has no such pane", () => {
+    // A pane the workspace does not have means the GRID is out of date — this
+    // pane is merely where it became visible. Without the re-read it stays on
+    // screen as a dead rectangle for the rest of the session.
+    const asked = vi.fn();
+    window.addEventListener("jarvis:agentic-ide-changed", asked);
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "T6", cols: 80, rows: 24 }, cb);
+
+    MockWebSocket.last!.dropped(4404);
+
+    expect(asked).toHaveBeenCalled();
+    expect(cb.onTrouble).toHaveBeenCalledWith(expect.any(String), false);
+    window.removeEventListener("jarvis:agentic-ide-changed", asked);
+    socket.close();
+  });
+
+  it("re-reads the state once before settling into the slow knock", async () => {
+    // Nine "not yet" answers is the moment a pane drops to one attempt every
+    // half minute. A workspace that opened meanwhile announces itself — but an
+    // announcement missed while this socket was reconnecting would then take
+    // thirty seconds to be noticed, or never.
+    const asked = vi.fn();
+    window.addEventListener("jarvis:agentic-ide-changed", asked);
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "T1", cols: 80, rows: 24 }, cb);
+
+    for (let i = 0; i < 9; i += 1) {
+      MockWebSocket.last!.dropped(4503);
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+
+    expect(asked).toHaveBeenCalledTimes(1);
+    window.removeEventListener("jarvis:agentic-ide-changed", asked);
     socket.close();
   });
 });

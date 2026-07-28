@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from .protocols import HarnessResult, HarnessTask, RiskTier, Transcript
@@ -157,6 +157,82 @@ class DictationCompleted(Event):
     #: makes ``outcome="failed"`` distinguishable from ``outcome="empty"``:
     #: before it existed, a provider 401 and plain silence looked identical.
     error: str | None = None
+
+
+#: Every reason a dictation start can be refused. Declared ONCE here, next to
+#: the event that carries it, because this value crosses the pipeline, the bus,
+#: the REST/WS surface and the UI — the exact shape of drift that has bitten
+#: this repo four times (AP-4 / BUG-008). Consumers import this tuple instead
+#: of restating the strings.
+#:
+#: ``microphone_unavailable``
+#:     The local capture gate is closed — the desktop app is not visible, or
+#:     microphone permission has not been granted.
+#: ``no_stt``
+#:     No speech-to-text provider is wired, so nothing could transcribe.
+#: ``already_running``
+#:     A dictation is already recording; the second start is a no-op.
+#: ``voice_session_active``
+#:     A voice conversation (wake word or push-to-talk) owns the microphone.
+#: ``pipeline_not_running``
+#:     The speech pipeline has no running event loop to host the session.
+DICTATION_REFUSAL_REASONS: Final[tuple[str, ...]] = (
+    "microphone_unavailable",
+    "no_stt",
+    "already_running",
+    "voice_session_active",
+    "pipeline_not_running",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DictationStarted(Event):
+    """A dictation turn has begun — the counterpart of ``DictationCompleted``.
+
+    Published the moment ``start_dictation()`` commits, BEFORE the first audio
+    frame is captured, so a UI surface can show "listening" at key-down speed
+    instead of waiting for the first partial transcript (which costs a partial
+    interval plus an STT round-trip, and never arrives at all for a short
+    press).
+
+    ``target`` is the RAW target the caller asked for (``auto`` | ``insert`` |
+    ``chat``); ``auto`` is deliberately resolved when the recording ENDS, not
+    here, so the value carried by this event is the request, not the verdict.
+    """
+
+    target: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DictationTranscribing(Event):
+    """Recording stopped; the final transcription is now running.
+
+    Published when the microphone lease is released — the key was let go, the
+    hands-free toggle stopped it, the duration cap expired, or a REST/WS stop
+    arrived — and before the closing transcription call. It is the honest
+    "no longer listening, not yet finished" phase: a UI surface switches from
+    a level meter to a working indicator here, and ``DictationCompleted``
+    always follows.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class DictationRefused(Event):
+    """A dictation could NOT start, and the user is owed an explanation.
+
+    Every refusal used to be a ``log.info`` in a file the desktop app cannot
+    show (CLAUDE.md §9: the app is a WebView with no dev tools), so pressing
+    the dictation shortcut with a closed microphone gate, no STT provider, or
+    a live voice session did *nothing* at all. This event makes each refusal
+    observable on the bus so the caller can say why the key did nothing.
+
+    ``reason`` is a stable token from ``DICTATION_REFUSAL_REASONS``; ``detail``
+    is a complete, user-facing English sentence, matching the contract of
+    ``DictationCompleted.detail``.
+    """
+
+    reason: str = ""
+    detail: str = ""
 
 
 # ----------------------------------------------------------------------
@@ -450,6 +526,54 @@ class AgenticIdeTerminalsClosed(Event):
     session_id: str = ""
     names: tuple[str, ...] = ()
     folder: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeWorkspaceChanged(Event):
+    """A workspace itself was opened, reopened, switched to, or closed.
+
+    The pane-level events above cover changes INSIDE a grid. This is the layer
+    above them, and it was missing: opening a workspace, restoring one after a
+    restart, switching tabs and closing a tab all happened in the registry with
+    nothing said out loud. Any client that was not the one making the change —
+    a second window, a browser tab, the app's own view after the backend
+    restored a workspace in the background — kept rendering a grid the backend
+    no longer had, and the panes of that grid then knocked at a workspace that
+    was not there. Nothing recovered by itself; the user had to reload.
+
+    ``reason`` is one of ``opened`` / ``restored`` / ``activated`` / ``closed``,
+    so a client can tell "your tab was switched" from "everything is gone"
+    without guessing from the payload. Clients re-read the authoritative state
+    on any of them — the event is a trigger, never the source of truth.
+    """
+    session_id: str = ""
+    reason: str = ""
+    folder: str = ""
+    name: str = ""
+    open_workspaces: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdePromptSent(Event):
+    """A prompt was typed into one pane by Jarvis rather than by the user.
+
+    The only thing that made a voice-driven prompt visible used to be the
+    agent's own echo travelling back over that pane's terminal socket. When
+    anything on that path was late or missing, the user watched an unchanged
+    screen and concluded the instruction had gone nowhere — with no second
+    signal anywhere in the app to say otherwise.
+
+    So the fact is announced in its own right. ``submitted`` carries the honest
+    three-way answer from ``send_prompt``: true (it went), false (it is sitting
+    in the pane's input box), null (never seen to arrive). ``preview`` is a
+    short excerpt, never the whole brief — this is a notification, not a copy
+    of the prompt.
+    """
+    session_id: str = ""
+    terminal: str = ""
+    agent: str = ""
+    submitted: bool | None = None
+    preview: str = ""
 
 
 @dataclass(frozen=True, slots=True)

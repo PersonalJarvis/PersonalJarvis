@@ -2556,7 +2556,9 @@
     "no_tools_explainer": "En cuanto el {name}-Agent worker activa una herramienta (p. ej. dispatch_to_harness, run_shell, screenshot), aparece aquí como un nodo de icono."
   },
   "use_web_socket": {
-    "jarvis_opened": "{name} abrió"
+    "jarvis_opened": "{name} abrió",
+    "prompt_sent": "Prompt enviado a",
+    "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió"
   },
   "chat_thread": {
     "message_to": "Mensaje a",

@@ -779,6 +779,19 @@ class Terminal:
     last_output_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
+    # When the last prompt was handed to this pane, as a wall-clock timestamp.
+    #
+    # The receipt the user is shown is built from THIS rather than from the
+    # terminal stream, and that is the whole point. A pane proves a prompt
+    # arrived by echoing it, which requires a chain of things to have gone
+    # right at one particular moment: the pane on screen, its output un-parked,
+    # its socket up, the emulator painted. Every link in that chain has failed
+    # in production at least once, and each failure looks identical from the
+    # user's chair — Jarvis says it sent the brief and the pane shows nothing,
+    # so the honest conclusion is that Jarvis lied. A timestamp in the state
+    # cannot be missed: it is read at mount, at every reconnect and at every
+    # poll, so the receipt is still there when somebody looks ten minutes later.
+    last_prompt_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
     # Did it arrive with its line structure intact? False means the pane
@@ -841,6 +854,39 @@ class Terminal:
     # Bound at spawn, cleared on detach, replaced on re-attach.
     viewer_output: Any = None
     viewer_exit: Any = None
+    # EVERY viewer currently attached to this pane, as ``(output, exit)`` pairs,
+    # newest last. ``viewer_output`` above is the newest of them — the OWNER,
+    # which is a different question from who gets to see the screen.
+    #
+    # One slot was enough only while a pane could be open in one place. It can
+    # be open in several: the desktop app and a browser tab, two windows, a
+    # contributor's dev server beside the app. Every one of them attaches to the
+    # same pane, and with a single slot the last to connect took the output and
+    # every other viewer went silent for good — an agent typing away behind a
+    # screen that never moved again, indistinguishable from a dead terminal, and
+    # only a reload brought it back (reported 2026-07-28, where a leftover tab
+    # from an earlier session quietly held the output of the panes the user was
+    # watching).
+    #
+    # Output is therefore fanned out to all of them, while the OWNER keeps the
+    # decisions that must have exactly one answer: the pseudo-terminal's size,
+    # and who is allowed to hand the slot back (see ``resize`` and ``detach``).
+    watchers: list[tuple[Any, Any]] = field(default_factory=list, repr=False, compare=False)
+    # Viewers that want to be TOLD when this pane is handed a prompt, rather
+    # than having to notice it in the output stream.
+    #
+    # Separate from ``watchers`` because it answers a different question. That
+    # list carries the agent's screen, and a screen is exactly what fails to
+    # prove a delivery: the pane may be parked, its emulator unpainted, its
+    # socket reconnecting, or the CLI may simply redraw its input box without
+    # the text ever scrolling into view. Every one of those has happened, and
+    # each time the user was told the brief was sent and saw nothing.
+    #
+    # So delivery is announced on its own channel, and the state carries it too
+    # (``last_prompt_at``) for the viewer that was not connected at that
+    # instant. Neither is a substitute for the other: this one is immediate and
+    # lossy, the state is durable and up to one poll late.
+    prompt_viewers: list[Any] = field(default_factory=list, repr=False, compare=False)
     # Serializes THIS pane's attach path — see `SessionRegistry.attach`.
     #
     # A pane is routinely connected to more than once in the same instant: the
@@ -902,6 +948,17 @@ class Terminal:
             # poll AND every model-facing status payload — per pane. 200 chars
             # matches the focus block's per-pane budget.
             "last_prompt": self.last_prompt[:200],
+            # How long the delivered text really is, so a client can say "1 of
+            # 2 400 characters" instead of presenting the 200-char excerpt as
+            # if it were everything that was sent.
+            "last_prompt_chars": len(self.last_prompt),
+            # WHEN it was handed over. Cheap enough for every poll (one float),
+            # and it is what turns "this pane has a last prompt" into "this pane
+            # was given a prompt at 15:42:07" — a claim the user can check
+            # against what they just heard Jarvis say. See the field's own
+            # comment for why the receipt may not be built from the terminal
+            # stream instead.
+            "last_prompt_at": self.last_prompt_at,
             "submitted": self.submitted,
             "lines_captured": len(lines),
             # What this pane is doing, in the two lengths the header needs: one
@@ -1068,6 +1125,89 @@ class RestoreResult:
     @property
     def terminal_count(self) -> int:
         return sum(len(s.terminals) for s in self.sessions)
+
+
+#: How many viewers one pane may feed at once.
+#:
+#: Generous, because the legitimate number is small (an app window, a browser
+#: tab, a second screen) and the point of the cap is not thrift — it is that a
+#: client leaking sockets must not grow this list without end. The oldest is
+#: dropped, which is also the one least likely to still have a human in front
+#: of it.
+MAX_WATCHERS = 8
+
+
+def _same_viewer(left: Any, right: Any) -> bool:
+    """Whether two viewer callbacks are the same one.
+
+    By equality as well as identity: a bound method is a brand new object on
+    every attribute access, so ``is`` alone answers "different" for two reads of
+    one socket's callback.
+    """
+    return left is right or left == right
+
+
+def _watch(term: Terminal, on_output: Any, on_exit: Any) -> None:
+    """Attach a viewer to ``term`` and make it the owner.
+
+    Newest last, and never twice: a socket that re-attaches (a resize, a resume
+    retry) replaces its own entry rather than being fed the same bytes twice.
+    """
+    term.watchers = [w for w in term.watchers if not _same_viewer(w[0], on_output)]
+    term.watchers.append((on_output, on_exit))
+    if len(term.watchers) > MAX_WATCHERS:
+        del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
+    term.viewer_output = on_output
+    term.viewer_exit = on_exit
+
+
+def _viewers(term: Terminal) -> list[Any]:
+    """Every output callback this pane should write to, newest last.
+
+    Falls back to the owner slot alone when nothing registered — a test (or any
+    caller) that sets ``viewer_output`` by hand still gets its output.
+    """
+    if term.watchers:
+        return [out for out, _ in term.watchers]
+    return [term.viewer_output] if term.viewer_output is not None else []
+
+
+def _exit_viewers(term: Terminal) -> list[Any]:
+    """The same, for the one-shot "the agent stopped" callback."""
+    if term.watchers:
+        return [done for _, done in term.watchers if done is not None]
+    return [term.viewer_exit] if term.viewer_exit is not None else []
+
+
+async def announce_prompt(term: Terminal) -> None:
+    """Tell every attached viewer that this pane was just handed a prompt.
+
+    Best-effort by construction, and deliberately so: a viewer that has gone
+    away, a socket mid-close, a handler that raises — none of them may cost the
+    delivery that already happened. The durable half of the receipt is the
+    pane's own ``last_prompt_at``, which every later state read picks up, so a
+    notice lost here degrades to "the receipt appears at the next poll" rather
+    than to "the user is told nothing".
+
+    A failure is logged rather than swallowed silently: a channel that never
+    reaches anyone looks, from the outside, exactly like the bug this exists to
+    fix.
+    """
+    if not term.prompt_viewers:
+        return
+    payload = {
+        "name": term.name,
+        "at": term.last_prompt_at,
+        "chars": len(term.last_prompt),
+        "preview": term.last_prompt[:200],
+        "submitted": term.submitted,
+        "prompts_sent": term.prompts_sent,
+    }
+    for notify in list(term.prompt_viewers):
+        try:
+            await notify(payload)
+        except Exception:  # noqa: BLE001 - one dead viewer never sinks the others
+            logger.debug("Agentic IDE: a prompt notice could not be delivered to a viewer")
 
 
 class SessionError(RuntimeError):
@@ -1820,6 +1960,8 @@ class Registry:
             term.stopping = True  # deliberate kills, not crashed resumes
             term.viewer_output = None
             term.viewer_exit = None
+            term.watchers.clear()
+            term.prompt_viewers.clear()
         if manager is not None:
             for term in session.terminals:
                 if term.pty_id:
@@ -2034,8 +2176,11 @@ class Registry:
             # by this one, so the newest viewer always wins. The one it replaces
             # may still be TIDYING UP — see ``detach``, which is what stops that
             # tidy-up from clearing the slot this line just filled.
-            term.viewer_output = on_output
-            term.viewer_exit = on_exit
+            #
+            # Winning the slot is about OWNERSHIP (the size, the handover), not
+            # about who may look: a viewer that was here first keeps receiving
+            # this pane's output until its own socket goes away.
+            _watch(term, on_output, on_exit)
             term.reattached = True
             term.stopping = False
             term.transcript.resize(cols, rows)
@@ -2102,8 +2247,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
-        term.viewer_output = on_output
-        term.viewer_exit = on_exit
+        _watch(term, on_output, on_exit)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
         term.stopping = False
@@ -2131,8 +2275,11 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
-            viewer = term.viewer_output
-            if viewer is not None:
+            # To EVERY viewer, not only the newest one. A pane open in two
+            # places has two screens and both are supposed to show the same
+            # agent; sending to one of them is how a window ends up frozen
+            # while the work behind it runs on.
+            for viewer in _viewers(term):
                 await viewer(text)
 
         async def _closed(_tid: str, code: int) -> None:
@@ -2170,8 +2317,7 @@ class Registry:
                     return
             term.status = "exited"
             term.exit_code = code
-            viewer = term.viewer_exit
-            if viewer is not None:
+            for viewer in _exit_viewers(term):
                 await viewer(code)
 
         # One of a few starts at a time (see COLD_START_LIMIT). The wait covers
@@ -2493,20 +2639,38 @@ class Registry:
         if found is None:
             return
         term = found[1]
+        # This viewer stops receiving output either way — it is the one going
+        # away. Done before the ownership check below, because a viewer that was
+        # displaced from the slot but is still WATCHING must not keep being
+        # written to after its socket closed.
+        if viewer is not None:
+            term.watchers = [w for w in term.watchers if not _same_viewer(w[0], viewer)]
         current = term.viewer_output
         # Compared by equality, not only by identity: a bound method is a brand
         # new object on every attribute access, so `is` would answer "you are
         # not the viewer" to the very callback sitting in the slot.
         if viewer is not None and current is not viewer and current != viewer:
-            # Somebody else is watching this pane now. Leaving quietly is the
-            # whole job — the slot belongs to the newer viewer.
+            # Somebody else OWNS this pane now. Leaving quietly is the whole job
+            # — the slot belongs to the newer viewer.
             logger.debug(
                 "Agentic IDE: a departing viewer left {} to the one that replaced it",
                 term.name,
             )
             return
+        # The owner is leaving. Whoever else is still attached takes the slot —
+        # the pane is not unwatched just because the newest window closed, and
+        # handing ownership to a viewer that is still there is what keeps the
+        # remaining screen able to set the agent's size.
+        #
+        # Naming no viewer keeps its original meaning: "nobody is watching this
+        # pane", full stop. A teardown says that, and promoting a survivor there
+        # would leave a torn-down pane holding callbacks.
+        if viewer is not None and term.watchers:
+            term.viewer_output, term.viewer_exit = term.watchers[-1]
+            return
         term.viewer_output = None
         term.viewer_exit = None
+        term.watchers = []
 
     # ------------------------------------------------------------- panes
     async def add_terminal(
@@ -2800,6 +2964,8 @@ class Registry:
                 term.status = "exited"
                 term.viewer_output = None
                 term.viewer_exit = None
+                term.watchers.clear()
+                term.prompt_viewers.clear()
                 session.terminals.remove(term)
                 # The recap cache is keyed by pane, and pane keys are reused
                 # (a new "Mika" in the same workspace). Dropping it here is what
@@ -2911,6 +3077,10 @@ class Registry:
 
         term.prompts_sent += 1
         term.last_prompt = payload
+        # Stamped before anything is announced, so the notice and the state can
+        # never disagree about when this happened — and so a viewer that arrives
+        # a second later reads the same instant the notice carried.
+        term.last_prompt_at = time.time()
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         # Somebody is driving this pane again, whatever the prompt said. Cleared
@@ -2929,6 +3099,11 @@ class Registry:
             "multi-line" if term.sent_multiline else "one line",
             payload[:120],
         )
+        # The receipt goes out for every outcome, submitted or not. A prompt
+        # sitting unsent in the input box is the case where seeing it matters
+        # MOST — that pane looks identical to a working one, and the user is
+        # the only one who can push it over the line.
+        await announce_prompt(term)
         return term
 
     async def _write_and_confirm(
@@ -3157,6 +3332,60 @@ def terminals_added_event(session: Session, created: list[Terminal], *, source_l
     )
 
 
+def workspace_changed_event(
+    session: Session | None,
+    reason: str,
+    *,
+    source_layer: str,
+    open_workspaces: int | None = None,
+) -> Any:
+    """The bus event announcing that a WORKSPACE appeared, moved or went away.
+
+    Same shape and the same reasoning as :func:`terminals_added_event`: built
+    here so every caller that holds a bus sends an identical payload, and read
+    by clients as a trigger to re-fetch rather than as the state itself.
+
+    ``session`` may be None — "closed" is a perfectly good thing to announce,
+    and the client needs to hear it most of all.
+    """
+    from jarvis.core.events import AgenticIdeWorkspaceChanged
+
+    if open_workspaces is None:
+        try:
+            open_workspaces = len(get_registry().workspaces())
+        except Exception:  # noqa: BLE001 - a count must never cost the event
+            open_workspaces = 0
+    return AgenticIdeWorkspaceChanged(
+        session_id=session.id if session is not None else "",
+        reason=reason,
+        folder=session.folder if session is not None else "",
+        name=session.name if session is not None else "",
+        open_workspaces=open_workspaces,
+        source_layer=source_layer,
+    )
+
+
+def prompt_sent_event(session: Session | None, term: Terminal, *, source_layer: str) -> Any:
+    """The bus event announcing that Jarvis typed a prompt into a pane.
+
+    The preview is deliberately short. This exists so a client can SAY that
+    something was sent — the prompt itself is already on screen in the pane it
+    went to, and putting a full brief on the bus would put it in every event
+    log as well.
+    """
+    from jarvis.core.events import AgenticIdePromptSent
+
+    preview = " ".join((term.last_prompt or "").split())
+    return AgenticIdePromptSent(
+        session_id=session.id if session is not None else "",
+        terminal=term.name,
+        agent=term.agent,
+        submitted=term.submitted,
+        preview=preview[:160],
+        source_layer=source_layer,
+    )
+
+
 def coding_mode_active() -> bool:
     """Is Jarvis an Agentic IDE right now?
 
@@ -3261,8 +3490,10 @@ __all__ = [
     "coding_mode_event",
     "get_registry",
     "is_runnable",
+    "prompt_sent_event",
     "reset_registry",
     "running_call_signs",
     "sanitize_prompt",
     "terminals_added_event",
+    "workspace_changed_event",
 ]

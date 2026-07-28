@@ -216,4 +216,56 @@ describe("WSClient", () => {
       }
     });
   });
+  describe("a socket that stops carrying anything", () => {
+    // The app-wide freeze. Every live update in Jarvis rides this one socket,
+    // and a half-open connection — the peer gone without a FIN, which is what a
+    // sleep, a network change or a killed backend leaves behind — keeps
+    // `readyState` at OPEN and never fires `close`. Nothing reconnected, the
+    // UI kept claiming it was connected, and only a reload brought it back.
+    it("replaces itself after two missed pings", async () => {
+      vi.useFakeTimers();
+      try {
+        const onClose = vi.fn();
+        const client = new WSClient({ onClose });
+        client.connect();
+        await Promise.resolve();
+        const dead = MockWebSocket.last;
+        expect(dead).toBeTruthy();
+
+        // Time passes; the socket answers nothing. The pings go out into it.
+        await vi.advanceTimersByTimeAsync(30_000 * 3);
+
+        expect(dead!.close).toHaveBeenCalled();
+        expect(onClose).toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(500);
+        expect(MockWebSocket.last).not.toBe(dead);
+        client.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves a socket alone while it is still answering", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = new WSClient({});
+        client.connect();
+        await Promise.resolve();
+        const live = MockWebSocket.last;
+
+        for (let i = 0; i < 4; i += 1) {
+          await vi.advanceTimersByTimeAsync(30_000);
+          // The backend's answer to the ping — the only frame an idle but
+          // healthy connection produces, and therefore the evidence.
+          live!.deliver({ type: "pong", payload: {} });
+        }
+
+        expect(live!.close).not.toHaveBeenCalled();
+        expect(MockWebSocket.last).toBe(live);
+        client.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

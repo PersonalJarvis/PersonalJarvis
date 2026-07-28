@@ -90,8 +90,10 @@ from jarvis.agentic_ide.session import (
     agent_argv,
     coding_mode_event,
     get_registry,
+    prompt_sent_event,
     sanitize_prompt,
     terminals_added_event,
+    workspace_changed_event,
 )
 from jarvis.agentic_ide.terminal_input import is_terminal_report_only
 
@@ -132,6 +134,35 @@ async def _announce_coding_mode(request: Request) -> None:
         )
     except Exception as exc:  # noqa: BLE001 - notification is not the work
         log.debug("AgenticIdeCodingModeChanged publish failed: %s", exc)
+
+
+async def _announce_workspace(request: Request, session: object | None, reason: str) -> None:
+    """Tell every connected client that a workspace opened, moved or closed.
+
+    The companion to ``_announce_coding_mode``, and it exists for a failure that
+    one could not cover: the mode event drives a badge, while THIS drives the
+    grid. A workspace opened by voice, restored after a restart, or closed in
+    another window changed nothing on a screen that was not the one doing it —
+    the panes on it went on knocking at a workspace that had been replaced, and
+    the only way back was a reload.
+
+    Same contract as its neighbour: best-effort (AP-18), read back from the
+    registry, a trigger rather than a source of truth.
+    """
+    bus = getattr(request.app.state, "bus", None)
+    if bus is None:
+        return
+    try:
+        await bus.publish(
+            workspace_changed_event(
+                session,  # type: ignore[arg-type]
+                reason,
+                source_layer="agentic_ide_routes",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - notification is not the work
+        log.debug("AgenticIdeWorkspaceChanged publish failed: %s", exc)
+
 
 # One system folder window at a time — see ``open_native_picker``.
 _native_picker_lock = asyncio.Lock()
@@ -769,6 +800,34 @@ class RecapsResponse(BaseModel):
     terminals: list[TerminalRecap] = Field(default_factory=list)
 
 
+class LastPrompt(BaseModel):
+    """The exact text a pane was last handed — the receipt, in full.
+
+    Its own request rather than a field of the workspace state, and that split
+    is deliberate: a composed brief runs to several thousand characters, and
+    carrying every pane's copy in every poll was measured as waste worth
+    removing. What the state keeps is the SHORT half (an excerpt, a length, a
+    timestamp), which is enough to render the receipt; this is what the user
+    gets when they click it open, and it is the only claim that can be checked
+    word for word against what the agent was told.
+    """
+
+    name: str
+    text: str = Field(description="The prompt as it was written into the pane, unabridged.")
+    chars: int = Field(default=0, description="Length of ``text``.")
+    at: float | None = Field(
+        default=None, description="When it was delivered (epoch seconds); null if none was."
+    )
+    submitted: bool | None = Field(
+        default=None,
+        description=(
+            "True when the agent accepted it and started, false when it is still "
+            "sitting in the pane's input box, null when it could not be confirmed."
+        ),
+    )
+    prompts_sent: int = Field(default=0, description="How many prompts this pane has been sent.")
+
+
 class RecapEdit(BaseModel):
     """A recap the user is writing for one pane themselves."""
 
@@ -1077,6 +1136,7 @@ async def activate_workspace(request: Request, req: ActivateWorkspaceRequest) ->
     # Each workspace carries its own coding mode, so bringing a different one to
     # the front can change the answer without anyone touching the toggle.
     await _announce_coding_mode(request)
+    await _announce_workspace(request, session, "activated")
     return {
         "ok": True,
         "active_id": session.id if session else None,
@@ -1101,7 +1161,7 @@ async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> di
 
 
 @router.post("/session", summary="Open an Agentic-IDE workspace")
-async def start_session(req: StartSessionRequest) -> dict:
+async def start_session(request: Request, req: StartSessionRequest) -> dict:
     """Open ``folder`` as another workspace, with one terminal per request entry.
 
     Whatever is already open STAYS open with its agents running — this adds a
@@ -1130,6 +1190,10 @@ async def start_session(req: StartSessionRequest) -> dict:
         )
     except Exception:  # noqa: BLE001 - history must never block opening a folder
         log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
+    # Every other window has to hear this. One of them may be showing the grid
+    # of a workspace this one just replaced at the front, and a grid nobody
+    # corrects is a grid whose panes attach to the wrong workspace.
+    await _announce_workspace(request, session, "opened")
     return {"ok": True, "session": session.to_dict(), "state": get_registry().state()}
 
 
@@ -1149,6 +1213,7 @@ async def end_session(request: Request) -> dict:
     # Closing the front workspace ends its coding mode — or hands it to whichever
     # workspace takes the front, which may have a different one.
     await _announce_coding_mode(request)
+    await _announce_workspace(request, get_registry().session, "closed")
     return {"ok": True, "closed": closed, "state": get_registry().state()}
 
 
@@ -1172,6 +1237,7 @@ async def close_workspace(request: Request, workspace_id: str) -> dict:
         raise HTTPException(status_code=404, detail="That workspace is not open.")
     await registry.end(workspace_id)
     await _announce_coding_mode(request)
+    await _announce_workspace(request, registry.session, "closed")
     return {"ok": True, "closed": workspace_id, "state": registry.state()}
 
 
@@ -1222,7 +1288,7 @@ async def get_resume_offer() -> ResumeOffer:
 
 
 @router.post("/resume", summary="Reopen the last Agentic-IDE workspace")
-async def resume_workspace() -> dict:
+async def resume_workspace(request: Request) -> dict:
     """Reopen everything that was open: same panes, same places, same coding CLIs.
 
     Every workspace in the restore point, not just whichever was on screen —
@@ -1281,6 +1347,12 @@ async def resume_workspace() -> dict:
         ],
     )
     total_panes = result.terminal_count
+    # A restore is the transition most likely to happen while nobody is looking
+    # — it is what follows an app restart — so it is also the one a client is
+    # most likely to miss. Reopened workspaces carry NEW ids, which means a view
+    # that keeps the old ones has panes addressing workspaces that no longer
+    # exist; saying so here is what turns that into a re-fetch.
+    await _announce_workspace(request, registry.session, "restored")
     return {
         "ok": True,
         "state": registry.state(),
@@ -1765,6 +1837,38 @@ async def refresh_terminal_recap(name: str, workspace_id: str | None = None) -> 
     return _recap_row(term, summary)
 
 
+@router.get(
+    "/terminals/{name}/prompt",
+    response_model=LastPrompt,
+    summary="The exact prompt a terminal was last sent",
+)
+async def get_last_prompt(name: str, workspace_id: str | None = None) -> LastPrompt:
+    """What terminal ``name`` was last told to do, word for word.
+
+    This is the proof half of a delivery. Jarvis composes a brief, types it
+    into a pane and says it did — and until this existed, the only evidence was
+    the pane's own screen, which is exactly what is missing in every case worth
+    checking: a pane that had parked its output, an emulator that never
+    painted, a socket that reconnected a moment later, a CLI that redrew its
+    input box without the text ever scrolling into view. "I sent it" and "you
+    can read what I sent" are different claims, and only the second one can be
+    verified by the person who has to trust it.
+
+    Answers for a pane that has never been sent anything too, with an empty
+    ``text`` and a null ``at`` — "nothing was sent here" is itself an answer,
+    and a 404 would read as "no such pane".
+    """
+    term, _session = _pane_for_recap(name, workspace_id)
+    return LastPrompt(
+        name=term.name,
+        text=term.last_prompt,
+        chars=len(term.last_prompt),
+        at=term.last_prompt_at,
+        submitted=term.submitted,
+        prompts_sent=term.prompts_sent,
+    )
+
+
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
 async def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
@@ -2015,6 +2119,11 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
     if registry.session is None:
         raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
 
+    # Bound once, up here: the announcements at the end of this route apply to
+    # every fan-out, and the fleet path that briefs EXISTING panes never enters
+    # the spawn branch below.
+    bus = getattr(request.app.state, "bus", None)
+
     created: list = []
     if req.spawn:
         for group in req.spawn:
@@ -2027,7 +2136,6 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
             created.extend(opened)
             if capped:
                 break
-        bus = getattr(request.app.state, "bus", None)
         session = registry.session
         if session is not None and bus is not None and created:
             try:
@@ -2102,6 +2210,22 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
         instruction=req.instruction,
         assignments=assignments,
     )
+    # One announcement per pane that was actually briefed — the fleet path is
+    # where a spoken "prompt terminal two and three" lands, and it is exactly
+    # the path where the user has no other way of knowing it happened: they are
+    # talking, not looking at a prompt bar. See the same publish in
+    # ``terminal_prompt`` for why the pane's own echo is not enough.
+    if bus is not None and session is not None:
+        for delivery in result.delivered:
+            term = session.find(delivery.terminal)
+            if term is None:
+                continue
+            try:
+                await bus.publish(
+                    prompt_sent_event(session, term, source_layer="agentic_ide_routes")
+                )
+            except Exception as exc:  # noqa: BLE001 - notification is not the work
+                log.debug("AgenticIdePromptSent publish failed: %s", exc)
     return {
         "ok": result.all_delivered,
         "dry_run": False,
@@ -2176,7 +2300,7 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
 
 
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
-async def terminal_prompt(name: str, req: PromptRequest) -> dict:
+async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> dict:
     """Type ``prompt`` into the terminal called ``name`` and press Enter.
 
     With ``compose=true`` the text is first rewritten into a prompt worth
@@ -2261,6 +2385,26 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         term = await registry.send_prompt(name, text)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    # Say out loud that a prompt went in.
+    #
+    # Until now the ONLY sign was the agent echoing it back down that pane's own
+    # terminal socket — one path, with no second opinion anywhere in the app. So
+    # whenever that path was interrupted (a viewer that had lost its pane, a
+    # window that was not looking, a socket in the middle of a slow reconnect)
+    # the user was told the prompt had been sent and watched a screen where
+    # nothing whatsoever happened, which reads as "it did nothing" (reported
+    # 2026-07-28). This event is independent of the pane: it arrives on the app
+    # socket every client already holds.
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None:
+        try:
+            await bus.publish(
+                prompt_sent_event(found[0], term, source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - notification is not the work
+            log.debug("AgenticIdePromptSent publish failed: %s", exc)
+
     # `submitted` is the honest part of this answer, and it has THREE states:
     # True the agent accepted the prompt and started, False the text is provably
     # still in its input box, null the pane never visibly took it and no claim
@@ -2354,12 +2498,63 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             except Exception:  # noqa: BLE001, S110 - viewer gone
                 pass
 
+    async def on_prompt(notice: dict) -> None:
+        """This pane was just handed a prompt — tell the viewer outright.
+
+        The alternative is what every earlier version relied on: let the user
+        recognise the delivery in the agent's own output. That reliably fails
+        in the states nobody can see from here — a parked pane, an emulator
+        that has not painted, a socket that reconnected a moment ago, or a CLI
+        that redraws its input box without the text ever scrolling into view.
+        The user is then told the brief was sent and looks at a pane where
+        nothing happened, which is indistinguishable from Jarvis making it up.
+
+        Lossy on purpose: a viewer that is not connected in this instant misses
+        it and picks the same receipt up from ``last_prompt_at`` on its next
+        state read. This channel buys immediacy, not delivery.
+        """
+        async with send_lock:
+            try:
+                await ws.send_json({"t": "prompt", **notice})
+            except Exception:  # noqa: BLE001, S110 - viewer gone; the state still carries it
+                pass
+
     # Pin the workspace ONCE, before anything is attached. A client that sent no
     # id means "the one showing right now", and that has to be resolved here
     # rather than on every later message: the front workspace can change while
     # this socket is open, and a keystroke must keep going to the pane it was
     # typed into.
     pinned = registry.get(workspace_id)
+    if workspace_id and pinned is None and registry.get(None) is not None:
+        # **A pane whose workspace is gone must not land in a different one.**
+        #
+        # Call-signs are positional: every workspace numbers its panes from T1.
+        # So a socket still holding a closed workspace's id used to resolve
+        # against whatever is at the FRONT now and attach to a stranger's T2 —
+        # in another folder, run by another agent. And because attaching makes
+        # you the owner, it took that pane's output away from the window the
+        # user was actually looking at, which then sat frozen until it was
+        # reloaded (measured 2026-07-28: a leftover tab from before an app
+        # restart quietly took over four live panes, and a prompt typed into
+        # them appeared nowhere).
+        #
+        # Answering "that workspace is gone" instead lets the client do the one
+        # correct thing: re-read the state and come back with the grid that
+        # exists. Distinguished from the 4503 above on purpose — nothing is
+        # coming back here, so waiting would be waiting for nothing.
+        log.info(
+            "Agentic IDE: %r asked for workspace %s, which is closed — telling it to re-read",
+            name,
+            workspace_id,
+        )
+        await ws.send_json(
+            {
+                "t": "error",
+                "message": "That workspace was closed — reloading the terminals.",
+            }
+        )
+        await ws.close(code=4409, reason="stale workspace")
+        return
     pane_workspace = pinned.id if pinned is not None else None
 
     try:
@@ -2414,8 +2609,23 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             # workspaces are switched between — saying "started a new
             # conversation" there would be plainly false.
             "reattached": term.reattached,
+            # What this pane was last told to do, and when — handed over with
+            # the handshake so a viewer that arrives AFTER the prompt (a
+            # reload, a reconnect, a second window opened later) still shows
+            # the receipt. Without it the proof would exist only for whoever
+            # happened to be connected in that one instant, which is precisely
+            # the user who did not need proving to.
+            "last_prompt_at": term.last_prompt_at,
+            "last_prompt_chars": len(term.last_prompt),
+            "last_prompt_preview": term.last_prompt[:200],
+            "submitted": term.submitted,
         }
     )
+
+    # Register only once the handshake is out. A notice arriving before the
+    # pane knows its own name would be dropped by the client as belonging to
+    # nothing, and the state read that follows would then be its first hint.
+    term.prompt_viewers.append(on_prompt)
 
     try:
         while True:
@@ -2472,6 +2682,14 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         # and releasing it then would leave a live agent painting into nothing
         # (BUG-113).
         registry.detach(term.key, pane_workspace, viewer=on_output)
+        # Unregistered by identity for the same reason: a pane open in two
+        # windows has two notice channels, and removing "the last one" would
+        # silence the window that is still watching. Guarded because the pane
+        # may already have been torn down (closing a workspace clears these).
+        try:
+            term.prompt_viewers.remove(on_prompt)
+        except ValueError:
+            pass
 
 
 def _safe_int(value: object, default: int) -> int:

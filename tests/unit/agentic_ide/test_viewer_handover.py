@@ -165,3 +165,81 @@ async def test_a_pane_the_open_workspace_does_not_have_is_refused(
         await registry.attach("Nobody", 80, 24, Viewer().output, Viewer().exit)
 
     assert not isinstance(refused.value, SessionNotReady)
+
+
+# ------------------------------------------------- one pane, several screens
+async def test_every_attached_viewer_sees_the_agent(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A pane open in two places drives BOTH screens.
+
+    The failure this pins is the one that made a live workspace look dead
+    (reported 2026-07-28). A pane fed only its newest viewer, and viewers are
+    not always the same window: the desktop app and a browser tab, two windows,
+    a leftover page from an earlier session. Whichever attached last took the
+    output and every other screen froze — agents working away behind rectangles
+    that never changed, and nothing but a reload to bring them back.
+    """
+    _session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 80, 24, app.output, app.exit)
+    await registry.attach(term.name, 80, 24, tab.output, tab.exit)
+
+    await fake_pty.emit(term.pty_id, "running the tests")
+
+    assert "running the tests" in app.screen, (
+        "the window that attached first went blind when a second one arrived"
+    )
+    assert "running the tests" in tab.screen
+    # Ownership is still single, and still the newest: the pseudo-terminal has
+    # exactly one size and two windows must not fight over it.
+    assert term.viewer_output == tab.output
+
+
+async def test_the_survivor_keeps_the_pane_when_the_owner_leaves(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Closing the newest window hands the pane back, it does not orphan it."""
+    session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 80, 24, app.output, app.exit)
+    await registry.attach(term.name, 80, 24, tab.output, tab.exit)
+
+    registry.detach(term.key, session.id, viewer=tab.output)
+    await fake_pty.emit(term.pty_id, "still here")
+
+    assert "still here" in app.screen
+    assert "still here" not in tab.screen, "a closed viewer must stop being fed"
+    assert term.viewer_output == app.output, (
+        "the remaining window has to own the pane, or it can never set the "
+        "agent's screen size again"
+    )
+
+
+async def test_an_exit_reaches_every_screen(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Both windows show the agent stopping — not just the newest one."""
+    _session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 80, 24, app.output, app.exit)
+    await registry.attach(term.name, 80, 24, tab.output, tab.exit)
+
+    await fake_pty.die(term.pty_id, 3)
+
+    assert app.exits == [3]
+    assert tab.exits == [3]
+
+
+async def test_one_socket_reattaching_is_not_two_viewers(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A viewer that attaches again replaces itself rather than doubling."""
+    _session, term = await _one_pane(registry, tmp_path)
+    viewer = Viewer()
+    await registry.attach(term.name, 80, 24, viewer.output, viewer.exit)
+    await registry.attach(term.name, 80, 24, viewer.output, viewer.exit)
+
+    await fake_pty.emit(term.pty_id, "once")
+
+    assert viewer.seen.count("once") == 1, "the pane wrote the same bytes twice"

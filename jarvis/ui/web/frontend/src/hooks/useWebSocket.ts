@@ -258,7 +258,14 @@ export function useWebSocket(): void {
 
         if (
           env.event_name === "AgenticIdeTerminalsAdded" ||
-          env.event_name === "AgenticIdeTerminalsClosed"
+          env.event_name === "AgenticIdeTerminalsClosed" ||
+          // A whole workspace opened, was restored after a restart, came to the
+          // front, or closed. Same treatment as a pane change and for a
+          // stronger reason: a view holding a workspace that no longer exists
+          // has panes that connect to nothing, so it does not merely look
+          // stale — it stops working, and until this event existed nothing but
+          // a reload told it (2026-07-28).
+          env.event_name === "AgenticIdeWorkspaceChanged"
         ) {
           // Panes were changed by voice or the CLI. The workspace view loads its
           // state once on mount, so without this it would keep showing the old
@@ -268,6 +275,28 @@ export function useWebSocket(): void {
           window.dispatchEvent(
             new CustomEvent("jarvis:agentic-ide-changed", { detail: env.payload }),
           );
+        }
+
+        if (env.event_name === "AgenticIdePromptSent") {
+          // Jarvis typed an instruction into a pane. The pane will show it as
+          // the agent echoes it back, but that is one path and the user is
+          // usually not looking at it while speaking — so the fact is stated
+          // here too, on the socket every screen already holds.
+          const p = env.payload as {
+            terminal?: string;
+            submitted?: boolean | null;
+          };
+          if (typeof p.terminal === "string" && p.terminal.length > 0) {
+            pushToast(
+              p.submitted === true ? "success" : "warning",
+              p.submitted === true
+                ? `${translate("use_web_socket.prompt_sent")} ${p.terminal}`
+                : `${p.terminal}: ${translate("use_web_socket.prompt_not_submitted")}`,
+            );
+            window.dispatchEvent(
+              new CustomEvent("jarvis:agentic-ide-prompt", { detail: p }),
+            );
+          }
         }
 
         if (env.event_name === "AgenticIdeCodingModeChanged") {
