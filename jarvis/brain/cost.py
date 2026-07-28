@@ -88,14 +88,21 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # ── DeepSeek ────────────────────────────────────────────────────
     "deepseek-chat": (0.27, 1.10),
     "deepseek-reasoner": (0.55, 2.19),
-    # ── OpenRouter (proxied models, same price as the origin) ──────────
+    # ── OpenRouter (proxied models; rates from the OpenRouter pricing
+    # feed, re-verified 2026-07-28 — they can diverge from the origin's
+    # native-API price) ────────────────────────────────────────────────
     "anthropic/claude-haiku-4.5": (0.80, 4.0),
-    "anthropic/claude-opus-4.8": (15.0, 75.0),
+    "anthropic/claude-opus-4.8": (5.0, 25.0),
+    "anthropic/claude-opus-4.8-fast": (10.0, 50.0),
     "anthropic/claude-opus-4.7": (15.0, 75.0),
     "anthropic/claude-sonnet-4.6": (3.0, 15.0),
     "google/gemini-3.5-flash": (1.50, 9.0),
     "google/gemini-3.5-flash-lite": (0.30, 2.50),
     "google/gemini-3.6-flash": (1.50, 7.50),
+    # 2026-07-28 audit: 1.87M tokens in 30 days ran on deepseek-v4-flash
+    # while it was absent here — the single biggest remaining $0 hole.
+    "deepseek/deepseek-v4-flash": (0.14, 0.28),
+    "deepseek/deepseek-v4-pro": (0.435, 0.87),
     # ── Mistral (same ordering) ──────────────────────────────────────
     "mistral-small-3.1": (0.20, 0.60),
     "mistral-large-3": (3.0, 9.0),

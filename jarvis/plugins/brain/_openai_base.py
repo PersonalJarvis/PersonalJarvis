@@ -377,10 +377,19 @@ async def stream_complete(
         # Usage info (OpenAI delivers this in the last chunk)
         usage = getattr(chunk, "usage", None)
         if usage is not None:
-            yield BrainDelta(usage={
+            usage_payload = {
                 "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
                 "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-            })
+            }
+            # Cache hits were invisible on this path (2026-07-28 cost audit:
+            # 84% of tool-loop tokens ran through OpenAI-protocol gateways) —
+            # without the protocol's cache_hit_tokens key nobody can measure
+            # whether a prompt-cache change works or what a turn really cost.
+            details = getattr(usage, "prompt_tokens_details", None)
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+            if cached > 0:
+                usage_payload["cache_hit_tokens"] = cached
+            yield BrainDelta(usage=usage_payload)
 
 
 _UNSUPPORTED_ERROR_MARKERS = (

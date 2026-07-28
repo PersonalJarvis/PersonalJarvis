@@ -794,6 +794,24 @@ def _is_instructional_question(user_text: str) -> bool:
 # NEVER in here (the question must stay answerable inline).
 _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 
+# Agentic-IDE pane tools that only make sense RELATIVE TO AN OPEN WORKSPACE.
+# With none open, every one of them can only fail — while their schemas cost
+# ~10 KB of input on every tool-loop iteration (2026-07-28 cost audit).
+# Deliberately NOT listed: ``agentic-ide-status`` (answers "nothing is open"
+# honestly) and ``agentic-ide-resume`` (the command that OPENS a workspace
+# by voice — hiding it would strand the feature).
+_AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
+    "agentic-ide-terminal-report",
+    "agentic-ide-prompt",
+    "agentic-ide-fanout",
+    "agentic-ide-spawn-terminals",
+    "agentic-ide-move-terminal",
+    "agentic-ide-close-agent-terminals",
+    "agentic-ide-focus",
+    "agentic-ide-interrupted",
+    "agentic-ide-continue-interrupted",
+})
+
 # Consequential action tools a turn with NO action signal of its own must never
 # INHERIT from the conversation context. GENERAL rule (not one phrase): a
 # question, a remark, or a mis-transcription asks for no desktop action, so it
@@ -5438,6 +5456,36 @@ class BrainManager:
             log.debug("knowledge-question spawn-hide gate failed", exc_info=True)
             return tools
 
+    def _hide_agentic_ide_tools_without_workspace(
+        self, tools: dict[str, Tool]
+    ) -> dict[str, Tool]:
+        """Drop the pane-scoped Agentic-IDE tools when NO workspace is open.
+
+        A capability gate, not a keyword guess: without an open workspace
+        those tools can only fail, so hiding them loses nothing — and their
+        schemas are ~10 KB of input re-sent on every tool-loop iteration.
+        ``agentic-ide-status`` and ``agentic-ide-resume`` always stay (see
+        _AGENTIC_IDE_WORKSPACE_TOOL_NAMES). Defensive: any fault returns
+        the tools unchanged so a gate bug can never blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            if not any(n in tools for n in _AGENTIC_IDE_WORKSPACE_TOOL_NAMES):
+                return tools
+            from jarvis.agentic_ide.session import get_registry as _ide_registry
+
+            if _ide_registry().session is not None:
+                return tools
+            return {
+                n: tool
+                for n, tool in tools.items()
+                if n not in _AGENTIC_IDE_WORKSPACE_TOOL_NAMES
+            }
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("agentic-ide workspace tool gate failed", exc_info=True)
+            return tools
+
     def _hide_action_tools_on_signalless_turn(
         self, tools: dict[str, Tool], user_text: str
     ) -> dict[str, Tool]:
@@ -9432,6 +9480,14 @@ class BrainManager:
                 _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
                     _turn_tools, routing_text
                 )
+            # Agentic-IDE pane tools exist only relative to an OPEN workspace
+            # (2026-07-28 cost audit): with none open they can only fail,
+            # while their schemas ride every loop iteration. Status/resume
+            # always stay visible.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_agentic_ide_tools_without_workspace(
+                    _turn_tools
+                )
             # A referential follow-up that inherited a currently registered
             # plugin/MCP tool remains inline even when that tool has no usage
             # card. The explicit heavy-work and artifact requests above retain
@@ -9667,8 +9723,22 @@ class BrainManager:
                 try:
                     from jarvis.brain.cost import calculate_cost_usd
                     cost_usd_total = calculate_cost_usd(model, tokens_in_total, tokens_out_total)
+                    if cost_usd_total == 0.0 and tokens_in_total > 0:
+                        # An unknown model prices as $0.00 and every surface
+                        # then renders the turn as free — that silence is how
+                        # 1.87M deepseek tokens went unbilled for a month
+                        # (2026-07-28 cost audit). Say it once per turn.
+                        log.warning(
+                            "No pricing entry for model %r — %d in / %d out "
+                            "tokens recorded as $0.00; add it to "
+                            "jarvis/brain/cost.py PRICING_USD_PER_MTOK",
+                            model, tokens_in_total, tokens_out_total,
+                        )
                 except Exception:  # noqa: BLE001
-                    pass
+                    log.warning(
+                        "Cost calculation failed for model %r — recording $0.00",
+                        model, exc_info=True,
+                    )
                 await self._bus.publish(BrainTurnStarted(
                     provider=prov_name,
                     model=model,

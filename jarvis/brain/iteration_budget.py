@@ -28,19 +28,33 @@ class IterationBudget:
     """Tracks turns and generated tokens for a conversation loop."""
     max_turns: int = 15
     max_tokens_total: int = 50_000
+    #: Cost backstop over the CUMULATIVE re-sent prompt. Distinct from the
+    #: 2026-06-01 trap above: input never counts against the small OUTPUT
+    #: ceiling — this is its own bound, sized so no legitimate flow reaches
+    #: it (~15 rounds of a 27k-token fixed block). Live 2026-07-26: one
+    #: voice turn summed 686k input tokens across loop rounds ≈ $1 on the
+    #: configured tool model. Tripping this behaves exactly like the other
+    #: two bounds: the loop's budget directive forces one final grounded
+    #: synthesis round — an honest answer, never a silent drop.
+    max_input_tokens_total: int = 400_000
     turns_used: int = 0
     tokens_used: int = 0           # OUTPUT tokens accumulated (runaway-generation signal)
-    input_tokens_seen: int = 0     # telemetry only — re-sent prompt, not a budget input
+    input_tokens_seen: int = 0     # cumulative re-sent prompt (cost backstop + telemetry)
 
     def record_turn(self, tokens_in: int = 0, tokens_out: int = 0) -> None:
         self.turns_used += 1
-        # Only generated (output) tokens count toward the ceiling — see module
-        # docstring. The re-sent prompt is tracked separately for telemetry.
+        # Only generated (output) tokens count toward the OUTPUT ceiling — see
+        # module docstring. The re-sent prompt accumulates against its own,
+        # far larger cost backstop.
         self.tokens_used += int(tokens_out)
         self.input_tokens_seen += int(tokens_in)
 
     def exceeded(self) -> bool:
-        return self.turns_used >= self.max_turns or self.tokens_used >= self.max_tokens_total
+        return (
+            self.turns_used >= self.max_turns
+            or self.tokens_used >= self.max_tokens_total
+            or self.input_tokens_seen >= self.max_input_tokens_total
+        )
 
     def remaining_turns(self) -> int:
         return max(0, self.max_turns - self.turns_used)

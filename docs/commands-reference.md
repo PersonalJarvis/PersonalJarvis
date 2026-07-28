@@ -175,7 +175,7 @@ Return the latest persisted user transcript and its complete voice turn, optiona
 
 Return the effective live Brain tool surface, including native, connected CLI, Marketplace, and MCP tools.
 
-- **Endpoint:** `GET /api/tools`
+- **Endpoint:** `GET /api/tools/brief`
 - **Arguments:** none
 - **Requires confirmation:** no
 - **Desktop UI section:** `settings`

@@ -492,7 +492,10 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "connected CLI, Marketplace, and MCP tools."
             ),
             method="GET",
-            path="/api/tools",
+            # The brief listing, deliberately not /api/tools: the full route
+            # serializes every schema (50-200k chars) and the tool-result cap
+            # slices that mid-JSON (2026-07-28 cost audit).
+            path="/api/tools/brief",
             worker_allowed=True,
             params={"type": "object", "properties": {}},
             ui_section="settings",

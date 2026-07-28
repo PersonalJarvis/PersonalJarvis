@@ -3506,3 +3506,78 @@ def test_pc_control_run_skill_gate_is_fault_tolerant() -> None:
     manager = _manager_with_cu_runskill_search()
     sentinel = object()
     assert manager._hide_run_skill_on_pc_control_turn(sentinel, "Oeffne Chrome") is sentinel  # type: ignore[arg-type]  # i18n-allow: German voice command under test
+
+
+# ---------------------------------------------------------------------------
+# Agentic-IDE workspace tool gate (2026-07-28 cost audit): the pane-scoped
+# agentic-ide-* tools only make sense relative to an OPEN workspace. With none
+# open they can only fail, while their schemas cost ~10 KB of input on every
+# tool-loop iteration. agentic-ide-status (honest "nothing is open" answer)
+# and agentic-ide-resume (the command that OPENS a workspace by voice) must
+# never be hidden.
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdeTool:
+    schema: dict[str, Any] = {}
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _manager_with_ide_tools() -> BrainManager:
+    tools = {
+        name: _FakeIdeTool(name)
+        for name in (
+            "agentic-ide-status",
+            "agentic-ide-resume",
+            "agentic-ide-prompt",
+            "agentic-ide-terminal-report",
+            "agentic-ide-spawn-terminals",
+        )
+    }
+    tools["search_web"] = _FakeSearchTool()
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools=tools,
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+
+
+def test_no_workspace_hides_pane_tools_keeps_status_and_resume(monkeypatch) -> None:
+    import jarvis.agentic_ide.session as ide_session
+
+    class _NoWorkspaceRegistry:
+        session = None
+
+    monkeypatch.setattr(ide_session, "get_registry", lambda: _NoWorkspaceRegistry())
+    manager = _manager_with_ide_tools()
+    gated = manager._hide_agentic_ide_tools_without_workspace(dict(manager._tools))
+    assert "agentic-ide-prompt" not in gated
+    assert "agentic-ide-terminal-report" not in gated
+    assert "agentic-ide-spawn-terminals" not in gated
+    assert "agentic-ide-status" in gated, "status must answer 'nothing open' honestly"
+    assert "agentic-ide-resume" in gated, "resume is what OPENS a workspace by voice"
+    assert "search_web" in gated
+
+
+def test_open_workspace_keeps_every_pane_tool(monkeypatch) -> None:
+    import jarvis.agentic_ide.session as ide_session
+
+    class _OpenWorkspaceRegistry:
+        session = object()
+
+    monkeypatch.setattr(ide_session, "get_registry", lambda: _OpenWorkspaceRegistry())
+    manager = _manager_with_ide_tools()
+    gated = manager._hide_agentic_ide_tools_without_workspace(dict(manager._tools))
+    assert set(gated) == set(manager._tools), "an open workspace hides nothing"
+
+
+def test_agentic_ide_gate_is_fault_tolerant() -> None:
+    manager = _manager_with_ide_tools()
+    sentinel = object()
+    assert (
+        manager._hide_agentic_ide_tools_without_workspace(sentinel)  # type: ignore[arg-type]
+        is sentinel
+    )

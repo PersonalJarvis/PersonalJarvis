@@ -36,6 +36,21 @@ def test_huge_resent_prompt_does_not_exhaust_the_loop():
     assert b.input_tokens_seen == 60_000
 
 
+def test_cumulative_input_backstop_trips_only_on_runaway_loops():
+    # 2026-07-28 cost audit: one voice turn summed 686k input tokens across
+    # loop rounds (the fixed ~27k block re-sent every iteration) ≈ $1. The
+    # input backstop bounds that tail without touching legitimate flows —
+    # and unlike the 2026-06-01 trap, a single large-context turn stays
+    # far below it.
+    b = IterationBudget(max_turns=100, max_tokens_total=50_000)
+    b.record_turn(tokens_in=60_000, tokens_out=40)
+    assert not b.exceeded(), "one large-context turn must not trip the backstop"
+    for _ in range(6):
+        b.record_turn(tokens_in=60_000, tokens_out=40)
+    assert b.input_tokens_seen >= 400_000
+    assert b.exceeded()
+
+
 def test_snapshot_structure():
     b = IterationBudget(max_turns=5, max_tokens_total=500)
     b.record_turn(tokens_in=100, tokens_out=50)

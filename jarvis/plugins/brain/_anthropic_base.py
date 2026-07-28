@@ -238,7 +238,12 @@ async def stream_complete(
                     usage_d = {
                         "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
                         "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                        "cache_read_input_tokens": int(
+                        # The protocol key is cache_hit_tokens (protocols.py) —
+                        # this plugin used to forward Anthropic's wire name
+                        # cache_read_input_tokens, which no consumer reads, so
+                        # cache hits were invisible in cost and telemetry and
+                        # cache regressions could not be measured.
+                        "cache_hit_tokens": int(
                             getattr(usage, "cache_read_input_tokens", 0) or 0),
                     }
                 yield BrainDelta(finish_reason=finish, usage=usage_d or None)

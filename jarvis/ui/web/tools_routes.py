@@ -63,3 +63,28 @@ async def list_tools(request: Request) -> dict[str, Any]:
         "total": len(tools),
         "by_source": by_source,
     }
+
+
+@router.get("/brief")
+async def list_tools_brief(request: Request) -> dict[str, Any]:
+    """The tool surface as a language model needs it: names, one line each.
+
+    The full listing above serializes every schema and runs to 50-200k
+    characters; the model-facing tool-result cap sliced that to 8k
+    mid-JSON, so the ``tools-list`` voice command paid thousands of input
+    tokens per loop iteration for a structurally broken fragment
+    (2026-07-28 cost audit). Schemas stay in the full route for the UI.
+    """
+    full = await list_tools(request)
+    return {
+        "tools": [
+            {
+                "name": t["name"],
+                "summary": str(t["description"]).split("\n", 1)[0][:140],
+                "source": t["source"],
+            }
+            for t in full["tools"]
+        ],
+        "total": full["total"],
+        "by_source": full["by_source"],
+    }
