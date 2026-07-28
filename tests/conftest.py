@@ -123,6 +123,28 @@ def _reset_bus():
     reset_default_bus()
 
 
+@pytest.fixture(autouse=True)
+def _reset_config_caches():
+    """Start every test with a cold config cache.
+
+    ``jarvis.core.config`` remembers the parsed TOML and the routing decision
+    derived from it, both keyed on the config FILE's identity — which is what
+    makes them safe in production and unsafe across tests: a suite that swaps
+    the config by monkeypatching ``load_config`` changes nothing about any file,
+    so without this the second test is answered with the first one's config.
+
+    Cheap (two dict clears) and applied to every test rather than the ones that
+    happen to need it today, because the failure mode is a test passing on the
+    previous test's data — which is silent, order-dependent, and exactly what
+    caught three model-catalog tests when the routing cache was introduced.
+    """
+    from jarvis.core.config import clear_config_cache
+
+    clear_config_cache()
+    yield
+    clear_config_cache()
+
+
 @pytest_asyncio.fixture
 async def fresh_bus():
     """Fresh EventBus for each test."""

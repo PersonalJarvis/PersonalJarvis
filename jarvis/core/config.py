@@ -333,6 +333,19 @@ class TriggerConfig(BaseModel):
     # Hangup key. Was hardcoded ("f1+f2",) at the SpeechPipeline call sites; now
     # user-editable via /api/settings/keybinds. Read directly at bootstrap.
     hotkey_hangup: str = "f1+f2"
+    # Dictation key: hold (or toggle, see [dictation].mode) to speak; the
+    # transcript is inserted into whatever text field currently has focus.
+    #
+    # Deliberately EMPTY by default. There is no combination that is free on
+    # every machine and every OS — the well-known ones are refused by
+    # ``validate_hotkey`` (Windows key, Ctrl+C, Alt+F4, the macOS Command
+    # shortcuts), and silently claiming a chord the user needs elsewhere is the
+    # worse failure. The setup wizard and Settings → Keybinds ask for it.
+    # Unbound is a valid, fully usable state: dictation still starts from the
+    # bar, from the UI, and from ``jarvis api dictation start`` — the last of
+    # which is the documented Wayland path, where the compositor (not the app)
+    # owns global shortcuts.
+    hotkey_dictate: str = ""
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -2432,6 +2445,88 @@ class SpeechConfig(BaseModel):
     vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
 
 
+class DictationConfig(BaseModel):
+    """Dictation mode: speak into whatever text field currently has focus.
+
+    TOML path: ``[dictation]`` · Attribute path: ``JarvisConfig.dictation``
+
+    The shortcut itself lives in ``[trigger].hotkey_dictate`` with every other
+    keybind; this block owns the behaviour. ``extra="allow"`` keeps the self-mod
+    pre-validate pipeline safe when a future key is added (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: ``hold`` = record while the key is down, submit on release (the mode
+    #: every reference tool ships and the one people expect). ``toggle`` = one
+    #: press starts, the next stops — kept for accessibility and long dictations
+    #: where holding a key for minutes is not reasonable.
+    mode: Literal["hold", "toggle"] = "hold"
+
+    #: Where the finished transcript goes. ``auto`` inserts into the focused
+    #: field of whatever application is in front, EXCEPT when that application
+    #: is Jarvis itself — then it goes to the app's own input, because inserting
+    #: into the window the user just left is both surprising and unrecoverable.
+    #: ``insert`` always inserts, ``chat`` never does (transcript event only).
+    target: Literal["auto", "insert", "chat"] = "auto"
+
+    #: ``clipboard`` writes the text, sends the paste chord and restores the
+    #: previous clipboard — one keystroke regardless of length, and it survives
+    #: editor autocomplete. ``type`` synthesises the text character by character;
+    #: correct for the rare control that ignores paste, but ~40 ms per character
+    #: on Windows and easily mangled by autocomplete, so it is opt-in.
+    insert_method: Literal["clipboard", "type"] = "clipboard"
+
+    #: Which paste chord to send. ``auto`` = Cmd+V on macOS, Ctrl+V elsewhere.
+    #: Many terminals do not paste on Ctrl+V, which is why the two explicit
+    #: alternatives exist.
+    paste_chord: Literal["auto", "ctrl_v", "ctrl_shift_v", "shift_insert"] = "auto"
+
+    #: Pause after writing the clipboard, before sending the chord. Too short
+    #: and the target app pastes the PREVIOUS clipboard content.
+    paste_delay_ms: int = Field(default=120, ge=0, le=2000)
+
+    #: Pause after the chord, before restoring the previous clipboard. Too short
+    #: and the target app has not read the clipboard yet.
+    paste_delay_after_ms: int = Field(default=120, ge=0, le=2000)
+
+    #: Put back whatever was on the clipboard before dictation. Text only — the
+    #: platform clipboard layer does not carry images, so an image on the
+    #: clipboard is lost either way; turning this off at least leaves the
+    #: transcript there.
+    restore_clipboard: bool = True
+
+    #: Remove filler sounds with the deterministic per-language rules in
+    #: ``jarvis.dictation.cleanup``. No model call, no rephrasing.
+    remove_fillers: bool = True
+
+    #: Safety ceiling for the cleanup: if the rules would drop more than this
+    #: fraction of the words, the RAW transcript is used instead. A cleanup that
+    #: eats a quarter of a sentence is a bug, not a cleanup.
+    filler_max_removed_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
+
+    #: Hard cap on one dictation, in seconds. Nothing records forever.
+    max_seconds: float = Field(default=300.0, gt=0.0, le=3600.0)
+
+    #: Live-transcript refresh interval while speaking. ``0`` disables the live
+    #: preview entirely (the final transcription still happens).
+    partial_interval_s: float = Field(default=1.2, ge=0.0, le=10.0)
+
+    #: Segment length for streaming-style transcription. The old dictation lane
+    #: re-transcribed the whole growing buffer on every tick, which costs
+    #: O(n²) audio-seconds and, on a paid API, real money. Closed segments are
+    #: transcribed once and never again; only the open tail is re-sent.
+    #: ``0`` restores the legacy full-buffer behaviour.
+    segment_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+
+    #: Keep a local history of dictations (raw + cleaned, for auditing what the
+    #: cleanup changed). Dictated text is among the most sensitive data this app
+    #: holds, so it is local-only, capped, and purgeable from the UI.
+    history_enabled: bool = True
+    history_max_entries: int = Field(default=200, ge=0, le=5000)
+    history_retention_days: int = Field(default=30, ge=0, le=3650)
+
+
 class MarketplaceConfig(BaseModel):
     """Plugin-marketplace connect settings (OAuth redirect mode).
 
@@ -2725,6 +2820,8 @@ class JarvisConfig(BaseModel):
     # Speech pipeline sub-configs (completeness classifier, …).
     # TOML path: [speech] / [speech.completeness]
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
+    # Dictation mode (hold to speak, transcript lands in the focused field).
+    dictation: DictationConfig = Field(default_factory=DictationConfig)
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
@@ -2784,15 +2881,21 @@ def _copy_toml_data(value: Any) -> Any:
 
 
 def clear_config_cache() -> None:
-    """Forget every parsed TOML payload.
+    """Forget everything derived from the config file.
 
-    The cache invalidates itself off the file's identity, so this exists for
-    the two cases that identity cannot see: a test that rewrites a fixture
+    Both caches invalidate themselves off the file's identity, so this exists
+    for the two cases that identity cannot see: a test that rewrites a fixture
     within one filesystem timestamp tick, and :mod:`jarvis.core.config_writer`
     announcing a write it just made rather than waiting to be found out.
+
+    The endpoint-routing cache is cleared with it, and must stay that way: it is
+    derived from the same file, so anything that can leave one stale leaves the
+    other stale too — and a stale route sends a provider's traffic to an address
+    the user has already changed.
     """
     with _TOML_CACHE_LOCK:
         _TOML_CACHE.clear()
+        _ENDPOINT_ROUTE_CACHE.clear()
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -3604,6 +3707,78 @@ class ResolvedEndpoint:
     via_proxy: bool
 
 
+@dataclass(frozen=True)
+class _EndpointRoute:
+    """Where a provider's traffic goes — the part decided purely by config."""
+
+    base_url: str | None
+    via_proxy: bool
+
+
+#: Config-derived routing per (config identity, provider, vendor default).
+#:
+#: This is the OTHER half of the freeze whose TOML half ``_TOML_CACHE`` fixed.
+#: ``resolve_provider_endpoint`` runs on every provider client build, on the
+#: event loop, and a key-aware fallback chain builds several providers per turn.
+#: Reaching ``load_config()`` for it rebuilt the whole ``JarvisConfig`` model
+#: each time: 281 fresh objects per call, handed straight to the garbage
+#: collector. Measured live on 2026-07-28 (two independent sessions, same
+#: verdict): the backend thread sat ``active+gil`` inside ``JarvisConfig(**data)``
+#: reached through exactly this function, and while it did, the Tk-drawn overlay
+#: stopped pumping and Windows replaced the frozen window with a ``Ghost``
+#: (BUG-118). Caching the model itself is not an option — a hundred sites mutate
+#: the object they are handed — but the routing decision is small, immutable and
+#: derived only from the file, so it can be remembered safely.
+_ENDPOINT_ROUTE_CACHE: dict[
+    tuple[tuple[int, int] | None, str, str | None], _EndpointRoute
+] = {}
+
+
+def _endpoint_route(
+    cfg_obj: JarvisConfig,
+    provider_id: str,
+    vendor_default_base_url: str | None,
+) -> _EndpointRoute:
+    """Pure routing decision for one provider — no secrets, no I/O."""
+    team = cfg_obj.team_proxy
+    if team.enabled and team.url and provider_id not in team.local_providers:
+        return _EndpointRoute(
+            base_url=f"{team.url.rstrip('/')}/p/{provider_id}", via_proxy=True
+        )
+    prov = cfg_obj.brain.providers.get(provider_id)
+    override = prov.base_url if prov is not None and prov.base_url else None
+    return _EndpointRoute(base_url=override or vendor_default_base_url, via_proxy=False)
+
+
+def _cached_endpoint_route(
+    provider_id: str,
+    vendor_default_base_url: str | None,
+) -> _EndpointRoute:
+    """The routing decision, without rebuilding the config model to get it.
+
+    Keyed on the config file's identity, so an edit is picked up exactly as it
+    was before — and ``clear_config_cache`` drops this alongside the parsed TOML,
+    which is what ``config_writer`` announces after every write.
+    """
+    identity: tuple[int, int] | None = None
+    try:
+        info = resolve_config_path().stat()
+        identity = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        identity = None
+
+    key = (identity, provider_id, vendor_default_base_url)
+    if identity is not None:
+        cached = _ENDPOINT_ROUTE_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    route = _endpoint_route(load_config(), provider_id, vendor_default_base_url)
+    if identity is not None:
+        _ENDPOINT_ROUTE_CACHE[key] = route
+    return route
+
+
 def resolve_provider_endpoint(
     provider_id: str,
     *,
@@ -3626,21 +3801,22 @@ def resolve_provider_endpoint(
     ``{url}/p/{provider_id}`` and the credential becomes the per-user team token
     (``team_proxy_token``) — the same flip for every provider class.
     """
-    cfg_obj = config if config is not None else load_config()
+    if config is not None:
+        route = _endpoint_route(config, provider_id, vendor_default_base_url)
+    else:
+        route = _cached_endpoint_route(provider_id, vendor_default_base_url)
 
-    team = cfg_obj.team_proxy
-    if team.enabled and team.url and provider_id not in team.local_providers:
-        base_url = f"{team.url.rstrip('/')}/p/{provider_id}"
+    # The credential is deliberately NOT part of what is remembered above. It
+    # comes from the keyring and can be replaced, revoked or repaired while the
+    # app runs — a cached one would keep a provider dead after the user fixed
+    # its key in the UI, which is the opposite of what this project promises.
+    if route.via_proxy:
         token = get_secret("team_proxy_token", "TEAM_PROXY_TOKEN")
-        return ResolvedEndpoint(base_url=base_url, credential=token, via_proxy=True)
-
-    override: str | None = None
-    prov = cfg_obj.brain.providers.get(provider_id)
-    if prov is not None and prov.base_url:
-        override = prov.base_url
-    base_url = override or vendor_default_base_url
+        return ResolvedEndpoint(base_url=route.base_url, credential=token, via_proxy=True)
     credential = get_provider_secret(provider_id)
-    return ResolvedEndpoint(base_url=base_url, credential=credential, via_proxy=False)
+    return ResolvedEndpoint(
+        base_url=route.base_url, credential=credential, via_proxy=False
+    )
 
 
 def set_secret(key: str, value: str) -> bool:
