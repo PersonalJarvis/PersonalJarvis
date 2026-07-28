@@ -39,7 +39,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from .names import near_miss, resolve
+from .names import CALL_SIGN_WORD_RE, canonical_positions, near_miss, resolve
 
 # How long a pending question stays answerable. Voice turns arrive within
 # seconds; two minutes covers a slow "uh... yes, Ellis" without letting a
@@ -201,8 +201,10 @@ def addresses_workspace(text: str) -> bool:
 # Is this word a call-sign at all?                                             #
 # --------------------------------------------------------------------------- #
 
-#: Word characters only — the unit the resolver scores. Mirrors ``intent``.
-_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+#: The unit the resolver scores — letters plus an optional digit tail, so a
+#: positional call-sign ("T1") arrives whole. Shared with ``intent`` through
+#: ``names`` so the two cannot disagree about where a name starts and ends.
+_WORD_RE = CALL_SIGN_WORD_RE
 
 _SENTENCE_START_RE = re.compile(r"(?:^|[.!?:;]\s*|\n\s*)$")
 
@@ -526,13 +528,22 @@ def detect_clarification(
     text = str(user_text or "").strip()
     if len(text) < 3 or not names:
         return None
+    # The workspace gate reads the ORIGINAL wording, because the pane noun is
+    # part of its evidence and the rewrite below consumes it: "prompte Terminal
+    # eins" becomes "prompte T1", and asked in that order the gate would have
+    # lost the word that proves the turn is about the workspace at all.
     if not addresses_workspace(text):
         return None
+    # Everything after it reads the canonical wording, so a pane named by
+    # position is as CERTAIN here as one named by its call-sign — otherwise
+    # "prompte Terminal eins und Blaike" would report the garbled second name
+    # while forgetting that the first one was clearly addressed.
+    working = canonical_positions(text, names)
 
     certain: list[str] = []
     certain_spans: list[tuple[int, int]] = []
     uncertain: list[tuple[tuple[int, int], UncertainName]] = []
-    for match in _WORD_RE.finditer(text):
+    for match in _WORD_RE.finditer(working):
         word = match.group(0)
         span = (match.start(), match.end())
         # Certain means the exact name or the same sound — deliberately the
@@ -547,9 +558,9 @@ def detect_clarification(
         candidates = near_miss(word, names)
         if not candidates:
             continue
-        if not _is_proper_name_position(text, *span):
+        if not _is_proper_name_position(working, *span):
             continue
-        if is_part_of_full_name(text, *span):
+        if is_part_of_full_name(working, *span):
             continue
         uncertain.append(
             (span, UncertainName(spoken=word, candidates=tuple(n for n, _ in candidates)))
@@ -567,7 +578,7 @@ def detect_clarification(
         kept = [
             (span, item)
             for span, item in uncertain
-            if _is_listed_beside(text, span, [s for s in neighbours if s != span])
+            if _is_listed_beside(working, span, [s for s in neighbours if s != span])
         ]
         if not kept:
             return None

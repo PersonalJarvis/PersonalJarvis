@@ -65,8 +65,8 @@ async def test_swap_exchanges_two_panes_and_keeps_the_shape(
 ) -> None:
     """The move a user reaches for most: these two are the wrong way round."""
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Alex", target="Casey", position="swap")
-    assert _layout(registry) == [("Casey", 0, 0), ("Blake", 1, 0), ("Alex", 2, 0)]
+    await registry.move_terminal("T1", target="T3", position="swap")
+    assert _layout(registry) == [("T3", 0, 0), ("T2", 1, 0), ("T1", 2, 0)]
 
 
 async def test_swap_works_between_a_stacked_pane_and_a_lone_one(
@@ -74,11 +74,11 @@ async def test_swap_works_between_a_stacked_pane_and_a_lone_one(
 ) -> None:
     """Columns of different heights: the two places trade, the stacks do not."""
     await _open(registry, tmp_path, 2)
-    lower = await registry.add_terminal(anchor="Alex", direction="down")
-    assert _layout(registry) == [("Alex", 0, 0), (lower.name, 0, 1), ("Blake", 1, 0)]
+    lower = await registry.add_terminal(anchor="T1", direction="down")
+    assert _layout(registry) == [("T1", 0, 0), (lower.name, 0, 1), ("T2", 1, 0)]
 
-    await registry.move_terminal(lower.name, target="Blake", position="swap")
-    assert _layout(registry) == [("Alex", 0, 0), ("Blake", 0, 1), (lower.name, 1, 0)]
+    await registry.move_terminal(lower.name, target="T2", position="swap")
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 0, 1), (lower.name, 1, 0)]
 
 
 # ------------------------------------------------------------ left and right
@@ -86,16 +86,16 @@ async def test_moving_right_of_a_pane_puts_it_in_its_own_column(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Alex", target="Blake", position="right")
-    assert _layout(registry) == [("Blake", 0, 0), ("Alex", 1, 0), ("Casey", 2, 0)]
+    await registry.move_terminal("T1", target="T2", position="right")
+    assert _layout(registry) == [("T2", 0, 0), ("T1", 1, 0), ("T3", 2, 0)]
 
 
 async def test_moving_left_of_a_pane_shifts_that_column_over(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Casey", target="Blake", position="left")
-    assert _layout(registry) == [("Alex", 0, 0), ("Casey", 1, 0), ("Blake", 2, 0)]
+    await registry.move_terminal("T3", target="T2", position="left")
+    assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0), ("T2", 2, 0)]
 
 
 async def test_moving_to_the_side_it_is_already_on_changes_nothing(
@@ -103,8 +103,8 @@ async def test_moving_to_the_side_it_is_already_on_changes_nothing(
 ) -> None:
     """The no-op drag must not walk a pane one column further every time."""
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Alex", target="Blake", position="left")
-    assert _layout(registry) == [("Alex", 0, 0), ("Blake", 1, 0), ("Casey", 2, 0)]
+    await registry.move_terminal("T1", target="T2", position="left")
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 2, 0)]
 
 
 async def test_pulling_a_stacked_pane_out_into_its_own_column(
@@ -112,9 +112,9 @@ async def test_pulling_a_stacked_pane_out_into_its_own_column(
 ) -> None:
     """The way back out of a stack — otherwise a split down is a one-way door."""
     await _open(registry, tmp_path, 1)
-    lower = await registry.add_terminal(anchor="Alex", direction="down")
-    await registry.move_terminal(lower.name, target="Alex", position="right")
-    assert _layout(registry) == [("Alex", 0, 0), (lower.name, 1, 0)]
+    lower = await registry.add_terminal(anchor="T1", direction="down")
+    await registry.move_terminal(lower.name, target="T1", position="right")
+    assert _layout(registry) == [("T1", 0, 0), (lower.name, 1, 0)]
 
 
 # ----------------------------------------------------------- above and below
@@ -123,33 +123,33 @@ async def test_moving_below_a_pane_joins_its_column(
 ) -> None:
     """Only the target's column moves; every other column keeps its height."""
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Casey", target="Alex", position="below")
-    assert _layout(registry) == [("Alex", 0, 0), ("Casey", 0, 1), ("Blake", 1, 0)]
+    await registry.move_terminal("T3", target="T1", position="below")
+    assert _layout(registry) == [("T1", 0, 0), ("T3", 0, 1), ("T2", 1, 0)]
 
 
 async def test_moving_above_a_pane_pushes_its_stack_down(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    lower = await registry.add_terminal(anchor="Alex", direction="down")
-    await registry.move_terminal("Blake", target=lower.name, position="above")
+    lower = await registry.add_terminal(anchor="T1", direction="down")
+    await registry.move_terminal("T2", target=lower.name, position="above")
     assert _layout(registry) == [
-        ("Alex", 0, 0),
-        ("Blake", 0, 1),
+        ("T1", 0, 0),
+        ("T2", 0, 1),
         (lower.name, 0, 2),
     ]
 
 
 async def test_reordering_inside_one_column(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 1)
-    middle = await registry.add_terminal(anchor="Alex", direction="down")
+    middle = await registry.add_terminal(anchor="T1", direction="down")
     bottom = await registry.add_terminal(anchor=middle.name, direction="down")
 
-    await registry.move_terminal("Alex", target=bottom.name, position="below")
+    await registry.move_terminal("T1", target=bottom.name, position="below")
     assert _layout(registry) == [
         (middle.name, 0, 0),
         (bottom.name, 0, 1),
-        ("Alex", 0, 2),
+        ("T1", 0, 2),
     ]
 
 
@@ -158,8 +158,8 @@ async def test_emptying_a_column_repacks_the_grid(
 ) -> None:
     """A vacated column would otherwise render as a blank stripe."""
     await _open(registry, tmp_path, 3)
-    await registry.move_terminal("Blake", target="Casey", position="below")
-    assert _layout(registry) == [("Alex", 0, 0), ("Casey", 1, 0), ("Blake", 1, 1)]
+    await registry.move_terminal("T2", target="T3", position="below")
+    assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0), ("T2", 1, 1)]
 
 
 # --------------------------------------------------------------- refusals
@@ -168,22 +168,22 @@ async def test_dropping_a_pane_on_itself_changes_nothing(
 ) -> None:
     """A cancelled gesture, not an error — it must not raise at the user."""
     await _open(registry, tmp_path, 2)
-    await registry.move_terminal("Alex", target="Alex", position="right")
-    assert _layout(registry) == [("Alex", 0, 0), ("Blake", 1, 0)]
+    await registry.move_terminal("T1", target="T1", position="right")
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0)]
 
 
 async def test_an_unknown_pane_names_the_running_ones(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    with pytest.raises(SessionError, match="Alex, Blake"):
-        await registry.move_terminal("Gandalf", target="Alex", position="swap")
+    with pytest.raises(SessionError, match="T1, T2"):
+        await registry.move_terminal("Gandalf", target="T1", position="swap")
 
 
 async def test_an_unknown_target_is_refused(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 2)
     with pytest.raises(SessionError, match="Gandalf"):
-        await registry.move_terminal("Alex", target="Gandalf", position="swap")
+        await registry.move_terminal("T1", target="Gandalf", position="swap")
 
 
 async def test_an_impossible_position_is_refused(
@@ -191,12 +191,12 @@ async def test_an_impossible_position_is_refused(
 ) -> None:
     await _open(registry, tmp_path, 2)
     with pytest.raises(SessionError, match="Position must be"):
-        await registry.move_terminal("Alex", target="Blake", position="diagonally")
+        await registry.move_terminal("T1", target="T2", position="diagonally")
 
 
 async def test_moving_without_a_workspace_is_refused(registry: Registry) -> None:
     with pytest.raises(SessionError, match="No Agentic-IDE session"):
-        await registry.move_terminal("Alex", target="Blake", position="swap")
+        await registry.move_terminal("T1", target="T2", position="swap")
 
 
 # ------------------------------------------------------------------- safety
@@ -205,11 +205,11 @@ async def test_moving_a_pane_leaves_its_agent_running(
 ) -> None:
     """The whole premise: rearranging is not a close-and-reopen."""
     await _open(registry, tmp_path, 2)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    pty_id = registry.session.find("Alex").pty_id
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    pty_id = registry.session.find("T1").pty_id
 
-    await registry.move_terminal("Alex", target="Blake", position="right")
+    await registry.move_terminal("T1", target="T2", position="right")
 
-    term = registry.session.find("Alex")
+    term = registry.session.find("T1")
     assert term.pty_id == pty_id, "the same PTY, so the same live agent"
     assert pty_id not in fake_pty.closed

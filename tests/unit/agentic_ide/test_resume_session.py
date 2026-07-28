@@ -47,10 +47,10 @@ def _argv(fake_pty: FakePtyManager) -> tuple[str, ...]:
 async def test_a_fresh_pane_is_launched_with_an_id_it_can_be_found_by(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
 
-    term = registry.session.find("Alex")
+    term = registry.session.find("T1")
     assert term.resume is not None and term.resume.kind == "claude_session"
     # The id went to the CLI, which is what makes the conversation findable.
     argv = _argv(fake_pty)
@@ -65,14 +65,14 @@ async def test_a_pane_with_a_handle_continues_instead_of_starting_over(
     tmp_path: Path,
     existing_conversation,
 ) -> None:
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    term = registry.session.find("Alex")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    term = registry.session.find("T1")
     term.resume = ResumeHandle(kind="claude_session", id="known-id", captured_at=1.0)
     existing_conversation("known-id")
 
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     assert _argv(fake_pty)[-2:] == ("--resume", "known-id")
-    assert registry.session.find("Alex").resumed is True
+    assert registry.session.find("T1").resumed is True
 
 
 async def test_reopening_a_pane_keeps_the_same_conversation(
@@ -82,20 +82,20 @@ async def test_reopening_a_pane_keeps_the_same_conversation(
     existing_conversation,
 ) -> None:
     """After the agent really died, the pane comes back with its conversation."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    minted = registry.session.find("Alex").resume
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    minted = registry.session.find("T1").resume
     assert minted is not None
     # The pane was used, so the CLI now has a conversation under that id.
     existing_conversation(minted.id)
 
     # The agent is gone — quit from inside, machine restarted, process killed.
     # THAT is what makes the next attach a restart rather than a re-join.
-    await fake_pty.die(registry.session.find("Alex").pty_id, 0)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await fake_pty.die(registry.session.find("T1").pty_id, 0)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
 
     assert _argv(fake_pty)[-2:] == ("--resume", minted.id)
-    assert registry.session.find("Alex").resumed is True
+    assert registry.session.find("T1").resumed is True
 
 
 async def test_letting_go_of_a_pane_does_not_stop_its_agent(
@@ -107,29 +107,29 @@ async def test_letting_go_of_a_pane_does_not_stop_its_agent(
     walking over to the chat view. An agent runs until its WORKSPACE is closed,
     so none of those may cost the work in progress.
     """
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    pty_id = registry.session.find("Alex").pty_id
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    pty_id = registry.session.find("T1").pty_id
 
-    registry.detach("Alex")
+    registry.detach("T1")
 
     assert pty_id not in fake_pty.closed, "the agent must still be running"
-    assert registry.session.find("Alex").status == "live"
-    assert registry.session.find("Alex").pty_id == pty_id
+    assert registry.session.find("T1").status == "live"
+    assert registry.session.find("T1").pty_id == pty_id
 
 
 async def test_a_pane_running_a_cli_that_cannot_resume_just_starts(
     registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     """A coding CLI added later must degrade, never break the pane."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    term = registry.session.find("Alex")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    term = registry.session.find("T1")
     term.agent = "some-future-cli"
 
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     assert _argv(fake_pty) == ("/usr/bin/some-future-cli",)
-    assert registry.session.find("Alex").resume is None
-    assert registry.session.find("Alex").resumed is False
+    assert registry.session.find("T1").resume is None
+    assert registry.session.find("T1").resumed is False
 
 
 async def test_a_handle_with_no_conversation_behind_it_starts_fresh(
@@ -145,17 +145,17 @@ async def test_a_handle_with_no_conversation_behind_it_starts_fresh(
 
     The pointer has to be dereferenced before it is spent.
     """
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    term = registry.session.find("Alex")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    term = registry.session.find("T1")
     term.resume = ResumeHandle(kind="claude_session", id="never-written", captured_at=1.0)
     # Deliberately no conversation on disk.
 
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
 
     argv = _argv(fake_pty)
     assert "--resume" not in argv, "an id pointing at nothing must not be spent"
     assert "--session-id" in argv, "and the fresh start gets a usable id of its own"
-    term = registry.session.find("Alex")
+    term = registry.session.find("T1")
     assert term.resumed is False
     assert term.status == "live", "the pane must come up, not die"
     assert term.resume is not None and term.resume.id != "never-written"
@@ -173,8 +173,8 @@ async def test_the_offer_does_not_promise_a_conversation_that_is_not_there(
                 folder=str(tmp_path),
                 terminals=[
                     resume_store.SnapshotTerminal(
-                        key="alex",
-                        name="Alex",
+                        key="t1",
+                        name="T1",
                         agent="claude",
                         resume=ResumeHandle(
                             kind="claude_session", id="never-written", captured_at=1.0
@@ -199,8 +199,8 @@ async def test_a_dead_conversation_falls_back_to_a_fresh_agent(
     existing_conversation,
 ) -> None:
     """The backstop: a conversation that looks present but the CLI rejects."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    term = registry.session.find("Alex")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    term = registry.session.find("T1")
     term.resume = ResumeHandle(kind="claude_session", id="stale", captured_at=1.0)
     existing_conversation("stale")
 
@@ -209,14 +209,14 @@ async def test_a_dead_conversation_falls_back_to_a_fresh_agent(
     async def _record_exit(code: int) -> None:
         exits.append(code)
 
-    await registry.attach("Alex", 80, 24, _noop, _record_exit)
+    await registry.attach("T1", 80, 24, _noop, _record_exit)
     # The CLI printed "no such conversation" and died right away.
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
 
     argv = _argv(fake_pty)
     assert "--resume" not in argv, "a stale handle must not be spent twice"
-    assert registry.session.find("Alex").resumed is False
-    assert registry.session.find("Alex").status == "live"
+    assert registry.session.find("T1").resumed is False
+    assert registry.session.find("T1").status == "live"
     # The viewer was never told the pane died — it did not, it restarted.
     assert exits == []
 
@@ -228,8 +228,8 @@ async def test_a_clean_exit_after_a_resume_is_not_second_guessed(
     existing_conversation,
 ) -> None:
     """Quitting an agent on purpose exits 0 — restarting it would be a bug."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    term = registry.session.find("Alex")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    term = registry.session.find("T1")
     term.resume = ResumeHandle(kind="claude_session", id="fine", captured_at=1.0)
     existing_conversation("fine")
 
@@ -238,11 +238,11 @@ async def test_a_clean_exit_after_a_resume_is_not_second_guessed(
     async def _record_exit(code: int) -> None:
         exits.append(code)
 
-    await registry.attach("Alex", 80, 24, _noop, _record_exit)
+    await registry.attach("T1", 80, 24, _noop, _record_exit)
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 0)
 
     assert exits == [0]
-    assert registry.session.find("Alex").status == "exited"
+    assert registry.session.find("T1").status == "exited"
 
 
 async def test_closing_a_resumed_pane_does_not_resurrect_it(
@@ -259,22 +259,22 @@ async def test_closing_a_resumed_pane_does_not_resurrect_it(
     and it would then run on with nobody watching, which is precisely what
     closing it prevents.
     """
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    registry.session.find("Alex").resume = ResumeHandle(
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    registry.session.find("T1").resume = ResumeHandle(
         kind="claude_session", id="fine", captured_at=1.0
     )
     existing_conversation("fine")
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    assert registry.session.find("Alex").resumed is True
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    assert registry.session.find("T1").resumed is True
     spawns_before = len(fake_pty.spawns)
 
     # The user closed the pane a second after it came back, and the kill is
     # reported by the PTY as a failure exit.
-    await registry.close_terminal("Alex")
+    await registry.close_terminal("T1")
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
 
     assert len(fake_pty.spawns) == spawns_before, "the agent must stay stopped"
-    assert registry.session.find("Alex") is None, "and its pane must be gone"
+    assert registry.session.find("T1") is None, "and its pane must be gone"
 
 
 async def test_closing_the_workspace_does_not_resurrect_a_resumed_pane(
@@ -284,13 +284,13 @@ async def test_closing_the_workspace_does_not_resurrect_a_resumed_pane(
     existing_conversation,
 ) -> None:
     """Same trap, reached by closing the whole workspace instead of one pane."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    registry.session.find("Alex").resume = ResumeHandle(
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    registry.session.find("T1").resume = ResumeHandle(
         kind="claude_session", id="fine", captured_at=1.0
     )
     existing_conversation("fine")
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    term = registry.session.find("Alex")
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    term = registry.session.find("T1")
     spawns_before = len(fake_pty.spawns)
 
     await registry.end()
@@ -309,8 +309,8 @@ async def test_a_late_crash_is_reported_as_a_crash(
 ) -> None:
     """Past the window an exit is just an exit; a restart loop would be worse."""
     monkeypatch.setattr(ide, "RESUME_FAILED_WINDOW_S", 0.0)
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    registry.session.find("Alex").resume = ResumeHandle(
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    registry.session.find("T1").resume = ResumeHandle(
         kind="claude_session", id="fine", captured_at=1.0
     )
     existing_conversation("fine")
@@ -320,11 +320,11 @@ async def test_a_late_crash_is_reported_as_a_crash(
     async def _record_exit(code: int) -> None:
         exits.append(code)
 
-    await registry.attach("Alex", 80, 24, _noop, _record_exit)
+    await registry.attach("T1", 80, 24, _noop, _record_exit)
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 3)
 
     assert exits == [3]
-    assert registry.session.find("Alex").status == "exited"
+    assert registry.session.find("T1").status == "exited"
 
 
 # ------------------------------------------------------------------ restore
@@ -342,16 +342,16 @@ def _workspace(folder: Path) -> resume_store.SnapshotWorkspace:
         folder=str(folder),
         terminals=[
             resume_store.SnapshotTerminal(
-                key="dana",
-                name="Dana",
+                key="t4",
+                name="T4",
                 agent="claude",
                 column=1,
                 slot=1,
-                resume=ResumeHandle(kind="claude_session", id="dana-conv", captured_at=1.0),
+                resume=ResumeHandle(kind="claude_session", id="t4-conv", captured_at=1.0),
                 prompts_sent=2,
             ),
             resume_store.SnapshotTerminal(
-                key="alex", name="Alex", agent="claude", column=0, slot=0
+                key="t1", name="T1", agent="claude", column=0, slot=0
             ),
         ],
     )
@@ -363,12 +363,12 @@ async def test_restore_rebuilds_titles_agents_and_positions(
     restored = (await registry.restore(_snapshot(tmp_path))).sessions[0]
 
     # Reading order, not snapshot order: left to right, top to bottom.
-    assert [t.name for t in restored.terminals] == ["Alex", "Dana"]
+    assert [t.name for t in restored.terminals] == ["T1", "T4"]
     assert [(t.column, t.slot) for t in restored.terminals] == [(0, 0), (1, 0)]
     assert [t.agent for t in restored.terminals] == ["claude", "claude"]
     assert restored.folder == str(tmp_path)
-    assert restored.find("Dana").resume.id == "dana-conv"
-    assert restored.find("Dana").prompts_sent == 2
+    assert restored.find("T4").resume.id == "t4-conv"
+    assert restored.find("T4").prompts_sent == 2
 
 
 async def test_restore_starts_nothing_by_itself(
@@ -386,15 +386,15 @@ async def test_a_restored_pane_continues_its_conversation_when_it_connects(
     tmp_path: Path,
     existing_conversation,
 ) -> None:
-    existing_conversation("dana-conv")
+    existing_conversation("t4-conv")
     await registry.restore(_snapshot(tmp_path))
-    await registry.attach("Dana", 80, 24, _noop, _noop_exit)
-    assert _argv(fake_pty)[-2:] == ("--resume", "dana-conv")
+    await registry.attach("T4", 80, 24, _noop, _noop_exit)
+    assert _argv(fake_pty)[-2:] == ("--resume", "t4-conv")
 
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    # Alex never had one, so it starts fresh — and says so.
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    # T1 never had one, so it starts fresh — and says so.
     assert "--resume" not in _argv(fake_pty)
-    assert registry.session.find("Alex").resumed is False
+    assert registry.session.find("T1").resumed is False
 
 
 async def test_restore_refuses_a_folder_that_is_gone(
@@ -421,7 +421,7 @@ async def test_restoring_a_folder_that_is_still_open_adds_the_remembered_workspa
     restored = (await registry.restore(_snapshot(tmp_path))).sessions[0]
 
     assert live not in fake_pty.closed, "the running agent must survive"
-    assert [t.name for t in restored.terminals] == ["Alex", "Dana"]
+    assert [t.name for t in restored.terminals] == ["T1", "T4"]
     assert len(registry.sessions) == 2
 
 
@@ -434,7 +434,7 @@ async def test_a_folder_from_an_earlier_session_is_not_reopened_beside_todays(
     new workspace cannot erase it. Reopening that archive wholesale is what made
     a restart come back with old folders beside the current one — and, because
     every workspace draws call-signs from the same pool, with a screen full of
-    "Alex" and "Alex 2".
+    "T1" and "T1 2".
     """
     old, today = tmp_path / "last-week", tmp_path / "today"
     old.mkdir()
@@ -452,7 +452,7 @@ async def test_a_folder_from_an_earlier_session_is_not_reopened_beside_todays(
     result = await fresh.restore(stored)
 
     assert [s.folder for s in result.sessions] == [str(today)]
-    assert [t.name for s in result.sessions for t in s.terminals] == ["Alex"]
+    assert [t.name for s in result.sessions for t in s.terminals] == ["T1"]
 
 
 async def test_workspaces_closed_one_by_one_still_come_back_together(
@@ -509,7 +509,7 @@ async def test_restoring_another_folder_opens_it_beside_the_running_one(
     await registry.restore(_snapshot(other))
 
     assert live not in fake_pty.closed, "the first workspace must keep running"
-    assert [t.name for t in registry.session.terminals] == ["Alex", "Dana"]
+    assert [t.name for t in registry.session.terminals] == ["T1", "T4"]
     assert len(registry.sessions) == 2
 
 
@@ -517,10 +517,10 @@ async def test_restoring_another_folder_opens_it_beside_the_running_one(
 async def test_opening_a_workspace_makes_it_resumable(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
     saved = resume_store.load()
     assert saved is not None
-    assert [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
+    assert [t.name for t in saved.workspaces[0].terminals] == ["T1"]
     assert saved.workspaces[0].folder == str(tmp_path)
 
 
@@ -528,28 +528,28 @@ async def test_the_conversation_id_reaches_the_snapshot(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
     """Without this the layout would come back and the conversations would not."""
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
 
     saved = resume_store.load()
     assert saved is not None and saved.workspaces[0].terminals[0].resume is not None
-    assert saved.workspaces[0].terminals[0].resume.id == registry.session.find("Alex").resume.id
+    assert saved.workspaces[0].terminals[0].resume.id == registry.session.find("T1").resume.id
 
 
 async def test_splitting_and_closing_keep_the_offer_current(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    await registry.add_terminal(anchor="Alex", direction="right", name="Blake")
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.add_terminal(anchor="T1", direction="right", name="T2")
     saved = resume_store.load()
     assert saved is not None and [t.name for t in saved.workspaces[0].terminals] == [
-        "Alex",
-        "Blake",
+        "T1",
+        "T2",
     ]
 
-    await registry.close_terminal("Blake")
+    await registry.close_terminal("T2")
     saved = resume_store.load()
-    assert saved is not None and [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
+    assert saved is not None and [t.name for t in saved.workspaces[0].terminals] == ["T1"]
 
 
 async def test_closing_the_workspace_keeps_it_resumable(
@@ -562,7 +562,7 @@ async def test_closing_the_workspace_keeps_it_resumable(
     reported the opposite: they close the workspace, come back, and want it back.
     Only asking to start fresh discards a restore point.
     """
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
     assert resume_store.load() is not None
 
     await registry.end()
@@ -570,7 +570,7 @@ async def test_closing_the_workspace_keeps_it_resumable(
     saved = resume_store.load()
     assert saved is not None, "closing must not erase what the user wants back"
     assert saved.workspaces[0].folder == str(tmp_path)
-    assert [t.name for t in saved.workspaces[0].terminals] == ["Alex"]
+    assert [t.name for t in saved.workspaces[0].terminals] == ["T1"]
 
 
 async def test_closing_every_workspace_still_keeps_them_resumable(
@@ -580,8 +580,8 @@ async def test_closing_every_workspace_still_keeps_them_resumable(
     first, second = tmp_path / "one", tmp_path / "two"
     first.mkdir()
     second.mkdir()
-    await registry.start(str(first), [{"agent": "claude", "name": "Alex"}])
-    await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
+    await registry.start(str(first), [{"agent": "claude", "name": "T1"}])
+    await registry.start(str(second), [{"agent": "claude", "name": "T2"}])
 
     assert await registry.close_all() == 2
 
@@ -679,7 +679,7 @@ async def test_the_remembered_list_stays_bounded(
 async def test_only_starting_fresh_discards_the_restore_point(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
     await registry.end()
     assert resume_store.load() is not None
 
@@ -703,8 +703,8 @@ async def test_every_open_workspace_is_remembered_in_tab_order(
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    one = await registry.start(str(first), [{"agent": "claude", "name": "Alex"}])
-    two = await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
+    one = await registry.start(str(first), [{"agent": "claude", "name": "T1"}])
+    two = await registry.start(str(second), [{"agent": "claude", "name": "T2"}])
 
     saved = resume_store.load()
     assert saved is not None
@@ -732,8 +732,8 @@ async def test_closing_one_of_two_leaves_both_on_offer(
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    one = await registry.start(str(first), [{"agent": "claude", "name": "Alex"}])
-    two = await registry.start(str(second), [{"agent": "claude", "name": "Blake"}])
+    one = await registry.start(str(first), [{"agent": "claude", "name": "T1"}])
+    two = await registry.start(str(second), [{"agent": "claude", "name": "T2"}])
 
     await registry.end(two.id)
 
@@ -750,8 +750,8 @@ async def test_a_broken_snapshot_write_never_breaks_the_workspace(
         raise OSError("disk full")
 
     monkeypatch.setattr(resume_store, "save", _boom)
-    workspace = await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
-    assert [t.name for t in workspace.terminals] == ["Alex"]
+    workspace = await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    assert [t.name for t in workspace.terminals] == ["T1"]
 
 
 # ------------------------------------------------------------------ lookups
@@ -788,12 +788,12 @@ async def test_a_lookup_offers_the_ids_other_panes_already_hold(
     monkeypatch.setattr(ide, "discover", _spy)
     await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
     registry.session.terminals[0].resume = None
-    await registry.add_terminal(name="Dana", agent="codex")
+    await registry.add_terminal(name="T4", agent="codex")
     registry.session.find("Cody").resume = ResumeHandle(
         kind="codex_rollout", id="cody-conv", captured_at=1.0
     )
 
-    await registry.attach("Dana", 80, 24, _noop, _noop_exit)
+    await registry.attach("T4", 80, 24, _noop, _noop_exit)
     await asyncio.sleep(0.05)
     assert seen and "cody-conv" in seen[-1]
 

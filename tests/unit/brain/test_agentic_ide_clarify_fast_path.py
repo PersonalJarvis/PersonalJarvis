@@ -95,8 +95,29 @@ async def _noop_exit(_code: int) -> None:
     return None
 
 
+#: Panes here carry CUSTOM call-signs, not the positional ones a workspace
+#: hands out by default (T1, T2, …). That is deliberate and it is the whole
+#: point of this file: a position is either said or not said, so it cannot be
+#: garbled into a near miss — while a name the user gave a pane can be, which
+#: is exactly the failure the clarification loop exists for. Testing it against
+#: T-numbers would test nothing at all.
+NAMED_PANES: tuple[str, ...] = ("Alex", "Blake", "Casey", "Dana", "Ellis")
+
+
 async def _open(registry: Registry, folder: Path, count: int) -> list[str]:
-    """Open ``count`` panes AND bring their agents live; return their call-signs."""
+    """Open ``count`` named panes AND bring their agents live; return the names."""
+    await registry.start(
+        folder if isinstance(folder, str) else str(folder),
+        [{"agent": "claude", "name": name} for name in NAMED_PANES[:count]],
+    )
+    assert registry.session is not None
+    for term in list(registry.session.terminals):
+        await registry.attach(term.name, 100, 30, _noop, _noop_exit)
+    return [t.name for t in registry.session.terminals]
+
+
+async def _open_numbered(registry: Registry, folder: Path, count: int) -> list[str]:
+    """The same, with the call-signs a workspace assigns on its own."""
     await registry.start(str(folder), [{"agent": "claude"} for _ in range(count)])
     assert registry.session is not None
     for term in list(registry.session.terminals):
@@ -310,3 +331,45 @@ async def test_a_single_addressee_is_never_asked_who_else(
     assert reply is not None
     assert not ide_clarify.WINDOW.armed
     assert len(_briefs(registry)) == 1
+
+
+# ------------------------------------------------------- positional call-signs
+
+
+async def test_a_spoken_position_is_briefed_without_a_question(
+    manager: BrainManager,
+    registry: Registry,
+    tmp_path: Path,
+    _fake_composer: list[str],
+) -> None:
+    """The default call-signs cannot be garbled, so they cost no clarification.
+
+    This is what the positional scheme buys: "prompt terminal two" carries its
+    own certainty — a number is either said or it is not — so the whole
+    near-miss loop above simply never runs for it.
+    """
+    names = await _open_numbered(registry, tmp_path, 4)
+    assert names == ["T1", "T2", "T3", "T4"]
+
+    reply = await manager._run_agentic_ide_fast_path(
+        "prompt terminal two to do a deep dive on the failing tests"
+    )
+
+    assert reply is not None
+    assert "T2" in reply
+    assert not ide_clarify.WINDOW.armed, "a position is never asked back"
+    assert len(_briefs(registry)) == 1
+    assert any("deep dive" in seen for seen in _fake_composer)
+
+
+async def test_a_position_nobody_opened_briefs_no_pane(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """"T7" with four panes open is a wrong number — never the nearest one."""
+    await _open_numbered(registry, tmp_path, 4)
+
+    await manager._run_agentic_ide_fast_path(
+        "prompt T7 to do a deep dive on the failing tests"
+    )
+
+    assert _briefs(registry) == []

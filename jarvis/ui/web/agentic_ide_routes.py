@@ -35,8 +35,9 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
 * ``WS     /pty/{name}``                 → the pane's live terminal stream
 
-``{name}`` accepts the call-sign ("mika", "Mika") or a spoken phrase containing
-it, so a voice command reaches the right pane without exact spelling.
+``{name}`` accepts the call-sign ("t2", "T2") or a spoken phrase containing it
+in any of the ways a position is said ("terminal two", "the second terminal"),
+so a voice command reaches the right pane without exact spelling.
 """
 
 from __future__ import annotations
@@ -2150,10 +2151,10 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
 
     Listing the running panes is not enough on its own. A caller that wanted to
     brief a pane called "Lee" reads a bare "not found" as "then open one" — and
-    call-signs come from a fixed pool in a fixed order, so the pane it opens is
-    called something else entirely and the very same prompt 404s again. A live
-    voice session on 2026-07-27 went round that loop four times and left four
-    blank panes behind, without ever briefing anyone.
+    call-signs are POSITIONS handed out by the workspace, so the pane it opens
+    is called something else entirely and the very same prompt 404s again. A
+    live voice session on 2026-07-27 went round that loop four times and left
+    four blank panes behind, without ever briefing anyone.
 
     So the error names the one move that works: brief a pane that exists, or
     open AND brief a new one in a single fan-out call, which returns the
@@ -2164,8 +2165,9 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
     )
     return (
         f"No terminal called {wanted!r}. Running: {running or 'none'}. "
-        "Call-signs are assigned automatically and cannot be requested, so "
-        "opening another pane will NOT produce this name and retrying this "
+        "Call-signs are the panes' positions (T1, T2, …), assigned by the "
+        "workspace and not requestable, so opening another pane will NOT "
+        "produce this name and retrying this "
         "prompt after a spawn fails the same way. Either prompt one of the "
         "panes listed above, or open and brief a new one in ONE call: "
         "POST /api/agentic-ide/fanout with spawn=[{\"count\": 1}] and the "

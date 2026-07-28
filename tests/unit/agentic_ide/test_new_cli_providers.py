@@ -59,7 +59,12 @@ def test_a_product_name_can_never_become_a_pane_call_sign() -> None:
         assert spoken in reserved
     from jarvis.agentic_ide import names
 
-    assert not {n.lower() for n in names.NAME_POOL} & reserved
+    # Panes are numbered (T1, T2, …), so no product name can be handed out as
+    # one — and saying a product name resolves to no pane at all.
+    panes = names.default_names(20)
+    assert not {n.lower() for n in panes} & reserved
+    for spoken in sorted(reserved):
+        assert names.resolve(spoken, panes) is None
 
 
 # ------------------------------------------------------------------ OpenCode

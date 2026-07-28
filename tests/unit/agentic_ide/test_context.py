@@ -52,15 +52,15 @@ async def test_focus_mode_block_names_the_folder_and_terminals(
     registry, fake = wired
     await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}])
     registry.set_focus_mode(True)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     on_output = fake.spawns[-1]["on_output"]
     await on_output("pty", "refactoring the router\r\n")
 
     block = focus_context_block()
     assert "AGENTIC IDE" in block
     assert str(tmp_path) in block
-    assert "Alex (Claude Code)" in block
-    assert "Blake (Codex)" in block
+    assert "T1 (Claude Code)" in block
+    assert "T2 (Codex)" in block
     assert "refactoring the router" in block
 
 
@@ -70,7 +70,7 @@ async def test_block_is_capped(
     registry, fake = wired
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     registry.set_focus_mode(True)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     on_output = fake.spawns[-1]["on_output"]
     for i in range(500):
         await on_output("pty", f"line number {i} with a fair amount of text\r\n")

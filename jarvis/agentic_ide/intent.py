@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .names import resolve
+from .names import CALL_SIGN_WORD_RE, canonical_positions, resolve
 
 # Kinds of turn this module recognises.
 KIND_PROMPT = "prompt"   # the user wants the agent to do something
@@ -298,9 +298,17 @@ def _canonical_text(text: str, candidates: list[str]) -> str:
     The collision risk that makes fuzzy matching dangerous elsewhere does not
     reach here: "unten"/"keine" score into the pool as ordinary sentence words,
     and an ordinary sentence word does not sit immediately behind "prompte".
+
+    The SPOKEN POSITIONS are folded in first, by the same argument one level
+    up: "prompte Terminal eins" and "prompte T1" are the same instruction, and
+    rewriting the long form into the call-sign once here is what saves every
+    template below from having to know that "terminal one", "tee one" and "the
+    first terminal" all mean T1.
     """
     if not candidates:
         return text
+
+    text = canonical_positions(text, candidates)
 
     briefed: set[int] = {
         match.start("word")
@@ -420,9 +428,11 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
-# A word made only of letters — the unit ``names.resolve`` scores a call-sign
-# against. Digits and underscores can never be part of a spoken name.
-_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+# One candidate call-sign word. Shared with ``clarify`` and the resolver
+# (``names.CALL_SIGN_WORD_RE``) so the three cannot disagree about where a name
+# starts and ends — a positional call-sign is letters PLUS digits, and a
+# letters-only tokenizer silently cut "T1" down to "T".
+_WORD_RE = CALL_SIGN_WORD_RE
 
 #: Verbs that can ONLY mean "hand this pane its work". The templates above are
 #: anchored on the call-sign and therefore bounded by distance, so a longer way
@@ -450,7 +460,7 @@ _BRIEFED_NAME_RE = re.compile(
     r"(?:(?:this|that|the|dieses?|diesem|den|dem|"  # i18n-allow: input vocab
     r"das|der|el|la|ese|este)\s+)?"  # i18n-allow: input vocab
     r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?"
-    r"(?P<word>[^\W\d_]+)",
+    r"(?P<word>[^\W\d_]+\d*)",
     re.IGNORECASE,
 )
 

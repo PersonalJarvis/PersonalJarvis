@@ -182,8 +182,13 @@ async def test_a_full_house_across_every_workspace_round_trips(
 
     Deliberately smaller than MAX_TERMINALS per workspace so the test stays
     fast — what is being pinned is that nothing collapses when several large
-    workspaces are remembered at once, including their call-signs staying
-    unique ACROSS workspaces.
+    workspaces are remembered at once, including every workspace numbering its
+    panes T1..Tn on its own.
+
+    Call-signs REPEAT across workspaces on purpose: a position is what the user
+    reads off the screen, and only one workspace is on screen at a time. A
+    second tab starting at T21 would keep names globally unique at the price of
+    the whole point of numbering them.
     """
     folders = []
     for index in range(ide.MAX_WORKSPACES):
@@ -198,10 +203,9 @@ async def test_a_full_house_across_every_workspace_round_trips(
     assert loaded is not None
     assert len(loaded.workspaces) == ide.MAX_WORKSPACES
     assert loaded.terminal_count == 20 * ide.MAX_WORKSPACES
-    every_name = [
-        t.name for w in loaded.workspaces for t in w.terminals
-    ]
-    assert len(set(every_name)) == len(every_name), "call-signs collided"
+    for workspace in loaded.workspaces:
+        names = [t.name for t in workspace.terminals]
+        assert names == default_names(20), "each workspace numbers its own panes"
 
 
 async def test_the_snapshot_of_a_full_house_stays_a_sane_size(

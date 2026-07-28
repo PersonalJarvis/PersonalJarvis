@@ -88,7 +88,7 @@ from .agent_sessions import (
     resume_argv,
 )
 from .folders import ProjectProfile, probe_project
-from .names import default_names, normalize, resolve
+from .names import free_positions, normalize, position_of, resolve
 from .terminal_input import THEME_COLOURS, TerminalQueryResponder
 from .transcript import ReplayBuffer, Transcript
 
@@ -664,8 +664,13 @@ def _behind_win_shim(
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
 
-    key: str  # url-safe key, e.g. "mika"
-    name: str  # spoken call-sign, e.g. "Mika"
+    # The url-safe key ("t1"), and the call-sign as it is written and spoken
+    # ("T1"). The name is the pane's IDENTITY, not a live read of where it
+    # sits: it is handed out from the grid position the pane is opened at and
+    # then stays put, so an instruction cannot land in a different agent
+    # because a neighbouring pane closed between hearing it and sending it.
+    key: str
+    name: str
     agent: str  # "claude" | "codex"
     display_name: str  # "Claude Code"
     index: int
@@ -1204,26 +1209,21 @@ class Registry:
             if missing:
                 raise SessionError(" ".join(_unavailable(m) for m in missing))
 
-            # Call-signs are unique across ALL open workspaces, not just within
-            # this one. A name is how the user addresses a pane out loud, and a
-            # second "Mika" two tabs over would make "tell Mika to run the
-            # tests" a question rather than an instruction. So the pool skips
-            # every name already spoken for, and this workspace simply starts
-            # further down it.
-            taken = self._reserved_names()
-            offered = default_names(len(requested) + len(taken))
-            pool = [n for n in offered if normalize(n) not in taken]
-            used: set[str] = set(taken)
+            # Call-signs count from T1 WITHIN this workspace, and every
+            # workspace counts from T1 again. That is the whole promise of a
+            # positional name: what the user sees on screen is what they say.
+            # Numbering across tabs instead — a second workspace starting at T5
+            # — would keep names globally unique at the price of the one thing
+            # this scheme is for, and the ambiguity it would prevent is not
+            # real: a spoken call-sign is resolved against the FRONT workspace
+            # first, which is the only one the user is looking at.
+            pool = free_positions([], len(requested))
+            used: set[str] = set()
             terminals: list[Terminal] = []
             for index, entry in enumerate(requested):
                 agent = str(entry.get("agent"))
-                fallback = pool[index] if index < len(pool) else f"T{index + 1}"
-                wanted = str(entry.get("name") or "").strip() or fallback
-                name = wanted
-                suffix = 2
-                while normalize(name) in used:
-                    name = f"{wanted} {suffix}"
-                    suffix += 1
+                wanted = str(entry.get("name") or "").strip() or pool[index]
+                name = _unique_name(wanted, used)
                 used.add(normalize(name))
                 terminals.append(
                     Terminal(
@@ -1271,14 +1271,6 @@ class Registry:
             if os.path.normcase(str(candidate)) == os.path.normcase(str(wanted)):
                 return session
         return None
-
-    def _reserved_names(self) -> set[str]:
-        """Every call-sign in use across all open workspaces, normalized."""
-        return {
-            normalize(term.name)
-            for session in self._sessions.values()
-            for term in session.terminals
-        }
 
     def _available_workspace_name(self, wanted: str) -> str:
         """Return a human-readable tab name that is unique in the bar."""
@@ -1542,18 +1534,27 @@ class Registry:
         self._renumber(session)
         return session
 
-    def _dedupe_names(self, terminals: list[Terminal]) -> None:
-        """Rename any call-sign already spoken for by another open workspace."""
-        used = self._reserved_names()
+    @staticmethod
+    def _dedupe_names(terminals: list[Terminal]) -> None:
+        """Give any two panes of ONE workspace that share a call-sign one each.
+
+        Scoped to the workspace being restored, because that is the scope a
+        positional call-sign lives in: T1 in one tab and T1 in another are two
+        different panes the user addresses by looking at one of them, and
+        renaming across tabs would take numbers away from a workspace that has
+        every right to them.
+
+        A repeated POSITION is repaired with the lowest free number rather than
+        a suffix: "T1 2" is neither speakable nor a position, so a snapshot
+        that somehow carried two T1s would otherwise produce a pane nobody can
+        address. A repeated CUSTOM name keeps the old suffix behaviour.
+        """
+        used: set[str] = set()
         for term in terminals:
-            if normalize(term.name) not in used:
-                used.add(normalize(term.name))
-                continue
-            base, suffix = term.name, 2
-            while normalize(f"{base} {suffix}") in used:
-                suffix += 1
-            term.name = f"{base} {suffix}"
-            term.key = normalize(term.name) or term.key
+            unique = _unique_name(term.name, used)
+            if unique != term.name:
+                term.name = unique
+                term.key = normalize(unique) or term.key
             used.add(normalize(term.name))
 
     async def activate(self, workspace_id: str | None) -> Session | None:
@@ -2417,23 +2418,15 @@ class Registry:
             if agent_argv(chosen) is None:
                 raise SessionError(_unavailable(chosen))
 
-            # Unused ACROSS every open workspace: a split must not hand this
-            # pane a call-sign another tab already answers to.
-            used = self._reserved_names()
+            # Unused within THIS workspace — the scope a positional call-sign
+            # is counted in. A split fills the lowest free number, so closing
+            # the middle pane and opening another puts the grid back at T1..Tn
+            # instead of drifting upward forever.
+            used = {normalize(t.name) for t in session.terminals}
             wanted = (name or "").strip()
             if not wanted:
-                # Next unused call-sign from the pool, so names stay speakable
-                # however many times the user splits.
-                pool = default_names(MAX_TERMINALS * MAX_WORKSPACES)
-                wanted = next(
-                    (n for n in pool if normalize(n) not in used),
-                    f"T{len(session.terminals) + 1}",
-                )
-            final = wanted
-            suffix = 2
-            while normalize(final) in used:
-                final = f"{wanted} {suffix}"
-                suffix += 1
+                wanted = free_positions([t.name for t in session.terminals], 1)[0]
+            final = _unique_name(wanted, used)
 
             if base is None:
                 column, slot = 0, 0
@@ -2908,12 +2901,16 @@ class Registry:
     def find_terminal(self, wanted: str) -> tuple[Session, Terminal] | None:
         """A pane by call-sign, anywhere — the front workspace answering first.
 
-        Call-signs are unique across open workspaces (see ``start``), so a name
-        identifies exactly one pane and searching beyond the front one cannot be
-        ambiguous. It is also what a user means: "tell Kai to run the tests" is
-        an instruction to Kai, not a request to first go and find which tab Kai
-        is in. The front workspace is still tried first, so the common case
-        never depends on iteration order.
+        The FRONT workspace deciding first is what makes positional call-signs
+        unambiguous: every workspace numbers its panes from T1, so "T2" means
+        the second pane of the tab the user is looking at. Nothing else could
+        be meant — the other tabs are not on screen.
+
+        The search continues into the background workspaces only when the front
+        one has no such pane. That is for CUSTOM call-signs, which a user gives
+        a pane precisely so they can address it from anywhere: "tell Mika to
+        run the tests" is an instruction to Mika, not a request to first go and
+        find which tab Mika is in.
         """
         session = self.session
         if session is not None:
@@ -2929,11 +2926,47 @@ class Registry:
         return None
 
     def _unknown_terminal(self, wanted: str) -> SessionError:
-        """The 'no such pane' error, naming every pane that DOES exist."""
+        """The 'no such pane' error, naming the panes that DO exist.
+
+        The FRONT workspace's panes when there is one, because that is the
+        answer to the question actually asked: somebody who says "T7" with four
+        panes open needs to hear which numbers this grid has, not a list of
+        every pane in every tab.
+        """
         if not self._sessions:
             return SessionError("No Agentic-IDE session is running.")
-        known = ", ".join(term.name for s in self._sessions.values() for term in s.terminals)
+        session = self.session
+        panes = (
+            session.terminals
+            if session is not None
+            else [term for s in self._sessions.values() for term in s.terminals]
+        )
+        known = ", ".join(term.name for term in panes)
         return SessionError(f"No terminal called {wanted!r}. Running: {known or 'none'}.")
+
+
+def _unique_name(wanted: str, used: set[str]) -> str:
+    """``wanted`` if it is free, otherwise the nearest name that is.
+
+    The two kinds of call-sign need two different repairs, and using the wrong
+    one costs a pane its voice:
+
+    * a **position** that is taken moves to the next free NUMBER. Suffixing it
+      would produce "T1 2" — neither a position nor anything a person can say
+      out loud, so the pane would sit there unaddressable;
+    * a **custom name** keeps the familiar numeric suffix ("Mika 2"), which is
+      how a person distinguishes two of the same thing anyway.
+    """
+    if normalize(wanted) not in used:
+        return wanted
+    if position_of(wanted) is not None:
+        return free_positions(
+            [name for name in used if position_of(name) is not None], 1
+        )[0]
+    suffix = 2
+    while normalize(f"{wanted} {suffix}") in used:
+        suffix += 1
+    return f"{wanted} {suffix}"
 
 
 def _mark_restored_continuations(terminals: list[Terminal]) -> None:

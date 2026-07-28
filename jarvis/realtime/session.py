@@ -1256,12 +1256,12 @@ class RealtimeVoiceSession:
     def _workspace_directive(self) -> str:
         """Tell the live model which coding agents are running, by name.
 
-        The live 2026-07-27 miss in one sentence: asked "was hat Dana gemacht",
-        the model said it did not know which person Dana was — and it was right
-        not to know, because its instructions never mentioned that a coding
-        agent called Dana was running in front of the user. It only answered
-        correctly after the user said the words "agentic IDE" out loud, which is
-        not a workflow anybody should have to learn.
+        The live 2026-07-27 miss in one sentence: asked what a named pane had
+        done, the model said it did not know which person that was — and it was
+        right not to know, because its instructions never mentioned that a
+        coding agent by that name was running in front of the user. It only
+        answered correctly after the user said the words "agentic IDE" out
+        loud, which is not a workflow anybody should have to learn.
 
         So the roster goes into the per-turn instructions: the model cannot
         route a name it has never heard of. Deliberately only the NAMES and
@@ -1282,20 +1282,20 @@ class RealtimeVoiceSession:
         return (
             "[Agentic IDE — coding agents are running right now]\n"
             f"Terminals open in the user's coding workspace: {roster}.\n"
-            "Those are names of RUNNING CODING AGENTS, not people you know. "
-            "When the user says one of them — in any language, any tense, on "
-            "its own or inside a sentence — they mean that terminal. Never "
-            "answer that you do not know who that is, never guess what it is "
-            "doing, and never treat it as a public figure or an acquaintance. "
-            "Call your action function so the workspace can answer from what "
-            "that terminal actually printed, and say the terminal's name back "
-            "in your reply so the user knows which agent you mean.\n"
+            "Those are RUNNING CODING AGENTS, not people you know. Each is "
+            "named T plus its place in the grid, and the user says that "
+            "number however a number is said — \"T2\", \"terminal two\", "
+            "\"the second terminal\" all mean the same pane. Never answer "
+            "that you do not know who that is, never guess what it is doing, "
+            "and never treat it as a public figure. Call your action function "
+            "so the workspace answers from what that terminal actually "
+            "printed, and say its name back in your reply.\n"
             "Never say a terminal has been told, briefed, prompted or asked "
             "anything unless your action function reported that it happened. "
-            "Live failure 2026-07-27: this model answered \"I have let Alex "
-            "know\" on a turn where nothing had reached Alex, and the user "
-            "found the pane still sitting at its startup banner. If you do not "
-            "know that the work went out, say what you actually did instead."
+            "Live failure 2026-07-27: this model answered \"I have let T1 "
+            "know\" on a turn where nothing had reached T1, and the user "
+            "found the pane still at its startup banner. If you do not know "
+            "that the work went out, say what you actually did instead."
         )
 
     def _skill_directive(self, text: str) -> str:

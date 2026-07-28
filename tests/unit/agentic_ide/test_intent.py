@@ -415,3 +415,82 @@ def test_a_pane_named_in_a_sentence_about_a_person_still_reaches_the_pane() -> N
     found = intent.detect("Frag Dana, ob Dana Schmidt geantwortet hat", names=NAMES)
     assert found is not None
     assert found.terminal == "Dana"
+
+
+# --------------------------------------------------------------- positions
+
+
+class TestPositionalCallSigns:
+    """The call-signs a workspace actually hands out: T1, T2, T3, …
+
+    The names above are CUSTOM ones, which panes only carry when their owner
+    named them. What ships by default is the position, and it reaches the
+    detector through a different door: the spoken forms are folded into the
+    exact call-sign before the addressing templates run, so every template
+    inherits "terminal two" and "the second terminal" for free.
+    """
+
+    PANES = ["T1", "T2", "T3", "T4"]
+
+    @pytest.mark.parametrize(
+        ("utterance", "expected"),
+        [
+            ("prompte T1 und lass ihn einen Deep Dive machen", "T1"),  # i18n-allow: input vocab under test
+            ("sag T2 er soll die Tests fixen", "T2"),  # i18n-allow: input vocab under test
+            ("T3 soll den Wake-Bug analysieren", "T3"),  # i18n-allow: input vocab under test
+            ("prompte Terminal vier mit dem Refactoring", "T4"),  # i18n-allow: input vocab under test
+            ("das zweite Terminal soll die Tests laufen lassen", "T2"),  # i18n-allow: input vocab under test
+            ("tell T3 to run the tests", "T3"),
+            ("prompt terminal one to review the wake path", "T1"),
+            ("let the last terminal clean up the branches", "T4"),
+        ],
+    )
+    def test_a_spoken_position_claims_the_turn(
+        self, utterance: str, expected: str
+    ) -> None:
+        found = intent.detect(utterance, names=self.PANES)
+        assert found is not None, f"{utterance!r} addressed nobody"
+        assert found.terminal == expected
+        assert found.kind == intent.KIND_PROMPT
+
+    @pytest.mark.parametrize(
+        ("utterance", "expected"),
+        [
+            ("was macht T2 gerade", "T2"),  # i18n-allow: input vocab under test
+            ("ist das dritte Terminal fertig", "T3"),  # i18n-allow: input vocab under test
+            ("what is terminal one up to", "T1"),
+        ],
+    )
+    def test_a_question_about_a_position_is_a_report(
+        self, utterance: str, expected: str
+    ) -> None:
+        found = intent.detect(utterance, names=self.PANES)
+        assert found is not None
+        assert found.terminal == expected
+        assert found.kind == intent.KIND_REPORT
+
+    def test_two_positions_are_both_addressed(self) -> None:
+        found = intent.detect_all(
+            "kannst du bitte T1 und T2 beide einen Deep Dive machen lassen",  # i18n-allow: input vocab under test
+            names=self.PANES,
+        )
+        assert [item.terminal for item in found] == ["T1", "T2"]
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            "öffne vier Terminals",  # i18n-allow: input vocab under test
+            "mach acht Terminals auf und lass sie die Tests fixen",  # i18n-allow: input vocab under test
+            "fix the 2 failing tests",
+            "spawn three agents in the background",
+        ],
+    )
+    def test_a_number_that_is_not_an_address_reaches_nobody(
+        self, utterance: str
+    ) -> None:
+        """Counting panes is not addressing one — that is the spawn path's turn."""
+        assert intent.detect(utterance, names=self.PANES) is None
+
+    def test_a_position_the_workspace_does_not_have_is_not_addressed(self) -> None:
+        """"T7" with four panes open must not quietly land on the nearest one."""
+        assert intent.detect("prompte T7 mit dem Deep Dive", names=self.PANES) is None  # i18n-allow: input vocab under test

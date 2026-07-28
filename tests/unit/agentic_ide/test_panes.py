@@ -57,7 +57,7 @@ async def test_a_fresh_workspace_puts_every_pane_in_its_own_column(
 ) -> None:
     """The wizard's panes stand side by side: one column each, top slot."""
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("Alex", 0, 0), ("Blake", 1, 0), ("Casey", 2, 0)]
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 2, 0)]
 
 
 # ---------------------------------------------------------------- split right
@@ -65,10 +65,10 @@ async def test_split_right_opens_a_column_next_to_the_anchor(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    term = await registry.add_terminal(anchor="Alex", direction="right")
+    term = await registry.add_terminal(anchor="T1", direction="right")
     # Immediately right of its anchor — not appended at the end — and everything
     # further right shifts over rather than being overwritten.
-    assert _layout(registry) == [("Alex", 0, 0), (term.name, 1, 0), ("Blake", 2, 0)]
+    assert _layout(registry) == [("T1", 0, 0), (term.name, 1, 0), ("T2", 2, 0)]
 
 
 async def test_split_right_inherits_the_anchor_agent(
@@ -84,7 +84,7 @@ async def test_an_explicit_agent_wins_over_the_anchor(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 1)
-    term = await registry.add_terminal(anchor="Alex", direction="right", agent="codex")
+    term = await registry.add_terminal(anchor="T1", direction="right", agent="codex")
     assert term.agent == "codex"
 
 
@@ -93,11 +93,11 @@ async def test_split_down_stacks_inside_the_anchor_column(
     registry: Registry, tmp_path: Path
 ) -> None:
     """The point of the column model: splitting one pane must not squash the
-    others. Blake keeps its own full-height column."""
+    others. T2 keeps its own full-height column."""
     await _open(registry, tmp_path, 2)
-    term = await registry.add_terminal(anchor="Alex", direction="down")
+    term = await registry.add_terminal(anchor="T1", direction="down")
     assert (term.column, term.slot) == (0, 1)
-    assert _layout(registry) == [("Alex", 0, 0), (term.name, 0, 1), ("Blake", 1, 0)]
+    assert _layout(registry) == [("T1", 0, 0), (term.name, 0, 1), ("T2", 1, 0)]
 
 
 async def test_split_down_pushes_the_existing_stack_down(
@@ -105,10 +105,10 @@ async def test_split_down_pushes_the_existing_stack_down(
 ) -> None:
     """Inserting into the middle of a stack must not collide with what is there."""
     await _open(registry, tmp_path, 1)
-    bottom = await registry.add_terminal(anchor="Alex", direction="down")
-    middle = await registry.add_terminal(anchor="Alex", direction="down")
+    bottom = await registry.add_terminal(anchor="T1", direction="down")
+    middle = await registry.add_terminal(anchor="T1", direction="down")
     slots = {name: (column, slot) for name, column, slot in _layout(registry)}
-    assert slots["Alex"] == (0, 0)
+    assert slots["T1"] == (0, 0)
     assert slots[middle.name] == (0, 1), "the newest pane sits under its anchor"
     assert slots[bottom.name] == (0, 2), "the older pane moved down"
 
@@ -117,15 +117,28 @@ async def test_split_down_pushes_the_existing_stack_down(
 async def test_new_panes_take_the_next_free_call_sign(
     registry: Registry, tmp_path: Path
 ) -> None:
-    await _open(registry, tmp_path, 2)  # Alex, Blake
+    await _open(registry, tmp_path, 2)  # T1, T2
     term = await registry.add_terminal(direction="right")
-    assert term.name == "Casey"
+    assert term.name == "T3"
 
 
-async def test_an_explicit_name_is_deduplicated(registry: Registry, tmp_path: Path) -> None:
+async def test_a_taken_position_moves_to_the_next_free_number(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Suffixing it would produce "T1 2" — neither a position nor speakable."""
     await _open(registry, tmp_path, 1)
-    term = await registry.add_terminal(name="Alex", direction="right")
-    assert term.name == "Alex 2"
+    term = await registry.add_terminal(name="T1", direction="right")
+    assert term.name == "T2"
+
+
+async def test_an_explicit_custom_name_is_deduplicated(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A name the user chose keeps the familiar numeric suffix."""
+    await _open(registry, tmp_path, 1)
+    await registry.add_terminal(name="Mika", direction="right")
+    term = await registry.add_terminal(name="Mika", direction="right")
+    assert term.name == "Mika 2"
 
 
 async def test_the_new_pane_starts_pending_and_addressable(
@@ -154,7 +167,7 @@ async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) 
 async def test_a_bad_direction_is_refused(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 1)
     with pytest.raises(SessionError, match="right.*down"):
-        await registry.add_terminal(anchor="Alex", direction="sideways")
+        await registry.add_terminal(anchor="T1", direction="sideways")
 
 
 async def test_adding_without_a_workspace_is_refused(registry: Registry) -> None:
@@ -178,23 +191,23 @@ async def test_closing_a_pane_stops_its_agent(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     pty_id = registry.session.terminals[0].pty_id
-    closed = await registry.close_terminal("Alex")
-    assert closed.name == "Alex"
+    closed = await registry.close_terminal("T1")
+    assert closed.name == "T1"
     assert pty_id in fake_pty.closed
-    assert [t.name for t in registry.session.terminals] == ["Blake"]
+    assert [t.name for t in registry.session.terminals] == ["T2"]
 
 
 async def test_closing_repacks_the_stack(registry: Registry, tmp_path: Path) -> None:
     """A gap in a stack would render as a blank cell, so slots are re-packed."""
     await _open(registry, tmp_path, 1)
-    middle = await registry.add_terminal(anchor="Alex", direction="down")
+    middle = await registry.add_terminal(anchor="T1", direction="down")
     bottom = await registry.add_terminal(anchor=middle.name, direction="down")
     assert [slot for _n, _c, slot in _layout(registry)] == [0, 1, 2]
 
     await registry.close_terminal(middle.name)
-    assert _layout(registry) == [("Alex", 0, 0), (bottom.name, 0, 1)]
+    assert _layout(registry) == [("T1", 0, 0), (bottom.name, 0, 1)]
 
 
 async def test_closing_a_whole_column_repacks_the_columns(
@@ -202,8 +215,8 @@ async def test_closing_a_whole_column_repacks_the_columns(
 ) -> None:
     """An emptied column would render as a blank stripe."""
     await _open(registry, tmp_path, 3)
-    await registry.close_terminal("Blake")
-    assert _layout(registry) == [("Alex", 0, 0), ("Casey", 1, 0)]
+    await registry.close_terminal("T2")
+    assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0)]
 
 
 async def test_closing_the_last_pane_leaves_an_empty_workspace(
@@ -211,7 +224,7 @@ async def test_closing_the_last_pane_leaves_an_empty_workspace(
 ) -> None:
     """Allowed on purpose: the grid then offers to open a fresh terminal."""
     await _open(registry, tmp_path, 1)
-    await registry.close_terminal("Alex")
+    await registry.close_terminal("T1")
     assert registry.session is not None
     assert registry.session.terminals == []
 
@@ -220,7 +233,7 @@ async def test_closing_an_unknown_pane_names_the_real_ones(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 1)
-    with pytest.raises(SessionError, match="Alex"):
+    with pytest.raises(SessionError, match="T1"):
         await registry.close_terminal("Gandalf")
 
 
@@ -228,16 +241,16 @@ async def test_closing_several_panes_is_one_canonical_batch(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 3)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    await registry.attach("Casey", 80, 24, _noop, _noop_exit)
-    pty_ids = {registry.session.find(name).pty_id for name in ("Alex", "Casey")}
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    await registry.attach("T3", 80, 24, _noop, _noop_exit)
+    pty_ids = {registry.session.find(name).pty_id for name in ("T1", "T3")}
 
-    closed, failed = await registry.close_terminals(["Alex", "Casey"])
+    closed, failed = await registry.close_terminals(["T1", "T3"])
 
-    assert [term.name for term in closed] == ["Alex", "Casey"]
+    assert [term.name for term in closed] == ["T1", "T3"]
     assert failed == []
     assert set(fake_pty.closed) >= pty_ids
-    assert [term.name for term in registry.session.terminals] == ["Blake"]
+    assert [term.name for term in registry.session.terminals] == ["T2"]
 
 
 async def test_a_batch_reports_unknown_names_but_closes_valid_ones(
@@ -245,36 +258,36 @@ async def test_a_batch_reports_unknown_names_but_closes_valid_ones(
 ) -> None:
     await _open(registry, tmp_path, 2)
 
-    closed, failed = await registry.close_terminals(["Alex", "Gandalf"])
+    closed, failed = await registry.close_terminals(["T1", "Gandalf"])
 
-    assert [term.name for term in closed] == ["Alex"]
+    assert [term.name for term in closed] == ["T1"]
     assert failed == [
         {
             "name": "Gandalf",
-            "detail": "No terminal called 'Gandalf'. Running: Alex, Blake.",
+            "detail": "No terminal called 'Gandalf'. Running: T1, T2.",
         }
     ]
-    assert [term.name for term in registry.session.terminals] == ["Blake"]
+    assert [term.name for term in registry.session.terminals] == ["T2"]
 
 
 async def test_a_closed_pane_refuses_further_prompts(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, 2)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
-    await registry.close_terminal("Alex")
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    await registry.close_terminal("T1")
     with pytest.raises(SessionError, match="No terminal called"):
-        await registry.send_prompt("Alex", "still there?")
+        await registry.send_prompt("T1", "still there?")
 
 
 async def test_a_reopened_call_sign_is_a_fresh_pane(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Closing Alex and splitting again must not resurrect the old transcript."""
+    """Closing T1 and splitting again must not resurrect the old transcript."""
     await _open(registry, tmp_path, 1)
-    await registry.attach("Alex", 80, 24, _noop, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
     registry.session.terminals[0].transcript.feed("old work\r\n")
-    await registry.close_terminal("Alex")
-    fresh = await registry.add_terminal(name="Alex", direction="right")
+    await registry.close_terminal("T1")
+    fresh = await registry.add_terminal(name="T1", direction="right")
     assert fresh.transcript.tail() == []
     assert fresh.prompts_sent == 0

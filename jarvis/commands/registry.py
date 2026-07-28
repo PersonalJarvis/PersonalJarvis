@@ -741,7 +741,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "Terminals are called T plus their place in the grid (T1, T2, "
                 "T3, left to right). Use this whenever the user tells a "
                 "terminal to do something "
-                "('tell T1 to ...', 'T2 soll ...', 'let terminal three "  # i18n-allow: quoted addressing examples the router must match
+                "('tell T1 to ...', 'T2 soll ...', 'let terminal three "  # i18n-allow: quoted addressing example
                 "refactor ...', 'prompt the second terminal') "
                 "— that work belongs to that agent, never to a background "
                 "worker. For SEVERAL terminals ('T1 and T2 both ...', 'let "

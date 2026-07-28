@@ -87,13 +87,14 @@ def test_no_spelling_claims_two_different_clis() -> None:
 
 
 def test_no_pane_call_sign_can_shadow_a_cli_name() -> None:
-    """Registry vs. the call-sign pool.
+    """Registry vs. the call-signs panes are actually handed.
 
     Addressing a pane called "Kimi" by saying "Kimi" is a coin flip, and the
-    loser gets somebody else's instruction.
+    loser gets somebody else's instruction. Positional call-signs make that
+    structurally impossible, and this pins that it stays so.
     """
     reserved = names._reserved()
-    assert not {n.lower() for n in names.NAME_POOL} & reserved
+    assert not {n.lower() for n in names.default_names(20)} & reserved
     for name in workspace_agents.coding_agent_names():
         assert name.lower() in reserved
 

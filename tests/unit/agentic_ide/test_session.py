@@ -96,7 +96,7 @@ async def test_start_creates_named_terminals(registry: Registry, tmp_path: Path)
     session = await _open(
         registry, tmp_path, [{"agent": "claude"}, {"agent": "codex"}]
     )
-    assert [t.name for t in session.terminals] == ["Alex", "Blake"]
+    assert [t.name for t in session.terminals] == ["T1", "T2"]
     assert [t.agent for t in session.terminals] == ["claude", "codex"]
     assert session.folder == str(tmp_path)
 
@@ -160,7 +160,7 @@ async def test_opening_the_same_folder_again_creates_another_workspace(
 ) -> None:
     """A workspace is a pane group, so one folder can back several of them."""
     first = await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
 
     again = await _open(registry, tmp_path, [{"agent": "codex"}])
@@ -198,7 +198,7 @@ async def test_a_second_folder_opens_beside_the_first(
     other = tmp_path / "second"
     other.mkdir()
     first = await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
     live_id = registry.session.terminals[0].pty_id
 
     second = await _open(registry, other, [{"agent": "claude"}])
@@ -209,21 +209,37 @@ async def test_a_second_folder_opens_beside_the_first(
     assert registry.active_id == second.id, "the new workspace comes to the front"
 
 
-async def test_call_signs_do_not_repeat_across_workspaces(
+async def test_every_workspace_numbers_its_panes_from_one(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """A name addresses exactly one pane, however many workspaces are open.
+    """A position describes the grid on screen, so each tab counts from T1.
 
-    "Tell Alex to run the tests" has to be an instruction, not a question about
-    which tab was meant.
+    The repetition is the feature. Numbering the second workspace T3, T4 …
+    would keep call-signs globally unique at the cost of the one thing they
+    are for: the user reading a number off the pane in front of them.
     """
     other = tmp_path / "second"
     other.mkdir()
     first = await _open(registry, tmp_path, [{"agent": "claude"}, {"agent": "claude"}])
     second = await _open(registry, other, [{"agent": "claude"}])
 
-    names = [t.name for t in first.terminals] + [t.name for t in second.terminals]
-    assert len(set(names)) == len(names), f"call-signs collided: {names}"
+    assert [t.name for t in first.terminals] == ["T1", "T2"]
+    assert [t.name for t in second.terminals] == ["T1"]
+
+
+async def test_a_spoken_position_addresses_the_workspace_on_screen(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """"T1" is whichever T1 the user is looking at — the front workspace's."""
+    other = tmp_path / "second"
+    other.mkdir()
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+    second = await _open(registry, other, [{"agent": "claude"}])
+
+    found = registry.find_terminal("T1")
+    assert found is not None
+    session, _term = found
+    assert session.id == second.id, "the front workspace answers first"
 
 
 async def test_switching_workspaces_leaves_every_agent_running(
@@ -374,7 +390,7 @@ async def test_attach_spawns_the_agent_in_the_chosen_folder(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    term = await registry.attach("Alex", 100, 30, _noop_output, _noop_exit)
+    term = await registry.attach("T1", 100, 30, _noop_output, _noop_exit)
     assert term.status == "live"
     spawn = fake_pty.spawns[-1]
     assert spawn["cwd"] == str(tmp_path)
@@ -385,16 +401,16 @@ async def test_attach_feeds_the_transcript(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty-id", "\x1b[32mediting main.py\x1b[0m\r\n")
-    assert registry.report("Alex")["transcript"] == ["editing main.py"]
+    assert registry.report("T1")["transcript"] == ["editing main.py"]
 
 
 async def test_attach_by_spoken_phrase(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    term = await registry.attach("alex", 80, 24, _noop_output, _noop_exit)
-    assert term.name == "Alex"
+    term = await registry.attach("t1", 80, 24, _noop_output, _noop_exit)
+    assert term.name == "T1"
 
 
 # --------------------------------------------------------------------- prompt
@@ -404,8 +420,8 @@ async def test_prompt_types_text_then_enter_separately(
     """Text and Enter go as two writes: agent TUIs debounce a single burst as a
     paste and insert a line break instead of submitting."""
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
-    await registry.send_prompt("Alex", "run the tests")
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    await registry.send_prompt("T1", "run the tests")
     assert fake_pty.typed == ["run the tests", "\r"]
 
 
@@ -413,8 +429,8 @@ async def test_prompt_counts_and_remembers_the_last_one(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
-    await registry.send_prompt("what is alex doing", "status please")
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    await registry.send_prompt("what is t1 doing", "status please")
     term = registry.session.terminals[0]
     assert term.prompts_sent == 1
     assert term.last_prompt == "status please"
@@ -424,7 +440,7 @@ async def test_prompt_to_an_unknown_terminal_names_the_real_ones(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    with pytest.raises(SessionError, match="Alex"):
+    with pytest.raises(SessionError, match="T1"):
         await registry.send_prompt("Gandalf", "hello")
 
 
@@ -435,21 +451,21 @@ async def test_prompt_is_refused_when_the_agent_is_not_running(
     refused rather than typed into something else."""
     await _open(registry, tmp_path, [{"agent": "claude"}])
     with pytest.raises(SessionError, match="not running"):
-        await registry.send_prompt("Alex", "run the tests")
+        await registry.send_prompt("T1", "run the tests")
 
 
 async def test_prompt_that_sanitizes_to_nothing_is_refused(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
     with pytest.raises(SessionError, match="empty"):
-        await registry.send_prompt("Alex", "\x03\x1b")
+        await registry.send_prompt("T1", "\x03\x1b")
 
 
 async def test_prompt_without_a_session_is_refused(registry: Registry) -> None:
     with pytest.raises(SessionError, match="No Agentic-IDE session"):
-        await registry.send_prompt("Alex", "hello")
+        await registry.send_prompt("T1", "hello")
 
 
 # ----------------------------------------------------------------- focus mode
@@ -473,8 +489,8 @@ async def test_end_closes_every_pty(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}, {"agent": "codex"}])
-    await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
-    await registry.attach("Blake", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    await registry.attach("T2", 80, 24, _noop_output, _noop_exit)
     assert await registry.end() is True
     assert len(fake_pty.closed) == 2
     assert registry.session is None
@@ -486,8 +502,8 @@ async def test_report_includes_status_and_folder(
     registry: Registry, tmp_path: Path
 ) -> None:
     await _open(registry, tmp_path, [{"agent": "claude"}])
-    data = registry.report("Alex")
-    assert data["name"] == "Alex"
+    data = registry.report("T1")
+    assert data["name"] == "T1"
     assert data["folder"] == str(tmp_path)
     assert data["status"] == "pending"
 
@@ -509,10 +525,10 @@ async def test_a_displaced_viewer_cannot_resize_the_pane_it_lost(
     async def first_viewer(_text: str) -> None: ...
     async def second_viewer(_text: str) -> None: ...
 
-    await registry.attach("Alex", 80, 24, first_viewer, _noop_exit)
+    await registry.attach("T1", 80, 24, first_viewer, _noop_exit)
     term = registry.session.terminals[0]
     # The second window takes the pane over — the newest viewer always wins.
-    await registry.attach("Alex", 200, 50, second_viewer, _noop_exit)
+    await registry.attach("T1", 200, 50, second_viewer, _noop_exit)
     fake_pty.resizes.clear()
 
     # The displaced viewer keeps measuring its own window and reporting it.
@@ -532,7 +548,7 @@ async def test_an_internal_resize_needs_no_viewer(
 
     async def viewer(_text: str) -> None: ...
 
-    await registry.attach("Alex", 80, 24, viewer, _noop_exit)
+    await registry.attach("T1", 80, 24, viewer, _noop_exit)
     term = registry.session.terminals[0]
     fake_pty.resizes.clear()
 

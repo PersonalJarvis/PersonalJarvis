@@ -816,7 +816,7 @@ export function AgenticIdeView() {
           {step === 2 && (
             <Section
               title="Who runs where?"
-              hint="Each terminal gets a call-sign so you can talk about it by name — “what is Mika doing?”."
+              hint="Terminals are numbered by position — T1, T2, T3 — so you can just say “what is T2 doing?”. Rename one if you prefer."
             >
               <ul className="space-y-2">
                 {planned.map((pane, index) => (

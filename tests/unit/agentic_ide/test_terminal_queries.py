@@ -48,7 +48,7 @@ async def test_a_startup_query_is_answered_into_the_pty(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "codex"}])
-    term = await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
 
     await fake_pty.emit(term.pty_id, STARTUP_QUERIES)
 
@@ -59,7 +59,7 @@ async def test_the_reply_describes_the_pane_the_viewer_is_looking_at(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "codex"}])
-    term = await registry.attach("Alex", 80, 24, _noop_output, _noop_exit, appearance="light")
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit, appearance="light")
 
     await fake_pty.emit(term.pty_id, "\x1b]11;?\x07")
 
@@ -77,7 +77,7 @@ async def test_a_replayed_screen_does_not_answer_its_own_old_queries(
     corruption itself.
     """
     await registry.start(str(tmp_path), [{"agent": "codex"}])
-    term = await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
     await fake_pty.emit(term.pty_id, STARTUP_QUERIES)
     answered_once = list(fake_pty.typed)
 
@@ -86,7 +86,7 @@ async def test_a_replayed_screen_does_not_answer_its_own_old_queries(
     async def _collect(text: str) -> None:
         replayed.append(text)
 
-    rejoined = await registry.attach("Alex", 80, 24, _collect, _noop_exit)
+    rejoined = await registry.attach("T1", 80, 24, _collect, _noop_exit)
 
     assert rejoined.reattached is True
     # The viewer gets the queries back (they are part of the screen)...
@@ -99,7 +99,7 @@ async def test_ordinary_agent_output_types_nothing_at_the_agent(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
     await registry.start(str(tmp_path), [{"agent": "codex"}])
-    term = await registry.attach("Alex", 80, 24, _noop_output, _noop_exit)
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
 
     await fake_pty.emit(term.pty_id, "\x1b[32mediting main.py\x1b[0m\r\n")
 
