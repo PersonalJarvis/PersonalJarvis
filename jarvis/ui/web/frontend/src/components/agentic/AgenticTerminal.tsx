@@ -86,7 +86,6 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
-import { PaneScrollbar } from "./PaneScrollbar";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
@@ -273,8 +272,8 @@ export function AgenticTerminal({
   layoutBusy = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // The padded box around the xterm host. The pane's scrollbar overlays it and
-  // measures hover against it — see ./PaneScrollbar.
+  // The padded box around the xterm host — the pane's visible inset, kept off
+  // the host itself because FitAddon reads the host's border-box.
   const scrollRegionRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -285,11 +284,6 @@ export function AgenticTerminal({
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
   const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
-  // Bumped once per built terminal. The scrollbar subscribes to xterm events,
-  // and the instance behind `termRef` is replaced on every restart — without a
-  // signal it would keep listening to a disposed one.
-  const [termEpoch, setTermEpoch] = useState(0);
-  const getTerminal = useCallback(() => termRef.current, []);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -376,7 +370,6 @@ export function AgenticTerminal({
     }
     termRef.current = term;
     fitRef.current = fit;
-    setTermEpoch((epoch) => epoch + 1);
     // Let the app-wide right-click menu reach this terminal. It cannot use the
     // browser selection here — the canvas renderer above paints the text, so
     // there is no selectable DOM to read — and it must paste through xterm so
@@ -394,7 +387,10 @@ export function AgenticTerminal({
     // terminal control code ^V and CANCELS the keystroke, so the browser never
     // runs its own paste and nothing arrives at all — see ./terminalPaste.
     const disposePasteBridge = installPasteBridge(
-      { attachCustomKeyEventHandler: keys.add, paste: (text) => term.paste(text) },
+      {
+        attachCustomKeyEventHandler: keys.add,
+        paste: (text) => term.paste(text),
+      },
       container,
       {
         readClipboard: robustPaste,
@@ -568,7 +564,11 @@ export function AgenticTerminal({
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
-      if (sentSize && sentSize.cols === size.cols && sentSize.rows === size.rows) {
+      if (
+        sentSize &&
+        sentSize.cols === size.cols &&
+        sentSize.rows === size.rows
+      ) {
         return;
       }
       if (socket?.send({ t: "r", ...size })) sentSize = size;
@@ -976,17 +976,6 @@ export function AgenticTerminal({
           data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
-        {/* Overlaid rather than laid out, and deliberately not the browser's
-            own bar — see ./PaneScrollbar for why a CSS-only scrollbar could
-            never work in a Claude Code pane. */}
-        <PaneScrollbar
-          name={name}
-          regionRef={scrollRegionRef}
-          hostRef={containerRef}
-          getTerminal={getTerminal}
-          epoch={termEpoch}
-          appearance={appearance}
-        />
       </div>
       {(dragging || attaching) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
@@ -1064,7 +1053,8 @@ function PaneHeader({
   const offersChoice = choices.filter((a) => a.installed).length > 1;
 
   const startSplit = (direction: SplitDirection) => {
-    if (offersChoice) setPicking((current) => (current === direction ? null : direction));
+    if (offersChoice)
+      setPicking((current) => (current === direction ? null : direction));
     else onSplit?.(direction);
   };
 
@@ -1083,7 +1073,8 @@ function PaneHeader({
         onArrangeStart
           ? (event) => {
               const target = event.target as HTMLElement | null;
-              if (target?.closest("button, a, input, [role='menuitem']")) return;
+              if (target?.closest("button, a, input, [role='menuitem']"))
+                return;
               onArrangeStart(event);
             }
           : undefined
@@ -1115,7 +1106,12 @@ function PaneHeader({
           style={
             focused
               ? undefined
-              : { color: light ? "#2b2b33" : "#e8e8ec", background: light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.06)" }
+              : {
+                  color: light ? "#2b2b33" : "#e8e8ec",
+                  background: light
+                    ? "rgba(0,0,0,0.05)"
+                    : "rgba(255,255,255,0.06)",
+                }
           }
         >
           {name}
@@ -1180,7 +1176,11 @@ function PaneHeader({
           light={light}
           onClick={onToggleMaximize}
         >
-          {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          {maximized ? (
+            <Minimize2 className="h-3.5 w-3.5" />
+          ) : (
+            <Maximize2 className="h-3.5 w-3.5" />
+          )}
         </PaneAction>
         <PaneAction
           label={`Open another terminal beside ${name}`}
@@ -1272,14 +1272,18 @@ function SplitAgentMenu({
         }}
       >
         <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-          {direction === "right" ? "Open beside — what?" : "Split below — what?"}
+          {direction === "right"
+            ? "Open beside — what?"
+            : "Split below — what?"}
         </p>
         {agents.map((agent) => (
           <button
             key={agent.name}
             type="button"
             role="menuitem"
-            autoFocus={agent.installed && agent === agents.find((a) => a.installed)}
+            autoFocus={
+              agent.installed && agent === agents.find((a) => a.installed)
+            }
             disabled={!agent.installed}
             data-testid={`pane-split-${direction}-${paneName}-${agent.name}`}
             onClick={(e) => {
@@ -1363,10 +1367,19 @@ function PaneAction({
 }
 
 /** Small status pill reused by the grid toolbar. */
-export function PaneStatusPill({ status, detail }: { status: PaneStatus; detail?: string }) {
+export function PaneStatusPill({
+  status,
+  detail,
+}: {
+  status: PaneStatus;
+  detail?: string;
+}) {
   if (status === "live") {
     return (
-      <span className="flex items-center gap-1 text-[11px] text-emerald-400" title={detail}>
+      <span
+        className="flex items-center gap-1 text-[11px] text-emerald-400"
+        title={detail}
+      >
         <Circle className="h-2 w-2 fill-current" />
         live
       </span>
@@ -1374,7 +1387,10 @@ export function PaneStatusPill({ status, detail }: { status: PaneStatus; detail?
   }
   if (status === "error") {
     return (
-      <span className="flex items-center gap-1 text-[11px] text-destructive" title={detail}>
+      <span
+        className="flex items-center gap-1 text-[11px] text-destructive"
+        title={detail}
+      >
         <AlertCircle className="h-3 w-3" />
         error
       </span>
@@ -1388,7 +1404,10 @@ export function PaneStatusPill({ status, detail }: { status: PaneStatus; detail?
     );
   }
   return (
-    <span className="flex items-center gap-1 text-[11px] text-muted-foreground" title={detail}>
+    <span
+      className="flex items-center gap-1 text-[11px] text-muted-foreground"
+      title={detail}
+    >
       <Loader2 className="h-3 w-3 animate-spin" />
       starting
     </span>
