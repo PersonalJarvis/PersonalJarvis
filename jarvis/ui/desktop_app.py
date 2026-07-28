@@ -2899,6 +2899,15 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
+                # Dictation mode. Ships unbound; the user assigns the key in
+                # Settings → Keybinds (or the wizard), and it live-re-arms.
+                dictate_hotkeys=(
+                    (self.cfg.trigger.hotkey_dictate,)
+                    if self.cfg.trigger.hotkey_dictate.strip()
+                    else ()
+                ),
+                dictate_mode=self.cfg.dictation.mode,
+                dictation_config=self.cfg.dictation,
                 hangup_hotkeys=(
                     (self.cfg.trigger.hotkey_hangup,)
                     if self.cfg.trigger.hotkey_hangup.strip()

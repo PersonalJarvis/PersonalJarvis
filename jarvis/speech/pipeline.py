@@ -48,6 +48,7 @@ from jarvis.core.events import (
     AnnouncementRequested,
     AudioOutFirst,
     BrainTTFT,
+    DictationCompleted,
     DictationTranscript,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
@@ -1281,10 +1282,23 @@ class SpeechPipeline:
         # it overrides the OWW model + threshold, the prefix-verifier matcher,
         # and the rolling-whisper pattern from the plan.
         wake_plan: Any = None,
+        # Dictation mode: hold (or toggle) to speak, the transcript is inserted
+        # into whatever text field has focus. Empty (the default) means no
+        # shortcut is armed — dictation is then started from the bar, the UI or
+        # the CLI. Deliberately its OWN binding rather than a revival of the
+        # deprecated ptt slot: dictation never reaches the brain.
+        dictate_hotkeys: tuple[str, ...] = (),
+        dictate_mode: str = "hold",
+        # Resolved DictationConfig (jarvis.core.config.DictationConfig) or None.
+        # None keeps every legacy call site and test on the built-in defaults.
+        dictation_config: Any = None,
     ) -> None:
         self._call_hotkeys = call_hotkeys
         self._ptt_hotkeys = ptt_hotkeys
         self._hangup_hotkeys = hangup_hotkeys
+        self._dictate_hotkeys = list(dictate_hotkeys)
+        self._dictate_mode = "toggle" if str(dictate_mode).lower() == "toggle" else "hold"
+        self._dictation_cfg = dictation_config
         # Push-to-talk runtime state. ``_ptt_mode`` arms the raw-recording path
         # in ``_active_session``; ``_ptt_release_event`` is the up-edge signal
         # that ends the recording. A held key never auto-ends via the VAD — the
@@ -1305,7 +1319,18 @@ class SpeechPipeline:
         # task so it can never touch ``_handle_utterance`` / the wake loop.
         self._dictation_stop_event = asyncio.Event()
         self._dictation_task: asyncio.Task[None] | None = None
-        self._dictation_max_s = 300.0
+        self._dictation_max_s = float(
+            getattr(self._dictation_cfg, "max_seconds", 300.0) or 300.0
+        )
+        # Where the finished transcript goes for the CURRENT dictation run:
+        # "chat" only publishes the transcript event (the chat composer's mic
+        # button), "insert" additionally pastes it into the focused field of
+        # whatever app is in front. Set per start_dictation call, never global.
+        self._dictation_target = "chat"
+        # True while a hold-mode dictation key is physically down. Mirrors
+        # ``_ptt_mode`` for the dictation lane so a repeated press edge (the
+        # Windows backend polls and re-fires on_press while held) is idempotent.
+        self._dictate_key_down = False
         # ``self._stt`` is the LOCAL FasterWhisperProvider used by the wake
         # backstop + VAD endpoint-probe (many calls/sec, a cloud round-trip
         # would be too slow). In the cloud-first lightweight path it is None:
@@ -2252,6 +2277,7 @@ class SpeechPipeline:
         call: list[str] | None = None,
         hangup: list[str] | None = None,
         ptt: list[str] | None = None,
+        dictate: list[str] | None = None,
     ) -> None:
         """Live-apply changed voice keybinds — no app/pipeline restart.
 
@@ -2271,11 +2297,14 @@ class SpeechPipeline:
             self._hangup_hotkeys = list(hangup)
         if ptt is not None:
             self._ptt_hotkeys = list(ptt)
+        if dictate is not None:
+            self._dictate_hotkeys = list(dictate)
         log.info(
-            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s]",
+            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s]",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
+            ", ".join(self._dictate_hotkeys) or "off",
         )
         self._hotkey_reload_event.set()
 
@@ -2290,15 +2319,33 @@ class SpeechPipeline:
         while True:
             await self._hotkey_reload_event.wait()
             self._hotkey_reload_event.clear()
-            bindings: dict[str, list[str]] = {
-                "call": list(self._call_hotkeys),
-                "hangup": list(self._hangup_hotkeys),
-            }
-            ptt_events: set[str] = set()
-            if self._ptt_hotkeys:
-                bindings["ptt"] = list(self._ptt_hotkeys)
-                ptt_events.add("ptt")
-            await trigger.rearm(bindings, push_to_talk=ptt_events)
+            bindings, edge_events = self._build_hotkey_bindings()
+            await trigger.rearm(bindings, push_to_talk=edge_events)
+
+    def _build_hotkey_bindings(self) -> tuple[dict[str, list[str]], set[str]]:
+        """The live binding table + the set of bindings wanting BOTH key edges.
+
+        One producer for both arming sites (``run`` at start, ``_hotkey_reload_loop``
+        on a live keybind change). They used to build this dict twice; a third
+        action made that duplication a drift bug waiting to happen — a shortcut
+        that works at boot but not after a Settings save, or the reverse.
+        """
+        bindings: dict[str, list[str]] = {
+            "call": list(self._call_hotkeys),
+            "hangup": list(self._hangup_hotkeys),
+        }
+        edge_events: set[str] = set()
+        if self._ptt_hotkeys:
+            bindings["ptt"] = list(self._ptt_hotkeys)
+            edge_events.add("ptt")
+        if self._dictate_hotkeys:
+            bindings["dictate"] = list(self._dictate_hotkeys)
+            # Hold mode needs the release edge to know when to submit; toggle
+            # mode deliberately gets the legacy single-fire-on-release contract
+            # so holding the key does not start and stop repeatedly.
+            if self._dictate_mode == "hold":
+                edge_events.add("dictate")
+        return bindings, edge_events
 
     # ------------------------------------------------------------------
     # Bus / Supervisor Helper — no-op wenn nicht konfiguriert
@@ -4010,23 +4057,17 @@ class SpeechPipeline:
                     exc,
                     exc_info=True,
                 )
-        hotkey_bindings = {
-            "call": list(self._call_hotkeys),
-            "hangup": list(self._hangup_hotkeys),
-        }
-        # Push-to-talk binding (both key edges) — only when configured. Kept as
-        # its own event so the configured wake hotkey can be true PTT while
-        # F3+F4 stays a quick toggle (a two-F-key chord is awkward to hold).
-        ptt_events: set[str] = set()
-        if self._ptt_hotkeys:
-            hotkey_bindings["ptt"] = list(self._ptt_hotkeys)
-            ptt_events.add("ptt")
+        # Push-to-talk and dictation want BOTH key edges; call/hangup keep the
+        # single-fire-on-release contract. One producer for boot and live re-arm.
+        hotkey_bindings, ptt_events = self._build_hotkey_bindings()
         log.info(
-            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] OWW=%s WAKE=%s (threshold=%.2f) "
-            "WHISPER-WAKE=%s TURN-MODE=%s",
+            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] OWW=%s "
+            "WAKE=%s (threshold=%.2f) WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
+            ", ".join(self._dictate_hotkeys) or "off",
+            self._dictate_mode,
             "on" if self._openwakeword_enabled else "off",
             list(self._wake._keywords),
             self._wake._threshold,
@@ -4523,9 +4564,56 @@ class SpeechPipeline:
                 self._on_ptt_press()
             elif event_name == "ptt_release":
                 self._on_ptt_release()
+            elif event_name == "dictate_press":
+                self._on_dictate_press()
+            elif event_name == "dictate_release":
+                self._on_dictate_release()
+            elif event_name == "dictate":
+                # Toggle mode: one press starts, the next stops.
+                self._on_dictate_toggle()
             elif event_name == "hangup":
                 log.info("📵 HANGUP via Hotkey")
                 self._trigger_voice_hangup()
+
+    # ------------------------------------------------------------------
+    # Dictation hotkey edges
+    # ------------------------------------------------------------------
+
+    def _on_dictate_press(self) -> None:
+        """Dictation key DOWN — start recording into the focused text field.
+
+        Idempotent by design: the Windows backend polls, so ``on_press`` fires
+        again on every poll while the chord is held. Only the first edge from
+        "key up" starts anything.
+        """
+        if self._dictate_key_down:
+            return
+        self._dictate_key_down = True
+        if not self.start_dictation(target=self._configured_dictation_target()):
+            # Could not start (mic busy, a voice session is live, no STT). Drop
+            # the latch immediately so the NEXT press is a fresh attempt rather
+            # than being swallowed as a repeat.
+            self._dictate_key_down = False
+
+    def _on_dictate_release(self) -> None:
+        """Dictation key UP — stop recording and submit what was held."""
+        if not self._dictate_key_down:
+            return
+        self._dictate_key_down = False
+        self.stop_dictation()
+
+    def _on_dictate_toggle(self) -> None:
+        """Toggle mode: start if idle, stop if running."""
+        task = self._dictation_task
+        if task is not None and not task.done():
+            self.stop_dictation()
+            return
+        self.start_dictation(target=self._configured_dictation_target())
+
+    def _configured_dictation_target(self) -> str:
+        """``[dictation].target`` — ``auto`` by default, resolved at start."""
+        cfg = getattr(self, "_dictation_cfg", None)
+        return str(getattr(cfg, "target", "auto") or "auto")
 
     def _on_ptt_press(self) -> None:
         """Push-to-talk DOWN edge — arm raw recording and open the session.
@@ -7304,16 +7392,23 @@ class SpeechPipeline:
             and self._capture_permission_allowed()
         )
 
-    def start_dictation(self) -> bool:
+    def start_dictation(self, *, target: str = "chat") -> bool:
         """Begin a transcribe-only dictation session (idempotent-safe).
+
+        ``target`` decides where the finished transcript goes:
+
+        * ``"chat"`` — publish the transcript only. This is the chat composer's
+          mic button: the text lands in the app's own input box.
+        * ``"insert"`` — additionally paste it into the focused text field of
+          whatever application is in front. This is dictation mode proper.
 
         Returns ``False`` when it cannot start — a voice/PTT session is active,
         the pipeline is busy, dictation is already running, or no STT is wired.
-        The caller (WS handler) turns ``False`` into an honest UI message rather
-        than silently doing nothing.
+        The caller (hotkey edge, WS handler, REST route) turns ``False`` into an
+        honest message rather than silently doing nothing.
 
         This NEVER routes to the brain: it spawns ``_dictation_session`` which
-        only publishes ``DictationTranscript`` events.
+        only publishes ``DictationTranscript`` / ``DictationCompleted`` events.
         """
         if not self._capture_permission_allowed():
             log.info("start_dictation ignored: microphone access is not ready.")
@@ -7342,12 +7437,26 @@ class SpeechPipeline:
         hangup = getattr(self, "_hangup_event", None)
         if hangup is not None:
             hangup.clear()
+        # Stored RAW ("auto" / "insert" / "chat"). ``auto`` is resolved when the
+        # recording ENDS, not here: the window that matters is the one in front
+        # when the text is delivered. Clicking "Start dictating" in the app and
+        # then switching to the target application is a normal flow, and
+        # resolving at start would have sent that text to the chat box.
+        self._dictation_target = target if target in ("insert", "chat") else "auto"
         self._dictation_stop_event = asyncio.Event()
         self._dictation_task = loop.create_task(
-            self._dictation_session(), name="chat-dictation"
+            self._dictation_session(), name="dictation"
         )
-        log.info("🎙️ dictation started (transcribe-only → chat input).")
+        log.info(
+            "🎙️ dictation started (transcribe-only, target=%s).",
+            self._dictation_target,
+        )
         return True
+
+    def dictation_active(self) -> bool:
+        """Is a dictation running right now? (REST/UI status, cheap.)"""
+        task = self._dictation_task
+        return task is not None and not task.done()
 
     def stop_dictation(self) -> bool:
         """Signal the active dictation session to finish (best-effort)."""
@@ -7357,49 +7466,128 @@ class SpeechPipeline:
         return True
 
     async def _dictation_session(self) -> None:
-        """Capture mic audio and stream live transcripts to the chat input.
+        """Capture mic audio, transcribe it in segments, deliver the result.
 
         A stripped-down ``_ptt_session``: open the mic, drain into a buffer,
-        transcribe the held-so-far buffer every ``_ptt_partial_interval_s`` and
-        publish a non-final ``DictationTranscript``; on the stop event (or the
-        max-duration cap) transcribe once more and publish the final one. It
-        deliberately does NOT use the VAD, the brain, TTS, or the turn-state
-        machine — the whole thing is wrapped fail-open so a dictation error can
-        never break a later real voice turn (BUG-020 discipline).
+        publish a live ``DictationTranscript`` while speaking, and on the stop
+        event (or the max-duration cap) produce the final text, clean it, and —
+        when the target is ``insert`` — paste it into the focused field of
+        whatever application is in front. It deliberately does NOT use the VAD
+        endpointing, the brain, TTS, or the turn-state machine, and the whole
+        thing is wrapped fail-open so a dictation error can never break a later
+        real voice turn (BUG-020 discipline).
+
+        **Segmented transcription.** The previous version re-transcribed the
+        ENTIRE growing buffer on every tick. That is O(n²) in audio seconds: a
+        two-minute dictation re-sent the whole recording ~100 times, and on a
+        paid API every one of those was billed. Now a segment is closed roughly
+        every ``segment_seconds`` — at the quietest point nearby, so words are
+        not cut in half — transcribed exactly once, and never re-sent. Only the
+        open tail is re-transcribed for the live preview, so on release only
+        that tail remains to be finalized.
+
+        **AP-24.** The live probe and the final transcription must never run
+        concurrently on one native engine. ``inference_active`` + the shared
+        ``_stop_ptt_live_transcription`` handshake are what keep them apart —
+        cancelling an ``asyncio.to_thread`` would only cancel the wrapper, not
+        the native call, and the next transcribe would then raise TranscribeBusy.
         """
         stt = self._utterance_stt
         if stt is None:
             return
+        # ``getattr`` defaults keep pipelines built via ``__new__`` working —
+        # a widely used pattern in this repo's unit tests, which bypass
+        # ``__init__`` entirely.
+        cfg = getattr(self, "_dictation_cfg", None)
+        target = getattr(self, "_dictation_target", "chat")
         buffer = bytearray()
-        interval = self._ptt_partial_interval_s if self._ptt_partial_interval_s > 0 else 1.2
+        started_at = time.monotonic()
+        interval = float(
+            getattr(cfg, "partial_interval_s", None)
+            if getattr(cfg, "partial_interval_s", None) is not None
+            else self._ptt_partial_interval_s
+        )
+        segment_seconds = float(getattr(cfg, "segment_seconds", 8.0) or 0.0)
+        # 16 kHz mono int16 -> 32000 bytes per second.
+        bytes_per_second = 16_000 * 2
+        segment_bytes = int(segment_seconds * bytes_per_second)
         # Sub-0.4s of audio is almost always a near-silence Whisper
         # hallucination; wait until enough has accumulated before transcribing.
-        min_bytes = int(0.4 * 16_000 * 2)
+        min_bytes = int(0.4 * bytes_per_second)
+
+        # Text of segments already closed and transcribed — never re-sent.
+        closed_parts: list[str] = []
+        # How many bytes of ``buffer`` the closed segments cover.
+        closed_bytes = 0
         last_published = ""
+        stop_event = asyncio.Event()
+        inference_active = asyncio.Event()
+        language = ""
+
+        async def _transcribe(pcm: bytes) -> tuple[str, str]:
+            """One transcription. Returns ``(text, language)``; never raises."""
+            inference_active.set()
+            try:
+                transcript = await stt.transcribe_pcm(pcm)
+            except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
+                log.debug("dictation transcribe failed: %s", exc)
+                return "", ""
+            finally:
+                inference_active.clear()
+            text = (getattr(transcript, "text", "") or "").strip()
+            lang = str(getattr(transcript, "language", "") or "")
+            return text, lang
 
         async def _probe() -> None:
-            """Periodic non-final transcript of the held-so-far buffer."""
-            nonlocal last_published
+            """Close finished segments and publish the live transcript."""
+            nonlocal closed_bytes, last_published, language
             try:
-                while True:
-                    await asyncio.sleep(interval)
-                    pcm = bytes(buffer)
-                    if len(pcm) < min_bytes:
-                        continue
+                while not stop_event.is_set():
                     try:
-                        transcript = await stt.transcribe_pcm(pcm)
-                    except Exception as exc:  # noqa: BLE001 — cosmetic, keep going
-                        log.debug("dictation probe failed: %s", exc)
+                        await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                    except TimeoutError:
+                        pass
+                    if stop_event.is_set():
+                        return
+                    tail = bytes(buffer[closed_bytes:])
+                    if len(tail) < min_bytes:
                         continue
-                    text = (getattr(transcript, "text", "") or "").strip()
-                    if not text or text == last_published:
+
+                    # Close a segment once the tail is long enough. Cutting at
+                    # the quietest point in the last stretch keeps the cut off
+                    # the middle of a word in the overwhelming majority of cases.
+                    if segment_bytes and len(tail) >= segment_bytes:
+                        from jarvis.dictation.segment import quietest_cut
+
+                        cut = quietest_cut(tail, segment_bytes, bytes_per_second)
+                        if cut >= min_bytes:
+                            text, lang = await _transcribe(tail[:cut])
+                            if stop_event.is_set():
+                                return
+                            if text:
+                                closed_parts.append(text)
+                                language = lang or language
+                            # Advance regardless: a segment that transcribed to
+                            # nothing was silence, and re-sending it forever
+                            # would rebuild the very O(n²) loop this replaces.
+                            closed_bytes += cut
+                            tail = bytes(buffer[closed_bytes:])
+
+                    tail_text = ""
+                    if len(tail) >= min_bytes:
+                        tail_text, lang = await _transcribe(tail)
+                        language = lang or language
+                        if stop_event.is_set():
+                            return
+                    live = " ".join([*closed_parts, tail_text]).strip()
+                    if not live or live == last_published:
                         continue
-                    last_published = text
+                    last_published = live
                     try:
                         await self._publish_event(
                             DictationTranscript(
                                 source_layer="speech.dictation",
-                                text=text,
+                                text=live,
                                 is_final=False,
                             )
                         )
@@ -7408,6 +7596,9 @@ class SpeechPipeline:
             except asyncio.CancelledError:
                 pass
 
+        final_text = ""
+        raw_text = ""
+        hung_up = False
         try:
             async with MicrophoneCapture(
                 device=self._input_device, device_priority=self._input_priority
@@ -7416,48 +7607,80 @@ class SpeechPipeline:
                 async def _drain() -> None:
                     async for chunk in mic.stream():
                         buffer.extend(chunk.pcm)
+                        # Feed the live loudness so the bar's equalizer moves
+                        # while dictating — same normalized RMS as the VAD and
+                        # PTT sites, zero cost when no overlay is subscribed.
+                        if mic_level.has_subscribers():
+                            samples = pcm_bytes_to_np(chunk.pcm)
+                            if samples.size:
+                                mic_level.feed(
+                                    float(np.sqrt(np.mean(np.square(samples))))
+                                )
 
                 drain_task = asyncio.create_task(_drain(), name="dictation-drain")
-                probe_task = asyncio.create_task(_probe(), name="dictation-probe")
+                probe_task = (
+                    asyncio.create_task(_probe(), name="dictation-probe")
+                    if interval > 0
+                    else None
+                )
                 stop_task = asyncio.create_task(self._dictation_stop_event.wait())
                 hangup_task = asyncio.create_task(self._hangup_event.wait())
                 wait_set = {stop_task, hangup_task, drain_task}
-                all_tasks = [drain_task, probe_task, stop_task, hangup_task]
                 try:
-                    await asyncio.wait(
+                    done, _pending = await asyncio.wait(
                         wait_set,
                         timeout=self._dictation_max_s,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
+                    hung_up = hangup_task in done or self._hangup_event.is_set()
                 finally:
-                    for t in all_tasks:
+                    # Freeze the probe BEFORE tearing anything else down so a
+                    # stop edge cannot race one more transcription into flight.
+                    stop_event.set()
+                    for t in (drain_task, stop_task, hangup_task):
                         t.cancel()
-                    for t in all_tasks:
+                    for t in (drain_task, stop_task, hangup_task):
                         try:
                             await t
                         except (asyncio.CancelledError, Exception):  # noqa: BLE001
                             pass
 
-            # One final transcription of the whole capture.
-            pcm = bytes(buffer)
-            final_text = ""
-            if len(pcm) >= min_bytes:
-                try:
-                    transcript = await stt.transcribe_pcm(pcm)
-                    final_text = (getattr(transcript, "text", "") or "").strip()
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("dictation final transcribe failed: %s", exc)
-            try:
-                await self._publish_event(
-                    DictationTranscript(
-                        source_layer="speech.dictation",
-                        text=final_text,
-                        is_final=True,
-                    )
+            # The mic lease is closed before waiting on the probe, so releasing
+            # the key always ends the recording even if a probe call is slow.
+            if probe_task is not None:
+                await self._stop_ptt_live_transcription(
+                    probe_task,
+                    stop_event=stop_event,
+                    inference_active=inference_active,
+                    wait_for_inference=not hung_up,
                 )
-            except Exception as exc:  # noqa: BLE001
-                log.debug("dictation final publish failed: %s", exc)
-            log.info("🎙️ dictation ended (%d chars).", len(final_text))
+
+            if not hung_up:
+                # Finalize ONLY the open tail — every closed segment is done.
+                tail = bytes(buffer[closed_bytes:])
+                tail_text = ""
+                if len(tail) >= min_bytes:
+                    tail_text, lang = await _transcribe(tail)
+                    language = lang or language
+                raw_text = " ".join([*closed_parts, tail_text]).strip()
+                final_text = raw_text
+
+            duration_s = max(0.0, time.monotonic() - started_at)
+            result = await self._finish_dictation(
+                raw_text=raw_text,
+                language=language,
+                duration_s=duration_s,
+                target=target,
+                hung_up=hung_up,
+            )
+            final_text = result
+            log.info(
+                "🎙️ dictation ended (%d chars, %.1fs, target=%s%s).",
+                len(final_text),
+                duration_s,
+                target,
+                ", hung up" if hung_up else "",
+            )
         except Exception:  # noqa: BLE001 — dictation must never break voice
             log.warning("dictation session crashed (non-fatal)", exc_info=True)
             try:
@@ -7468,6 +7691,156 @@ class SpeechPipeline:
                 )
             except Exception:  # noqa: BLE001
                 pass
+
+    async def _finish_dictation(
+        self,
+        *,
+        raw_text: str,
+        language: str,
+        duration_s: float,
+        target: str,
+        hung_up: bool,
+    ) -> str:
+        """Clean, deliver and record one finished dictation. Returns the text.
+
+        Split out of ``_dictation_session`` so the delivery half is testable
+        without a microphone. Every step degrades on its own: a failed cleanup
+        falls back to the raw transcript, a failed insertion falls back to "it
+        is on your clipboard", and a failed history write costs nothing but the
+        history entry.
+        """
+        cleaned = raw_text
+        removed_words = 0
+        cleanup_reason = ""
+        cfg = getattr(self, "_dictation_cfg", None)
+
+        if raw_text and not hung_up:
+            try:
+                from jarvis.dictation.cleanup import clean_transcript
+
+                outcome = clean_transcript(
+                    raw_text,
+                    language=language,
+                    remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
+                    max_removed_fraction=float(
+                        getattr(cfg, "filler_max_removed_fraction", 0.25)
+                    ),
+                )
+                cleaned = outcome.text
+                removed_words = outcome.removed_words
+                cleanup_reason = outcome.reason
+            except Exception:  # noqa: BLE001 — never lose the text to a cleanup bug
+                log.warning("dictation cleanup failed; using the raw transcript",
+                            exc_info=True)
+                cleaned = raw_text
+
+        # Publish the final transcript first: the chat composer and the bar
+        # both listen for it, and they should update even if insertion fails.
+        try:
+            await self._publish_event(
+                DictationTranscript(
+                    source_layer="speech.dictation",
+                    text=cleaned,
+                    is_final=True,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("dictation final publish failed: %s", exc)
+
+        # Resolve ``auto`` now: the foreground window at DELIVERY time is the
+        # one the user means, not the one that happened to be in front when
+        # recording started.
+        resolved_target = target
+        if target not in ("insert", "chat"):
+            try:
+                from jarvis.dictation.insert import resolve_target
+
+                resolved_target = resolve_target(target)
+            except Exception:  # noqa: BLE001 — an unreadable foreground is not fatal
+                log.debug("dictation target resolution failed", exc_info=True)
+                resolved_target = "insert"
+
+        outcome_name = "chat"
+        detail = ""
+        method = ""
+        if hung_up:
+            outcome_name = "cancelled"
+        elif not cleaned.strip():
+            outcome_name = "empty"
+        elif resolved_target == "insert":
+            insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
+            outcome_name = insert_result.status
+            detail = insert_result.detail
+            method = insert_result.method
+
+        try:
+            await self._publish_event(
+                DictationCompleted(
+                    source_layer="speech.dictation",
+                    text=cleaned,
+                    raw_text=raw_text,
+                    outcome=outcome_name,
+                    detail=detail,
+                    method=method,
+                    language=language,
+                    duration_s=duration_s,
+                    removed_words=removed_words,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("dictation completion publish failed: %s", exc)
+
+        if raw_text and getattr(cfg, "history_enabled", True):
+            try:
+                from jarvis.dictation.history import DictationHistory
+
+                await asyncio.to_thread(
+                    DictationHistory().add,
+                    raw_text=raw_text,
+                    text=cleaned,
+                    language=language,
+                    duration_s=duration_s,
+                    outcome=outcome_name,
+                    method=method,
+                    removed_words=removed_words,
+                    cleanup_reason=cleanup_reason,
+                    max_entries=int(getattr(cfg, "history_max_entries", 200)),
+                    retention_days=int(getattr(cfg, "history_retention_days", 30)),
+                )
+            except Exception:  # noqa: BLE001 — history is never worth a failure
+                log.debug("dictation history write failed", exc_info=True)
+
+        return cleaned
+
+    def _insert_dictation(self, text: str):
+        """Blocking insertion, run off the event loop. Never raises.
+
+        ``insert_text`` sleeps around the paste chord and talks to the OS
+        clipboard, so it must not run on the pipeline's loop — a 250 ms block
+        there is a stutter in the voice path.
+        """
+        from jarvis.dictation.insert import InsertResult, insert_text
+
+        cfg = getattr(self, "_dictation_cfg", None)
+        try:
+            return insert_text(
+                text,
+                method=str(getattr(cfg, "insert_method", "clipboard")),
+                paste_chord=str(getattr(cfg, "paste_chord", "auto")),
+                delay_ms=int(getattr(cfg, "paste_delay_ms", 120)),
+                delay_after_ms=int(getattr(cfg, "paste_delay_after_ms", 120)),
+                restore_clipboard=bool(getattr(cfg, "restore_clipboard", True)),
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to an honest report
+            log.warning("dictation insertion failed: %s", exc, exc_info=True)
+            return InsertResult(
+                status="unavailable",
+                detail=(
+                    "The text could not be inserted here. It is kept in the "
+                    "dictation history."
+                ),
+                clipboard_holds_text=False,
+            )
 
     async def _session_input_stream(
         self, chunks: AsyncIterator[AudioChunk]
@@ -10554,6 +10927,13 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
+        dictate_hotkeys=(
+            (config.trigger.hotkey_dictate,)
+            if config.trigger.hotkey_dictate.strip()
+            else ()
+        ),
+        dictate_mode=config.dictation.mode,
+        dictation_config=config.dictation,
         hangup_hotkeys=(
             (config.trigger.hotkey_hangup,)
             if config.trigger.hotkey_hangup.strip()

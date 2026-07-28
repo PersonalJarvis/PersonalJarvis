@@ -505,6 +505,50 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("lista las herramientas mcps y clis conectadas",),  # i18n-allow: input vocab
             },
         ),
+        # -------------------------------------------------------- dictation
+        AppCommand(
+            id="dictation-start",
+            title="Start dictation",
+            description=(
+                "Start dictation: speak, and the transcribed text is inserted "
+                "into whatever text field currently has focus. Stops with "
+                "dictation-stop or the dictation shortcut."
+            ),
+            method="POST",
+            path="/api/dictation/start",
+            params={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "enum": ["insert", "chat"],
+                        "description": (
+                            "insert = paste into the app in front; "
+                            "chat = fill the chat input only"
+                        ),
+                    }
+                },
+            },
+            ui_section="dictation",
+            voice_aliases={
+                "de": ("starte das diktat", "diktier-modus an"),  # i18n-allow: input vocab
+                "en": ("start dictation", "turn on dictation mode"),
+                "es": ("inicia el dictado", "activa el modo dictado"),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="dictation-stop",
+            title="Stop dictation",
+            description="Finish the running dictation and deliver the text.",
+            method="POST",
+            path="/api/dictation/stop",
+            ui_section="dictation",
+            voice_aliases={
+                "de": ("stopp das diktat", "diktier-modus aus"),  # i18n-allow: input vocab
+                "en": ("stop dictation", "turn off dictation mode"),
+                "es": ("detén el dictado", "desactiva el modo dictado"),  # i18n-allow: input vocab
+            },
+        ),
         # ----------------------------------------------------------- system
         AppCommand(
             id="app-restart",
@@ -693,11 +737,14 @@ def _build_registry() -> tuple[AppCommand, ...]:
             id="agentic-ide-prompt",
             title="Prompt an Agentic-IDE terminal",
             description=(
-                "Send an instruction to the coding agent in ONE named terminal. "
-                "Use this whenever the user tells a terminal to do something "
-                "('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') "  # i18n-allow: quoted addressing examples the router must match
+                "Send an instruction to the coding agent in ONE terminal. "
+                "Terminals are called T plus their place in the grid (T1, T2, "
+                "T3, left to right). Use this whenever the user tells a "
+                "terminal to do something "
+                "('tell T1 to ...', 'T2 soll ...', 'let terminal three "  # i18n-allow: quoted addressing examples the router must match
+                "refactor ...', 'prompt the second terminal') "
                 "— that work belongs to that agent, never to a background "
-                "worker. For SEVERAL terminals ('Kai and Mika both ...', 'let "
+                "worker. For SEVERAL terminals ('T1 and T2 both ...', 'let "
                 "the two of them ...') call 'agentic-ide-fanout' instead, with "
                 "every call-sign in 'terminals': it briefs them at once and "
                 "reports which ones really got the work. Calling this command "
@@ -767,7 +814,8 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "it' and 'spawn N terminals and let them do X': pass the work as "
                 "'instruction', the panes to brief as 'terminals', and the panes "
                 "to open first as 'spawn'. Never emulate it by opening panes and "
-                "then prompting — call-signs are assigned automatically, so a "
+                "then prompting — call-signs are the panes' positions (T1, T2, "
+                "…) and are assigned by the workspace, so a "
                 "pane you open is NOT called the name you had in mind, and "
                 "re-spawning after a failed prompt just leaves blank panes "
                 "behind. Set 'split' true only when the user asked for the work "
@@ -854,7 +902,8 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "the accepted ids are listed on the parameter itself, and it is "
                 "the only list that is right for this install. Omitted, the new "
                 "panes run whatever the "
-                "last pane runs. Their call-signs are assigned automatically — "
+                "last pane runs. Their call-signs are their positions in the "
+                "grid (T1, T2, …), assigned by the workspace — "
                 "the reply's names are the only way to address them, and calling "
                 "this again never produces a name you picked. "
                 "CHECK THE REPLY: 'capped' true means the workspace maximum cut "

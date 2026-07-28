@@ -1281,7 +1281,7 @@ def _keybind_values(trig: object) -> dict[str, str]:
 
 
 class KeybindBody(BaseModel):
-    action: str = Field(..., description="call | hangup")
+    action: str = Field(..., description="call | hangup | dictate")
     hotkey: str = Field(..., max_length=64)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
@@ -1299,7 +1299,12 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
     return {
         "keybinds": _keybind_values(trig),
-        "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup},
+        "defaults": {
+            "call": d.hotkey_call,
+            "hangup": d.hotkey_hangup,
+            # Dictation ships unbound on purpose — see TriggerConfig.hotkey_dictate.
+            "dictate": d.hotkey_dictate,
+        },
         "suggestions": list(_KEYBIND_SUGGESTIONS),
         "restart_required": restart_required,
     }

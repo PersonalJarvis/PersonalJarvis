@@ -542,9 +542,18 @@ def visual_mode(
 
     ``hold_s`` bridges the short gaps between words/sentences so the bars don't
     flap back on every micro-pause.
+
+    ``dictate`` is the fifth coarse mode (dictation runs outside the voice
+    state machine entirely). It always renders as the equalizer: dictation is
+    the user talking, the mic level is being fed, and there is nothing for a
+    thinking indicator to represent. Handled BEFORE the audio-activity branches
+    so a silent pause mid-dictation shows still bars rather than falling
+    through to the thinking core.
     """
     if coarse_mode == "idle":
         return "idle"
+    if coarse_mode == "dictate":
+        return "speak"
     if playback_active or seconds_since_audible < hold_s:
         return "speak"
     if coarse_mode == "think":

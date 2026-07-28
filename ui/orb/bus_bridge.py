@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
     AudioOutFirst,
+    DictationCompleted,
+    DictationTranscript,
     JarvisAgentBackgroundCompleted,
     ListeningStarted,
     OrbResetRequested,
@@ -189,6 +191,10 @@ class OrbBusBridge:
         self._hide_on_idle = hide_on_idle
         self._hangup_task: asyncio.Task | None = None
         self._completion_task: asyncio.Task | None = None
+        # Dictation lane (separate from every voice state — see
+        # _on_dictation_transcript): True while a dictation is painting the bar.
+        self._dictation_active = False
+        self._dictation_standdown_task: asyncio.Task | None = None
         self._rng = random.Random()
         self._listening_transcript_text = ""
         # True while the pipeline is mid-completion-buffer (paused on an
@@ -292,6 +298,13 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
+            # Dictation is a SEPARATE lane from the voice states: it raises no
+            # SystemStateChanged, so the four voice modes stay exactly as they
+            # are and dictation gets its own coarse mode instead of borrowing
+            # one. Without these two the bar showed nothing at all while
+            # dictating.
+            self._bus.subscribe(DictationTranscript, self._on_dictation_transcript)
+            self._bus.subscribe(DictationCompleted, self._on_dictation_completed)
             # Boot visibility gate: a genuine voice-ready signal releases the
             # hidden Jarvis Bar. Degraded UI-only ready signals do not.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
@@ -880,6 +893,84 @@ class OrbBusBridge:
             self._show_listening_transcript(self._listening_transcript_text)
         elif state in ("THINKING", "SPEAKING"):
             self._show_listening_transcript(self._last_response_text or THINKING_BUBBLE_TEXT)
+
+    async def _on_dictation_transcript(self, event: DictationTranscript) -> None:
+        """Show the live dictation text on the bar.
+
+        Dictation runs in its own lane — it never raises SystemStateChanged, so
+        none of the voice-state handling above sees it and none of the four
+        voice modes change meaning. It gets its own coarse mode, ``dictate``,
+        which the renderer paints as the equalizer (the mic level is being fed,
+        so the bars actually move) with no thinking indicator.
+
+        A live voice session ALWAYS wins: dictation cannot start while one is
+        running, but a race at the boundary must not repaint a real turn.
+        """
+        if self._voice_session_active or self._last_state != "IDLE":
+            return
+        if getattr(event, "is_final", False):
+            # The completion handler owns the end of a dictation — it knows the
+            # outcome and whether anything needs saying.
+            return
+        text = (event.text or "").strip()
+        try:
+            self._orb.show(mode="dictate")
+        except Exception as exc:  # noqa: BLE001 — a surface hiccup is cosmetic
+            log.debug("OrbBridge dictation show suppressed: %s", exc)
+        self._dictation_active = True
+        self._show_listening_transcript(text)
+
+    async def _on_dictation_completed(self, event: DictationCompleted) -> None:
+        """Dictation finished — show the outcome briefly, then stand down.
+
+        ``detail`` is only non-empty when something the user must know happened
+        (the OS blocked the paste and the text is on the clipboard). Showing it
+        on the bar is the difference between "nothing happened" and "here is
+        why, and here is what to do".
+        """
+        if not getattr(self, "_dictation_active", False):
+            return
+        self._dictation_active = False
+        message = (event.detail or "").strip() or (event.text or "").strip()
+        self._show_listening_transcript(message)
+        if self._voice_session_active or self._last_state != "IDLE":
+            return
+        # Give the user a moment to read it, then return the bar to standby.
+        # A longer dwell for a message that needs acting on than for the plain
+        # "here is what you dictated" echo.
+        delay = 4.0 if (event.detail or "").strip() else 1.5
+        try:
+            self._schedule_dictation_standdown(delay)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OrbBridge dictation stand-down suppressed: %s", exc)
+
+    def _schedule_dictation_standdown(self, delay_s: float) -> None:
+        """Return the bar to its resting look after a dictation."""
+        task = getattr(self, "_dictation_standdown_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+
+        async def _standdown() -> None:
+            try:
+                await asyncio.sleep(delay_s)
+            except asyncio.CancelledError:
+                return
+            if self._dictation_active or self._voice_session_active:
+                return
+            if self._last_state != "IDLE":
+                return
+            self._show_listening_transcript("")
+            try:
+                if self._hide_on_idle:
+                    self._orb.hide()
+                else:
+                    self._orb.show(mode="idle")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OrbBridge dictation idle repaint suppressed: %s", exc)
+
+        self._dictation_standdown_task = asyncio.create_task(
+            _standdown(), name="orb-dictation-standdown"
+        )
 
     def _show_listening_transcript(self, text: str) -> None:
         show_transcript = getattr(self._orb, "show_listening_transcript", None)

@@ -316,6 +316,7 @@ class WebServer:
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .diagnostics_routes import router as diagnostics_router
+        from .dictation_routes import router as dictation_router
         from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
         from .downloads_routes import router as downloads_router
@@ -442,6 +443,10 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(dictionary_router)
+        # Dictation mode — hold to speak, text lands in the focused field.
+        # Mounted so every action is also `jarvis api dictation <op>`, which is
+        # the documented Wayland path (no app-owned global shortcuts there).
+        app.include_router(dictation_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
@@ -1583,6 +1588,10 @@ class WebServer:
         from jarvis.core.runtime_refs import get_speech_pipeline
 
         mode = str(payload.get("mode", "start"))
+        # "chat" (default) fills the composer; "insert" is dictation mode —
+        # the transcript is pasted into the focused field of whatever app is in
+        # front. The chat mic button never sends "insert".
+        target = "insert" if str(payload.get("target", "chat")) == "insert" else "chat"
         pipeline = get_speech_pipeline()
         if pipeline is None:
             # Headless / voice disabled — no server mic. Recoverable, not fatal:
@@ -1602,7 +1611,7 @@ class WebServer:
             if mode == "stop":
                 pipeline.stop_dictation()
             else:
-                started = pipeline.start_dictation()
+                started = pipeline.start_dictation(target=target)
                 if not started:
                     await self.bus.publish(
                         ErrorOccurred(

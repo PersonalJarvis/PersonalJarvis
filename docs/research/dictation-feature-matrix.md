@@ -1,7 +1,15 @@
 # Dictation Feature Matrix — established tools vs. our current state
 
-**Date:** 2026-07-28 · **Status:** research only, no code changed ·
-**Companion:** [`docs/plans/dictation-mode-plan.md`](../plans/dictation-mode-plan.md)
+**Date:** 2026-07-28 · **Status:** research snapshot taken BEFORE the feature
+was built — the "our state" column is the starting point, not today's state.
+
+> **Dictation mode shipped the same day.** The rows below marked *partial* or
+> *missing* were the work list; they are now implemented (`jarvis/dictation/`,
+> the `dictate` keybind, `/api/dictation/*`, the Dictation view, the bar's
+> `dictate` mode). This document is kept as-is because it is the evidence the
+> design rests on — what the established tools actually do, and where our own
+> gaps were. For what was built and why, read the module docstrings under
+> `jarvis/dictation/`.
 
 A "dictation mode" (hold a key, speak, release, the text lands in whatever text
 field currently has focus) is not a new subsystem for Personal Jarvis. It is a

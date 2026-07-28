@@ -125,6 +125,13 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
+        dictate_hotkeys=(
+            (config.trigger.hotkey_dictate,)
+            if config.trigger.hotkey_dictate.strip()
+            else ()
+        ),
+        dictate_mode=config.dictation.mode,
+        dictation_config=config.dictation,
         hangup_hotkeys=(
             (config.trigger.hotkey_hangup,)
             if config.trigger.hotkey_hangup.strip()

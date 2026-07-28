@@ -774,6 +774,7 @@ function formatCombo(combo: string): string {
 const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
   { action: "call", labelKey: "settings_view.keybinds.call_label" },
   { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
+  { action: "dictate", labelKey: "settings_view.keybinds.dictate_label" },
 ];
 
 /**
@@ -824,6 +825,7 @@ const _KB_PLATFORM = detectKeyboardPlatform();
 const _ACTION_LABEL_KEY: Record<KeybindAction, string> = {
   call: "settings_view.keybinds.call_label",
   hangup: "settings_view.keybinds.hangup_label",
+  dictate: "settings_view.keybinds.dictate_label",
 };
 
 /** The combo rendered as keycap chips ("Ctrl + F5" → [Ctrl] + [F5]). */

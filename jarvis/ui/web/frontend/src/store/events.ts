@@ -37,6 +37,7 @@ export type SectionId =
   | "feedback"
   | "agent-instructions"
   | "dictionary"
+  | "dictation"
   | "agentic-ide";
 
 export const SECTION_IDS = [
@@ -66,6 +67,7 @@ export const SECTION_IDS = [
   "feedback",
   "agent-instructions",
   "dictionary",
+  "dictation",
   "agentic-ide",
 ] as const satisfies readonly SectionId[];
 
@@ -104,6 +106,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   dictionary: "Dictionary",
+  dictation: "Dictation",
   "agentic-ide": "Agentic IDE",
 };
 

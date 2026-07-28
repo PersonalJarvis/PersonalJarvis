@@ -67,8 +67,17 @@ def resolve_click(
     instead of silently hanging up. This closes the "Jarvis hangs up by itself"
     trap (live bug 2026-06-19): the old code hung up on ANY click in the left
     40% of the bar, decoupled from the visible affordance.
+
+    ``dictate`` (a dictation is recording) is inert on purpose: without this
+    branch it would fall through to "not active" and a stray click would START
+    A VOICE SESSION in the middle of dictating. There is always another way to
+    stop — release the key, press it again in toggle mode, the Dictation view,
+    or ``jarvis api dictation stop`` — so an inert bar costs nothing and cannot
+    misfire.
     """
     frac = x / max(1, width)
+    if mode == "dictate":
+        return "none"
     active = mode in ("listen", "think", "speak")
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
         return "mute"

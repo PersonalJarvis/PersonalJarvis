@@ -124,6 +124,33 @@ class DictationTranscript(Event):
     is_final: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class DictationCompleted(Event):
+    """A dictation finished — what was produced and where it ended up.
+
+    Separate from ``DictationTranscript`` (which is the live text feed) because
+    this carries the OUTCOME, and the outcome is the part the user must not be
+    left guessing about: ``inserted`` means it is in their text field,
+    ``clipboard_only`` means the OS blocked the paste and the text is one
+    Ctrl+V away, ``unavailable`` means neither worked. The UI and the Jarvis Bar
+    both surface ``detail`` verbatim, so it is a complete, user-facing sentence.
+    """
+
+    #: What was inserted (after cleanup).
+    text: str = ""
+    #: The transcript exactly as the STT returned it, before cleanup.
+    raw_text: str = ""
+    #: ``inserted`` | ``clipboard_only`` | ``unavailable`` | ``chat`` | ``empty``.
+    outcome: str = ""
+    #: User-facing explanation; empty when nothing needs explaining.
+    detail: str = ""
+    #: e.g. ``clipboard+ctrl_v`` / ``type`` — empty when nothing was inserted.
+    method: str = ""
+    language: str = ""
+    duration_s: float = 0.0
+    removed_words: int = 0
+
+
 # ----------------------------------------------------------------------
 # Intent & Routing
 # ----------------------------------------------------------------------

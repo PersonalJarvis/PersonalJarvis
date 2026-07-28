@@ -125,6 +125,12 @@ const NAV_GROUPS: NavItem[][] = [
       icon: BookA,
       fallbackLabel: "Dictionary",
     },
+    {
+      id: "dictation",
+      labelKey: "nav.dictation",
+      icon: Mic,
+      fallbackLabel: "Dictation",
+    },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
   ],
   // 4) Social links + in-app feedback.

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -170,6 +171,141 @@ def windows_process_is_elevated() -> bool | None:
         return None
 
 
+def windows_foreground_window_is_elevated() -> bool | None:
+    """Is the window currently in the FOREGROUND owned by an elevated process?
+
+    The mirror image of :func:`windows_process_is_elevated`: that one asks
+    "can other software type into us", this one asks "can we type into what the
+    user is looking at". Same UIPI rule, opposite direction — and the same
+    silence: a ``SendInput`` blocked by UIPI reports failure through neither its
+    return value nor ``GetLastError``, so dictation would paste into the void
+    and report success. Measured on a live desktop 2026-07-02.
+
+    ``None`` when the answer cannot be determined — including on every
+    non-Windows host, where the question does not apply. Never raises: a
+    diagnostic that can crash the caller is worse than no diagnostic.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes  # noqa: PLC0415 — lazy: keeps this module import-clean (HN-7)
+        from ctypes import wintypes  # noqa: PLC0415
+
+        TOKEN_QUERY = 0x0008
+        TokenElevation = 20
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        # Declaring these is load-bearing, not decoration — see the sibling
+        # function: an undeclared 64-bit HANDLE is silently truncated to int.
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return None
+
+        process = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
+        )
+        if not process:
+            # Access denied reading a higher-integrity process is itself a
+            # strong hint that it IS elevated — but it is not proof (the
+            # handle can fail for other reasons), and this probe must not
+            # invent findings. "Unknown" is the honest answer.
+            return None
+        try:
+            token = wintypes.HANDLE()
+            if not advapi32.OpenProcessToken(
+                process, TOKEN_QUERY, ctypes.byref(token)
+            ):
+                return None
+            try:
+                elevated = wintypes.DWORD()
+                returned = wintypes.DWORD()
+                ok = advapi32.GetTokenInformation(
+                    token,
+                    TokenElevation,
+                    ctypes.cast(ctypes.byref(elevated), wintypes.LPVOID),
+                    ctypes.sizeof(elevated),
+                    ctypes.byref(returned),
+                )
+                if not ok:
+                    return None
+                return bool(elevated.value)
+            finally:
+                kernel32.CloseHandle(token)
+        finally:
+            kernel32.CloseHandle(process)
+    except Exception:  # noqa: BLE001 — an unreadable token is "unknown", not fatal
+        log.debug("Could not read the foreground window's elevation", exc_info=True)
+        return None
+
+
+def macos_secure_input_enabled() -> bool | None:
+    """Is macOS Secure Input active right now?
+
+    A password field turns it on (``EnableSecureEventInput``), and while it is
+    on, keyboard events stop reaching every other process. Synthetic keystrokes
+    are therefore unsafe: the paste chord may simply not arrive.
+
+    ``None`` on non-macOS hosts or when the API cannot be reached. Never raises.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes  # noqa: PLC0415 — lazy (HN-7)
+        import ctypes.util  # noqa: PLC0415
+
+        path = ctypes.util.find_library("Carbon")
+        if not path:
+            return None
+        carbon = ctypes.cdll.LoadLibrary(path)
+        probe = getattr(carbon, "IsSecureEventInputEnabled", None)
+        if probe is None:
+            return None
+        probe.argtypes = []
+        probe.restype = ctypes.c_bool
+        return bool(probe())
+    except Exception:  # noqa: BLE001 — an unreadable state is "unknown", not fatal
+        log.debug("Could not read the macOS Secure Input state", exc_info=True)
+        return None
+
+
 def _euid() -> int | None:
     """Effective user id, or ``None`` on platforms without one (Windows)."""
     getter = getattr(os, "geteuid", None)
@@ -251,5 +387,7 @@ __all__ = [
     "InputIsolationReason",
     "InputIsolationReport",
     "describe_input_isolation",
+    "macos_secure_input_enabled",
+    "windows_foreground_window_is_elevated",
     "windows_process_is_elevated",
 ]

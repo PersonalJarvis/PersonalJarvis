@@ -85,6 +85,14 @@ _MODIFIER_TOKENS = frozenset(
         "ctrl", "control", "right_ctrl", "right_control",
         "alt", "right_alt", "left_alt", "altgr",
         "shift", "win", "window",
+        # macOS Command. The Quartz backend has always decoded it
+        # (``_FLAG_MASK_TO_TOKEN`` maps ``kCGEventFlagMaskCommand`` -> ``cmd``),
+        # but it was missing here, so the validator treated Command as an
+        # ordinary KEY. Consequence: every macOS-critical chord passed —
+        # ``cmd+q``, ``cmd+w``, ``cmd+c``, ``cmd+space`` were all accepted while
+        # their Windows equivalents were refused, and a user could bind "quit
+        # the focused app" as their dictation key.
+        "cmd", "command", "meta", "super",
     }
 )
 
@@ -102,21 +110,41 @@ _SOLO_SAFE_KEYS = frozenset({f"f{i}" for i in range(1, 25)}) | frozenset(
 )
 
 
-def validate_hotkey(combo: str) -> tuple[bool, str]:
-    """Validate a user-supplied push-to-talk hotkey string.
+# Keys the OS keeps for itself no matter what the user wants.
+#   * F12 is permanently reserved for the debugger — Microsoft documents that it
+#     must not be registered as a hot key even when nothing is being debugged.
+_RESERVED_SOLO_KEYS = frozenset({"f12"})
+
+# Command-modified chords macOS assigns to universal system actions. Binding one
+# as a trigger means the user loses that action (Cmd+Q quits the focused app,
+# Cmd+W closes its window, Cmd+Space is Spotlight) — the exact class of mistake
+# the Windows list below already prevented. These were all ACCEPTED before
+# ``cmd`` became a recognised modifier.
+_MACOS_CRITICAL_KEYS = frozenset({"c", "v", "x", "z", "q", "w", "a", "s", "space", "tab"})
+
+
+def validate_hotkey(combo: str, *, platform: str | None = None) -> tuple[bool, str]:
+    """Validate a user-supplied hotkey string (call / hangup / dictate).
 
     Returns ``(ok, reason)``. ``reason`` is an English, user-facing sentence
     when ``ok`` is False (the UI surfaces it). The rules encode the CLAUDE.md
     hotkey guidance so a bad combo can never reach the hotkey backend (where an
-    invalid registration would silently disable EVERY hotkey):
+    invalid registration would silently disable that shortcut):
 
       * non-empty and parseable (``mod+mod+key`` syntax),
       * at least one non-modifier key (a combo of only Ctrl/Alt/Shift is dead),
       * a modifier OR a second key — a single bare key (``j``) as a global
         hotkey fires on every keystroke while typing,
       * no Windows-key combos (reserved by the OS),
-      * not an OS-critical shortcut (Alt+F4 closes windows, Ctrl+C is
-        copy/interrupt).
+      * not an OS-critical shortcut — Alt+F4 closes windows, Ctrl+C is
+        copy/interrupt, and on the macOS side Cmd+Q/W/C/V/Space and friends,
+      * not a permanently reserved key (F12 belongs to the debugger).
+
+    ``platform`` (``"win32"`` / ``"darwin"`` / ``"linux"``) is only used to warn
+    about a Command-based chord on a host that has no Command key; it defaults
+    to the live platform and exists so tests are deterministic. The combo
+    vocabulary itself stays platform-neutral: a config file may legitimately
+    travel between a Mac and a PC.
     """
     if not combo or not combo.strip():
         return False, "Hotkey is empty."
@@ -142,19 +170,56 @@ def validate_hotkey(combo: str) -> tuple[bool, str]:
     if any(p in ("win", "window") for p in modifiers):
         return False, "Windows-key combos are reserved by the OS — pick Ctrl/Alt/Shift."
 
+    reserved = sorted(set(non_modifiers) & _RESERVED_SOLO_KEYS)
+    if reserved:
+        return False, (
+            f"{reserved[0].upper()} is permanently reserved by the operating "
+            "system (the debugger claims it) — choose another key."
+        )
+
     _CTRL = ("ctrl", "control", "right_ctrl", "right_control")
     _ALT = ("alt", "right_alt", "left_alt", "altgr")
+    _CMD = ("cmd", "command", "meta", "super")
     alt_held = any(p in _ALT for p in modifiers)
     # "X-only" means X-family modifiers and nothing else — so the exact OS
     # shortcut is blocked while a richer combo that merely contains it (e.g.
     # Ctrl+Shift+C) stays allowed.
     ctrl_only = bool(modifiers) and all(p in _CTRL for p in modifiers)
+    cmd_only = bool(modifiers) and all(p in _CMD for p in modifiers)
     if alt_held and "f4" in non_modifiers:
         return False, "Alt+F4 closes the active window — choose another combo."
     if ctrl_only and non_modifiers == ["c"]:
         return False, "Ctrl+C is the copy / interrupt shortcut — choose another combo."
+    if cmd_only and len(non_modifiers) == 1 and non_modifiers[0] in _MACOS_CRITICAL_KEYS:
+        return False, (
+            f"Command+{non_modifiers[0].upper()} is a system shortcut on macOS "
+            "(copy, quit, close, Spotlight and friends) — add Shift/Alt or "
+            "choose another key."
+        )
+
+    if any(p in ("cmd", "command") for p in modifiers):
+        host = platform if platform is not None else _detect_platform()
+        if host not in (None, "darwin"):
+            return False, (
+                "There is no Command key on this computer — use Ctrl, Alt or "
+                "Shift instead. (Command shortcuts work on macOS.)"
+            )
 
     return True, ""
+
+
+def _detect_platform() -> str | None:
+    """The live platform id, or ``None`` when it cannot be determined.
+
+    Lazy + fail-open: a hotkey the validator cannot place is better accepted
+    (the backend then degrades honestly, per-combo) than rejected on a guess.
+    """
+    try:
+        from jarvis.platform import detect_platform
+
+        return detect_platform()
+    except Exception:  # noqa: BLE001 — validation must never depend on a probe
+        return None
 
 
 class HotkeyTrigger:

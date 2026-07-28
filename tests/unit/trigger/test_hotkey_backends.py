@@ -311,8 +311,48 @@ def test_noop_backend_logs_once_then_no_ops(caplog):
     with caplog.at_level(logging.INFO, logger="jarvis.trigger.backends.noop"):
         NoopBackend()
         NoopBackend()  # second construction must NOT log again
-    wayland_logs = [r for r in caplog.records if "Wayland" in r.getMessage()]
-    assert len(wayland_logs) == 1, "the Wayland message must log exactly once"
+    explained = [
+        r for r in caplog.records if "Global hotkeys are unavailable" in r.getMessage()
+    ]
+    assert len(explained) == 1, "the explanation must log exactly once"
+
+
+def test_noop_backend_explains_the_ACTUAL_reason(monkeypatch):
+    """The message used to say "Wayland" on every host, including Windows.
+
+    Telling users their session type is the problem when the real fix is one
+    ``pip install`` away is the "said it worked, nothing happened" class applied
+    to a diagnostic. The reason is measured now, so each host gets the remedy
+    that actually applies to it.
+    """
+    from jarvis.trigger.backends.noop import explain_unavailable
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "linux")
+    monkeypatch.setattr("jarvis.platform.probes.is_wayland", lambda: True)
+    wayland = explain_unavailable()
+    assert "Wayland" in wayland
+    assert "pip install" not in wayland  # nothing to install fixes Wayland
+
+    monkeypatch.setattr("jarvis.platform.probes.is_wayland", lambda: False)
+    x11 = explain_unavailable()
+    assert "desktop-linux" in x11  # the extra that actually fixes X11
+    assert "Wayland" not in x11
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
+    macos = explain_unavailable()
+    assert "Accessibility" in macos and "Input Monitoring" in macos
+
+
+def test_noop_backend_reason_never_raises(monkeypatch):
+    """A failing probe must still yield a usable sentence."""
+    from jarvis.trigger.backends.noop import explain_unavailable
+
+    def _boom():
+        raise OSError("probe exploded")
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", _boom)
+    message = explain_unavailable()
+    assert message and "wake word" in message
 
 
 def test_noop_backend_methods_never_raise():
@@ -332,7 +372,7 @@ def test_noop_backend_message_is_english():
     import jarvis.trigger.backends.noop as noop_mod
 
     # Inspect the source so the assertion does not depend on log capture timing.
-    src = inspect.getsource(noop_mod.NoopBackend._explain_once)
+    src = inspect.getsource(noop_mod.explain_unavailable)
     assert "wake word" in src
     assert "Wayland" in src
 

@@ -296,7 +296,8 @@ export function validateCombo(
   return { status: "ok" };
 }
 
-export type KeybindAction = "call" | "hangup";
+// Mirrors KEYBIND_ACTIONS in jarvis/core/config_writer.py — keep in sync.
+export type KeybindAction = "call" | "hangup" | "dictate";
 
 /** Response of GET /api/settings/keybinds. */
 export interface KeybindsConfig {

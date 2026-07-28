@@ -570,10 +570,17 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup")
+KEYBIND_ACTIONS = ("call", "hangup", "dictate")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
+    # Dictation mode: hold (or toggle) to speak, the transcript is inserted into
+    # whatever text field has focus. Ships UNBOUND — there is no combination
+    # that is free on every machine, so the user picks one (setup wizard or
+    # Settings). An empty value means "dictation has no shortcut", which is a
+    # valid state, not a broken one: the bar, the UI and `jarvis api dictation
+    # start` all still work (and are the documented Wayland path).
+    "dictate": "hotkey_dictate",
 }
 
 
@@ -592,6 +599,47 @@ def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -
     except KeyError:
         raise ValueError(f"unknown keybind action: {action!r}") from None
     _patch_table(path, "trigger", key, hotkey)
+
+
+#: Dictation settings that may be changed through the API. The value is both
+#: the ``[dictation]`` TOML key and the ``DictationConfig`` field name; keep in
+#: sync with the model and with the TS type in the frontend's dictation hook.
+DICTATION_SETTING_KEYS = (
+    "mode",
+    "target",
+    "insert_method",
+    "paste_chord",
+    "paste_delay_ms",
+    "paste_delay_after_ms",
+    "restore_clipboard",
+    "remove_fillers",
+    "filler_max_removed_fraction",
+    "max_seconds",
+    "partial_interval_s",
+    "segment_seconds",
+    "history_enabled",
+    "history_max_entries",
+    "history_retention_days",
+)
+
+
+def set_dictation_setting(
+    key: str,
+    value: str | bool | int | float,
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one ``[dictation]`` key in jarvis.toml.
+
+    Toml-only, like the other ``[trigger]``/``[dictation]`` writers: these keys
+    are not part of the drift-guard's reference snapshot, so a plain atomic
+    write is enough and the BUG-010 three-layer rule does not apply. The
+    caller validates the value against ``DictationConfig`` first — this writer
+    only refuses unknown KEYS, so a typo can never invent a config field.
+    """
+    if key not in DICTATION_SETTING_KEYS:
+        raise ValueError(f"unknown dictation setting: {key!r}")
+    _patch_table(path, "dictation", key, value)
 
 
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1622,14 +1670,17 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
         _atomic_write(path, out)
 
 
-def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]) -> None:
+def _patch_table(
+    path: Path, table: str, key: str, value: str | bool | int | float | list[str]
+) -> None:
     """Set ``[table] key = value`` in the TOML file.
 
     Creates the table if it is absent. Preserves comments and formatting via
     tomlkit, including the optional BOM (see module docstring). ``value`` may be
     a ``str``, a ``bool`` (serialised as ``true``/``false`` — used by the
-    autostart toggle), or a ``list[str]`` (serialised as a TOML array — used by
-    ``[team_proxy] local_providers``).
+    autostart toggle), an ``int``/``float`` (the dictation delays and caps), or
+    a ``list[str]`` (serialised as a TOML array — used by ``[team_proxy]
+    local_providers``).
     """
     path = _ensure_writable_config_path(path)
 

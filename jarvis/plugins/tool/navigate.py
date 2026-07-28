@@ -48,6 +48,7 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "dictionary",
+        "dictation",
         "agentic-ide",
     }
 )

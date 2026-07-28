@@ -89,6 +89,9 @@ const RunInspectorView = lazyView(() =>
 const DictionaryView = lazyView(() =>
   import("@/views/DictionaryView").then((m) => ({ default: m.DictionaryView })),
 );
+const DictationView = lazyView(() =>
+  import("@/views/DictationView").then((m) => ({ default: m.DictationView })),
+);
 const AgentInstructionsView = lazyView(() =>
   import("@/views/AgentInstructionsView").then((m) => ({
     default: m.AgentInstructionsView,
@@ -266,6 +269,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <SettingsView />;
     case "dictionary":
       return <DictionaryView />;
+    case "dictation":
+      return <DictationView />;
     case "outputs":
       return <OutputsView />;
     case "socials":

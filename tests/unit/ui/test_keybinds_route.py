@@ -28,8 +28,15 @@ def test_get_returns_call_and_hangup_plus_defaults() -> None:
     assert body["keybinds"] == {
         "call": "f3+f4",
         "hangup": "f1+f2",
+        # Dictation ships UNBOUND on purpose: no combination is free on every
+        # machine, so the user assigns one (TriggerConfig.hotkey_dictate).
+        "dictate": "",
     }
-    assert body["defaults"] == {"call": "f3+f4", "hangup": "f1+f2"}
+    assert body["defaults"] == {
+        "call": "f3+f4",
+        "hangup": "f1+f2",
+        "dictate": "",
+    }
     assert "push_to_talk" not in body
     assert body["restart_required"] is True
     assert len(body["suggestions"]) >= 3

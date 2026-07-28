@@ -344,6 +344,23 @@ desktop = [
 # base install never pulls them in. Linux's AT-SPI uses distro-packaged pyatspi
 # (``apt install python3-pyatspi gir1.2-atspi-2.0``), surfaced via the
 # ``capabilities.has_ax_tree`` runtime probe — it is NEVER a pip dependency.
+# Linux DESKTOP input extras — deliberately opt-in and NOT part of [full].
+#
+# Global hotkeys on Linux/X11 need pynput, and pynput hard-requires ``evdev``,
+# which ships source-only and compiles against the kernel headers. Pulling that
+# into [full] would break the one advertised install path on a stock
+# python:3.11-slim image — exactly what the cloud-first rule forbids. So it
+# lives here: a Linux desktop user who wants a global dictation/call shortcut
+# installs ``personal-jarvis[desktop-linux]`` (needs a C compiler and
+# linux-headers), and everyone else gets the honest, logged no-op instead of a
+# failed install.
+#
+# Wayland is a separate matter and this extra does NOT fix it: Wayland blocks
+# global key grabs by design, so shortcuts there belong to the compositor.
+# See docs/os-parity.md.
+desktop-linux = [
+    "pynput>=1.7; sys_platform == 'linux'",
+]
 desktop-macos = [
     # The managed-install app bundle keeps a native Mach-O launcher: a shell
     # CFBundleExecutable that execs external Python has no stable TCC
