@@ -86,6 +86,7 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
+import { PaneScrollbar } from "./PaneScrollbar";
 import { openPaneSocket, type PaneSocket } from "./paneSocket";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
@@ -273,10 +274,16 @@ export function AgenticTerminal({
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // The padded box around the xterm host — the pane's visible inset, kept off
-  // the host itself because FitAddon reads the host's border-box.
+  // the host itself because FitAddon reads the host's border-box. The pane's
+  // scrollbar overlays this box and measures hover against it.
   const scrollRegionRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Bumped once per built terminal. The scrollbar subscribes to xterm events,
+  // and the instance behind `termRef` is replaced on every restart — without a
+  // signal it would keep listening to a disposed one.
+  const [termEpoch, setTermEpoch] = useState(0);
+  const getTerminal = useCallback(() => termRef.current, []);
   // Lets the font-size effect trigger a REAL resize (xterm + the terminal
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
@@ -370,6 +377,7 @@ export function AgenticTerminal({
     }
     termRef.current = term;
     fitRef.current = fit;
+    setTermEpoch((epoch) => epoch + 1);
     // Let the app-wide right-click menu reach this terminal. It cannot use the
     // browser selection here — the canvas renderer above paints the text, so
     // there is no selectable DOM to read — and it must paste through xterm so
@@ -975,6 +983,17 @@ export function AgenticTerminal({
           // the unused ground belongs on.
           data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
+        />
+        {/* Overlaid rather than laid out, and deliberately not the browser's
+            own bar — see ./PaneScrollbar for why a CSS scrollbar has nothing
+            to move in a full-screen CLI's pane. */}
+        <PaneScrollbar
+          name={name}
+          regionRef={scrollRegionRef}
+          hostRef={containerRef}
+          getTerminal={getTerminal}
+          epoch={termEpoch}
+          appearance={appearance}
         />
       </div>
       {(dragging || attaching) && (

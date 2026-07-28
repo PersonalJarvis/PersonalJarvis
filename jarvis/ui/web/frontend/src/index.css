@@ -66,13 +66,13 @@
   display: none;
 }
 
-/* Agentic IDE panes carry NO scroll track at all — maintainer's call, after a
-   custom one was built, rebuilt and removed again. The native bar cannot stand
-   in for it: it is permanently on screen down the side of every pane in the
-   grid, and it is powered by the xterm viewport, which a full-screen CLI like
-   Claude Code leaves empty because it runs on the alternate screen and keeps
-   its history in its own process. Scrolling is the wheel, which reaches
-   whichever of the two owns the screen.
+/* Agentic IDE panes never show the BROWSER's scroll track. It is permanently
+   on screen down the side of every pane in the grid, and it is powered by the
+   xterm viewport, which a full-screen CLI like Claude Code leaves empty
+   because it runs on the alternate screen and keeps its history in its own
+   process. The pane draws its own hover-only bar instead (PaneScrollbar),
+   which can also drive a full-screen CLI; the wheel keeps reaching whichever
+   side owns the screen either way.
 
    Hiding it here rather than switching the viewport to `overflow: hidden` is
    deliberate: xterm still needs a scrollable viewport for the wheel itself.
