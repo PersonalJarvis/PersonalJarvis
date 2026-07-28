@@ -58,6 +58,8 @@ __all__ = [
     "KEYWORD_BATCH",
     "EMBED_BATCH",
     "DISTILL_BATCH",
+    "EVENTS_BACKFILL_BATCH",
+    "EVENTS_BACKFILL_CURSOR",
     "MEDIA_BATCH",
     "MAX_EMBED_CHARS",
     "MAX_MEDIA_BYTES",
@@ -73,6 +75,17 @@ __all__ = [
 KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
+
+#: Items per pass of the deterministic event backfill. Bigger than the model
+#: lanes because it costs no model call, no network and no vector: it reads a
+#: distillation that is already on the row and does arithmetic on it. Bounded
+#: anyway so a first boot on a large corpus stays a background job.
+EVENTS_BACKFILL_BATCH = 100
+
+#: ``uw_meta`` key holding the id the event backfill has walked up to. Carries
+#: the extraction version, so bumping ``events.EVENT_VERSION`` re-opens the
+#: lane over the whole corpus by itself instead of needing a migration.
+EVENTS_BACKFILL_CURSOR = "events_backfill_cursor"
 
 #: How long the embedding-dependent stages sleep after the provider answered
 #: with a rate/quota rejection. A depleted quota is GLOBAL: retrying the batch
@@ -300,6 +313,9 @@ class PipelineWorker:
         #: identity of a vector space, and therefore of whatever is refusing
         #: to fill it.
         self._embed_slot_key = ""
+        #: ``False`` once the deterministic event backfill has drained the
+        #: corpus, so the finished lane costs one ``uw_meta`` read per pass.
+        self._events_backfill_open = True
         #: The live provider-level embedding block, or ``None`` while vectors
         #: are coming back. Survives the individual cooldown naps: what matters
         #: to a reader is "this has been refused since yesterday evening", not
@@ -428,6 +444,13 @@ class PipelineWorker:
         attempted += await self._keyword_pass()
         attempted += await self._embed_pass()
         attempted += await self._distill_pass()
+        # The event backfill runs only in the gaps too, and unlike the lanes
+        # above it terminates: once it has walked the corpus it costs one meta
+        # read per pass. Counted as attempted work so pacing sees it — it is
+        # cheap, not free, and a large corpus should not spin through it at
+        # full speed on a laptop.
+        if not attempted:
+            attempted += await self._events_backfill_pass()
         # Media enrichment runs only in the gaps. It is the one stage that can
         # be skipped forever without anything breaking, so by default it never
         # takes a turn away from a stage that cannot. "eager" opts out of that
@@ -1232,6 +1255,71 @@ class PipelineWorker:
                 item.get("id"),
                 exc_info=True,
             )
+
+    # -- event backfill over an already-distilled corpus ----------------------
+
+    async def _events_backfill_pass(self) -> int:
+        """Derive events for items distilled BEFORE this feature existed.
+
+        The distillation stage only ever claims items that are not yet
+        distilled, so a corpus imported earlier would never reach
+        :meth:`_derive_events` — its owner would be told the knowledge base
+        answers episodic questions while it silently answered none of them.
+
+        This lane closes that gap for exactly ZERO model calls: it re-reads the
+        distillation JSON already stored on each item and runs the same pure
+        derivation. It walks the corpus once, by id, remembering how far it got
+        in ``uw_meta``, and then costs one meta read per pass forever. Every
+        capability it needs is probed, so a third-party store or a test fake
+        simply has no backfill (and no error).
+        """
+        if not self._events_backfill_open:
+            return 0
+        ultrawiki = getattr(self._cfg, "ultrawiki", None)
+        if not bool(getattr(ultrawiki, "events_enabled", True)):
+            return 0
+        reader = getattr(self._store, "items_with_distillation", None)
+        get_meta = getattr(self._store, "get_meta", None)
+        set_meta = getattr(self._store, "set_meta", None)
+        if not callable(reader) or not callable(get_meta) or not callable(set_meta):
+            self._events_backfill_open = False
+            return 0
+        from jarvis.ultrawiki.events import EVENT_VERSION  # noqa: PLC0415 — lazy (AP-26)
+
+        key = f"{EVENTS_BACKFILL_CURSOR}_v{EVENT_VERSION}"
+        try:
+            raw = await get_meta(key)
+            cursor = int(str(raw or "0"))
+        except (TypeError, ValueError):
+            cursor = 0
+        except Exception:  # noqa: BLE001 — a store without the table has no lane
+            log.debug("event backfill: cursor unreadable", exc_info=True)
+            self._events_backfill_open = False
+            return 0
+        if cursor < 0:  # the sentinel this lane writes when it is finished
+            self._events_backfill_open = False
+            return 0
+        try:
+            items = await reader(after_id=cursor, limit=EVENTS_BACKFILL_BATCH)
+        except Exception:  # noqa: BLE001 — never fails a pass
+            log.debug("event backfill: read failed", exc_info=True)
+            self._events_backfill_open = False
+            return 0
+        if not items:
+            await self._store.set_meta(key, "-1")
+            self._events_backfill_open = False
+            log.info("UltraWiki: episodic event backfill complete")
+            return 0
+        for item in items:
+            try:
+                fields = json.loads(str(item.get("distill_json") or "{}"))
+            except ValueError:
+                fields = {}
+            if isinstance(fields, dict):
+                await self._derive_events(item, fields)
+            cursor = max(cursor, int(item["id"]))
+        await self._store.set_meta(key, str(cursor))
+        return len(items)
 
     # -- media enrichment ----------------------------------------------------
 

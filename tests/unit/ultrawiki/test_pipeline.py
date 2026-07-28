@@ -927,3 +927,101 @@ async def test_hard_cancel_reraises_cancelled_error(store):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# ---------------------------------------------------------------------------
+# The deterministic event backfill (P5 review, finding 8)
+# ---------------------------------------------------------------------------
+
+
+async def test_event_backfill_gives_an_already_distilled_corpus_its_events(store):
+    """The distillation stage claims only items that are NOT yet distilled, so
+    a corpus imported before the event tables existed would never reach event
+    derivation at all. The backfill closes that without one model call."""
+    from jarvis.ultrawiki.pipeline import EVENTS_BACKFILL_CURSOR
+    from jarvis.ultrawiki.types import DocType
+
+    await store.upsert_items("src1", [make_item(1)])
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    item_id = int(item["id"])
+    await store.mark_stage_done(item_id, ItemState.KEYWORD_INDEXED)
+    await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+    await store.mark_stage_done(item_id, ItemState.DISTILLED)
+    await store.add_document(
+        item_id,
+        DocType.SUMMARY,
+        "summary text",
+        distill_json=json.dumps(
+            {"question": "When did it start?", "summary": "It began on 2026-02-02."}
+        ),
+        distill_version=1,
+    )
+    assert await store.list_events() == []
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,  # the whole point: no model is involved
+        distill_ready_fn=DISTILL_READY,
+    )
+    assert await worker._events_backfill_pass() == 1
+    events = await store.list_events()
+    assert len(events) == 1
+    assert events[0]["occurred_at"].startswith("2026-02-02")
+    # ... and the mentioned entities did NOT become people.
+    assert await store.list_people(kind=None, limit=50) == []
+
+    # The lane terminates: a second pass drains, a third costs one meta read.
+    assert await worker._events_backfill_pass() == 0
+    assert worker._events_backfill_open is False
+    from jarvis.ultrawiki.events import EVENT_VERSION
+
+    assert await store.get_meta(f"{EVENTS_BACKFILL_CURSOR}_v{EVENT_VERSION}") == "-1"
+
+
+async def test_event_backfill_resumes_from_its_cursor(store):
+    """It walks the corpus once, by id, and survives a restart mid-corpus."""
+    from jarvis.ultrawiki.events import EVENT_VERSION
+    from jarvis.ultrawiki.pipeline import EVENTS_BACKFILL_CURSOR
+    from jarvis.ultrawiki.types import DocType
+
+    await store.upsert_items("src1", [make_item(1), make_item(2)])
+    ids = []
+    for index in (1, 2):
+        row = await store.get_item_by_external_id("src1", f"ext-{index:04d}")
+        item_id = int(row["id"])
+        ids.append(item_id)
+        await store.add_document(
+            item_id, DocType.SUMMARY, "t", distill_json='{"summary": "on 2026-02-02"}'
+        )
+    key = f"{EVENTS_BACKFILL_CURSOR}_v{EVENT_VERSION}"
+    await store.set_meta(key, str(ids[0]))
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: FakeEmbeddingBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    assert await worker._events_backfill_pass() == 1
+    assert {event["item_id"] for event in await store.list_events()} == {ids[1]}
+    assert await store.get_meta(key) == str(ids[1])
+
+
+async def test_event_backfill_is_silent_on_a_store_that_cannot_do_it(store):
+    """A third-party store or a test fake simply has no backfill — and no error."""
+
+    class Bare:
+        pass
+
+    worker = PipelineWorker(
+        Bare(),
+        make_cfg(),
+        embedding_backend_factory=lambda: None,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    assert await worker._events_backfill_pass() == 0
+    assert worker._events_backfill_open is False

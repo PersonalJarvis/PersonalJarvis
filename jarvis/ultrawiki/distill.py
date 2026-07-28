@@ -34,11 +34,21 @@ path. Two rules make that array safe to consume:
   timestamp is asking for a wrong answer that looks right; the resolver
   anchors every relative expression against the item's own timestamp.
 
-The bump invalidates every cached distillation, so a corpus re-distills
-incrementally in the background at the cheap router tier. Nothing is lost
-meanwhile: items keep their existing summary document until the new one
-lands, and events are also derived from PRE-v2 distillations wherever they
-state an absolute date (``events.derive_events``'s legacy path).
+**What the bump does and does not do.** It changes the cache key, so every
+distillation from here on is a v2 one and no v1 cache row can be served for
+it. It does NOT re-distill an existing corpus: the pipeline's distillation
+stage claims only items that are not distilled yet, and re-running a whole
+corpus through a model is a cost no version bump gets to decide on the
+owner's behalf.
+
+That is affordable because events do not actually need a v2 distillation. An
+already-distilled corpus gets them from the text it already stores, wherever
+that states an absolute date (``events.derive_events``'s legacy path), driven
+by the pipeline's deterministic backfill lane
+(``pipeline.PipelineWorker._events_backfill_pass``) — no model call, no
+network, no re-embedding. A v2 distillation is simply richer when it arrives:
+the model states the kind, the place, the participants and a relative date
+this module could never recover from prose.
 """
 
 from __future__ import annotations
