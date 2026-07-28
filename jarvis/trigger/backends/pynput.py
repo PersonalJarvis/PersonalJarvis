@@ -15,9 +15,11 @@ form into the pynput key tokens the listener matches against.
 
 A combo is considered *down* when every one of its keys is currently held; the
 press handler fires on the transition into that state and the release handler on
-the transition out of it. This is the documented robust both-edges pynput
-pattern (a bare ``Listener`` with manual state), avoiding the press-only
-limitation of ``GlobalHotKeys``.
+the transition out of it. Each edge runs only its OWN handler, so a row carrying
+just one of the two observes just that edge — a toggle binding (``on_release``
+only) fires exactly once on key-up here, on Windows and on macOS alike. This is
+the documented robust both-edges pynput pattern (a bare ``Listener`` with manual
+state), avoiding the press-only limitation of ``GlobalHotKeys``.
 
 macOS permission hint (AD-8 / AD-13)
 ------------------------------------
@@ -298,14 +300,18 @@ class PynputBackend:
             if is_down and not combo["down"]:
                 combo["down"] = True
                 self._got_event = True
-                handler = combo["on_press"] or combo["on_release"]
-                if handler is not None:
-                    handler()
+                # Each edge fires ONLY its own handler. A toggle binding carries
+                # on_release alone (HotkeyTrigger._build_bindings) so a held key
+                # fires exactly once on the up edge; falling back to it here made
+                # every toggle fire on key-DOWN on this backend while the Windows
+                # path fired on key-up — one config, two behaviours.
+                if combo["on_press"] is not None:
+                    combo["on_press"]()
             elif not is_down and combo["down"]:
                 combo["down"] = False
                 self._got_event = True
-                # Only a push-to-talk binding (both edges set) fires on release.
-                if combo["on_press"] is not None and combo["on_release"] is not None:
+                # Push-to-talk (both edges set) and toggle (release only) alike.
+                if combo["on_release"] is not None:
                     combo["on_release"]()
 
     def start(self) -> None:

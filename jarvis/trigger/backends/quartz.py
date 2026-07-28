@@ -27,9 +27,10 @@ Known trade-offs (documented, honest):
   when a bound combo actually contains one — the tap never asks for the
   primary click.
 
-The combo vocabulary, edge semantics (press fires on the chord-down
-transition, release only for push-to-talk rows), the permission fail-closed
-gate, and ``received_any_event()`` mirror ``PynputBackend`` exactly, so the
+The combo vocabulary, edge semantics (``on_press`` fires on the chord-down
+transition, ``on_release`` on the chord-up transition — each edge only ever
+runs its OWN handler), the permission fail-closed gate, and
+``received_any_event()`` mirror ``PynputBackend`` exactly, so the
 ``HotkeyTrigger`` call site stays platform-agnostic (AD-7).
 """
 
@@ -156,14 +157,18 @@ class QuartzHotkeyBackend:
             if is_down and not combo["down"]:
                 combo["down"] = True
                 self._got_event = True
-                handler = combo["on_press"] or combo["on_release"]
-                if handler is not None:
-                    handler()
+                # Each edge fires ONLY its own handler. A toggle binding carries
+                # on_release alone (HotkeyTrigger._build_bindings) so a held key
+                # fires exactly once on the up edge; falling back to it here made
+                # every toggle fire on key-DOWN on this backend while the Windows
+                # path fired on key-up — one config, two behaviours.
+                if combo["on_press"] is not None:
+                    combo["on_press"]()
             elif not is_down and combo["down"]:
                 combo["down"] = False
                 self._got_event = True
-                # Only a push-to-talk binding (both edges set) fires on release.
-                if combo["on_press"] is not None and combo["on_release"] is not None:
+                # Push-to-talk (both edges set) and toggle (release only) alike.
+                if combo["on_release"] is not None:
                     combo["on_release"]()
 
     def _handle_key_down(self, keycode: int) -> None:
