@@ -841,6 +841,28 @@ class Terminal:
     # Bound at spawn, cleared on detach, replaced on re-attach.
     viewer_output: Any = None
     viewer_exit: Any = None
+    # Serializes THIS pane's attach path — see `SessionRegistry.attach`.
+    #
+    # A pane is routinely connected to more than once in the same instant: the
+    # panes of a restored workspace reconnect in a burst while the workspace is
+    # still opening, are answered "not yet", and retry — and a retry that
+    # overlaps the attempt it replaces is two sockets asking for one pane. The
+    # spawn path awaits three times between asking "is a process already
+    # running?" and recording the one it starts — a cold-start slot, the
+    # account's filesystem work, the spawn itself — so a second attempt walked
+    # straight through that gap and started a SECOND agent for one call-sign.
+    #
+    # Measured 2026-07-28: two `claude --resume <the same id>` processes for one
+    # pane, a grid of black panes whose transcripts were filling normally, and
+    # orphaned CLIs burning a subscription with nothing left holding their ids.
+    # The newer spawn takes the viewer slot and clears the replay buffer, which
+    # is exactly what leaves the viewer that IS on screen attached to nothing —
+    # and an agent's TUI paints itself once, so nothing arrives to correct it.
+    #
+    # Per pane rather than one registry-wide lock: attaches to DIFFERENT panes
+    # must stay concurrent, or opening a workspace of a dozen agents would queue
+    # every cold start behind the slowest one.
+    attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         # Read the replayed screen ONCE. `lines()` walks the whole scrollback,
@@ -1912,7 +1934,55 @@ class Registry:
         workspace_id: str | None = None,
         appearance: str | None = None,
     ) -> Terminal:
+        """Point a viewer at terminal ``key`` — one attach at a time per pane.
+
+        The whole of :meth:`_attach_locked` runs under the pane's OWN lock:
+        everything about a pane's agent that must be true exactly once is
+        decided in there, across three awaits, and concurrent attaches are not a
+        rare race but the ordinary case (a restored workspace reconnects every
+        pane at once, and each retry while it is still opening is one more
+        socket). See ``Terminal.attach_lock`` for what walking through that gap
+        cost.
+
+        Resolving the pane BEFORE taking the lock is deliberate: an unknown
+        call-sign and a workspace that is not open yet are answers this can give
+        immediately, and they are exactly what a burst of reconnecting panes
+        asks for. ``_attach_locked`` resolves again under the lock, because the
+        workspace may have closed while this attempt waited its turn.
+        """
+        found = self._locate(key, workspace_id)
+        if found is None:
+            if self.get(workspace_id) is None:
+                raise SessionNotReady("No Agentic-IDE session is running.")
+            raise SessionError(f"Unknown terminal: {key}")
+        _session, term = found
+        async with term.attach_lock:
+            return await self._attach_locked(
+                key,
+                cols,
+                rows,
+                on_output,
+                on_exit,
+                workspace_id=workspace_id,
+                appearance=appearance,
+            )
+
+    async def _attach_locked(
+        self,
+        key: str,
+        cols: int,
+        rows: int,
+        on_output: Any,
+        on_exit: Any,
+        workspace_id: str | None = None,
+        appearance: str | None = None,
+    ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
+
+        Caller holds ``term.attach_lock`` — see :meth:`attach`. Nothing here may
+        run without it: the gap between "is a process already running?" below
+        and ``term.pty_id`` being recorded at the end is what a second
+        concurrent attach used to start a duplicate agent through.
 
         ``on_output(text)`` / ``on_exit(code)`` are awaited in this loop. The
         transcript is fed here, so it keeps filling even if the UI pane is
