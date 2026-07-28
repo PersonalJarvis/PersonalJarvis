@@ -25,6 +25,25 @@ window.addEventListener("load", () => {
   sessionStorage.removeItem("jarvis:preload-reloaded");
 });
 
+// Say it out loud when the main thread stops answering the user. In a WebView
+// there is no console to notice it in, so a multi-second block shows up only as
+// "Not responding" in the window title and as keystrokes arriving late in a
+// terminal pane — with nothing anywhere to say what ran. The backend reports
+// its own stalls the same way (jarvis/core/loop_watchdog.py); this covers the
+// half that draws the window. Silent unless something actually blocks.
+void import("./lib/uiStallWatch").then(({ watchUiStalls }) => {
+  watchUiStalls((payload) => {
+    void fetch("/api/diagnostics/ui-stall", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      // The thread that just unblocked may be on its way to blocking again, and
+      // this report must survive that rather than be cancelled with the page.
+      keepalive: true,
+    }).catch(() => undefined);
+  });
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 5_000, retry: 1 },

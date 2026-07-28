@@ -19,6 +19,8 @@ import contextlib
 from typing import Any
 
 from fastapi import APIRouter
+from loguru import logger as log
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
@@ -172,6 +174,56 @@ async def cancel_scopes() -> dict[str, Any]:
         "delivering": delivering,
         "delivering_count": len(delivering),
     }
+
+
+class UiStallReport(BaseModel):
+    """One stretch during which the UI thread could not answer the user."""
+
+    blocked_ms: float = Field(
+        description="How long the browser's main thread was busy in one task."
+    )
+    at: str = Field(
+        default="",
+        description="Which view was on screen, as the UI names it.",
+    )
+    panes: int = Field(
+        default=0, description="Terminal panes mounted when it happened."
+    )
+    detail: str = Field(
+        default="",
+        description=(
+            "What the browser attributed the task to. Never free text from a "
+            "user and never page content — the reporter sends fixed labels."
+        ),
+    )
+
+
+@router.post("/ui-stall", summary="Report a frozen UI thread")
+async def report_ui_stall(report: UiStallReport) -> dict[str, Any]:
+    """Record that the window stopped answering, and for how long.
+
+    The desktop app is a WebView with no console and no dev tools, so a browser
+    main thread that blocks is invisible: the user sees "Not responding" in the
+    title bar and there is nothing anywhere to say what it was doing. The
+    backend already reports its own stalls from off the loop
+    (``jarvis.core.loop_watchdog``); this is the same idea for the half that
+    draws the window, and it is the half that survived every backend hypothesis
+    on 2026-07-28 — loop lag, CPU contention, GIL pressure, terminal frame
+    rate, xterm write and reflow cost were all measured and all clean, while
+    the window kept freezing for the user.
+
+    Deliberately a log line rather than stored state: it is read while chasing
+    a live complaint, next to the backend's own stall reports on the same clock.
+    """
+    log.warning(
+        "UI thread STALLED for {:.0f} ms (view={}, panes={}) — the window could "
+        "not answer clicks or keystrokes during this. Attributed to: {}",
+        report.blocked_ms,
+        report.at or "unknown",
+        report.panes,
+        report.detail or "unattributed",
+    )
+    return {"ok": True}
 
 
 @router.get("/event-loop-lag")
