@@ -1,7 +1,10 @@
 [build-system]
 # setuptools>=77 is the floor for the PEP 639 license expression below; the
-# TOML-table form it replaces is deprecated and scheduled for removal.
-requires = ["setuptools>=77", "wheel"]
+# TOML-table form it replaces is deprecated and scheduled for removal. The
+# floor is raised to 83 because every setuptools < 83.0.0 carries a published
+# advisory (Dependabot #85) — a build-time-only exposure, but the pin costs
+# nothing and 83 still satisfies the PEP 639 requirement above.
+requires = ["setuptools>=83", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
