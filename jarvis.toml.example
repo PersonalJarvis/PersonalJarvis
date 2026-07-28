@@ -44,7 +44,7 @@ sensitivity = 0.5            # 0.5..1 (values below 0.5 are lifted — the wake 
 
 # ── Speech-to-Text ──
 [stt]
-provider = "groq-api"        # groq-api | openai-api | openrouter-stt | deepgram-flux | deepgram-nova3
+provider = "groq-api"        # groq-api | openai-api | openrouter-stt | gemini-api | faster-whisper (local)
 device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
 language = "auto"            # "de" | "en" | "auto"
 bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns
