@@ -91,7 +91,11 @@
     "contacts": "Contactos",
     "feedback": "Comentarios",
     "agent_instructions": "{name}.md",
-    "agentic_ide": "IDE agéntico"
+    "agentic_ide": "IDE agéntico",
+    "voice": "Voz de {name}",
+    "voice_shortcuts": "Atajos",
+    "voice_language": "Idioma",
+    "voice_api_keys": "Claves API"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -229,7 +233,8 @@
     "cancel": "Cancelar",
     "save": "Guardar",
     "add_confirm": "Añadir palabra",
-    "research_preview": "Research Preview"
+    "research_preview": "Research Preview",
+    "applies_to_dictation": "Estas correcciones también se aplican al dictado — lo que corrijas aquí queda corregido en el texto que llega a tus otras apps."
   },
   "dictation": {
     "title": "Dictado",
@@ -266,7 +271,66 @@
     "clear_history": "Borrar todo",
     "raw_prefix": "Se oyó:",
     "removed_words": "{0} muletilla(s) eliminada(s)",
-    "delete_entry": "Eliminar esta entrada"
+    "delete_entry": "Eliminar esta entrada",
+    "search_placeholder": "Buscar en tus dictados",
+    "stats": {
+      "title": "Tu dictado",
+      "words": "Palabras",
+      "wpm": "Palabras por minuto",
+      "streak": "Días seguidos",
+      "window_lifetime": "Desde siempre",
+      "window_days": "Últimos {0} días"
+    },
+    "group": {
+      "today": "Hoy",
+      "yesterday": "Ayer"
+    },
+    "restore": "Restaurar",
+    "restore_hint": "Volver a transcribir desde el audio guardado.",
+    "restored": "Restaurado",
+    "discard": "Descartar",
+    "discarded_badge": "Descartado",
+    "delete_permanently": "Eliminar definitivamente",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "audio_kept": "Audio guardado",
+    "clear_history_hint": "Esto también borra el audio guardado y reinicia tu racha.",
+    "outcome": {
+      "inserted": "Insertado",
+      "clipboard_only": "Copiado al portapapeles",
+      "unavailable": "No se pudo insertar",
+      "chat": "Enviado al chat",
+      "empty": "No se oyó nada",
+      "cancelled": "Cancelado",
+      "failed": "Fallido"
+    }
+  },
+  "voice": {
+    "hub": {
+      "subtitle": "Todo lo que convierte lo que dices en texto — dictado, tu propio vocabulario, las teclas que lo inician y los proveedores detrás."
+    },
+    "shortcuts": {
+      "title": "Atajos",
+      "description": "Elige las teclas que inician el dictado.",
+      "ptt_label": "Pulsar para hablar",
+      "ptt_hint": "Mantén la tecla, habla y suéltala para insertar.",
+      "toggle_label": "Manos libres",
+      "toggle_hint": "Una pulsación empieza, otra detiene.",
+      "suggestions_title": "Combinaciones sugeridas"
+    },
+    "language": {
+      "title": "Idioma del dictado",
+      "description": "En qué idioma se transcribe tu dictado.",
+      "auto": "Detectar automáticamente",
+      "de": "Alemán",
+      "en": "Inglés",
+      "es": "Español",
+      "auto_hint": "La detección automática va bien para casi todo el mundo. Fijar un idioma puede empeorar el reconocimiento en un modelo que no se entrenó para él."
+    },
+    "api_keys": {
+      "title": "Entrada de voz",
+      "description": "Claves y proveedores que convierten tu voz en texto."
+    }
   },
   "voice_state": {
     "idle": "Listo",
@@ -1459,7 +1523,8 @@
         "alt_f4": "Alt+F4 cierra la ventana activa — elige otra combinación.",
         "ctrl_c": "Ctrl+C es el atajo de copiar — elige otra combinación.",
         "collision": "Se solapa con {action} ({combo}) — una pulsación activaría ambas. Elige otras teclas.",
-        "solo_nav": "Permitido — pero ten en cuenta: esta tecla también se dispara al navegar por el texto."
+        "solo_nav": "Permitido — pero ten en cuenta: esta tecla también se dispara al navegar por el texto.",
+        "f12_reserved": "F12 está reservada permanentemente por el sistema — elige otra tecla."
       },
       "keyboard": {
         "legend_pressed": "Pulsada",
@@ -1467,7 +1532,8 @@
         "legend_bound": "Ya usada",
         "hint": "Pulsa teclas o haz clic en ellas para crear la combinación",
         "reserved": "Reservada por el sistema"
-      }
+      },
+      "dictate_toggle_label": "Dictado manos libres"
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Ruta manual para problemas de PATH en Windows. Vacío usa 'codex' del PATH.",

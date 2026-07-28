@@ -29,7 +29,18 @@ import { useT } from "@/i18n";
  *
  * Backed by /api/dictionary (GET/POST/PATCH/DELETE) via useDictionary.
  */
-export function DictionaryView() {
+export interface DictionaryViewProps {
+  /**
+   * Suppress this view's own `ViewHeader`.
+   *
+   * Set by the merged voice section, which renders one "{name} Voice" header
+   * above the tab bar — a second bordered band right below it reads as a
+   * rendering fault. Standalone rendering keeps its own header.
+   */
+  hideHeader?: boolean;
+}
+
+export function DictionaryView({ hideHeader = false }: DictionaryViewProps = {}) {
   const t = useT();
   const { entries, loading, error, createEntry, updateEntry, removeEntry } =
     useDictionary();
@@ -64,16 +75,18 @@ export function DictionaryView() {
 
   return (
     <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<BookA className="h-4 w-4 text-primary" />}
-        title={t("dictionary.title")}
-        titleBadge={
-          <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-            {t("dictionary.research_preview")}
-          </span>
-        }
-        subtitle={t("dictionary.description")}
-      />
+      {!hideHeader && (
+        <ViewHeader
+          icon={<BookA className="h-4 w-4 text-primary" />}
+          title={t("dictionary.title")}
+          titleBadge={
+            <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+              {t("dictionary.research_preview")}
+            </span>
+          }
+          subtitle={t("dictionary.description")}
+        />
+      )}
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <div className="mx-auto max-w-3xl">
           <div className="flex items-center gap-3">

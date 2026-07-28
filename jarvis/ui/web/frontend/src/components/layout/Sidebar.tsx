@@ -2,7 +2,6 @@ import {
   MessageSquare,
   Users,
   Boxes,
-  BookA,
   BookOpen,
   KeyRound,
   Settings,
@@ -119,17 +118,25 @@ const NAV_GROUPS: NavItem[][] = [
       icon: Settings,
       matchIds: ["settings", "taskbar", "languages"],
     },
-    {
-      id: "dictionary",
-      labelKey: "nav.dictionary",
-      icon: BookA,
-      fallbackLabel: "Dictionary",
-    },
+    // The voice section — dictation, the custom vocabulary, the keys that start
+    // it, the dictation language and the speech-to-text providers — behind one
+    // tab switch. "dictation" is the default landing; matchIds keeps the row
+    // highlighted for any of the fronted tabs. The label carries the {name}
+    // token, so the row reads as the user's own wake-word brand.
     {
       id: "dictation",
-      labelKey: "nav.dictation",
+      labelKey: "nav.voice",
       icon: Mic,
-      fallbackLabel: "Dictation",
+      matchIds: [
+        "dictation",
+        "dictionary",
+        "voice-shortcuts",
+        "voice-language",
+        "voice-api-keys",
+      ],
+      // Name-FREE on purpose: the fallback is rendered verbatim when the key is
+      // missing from a locale, and it is NOT interpolated.
+      fallbackLabel: "Voice",
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
   ],

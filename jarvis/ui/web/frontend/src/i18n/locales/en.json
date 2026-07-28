@@ -91,7 +91,11 @@
     "contacts": "Contacts",
     "feedback": "Feedback",
     "agent_instructions": "{name}.md",
-    "agentic_ide": "Agentic IDE"
+    "agentic_ide": "Agentic IDE",
+    "voice": "{name} Voice",
+    "voice_shortcuts": "Shortcuts",
+    "voice_language": "Language",
+    "voice_api_keys": "API Keys"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -229,7 +233,8 @@
     "cancel": "Cancel",
     "save": "Save",
     "add_confirm": "Add word",
-    "research_preview": "Research Preview"
+    "research_preview": "Research Preview",
+    "applies_to_dictation": "These corrections apply to dictation as well — anything you fix here is fixed in the text that lands in your other apps."
   },
   "dictation": {
     "title": "Dictation",
@@ -266,7 +271,66 @@
     "clear_history": "Delete all",
     "raw_prefix": "Heard:",
     "removed_words": "{0} filler word(s) removed",
-    "delete_entry": "Delete this entry"
+    "delete_entry": "Delete this entry",
+    "search_placeholder": "Search your dictations",
+    "stats": {
+      "title": "Your dictation",
+      "words": "Words",
+      "wpm": "Words per minute",
+      "streak": "Day streak",
+      "window_lifetime": "All time",
+      "window_days": "Last {0} days"
+    },
+    "group": {
+      "today": "Today",
+      "yesterday": "Yesterday"
+    },
+    "restore": "Restore",
+    "restore_hint": "Transcribe again from the saved audio.",
+    "restored": "Restored",
+    "discard": "Discard",
+    "discarded_badge": "Discarded",
+    "delete_permanently": "Delete permanently",
+    "copy": "Copy",
+    "copied": "Copied",
+    "audio_kept": "Audio kept",
+    "clear_history_hint": "This also deletes saved audio and resets your streak.",
+    "outcome": {
+      "inserted": "Inserted",
+      "clipboard_only": "Copied to clipboard",
+      "unavailable": "Could not insert",
+      "chat": "Sent to chat",
+      "empty": "Nothing heard",
+      "cancelled": "Cancelled",
+      "failed": "Failed"
+    }
+  },
+  "voice": {
+    "hub": {
+      "subtitle": "Everything that turns what you say into text — dictation, your own vocabulary, the keys that start it, and the providers behind it."
+    },
+    "shortcuts": {
+      "title": "Shortcuts",
+      "description": "Choose the keys that start dictation.",
+      "ptt_label": "Push to talk",
+      "ptt_hint": "Hold the key, speak, release to insert.",
+      "toggle_label": "Hands-free",
+      "toggle_hint": "Press once to start, press again to stop.",
+      "suggestions_title": "Suggested combinations"
+    },
+    "language": {
+      "title": "Dictation language",
+      "description": "Which language your dictation is transcribed in.",
+      "auto": "Detect automatically",
+      "de": "German",
+      "en": "English",
+      "es": "Spanish",
+      "auto_hint": "Automatic detection is right for almost everyone. Pinning a language can make recognition worse on a model that was not trained for it."
+    },
+    "api_keys": {
+      "title": "Voice input",
+      "description": "Keys and providers used to turn your speech into text."
+    }
   },
   "voice_state": {
     "idle": "Ready",
@@ -1460,7 +1524,8 @@
         "alt_f4": "Alt+F4 closes the active window — choose another combination.",
         "ctrl_c": "Ctrl+C is the copy shortcut — choose another combination.",
         "collision": "Overlaps with {action} ({combo}) — one press would trigger both. Choose different keys.",
-        "solo_nav": "Allowed — but note: this key also fires while navigating text."
+        "solo_nav": "Allowed — but note: this key also fires while navigating text.",
+        "f12_reserved": "F12 is permanently reserved by the system — pick another key."
       },
       "keyboard": {
         "legend_pressed": "Pressed",
@@ -1468,7 +1533,8 @@
         "legend_bound": "Already used",
         "hint": "Press keys or click them to build the combo",
         "reserved": "Reserved by the system"
-      }
+      },
+      "dictate_toggle_label": "Hands-free dictation"
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",

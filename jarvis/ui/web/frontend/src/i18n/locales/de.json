@@ -91,7 +91,11 @@
     "contacts": "Kontakte",
     "feedback": "Feedback",
     "agent_instructions": "{name}.md",
-    "agentic_ide": "Agentic IDE"
+    "agentic_ide": "Agentic IDE",
+    "voice": "{name} Stimme",
+    "voice_shortcuts": "Tastenkürzel",
+    "voice_language": "Sprache",
+    "voice_api_keys": "API-Keys"
   },
   "agent_instructions": {
     "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
@@ -229,7 +233,8 @@
     "cancel": "Abbrechen",
     "save": "Speichern",
     "add_confirm": "Wort hinzufügen",
-    "research_preview": "Research Preview"
+    "research_preview": "Research Preview",
+    "applies_to_dictation": "Diese Korrekturen gelten auch fürs Diktat — was du hier korrigierst, ist auch in dem Text korrigiert, der in deinen anderen Apps landet."
   },
   "dictation": {
     "title": "Diktat",
@@ -266,7 +271,66 @@
     "clear_history": "Alle löschen",
     "raw_prefix": "Gehört:",
     "removed_words": "{0} Füllwort/-wörter entfernt",
-    "delete_entry": "Diesen Eintrag löschen"
+    "delete_entry": "Diesen Eintrag löschen",
+    "search_placeholder": "Diktate durchsuchen",
+    "stats": {
+      "title": "Dein Diktat",
+      "words": "Wörter",
+      "wpm": "Wörter pro Minute",
+      "streak": "Tage in Folge",
+      "window_lifetime": "Gesamt",
+      "window_days": "Letzte {0} Tage"
+    },
+    "group": {
+      "today": "Heute",
+      "yesterday": "Gestern"
+    },
+    "restore": "Wiederherstellen",
+    "restore_hint": "Aus dem gespeicherten Audio erneut transkribieren.",
+    "restored": "Wiederhergestellt",
+    "discard": "Verwerfen",
+    "discarded_badge": "Verworfen",
+    "delete_permanently": "Endgültig löschen",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "audio_kept": "Audio behalten",
+    "clear_history_hint": "Damit werden auch gespeicherte Audios gelöscht und deine Serie zurückgesetzt.",
+    "outcome": {
+      "inserted": "Eingefügt",
+      "clipboard_only": "In die Zwischenablage kopiert",
+      "unavailable": "Einfügen nicht möglich",
+      "chat": "An den Chat geschickt",
+      "empty": "Nichts gehört",
+      "cancelled": "Abgebrochen",
+      "failed": "Fehlgeschlagen"
+    }
+  },
+  "voice": {
+    "hub": {
+      "subtitle": "Alles, was gesprochene Worte zu Text macht — Diktat, dein eigenes Wörterbuch, die Tasten dafür und die Anbieter dahinter."
+    },
+    "shortcuts": {
+      "title": "Tastenkürzel",
+      "description": "Wähle die Tasten, die das Diktat starten.",
+      "ptt_label": "Zum Sprechen halten",
+      "ptt_hint": "Taste halten, sprechen, loslassen — der Text wird eingefügt.",
+      "toggle_label": "Freihändig",
+      "toggle_hint": "Einmal drücken startet, nochmal drücken stoppt.",
+      "suggestions_title": "Vorgeschlagene Kombinationen"
+    },
+    "language": {
+      "title": "Diktatsprache",
+      "description": "In welcher Sprache dein Diktat transkribiert wird.",
+      "auto": "Automatisch erkennen",
+      "de": "Deutsch",
+      "en": "Englisch",
+      "es": "Spanisch",
+      "auto_hint": "Automatische Erkennung passt für fast alle. Eine feste Sprache kann die Erkennung verschlechtern, wenn das Modell nicht dafür trainiert wurde."
+    },
+    "api_keys": {
+      "title": "Spracheingabe",
+      "description": "Schlüssel und Anbieter, die deine Sprache in Text verwandeln."
+    }
   },
   "voice_state": {
     "idle": "Bereit",
@@ -1459,7 +1523,8 @@
         "alt_f4": "Alt+F4 schließt das aktive Fenster — wähle eine andere Kombination.",
         "ctrl_c": "Strg+C ist der Kopieren-Shortcut — wähle eine andere Kombination.",
         "collision": "Überschneidet sich mit {action} ({combo}) — ein Tastendruck würde beides auslösen. Wähle andere Tasten.",
-        "solo_nav": "Erlaubt — aber beachte: Diese Taste löst auch beim Navigieren im Text aus."
+        "solo_nav": "Erlaubt — aber beachte: Diese Taste löst auch beim Navigieren im Text aus.",
+        "f12_reserved": "F12 ist dauerhaft vom System reserviert — wähle eine andere Taste."
       },
       "keyboard": {
         "legend_pressed": "Gedrückt",
@@ -1467,7 +1532,8 @@
         "legend_bound": "Schon belegt",
         "hint": "Tasten drücken oder anklicken, um die Kombi zu bauen",
         "reserved": "Vom System reserviert"
-      }
+      },
+      "dictate_toggle_label": "Freihändiges Diktat"
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manueller Pfad für Windows-PATH-Probleme. Leer lassen nutzt 'codex' aus PATH.",

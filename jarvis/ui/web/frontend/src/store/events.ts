@@ -38,6 +38,13 @@ export type SectionId =
   | "agent-instructions"
   | "dictionary"
   | "dictation"
+  // The three tabs added by the merged voice section. "dictation" (default
+  // landing) and "dictionary" keep their original ids on purpose — renaming
+  // them would break the Command-Registry ui_section binding and every existing
+  // voice deep-link for no gain.
+  | "voice-shortcuts"
+  | "voice-language"
+  | "voice-api-keys"
   | "agentic-ide";
 
 export const SECTION_IDS = [
@@ -68,6 +75,12 @@ export const SECTION_IDS = [
   "agent-instructions",
   "dictionary",
   "dictation",
+  // `satisfies` only catches array entries that are missing from the union,
+  // never a union member missing from the array — these three have to be added
+  // by hand as well (docs/BUGS.md, the recurring enum-drift class).
+  "voice-shortcuts",
+  "voice-language",
+  "voice-api-keys",
   "agentic-ide",
 ] as const satisfies readonly SectionId[];
 
@@ -107,6 +120,12 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "agent-instructions": "Agent Instructions",
   dictionary: "Dictionary",
   dictation: "Dictation",
+  // Plain English, deliberately NOT the "{name} Voice" brand: these labels are
+  // read back by the voice-navigation toast, which does not interpolate the
+  // assistant name. Naming the sub-section is also the more useful readback.
+  "voice-shortcuts": "Voice Shortcuts",
+  "voice-language": "Dictation Language",
+  "voice-api-keys": "Voice Input Keys",
   "agentic-ide": "Agentic IDE",
 };
 

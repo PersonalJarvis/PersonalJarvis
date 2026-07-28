@@ -30,7 +30,18 @@ import { useT } from "@/i18n";
  *
  * Backed by /api/dictation (status/start/stop/settings/history) via useDictation.
  */
-export function DictationView() {
+export interface DictationViewProps {
+  /**
+   * Suppress this view's own `ViewHeader`.
+   *
+   * Set by the merged voice section, which renders one "{name} Voice" header
+   * above the tab bar — a second bordered band right below it reads as a
+   * rendering fault. Standalone rendering keeps its own header.
+   */
+  hideHeader?: boolean;
+}
+
+export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
   const t = useT();
   const {
     status,
@@ -79,11 +90,13 @@ export function DictationView() {
 
   return (
     <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<Mic className="h-4 w-4 text-primary" />}
-        title={t("dictation.title")}
-        subtitle={t("dictation.description")}
-      />
+      {!hideHeader && (
+        <ViewHeader
+          icon={<Mic className="h-4 w-4 text-primary" />}
+          title={t("dictation.title")}
+          subtitle={t("dictation.description")}
+        />
+      )}
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {error && <p className="text-xs text-destructive">{error}</p>}

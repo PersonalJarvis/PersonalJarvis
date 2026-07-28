@@ -86,11 +86,12 @@ const RunInspectorView = lazyView(() =>
     default: m.RunInspectorView,
   })),
 );
-const DictionaryView = lazyView(() =>
-  import("@/views/DictionaryView").then((m) => ({ default: m.DictionaryView })),
-);
-const DictationView = lazyView(() =>
-  import("@/views/DictationView").then((m) => ({ default: m.DictationView })),
+// Dictation + Dictionary + Shortcuts + Language + Voice API keys are merged
+// behind the one "{name} Voice" sidebar entry. Only the hub is split out here —
+// it statically imports its five tabs, so they travel in its chunk instead of
+// being prefetched as separate ones.
+const VoiceHubView = lazyView(() =>
+  import("@/views/VoiceHubView").then((m) => ({ default: m.VoiceHubView })),
 );
 const AgentInstructionsView = lazyView(() =>
   import("@/views/AgentInstructionsView").then((m) => ({
@@ -267,10 +268,16 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "taskbar":
     case "languages":
       return <SettingsView />;
-    case "dictionary":
-      return <DictionaryView />;
+    // The merged voice section: Dictation (default landing) + Dictionary +
+    // Shortcuts + Language + the speech-to-text keys, behind one tab bar. The
+    // active id doubles as the tab state, so a voice deep-link to any of them
+    // still lands on the right tab.
     case "dictation":
-      return <DictationView />;
+    case "dictionary":
+    case "voice-shortcuts":
+    case "voice-language":
+    case "voice-api-keys":
+      return <VoiceHubView />;
     case "outputs":
       return <OutputsView />;
     case "socials":

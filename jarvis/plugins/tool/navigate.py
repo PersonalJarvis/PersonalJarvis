@@ -49,6 +49,9 @@ KNOWN: frozenset[str] = frozenset(
         "agent-instructions",
         "dictionary",
         "dictation",
+        "voice-shortcuts",
+        "voice-language",
+        "voice-api-keys",
         "agentic-ide",
     }
 )
@@ -137,6 +140,21 @@ _ALIASES: dict[str, str] = {
     "erweiterung": "skills",
     "tools": "plugins",
     "werkzeuge": "plugins",
+    # Voice section tabs. Deliberately NARROW, multi-word phrases only: the
+    # brain-side matcher (jarvis/brain/navigation_intent.py) runs BEFORE the
+    # capability gate, so a bare "voice" / "stimme" / "voz" alias would hijack
+    # every utterance that merely mentions the voice.
+    "dictation shortcuts": "voice-shortcuts",
+    "dictation keys": "voice-shortcuts",
+    "diktat-tastenkürzel": "voice-shortcuts",  # i18n-allow: input vocab
+    "diktat-tasten": "voice-shortcuts",  # i18n-allow: input vocab
+    "atajos de dictado": "voice-shortcuts",  # i18n-allow: input vocab
+    "dictation language": "voice-language",
+    "diktat-sprache": "voice-language",  # i18n-allow: input vocab
+    "idioma de dictado": "voice-language",  # i18n-allow: input vocab
+    "voice input keys": "voice-api-keys",
+    "spracheingabe-schlüssel": "voice-api-keys",  # i18n-allow: input vocab
+    "claves de entrada de voz": "voice-api-keys",  # i18n-allow: input vocab
 }
 
 
