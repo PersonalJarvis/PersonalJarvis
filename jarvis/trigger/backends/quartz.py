@@ -23,6 +23,9 @@ Known trade-offs (documented, honest):
   as most native hotkey utilities.
 * ``right_control`` matches either Control key (the flags word does not carry
   a portable left/right distinction).
+* Mouse buttons (middle and the two side buttons) join the same tap, and only
+  when a bound combo actually contains one — the tap never asks for the
+  primary click.
 
 The combo vocabulary, edge semantics (press fires on the chord-down
 transition, release only for push-to-talk rows), the permission fail-closed
@@ -35,6 +38,7 @@ from __future__ import annotations
 import logging
 import threading
 
+from jarvis.trigger.backends.global_hotkeys import MOUSE_BUTTON_TOKENS
 from jarvis.trigger.backends.pynput import (
     _macos_hotkey_permissions_granted,
     _parse_combo_tokens,
@@ -69,6 +73,17 @@ _FLAG_MASK_TO_TOKEN: tuple[tuple[int, str], ...] = (
     (1 << 20, "cmd"),        # kCGEventFlagMaskCommand
 )
 
+# ``kCGMouseEventButtonNumber`` -> the shared mouse token. Quartz numbers the
+# buttons in hardware order: 0 left, 1 right, 2 middle, 3 and 4 the side pair.
+# Left and right are deliberately absent (see ``MOUSE_BUTTON_TOKENS``), which is
+# also why the tap only ever asks for the ``OtherMouse`` events — the primary
+# click never even reaches this backend.
+_MOUSE_BUTTON_TO_TOKEN: dict[int, str] = {
+    2: "mouse_middle",
+    3: "mouse_x1",
+    4: "mouse_x2",
+}
+
 
 class QuartzHotkeyBackend:
     """Quartz event-tap hotkey backend for macOS (AD-8).
@@ -89,6 +104,10 @@ class QuartzHotkeyBackend:
         self._runloop: object | None = None
         self._thread: threading.Thread | None = None
         self._teardown_failed = False
+        # Widen the tap to mouse events only when a bound combo needs one: a
+        # narrower mask is fewer events crossing the tap for every click the
+        # user makes all day.
+        self._needs_mouse = False
 
     # ------------------------------------------------------------------
     # Registration + chord matching (mirrors PynputBackend semantics)
@@ -115,6 +134,9 @@ class QuartzHotkeyBackend:
                 }
             )
         self._combos = combos
+        self._needs_mouse = any(
+            combo["tokens"] & MOUSE_BUTTON_TOKENS for combo in combos
+        )
 
     def _reconcile(self) -> None:
         """Fire press/release handlers on chord down/up transitions."""
@@ -153,6 +175,21 @@ class QuartzHotkeyBackend:
 
     def _handle_key_up(self, keycode: int) -> None:
         token = _KEYCODE_TO_TOKEN.get(keycode)
+        if token is None:
+            return
+        self._reconcile()  # check release edges BEFORE dropping the token
+        self._held.discard(token)
+        self._reconcile()
+
+    def _handle_mouse_down(self, button_number: int) -> None:
+        token = _MOUSE_BUTTON_TO_TOKEN.get(button_number)
+        if token is None:
+            return
+        self._held.add(token)
+        self._reconcile()
+
+    def _handle_mouse_up(self, button_number: int) -> None:
+        token = _MOUSE_BUTTON_TO_TOKEN.get(button_number)
         if token is None:
             return
         self._reconcile()  # check release edges BEFORE dropping the token
@@ -217,6 +254,25 @@ class QuartzHotkeyBackend:
             )
             return
 
+        # Resolved once, tolerantly: a pyobjc build without the mouse constants
+        # must degrade to "keyboard shortcuts only", never make every event
+        # raise inside the tap callback.
+        mouse_down_type = getattr(Quartz, "kCGEventOtherMouseDown", None)
+        mouse_up_type = getattr(Quartz, "kCGEventOtherMouseUp", None)
+        button_field = getattr(Quartz, "kCGMouseEventButtonNumber", None)
+        mouse_ready = (
+            mouse_down_type is not None
+            and mouse_up_type is not None
+            and button_field is not None
+        )
+        if self._needs_mouse and not mouse_ready:
+            log.warning(
+                "Mouse-button shortcuts are unavailable on this system (the "
+                "installed Quartz build exposes no mouse event constants) — "
+                "shortcuts that use a key combination still work, and voice "
+                "still works via the wake word."
+            )
+
         def _callback(_proxy, event_type, event, _refcon):
             try:
                 if event_type == Quartz.kCGEventKeyDown:
@@ -231,6 +287,14 @@ class QuartzHotkeyBackend:
                     self._handle_key_up(int(keycode))
                 elif event_type == Quartz.kCGEventFlagsChanged:
                     self._handle_flags(int(Quartz.CGEventGetFlags(event)))
+                elif mouse_ready and event_type == mouse_down_type:
+                    self._handle_mouse_down(
+                        int(Quartz.CGEventGetIntegerValueField(event, button_field))
+                    )
+                elif mouse_ready and event_type == mouse_up_type:
+                    self._handle_mouse_up(
+                        int(Quartz.CGEventGetIntegerValueField(event, button_field))
+                    )
                 elif event_type in (
                     Quartz.kCGEventTapDisabledByTimeout,
                     Quartz.kCGEventTapDisabledByUserInput,
@@ -248,6 +312,9 @@ class QuartzHotkeyBackend:
                 | Quartz.CGEventMaskBit(Quartz.kCGEventKeyUp)
                 | Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged)
             )
+            if self._needs_mouse and mouse_ready:
+                mask |= Quartz.CGEventMaskBit(mouse_down_type)
+                mask |= Quartz.CGEventMaskBit(mouse_up_type)
             tap = Quartz.CGEventTapCreate(
                 Quartz.kCGSessionEventTap,
                 Quartz.kCGHeadInsertEventTap,
@@ -381,6 +448,7 @@ class QuartzHotkeyBackend:
     def unregister(self) -> None:
         """Drop the armed bindings. The tap is torn down in ``stop``."""
         self._combos = []
+        self._needs_mouse = False
 
     def received_any_event(self) -> bool:
         """True once any bound chord has fired (AD-8 macOS permission hint)."""

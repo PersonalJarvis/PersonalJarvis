@@ -111,25 +111,10 @@ def test_validate_hotkey_accepts_safe_combos(combo):
     assert ok, f"{combo!r} should be valid, got: {reason}"
 
 
-@_pytest.mark.parametrize(
-    "combo",
-    [
-        "",                 # empty
-        "   ",              # blank
-        "ctrl+alt+shift",   # modifiers only — no real key
-        "j",                # single bare letter — fires on every keystroke
-        "5",                # single bare digit — fires while typing numbers
-        "space",            # typing key solo — fires on every space
-        "enter",            # typing key solo
-        "tab",              # typing key solo
-        "backspace",        # typing key solo
-        "numpad_5",         # numpad digit solo — fires while typing numbers
-        "win+j",            # Windows key reserved
-        "alt+f4",           # closes windows
-        "ctrl+c",           # copy / interrupt
-    ],
-)
-def test_validate_hotkey_rejects_unsafe_combos(combo):
+@_pytest.mark.parametrize("combo", ["", "   ", "+", " + "])
+def test_validate_hotkey_rejects_only_the_meaningless(combo):
+    """The ONLY hard refusal left (maintainer directive 2026-07-28): a combo
+    with no keys in it. Everything else the user asks for, the user gets."""
     from jarvis.trigger.hotkey import validate_hotkey
 
     ok, reason = validate_hotkey(combo)
@@ -137,29 +122,113 @@ def test_validate_hotkey_rejects_unsafe_combos(combo):
     assert reason, "a rejection must carry a user-facing reason"
 
 
+@_pytest.mark.parametrize(
+    ("combo", "caution_marker"),
+    [
+        # Was: "a combo of only Ctrl/Alt/Shift cannot be a trigger."
+        ("ctrl+alt+shift", "modifier keys only"),
+        ("ctrl+win", "modifier keys only"),
+        # Was: "This key fires while typing normal text."
+        ("j", "while you type"),
+        ("5", "while you type"),
+        ("space", "while you type"),
+        ("enter", "while you type"),
+        ("tab", "while you type"),
+        ("backspace", "while you type"),
+        ("numpad_5", "while you type"),
+        # Was: OS-critical refusals.
+        ("alt+f4", "Alt+F4"),
+        ("ctrl+c", "Ctrl+C"),
+        ("f12", "debugger"),
+    ],
+)
+def test_formerly_refused_combos_are_accepted_with_a_caution(combo, caution_marker):
+    """The refusals became a NON-BLOCKING warning channel: the combo saves, and
+    the UI can tell the user what it will cost them. A caution that is empty is
+    the real regression here — that would be silent acceptance."""
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    verdict = validate_hotkey(combo, platform="win32")
+    assert verdict.ok is True, f"{combo!r} must be selectable now"
+    assert caution_marker in verdict.caution, verdict.caution
+
+
+def test_the_verdict_still_unpacks_as_the_historical_pair():
+    """Every existing caller does ``ok, reason = validate_hotkey(...)``. A third
+    tuple element would have turned all of them into a ValueError."""
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    ok, reason = validate_hotkey("ctrl+win", platform="win32")
+    assert ok is True
+    assert reason == ""
+    ok, reason = validate_hotkey("")
+    assert ok is False
+    assert reason
+
+
+def test_a_clean_combo_carries_no_caution():
+    """Cautions must stay rare, or the UI trains the user to ignore them."""
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    verdict = validate_hotkey("ctrl+right_alt+j", platform="win32")
+    assert verdict.ok is True
+    assert verdict.cautions == ()
+    assert verdict.caution == ""
+
+
 def test_validate_hotkey_allows_ctrl_c_when_part_of_larger_combo():
     """Ctrl+C alone is the interrupt; Ctrl+Shift+C is a different, safe combo."""
     from jarvis.trigger.hotkey import validate_hotkey
 
-    ok, _ = validate_hotkey("ctrl+shift+c")
-    assert ok
+    verdict = validate_hotkey("ctrl+shift+c")
+    assert verdict.ok
+    assert verdict.cautions == ()
 
 
 @_pytest.mark.parametrize(
-    "combo",
-    ["super+d", "meta+d", "ctrl+super+space", "ctrl+meta+j", "shift+super+k"],
+    ("combo", "registers_as"),
+    [
+        ("super+d", {"window", "d"}),
+        ("meta+d", {"window", "d"}),
+        ("ctrl+super+space", {"control", "window", "space"}),
+        ("ctrl+meta+j", {"control", "window", "j"}),
+        ("shift+super+k", {"shift", "window", "k"}),
+    ],
 )
 @_pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
-def test_validate_hotkey_rejects_the_super_and_meta_aliases(combo, platform):
-    """The hole this closes: ``super``/``meta`` are the SAME physical key as
-    ``win``, but they were checked by neither the Windows rule nor the Command
-    rule. A combo using them passed validation and then registered a binding no
-    backend could ever match — armed, and permanently dead."""
-    from jarvis.trigger.hotkey import validate_hotkey
+def test_the_super_and_meta_aliases_normalize_to_a_key_that_fires(
+    combo, registers_as, platform
+):
+    """INVERTED from ``..._rejects_the_super_and_meta_aliases``.
 
-    ok, reason = validate_hotkey(combo, platform=platform)
-    assert not ok, f"{combo!r} should be rejected on {platform}"
-    assert "Super" in reason or "Windows" in reason
+    The bug that test recorded was real and must stay closed: ``super``/``meta``
+    are the SAME physical key as ``win``, and a combo using them was once armed
+    against a token no backend knew — armed, and permanently dead. Refusing them
+    was the wrong cure (the maintainer wants Ctrl+Win), so the guarantee moves
+    from "rejected" to "accepted AND actually reaches the key every backend
+    watches": the alias folds onto ``window``, which the Windows poller reads as
+    VK_LWIN/VK_RWIN, the Quartz tap decodes from the Command flag, and pynput
+    matches through its ``cmd`` aliases. Accepting them WITHOUT this assertion
+    would re-open the original bug."""
+    from jarvis.trigger.backends.pynput import _GENERIC_MODIFIER_ALIASES, _parse_combo_tokens
+    from jarvis.trigger.hotkey import normalized_combo_tokens, validate_hotkey
+
+    verdict = validate_hotkey(combo, platform=platform)
+    assert verdict.ok is True, f"{combo!r} must be selectable on {platform}"
+
+    # It normalizes onto the one token the backends share...
+    assert normalized_combo_tokens(combo) == registers_as
+    # ...and that token resolves to a real physical key in the pynput matcher
+    # rather than a literal string nothing can ever match.
+    tokens = _parse_combo_tokens(_normalize_for_test(combo))
+    assert "cmd" in tokens
+    assert _GENERIC_MODIFIER_ALIASES["cmd"] == frozenset({"cmd", "cmd_l", "cmd_r"})
+
+
+def _normalize_for_test(combo: str) -> str:
+    from jarvis.trigger.hotkey import _normalize_combo
+
+    return _normalize_combo(combo)
 
 
 def test_legacy_super_combos_still_normalize_to_a_real_key():

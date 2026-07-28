@@ -30,6 +30,31 @@ import threading
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Mouse buttons as shortcut keys (maintainer directive 2026-07-28).
+#
+# These three tokens are the shared vocabulary for EVERY backend — the Windows
+# poller, the macOS event tap and the Linux pynput listener all translate them
+# to their own primitive. They live here because this module already owns the
+# canonical combo vocabulary (``_KEY_MAP`` / ``_normalize_combo``); one
+# definition, three consumers, no hand-mirrored copy to drift (AP-4).
+#
+# Left and right button are deliberately NOT offered. Their meaning follows the
+# system "swap mouse buttons" setting, so a shortcut recorded as "left" would
+# fire on the physical right button for a left-handed user — and binding the
+# primary click globally makes the machine unusable in the first place.
+# ---------------------------------------------------------------------------
+MOUSE_BUTTON_TOKENS = frozenset({"mouse_middle", "mouse_x1", "mouse_x2"})
+
+# Friendlier spellings a hand-written jarvis.toml may use. X1/X2 are what the
+# hardware calls the two side buttons; Back/Forward is what they do in a
+# browser.
+_MOUSE_ALIASES = {
+    "mouse_back": "mouse_x1",
+    "mouse_forward": "mouse_x2",
+    "middle_mouse": "mouse_middle",
+}
+
 # Map jarvis.toml combo syntax -> global-hotkeys syntax. global-hotkeys only
 # knows the generic "alt"/"control" — no left/right distinction except for
 # "right_control" — so we fold right_alt/left_alt onto "alt".
@@ -41,14 +66,37 @@ _KEY_MAP = {
     "altgr": "alt",
     "win": "window",
     # Same physical key, other names: X11 and most Linux desktops call it
-    # Super, some configs spell it Meta. ``validate_hotkey`` refuses new
-    # bindings that use them, but a jarvis.toml written before that rule
-    # existed may still carry one — folding them here means such a config
-    # normalizes to a real token instead of arming a combo that never fires.
+    # Super, some configs spell it Meta. Folding them here means a config that
+    # spells the key either way normalizes to the one token every backend
+    # matches, instead of arming a combo that never fires.
     "super": "window",
     "meta": "window",
     "shift": "shift",
+    **_MOUSE_ALIASES,
 }
+
+# The Windows virtual-key codes for the three buttons, as the numeric tokens
+# ``global_hotkeys`` accepts (its ``_to_virtualkey`` parses a hex string when the
+# name is not one of its own, and its matcher's only primitive is
+# ``GetAsyncKeyState``, which reports mouse buttons). Applied at the library
+# boundary only — everything above it keeps the readable token, so a log line
+# and a jarvis.toml stay legible on every OS.
+_MOUSE_TOKEN_TO_VK = {
+    "mouse_middle": "0x04",  # VK_MBUTTON
+    "mouse_x1": "0x05",      # VK_XBUTTON1 (Back)
+    "mouse_x2": "0x06",      # VK_XBUTTON2 (Forward)
+}
+
+
+def _canonical_token(token: str) -> str:
+    """Fold an alias spelling onto its canonical token (``mouse_back`` -> x1)."""
+    return _MOUSE_ALIASES.get(token, token)
+
+
+def _to_library_combo(normalized: str) -> str:
+    """Swap the friendly mouse tokens for the numeric VK the library wants."""
+    parts = [p.strip() for p in normalized.split("+") if p.strip()]
+    return " + ".join(_MOUSE_TOKEN_TO_VK.get(p, p) for p in parts)
 
 # --------------------------------------------------------------------------
 # Module-level single-checker guard.
@@ -133,6 +181,12 @@ class GlobalHotkeysBackend:
             self._gh = None
             return
 
+        # The rows arrive with the shared vocabulary (``mouse_x2``); the library
+        # speaks virtual-key numbers for the mouse. Translate ONCE here, and use
+        # the translated strings for registration AND removal — the two must be
+        # byte-identical or ``remove_hotkeys`` leaves a stale registration that
+        # bricks the next re-entry.
+        bindings = [[_to_library_combo(row[0]), *row[1:]] for row in bindings]
         combo_strings = [row[0] for row in bindings]
 
         # Idempotent (re-)registration. A previous lifecycle in this process
@@ -231,9 +285,12 @@ class GlobalHotkeysBackend:
 
 
 __all__ = [
+    "MOUSE_BUTTON_TOKENS",
     "GlobalHotkeysBackend",
     "_KEY_MAP",
+    "_canonical_token",
     "_normalize_combo",
+    "_to_library_combo",
     "_start_checker_once",
     "_stop_checker_once",
     "_reset_checker_state_for_tests",

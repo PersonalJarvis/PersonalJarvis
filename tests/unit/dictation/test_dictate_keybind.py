@@ -58,22 +58,28 @@ def test_the_shipped_dictation_combos_validate_everywhere(platform: str) -> None
 
 
 @pytest.mark.parametrize("combo", ["cmd+c", "cmd+v", "cmd+q", "cmd+w", "cmd+space"])
-def test_macos_system_shortcuts_are_refused(combo: str) -> None:
-    ok, reason = validate_hotkey(combo, platform="darwin")
-    assert ok is False
-    assert "macOS" in reason
+def test_macos_system_shortcuts_are_cautioned_not_refused(combo: str) -> None:
+    """INVERTED 2026-07-28: any combination is selectable. Losing Cmd+Q to a
+    shortcut is the user's call to make — but they get told first."""
+    verdict = validate_hotkey(combo, platform="darwin")
+    assert verdict.ok is True
+    assert "macOS" in verdict.caution
+    assert "still receives it" in verdict.caution
 
 
 @pytest.mark.parametrize("combo", ["cmd+d", "cmd+shift+d", "cmd+alt+space"])
 def test_usable_command_chords_are_accepted_on_macos(combo: str) -> None:
-    ok, reason = validate_hotkey(combo, platform="darwin")
-    assert ok is True, reason
+    verdict = validate_hotkey(combo, platform="darwin")
+    assert verdict.ok is True, verdict.reason
+    assert verdict.cautions == ()
 
 
-def test_command_chord_is_refused_where_there_is_no_command_key() -> None:
-    ok, reason = validate_hotkey("cmd+d", platform="win32")
-    assert ok is False
-    assert "Command key" in reason
+def test_command_chord_is_cautioned_where_there_is_no_command_key() -> None:
+    """A config that travels from a Mac keeps its Cmd shortcut instead of being
+    rewritten; the PC it lands on says honestly that the key does not exist."""
+    verdict = validate_hotkey("cmd+d", platform="win32")
+    assert verdict.ok is True
+    assert "no Command key" in verdict.caution
 
 
 # --------------------------------------------------------------------------
@@ -81,29 +87,46 @@ def test_command_chord_is_refused_where_there_is_no_command_key() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_f12_is_refused_as_reserved() -> None:
-    ok, reason = validate_hotkey("f12", platform="win32")
-    assert ok is False
-    assert "reserved" in reason.lower()
+def test_f12_carries_a_caution_instead_of_a_refusal() -> None:
+    verdict = validate_hotkey("f12", platform="win32")
+    assert verdict.ok is True
+    assert "debugger" in verdict.caution
 
 
 @pytest.mark.parametrize(
-    ("combo", "expected"),
+    ("combo", "expected_ok", "expect_caution"),
     [
-        ("ctrl+alt+d", True),
-        ("f5", True),
-        ("f3+f4", True),
-        ("win+d", False),
-        ("alt+f4", False),
-        ("ctrl+c", False),
-        ("j", False),
-        ("ctrl", False),
-        ("", False),
+        ("ctrl+alt+d", True, False),
+        ("f5", True, False),
+        ("f3+f4", True, False),
+        # INVERTED 2026-07-28 — these five used to be refusals. The maintainer
+        # asked for ANY key combination, explicitly including Ctrl+Win; the
+        # honest cost of each is now a caution the UI shows, not a wall.
+        ("win+d", True, True),
+        ("ctrl+win", True, True),
+        ("alt+f4", True, True),
+        ("ctrl+c", True, True),
+        ("j", True, True),
+        ("ctrl", True, True),
+        # The one thing that still means nothing at all.
+        ("", False, False),
     ],
 )
-def test_existing_rules_are_unchanged(combo: str, expected: bool) -> None:
-    ok, _reason = validate_hotkey(combo, platform="win32")
-    assert ok is expected
+def test_only_an_empty_combo_is_refused(
+    combo: str, expected_ok: bool, expect_caution: bool
+) -> None:
+    verdict = validate_hotkey(combo, platform="win32")
+    assert verdict.ok is expected_ok
+    assert bool(verdict.cautions) is expect_caution, verdict.caution
+
+
+def test_win_d_is_accepted_but_names_what_it_costs() -> None:
+    """``win+d`` shows the desktop on Windows. Jarvis still SEES the press (the
+    backend polls key state rather than registering a system hot key), so the
+    honest statement is 'you get both', not 'you cannot have this'."""
+    verdict = validate_hotkey("win+d", platform="win32")
+    assert verdict.ok is True
+    assert verdict.caution
 
 
 # --------------------------------------------------------------------------
