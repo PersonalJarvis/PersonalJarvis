@@ -365,6 +365,11 @@ KIMI_CURRENT = "kimi-code"
 KIMI_LEGACY = "kimi-cli"
 
 
+#: The npm package that IS the current generation. Its presence on the resolved
+#: binary path is the only positive, subprocess-free proof of which one runs.
+_KIMI_CURRENT_PACKAGE = "kimi-code"
+
+
 def kimi_generation() -> str | None:
     """Which Kimi is installed: the current CLI, the wound-down one, or unknown.
 
@@ -376,13 +381,48 @@ def kimi_generation() -> str | None:
     therefore not polish: it is the difference between resuming a conversation
     and opening a stranger's.
 
-    Decided on the data directory, which is the thing that actually differs and
-    the one signal that costs no subprocess. ``None`` means neither has been run
-    yet on this machine — a fresh install, where the honest answer is "whatever
-    the installer just put there", and the caller falls back to the current
-    generation's behaviour because that is what a fresh install gets.
+    **The BINARY decides, not the data directory**, and that order was learned
+    the hard way. Deciding on the data directory looks cheaper and is wrong for
+    the single most likely state a machine is in: someone upgrades, so the new
+    binary is on PATH — but its data root does not exist until the first run,
+    while the old generation's root is still lying there from before. A
+    directory-first probe reports the WOUND-DOWN generation on a machine that
+    can no longer run it, and every pane then reads the wrong history and offers
+    to resume conversations belonging to a CLI that is gone. Measured on the
+    maintainer's own box the moment the upgrade landed.
+
+    So: the resolved binary path first (an npm install carries the package name
+    in it, which is positive proof and costs no subprocess), then the data roots
+    as a fallback for an install laid out some other way. ``None`` means nothing
+    on this machine says either way, and the caller reads no history at all
+    rather than guessing at one.
     """
+    import shutil
     from pathlib import Path
+
+    try:
+        from jarvis.core.path_augment import ensure_cli_paths
+
+        ensure_cli_paths()
+    except Exception:  # noqa: BLE001, S110 - PATH augmentation is best-effort
+        pass
+    binary = shutil.which("kimi")
+    if binary:
+        try:
+            resolved = Path(binary).resolve()
+        except OSError:
+            resolved = Path(binary)
+        # The shim itself is just "kimi", so the package name shows up either in
+        # the resolved path (a POSIX symlink into the package) or in a sibling
+        # node_modules tree (the Windows .cmd shim, which stays where it is).
+        parts = {part.lower() for part in resolved.parts}
+        if _KIMI_CURRENT_PACKAGE in parts:
+            return KIMI_CURRENT
+        package = (
+            resolved.parent / "node_modules" / "@moonshot-ai" / _KIMI_CURRENT_PACKAGE
+        )
+        if package.is_dir():
+            return KIMI_CURRENT
 
     home = Path.home()
     if (home / ".kimi-code").is_dir():
@@ -524,6 +564,15 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # to an installed binary reads as a broken install.
         version_regex=_LOOSE_SEMVER_RE,
         needs_trust=False,
+        # The npm install puts a .cmd shim on PATH that runs node against the
+        # package's own entrypoint; going straight there keeps the pane's own
+        # process the agent rather than a cmd wrapper around it.
+        win_shim=WinShim(
+            relative_path=(
+                "node_modules", "@moonshot-ai", "kimi-code", "dist", "main.mjs",
+            ),
+            kind="node",
+        ),
         # Its update preflight can check, install and PROMPT mid-session.
         spawn_env=(("KIMI_CODE_NO_AUTO_UPDATE", "1"),),
         # DELIBERATELY no AccountSpec — several seats of this CLI are not

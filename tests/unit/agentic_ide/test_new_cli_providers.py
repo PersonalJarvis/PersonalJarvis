@@ -240,16 +240,57 @@ def test_kimi_folder_key_is_derived_from_the_native_path(tmp_path: Path) -> None
     assert agent_sessions._kimi_folder_key(str(tmp_path)) == expected
 
 
-def test_the_kimi_generation_probe_reads_the_data_root(
+def test_the_kimi_generation_probe_falls_back_to_the_data_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Two generations, one binary name — and the wrong flags on the wrong one."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr("shutil.which", lambda _name: None)
     assert workspace_agents.kimi_generation() is None
     (tmp_path / ".kimi").mkdir()
     assert workspace_agents.kimi_generation() == workspace_agents.KIMI_LEGACY
     (tmp_path / ".kimi-code").mkdir()
     assert workspace_agents.kimi_generation() == workspace_agents.KIMI_CURRENT
+
+
+def test_the_installed_binary_outranks_a_leftover_data_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The state a machine is actually in right after someone upgrades.
+
+    The new binary is on PATH, its data root does not exist yet (nothing has
+    run), and the OLD generation's root is still lying there from before. A
+    probe that reads directories first answers "wound-down generation" on a
+    machine that can no longer run it — and every pane then reads the wrong
+    history and offers to resume conversations belonging to a CLI that is gone.
+    Reproduced on the maintainer's own box the moment the upgrade landed.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / ".kimi").mkdir()  # left behind by the previous generation
+    assert not (tmp_path / ".kimi-code").exists()
+
+    # The Windows shape: a .cmd shim beside the package it launches.
+    shim_dir = tmp_path / "npm"
+    package = shim_dir / "node_modules" / "@moonshot-ai" / "kimi-code"
+    package.mkdir(parents=True)
+    shim = shim_dir / "kimi.cmd"
+    shim.write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr("shutil.which", lambda _name: str(shim))
+    assert workspace_agents.kimi_generation() == workspace_agents.KIMI_CURRENT
+
+    # The POSIX shape: the package name is in the resolved path itself.
+    posix_bin = package / "dist" / "main.mjs"
+    posix_bin.parent.mkdir(parents=True)
+    posix_bin.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    monkeypatch.setattr("shutil.which", lambda _name: str(posix_bin))
+    assert workspace_agents.kimi_generation() == workspace_agents.KIMI_CURRENT
+
+    # And a binary that says nothing either way still lets the roots decide.
+    stray = tmp_path / "elsewhere" / "kimi"
+    stray.parent.mkdir()
+    stray.write_text("", encoding="utf-8")
+    monkeypatch.setattr("shutil.which", lambda _name: str(stray))
+    assert workspace_agents.kimi_generation() == workspace_agents.KIMI_LEGACY
 
 
 # ------------------------------------------------------------------- GLM
