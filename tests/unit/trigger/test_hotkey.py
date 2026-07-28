@@ -145,6 +145,41 @@ def test_validate_hotkey_allows_ctrl_c_when_part_of_larger_combo():
     assert ok
 
 
+@_pytest.mark.parametrize(
+    "combo",
+    ["super+d", "meta+d", "ctrl+super+space", "ctrl+meta+j", "shift+super+k"],
+)
+@_pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_validate_hotkey_rejects_the_super_and_meta_aliases(combo, platform):
+    """The hole this closes: ``super``/``meta`` are the SAME physical key as
+    ``win``, but they were checked by neither the Windows rule nor the Command
+    rule. A combo using them passed validation and then registered a binding no
+    backend could ever match — armed, and permanently dead."""
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    ok, reason = validate_hotkey(combo, platform=platform)
+    assert not ok, f"{combo!r} should be rejected on {platform}"
+    assert "Super" in reason or "Windows" in reason
+
+
+def test_legacy_super_combos_still_normalize_to_a_real_key():
+    """A jarvis.toml written before the rule above must not arm a token no
+    backend understands: super/meta fold to the same key ``win`` does."""
+    from jarvis.trigger.hotkey import _normalize_combo
+
+    assert _normalize_combo("ctrl+super+space") == "control + window + space"
+    assert _normalize_combo("ctrl+meta+space") == "control + window + space"
+    assert _normalize_combo("ctrl+win+space") == "control + window + space"
+
+
+def test_command_chords_stay_valid_on_macos():
+    """Closing the Super hole must not take macOS Command with it."""
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    ok, reason = validate_hotkey("cmd+d", platform="darwin")
+    assert ok, reason
+
+
 # ----------------------------------------------------------------------
 # Registration
 # ----------------------------------------------------------------------

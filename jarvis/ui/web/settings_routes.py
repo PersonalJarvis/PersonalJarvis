@@ -1247,20 +1247,52 @@ async def wake_mic_level(request: Request) -> dict[str, object]:
     }
 
 
-# Curated safe combos for the voice-keybind UI quick-picks. They avoid
-# OS-critical shortcuts and work across the supported desktop platforms.
+# Curated safe combos for the voice-keybind UI quick-picks. Every entry passes
+# ``validate_hotkey`` on win32, darwin AND linux, and avoids the OS-critical
+# chords. ``f3+f4`` used to be in this list and was removed: it is the shipped
+# Call combo, so it collided with an existing binding every single time and the
+# quick-pick could never be saved.
 _KEYBIND_SUGGESTIONS = [
     "ctrl+right_alt+j",
     "ctrl+right_alt+k",
     "ctrl+right_alt+space",
     "ctrl+shift+space",
-    "f3+f4",
+    "ctrl+shift+d",
+    "ctrl+shift+j",
+    "ctrl+alt+d",
 ]
 
 
+def _combo_keys(combo: str) -> set[str]:
+    """The key SET of a combo — the unit the collision rule compares."""
+    return {p.strip() for p in str(combo or "").strip().lower().split("+") if p.strip()}
+
+
+def _available_suggestions(bound: dict[str, str]) -> list[str]:
+    """Quick-picks minus everything that would be rejected on save.
+
+    The collision rule refuses a combo whose key set is a subset or superset of
+    another action's. Offering such a chord as a one-click suggestion is a
+    guaranteed 400 the moment the user clicks it, so it is filtered out here
+    instead — the server owns the rule, so the server owns the list.
+    """
+    taken = [_combo_keys(c) for c in bound.values() if c and c.strip()]
+    out: list[str] = []
+    for suggestion in _KEYBIND_SUGGESTIONS:
+        keys = _combo_keys(suggestion)
+        if any(keys <= other or other <= keys for other in taken):
+            continue
+        out.append(suggestion)
+    return out
+
+
 # ---------------------------------------------------------------------------
-# Voice keybinds (editable): Call / Hangup. GET both actions plus defaults;
-# PUT one action at a time. Persisted to jarvis.toml [trigger] AND live-applied
+# Voice keybinds (editable): every action in config_writer.KEYBIND_ACTIONS —
+# Call, Hangup, push-to-talk dictation and hands-free dictation. GET returns all
+# of them plus their defaults; PUT changes one action at a time. The action list
+# is never restated here; it is read from KEYBIND_ACTIONS / KEYBIND_TOML_KEY so
+# a new action reaches this route, the CLI and the UI in one edit.
+# Persisted to jarvis.toml [trigger] AND live-applied
 # to the running voice pipeline (set_keybinds → HotkeyTrigger.rearm), so a
 # change takes effect immediately without a restart; a headless/down pipeline
 # falls back to "applies on next start".
@@ -1281,7 +1313,11 @@ def _keybind_values(trig: object) -> dict[str, str]:
 
 
 class KeybindBody(BaseModel):
-    action: str = Field(..., description="call | hangup | dictate")
+    action: str = Field(
+        ...,
+        description="One of config_writer.KEYBIND_ACTIONS "
+        "(call | hangup | dictate | dictate_toggle)",
+    )
     hotkey: str = Field(..., max_length=64)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
@@ -1289,6 +1325,7 @@ class KeybindBody(BaseModel):
 @router.get("/keybinds")
 async def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
+    from jarvis.core.config_writer import KEYBIND_TOML_KEY
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1297,15 +1334,17 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     # (headless / not yet started). With a running pipeline, saves apply live.
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
+    current = _keybind_values(trig)
     return {
-        "keybinds": _keybind_values(trig),
+        "keybinds": current,
+        # DERIVED, never a hand-written dict. A literal map here is the AP-4
+        # trap in its purest form: a new action lands in KEYBIND_ACTIONS, the
+        # UI renders its row, and the row's "reset to default" reads undefined
+        # because one of the four layers was never told.
         "defaults": {
-            "call": d.hotkey_call,
-            "hangup": d.hotkey_hangup,
-            # Dictation ships unbound on purpose — see TriggerConfig.hotkey_dictate.
-            "dictate": d.hotkey_dictate,
+            action: str(getattr(d, field, "")) for action, field in KEYBIND_TOML_KEY.items()
         },
-        "suggestions": list(_KEYBIND_SUGGESTIONS),
+        "suggestions": _available_suggestions(current),
         "restart_required": restart_required,
     }
 

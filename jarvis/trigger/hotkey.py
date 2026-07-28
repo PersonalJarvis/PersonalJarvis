@@ -167,8 +167,18 @@ def validate_hotkey(combo: str, *, platform: str | None = None) -> tuple[bool, s
             "second key. (Function keys and navigation keys like F5 or Arrow Up "
             "can be used on their own.)"
         )
-    if any(p in ("win", "window") for p in modifiers):
-        return False, "Windows-key combos are reserved by the OS — pick Ctrl/Alt/Shift."
+    # ``super`` / ``meta`` are the same physical key as ``win`` under different
+    # names (X11 and most Linux desktops call it Super, pynput reports it as
+    # ``cmd``). Before they were listed here, ``ctrl+super+space`` passed
+    # validation and then registered a binding that could never fire: neither
+    # ``global_hotkeys._KEY_MAP`` nor ``pynput._MODIFIER_TO_KEY_ATTR`` knew the
+    # token, so the combo was armed and silently dead. Rejecting it is the
+    # honest answer — the OS owns that key on all three platforms.
+    if any(p in ("win", "window", "super", "meta") for p in modifiers):
+        return False, (
+            "Windows / Super key combos are reserved by the OS — pick "
+            "Ctrl/Alt/Shift."
+        )
 
     reserved = sorted(set(non_modifiers) & _RESERVED_SOLO_KEYS)
     if reserved:
@@ -179,6 +189,9 @@ def validate_hotkey(combo: str, *, platform: str | None = None) -> tuple[bool, s
 
     _CTRL = ("ctrl", "control", "right_ctrl", "right_control")
     _ALT = ("alt", "right_alt", "left_alt", "altgr")
+    # ``meta``/``super`` are listed for completeness only — the Windows/Super
+    # rule above already rejected any combo containing them, so they can never
+    # reach this branch. macOS Command is spelled ``cmd``/``command``.
     _CMD = ("cmd", "command", "meta", "super")
     alt_held = any(p in _ALT for p in modifiers)
     # "X-only" means X-family modifiers and nothing else — so the exact OS

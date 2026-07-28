@@ -570,17 +570,21 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup", "dictate")
+KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
-    # Dictation mode: hold (or toggle) to speak, the transcript is inserted into
-    # whatever text field has focus. Ships UNBOUND — there is no combination
-    # that is free on every machine, so the user picks one (setup wizard or
-    # Settings). An empty value means "dictation has no shortcut", which is a
-    # valid state, not a broken one: the bar, the UI and `jarvis api dictation
-    # start` all still work (and are the documented Wayland path).
+    # Push-to-talk dictation: HOLD to speak, release to insert the transcript
+    # into whatever text field has focus. Ships bound to a curated combo (see
+    # TriggerConfig.hotkey_dictate for the reasoning and the collision proof).
+    # An empty value means "dictation has no shortcut", which stays a valid
+    # state, not a broken one: the bar, the UI and `jarvis api dictation start`
+    # all still work (and are the documented Wayland path).
     "dictate": "hotkey_dictate",
+    # Hands-free dictation: press once to start, press again to stop. A
+    # separate action rather than a mode flag, so a user can arm a hold key and
+    # a toggle key at the same time.
+    "dictate_toggle": "hotkey_dictate_toggle",
 }
 
 
@@ -620,6 +624,10 @@ DICTATION_SETTING_KEYS = (
     "history_enabled",
     "history_max_entries",
     "history_retention_days",
+    "language",
+    "keep_failed_audio",
+    "audio_retention_days",
+    "audio_max_files",
 )
 
 

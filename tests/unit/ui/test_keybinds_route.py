@@ -1,4 +1,10 @@
-"""GET/PUT /api/settings/keybinds — editable Call/Hangup keybinds."""
+"""GET/PUT /api/settings/keybinds — the editable voice keybinds.
+
+The exact-dict assertions below are a deliberate tripwire, not an oversight: a
+keybind action that reaches ``KEYBIND_ACTIONS`` but not this route is the AP-4
+drift class (the UI renders a row whose value and default are both undefined).
+Extend them when an action is added; never relax them to a subset check.
+"""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -6,6 +12,9 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.core.config import TriggerConfig
+from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
+from jarvis.trigger.hotkey import validate_hotkey
 from jarvis.ui.web.settings_routes import router
 
 
@@ -23,23 +32,134 @@ def _client(**trig) -> TestClient:
     return TestClient(app)
 
 
-def test_get_returns_call_and_hangup_plus_defaults() -> None:
+def test_get_returns_every_action_plus_defaults() -> None:
     body = _client().get("/api/settings/keybinds").json()
+    # The namespace above carries no dictation fields, so both dictation values
+    # fall back to the TriggerConfig defaults — which is exactly the fresh
+    # install a downloader gets.
     assert body["keybinds"] == {
         "call": "f3+f4",
         "hangup": "f1+f2",
-        # Dictation ships UNBOUND on purpose: no combination is free on every
-        # machine, so the user assigns one (TriggerConfig.hotkey_dictate).
-        "dictate": "",
+        "dictate": "ctrl+right_alt+j",
+        "dictate_toggle": "ctrl+right_alt+space",
     }
     assert body["defaults"] == {
         "call": "f3+f4",
         "hangup": "f1+f2",
-        "dictate": "",
+        "dictate": "ctrl+right_alt+j",
+        "dictate_toggle": "ctrl+right_alt+space",
     }
     assert "push_to_talk" not in body
     assert body["restart_required"] is True
     assert len(body["suggestions"]) >= 3
+
+
+def test_get_covers_exactly_the_registered_actions() -> None:
+    """No action may exist in the registry without a value AND a default."""
+    body = _client().get("/api/settings/keybinds").json()
+    assert set(body["keybinds"]) == set(KEYBIND_ACTIONS)
+    assert set(body["defaults"]) == set(KEYBIND_ACTIONS)
+
+
+def test_defaults_are_derived_from_the_config_model() -> None:
+    """A hardcoded defaults dict is the AP-4 trap this route used to carry."""
+    body = _client().get("/api/settings/keybinds").json()
+    model = TriggerConfig()
+    assert body["defaults"] == {
+        action: getattr(model, field) for action, field in KEYBIND_TOML_KEY.items()
+    }
+
+
+def test_shipped_defaults_are_valid_on_every_supported_platform() -> None:
+    """A default that fails validation is a shortcut nobody can re-save."""
+    model = TriggerConfig()
+    for field in KEYBIND_TOML_KEY.values():
+        combo = getattr(model, field)
+        if not combo:
+            continue
+        for platform in ("win32", "darwin", "linux"):
+            ok, reason = validate_hotkey(combo, platform=platform)
+            assert ok is True, f"{field}={combo} rejected on {platform}: {reason}"
+
+
+def test_shipped_defaults_do_not_collide_with_each_other() -> None:
+    """The polling backend matches subsets, so any subset/superset pair fires
+    two actions at once. All four shipped combos must be mutually disjoint."""
+    model = TriggerConfig()
+    sets = {
+        action: {p for p in getattr(model, field).split("+") if p}
+        for action, field in KEYBIND_TOML_KEY.items()
+        if getattr(model, field)
+    }
+    for left, left_keys in sets.items():
+        for right, right_keys in sets.items():
+            if left >= right:
+                continue
+            assert not (left_keys <= right_keys or right_keys <= left_keys), (
+                f"{left} and {right} overlap"
+            )
+
+
+def test_suggestions_exclude_combos_that_would_be_rejected() -> None:
+    """A quick-pick that collides with a bound action is a guaranteed 400."""
+    body = _client().get("/api/settings/keybinds").json()
+    bound = [
+        {p for p in combo.split("+") if p}
+        for combo in body["keybinds"].values()
+        if combo
+    ]
+    for suggestion in body["suggestions"]:
+        keys = {p for p in suggestion.split("+") if p}
+        assert not any(keys <= other or other <= keys for other in bound), suggestion
+
+
+def test_suggestions_are_valid_on_every_supported_platform() -> None:
+    from jarvis.ui.web.settings_routes import _KEYBIND_SUGGESTIONS
+
+    assert len(_KEYBIND_SUGGESTIONS) >= 6
+    for suggestion in _KEYBIND_SUGGESTIONS:
+        for platform in ("win32", "darwin", "linux"):
+            ok, reason = validate_hotkey(suggestion, platform=platform)
+            assert ok is True, f"{suggestion} rejected on {platform}: {reason}"
+
+
+def test_put_dictate_toggle_is_accepted() -> None:
+    body = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "dictate_toggle", "hotkey": "CTRL+SHIFT+D", "persist": False},
+    ).json()
+    assert body["ok"] is True
+    assert body["action"] == "dictate_toggle"
+    assert body["hotkey"] == "ctrl+shift+d"
+
+
+def test_put_dictate_toggle_live_applies_under_its_action_name() -> None:
+    """The pipeline kwarg must be spelled exactly like the action, or a
+    successful save silently re-arms nothing."""
+    calls: list[dict] = []
+
+    class _FakePipeline:
+        def set_keybinds(self, **kw):  # noqa: ANN003
+            calls.append(kw)
+
+    client = _client()
+    client.app.state.speech_pipeline = _FakePipeline()
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "dictate_toggle", "hotkey": "ctrl+shift+d", "persist": False},
+    )
+    assert resp.json()["applied_live"] is True
+    assert calls == [{"dictate_toggle": ["ctrl+shift+d"]}]
+
+
+def test_put_rejects_a_dictation_combo_that_collides_with_the_other_one() -> None:
+    """Both dictation rows are bound by default, so they must guard each other."""
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "dictate", "hotkey": "ctrl+right_alt+space", "persist": False},
+    )
+    assert resp.status_code == 400
+    assert "dictate_toggle" in resp.json()["detail"]
 
 
 def test_retired_ptt_hotkey_route_is_not_mounted() -> None:

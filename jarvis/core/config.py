@@ -333,19 +333,28 @@ class TriggerConfig(BaseModel):
     # Hangup key. Was hardcoded ("f1+f2",) at the SpeechPipeline call sites; now
     # user-editable via /api/settings/keybinds. Read directly at bootstrap.
     hotkey_hangup: str = "f1+f2"
-    # Dictation key: hold (or toggle, see [dictation].mode) to speak; the
-    # transcript is inserted into whatever text field currently has focus.
+    # Push-to-talk dictation key: HOLD to speak, release to insert. The
+    # transcript lands in whatever text field currently has focus.
     #
-    # Deliberately EMPTY by default. There is no combination that is free on
-    # every machine and every OS — the well-known ones are refused by
-    # ``validate_hotkey`` (Windows key, Ctrl+C, Alt+F4, the macOS Command
-    # shortcuts), and silently claiming a chord the user needs elsewhere is the
-    # worse failure. The setup wizard and Settings → Keybinds ask for it.
-    # Unbound is a valid, fully usable state: dictation still starts from the
-    # bar, from the UI, and from ``jarvis api dictation start`` — the last of
-    # which is the documented Wayland path, where the compositor (not the app)
-    # owns global shortcuts.
-    hotkey_dictate: str = ""
+    # Ships BOUND (maintainer directive 2026-07-28). Dictation shipped unbound
+    # for a while on the theory that no chord is free on every machine; the
+    # result was a headline feature that did nothing on a fresh install unless
+    # the user happened to open the Shortcuts tab. The two combos below are
+    # curated instead: both pass ``validate_hotkey`` on win32, darwin AND linux,
+    # neither is an OS-reserved chord, and their key sets are neither subsets
+    # nor supersets of each other or of Call (``f3+f4``) / Hangup (``f1+f2``),
+    # so the keybind collision rule accepts all four at once. Clearing a row in
+    # the Voice → Shortcuts tab is one click, and an empty value remains a
+    # fully valid state: dictation still starts from the bar, from the UI, and
+    # from ``jarvis api dictation start`` — the last of which is the documented
+    # Wayland path, where the compositor (not the app) owns global shortcuts.
+    hotkey_dictate: str = "ctrl+right_alt+j"
+    # Hands-free dictation key: press once to start, press again to stop. Its
+    # own action (not ``[dictation].mode``) so a user can have BOTH a hold key
+    # and a toggle key armed at the same time; ``[dictation].mode = "toggle"``
+    # stays honoured for installs that configured it, and only changes how
+    # ``hotkey_dictate`` behaves.
+    hotkey_dictate_toggle: str = "ctrl+right_alt+space"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -2464,6 +2473,14 @@ class SpeechConfig(BaseModel):
     vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
 
 
+#: The values ``[dictation].language`` accepts. ``auto`` (detect per utterance)
+#: plus every supported product locale — they are equal, never a German- or
+#: English-first list (CLAUDE.md §1, runtime output language). The REST layer's
+#: ``choices.language`` and the frontend's ``DictationLanguage`` union mirror
+#: this tuple; adding a locale means adding it here first.
+DICTATION_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+
+
 class DictationConfig(BaseModel):
     """Dictation mode: speak into whatever text field currently has focus.
 
@@ -2544,6 +2561,43 @@ class DictationConfig(BaseModel):
     history_enabled: bool = True
     history_max_entries: int = Field(default=200, ge=0, le=5000)
     history_retention_days: int = Field(default=30, ge=0, le=3650)
+
+    #: Which language the dictation transcription is pinned to. ``auto`` (the
+    #: default, and the right answer for almost everyone) lets the provider
+    #: detect it per utterance. Pinning helps only when the provider keeps
+    #: guessing wrong; on a model that was not trained for the pinned language
+    #: it makes recognition WORSE, so the UI says so out loud.
+    #:
+    #: Deliberately independent of ``[stt].language`` (the voice-turn language)
+    #: and ``[wake].language`` — dictating in one language while talking to the
+    #: assistant in another is a normal thing to want.
+    language: str = "auto"
+
+    #: Keep the raw audio of a dictation that produced nothing usable
+    #: (``failed`` / ``cancelled`` / ``empty``) so the Restore button can
+    #: transcribe it again. NEVER kept for a successful dictation: audio is the
+    #: most sensitive thing this application stores, so it is only ever written
+    #: when it buys back something the user actually lost. Local-only, capped by
+    #: the two keys below, deleted with the history entry and purged when the
+    #: history is cleared. Its own key, not a rider on ``history_enabled``, so
+    #: it can be turned off on its own.
+    keep_failed_audio: bool = True
+    #: Delete kept audio older than this many days. ``0`` disables the age cap.
+    audio_retention_days: int = Field(default=7, ge=0, le=365)
+    #: Keep at most this many audio files. ``0`` disables the count cap (the
+    #: age cap still applies); it does not mean "delete everything".
+    audio_max_files: int = Field(default=20, ge=0, le=1000)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _coerce_dictation_language(cls, value: object) -> str:
+        """Normalize only — an unknown value falls back to ``auto``.
+
+        A stale or hand-edited config must never fail validation (AP-16), and
+        ``auto`` is always a working answer.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in DICTATION_LANGUAGES else "auto"
 
 
 class MarketplaceConfig(BaseModel):

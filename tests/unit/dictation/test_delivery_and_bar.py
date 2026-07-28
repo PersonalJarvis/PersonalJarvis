@@ -10,6 +10,9 @@ a voice session.
 """
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from jarvis.core.config import DictationConfig
@@ -163,6 +166,240 @@ async def test_auto_target_is_resolved_at_DELIVERY_time(
     assert events[-1].outcome == "chat"
 
 
+# --------------------------------------------------------------------------
+# The failure signal — "the provider refused us" vs "you said nothing"
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_transcription_failure_is_reported_as_failed_not_empty() -> None:
+    """Before this, a provider 401 and plain silence produced the identical
+    ``empty`` outcome, so the one failure a user can actually fix was the one
+    the app never mentioned."""
+    pipe, events = _pipeline()
+    await pipe._finish_dictation(
+        raw_text="", language="", duration_s=1.0, target="insert", hung_up=False,
+        stt_error="AuthenticationError: 401 invalid api key",
+    )
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "failed"
+    assert "401" in (completed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_silence_without_an_error_is_still_empty() -> None:
+    pipe, events = _pipeline()
+    await pipe._finish_dictation(
+        raw_text="", language="en", duration_s=0.2, target="insert", hung_up=False,
+        stt_error=None,
+    )
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "empty"
+    assert completed.error is None
+
+
+@pytest.mark.asyncio
+async def test_a_hangup_outranks_a_late_transcription_error() -> None:
+    """The user cancelled; telling them it "failed" would be a lie."""
+    pipe, events = _pipeline()
+    await pipe._finish_dictation(
+        raw_text="", language="", duration_s=0.4, target="insert", hung_up=True,
+        stt_error="TimeoutError: provider timed out",
+    )
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_text_that_did_arrive_is_still_delivered_after_a_flaky_segment() -> None:
+    """One failed segment in an otherwise working dictation is not a failed
+    dictation — the words the user got must still reach their text field."""
+    inserted: list[str] = []
+    pipe, events = _pipeline()
+    pipe._insert_dictation = lambda text: inserted.append(text) or InsertResult(  # type: ignore[assignment]
+        status="inserted", detail="", clipboard_holds_text=False,
+        method="clipboard+ctrl_v",
+    )
+    await pipe._finish_dictation(
+        raw_text="the part that came through", language="en", duration_s=2.0,
+        target="insert", hung_up=False, stt_error="TimeoutError: one segment",
+    )
+    assert inserted == ["the part that came through"]
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "inserted"
+
+
+# --------------------------------------------------------------------------
+# The pinned dictation language
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_language_outranks_the_provider_guess() -> None:
+    """A provider that reports nothing (or the wrong thing) leaves the cleanup
+    with reason="no_rules" — no cleanup at all — despite an explicit pin."""
+    pipe, events = _pipeline(
+        DictationConfig(language="de", history_enabled=False)
+    )
+    text = await pipe._finish_dictation(
+        raw_text="Ähm, das ist äh wirklich gut.",  # i18n-allow: fixture (§1 #4)
+        language="",  # the provider could not tell
+        duration_s=3.0,
+        target="chat",
+        hung_up=False,
+    )
+    assert text == "Das ist wirklich gut."  # i18n-allow: German fixture under test (§1 list #4)
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.language == "de"
+
+
+@pytest.mark.asyncio
+async def test_auto_leaves_the_detected_language_alone() -> None:
+    pipe, events = _pipeline(DictationConfig(history_enabled=False))
+    await pipe._finish_dictation(
+        raw_text="hello there", language="en", duration_s=1.0,
+        target="chat", hung_up=False,
+    )
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.language == "en"
+
+
+# --------------------------------------------------------------------------
+# The audio sidecar — written only when it buys back something lost
+# --------------------------------------------------------------------------
+
+
+class _FakeHistory:
+    """Stands in for DictationHistory without touching the user's data dir."""
+
+    instances: list = []
+
+    def __init__(self, *_a, **_k) -> None:
+        self.added: list[dict] = []
+        self.updated: list[tuple[str, dict]] = []
+        _FakeHistory.instances.append(self)
+
+    @property
+    def audio_dir(self):
+        from pathlib import Path
+
+        return Path("audio-dir-sentinel")
+
+    def add(self, **fields):
+        self.added.append(fields)
+        return SimpleNamespace(id="entry-1")
+
+    def update(self, entry_id: str, **fields):
+        self.updated.append((entry_id, fields))
+        return SimpleNamespace(id=entry_id)
+
+
+@pytest.fixture
+def audio_spy(monkeypatch: pytest.MonkeyPatch):
+    """Capture every audio-sidecar call without writing a byte to disk."""
+    import jarvis.dictation.audio as audio_mod
+    import jarvis.dictation.history as history_mod
+
+    saved: list[tuple[str, int]] = []
+    pruned: list[dict] = []
+    _FakeHistory.instances.clear()
+
+    monkeypatch.setattr(history_mod, "DictationHistory", _FakeHistory)
+    monkeypatch.setattr(
+        audio_mod,
+        "save_dictation_audio",
+        lambda entry_id, pcm, **kw: (
+            saved.append((entry_id, len(pcm))) or Path("saved.wav")
+        ),
+    )
+    monkeypatch.setattr(
+        audio_mod, "prune_audio", lambda **kw: pruned.append(kw) or 0
+    )
+    return SimpleNamespace(saved=saved, pruned=pruned)
+
+
+@pytest.mark.asyncio
+async def test_failed_audio_is_kept_and_linked_to_its_entry(audio_spy) -> None:
+    pipe, _events = _pipeline(DictationConfig(keep_failed_audio=True))
+    await pipe._finish_dictation(
+        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
+        stt_error="AuthenticationError: 401", audio=b"\x01\x02" * 100,
+    )
+    assert audio_spy.saved == [("entry-1", 200)]
+    history = _FakeHistory.instances[-1]
+    assert history.updated == [("entry-1", {"audio_path": "saved.wav"})]
+    # Retention runs after the write, never before it.
+    assert audio_spy.pruned and audio_spy.pruned[0]["max_files"] == 20
+
+
+@pytest.mark.asyncio
+async def test_a_successful_dictation_never_leaves_audio_behind(audio_spy) -> None:
+    """Audio is the most sensitive thing this app stores. It is written on
+    exactly one path: the user lost something AND allowed it."""
+    pipe, _events = _pipeline(DictationConfig(keep_failed_audio=True))
+    await pipe._finish_dictation(
+        raw_text="this one worked", language="en", duration_s=2.0,
+        target="chat", hung_up=False, audio=b"\x01\x02" * 100,
+    )
+    assert audio_spy.saved == []
+
+
+@pytest.mark.asyncio
+async def test_keep_failed_audio_off_writes_nothing(audio_spy) -> None:
+    pipe, _events = _pipeline(DictationConfig(keep_failed_audio=False))
+    await pipe._finish_dictation(
+        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
+        stt_error="AuthenticationError: 401", audio=b"\x01\x02" * 100,
+    )
+    assert audio_spy.saved == []
+    # The history row is still written — that is what Restore needs a handle on.
+    assert _FakeHistory.instances[-1].added
+
+
+@pytest.mark.asyncio
+async def test_a_wordless_failure_is_still_recorded(audio_spy) -> None:
+    """The old guard skipped the history whenever there was no raw text, which
+    is precisely when the worst failures happen."""
+    pipe, _events = _pipeline(DictationConfig())
+    await pipe._finish_dictation(
+        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
+        stt_error="RuntimeError: engine wedged",
+    )
+    added = _FakeHistory.instances[-1].added
+    assert added and added[0]["outcome"] == "failed"
+    assert added[0]["error"] == "RuntimeError: engine wedged"
+
+
+@pytest.mark.asyncio
+async def test_history_disabled_writes_nothing_at_all(audio_spy) -> None:
+    pipe, _events = _pipeline(DictationConfig(history_enabled=False))
+    await pipe._finish_dictation(
+        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
+        stt_error="RuntimeError: engine wedged", audio=b"\x01\x02" * 100,
+    )
+    assert _FakeHistory.instances == []
+    assert audio_spy.saved == []
+
+
+@pytest.mark.asyncio
+async def test_a_broken_history_write_never_costs_the_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.dictation.history as history_mod
+
+    class _BoomHistory:
+        def __init__(self, *_a, **_k) -> None:
+            raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(history_mod, "DictationHistory", _BoomHistory)
+    pipe, _events = _pipeline(DictationConfig())
+    text = await pipe._finish_dictation(
+        raw_text="the words survive", language="en", duration_s=1.0,
+        target="chat", hung_up=False,
+    )
+    assert text == "the words survive"
+
+
 @pytest.mark.asyncio
 async def test_a_broken_cleanup_never_loses_the_text(
     monkeypatch: pytest.MonkeyPatch,
@@ -177,6 +414,213 @@ async def test_a_broken_cleanup_never_loses_the_text(
         target="chat", hung_up=False,
     )
     assert text == "the raw words"
+
+
+# --------------------------------------------------------------------------
+# The recording session — the half above the delivery contract
+# --------------------------------------------------------------------------
+
+
+class _FakeChunk:
+    def __init__(self, pcm: bytes) -> None:
+        self.pcm = pcm
+
+
+class _FakeMic:
+    """Yields one chunk and ends, which is what closes the session."""
+
+    def __init__(self, pcm: bytes) -> None:
+        self._pcm = pcm
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc) -> bool:
+        return False
+
+    async def stream(self):
+        yield _FakeChunk(self._pcm)
+
+
+def _session_pipeline(stt, cfg: DictationConfig):
+    """A pipeline wired for ``_dictation_session`` and nothing else."""
+    import asyncio
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._utterance_stt = stt
+    pipe._dictation_cfg = cfg
+    pipe._dictation_target = "chat"
+    pipe._ptt_partial_interval_s = 0.0
+    pipe._dictation_max_s = 5.0
+    pipe._input_device = None
+    pipe._input_priority = None
+    pipe._dictation_stop_event = asyncio.Event()
+    pipe._hangup_event = asyncio.Event()
+    events: list[object] = []
+
+    async def _publish(event: object) -> None:
+        events.append(event)
+
+    pipe._publish_event = _publish  # type: ignore[assignment]
+    return pipe, events
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_language_reaches_the_provider(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    import jarvis.speech.pipeline as pipeline_mod
+
+    seen: list[dict] = []
+
+    class _STT:
+        async def transcribe_pcm(self, pcm: bytes, **kw):
+            seen.append(kw)
+            return SimpleNamespace(text="hola mundo", language="es")
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, _events = _session_pipeline(
+        _STT(), DictationConfig(language="es", partial_interval_s=0.0)
+    )
+    await pipe._dictation_session()
+    assert seen == [{"language": "es"}]
+
+
+@pytest.mark.asyncio
+async def test_auto_sends_no_language_at_all(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """``auto`` means "provider, you decide" — pinning it to a detected value
+    would defeat per-utterance detection."""
+    import jarvis.speech.pipeline as pipeline_mod
+
+    seen: list[dict] = []
+
+    class _STT:
+        async def transcribe_pcm(self, pcm: bytes, **kw):
+            seen.append(kw)
+            return SimpleNamespace(text="hello", language="en")
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, _events = _session_pipeline(
+        _STT(), DictationConfig(language="auto", partial_interval_s=0.0)
+    )
+    await pipe._dictation_session()
+    assert seen == [{}]
+
+
+@pytest.mark.asyncio
+async def test_a_provider_without_the_language_keyword_still_transcribes(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """The STT contract allows a bare ``transcribe_pcm(pcm)``. A pin must
+    degrade to "no pin", never to a failed dictation."""
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _LegacySTT:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def transcribe_pcm(self, pcm: bytes):
+            self.calls += 1
+            return SimpleNamespace(text="it still works", language="en")
+
+    stt = _LegacySTT()
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, events = _session_pipeline(
+        stt, DictationConfig(language="de", partial_interval_s=0.0)
+    )
+    await pipe._dictation_session()
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "chat"
+    assert completed.text == "it still works"
+    assert stt.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_provider_error_ends_the_session_as_failed(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _BrokenSTT:
+        async def transcribe_pcm(self, pcm: bytes, **_kw):
+            raise RuntimeError("401 invalid api key")
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, events = _session_pipeline(
+        _BrokenSTT(), DictationConfig(partial_interval_s=0.0)
+    )
+    await pipe._dictation_session()
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "failed"
+    assert "401" in (completed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_session_is_recorded_instead_of_vanishing(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """The old handler logged a warning and returned. The worst failure this
+    feature has must not also be its most invisible one."""
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _BoomMic:
+        async def __aenter__(self):
+            raise OSError("no input device")
+
+        async def __aexit__(self, *_exc) -> bool:
+            return False
+
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kw: _BoomMic())
+
+    class _STT:
+        async def transcribe_pcm(self, pcm: bytes, **_kw):  # pragma: no cover
+            raise AssertionError("never reached")
+
+    pipe, events = _session_pipeline(_STT(), DictationConfig())
+    await pipe._dictation_session()
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.outcome == "failed"
+    assert "no input device" in (completed.error or "")
+    added = _FakeHistory.instances[-1].added
+    assert added and added[0]["outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_crash_inside_delivery_does_not_double_publish(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """Re-entering the delivery half would publish a second final transcript
+    and could recurse straight back into the same fault."""
+    import jarvis.speech.pipeline as pipeline_mod
+
+    calls: list[int] = []
+
+    class _STT:
+        async def transcribe_pcm(self, pcm: bytes, **_kw):
+            return SimpleNamespace(text="hello", language="en")
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, _events = _session_pipeline(_STT(), DictationConfig(partial_interval_s=0.0))
+
+    async def _boom(**_kw):
+        calls.append(1)
+        raise RuntimeError("delivery exploded")
+
+    pipe._finish_dictation = _boom  # type: ignore[assignment]
+    await pipe._dictation_session()
+    assert calls == [1]
 
 
 # --------------------------------------------------------------------------

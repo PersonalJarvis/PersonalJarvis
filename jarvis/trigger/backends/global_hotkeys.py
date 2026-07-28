@@ -40,6 +40,13 @@ _KEY_MAP = {
     "left_alt": "alt",
     "altgr": "alt",
     "win": "window",
+    # Same physical key, other names: X11 and most Linux desktops call it
+    # Super, some configs spell it Meta. ``validate_hotkey`` refuses new
+    # bindings that use them, but a jarvis.toml written before that rule
+    # existed may still carry one — folding them here means such a config
+    # normalizes to a real token instead of arming a combo that never fires.
+    "super": "window",
+    "meta": "window",
     "shift": "shift",
 }
 

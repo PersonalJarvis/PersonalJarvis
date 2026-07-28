@@ -2899,11 +2899,17 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
-                # Dictation mode. Ships unbound; the user assigns the key in
-                # Settings → Keybinds (or the wizard), and it live-re-arms.
+                # Dictation. Both keys ship bound to a curated combo (see
+                # TriggerConfig.hotkey_dictate); either can be cleared in the
+                # Voice → Shortcuts tab, and both live-re-arm without a restart.
                 dictate_hotkeys=(
                     (self.cfg.trigger.hotkey_dictate,)
                     if self.cfg.trigger.hotkey_dictate.strip()
+                    else ()
+                ),
+                dictate_toggle_hotkeys=(
+                    (self.cfg.trigger.hotkey_dictate_toggle,)
+                    if self.cfg.trigger.hotkey_dictate_toggle.strip()
                     else ()
                 ),
                 dictate_mode=self.cfg.dictation.mode,

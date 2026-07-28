@@ -99,3 +99,50 @@ async def test_reload_loop_omits_ptt_binding_when_unset():
     bindings, ptt = trigger.calls[0]
     assert "ptt" not in bindings
     assert ptt == set()
+
+
+def test_set_keybinds_updates_the_hands_free_dictation_key():
+    """The kwarg is spelled like the action id, because the settings route
+    calls ``set_keybinds(**{action: [...]})`` — a rename there turns a
+    successful save into a silent no-op."""
+    pipe = _pipe()
+    pipe.set_keybinds(dictate_toggle=["ctrl+shift+d"])
+    assert pipe._dictate_toggle_hotkeys == ["ctrl+shift+d"]
+    assert pipe._dictate_hotkeys == []  # untouched
+    assert pipe._hotkey_reload_event.is_set()
+
+
+async def test_reload_loop_arms_hands_free_without_asking_for_both_edges():
+    """A toggle must fire once per press. Registering it as an edge binding
+    would start on key-down and stop again on key-up — push-to-talk by
+    accident."""
+    pipe = _pipe()
+    pipe._call_hotkeys = ["f3+f4"]
+    pipe._hangup_hotkeys = ["f1+f2"]
+    pipe._ptt_hotkeys = []
+    pipe._dictate_hotkeys = ["ctrl+right_alt+j"]
+    pipe._dictate_toggle_hotkeys = ["ctrl+right_alt+space"]
+    trigger = _FakeTrigger()
+    pipe._hotkey_reload_event.set()
+
+    await _run_reload_once(pipe, trigger)
+
+    bindings, edges = trigger.calls[0]
+    assert bindings["dictate"] == ["ctrl+right_alt+j"]
+    assert bindings["dictate_toggle"] == ["ctrl+right_alt+space"]
+    assert edges == {"dictate"}
+
+
+async def test_reload_loop_omits_hands_free_binding_when_cleared():
+    pipe = _pipe()
+    pipe._call_hotkeys = ["f3+f4"]
+    pipe._hangup_hotkeys = ["f1+f2"]
+    pipe._ptt_hotkeys = []
+    pipe._dictate_toggle_hotkeys = []
+    trigger = _FakeTrigger()
+    pipe._hotkey_reload_event.set()
+
+    await _run_reload_once(pipe, trigger)
+
+    bindings, _edges = trigger.calls[0]
+    assert "dictate_toggle" not in bindings

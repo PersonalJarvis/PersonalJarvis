@@ -28,9 +28,28 @@ def test_dictate_is_a_first_class_keybind_action() -> None:
     assert hasattr(TriggerConfig(), "hotkey_dictate")
 
 
-def test_dictation_ships_unbound() -> None:
-    """No combination is free on every machine — the user picks one."""
-    assert TriggerConfig().hotkey_dictate == ""
+def test_hands_free_dictation_is_its_own_keybind_action() -> None:
+    """Not a mode flag: a user may arm a hold key AND a toggle key at once."""
+    assert "dictate_toggle" in KEYBIND_ACTIONS
+    assert KEYBIND_TOML_KEY["dictate_toggle"] == "hotkey_dictate_toggle"
+    assert hasattr(TriggerConfig(), "hotkey_dictate_toggle")
+
+
+def test_dictation_ships_bound_on_both_rows() -> None:
+    """Maintainer directive 2026-07-28. Shipping unbound made the headline
+    feature do nothing on a fresh install; these two combos are curated
+    instead (valid on all three platforms, mutually disjoint)."""
+    trig = TriggerConfig()
+    assert trig.hotkey_dictate == "ctrl+right_alt+j"
+    assert trig.hotkey_dictate_toggle == "ctrl+right_alt+space"
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_the_shipped_dictation_combos_validate_everywhere(platform: str) -> None:
+    trig = TriggerConfig()
+    for combo in (trig.hotkey_dictate, trig.hotkey_dictate_toggle):
+        ok, reason = validate_hotkey(combo, platform=platform)
+        assert ok is True, f"{combo} on {platform}: {reason}"
 
 
 # --------------------------------------------------------------------------
@@ -92,12 +111,15 @@ def test_existing_rules_are_unchanged(combo: str, expected: bool) -> None:
 # --------------------------------------------------------------------------
 
 
-def _pipeline(*, dictate: list[str], mode: str = "hold") -> SpeechPipeline:
+def _pipeline(
+    *, dictate: list[str], mode: str = "hold", dictate_toggle: list[str] | None = None
+) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._call_hotkeys = ["f3+f4"]
     pipe._hangup_hotkeys = ["f1+f2"]
     pipe._ptt_hotkeys = []
     pipe._dictate_hotkeys = dictate
+    pipe._dictate_toggle_hotkeys = dictate_toggle or []
     pipe._dictate_mode = mode
     return pipe
 
@@ -119,10 +141,37 @@ def test_toggle_mode_fires_once_on_release() -> None:
 def test_unbound_dictation_arms_nothing_but_leaves_voice_intact() -> None:
     bindings, edges = _pipeline(dictate=[])._build_hotkey_bindings()
     assert "dictate" not in bindings
+    assert "dictate_toggle" not in bindings
     assert edges == set()
     # The existing voice shortcuts must be untouched by this feature.
     assert bindings["call"] == ["f3+f4"]
     assert bindings["hangup"] == ["f1+f2"]
+
+
+def test_hands_free_fires_once_per_press() -> None:
+    """Never an edge binding — both edges would make a toggle behave like
+    push-to-talk (start on key-down, stop again on key-up)."""
+    bindings, edges = _pipeline(
+        dictate=[], dictate_toggle=["ctrl+right_alt+space"]
+    )._build_hotkey_bindings()
+    assert bindings["dictate_toggle"] == ["ctrl+right_alt+space"]
+    assert "dictate_toggle" not in edges
+
+
+def test_both_dictation_rows_can_be_armed_at_the_same_time() -> None:
+    bindings, edges = _pipeline(
+        dictate=["ctrl+right_alt+j"], dictate_toggle=["ctrl+right_alt+space"]
+    )._build_hotkey_bindings()
+    assert bindings["dictate"] == ["ctrl+right_alt+j"]
+    assert bindings["dictate_toggle"] == ["ctrl+right_alt+space"]
+    assert edges == {"dictate"}
+
+
+def test_an_unbound_hands_free_row_arms_nothing() -> None:
+    bindings, _edges = _pipeline(
+        dictate=["ctrl+right_alt+j"], dictate_toggle=[]
+    )._build_hotkey_bindings()
+    assert "dictate_toggle" not in bindings
 
 
 # --------------------------------------------------------------------------
@@ -200,6 +249,48 @@ def test_toggle_starts_then_stops() -> None:
 
     pipe._dictation_task = _RunningTask()  # type: ignore[assignment]
     pipe._on_dictate_toggle()
+    assert pipe.stopped == 1
+
+
+class _ScriptedTrigger:
+    """Replays a fixed list of hotkey event names, then ends the stream."""
+
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    async def events(self):
+        for name in self._names:
+            yield name
+
+
+@pytest.mark.asyncio
+async def test_the_hands_free_event_reaches_the_toggle_handler() -> None:
+    """The binding is only half the wiring — without this dispatch arm the key
+    registers with the OS, fires, and nothing happens."""
+    pipe = _RecordingPipeline()
+    await pipe._hotkey_loop(_ScriptedTrigger(["dictate_toggle"]))
+    assert pipe.started == ["auto"]
+
+
+@pytest.mark.asyncio
+async def test_the_hands_free_key_stops_a_running_dictation() -> None:
+    pipe = _RecordingPipeline()
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    pipe._dictation_task = _RunningTask()  # type: ignore[assignment]
+    await pipe._hotkey_loop(_ScriptedTrigger(["dictate_toggle"]))
+    assert pipe.stopped == 1
+    assert pipe.started == []
+
+
+@pytest.mark.asyncio
+async def test_the_hold_key_edges_still_dispatch_unchanged() -> None:
+    pipe = _RecordingPipeline()
+    await pipe._hotkey_loop(_ScriptedTrigger(["dictate_press", "dictate_release"]))
+    assert pipe.started == ["auto"]
     assert pipe.stopped == 1
 
 

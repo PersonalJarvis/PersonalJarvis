@@ -130,6 +130,14 @@ async def _main() -> None:
             if config.trigger.hotkey_dictate.strip()
             else ()
         ),
+        # Hands-free dictation. Wired here as well as in desktop_app: this is
+        # the pipeline the watchdog rebuilds after a voice restart, so a
+        # binding missing here works exactly once and then disappears.
+        dictate_toggle_hotkeys=(
+            (config.trigger.hotkey_dictate_toggle,)
+            if config.trigger.hotkey_dictate_toggle.strip()
+            else ()
+        ),
         dictate_mode=config.dictation.mode,
         dictation_config=config.dictation,
         hangup_hotkeys=(

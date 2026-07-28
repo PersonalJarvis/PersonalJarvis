@@ -1289,6 +1289,11 @@ class SpeechPipeline:
         # deprecated ptt slot: dictation never reaches the brain.
         dictate_hotkeys: tuple[str, ...] = (),
         dictate_mode: str = "hold",
+        # Hands-free dictation: press once to start, press again to stop. Its
+        # OWN binding, independent of ``dictate_mode`` — a user may have a hold
+        # key and a toggle key armed at the same time, and the legacy
+        # ``[dictation].mode = "toggle"`` still only governs ``dictate_hotkeys``.
+        dictate_toggle_hotkeys: tuple[str, ...] = (),
         # Resolved DictationConfig (jarvis.core.config.DictationConfig) or None.
         # None keeps every legacy call site and test on the built-in defaults.
         dictation_config: Any = None,
@@ -1297,6 +1302,7 @@ class SpeechPipeline:
         self._ptt_hotkeys = ptt_hotkeys
         self._hangup_hotkeys = hangup_hotkeys
         self._dictate_hotkeys = list(dictate_hotkeys)
+        self._dictate_toggle_hotkeys = list(dictate_toggle_hotkeys)
         self._dictate_mode = "toggle" if str(dictate_mode).lower() == "toggle" else "hold"
         self._dictation_cfg = dictation_config
         # Push-to-talk runtime state. ``_ptt_mode`` arms the raw-recording path
@@ -2278,6 +2284,7 @@ class SpeechPipeline:
         hangup: list[str] | None = None,
         ptt: list[str] | None = None,
         dictate: list[str] | None = None,
+        dictate_toggle: list[str] | None = None,
     ) -> None:
         """Live-apply changed voice keybinds — no app/pipeline restart.
 
@@ -2290,6 +2297,11 @@ class SpeechPipeline:
         Mirrors the ``set_wake_plan`` live-apply contract: safe to call from the
         FastAPI handler thread — it shares the pipeline's event loop. Only the
         actions passed are changed; ``None`` leaves that action untouched.
+
+        Every keyword here is spelled exactly like its entry in
+        ``config_writer.KEYBIND_ACTIONS``: the settings route calls
+        ``set_keybinds(**{action: [...]})``, so a keyword that drifts from the
+        action string turns a successful save into a silent no-op.
         """
         if call is not None:
             self._call_hotkeys = list(call)
@@ -2299,12 +2311,16 @@ class SpeechPipeline:
             self._ptt_hotkeys = list(ptt)
         if dictate is not None:
             self._dictate_hotkeys = list(dictate)
+        if dictate_toggle is not None:
+            self._dictate_toggle_hotkeys = list(dictate_toggle)
         log.info(
-            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s]",
+            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s] "
+            "DICTATE-TOGGLE=[%s]",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
             ", ".join(self._dictate_hotkeys) or "off",
+            ", ".join(self._dictate_toggle_hotkeys) or "off",
         )
         self._hotkey_reload_event.set()
 
@@ -2345,6 +2361,14 @@ class SpeechPipeline:
             # so holding the key does not start and stop repeatedly.
             if self._dictate_mode == "hold":
                 edge_events.add("dictate")
+        # ``getattr`` default: unit tests build pipelines via ``__new__`` and set
+        # only the attributes they care about, a widely used pattern in this repo.
+        dictate_toggle = getattr(self, "_dictate_toggle_hotkeys", None) or []
+        if dictate_toggle:
+            bindings["dictate_toggle"] = list(dictate_toggle)
+            # Never an edge binding: the whole point of a toggle is one event
+            # per press. Asking for both edges would start on the down edge and
+            # stop again on the up edge, i.e. turn it back into push-to-talk.
         return bindings, edge_events
 
     # ------------------------------------------------------------------
@@ -4061,13 +4085,15 @@ class SpeechPipeline:
         # single-fire-on-release contract. One producer for boot and live re-arm.
         hotkey_bindings, ptt_events = self._build_hotkey_bindings()
         log.info(
-            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] OWW=%s "
+            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] "
+            "DICTATE-TOGGLE=[%s] OWW=%s "
             "WAKE=%s (threshold=%.2f) WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
             ", ".join(self._dictate_hotkeys) or "off",
             self._dictate_mode,
+            ", ".join(getattr(self, "_dictate_toggle_hotkeys", None) or []) or "off",
             "on" if self._openwakeword_enabled else "off",
             list(self._wake._keywords),
             self._wake._threshold,
@@ -4569,7 +4595,11 @@ class SpeechPipeline:
             elif event_name == "dictate_release":
                 self._on_dictate_release()
             elif event_name == "dictate":
-                # Toggle mode: one press starts, the next stops.
+                # Legacy [dictation].mode = "toggle": one press starts, the
+                # next stops. Only reached when the HOLD key is in toggle mode.
+                self._on_dictate_toggle()
+            elif event_name == "dictate_toggle":
+                # The dedicated hands-free key. Same handler, its own binding.
                 self._on_dictate_toggle()
             elif event_name == "hangup":
                 log.info("📵 HANGUP via Hotkey")
@@ -7523,17 +7553,46 @@ class SpeechPipeline:
         stop_event = asyncio.Event()
         inference_active = asyncio.Event()
         language = ""
+        # The last transcription error, or None. Resolved ONCE per session at
+        # the end: it is what separates "the provider rejected us" from "you
+        # said nothing", and without it a 401 arrives in the history looking
+        # exactly like silence — with no hint that a key needs fixing.
+        stt_error: str | None = None
+        # ``[dictation].language`` pinned by the user; None means "auto", i.e.
+        # let the provider detect it. Resolved here rather than inside the
+        # closure so the config is read once per session, not once per segment.
+        pinned_language = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
+        forced_language = pinned_language if pinned_language not in ("", "auto") else None
 
         async def _transcribe(pcm: bytes) -> tuple[str, str]:
-            """One transcription. Returns ``(text, language)``; never raises."""
+            """One transcription. Returns ``(text, language)``; never raises.
+
+            Records the failure in ``stt_error`` instead of swallowing it. A
+            later successful call clears it again — a single flaky segment in an
+            otherwise working dictation is not a failed dictation.
+            """
+            nonlocal stt_error
             inference_active.set()
             try:
-                transcript = await stt.transcribe_pcm(pcm)
+                if forced_language is None:
+                    transcript = await stt.transcribe_pcm(pcm)
+                else:
+                    try:
+                        transcript = await stt.transcribe_pcm(
+                            pcm, language=forced_language
+                        )
+                    except TypeError:
+                        # Provider predates the keyword (contract allows a bare
+                        # ``transcribe_pcm(pcm)``). Fall back rather than call
+                        # the pin a failure — precedent: rolling_whisper_wake.
+                        transcript = await stt.transcribe_pcm(pcm)
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
                 log.debug("dictation transcribe failed: %s", exc)
+                stt_error = f"{type(exc).__name__}: {exc}".strip()
                 return "", ""
             finally:
                 inference_active.clear()
+            stt_error = None
             text = (getattr(transcript, "text", "") or "").strip()
             lang = str(getattr(transcript, "language", "") or "")
             return text, lang
@@ -7599,6 +7658,10 @@ class SpeechPipeline:
         final_text = ""
         raw_text = ""
         hung_up = False
+        # True once the delivery half has been entered, so the crash handler
+        # below can tell "we never got to deliver" from "delivery itself blew
+        # up" and never runs the delivery twice.
+        finished = False
         try:
             async with MicrophoneCapture(
                 device=self._input_device, device_priority=self._input_priority
@@ -7666,31 +7729,57 @@ class SpeechPipeline:
                 final_text = raw_text
 
             duration_s = max(0.0, time.monotonic() - started_at)
+            finished = True
             result = await self._finish_dictation(
                 raw_text=raw_text,
                 language=language,
                 duration_s=duration_s,
                 target=target,
                 hung_up=hung_up,
+                stt_error=stt_error,
+                audio=bytes(buffer),
             )
             final_text = result
             log.info(
-                "🎙️ dictation ended (%d chars, %.1fs, target=%s%s).",
+                "🎙️ dictation ended (%d chars, %.1fs, target=%s%s%s).",
                 len(final_text),
                 duration_s,
                 target,
                 ", hung up" if hung_up else "",
+                f", stt error: {stt_error}" if stt_error else "",
             )
-        except Exception:  # noqa: BLE001 — dictation must never break voice
+        except Exception as exc:  # noqa: BLE001 — dictation must never break voice
             log.warning("dictation session crashed (non-fatal)", exc_info=True)
+            if finished:
+                # The crash happened after (or inside) the delivery half, which
+                # already published its own final transcript. Re-entering it
+                # would double-publish and could recurse into the same fault.
+                return
+            # Everything before delivery: route the failure THROUGH the normal
+            # finish path instead of returning silently. It publishes the same
+            # empty final transcript the old handler did, and additionally
+            # records a `failed` history row — the worst failure this feature
+            # has used to be its most invisible one.
             try:
-                await self._publish_event(
-                    DictationTranscript(
-                        source_layer="speech.dictation", text="", is_final=True
-                    )
+                await self._finish_dictation(
+                    raw_text="",
+                    language=language,
+                    duration_s=max(0.0, time.monotonic() - started_at),
+                    target=target,
+                    hung_up=False,
+                    stt_error=f"{type(exc).__name__}: {exc}".strip(),
+                    audio=bytes(buffer),
                 )
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001 — the fallback must not raise either
+                log.debug("dictation failure record failed", exc_info=True)
+                try:
+                    await self._publish_event(
+                        DictationTranscript(
+                            source_layer="speech.dictation", text="", is_final=True
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def _finish_dictation(
         self,
@@ -7700,6 +7789,8 @@ class SpeechPipeline:
         duration_s: float,
         target: str,
         hung_up: bool,
+        stt_error: str | None = None,
+        audio: bytes | None = None,
     ) -> str:
         """Clean, deliver and record one finished dictation. Returns the text.
 
@@ -7708,11 +7799,26 @@ class SpeechPipeline:
         falls back to the raw transcript, a failed insertion falls back to "it
         is on your clipboard", and a failed history write costs nothing but the
         history entry.
+
+        ``stt_error`` is the transcription failure, if there was one. It is what
+        makes ``failed`` distinguishable from ``empty``, so it is carried into
+        the completion event and the history row rather than logged and dropped.
+        ``audio`` is the session's raw PCM; it is written to a local sidecar
+        only when the dictation produced nothing usable AND the user allows it
+        (``[dictation].keep_failed_audio``), which is what a later Restore
+        transcribes again.
         """
         cleaned = raw_text
         removed_words = 0
         cleanup_reason = ""
         cfg = getattr(self, "_dictation_cfg", None)
+
+        # A user-pinned ``[dictation].language`` outranks whatever the provider
+        # reported. Without this the cleanup rules see the provider's guess —
+        # and a provider that answers "unknown" leaves every dictation with
+        # reason="no_rules", i.e. no cleanup at all despite an explicit pin.
+        pinned = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
+        effective_language = pinned if pinned not in ("", "auto") else language
 
         if raw_text and not hung_up:
             try:
@@ -7720,7 +7826,7 @@ class SpeechPipeline:
 
                 outcome = clean_transcript(
                     raw_text,
-                    language=language,
+                    language=effective_language,
                     remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
                     max_removed_fraction=float(
                         getattr(cfg, "filler_max_removed_fraction", 0.25)
@@ -7766,7 +7872,10 @@ class SpeechPipeline:
         if hung_up:
             outcome_name = "cancelled"
         elif not cleaned.strip():
-            outcome_name = "empty"
+            # Nothing to deliver. WHY there is nothing is the whole point of
+            # this branch: a provider error is a "failed" the user can act on
+            # (fix the key, switch provider), silence is just an "empty".
+            outcome_name = "failed" if stt_error else "empty"
         elif resolved_target == "insert":
             insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
             outcome_name = insert_result.status
@@ -7782,35 +7891,117 @@ class SpeechPipeline:
                     outcome=outcome_name,
                     detail=detail,
                     method=method,
-                    language=language,
+                    language=effective_language,
                     duration_s=duration_s,
                     removed_words=removed_words,
+                    error=stt_error,
                 )
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("dictation completion publish failed: %s", exc)
 
-        if raw_text and getattr(cfg, "history_enabled", True):
-            try:
-                from jarvis.dictation.history import DictationHistory
-
-                await asyncio.to_thread(
-                    DictationHistory().add,
-                    raw_text=raw_text,
-                    text=cleaned,
-                    language=language,
-                    duration_s=duration_s,
-                    outcome=outcome_name,
-                    method=method,
-                    removed_words=removed_words,
-                    cleanup_reason=cleanup_reason,
-                    max_entries=int(getattr(cfg, "history_max_entries", 200)),
-                    retention_days=int(getattr(cfg, "history_retention_days", 30)),
-                )
-            except Exception:  # noqa: BLE001 — history is never worth a failure
-                log.debug("dictation history write failed", exc_info=True)
-
+        await self._record_dictation(
+            raw_text=raw_text,
+            cleaned=cleaned,
+            language=effective_language,
+            duration_s=duration_s,
+            outcome_name=outcome_name,
+            method=method,
+            removed_words=removed_words,
+            cleanup_reason=cleanup_reason,
+            stt_error=stt_error,
+            audio=audio,
+        )
         return cleaned
+
+    async def _record_dictation(
+        self,
+        *,
+        raw_text: str,
+        cleaned: str,
+        language: str,
+        duration_s: float,
+        outcome_name: str,
+        method: str,
+        removed_words: int,
+        cleanup_reason: str,
+        stt_error: str | None,
+        audio: bytes | None,
+    ) -> None:
+        """Write the history row and, when warranted, the audio sidecar.
+
+        Split out of ``_finish_dictation`` because it is the only part that
+        touches the disk: the caller has already published everything the UI
+        needs, so nothing in here is allowed to change what the user sees. All
+        of it is best-effort — a failed history write costs the history entry
+        and nothing else.
+        """
+        from jarvis.dictation.outcomes import is_recoverable
+
+        cfg = getattr(self, "_dictation_cfg", None)
+        # A dictation that produced nothing is recorded too when its outcome
+        # says the user LOST something (failed / cancelled / empty): that row is
+        # the only place a later Restore can start from.
+        if not (raw_text or is_recoverable(outcome_name)):
+            return
+        if not getattr(cfg, "history_enabled", True):
+            return
+
+        entry = None
+        history = None
+        try:
+            from jarvis.dictation.history import DictationHistory
+
+            history = DictationHistory()
+            entry = await asyncio.to_thread(
+                history.add,
+                raw_text=raw_text,
+                text=cleaned,
+                language=language,
+                duration_s=duration_s,
+                outcome=outcome_name,
+                method=method,
+                removed_words=removed_words,
+                cleanup_reason=cleanup_reason,
+                error=stt_error,
+                max_entries=int(getattr(cfg, "history_max_entries", 200)),
+                retention_days=int(getattr(cfg, "history_retention_days", 30)),
+            )
+        except Exception:  # noqa: BLE001 — history is never worth a failure
+            log.debug("dictation history write failed", exc_info=True)
+            return
+
+        # Audio is the most sensitive thing this application ever stores, so it
+        # is written on exactly one path: the user allowed it AND the dictation
+        # left them with nothing to show for it. Never on a success.
+        if (
+            entry is None
+            or history is None
+            or not audio
+            or not bool(getattr(cfg, "keep_failed_audio", True))
+            or not is_recoverable(outcome_name)
+        ):
+            return
+        try:
+            from jarvis.dictation.audio import prune_audio, save_dictation_audio
+
+            path = await asyncio.to_thread(
+                save_dictation_audio, entry.id, audio, directory=history.audio_dir
+            )
+            if path is not None:
+                await asyncio.to_thread(
+                    history.update, entry.id, audio_path=str(path)
+                )
+            # Retention runs after the write, off the delivery path: the
+            # transcript is already in front of the user by now.
+            await asyncio.to_thread(
+                prune_audio,
+                max_files=int(getattr(cfg, "audio_max_files", 20)),
+                retention_days=int(getattr(cfg, "audio_retention_days", 7)),
+                directory=history.audio_dir,
+            )
+        except Exception:  # noqa: BLE001 — a lost recovery option, not a lost dictation
+            log.debug("dictation audio sidecar failed", exc_info=True)
 
     def _insert_dictation(self, text: str):
         """Blocking insertion, run off the event loop. Never raises.
@@ -10930,6 +11121,11 @@ async def _main() -> None:
         dictate_hotkeys=(
             (config.trigger.hotkey_dictate,)
             if config.trigger.hotkey_dictate.strip()
+            else ()
+        ),
+        dictate_toggle_hotkeys=(
+            (config.trigger.hotkey_dictate_toggle,)
+            if config.trigger.hotkey_dictate_toggle.strip()
             else ()
         ),
         dictate_mode=config.dictation.mode,

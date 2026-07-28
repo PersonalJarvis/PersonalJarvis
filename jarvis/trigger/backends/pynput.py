@@ -74,6 +74,11 @@ _MODIFIER_TO_KEY_ATTR = {
     "alt": "alt",
     "shift": "shift",
     "window": "cmd",
+    # ``_normalize_combo`` already folds super/meta to ``window``, so these two
+    # only matter for a caller that hands us a raw combo. pynput reports the
+    # Super/Windows key as ``Key.cmd`` on every platform, hence the same target.
+    "super": "cmd",
+    "meta": "cmd",
 }
 
 # ``pynput`` reports the right-hand modifier keys with side-specific names
@@ -86,6 +91,12 @@ _GENERIC_MODIFIER_ALIASES: dict[str, frozenset[str]] = {
     "alt": frozenset({"alt", "alt_l", "alt_r", "alt_gr"}),
     "shift": frozenset({"shift", "shift_l", "shift_r"}),
     "cmd": frozenset({"cmd", "cmd_l", "cmd_r"}),
+    # Super/Meta are the same key pynput calls ``cmd``. Reached only when a
+    # combo skipped ``_normalize_combo``; folding them here keeps a legacy
+    # config comparing against the right physical key instead of a token that
+    # matches nothing.
+    "super": frozenset({"cmd", "cmd_l", "cmd_r"}),
+    "meta": frozenset({"cmd", "cmd_l", "cmd_r"}),
 }
 
 # --------------------------------------------------------------------------

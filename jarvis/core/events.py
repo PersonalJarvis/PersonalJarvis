@@ -140,7 +140,10 @@ class DictationCompleted(Event):
     text: str = ""
     #: The transcript exactly as the STT returned it, before cleanup.
     raw_text: str = ""
-    #: ``inserted`` | ``clipboard_only`` | ``unavailable`` | ``chat`` | ``empty``.
+    #: One of ``jarvis.dictation.outcomes.DICTATION_OUTCOMES``. That tuple is
+    #: the single vocabulary for this value; it is imported rather than
+    #: restated here because listing it twice is exactly how the five layers
+    #: that carry an outcome drifted apart before (AP-4 / BUG-008).
     outcome: str = ""
     #: User-facing explanation; empty when nothing needs explaining.
     detail: str = ""
@@ -149,6 +152,11 @@ class DictationCompleted(Event):
     language: str = ""
     duration_s: float = 0.0
     removed_words: int = 0
+    #: Why transcription failed, when it did (a provider error, a missing key,
+    #: a wedged engine). ``None`` on every path that did not fail. This is what
+    #: makes ``outcome="failed"`` distinguishable from ``outcome="empty"``:
+    #: before it existed, a provider 401 and plain silence looked identical.
+    error: str | None = None
 
 
 # ----------------------------------------------------------------------
