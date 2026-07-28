@@ -88,6 +88,18 @@ The following ADs are **refined** by empirical findings from `docs/spike-results
   | `openai` | `openai` | `OPENAI_API_KEY` | `openai_api_key` |
   | `openrouter` | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` |
   | `grok` | `xai` | `XAI_API_KEY` (fallback `GROK_API_KEY`) | (Grok key) |
+  | `nvidia` | `nvidia` | `NVIDIA_API_KEY` | `nvidia_api_key` |
+  | `ollama` | `ollama` | — (keyless) | — |
+  | `local-openai` | `local-openai` | — (keyless) | — |
+
+  The last three rows do not run on the external CLI worker: they are
+  OpenAI-compatible API brains served by the in-process `ApiAgentWorker`. Their
+  rows exist so each is selectable as a Jarvis-Agent in the API-Keys view —
+  without a row, a user running a local model could not pick it at all.
+  `ollama` and `local-openai` are keyless by design: no Agent key slot exists,
+  `get_jarvis_agent_secret` returns `None`, and the worker proceeds without one
+  while the brain plugin supplies its own dummy SDK key. The key names in
+  `MAPPINGS` for those two are placeholders that keep the row shape uniform.
 
   Bridge mechanics: read the matching Personal-Jarvis secret key, set the ENV var `openclaw` expects in the subprocess spawn (`subprocess.Popen(env={...,"GEMINI_API_KEY": secret})` or `[System.Environment]::SetEnvironmentVariable($name, $value, "Process")`). **NO** custom `OPENCLAW_*` namespace in the wizard; instead, reuse the existing `gemini_api_key`/`anthropic_api_key`/etc. secrets from `jarvis/setup/wizard.py:SECRETS`. Plus: provider-slug mapping is critical (`gemini` → `google`, `grok` → `xai`, `claude-api` → `anthropic`).
 
