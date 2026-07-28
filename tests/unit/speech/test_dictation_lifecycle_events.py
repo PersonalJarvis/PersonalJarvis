@@ -304,37 +304,52 @@ async def test_a_second_start_while_recording_is_refused_out_loud(
 
 
 @pytest.mark.asyncio
-async def test_the_dictation_key_during_a_voice_session_says_so() -> None:
-    """The collision case: a live voice conversation owns the microphone.
+async def test_a_voice_session_that_will_not_let_go_is_refused_out_loud(
+    monkeypatch,
+) -> None:
+    """The collision case is a TAKEOVER now, not a refusal.
 
-    Refusing is deliberate — preempting the session on a keypress would leave a
-    hold gesture released before the handover finished with a dictation nobody
-    stops. What is NOT acceptable is refusing silently, which is what happened
-    before: the key did nothing at all.
+    An explicit key press beats a conversation somebody left open, so the
+    session is hung up and the dictation starts. Only a session that does not
+    give the microphone back — nothing here ever returns this pipeline to IDLE —
+    is still a dead end, and it says so out loud instead of doing nothing at all.
+    The takeover itself is pinned in
+    ``test_dictation_takes_over_voice_session.py``.
     """
+    monkeypatch.setattr(pipeline_mod, "_DICTATION_HANDOVER_TIMEOUT_S", 0.05)
     bus = EventBus()
     seen = _Collector(bus)
     pipe = _dictation_pipeline(bus)
     pipe._state = PipelineState.ACTIVE
 
-    assert pipe.start_dictation() is False
+    assert pipe.start_dictation() is True
+    handover = pipe._dictation_handover_task
+    assert handover is not None
+    await asyncio.wait_for(handover, timeout=2.0)
     await _drain_bus()
 
-    assert [e.reason for e in seen.refused] == ["voice_session_active"]
+    assert [e.reason for e in seen.refused] == ["handover_failed"]
     assert "microphone" in seen.refused[0].detail.lower()
+    assert seen.started == []
 
     # Push-to-talk is the same collision through a different door.
     pipe._state = PipelineState.IDLE
     pipe._ptt_mode = True
     seen.refused.clear()
-    assert pipe.start_dictation() is False
+    assert pipe.start_dictation() is True
+    handover = pipe._dictation_handover_task
+    assert handover is not None
+    await asyncio.wait_for(handover, timeout=2.0)
     await _drain_bus()
-    assert [e.reason for e in seen.refused] == ["voice_session_active"]
+    assert [e.reason for e in seen.refused] == ["handover_failed"]
 
 
 @pytest.mark.asyncio
-async def test_every_refusal_reason_comes_from_the_shared_vocabulary() -> None:
+async def test_every_refusal_reason_comes_from_the_shared_vocabulary(
+    monkeypatch,
+) -> None:
     """AP-4: the reason token crosses pipeline → bus → REST → UI."""
+    monkeypatch.setattr(pipeline_mod, "_DICTATION_HANDOVER_TIMEOUT_S", 0.0)
     bus = EventBus()
     seen = _Collector(bus)
 
@@ -349,6 +364,9 @@ async def test_every_refusal_reason_comes_from_the_shared_vocabulary() -> None:
     busy = _dictation_pipeline(bus)
     busy._state = PipelineState.ACTIVE
     busy.start_dictation()
+    handover = busy._dictation_handover_task
+    assert handover is not None
+    await asyncio.wait_for(handover, timeout=2.0)
 
     await _drain_bus()
 
