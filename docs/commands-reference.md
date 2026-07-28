@@ -161,6 +161,36 @@ Store one self-contained fact or summary through the guarded Wiki curator. The c
 - **Desktop UI section:** `memory`
 - **Voice example (EN):** "store that in my wiki"
 
+## `people-list` — List the people I know
+
+List the people the knowledge base has identified, newest evidence merged, optionally filtered by a name or an identifier (an e-mail address, a phone number). Use this to answer 'who do you know about' and to look up which stored person a spoken name refers to.
+
+- **Endpoint:** `GET /api/ultrawiki/identity/people`
+- **Arguments:** `q` (string; optional); `limit` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `memory`
+- **Voice example (EN):** "which people do you know about"
+
+## `person-profile` — Show what I know about one person
+
+Read one identified person in full: every known name, e-mail, phone and handle, which identities were merged into them, and which merge proposals are still open. Take the id from people-list; a merged-away id forwards to the surviving person.
+
+- **Endpoint:** `GET /api/ultrawiki/identity/people/{entity_id}`
+- **Arguments:** `entity_id` (integer; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `memory`
+- **Voice example (EN):** "what do you know about this person"
+
+## `identity-queue-list` — List possible duplicate people
+
+List the pairs the knowledge base suspects are the same person but refused to merge on its own, strongest evidence first. Nothing here has been merged — each pair waits for a human decision.
+
+- **Endpoint:** `GET /api/ultrawiki/identity/queue`
+- **Arguments:** `status` (one of: pending, confirmed, rejected, all; optional); `limit` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `memory`
+- **Voice example (EN):** "which people might be the same person"
+
 ## `session-latest-turn` — Show latest voice turn
 
 Return the latest persisted user transcript and its complete voice turn, optionally restricted to one session.

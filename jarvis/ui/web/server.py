@@ -356,6 +356,7 @@ class WebServer:
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
         from .ultrawiki_explore_routes import router as ultrawiki_explore_router
+        from .ultrawiki_identity_routes import router as ultrawiki_identity_router
         from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
@@ -499,6 +500,9 @@ class WebServer:
         # The readable Explore surface over the same store — separate module,
         # same prefix and tag (see ultrawiki_explore_routes for why).
         app.include_router(ultrawiki_explore_router)
+        # The identity surface over the same store — People, the merge
+        # confirmation queue, and the reversible merge audit trail.
+        app.include_router(ultrawiki_identity_router)
         # ConnectionManager singleton for the global event stream. Attached
         # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()

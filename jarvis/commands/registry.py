@@ -460,6 +460,103 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="people-list",
+            title="List the people I know",
+            description=(
+                "List the people the knowledge base has identified, newest "
+                "evidence merged, optionally filtered by a name or an "
+                "identifier (an e-mail address, a phone number). Use this to "
+                "answer 'who do you know about' and to look up which stored "
+                "person a spoken name refers to."
+            ),
+            method="GET",
+            path="/api/ultrawiki/identity/people",
+            params={
+                "type": "object",
+                "properties": {
+                    "q": _str_param(
+                        "Optional filter over display names and identifiers.",
+                        max_length=200,
+                    ),
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum people to return (1-1000).",
+                        "minimum": 1,
+                        "maximum": 1000,
+                    },
+                },
+            },
+            ui_section="memory",
+            voice_aliases={
+                "de": ("welche personen kennst du",),  # i18n-allow: input vocab
+                "en": ("which people do you know about",),
+                "es": ("qué personas conoces",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="person-profile",
+            title="Show what I know about one person",
+            description=(
+                "Read one identified person in full: every known name, e-mail, "
+                "phone and handle, which identities were merged into them, and "
+                "which merge proposals are still open. Take the id from "
+                "people-list; a merged-away id forwards to the surviving person."
+            ),
+            method="GET",
+            path="/api/ultrawiki/identity/people/{entity_id}",
+            params={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "integer",
+                        "description": "Person id as returned by people-list.",
+                        "minimum": 1,
+                    },
+                },
+                "required": ["entity_id"],
+            },
+            path_params=("entity_id",),
+            ui_section="memory",
+            voice_aliases={
+                "de": ("was weißt du über diese person",),  # i18n-allow: input vocab
+                "en": ("what do you know about this person",),
+                "es": ("qué sabes de esta persona",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="identity-queue-list",
+            title="List possible duplicate people",
+            description=(
+                "List the pairs the knowledge base suspects are the same "
+                "person but refused to merge on its own, strongest evidence "
+                "first. Nothing here has been merged — each pair waits for a "
+                "human decision."
+            ),
+            method="GET",
+            path="/api/ultrawiki/identity/queue",
+            params={
+                "type": "object",
+                "properties": {
+                    "status": _str_param(
+                        "Which proposals to list.",
+                        enum=["pending", "confirmed", "rejected", "all"],
+                    ),
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum proposals to return (1-1000).",
+                        "minimum": 1,
+                        "maximum": 1000,
+                    },
+                },
+            },
+            ui_section="memory",
+            voice_aliases={
+                "de": ("welche personen könnten dieselbe sein",),  # i18n-allow: input vocab
+                "en": ("which people might be the same person",),
+                "es": ("qué personas podrían ser la misma",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="session-latest-turn",
             title="Show latest voice turn",
             description=(
