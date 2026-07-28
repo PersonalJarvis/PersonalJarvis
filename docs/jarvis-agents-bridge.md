@@ -1,6 +1,24 @@
 # Jarvis-Agents-Bridge — Architecture Doc
 
-**Status:** Draft — Wave 1 (Spike) complete, Wave 2 (Implementation) next
+> **HISTORICAL — superseded, not a plan of record.** This document designs a
+> subprocess bridge to the external `openclaw` worker CLI. That bridge was
+> **never built**: `jarvis/plugins/harness/jarvis_agent.py` does not exist, no
+> `jarvis.harness` entry point was ever registered for it (see
+> `pyproject.toml` → `[project.entry-points."jarvis.harness"]`, which registers
+> only `python-script` and `screenshot`), and `jarvis/core/config.py:1353`
+> records the same fact. Heavy work is instead carried by **direct mission
+> workers** — `ClaudeDirectWorker`, `CodexDirectWorker`, `GoogleCliWorker`, and
+> the in-process `ApiAgentWorker` — selected by the cross-family resolver in
+> `jarvis/missions/init.py`. The only surviving `openclaw` code path,
+> `jarvis/missions/workers/provider_chain.py`, is imported by nothing in
+> `jarvis/`. Read this doc for the Wave-1 spike findings (SP-1..SP-8) and the
+> architecture decisions AD-1..AD-21 that later work still cites; do **not**
+> read its wave plan, file paths, or `OPENCLAW_STATE_DIR` environment contract
+> as a description of the shipping system. The live worker state directory
+> variable is `MISSION_STATE_DIR` (`jarvis/missions/isolation/env.py:221`).
+
+**Status:** HISTORICAL — Wave 1 (Spike) complete; Wave 2 (Implementation) was
+never executed under this design (superseded by the direct mission workers)
 **Date:** 2026-05-06 (Jarvis-Agent cleanup 2026-05-09, Wave-1 spike findings 2026-05-09)
 **Branch:** `claude/improve-subagents-structure-5094K`
 **Reference:** Fully replaces the Phase-5 Jarvis-Agent tier with a subprocess bridge to the external `openclaw` worker CLI (github.com/openclaw/openclaw, Peter Steinberger). The Phase-6 skeleton (Mission-Manager, Critic-Loop, worktree isolation, Kontrollierer) is retained and used as a shell around the bridge.
