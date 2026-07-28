@@ -20,6 +20,7 @@ import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
+import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
 import {
   useWakeWord,
   useLocalSpeechInstall,
@@ -86,17 +87,40 @@ export function SettingsView() {
         title={t("settings_view.title")}
         subtitle={t("settings_view.subtitle")}
       />
+      {/* Each group is fault-isolated. The panels are independent, each backed
+          by its own route, so one of them throwing must cost the user that one
+          panel — not the ability to change any setting at all. */}
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        <LanguagesGroup />
-        <AppSettingsGroup />
-        <PermissionsPanel />
-        <RealtimeVoiceGroup />
-        <SystemPromptGroup />
-        <WakeWordPanel />
-        <SilenceWindowGroup />
-        <VolumeGroup />
-        <AudioDevicesGroup />
-        <KeybindsPanel />
+        <SettingsGroupBoundary group="languages">
+          <LanguagesGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="app">
+          <AppSettingsGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="permissions">
+          <PermissionsPanel />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="realtime-voice">
+          <RealtimeVoiceGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="system-prompt">
+          <SystemPromptGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="wake-word">
+          <WakeWordPanel />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="silence-window">
+          <SilenceWindowGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="volume">
+          <VolumeGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="audio-devices">
+          <AudioDevicesGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="keybinds">
+          <KeybindsPanel />
+        </SettingsGroupBoundary>
 
         <ul className="mt-2 space-y-2">
           {rows.map((r) => (
@@ -104,7 +128,9 @@ export function SettingsView() {
           ))}
         </ul>
 
-        <OverlayTaskbarGroup />
+        <SettingsGroupBoundary group="overlay-taskbar">
+          <OverlayTaskbarGroup />
+        </SettingsGroupBoundary>
       </div>
     </div>
   );
@@ -276,7 +302,11 @@ function WakeWordPanel() {
   // Hydrate the form once the GET resolves (and whenever the config changes).
   useEffect(() => {
     if (!config) return;
-    setPhrase(config.phrase);
+    // Every field defaults. The panel derives `phrase.trim()` on the next
+    // render, so a backend that omits the field (older build, degraded route)
+    // would throw out of the render path and take the whole view with it —
+    // the same version-skew failure the keybind rows hit.
+    setPhrase(config.phrase ?? "");
     setEngine(config.engine || "auto");
     setCustomModelPath(config.custom_model_path ?? "");
     // ?? "auto" keeps the dropdown controlled even if an older backend omits it.

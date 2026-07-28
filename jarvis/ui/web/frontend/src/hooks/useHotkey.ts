@@ -195,10 +195,19 @@ export function composeCombo(tokens: Iterable<string>): string {
   return [...mods, ...keys].join("+");
 }
 
-/** Split a combo string back into its token set ("ctrl+f5" → {"ctrl","f5"}). */
+/**
+ * Split a combo string back into its token set ("ctrl+f5" → {"ctrl","f5"}).
+ *
+ * The `?? ""` is a RUNTIME guard, not redundancy with the `string` type: every
+ * combo originates in a backend JSON payload, where TypeScript guarantees
+ * nothing. A backend that does not yet know an action returns no combo for it,
+ * and the resulting `undefined.split("+")` took the entire Settings view down
+ * instead of one row (2026-07-28). Callers still default at their own level;
+ * this makes the failure impossible rather than merely unlikely.
+ */
 export function comboTokens(combo: string): Set<string> {
   return new Set(
-    combo
+    (combo ?? "")
       .split("+")
       .map((p) => p.trim().toLowerCase())
       .filter(Boolean),

@@ -2038,7 +2038,10 @@
     "title": "View could not be loaded",
     "crashed_prefix": "crashed.",
     "crashed_suffix": "stays usable.",
-    "back_to_chats": "Back to Chats"
+    "back_to_chats": "Back to Chats",
+    "group_title": "This section could not be loaded",
+    "group_hint": "Every other setting on this page still works.",
+    "group_retry": "Try again"
   },
   "plan_step_list": {
     "no_plan": "No structured plan — single-shot run.",

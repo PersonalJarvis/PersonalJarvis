@@ -61,7 +61,10 @@ export function formatCombo(combo: string): string {
   // Numpad digits render as "Num 3" rather than "NUMPAD_3".
   const numpad = (p: string) =>
     /^numpad_[0-9]$/.test(p) ? "Num " + p.slice(7) : null;
-  return combo
+  // `?? ""` for the same reason as in comboTokens: the combo comes from a
+  // backend payload, so an absent action arrives as undefined at runtime no
+  // matter what the type says.
+  return (combo ?? "")
     .split("+")
     .map((p) => labels[p] ?? numpad(p) ?? p.toUpperCase())
     .join(" + ");
@@ -158,10 +161,16 @@ export function KeybindRow({
 }: KeybindRowProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
-  // `?? ""` is load-bearing: a backend that does not know this action yet
-  // returns no entry at all, and an undefined combo would crash comboTokens.
-  const current = config?.keybinds[action] ?? "";
-  const def = config?.defaults[action];
+  // Every read defaults, at BOTH levels. A backend that does not know this
+  // action yet returns no entry (`keybinds.dictate` undefined) and one that
+  // errors or predates the route returns no map at all (`keybinds` undefined) —
+  // the first fed comboTokens an undefined combo, the second dereferenced
+  // undefined directly. Either one used to take the WHOLE Settings view down
+  // with it (reported as "Cannot read properties of undefined (reading
+  // 'split')"), because a frontend build and the running backend are updated
+  // separately and a version skew is the normal state, not an edge case.
+  const current = config?.keybinds?.[action] ?? "";
+  const def = config?.defaults?.[action];
 
   const [combo, setCombo] = useState("");
   const [capturing, setCapturing] = useState(false);
@@ -172,14 +181,14 @@ export function KeybindRow({
   const [pressedCodes, setPressedCodes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (config) setCombo(config.keybinds[action] ?? "");
+    if (config) setCombo(config.keybinds?.[action] ?? "");
   }, [config, action]);
 
   // Tokens already bound to the OTHER actions → marked "used" on the keyboard so
   // the user can pick a free key (their keys "can't be free", as reported).
   const boundTokens = useMemo(() => {
     const out: Record<string, string> = {};
-    if (!config) return out;
+    if (!config?.keybinds) return out;
     for (const [act, c] of Object.entries(config.keybinds)) {
       if (act === action) continue;
       const labelKey = ACTION_LABEL_KEY[act as KeybindAction];
@@ -195,7 +204,7 @@ export function KeybindRow({
   // id back for the message.
   const otherCombos = useMemo(() => {
     const out: Record<string, string> = {};
-    if (!config) return out;
+    if (!config?.keybinds) return out;
     for (const [act, c] of Object.entries(config.keybinds)) {
       if (act !== action) out[act] = c ?? "";
     }

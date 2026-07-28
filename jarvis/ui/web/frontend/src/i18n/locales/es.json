@@ -2037,7 +2037,10 @@
     "title": "No se pudo cargar la vista",
     "crashed_prefix": "se ha bloqueado.",
     "crashed_suffix": "sigue disponible.",
-    "back_to_chats": "Volver a los chats"
+    "back_to_chats": "Volver a los chats",
+    "group_title": "No se pudo cargar esta sección",
+    "group_hint": "El resto de los ajustes de esta página siguen funcionando.",
+    "group_retry": "Intentar de nuevo"
   },
   "plan_step_list": {
     "no_plan": "Sin plan estructurado: ejecución de un solo paso.",
