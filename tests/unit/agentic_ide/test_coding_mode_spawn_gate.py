@@ -1,22 +1,20 @@
-"""Coding mode forbids an internal worker; a pane's own fan-out stays its work.
+"""A pane's own sub-agent fan-out is the pane's work; delegation stays available.
 
-Two rules, one collision. "Sub-agent" is the vocabulary every agentic coding CLI
-uses for its own parallel helpers, and it is also the word that makes Jarvis
-dispatch a background mission worker. While the user is inside the Agentic IDE
-those two readings point in opposite directions, and the user cannot phrase
-their way out of it — so the MODE decides, not the wording.
+"Sub-agent" is what every agentic coding CLI calls its own parallel helpers, and
+it is also the word that makes Jarvis dispatch a background mission worker.
+Inside a coding workspace those two readings point in opposite directions.
 
-Live failure these pin (voice session 2026-07-27 20:00, maintainer mandate the
-same day): "let Alex and Ellis do a deep dive … and they should spawn swarms of
-sub-agents". Both call-signs named running panes, the addressing was detected
-correctly — and the turn went to an invisible background worker anyway because
-the sentence contained "sub-agents" and "spawn". Both terminals sat idle while
-the assistant reported that the agents had been briefed.
+Live failure these pin (voice session 2026-07-27 20:00): "let Alex and Ellis do
+a deep dive … and they should spawn swarms of sub-agents". Both call-signs named
+running panes, the addressing was detected correctly — and the turn went to an
+invisible background worker anyway because the sentence contained "sub-agents"
+and "spawn". Both terminals sat idle while the assistant reported them briefed.
 
-The other direction is guarded just as hard: with coding mode off, asking for a
-background agent must still get one. That feature is the reason the vehicle
-stand-down exists at all, and breaking it while fixing the above would only swap
-which half of the user's intent gets lost.
+The TURN decides, not the mode (maintainer, 2026-07-28). An earlier version of
+this fix blocked every spawn while coding mode was on, which bought the fix by
+deleting a feature — brainstorming inside the IDE and asking for a background
+agent is legitimate and common. So the guards below come in pairs: each one that
+pins "this reaches the pane" has a sibling pinning "and this still delegates".
 """
 from __future__ import annotations
 
@@ -29,9 +27,9 @@ from jarvis.agentic_ide.intent import owns_turn, spawn_vehicle_outranks_workspac
 from jarvis.agentic_ide.session import Registry, reset_registry
 from jarvis.brain.spawn_gate import (
     OFFER_WINDOW,
-    SPAWN_BLOCKED_CODING_MODE_FEEDBACK,
+    SPAWN_BLOCKED_ADDRESSED_PANE_FEEDBACK,
     SPAWN_BLOCKED_MODEL_FEEDBACK,
-    coding_mode_blocks_spawn,
+    addressed_pane_blocks_spawn,
     llm_spawn_allowed,
     spawn_blocked_feedback,
 )
@@ -50,9 +48,7 @@ LIVE_TURN = (
 
 PANES = ["Alex", "Ellis", "Casey"]
 
-# The strongest delegation wording the gate knows, spoken. If THIS reaches a
-# mission worker while coding mode is on, nothing said inside the IDE is safe
-# from the collision.
+# The strongest delegation wording the gate knows, spoken.
 EXPLICIT_DELEGATION = "Spawne bitte einen Agenten im Hintergrund"  # i18n-allow: input vocab
 
 # The mirror cases: the vehicle word comes FIRST, so these are orders to Jarvis
@@ -63,8 +59,7 @@ GENUINE_DELEGATIONS = [
     "Delegiere das im Hintergrund an einen Worker",  # i18n-allow: input vocab
 ]
 
-# "Open five more panes" — the pane-noun path, which is decided before any of
-# the vehicle logic and must stay exactly as it was.
+# "Open five more panes" — the pane-noun path, decided before any vehicle logic.
 MORE_TERMINALS = "Öffne bitte fünf neue Claude Code Terminals"  # i18n-allow: input vocab
 
 
@@ -85,130 +80,124 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Registry:
     return registry
 
 
-async def _coding_mode(registry: Registry, folder: Path) -> None:
+async def _coding_mode(registry: Registry, folder: Path) -> str:
+    """Open a workspace in coding mode; returns the one pane's call-sign."""
     await registry.start(str(folder), [{"agent": "claude"}])
     registry.set_focus_mode(True)
+    return registry.session.terminals[0].name
 
 
 # --------------------------------------------------------------------------- #
-# Part A — the mode is the switch                                             #
+# The feature that must NOT be deleted                                        #
 # --------------------------------------------------------------------------- #
 
 
-async def test_coding_mode_blocks_even_an_explicit_spawn_request(
+async def test_coding_mode_still_allows_an_explicit_spawn(
     wired: Registry, tmp_path: Path
 ) -> None:
-    """The clearest possible delegation request still starts no worker.
+    """The scope correction, pinned: coding mode is not a reason to refuse.
 
-    Deliberately the strongest wording the gate knows: if THIS reaches a mission
-    worker, nothing the user says inside the IDE is safe from the collision.
+    Brainstorming inside the IDE and asking for a background agent is a normal
+    thing to do. The first version of this fix blocked it outright; this test
+    exists so that never comes back silently.
     """
     await _coding_mode(wired, tmp_path)
-    assert coding_mode_blocks_spawn() is True
-    assert llm_spawn_allowed(EXPLICIT_DELEGATION) is False
-
-
-async def test_workspace_without_the_toggle_still_delegates(
-    wired: Registry, tmp_path: Path
-) -> None:
-    """Terminals on a screen are not the mode — the background agent stays.
-
-    The toggle is what the user can see (the app-wide coding-mode badge), so it
-    is what may take a feature away from them.
-    """
-    await wired.start(str(tmp_path), [{"agent": "claude"}])
-    assert coding_mode_blocks_spawn() is False
     assert llm_spawn_allowed(EXPLICIT_DELEGATION) is True
 
 
-async def test_leaving_coding_mode_restores_the_background_agent(
+async def test_coding_mode_allows_a_research_delegation(
     wired: Registry, tmp_path: Path
 ) -> None:
-    """The block is a mode, not a latch — turning it off gives the feature back."""
+    """Naming no pane means the workspace has no claim, mode or not."""
     await _coding_mode(wired, tmp_path)
-    assert llm_spawn_allowed("Spawn a background worker for this") is False
-    wired.set_focus_mode(False)
-    assert llm_spawn_allowed("Spawn a background worker for this") is True
-
-
-def test_no_workspace_leaves_the_gate_untouched() -> None:
-    """With no workspace at all, the gate behaves exactly as it always did."""
-    assert coding_mode_blocks_spawn() is False
-    assert llm_spawn_allowed("Spawn an agent to research this") is True
-    assert llm_spawn_allowed("What is the capital of Portugal?") is False
-
-
-async def test_blocked_feedback_tells_the_model_to_use_a_terminal(
-    wired: Registry, tmp_path: Path
-) -> None:
-    """A block inside the IDE must not invite an offer of a background agent.
-
-    The generic text asks the model to OFFER delegation on the next turn, which
-    is the wrong next move here — the work belongs in a pane on screen.
-    """
-    assert spawn_blocked_feedback() == SPAWN_BLOCKED_MODEL_FEEDBACK
-    await _coding_mode(wired, tmp_path)
-    message = spawn_blocked_feedback()
-    assert message == SPAWN_BLOCKED_CODING_MODE_FEEDBACK
-    assert "agentic-ide-prompt" in message
-
-
-# --------------------------------------------------------------------------- #
-# Part B — a pane's own fan-out is the pane's work                            #
-# --------------------------------------------------------------------------- #
-
-
-def test_live_turn_reaches_the_addressed_panes() -> None:
-    """The 2026-07-27 20:00 utterance belongs to Alex and Ellis, not to a worker.
-
-    Asserted with the toggle OFF on purpose: whether coding mode was on during
-    the live session cannot be recovered, so the fix may not depend on it.
-    """
-    assert coding_mode_blocks_spawn() is False
-    assert owns_turn(LIVE_TURN, names=PANES) is True
-
-
-def test_pane_told_to_fan_out_keeps_the_turn_in_english() -> None:
-    """Same shape, plainly worded — the rule is about word order, not locale."""
-    text = "Alex should spawn a swarm of sub-agents to map the codebase"
-    assert owns_turn(text, names=PANES) is True
+    assert llm_spawn_allowed("Spawn a background agent that audits the wiki") is True
 
 
 @pytest.mark.parametrize("text", GENUINE_DELEGATIONS)
 def test_genuine_delegation_still_outranks_an_open_workspace(text: str) -> None:
-    """The mirror bug stays shut: the vehicle word FIRST is an order to Jarvis.
+    """The vehicle word FIRST is an order to Jarvis, even when a pane is named.
 
     "Spawn an agent that helps Alex" names a pane too — as what the new agent is
     FOR. Reading it as an instruction to Alex would swallow a background request
-    the user genuinely made, which is the failure the vehicle stand-down exists
-    to prevent.
+    the user genuinely made.
     """
     assert spawn_vehicle_outranks_workspace(text, names=PANES) is True
     assert owns_turn(text, names=PANES) is False
 
 
-def test_spawn_vocabulary_without_any_named_pane_is_never_the_workspace() -> None:
-    """No call-sign, no claim — the ordinary delegation request is untouched."""
-    text = "Spawn a background agent that audits the wiki system"
-    assert spawn_vehicle_outranks_workspace(text, names=PANES) is True
-    assert owns_turn(text, names=PANES) is False
+def test_no_workspace_leaves_the_gate_untouched() -> None:
+    """With no workspace at all, the gate behaves exactly as it always did."""
+    assert llm_spawn_allowed("Spawn an agent to research this") is True
+    assert llm_spawn_allowed("What is the capital of Portugal?") is False
 
 
-async def test_coding_mode_hands_the_turn_to_the_pane(
+# --------------------------------------------------------------------------- #
+# The turn that belongs to a pane                                             #
+# --------------------------------------------------------------------------- #
+
+
+def test_live_turn_reaches_the_addressed_panes() -> None:
+    """The 2026-07-27 20:00 utterance belongs to Alex and Ellis, not to a worker."""
+    assert owns_turn(LIVE_TURN, names=PANES) is True
+
+
+def test_pane_told_to_fan_out_keeps_the_turn_in_english() -> None:
+    """Same shape, plainly worded — the rule is word order, not locale."""
+    text = "Alex should spawn a swarm of sub-agents to map the codebase"
+    assert owns_turn(text, names=PANES) is True
+    assert spawn_vehicle_outranks_workspace(text, names=PANES) is False
+
+
+async def test_addressed_pane_blocks_the_llm_spawn(
     wired: Registry, tmp_path: Path
 ) -> None:
-    """In coding mode the stand-down lifts entirely.
-
-    Not cosmetic: with Part A blocking the spawn, a turn the workspace also
-    refused would reach nothing at all — the spawn gate would decline the
-    mission, the router's fast path would decline to type, and the user would
-    get silence. The two gates have to agree in the same direction.
-    """
-    await _coding_mode(wired, tmp_path)
-    pane = wired.session.terminals[0].name
+    """End to end through the gate the model actually hits."""
+    pane = await _coding_mode(wired, tmp_path)
     text = f"{pane} should spawn sub-agents and analyze the wiki system"
-    assert spawn_vehicle_outranks_workspace(text, names=[pane]) is False
-    assert owns_turn(text, names=[pane]) is True
+    assert addressed_pane_blocks_spawn(text) is True
+    assert llm_spawn_allowed(text) is False
+
+
+async def test_plain_terminal_prompt_never_spawns(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """The ordinary case the user cares about most: "prompt <pane> …"."""
+    pane = await _coding_mode(wired, tmp_path)
+    text = f"Prompt {pane} to review the wake pipeline"
+    assert addressed_pane_blocks_spawn(text) is True
+    assert llm_spawn_allowed(text) is False
+
+
+# --------------------------------------------------------------------------- #
+# What the model is told when a spawn is refused                              #
+# --------------------------------------------------------------------------- #
+
+
+async def test_blocked_feedback_points_at_the_terminal(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """A block caused by an addressed pane must not invite a background offer.
+
+    The generic text asks the model to OFFER delegation on the next turn, which
+    is the wrong next move here — the work belongs in the pane just named.
+    """
+    pane = await _coding_mode(wired, tmp_path)
+    message = spawn_blocked_feedback(f"{pane} should spawn sub-agents")
+    assert message == SPAWN_BLOCKED_ADDRESSED_PANE_FEEDBACK
+    assert "agentic-ide-prompt" in message
+    # Gathering context for the brief stays explicitly allowed.
+    assert "other functions" in message
+
+
+async def test_blocked_feedback_stays_generic_without_a_pane(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """A conversational block keeps the offer-delegation guidance."""
+    await _coding_mode(wired, tmp_path)
+    assert spawn_blocked_feedback("What is the capital of Portugal?") == (
+        SPAWN_BLOCKED_MODEL_FEEDBACK
+    )
+    assert spawn_blocked_feedback() == SPAWN_BLOCKED_MODEL_FEEDBACK
 
 
 def test_asking_for_more_terminals_is_still_the_workspace() -> None:

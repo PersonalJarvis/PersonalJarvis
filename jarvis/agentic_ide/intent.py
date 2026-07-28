@@ -285,13 +285,31 @@ def _canonical_text(text: str, candidates: list[str]) -> str:
     branch where ordinary speech collides with the pool ("allen" scores 0.750
     against "Alex"), and rewriting it here would hand every template a name the
     user never said.
+
+    ONE position is exempt, because there the sentence itself vouches for the
+    word: whatever directly follows a briefing verb ("prompt …", "brief …",
+    "beauftrage …") is being named as the addressee. Nothing else can stand
+    there. So a garbled call-sign is admitted on the FUZZY band at that spot and
+    at no other — which is what rescues the maintainer's own example, "hey,
+    prompte adex" (2026-07-28): "adex" reaches "Alex" only fuzzily, so every
+    template missed it, the last-resort branch rejected it for not being
+    certain, and the turn addressed nothing at all.
+
+    The collision risk that makes fuzzy matching dangerous elsewhere does not
+    reach here: "unten"/"keine" score into the pool as ordinary sentence words,
+    and an ordinary sentence word does not sit immediately behind "prompte".
     """
     if not candidates:
         return text
 
+    briefed: set[int] = {
+        match.start("word")
+        for match in _BRIEFED_NAME_RE.finditer(text)
+    }
+
     def _replace(match: re.Match[str]) -> str:
         word = match.group(0)
-        hit = resolve(word, candidates, fuzzy=False)
+        hit = resolve(word, candidates, fuzzy=match.start() in briefed)
         return hit if hit is not None else word
 
     return _WORD_RE.sub(_replace, text)
@@ -416,6 +434,23 @@ _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _BRIEFING_VERB_RE = re.compile(
     r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
     r"beauftrag\w*|briefing|briefe\w*|assign\w*|encarga\w*)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: The ADDRESSEE SLOT: the word a briefing verb hands its work to. Whatever
+#: stands here is being named as the pane — that is the only thing the position
+#: admits — so ``_canonical_text`` may repair a garbled call-sign here on the
+#: fuzzy band without opening the door to the collisions that band causes
+#: elsewhere. The optional filler is exactly what people put between the verb
+#: and the name and nothing more: an article and/or a pane noun
+#: ("prompt THE TERMINAL Alex"), each at most once.
+_BRIEFED_NAME_RE = re.compile(
+    r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
+    r"beauftrag\w*|briefe\w*|assign\w*|encarga\w*)\b\s+"  # i18n-allow: input vocab
+    r"(?:(?:this|that|the|dieses?|diesem|den|dem|"  # i18n-allow: input vocab
+    r"das|der|el|la|ese|este)\s+)?"  # i18n-allow: input vocab
+    r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?"
+    r"(?P<word>[^\W\d_]+)",
     re.IGNORECASE,
 )
 
@@ -1726,15 +1761,10 @@ def spawn_vehicle_outranks_workspace(
     gate refuses the mission, the fast path refuses to type, and the user is
     left with silence — the failure this whole area exists to end.
     """
-    from jarvis.brain.spawn_gate import coding_mode_blocks_spawn, names_spawn_vehicle
+    from jarvis.brain.spawn_gate import names_spawn_vehicle
 
     text = (user_text or "").strip()
     if not names_spawn_vehicle(text):
-        return False
-    if coding_mode_blocks_spawn():
-        # No wording reaches a background worker in this mode, so letting the
-        # vocabulary win here would only take the turn away from the pane that
-        # can still serve it.
         return False
     candidates = _running_names() if names is None else list(names)
     return not _spawn_words_describe_pane_work(text, candidates)
@@ -1753,16 +1783,13 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
        spawn vehicle ("spawne … Terminals"). The mandatory pane noun is what
        makes claiming it safe, and it holds with no workspace open too — the
        feature then opens one, so a background mission would be just as wrong.
-    2. Coding mode owns every turn it can serve. While the user is IN the
-       Agentic IDE, Jarvis does not dispatch its own workers at all
-       (``spawn_gate.coding_mode_blocks_spawn``), so an addressed pane must not
-       lose the turn to vocabulary that can no longer reach a spawn anyway —
-       that would strand the work in the gap between the two gates.
-    3. Otherwise an utterance that explicitly names the spawn vehicle is NOT
+    2. Otherwise an utterance that explicitly names the spawn vehicle is NOT
        owned here — asking for a background agent while a workspace happens to
        be open is a real request, and stealing it would be the mirror image of
-       the bug this module fixes. The one exception is an utterance whose spawn
-       words describe a PANE's work; see ``_spawn_words_describe_pane_work``.
+       the bug this module fixes. That holds INSIDE coding mode too: the mode
+       is not a reason to refuse a delegation the user asked for. The one
+       exception is an utterance whose spawn words describe a PANE's work; see
+       ``_spawn_words_describe_pane_work``.
     """
     text = (user_text or "").strip()
     if not text:

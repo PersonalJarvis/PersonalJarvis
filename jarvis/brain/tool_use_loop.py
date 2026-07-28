@@ -927,7 +927,7 @@ class ToolUseLoop:
                     tool_result_payload = {
                         "success": False,
                         "output": None,
-                        "error": spawn_blocked_feedback(),
+                        "error": spawn_blocked_feedback(user_utterance),
                     }
                 elif (
                     tool_name in CU_VEHICLE_TOOL_NAMES

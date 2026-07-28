@@ -6543,23 +6543,6 @@ class BrainManager:
         # _heavy_worker_provider_viable.
         if not self._heavy_worker_provider_viable():
             return False
-        # Agentic-IDE coding mode forbids an internal worker outright — ahead of
-        # the explicit-trigger hoist below, which is negation- AND context-blind
-        # and would otherwise read the CLI agent's own fan-out vocabulary
-        # ("they should spawn sub-agents") as an order to dispatch a Jarvis
-        # mission. Maintainer mandate 2026-07-27; the LLM-chosen path is closed
-        # by the same predicate in ``spawn_gate.llm_spawn_allowed``.
-        try:
-            from jarvis.brain.spawn_gate import coding_mode_blocks_spawn
-
-            if coding_mode_blocks_spawn():
-                log.info(
-                    "force-spawn skipped: Agentic-IDE coding mode is on — "
-                    "the terminals do this work, no background agent"
-                )
-                return False
-        except Exception as exc:  # noqa: BLE001 — optional surface, never fatal
-            log.debug("coding-mode spawn check failed, ignoring: %s", exc)
         # Explicit spawn DECLINE wins over EVERYTHING below, including the
         # negation-blind explicit-trigger hoist: when the user literally says
         # "don't spawn a subagent" / "talk to me directly", the trigger word

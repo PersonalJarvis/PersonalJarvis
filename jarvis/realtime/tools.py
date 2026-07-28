@@ -410,7 +410,7 @@ class RealtimeToolBridge:
             # spoken turn asks for one (or confirms an offer one turn later).
             # Deterministic — prompt-side discouragement failed repeatedly.
             # See jarvis/brain/spawn_gate.py.
-            message = spawn_blocked_feedback()
+            message = spawn_blocked_feedback(user_text)
         elif name in CU_VEHICLE_TOOL_NAMES and not llm_computer_use_allowed(
             user_text
         ):
