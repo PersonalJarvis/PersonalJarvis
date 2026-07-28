@@ -171,15 +171,29 @@ class DictationCompleted(Event):
 #: ``no_stt``
 #:     No speech-to-text provider is wired, so nothing could transcribe.
 #: ``already_running``
-#:     A dictation is already recording; the second start is a no-op.
+#:     A dictation is already recording (or a handover is in flight); the
+#:     second start is a no-op.
+#: ``handover_failed``
+#:     A live voice conversation owned the microphone, the dictation asked it to
+#:     hang up, and the microphone did not come back — the teardown raised, ran
+#:     past its bound, or the key was released while it was still running. This
+#:     is the ONLY outcome of a collision with a voice session: an explicit
+#:     dictation key press is a deliberate user action and now WINS over a
+#:     conversation somebody left open, so a plain "a session is running" is no
+#:     longer a refusal at all.
 #: ``voice_session_active``
-#:     A voice conversation (wake word or push-to-talk) owns the microphone.
+#:     LEGACY. A voice conversation (wake word or push-to-talk) owned the
+#:     microphone and the dictation gave up instead of taking over. No longer
+#:     published — kept in the vocabulary because an older backend can still
+#:     send it to a newer UI, and a consumer that dropped the token would then
+#:     render an unknown-reason blank.
 #: ``pipeline_not_running``
 #:     The speech pipeline has no running event loop to host the session.
 DICTATION_REFUSAL_REASONS: Final[tuple[str, ...]] = (
     "microphone_unavailable",
     "no_stt",
     "already_running",
+    "handover_failed",
     "voice_session_active",
     "pipeline_not_running",
 )

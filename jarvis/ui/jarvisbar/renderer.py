@@ -15,6 +15,9 @@ State → look:
 - ``dictate``              → the equalizer, driven by the dictation mic level.
 - ``dictate_transcribing`` → the orbital core: recording has stopped and the
                transcription is running, so there IS something to represent.
+- ``notice``  → a breathing red cross in an opened pill: something the user
+               asked for did not happen. The bar carries no text, so this look
+               IS the message on this surface.
 
 Gold only appears during activity; idle dots stay muted.
 """
@@ -33,6 +36,7 @@ from PIL import Image, ImageDraw
 from jarvis.ui.jarvisbar.modes import (  # noqa: F401 — re-exported as renderer.MODES
     DICTATION_MODES,
     MODES,
+    NOTICE_MODES,
 )
 
 COLOR_KEY_RGB = (255, 0, 255)
@@ -180,6 +184,33 @@ def drop_rim_color(
     if state == DROP_STATE_REJECTED:
         return MUTED_RED
     return base
+
+
+# --- the `notice` look: "what you asked for did not happen" -------------------
+# The bar has no text, so a refusal has exactly one way to reach the user here:
+# a look distinct from every other one. It reuses the drop-verdict cross (same
+# glyph, same supersampled drawing, same red) because that mark already means
+# "no" on this surface — inventing a second negative symbol would only make two
+# things the user has to learn. The rim goes red for the same reason the muted
+# rim does: it is legible from the corner of the eye at the resting pill size.
+#
+# The pulse is what separates a notice from a frozen frame. A static cross on a
+# bar that is normally animated reads as "the bar has hung"; a slow breath reads
+# as a deliberate message. Amplitude is small on purpose — this is an answer to
+# a keypress, not an alarm.
+NOTICE_PULSE_RAD_S = 3.4
+NOTICE_ALPHA_MIN = 0.55
+
+
+def notice_alpha(t: float) -> float:
+    """Glyph alpha of the ``notice`` look at time ``t`` (pure, in [MIN, 1.0]).
+
+    Pure and bounded so the breath is unit-testable without a display, and so a
+    surface can never render the notice fully transparent (an invisible "your
+    key press did nothing" message is the bug this look exists to fix).
+    """
+    pulse = 0.5 + 0.5 * math.sin(t * NOTICE_PULSE_RAD_S)
+    return NOTICE_ALPHA_MIN + (1.0 - NOTICE_ALPHA_MIN) * pulse
 
 # Size factors. ``_SCALE`` is the overall shrink (1.0 was the original, far too
 # big). ``_W`` / ``_H`` then stretch width / height independently on top of it:
@@ -498,10 +529,16 @@ def target_pill_size(
     (``render``, where a dictation mode has already resolved to ``speak`` /
     ``think``) or the COARSE mode (the Qt surface's hover-footprint probe) — so
     listing them keeps the hit-box the user can hover in step with the pill the
-    renderer actually draws during a dictation."""
+    renderer actually draws during a dictation.
+
+    ``notice`` opens the pill for the same reason a drop verdict does, and no
+    further: the resting pill is a ~37x6 px sliver with no room to draw a
+    legible mark in, while the 2x ACTIVE size would make a passing message look
+    like a live session. OPEN is the size at which the answer is readable and
+    still unmistakably not a conversation."""
     if mode in ("listen", "speak", "think") or mode in DICTATION_MODES:
         return ACTIVE_W, ACTIVE_H
-    if hovered or muted or drop_open:
+    if hovered or muted or drop_open or mode in NOTICE_MODES:
         return OPEN_W, OPEN_H
     return COLLAPSED_W, COLLAPSED_H
 
@@ -574,7 +611,15 @@ def visual_mode(
       running) renders as the orbital core. Here there genuinely IS work in
       flight to represent, and the mic feed has stopped — showing the equalizer
       would claim the bar is still listening when it is not.
+
+    ``notice`` is resolved first and passes through unchanged. It is the one
+    look that must survive EVERY other signal: it is raised precisely when
+    something did not happen, and a stale level sample or an in-flight playback
+    must never be able to repaint it as listening or speaking — that would
+    replace the answer to the user's key press with a lie about the microphone.
     """
+    if coarse_mode in NOTICE_MODES:
+        return coarse_mode
     if coarse_mode == "idle":
         return "idle"
     if coarse_mode == "dictate":
@@ -787,6 +832,10 @@ class JarvisBarRenderer:
         drop_elapsed: float = 0.0,
     ) -> Image.Image:
         active = mode in ("listen", "speak")
+        # "That did not happen" — see NOTICE_MODES. Held separately from the
+        # active/idle split because it is neither: nothing is running, but the
+        # pill is not at rest either.
+        notice = mode in NOTICE_MODES
         # Drag-drop feedback. ``drop_state`` is what the surface currently sees
         # (a hovering payload, or the verdict of one that landed) and
         # ``drop_elapsed`` how long the verdict has been up; the glyph's own
@@ -839,6 +888,11 @@ class JarvisBarRenderer:
         # are dragging.
         outline_color = MUTED_RED if muted else PILL_BORDER
         outline_color = drop_rim_color(t, outline_color, drop_state)
+        if notice and not confirming:
+            # A refusal outranks the resting/muted rim: it is transient and it
+            # is the reason the pill opened. A drop verdict in flight still
+            # wins, because the user is looking at the payload they just let go.
+            outline_color = MUTED_RED
         d.rounded_rectangle(
             [cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2],
             radius=ph / 2,
@@ -862,6 +916,14 @@ class JarvisBarRenderer:
                 fraction=tick_frac,
                 alpha=tick_alpha,
                 ok=drop_state == DROP_STATE_OK,
+            )
+        elif notice:
+            # The message owns the pill alone — deliberately ABOVE the hover
+            # branch. Hovering must not swap a "that did not happen" answer for
+            # the mic/close-X controls: the user would be left with controls and
+            # no idea why they pressed a key and nothing occurred.
+            self._draw_drop_glyph(
+                img, cx, cy, ph, fraction=1.0, alpha=notice_alpha(t), ok=False
             )
         elif hovered:
             x_left = cx - 0.42 * pw

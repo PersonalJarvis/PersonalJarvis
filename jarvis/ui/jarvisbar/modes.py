@@ -34,5 +34,18 @@ VOICE_MODES: tuple[str, ...] = ("idle", "listen", "speak", "think")
 #: - ``dictate_transcribing``  — recording stopped, the transcription is running.
 DICTATION_MODES: tuple[str, ...] = ("dictate", "dictate_transcribing")
 
+#: Attention modes: something the user ASKED for did not happen, and they are
+#: owed a reason. The bar carries no text, so without a look of its own a
+#: refusal reached only a log file the desktop app cannot display — pressing the
+#: dictation shortcut with a live voice conversation did nothing at all, on
+#: screen or anywhere else. This mode is that missing answer.
+#:
+#: - ``notice`` — a brief, self-clearing "that did not happen" look. It is NOT a
+#:   dictation mode and must never be one: a dictation mode claims the
+#:   microphone is recording, which on a REFUSED dictation is the opposite of
+#:   the truth. Like the dictation modes it is inert to clicks, because a
+#:   transient message is not a control.
+NOTICE_MODES: tuple[str, ...] = ("notice",)
+
 #: Every mode a surface accepts. Anything else is dropped by ``show()``.
-MODES: tuple[str, ...] = VOICE_MODES + DICTATION_MODES
+MODES: tuple[str, ...] = VOICE_MODES + DICTATION_MODES + NOTICE_MODES

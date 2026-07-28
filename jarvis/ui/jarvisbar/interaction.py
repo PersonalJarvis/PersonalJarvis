@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Dependency-free import (no numpy/PIL): this module stays cheap enough for the
 # IPC proxy and the pure unit tests.
-from jarvis.ui.jarvisbar.modes import DICTATION_MODES
+from jarvis.ui.jarvisbar.modes import DICTATION_MODES, NOTICE_MODES
 
 
 # --------------------------------------------------------------------------- #
@@ -79,9 +79,19 @@ def resolve_click(
     stop — release the key, press it again in toggle mode, the Dictation view,
     or ``jarvis api dictation stop`` — so an inert bar costs nothing and cannot
     misfire.
+
+    ``NOTICE_MODES`` is inert for the same reason and one more. A notice is a
+    transient ANSWER, not a control: it appears unrequested, it opens the pill
+    under wherever the pointer happens to be, and it clears itself a moment
+    later. Letting it resolve a click would mean a click aimed at the bar's
+    resting state lands on whatever the notice replaced it with — starting a
+    voice session or toggling the mic by accident. Worse, a notice can be raised
+    WHILE a conversation is live (a refused dictation says so mid-session), and
+    the "not active → talk" fall-through would then fire a second session on a
+    bar the user could not see the truth of.
     """
     frac = x / max(1, width)
-    if mode in DICTATION_MODES:
+    if mode in DICTATION_MODES or mode in NOTICE_MODES:
         return "none"
     active = mode in ("listen", "think", "speak")
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)

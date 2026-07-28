@@ -661,6 +661,23 @@ _DICTATION_WAKE_RELEASE_TIMEOUT_S = 3.0
 # was never delivered. See ``SpeechPipeline._on_dictate_press``.
 _DICTATE_HOLD_REPEAT_GRACE_S = 2.0
 
+# How long an explicit dictation key press waits for a live voice conversation
+# to give the microphone back before it gives up and says so.
+#
+# The press WINS over the session (see ``_begin_dictation_handover``), but the
+# wait has to be bounded: a teardown that wedges must not leave the shortcut
+# permanently dead — the very failure mode this whole lane exists to remove. A
+# hangup stops the player immediately and unwinds through the normal session
+# teardown, which is itself bounded, so anything past this window is a wedge and
+# an honest refusal beats an endless spinner.
+_DICTATION_HANDOVER_TIMEOUT_S = 5.0
+
+# Poll interval while waiting for that handover. There is no single event that
+# means "the session released the input device" — the state machine reaches IDLE
+# only after its capture context has exited — so the wait watches that state.
+# Small enough to be imperceptible, large enough not to spin the loop.
+_DICTATION_HANDOVER_POLL_S = 0.02
+
 
 class _SessionInputBuffer:
     """Replayable bounded handoff for one continuously captured mic stream.
@@ -1355,6 +1372,11 @@ class SpeechPipeline:
         # task so it can never touch ``_handle_utterance`` / the wake loop.
         self._dictation_stop_event = asyncio.Event()
         self._dictation_task: asyncio.Task[None] | None = None
+        # The short-lived task that ends a live voice conversation so this
+        # dictation can have the microphone. Alive only between the key press
+        # and the moment ``_dictation_task`` exists (or the handover is refused),
+        # and never both at once. See ``_begin_dictation_handover``.
+        self._dictation_handover_task: asyncio.Task[None] | None = None
         self._dictation_max_s = float(
             getattr(self._dictation_cfg, "max_seconds", 300.0) or 300.0
         )
@@ -2358,7 +2380,7 @@ class SpeechPipeline:
         if dictate_toggle is not None:
             self._dictate_toggle_hotkeys = list(dictate_toggle)
         log.info(
-            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s] "
+            "Keybinds live-switched: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s] "
             "DICTATE-TOGGLE=[%s]",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
@@ -2416,7 +2438,7 @@ class SpeechPipeline:
         return bindings, edge_events
 
     # ------------------------------------------------------------------
-    # Bus / Supervisor Helper — no-op wenn nicht konfiguriert
+    # Bus / supervisor helpers — a no-op when nothing is configured
     # ------------------------------------------------------------------
 
     async def _transition(self, new_state: str) -> None:
@@ -2903,7 +2925,10 @@ class SpeechPipeline:
 
         Two independent things must BOTH hold for wake to stay blocked:
 
-        1. ``_dictation_task`` is alive. Derived from ``task.done()``, never a
+        1. A dictation task is alive — either the recording itself
+           (``_dictation_task``) or the handover that is ending a voice
+           conversation to get the microphone for one
+           (``_dictation_handover_task``). Derived from ``task.done()``, never a
            bare bool somebody has to remember to clear — a crashed, cancelled or
            returned task is ``done()``, so the block lifts by itself.
         2. The watchdog deadline has not passed. ``_dictation_wake_block_until``
@@ -2911,11 +2936,18 @@ class SpeechPipeline:
            that somehow hangs forever therefore still cannot deafen the wake
            word beyond it.
 
-        Both defaults fail OPEN (no task → False, missing deadline → 0.0 →
+        The handover half matters as much as the recording half: ending the
+        conversation returns the pipeline to IDLE with the wake loop free to
+        re-arm, and a wake word firing in that gap would take the microphone
+        straight back from the user who just pressed the dictation key.
+
+        All defaults fail OPEN (no task → False, missing deadline → 0.0 →
         False), because the failure this guards against is BUG-037: permanently
         deaf with no visible cause and only a restart to fix.
         """
         task = getattr(self, "_dictation_task", None)
+        if task is None or task.done():
+            task = getattr(self, "_dictation_handover_task", None)
         if task is None or task.done():
             return False
         return time.time() < float(getattr(self, "_dictation_wake_block_until", 0.0))
@@ -4802,9 +4834,11 @@ class SpeechPipeline:
                 return
         self._dictate_key_down = True
         if not self.start_dictation(target=self._configured_dictation_target()):
-            # Could not start (mic busy, a voice session is live, no STT). Drop
+            # Could not start (no microphone, no STT, already recording). Drop
             # the latch immediately so the NEXT press is a fresh attempt rather
-            # than being swallowed as a repeat.
+            # than being swallowed as a repeat. A live voice session is NOT one
+            # of these: it is accepted and handed over, and the latch has to
+            # stay so the release can cancel a handover that is still running.
             self._dictate_key_down = False
 
     def _on_dictate_release(self) -> None:
@@ -4815,9 +4849,13 @@ class SpeechPipeline:
         self.stop_dictation()
 
     def _on_dictate_toggle(self) -> None:
-        """Toggle mode: start if idle, stop if running."""
-        task = self._dictation_task
-        if task is not None and not task.done():
+        """Toggle mode: start if idle, stop if running.
+
+        ``dictation_active`` covers the handover window too, so the second press
+        of a hands-free toggle cancels a voice-session handover that has not
+        finished instead of falling through and asking for a second dictation.
+        """
+        if self.dictation_active():
             self.stop_dictation()
             return
         self.start_dictation(target=self._configured_dictation_target())
@@ -6384,7 +6422,12 @@ class SpeechPipeline:
                     )
                 else:
                     # Normal disconnect earcon followed by speaker-echo lock.
-                    await self._play_earcon(DISCONNECT_PCM)
+                    # Skipped when the dictation lane is what ended this session:
+                    # the user's microphone is open a few milliseconds later (or
+                    # already is), and a tone played into it is speaker echo the
+                    # transcription then has to eat.
+                    if not self._dictation_blocks_activation():
+                        await self._play_earcon(DISCONNECT_PCM)
                     lock_s = self._post_hangup_lock_seconds()
                     self._wake_lock_until = time.time() + lock_s
                     log.info(
@@ -7750,8 +7793,24 @@ class SpeechPipeline:
         * ``"insert"`` — additionally paste it into the focused text field of
           whatever application is in front. This is dictation mode proper.
 
-        Returns ``False`` when it cannot start — a voice/PTT session is active,
-        the pipeline is busy, dictation is already running, or no STT is wired.
+        Returns ``False`` when it cannot start — no microphone, no STT, or a
+        dictation already running. A live voice conversation is NOT one of
+        those cases any more: see the handover below.
+
+        **The dictation key wins.** Pressing it is a deliberate, explicit user
+        action; a conversation left open in the background is not. On this
+        machine's configuration a session never ends by itself (idle auto-hangup
+        is off by maintainer mandate and the hangup key is unbound), so a single
+        wake word at any point in the day used to make EVERY later dictation
+        press refuse — silently — until the app was restarted. So a press now
+        hangs the conversation up through the ordinary hangup chokepoint (the
+        same one the bar's close-X uses), waits for the microphone to actually
+        come back, and then records. This is the maintainer's own kill-switch
+        doctrine: an explicit stop gesture beats whatever Jarvis is in the
+        middle of, INCLUDING a half-spoken answer, and the answer is cut off the
+        clean way — the player stops, the session unwinds through its normal
+        teardown, and a bounded wait means a wedged teardown refuses honestly
+        instead of hanging or deafening the key forever.
 
         **Every refusal is announced**, not just logged: each one publishes a
         ``DictationRefused`` carrying a stable reason token and a finished
@@ -7759,7 +7818,8 @@ class SpeechPipeline:
         ``log.info`` in a file the desktop app cannot display (CLAUDE.md §9), so
         the key simply did nothing and the user had no way to learn why. The
         boolean return is unchanged, so every existing caller (hotkey edge, WS
-        handler, REST route) keeps working.
+        handler, REST route) keeps working; ``True`` from the handover path
+        means "accepted", and its failure arrives as ``DictationRefused``.
 
         This NEVER routes to the brain: it spawns ``_dictation_session`` which
         only publishes ``DictationStarted`` / ``DictationTranscript`` /
@@ -7779,23 +7839,10 @@ class SpeechPipeline:
                 "to transcribe with. Add a provider key in Settings.",
             )
             return False
-        if self._dictation_task is not None and not self._dictation_task.done():
+        if self.dictation_active():
             self._refuse_dictation(
                 "already_running",
                 "A dictation is already recording.",
-            )
-            return False
-        if self._ptt_mode or self._state != PipelineState.IDLE:
-            # Deliberate: a live voice conversation owns the microphone, and the
-            # dictation lane opens its own stream. Preempting the session on a
-            # keypress was considered and rejected — a hold gesture released
-            # before the handover finished would leave a dictation nobody stops,
-            # running to the duration cap. Refusing is the honest behaviour; the
-            # defect was that the refusal was SILENT.
-            self._refuse_dictation(
-                "voice_session_active",
-                "A voice conversation is running and is using the microphone. "
-                "Hang up first, then dictate.",
             )
             return False
         try:
@@ -7806,6 +7853,165 @@ class SpeechPipeline:
                 "The voice pipeline is not running, so dictation cannot start.",
             )
             return False
+        if self._voice_session_holds_microphone():
+            return self._begin_dictation_handover(loop, target=target)
+        return self._commit_dictation(loop, target=target)
+
+    def _voice_session_holds_microphone(self) -> bool:
+        """True while the VOICE lane owns the one input device.
+
+        Push-to-talk arms its raw recording before the state machine leaves
+        IDLE, so both halves are needed; either one means the dictation lane
+        must not open a stream of its own (AP-24 / the BUG-014 family).
+        ``getattr`` defaults keep pipelines built via ``__new__`` working.
+        """
+        return bool(getattr(self, "_ptt_mode", False)) or (
+            getattr(self, "_state", PipelineState.IDLE) is not PipelineState.IDLE
+        )
+
+    def _begin_dictation_handover(
+        self, loop: asyncio.AbstractEventLoop, *, target: str
+    ) -> bool:
+        """Take the microphone from a live voice conversation, then dictate.
+
+        Returns ``True`` when the press is ACCEPTED: the conversation has been
+        told to hang up and the dictation starts a moment later, once the device
+        has actually been released. That ordering is the whole point, because
+        two native input streams on one device is the AP-24 class of bug.
+        ``False`` means the hangup itself could not even be requested, which is
+        refused out loud like any other dead end.
+
+        The wake gate is closed here rather than at the commit point: ending the
+        conversation returns the pipeline to IDLE with the wake loop free to
+        re-arm, and a wake word firing inside that gap would take the microphone
+        straight back from the user who just pressed the key. The deadline
+        covers only the handover — ``_commit_dictation`` re-arms it for the
+        recording — so a handover that dies without running its own teardown
+        still cannot deafen wake for more than this window (BUG-037).
+        """
+        self._dictation_wake_block_until = (
+            time.time() + _DICTATION_HANDOVER_TIMEOUT_S + 1.0
+        )
+        try:
+            # Hang up SYNCHRONOUSLY, on the press itself — never from inside the
+            # waiting task. A task cancelled before its first step (a
+            # press-and-release a few milliseconds apart, which is a normal
+            # human gesture) never executes a single line of its body, so a
+            # hangup scheduled in there would simply not happen and the key
+            # would be back to doing nothing at all.
+            #
+            # This is the ordinary hangup entry point — the same one the bar's
+            # close-X calls. It stops the player immediately, cancels a running
+            # Computer-Use mission and a live chat turn, and lets the session
+            # unwind through its own teardown. Deliberately NOT a second
+            # teardown of our own: one chokepoint, one contract.
+            self.request_hangup()
+        except Exception as exc:  # noqa: BLE001 — an honest refusal, not a crash
+            log.warning("Dictation handover could not hang up the session: %s", exc)
+            self._refuse_dictation(
+                "handover_failed",
+                "The running voice conversation could not be ended, so the "
+                "dictation did not start. Close the voice bar and press the "
+                "key again.",
+            )
+            return False
+        task = loop.create_task(
+            self._dictate_when_the_microphone_is_free(loop, target=target),
+            name="dictation-handover",
+        )
+        # The terminal guarantee lives in a done-callback, not in the
+        # coroutine's own ``except``, for the same never-started reason.
+        task.add_done_callback(self._on_handover_settled)
+        self._dictation_handover_task = task
+        log.info(
+            "Dictation key pressed during a live voice session — hung up, "
+            "waiting for the microphone."
+        )
+        return True
+
+    async def _dictate_when_the_microphone_is_free(
+        self, loop: asyncio.AbstractEventLoop, *, target: str
+    ) -> None:
+        """Wait for the hung-up session to release the device, then dictate.
+
+        The hangup has already been requested (see ``_begin_dictation_handover``);
+        this is only the wait, and it is BOUNDED. The pipeline reaches IDLE after
+        its capture context has exited, so waiting for that state is what keeps
+        the dictation from opening a second native stream on the same device
+        (AP-24). Nothing here can leave the wake gate closed — the gate is
+        derived from this task being alive, so it reopens the moment this
+        returns, raises or is cancelled (BUG-037).
+        """
+        try:
+            deadline = loop.time() + _DICTATION_HANDOVER_TIMEOUT_S
+            while self._voice_session_holds_microphone():
+                if loop.time() >= deadline:
+                    log.warning(
+                        "Dictation handover timed out after %.1fs — the voice "
+                        "session still holds the microphone.",
+                        _DICTATION_HANDOVER_TIMEOUT_S,
+                    )
+                    self._refuse_dictation(
+                        "handover_failed",
+                        "The voice conversation did not give the microphone back "
+                        "in time, so the dictation did not start. Try the key "
+                        "again in a moment.",
+                    )
+                    return
+                await asyncio.sleep(_DICTATION_HANDOVER_POLL_S)
+            self._commit_dictation(loop, target=target)
+        finally:
+            # Not the terminal guarantee — a task cancelled before its first
+            # step never runs this. ``_on_handover_settled`` is what always
+            # runs; this only releases the handle as early as possible.
+            self._dictation_handover_task = None
+
+    def _on_handover_settled(self, task: asyncio.Task[None]) -> None:
+        """Terminal guarantee for the handover: it commits, or it explains.
+
+        Runs for EVERY end of the handover task, including one cancelled before
+        it ever started — the fastest press-and-release, and the case a plain
+        ``except asyncio.CancelledError`` inside the coroutine silently misses.
+        Never raises: a callback that throws here would surface as a stray
+        "exception in callback" and take the explanation with it (AP-18).
+        """
+        try:
+            if getattr(self, "_dictation_handover_task", None) is task:
+                self._dictation_handover_task = None
+            if task.cancelled():
+                # The key was let go (or a toggle stopped it) while the
+                # conversation was still shutting down. Starting the recording
+                # now would leave a dictation nobody is holding a key for,
+                # running to the duration cap — so say what happened instead.
+                # The hangup itself already went through, which is exactly why
+                # pressing again works.
+                self._refuse_dictation(
+                    "handover_failed",
+                    "The voice conversation was still shutting down when the "
+                    "dictation key was released, so nothing was recorded. The "
+                    "microphone is free now — press the key again.",
+                )
+                return
+            error = task.exception()
+            if error is not None:
+                log.warning("Dictation handover failed: %s", error, exc_info=error)
+                self._refuse_dictation(
+                    "handover_failed",
+                    "Handing the microphone over from the voice conversation "
+                    "failed, so the dictation did not start. Try the key again.",
+                )
+        except Exception:  # noqa: BLE001 — a refusal must never become a crash
+            log.debug("Dictation handover callback failed", exc_info=True)
+
+    def _commit_dictation(
+        self, loop: asyncio.AbstractEventLoop, *, target: str
+    ) -> bool:
+        """Arm the wake block, announce the turn and spawn the recording task.
+
+        The commit point shared by the direct start and the handover, so both
+        arrive in the dictation lane through exactly one door. Always returns
+        ``True``; every reason not to be here is checked by ``start_dictation``.
+        """
         # A fresh dictation session must NOT inherit a stale hangup. ``_hangup_event``
         # is set by every "auflegen" and is otherwise only cleared when the next
         # VOICE session is accepted (``_run_session``). The dictation lane shares
@@ -7878,12 +8084,33 @@ class SpeechPipeline:
         )
 
     def dictation_active(self) -> bool:
-        """Is a dictation running right now? (REST/UI status, cheap.)"""
-        task = self._dictation_task
-        return task is not None and not task.done()
+        """Is the dictation lane engaged right now? (REST/UI status, cheap.)
+
+        True for the recording AND for the handover that is clearing a voice
+        conversation out of the way for one. Both count, because both mean the
+        key has been pressed and the lane is owed exactly one outcome — a second
+        start in that window is the ``already_running`` no-op, not a race for
+        the microphone.
+        """
+        for name in ("_dictation_task", "_dictation_handover_task"):
+            task = getattr(self, name, None)
+            if task is not None and not task.done():
+                return True
+        return False
 
     def stop_dictation(self) -> bool:
-        """Signal the active dictation session to finish (best-effort)."""
+        """Signal the active dictation session to finish (best-effort).
+
+        A handover still in flight is CANCELLED rather than stopped: the
+        recording it was about to start has not begun, and letting it start now
+        would leave a dictation nobody is holding a key for, running to the
+        duration cap. The cancellation publishes its own refusal, so a hold
+        gesture released mid-handover still tells the user what happened.
+        """
+        handover = getattr(self, "_dictation_handover_task", None)
+        if handover is not None and not handover.done():
+            handover.cancel()
+            return True
         if self._dictation_task is None or self._dictation_task.done():
             return False
         self._dictation_stop_event.set()

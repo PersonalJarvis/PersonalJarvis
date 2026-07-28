@@ -267,7 +267,17 @@ def mode_energy(mode: str, t: float, ext_level: float | None) -> float:
       loudness the user happened to end on. This mode therefore ignores the
       stale level outright and runs a steady work pulse instead — the mascot's
       equivalent of the bar's orbital core.
+
+    ``notice`` — something the user asked for did not happen. Like
+    ``dictate_transcribing`` it IGNORES the live level: the mascot must not
+    shimmer along with a microphone it is not using while it says the opposite.
+    It runs a low, slow breath — clearly awake (a dead-flat mascot reads as a
+    crashed one) and clearly not listening. On this surface the reason itself
+    is legible in the speech bubble, so the energy only has to avoid
+    contradicting it.
     """
+    if mode == "notice":
+        return max(0.0, min(1.0, 0.16 + 0.08 * math.sin(t * 1.1)))
     if mode == "dictate":
         live = 0.0 if ext_level is None else max(0.0, min(1.0, ext_level))
         floor = 0.22 + 0.14 * math.sin(t * 1.6)
