@@ -33,15 +33,15 @@
 # to remove, and a fork generates its own. So withhold that whole subtree.
 scripts/ci/privacy_gate/**
 
-# --- .mailmap: full-depersonalization decision (2026-06-01) ------------------
-# The dist repo's history is already 100% noreply-authored (no real-email
-# commits exist there), so .mailmap maps nothing and is NOT load-bearing in the
-# distribution — it only ships the maintainer's two private emails + full name
-# as file data. Per the maintainer's "full depersonalization" choice for the
-# v0.1.0 release, drop it from the snapshot entirely (cleanest cut: removes both
-# real emails and the full name with zero scrub artifacts). reconcile deletes it
-# from the dist tree.
-.mailmap
+# --- .mailmap: shipped again since 2026-07-28 (maintainer directive) ---------
+# The 2026-06-01 full-depersonalization entry withheld .mailmap because it then
+# carried the maintainer's two private e-mail addresses as file data. That era
+# is retired (2026-07-17: one shared git history) and its premise no longer
+# holds either: the public history is NOT purely noreply-authored (generic
+# "Personal Jarvis Maintainer" and placeholder identities exist there), so the
+# file IS load-bearing for honest `git shortlog` attribution. The tracked
+# .mailmap now must never contain a real personal address (see
+# scrub-exempt.txt), which removes the reason to withhold it.
 
 # --- Encrypted release-signing keys (maintainer identity) -------------------
 install/keys/*.key.enc

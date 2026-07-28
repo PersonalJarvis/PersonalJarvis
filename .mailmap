@@ -1,0 +1,22 @@
+# .mailmap — map historical placeholder identities onto the maintainer's
+# canonical GitHub identity so `git shortlog -sne` reports an honest picture.
+# The history itself is append-only and is never rewritten.
+#
+# Invariant (see scripts/ci/privacy_gate/references/scrub-exempt.txt): this
+# tracked file must NEVER contain a real personal e-mail address — only the
+# GitHub noreply form, project-generic addresses, and RFC-reserved
+# placeholders. A real address anywhere in history stays unmapped here.
+#
+# Deliberately not mapped: dependabot[bot], Claude, and other bot identities —
+# they are legitimately not the maintainer.
+
+# Canonical identity. This line also normalizes name-only variants
+# ("RubenLütke", "rubenluetke10-beep", "Personal Jarvis Maintainer") that
+# committed with the same address.
+Ruben Lütke <226271791+rubenluetke10-beep@users.noreply.github.com>
+
+# Early automation committed as a generic project identity.
+Ruben Lütke <226271791+rubenluetke10-beep@users.noreply.github.com> <noreply@personaljarvis.dev>
+
+# Placeholder identity from a misconfigured machine (example.com is RFC-reserved).
+Ruben Lütke <226271791+rubenluetke10-beep@users.noreply.github.com> <harald@example.com>

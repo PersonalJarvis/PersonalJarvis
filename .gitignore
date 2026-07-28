@@ -326,7 +326,3 @@ video/*.png
 # Internal trademark/brand risk assessment. A self-authored record of known,
 # deferred IP risk — keep it private; the public posture is TRADEMARK.md.
 /docs/legal/trademark-brand-audit-*.html
-
-# Author email map. Its stated purpose is to keep private addresses out of the
-# public index, but the file itself publishes them in plaintext.
-/.mailmap
