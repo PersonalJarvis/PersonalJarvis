@@ -34,16 +34,38 @@ import { fetchLastPrompt } from "@/lib/agenticIdeApi";
  *
  * ## Why it does not simply fade away
  *
- * A toast that vanishes after four seconds only reassures a user who was
- * already watching — the one who never doubted it. The doubt belongs to
- * whoever looked away, and it appears minutes later. So this stays: prominent
- * while it is fresh, then shrinking to a quiet line that remains until the
- * next prompt replaces it or the user dismisses it. Proof that expires is not
- * proof.
+ * It shows for five seconds and goes (maintainer decision 2026-07-28, after
+ * seeing it live). A receipt that lingers sits on top of the agent's output —
+ * the pane is a terminal, and the bottom rows are where a CLI does its
+ * talking, so a permanent bar buys certainty by covering the thing it is
+ * certifying. Five seconds is enough to see WHICH pane was addressed and that
+ * something real was sent, which is what was missing.
+ *
+ * Nothing is lost by leaving: the delivery stays in the pane's state and the
+ * full text stays readable at `GET /terminals/{name}/prompt` (and through the
+ * CLI), so a doubt that surfaces ten minutes later still has an answer. What
+ * expires is the interruption, not the proof.
+ *
+ * Two deliberate exceptions, because both would turn "brief" into "broken":
+ *
+ * - a receipt the user is READING or pointing at stays until they are done —
+ *   a panel that closes under the cursor is worse than one that never opened;
+ * - a prompt that was typed but never STARTED stays, full stop. That is not a
+ *   confirmation, it is a warning: the pane looks exactly like a working one
+ *   and only the user can push it over the line. Hiding it after five seconds
+ *   would recreate the original bug in a new place.
  */
 
-/** How long the receipt stays in its full, hard-to-miss form. */
-export const RECEIPT_PROMINENT_MS = 9_000;
+/** How long an ordinary receipt stays on screen before it withdraws. */
+export const RECEIPT_VISIBLE_MS = 5_000;
+
+/**
+ * Grace period after the pointer leaves, before a hovered receipt withdraws.
+ *
+ * Short, but not zero: the receipt must not evaporate in the instant between
+ * "I am moving the mouse towards it" and arriving.
+ */
+export const RECEIPT_LEAVE_GRACE_MS = 1_200;
 
 export interface PromptReceiptProps {
   /** Call-sign of the pane this receipt belongs to. */
@@ -100,8 +122,9 @@ export function PromptReceipt({
   submitted,
   onDismiss,
 }: PromptReceiptProps) {
-  const [prominent, setProminent] = useState(true);
+  const [gone, setGone] = useState(false);
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [full, setFull] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -114,17 +137,44 @@ export function PromptReceipt({
     };
   }, []);
 
-  // A fresh delivery is prominent again: this component is keyed by `at` in the
-  // pane, but a re-render with a new timestamp must not leave a two-minute-old
-  // receipt in its quiet form while the user is being told something arrived.
+  // A new delivery is a new receipt: this component is keyed by `at` in the
+  // pane, but a withdrawn one must never stay withdrawn while something fresh
+  // is being announced.
   useEffect(() => {
-    setProminent(true);
+    setGone(false);
     setOpen(false);
+    setHovered(false);
     setFull(null);
     setLoadError("");
-    const timer = window.setTimeout(() => setProminent(false), RECEIPT_PROMINENT_MS);
-    return () => window.clearTimeout(timer);
   }, [at]);
+
+  /**
+   * Withdraw after five seconds — unless withdrawing would be the wrong thing.
+   *
+   * A prompt that never STARTED keeps its receipt: that is a warning the user
+   * has to act on, not a confirmation they can be spared. And a receipt being
+   * read or pointed at is not in anyone's way; it leaves shortly after the
+   * pointer does.
+   */
+  const holdOpen = submitted === false || open || hovered;
+  /** Has this receipt ever been held back? Then it leaves on the short clock. */
+  const wasHeld = useRef(false);
+  useEffect(() => {
+    wasHeld.current = false;
+  }, [at]);
+  useEffect(() => {
+    if (holdOpen) {
+      wasHeld.current = true;
+      return;
+    }
+    if (gone) return;
+    // Someone who has just finished reading does not need the full five
+    // seconds again — but they do need more than zero, or the receipt
+    // disappears in the gap between leaving it and deciding to come back.
+    const delay = wasHeld.current ? RECEIPT_LEAVE_GRACE_MS : RECEIPT_VISIBLE_MS;
+    const timer = window.setTimeout(() => setGone(true), delay);
+    return () => window.clearTimeout(timer);
+  }, [at, gone, holdOpen]);
 
   // The relative label has to keep up on its own — nothing else re-renders this
   // pane once the agent settles, and a receipt frozen at "just now" half an
@@ -171,27 +221,39 @@ export function PromptReceipt({
           }
         : {
             icon: <HelpCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
-            label: "Prompt sent",
+            // The qualifier rides in the LABEL rather than the line below it,
+            // which only the warning case still renders. A five-second bar
+            // reading a bare "Prompt sent" would quietly upgrade "could not
+            // confirm it started" into "it started" — the exact overstatement
+            // this component exists to stop.
+            label: "Prompt sent — start could not be confirmed",
             note: "it went to the pane; the agent's start could not be confirmed",
           };
 
   const clock = clockLabel(at);
 
+  // Withdrawn: the pane belongs to its agent again. Unmounting rather than
+  // hiding, so nothing of this sits over the terminal's bottom rows — which
+  // are exactly the rows a CLI writes its answers into.
+  if (gone) return null;
+
   return (
     <div
-      className={`pointer-events-auto absolute inset-x-2 bottom-2 z-20 rounded-md border
-                  backdrop-blur transition-all duration-500 ${
-                    prominent
-                      ? "border-primary/50 bg-card/95 shadow-lg"
-                      : "border-border/60 bg-card/80"
-                  }`}
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 rounded-md border
+                 border-primary/50 bg-card/95 shadow-lg backdrop-blur
+                 transition-opacity duration-300"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       // Announced rather than only drawn: the whole point is that the user
       // finds out, and someone using a screen reader gets no help from a ring
-      // around a rectangle.
+      // around a rectangle. `polite` matters more now that it is brief — it
+      // must not cut off whatever the reader is in the middle of saying.
       role="status"
       aria-live="polite"
       data-testid="prompt-receipt"
-      data-prominent={prominent ? "true" : "false"}
+      // Whether this one will withdraw on its own. False is the warning case,
+      // which stays until dealt with.
+      data-transient={submitted === false ? "false" : "true"}
     >
       <div className="flex items-center gap-2 px-2 py-1.5">
         {verdict.icon}
@@ -203,7 +265,7 @@ export function PromptReceipt({
           data-testid="prompt-receipt-toggle"
           title={`Read exactly what was sent to ${terminal}`}
         >
-          <span className="shrink-0 text-[11px] font-medium text-foreground">
+          <span className="shrink-0 truncate text-[11px] font-medium text-foreground">
             {verdict.label}
           </span>
           <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -233,7 +295,11 @@ export function PromptReceipt({
         </button>
       </div>
 
-      {prominent && !open && (
+      {/* The second line is for the case that needs explaining and acting on.
+          On the ordinary "sent and running" receipt it would be one more row
+          covering the terminal for five seconds to say what the first row
+          already said. */}
+      {submitted === false && !open && (
         <p className="px-2 pb-1.5 text-[10px] leading-snug text-muted-foreground">
           {verdict.note} · click to read what was sent
         </p>

@@ -1,6 +1,11 @@
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PromptReceipt, agoLabel, RECEIPT_PROMINENT_MS } from "./PromptReceipt";
+import {
+  PromptReceipt,
+  agoLabel,
+  RECEIPT_LEAVE_GRACE_MS,
+  RECEIPT_VISIBLE_MS,
+} from "./PromptReceipt";
 
 /*
  * The receipt exists because a delivered prompt is routinely invisible: the
@@ -118,20 +123,63 @@ describe("PromptReceipt", () => {
     );
   });
 
-  it("stays on screen after its prominent spell instead of vanishing", () => {
-    // A toast that fades only reassures the user who was already watching —
-    // the one who never doubted it. Doubt arrives minutes later.
+  it("withdraws after five seconds so it stops covering the terminal", () => {
+    // The pane is a terminal and its bottom rows are where a CLI answers. A
+    // receipt that lingers buys certainty by covering the thing it certifies
+    // (maintainer decision 2026-07-28, after seeing it live).
     render(<PromptReceipt {...base} />);
-    expect(screen.getByTestId("prompt-receipt").dataset.prominent).toBe("true");
+    expect(screen.getByTestId("prompt-receipt")).toBeTruthy();
 
     act(() => {
-      vi.advanceTimersByTime(RECEIPT_PROMINENT_MS + 500);
+      vi.advanceTimersByTime(RECEIPT_VISIBLE_MS + 200);
+    });
+
+    expect(screen.queryByTestId("prompt-receipt")).toBeNull();
+  });
+
+  it("keeps a prompt that never STARTED on screen", () => {
+    // Not a confirmation but a warning: that pane looks exactly like a working
+    // one, and only the user can push it over the line. Hiding it after five
+    // seconds would rebuild the original bug somewhere new.
+    render(<PromptReceipt {...base} submitted={false} />);
+
+    act(() => {
+      vi.advanceTimersByTime(RECEIPT_VISIBLE_MS * 4);
     });
 
     const receipt = screen.getByTestId("prompt-receipt");
     expect(receipt).toBeTruthy();
-    expect(receipt.dataset.prominent).toBe("false");
-    expect(receipt.textContent).toContain("Review the ranking pipeline");
+    expect(receipt.dataset.transient).toBe("false");
+  });
+
+  it("does not disappear while it is being read", () => {
+    render(<PromptReceipt {...base} />);
+    fireEvent.click(screen.getByTestId("prompt-receipt-toggle"));
+
+    act(() => {
+      vi.advanceTimersByTime(RECEIPT_VISIBLE_MS * 5);
+    });
+
+    // A panel that closes under the cursor is worse than one that never opened.
+    expect(screen.getByTestId("prompt-receipt-body")).toBeTruthy();
+  });
+
+  it("does not disappear under the pointer, and leaves shortly after it goes", () => {
+    render(<PromptReceipt {...base} />);
+    const receipt = screen.getByTestId("prompt-receipt");
+    fireEvent.mouseEnter(receipt);
+
+    act(() => {
+      vi.advanceTimersByTime(RECEIPT_VISIBLE_MS * 3);
+    });
+    expect(screen.getByTestId("prompt-receipt")).toBeTruthy();
+
+    fireEvent.mouseLeave(screen.getByTestId("prompt-receipt"));
+    act(() => {
+      vi.advanceTimersByTime(RECEIPT_LEAVE_GRACE_MS + 200);
+    });
+
+    expect(screen.queryByTestId("prompt-receipt")).toBeNull();
   });
 
   it("goes away only when the user says so", () => {
