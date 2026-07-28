@@ -6523,6 +6523,16 @@ periodic ordering operation does not activate the helper application. Keep
 compositor workarounds behind a platform backend instead of changing a
 rendering path already proven on another OS.
 
+**Triage note (2026-07-28).** A later Windows screenshot showed the same black
+rectangle, but a live measurement proved the Windows color key was keying out
+correctly (zero black pixels on screen) — the black padding was produced by the
+screen-capture path, not by the compositor. Because a real defect and a capture
+artifact are indistinguishable in a screenshot, and the two have unrelated
+fixes, confirm the box on the physical display before changing transparency
+code. Per-OS mechanics, the color-of-the-box decision table, and the measured
+Windows evidence:
+[`docs/overlay-transparency.md`](overlay-transparency.md).
+
 ---
 
 ## BUG-094: macOS Jarvis Bar cannot enter a hidden Dock strip and stays stranded when the Dock changes state (MEDIUM, FIXED 2026-07-19)
