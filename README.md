@@ -21,8 +21,9 @@
 ---
 
 Not a classical voice assistant: a fast **Router-Brain** listens, decides, and *delegates* —
-heavy work goes to interchangeable agent harnesses (Claude Code, Codex CLI, MCP,
-computer-use) that run isolated, get reviewed by a critic, and report back in your language.
+heavy work goes to interchangeable coding-agent workers (Claude Code, Codex CLI, Gemini CLI,
+or an in-process worker on whatever API key you have) that run isolated, get reviewed by a
+critic, and report back in your language.
 **Provider-agnostic** (Gemini, Claude, OpenAI, OpenRouter — one setting), **self-modifying**,
 and it runs everywhere — headless server to full voice desktop.
 
@@ -33,10 +34,19 @@ and it runs everywhere — headless server to full voice desktop.
 | *"Research vector databases."* | An isolated agent digs in; the finished report lands as a download in **Outputs**. |
 | *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out through the optional Twilio line. |
 | *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki — still known in every future session. |
-| *"When the download finishes, ping me on Telegram."* | A when-then trigger arms itself and messages you the moment it fires. |
+| *"Switch the voice over to Cartesia."* | The speech provider changes live and reads the change back to you, old → new. |
 | *"Open the browser and pull up the weather."* | Jarvis takes mouse and keyboard and does it on your screen. |
 
-Every one of these works today, out of the box.
+Every one of these runs on shipped code — none is a roadmap item. Two carry a setup cost
+that is not "out of the box": the **phone call** needs the optional `[telephony]` extra plus
+your own Twilio account, a number, and a publicly reachable HTTPS URL for the webhooks;
+**computer use** needs a desktop install with a screen, not the headless one.
+
+**When-then triggers** are a real feature too, but they are *not* voice-armed: you create
+them in the **Tasks** view or with `jarvis tasks create`, not by saying "when X, do Y".
+They fire on a clock, an interval, or one of Jarvis's own internal events (a mission
+finishing, a message being sent) — not on arbitrary things happening elsewhere on your PC —
+and what they can do is *speak*, *run one tool*, *dispatch a harness*, or *run an agent turn*.
 
 ## See it in action
 
@@ -54,10 +64,10 @@ Every one of these works today, out of the box.
 
 | | |
 |---|---|
-| **Never blocks** | A sub-second Ack-Brain replies while the deep brain still thinks. |
-| **Meta-orchestrator** | A lean Router dispatches to specialized harnesses, not one giant prompt. |
+| **Never blocks** | The moment the Router picks an action you hear a grounded one-liner about *that* action — not a guess, and not silence. |
+| **Meta-orchestrator** | A lean Router dispatches to specialized tools and workers, not one giant prompt. |
 | **Self-healing** | Missions run in isolated worktrees; a critic reviews before you hear it. |
-| **Provider-agnostic** | Gemini, Claude, OpenAI, OpenRouter — switch by voice, smart fallback. |
+| **Provider-agnostic** | Gemini, Claude, OpenAI, OpenRouter — one setting, smart cross-family fallback. Voice and speech providers switch by voice; the **brain** provider is yours alone, changeable only in the app or the CLI. |
 | **Your plan or key** | Run agents on a subscription login or a pay-per-token key. |
 | **Self-modifying** | Rewrites its own settings through a reversible, audited pipeline. |
 | **Lasting memory** | A Knowledge Wiki + awareness build a model of you across sessions. |
@@ -81,8 +91,8 @@ plugins be swapped freely.
 
 ```
 L7  UI/UX           Desktop app (FastAPI + React + pywebview), tray, Orb overlay
-L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager, Controller
-L5  Harness adapter Claude Code, Codex, Open Interpreter, MCP, raw computer-use
+L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager + workers, Controller
+L5  Harness adapter python-script, computer-use  (coding agents are L6 mission workers)
 L4  Brain           Gemini · Claude · OpenAI · Grok · OpenRouter  +  sub-second Ack-Brain
 L3  Intent / Risk   Classifier, four-tier risk policy, approval, rate-limit tracking
 L2  Speech          Wake → VAD → STT → TTS  (cloud or local, your choice)
@@ -229,12 +239,16 @@ Jarvis reads and writes. Tell it something once and every future session knows.
 It's plain files on your disk — read it, edit it, sync it, own it.
 
 **Computer use.** Jarvis takes the mouse and keyboard when you ask: open apps,
-click, type, navigate — with an on-screen action border so you always see when
-it's driving.
+click, type, navigate — with an on-screen action border so you see when it's
+driving. The border is drawn by a small Qt sidecar from the `[desktop]` extra;
+where that is absent (base or headless install, aarch64 Linux) it degrades to a
+logged no-op and the control itself still works.
 
 **Channels & telephony.** Desktop window, browser, Telegram, and Discord all
-reach the same brain and share the same memory. Optional Twilio integration
-makes real outbound phone calls.
+reach the same brain and share the same memory. Real outbound phone calls are
+possible but not out of the box: they need the optional `[telephony]` extra, your
+own Twilio account and number, and a publicly reachable HTTPS URL Twilio can call
+back for the voice webhook and the media socket.
 
 **Safety tiers.** Every action is classified **safe / monitor / ask / block**
 before it runs — destructive things ask first, whitelisted routines stop nagging
@@ -242,8 +256,10 @@ you, and the blacklist always outranks the whitelist.
 
 **Self-modification.** It can change its own settings by voice — through a
 guarded pipeline (validate → backup → apply → verify → roll back on failure)
-with a full audit trail. Generated skills always land as *drafts* for your
-review; nothing self-activates.
+with a full audit trail. Deliberately out of its own reach: secrets and keys,
+the safety tiers, the review gates, and the **active brain provider**, which
+only you can change from the app or the CLI. Generated skills always land as
+*drafts* for your review; nothing self-activates.
 
 **Realtime voice.** Optional speech-to-speech mode (OpenAI Realtime, Gemini
 Live) for sub-second conversational latency — with automatic fallback to the
@@ -280,7 +296,7 @@ phrase = ""                # YOUR word — nothing is preset for you
 engine = "auto"            # resolves the best engine for your phrase
 
 [stt]
-provider = "groq-api"      # or openai-api, openrouter-stt, deepgram-…
+provider = "groq-api"      # or openai-api, openrouter-stt, gemini-api, faster-whisper (local)
 
 [tts]
 provider = "gemini-flash-tts"
@@ -310,7 +326,7 @@ one line in `pyproject.toml`, reinstall — no fork, no core edits.
 | `jarvis.stt` / `jarvis.tts` | Speech recognition / synthesis backends |
 | `jarvis.wakeword` | Wake-word engines |
 | `jarvis.realtime` | Speech-to-speech providers |
-| `jarvis.harness` | Agent harnesses missions delegate to |
+| `jarvis.harness` | Harness adapters the router and when-then tasks dispatch to |
 | `jarvis.tool` | Actions the router can call directly |
 | `jarvis.channel` | New surfaces — chat platforms, transports |
 
@@ -328,7 +344,6 @@ chat whole.
 PersonalJarvis/
 ├── jarvis/          # The application — every core package (brain, speech, missions, memory, UI server…)
 ├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
-├── OS-Level/        # Edge-glow overlay process — action border, mascot, cursor trail
 ├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
 ├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
 ├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
