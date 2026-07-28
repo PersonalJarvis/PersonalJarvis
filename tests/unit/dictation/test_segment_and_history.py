@@ -75,6 +75,11 @@ def history(tmp_path: Path) -> DictationHistory:
     return DictationHistory(tmp_path / "dictation_history.json")
 
 
+def _missing_wav() -> Path:
+    """A path that is guaranteed not to exist, for the availability check."""
+    return Path("definitely") / "not" / "here.wav"
+
+
 def test_empty_history_reads_as_empty_list(history: DictationHistory) -> None:
     assert history.list_all() == []
 
@@ -137,6 +142,205 @@ def test_empty_add_is_a_no_op(history: DictationHistory) -> None:
 
 
 # --------------------------------------------------------------------------
+# The fields added for restore/statistics
+# --------------------------------------------------------------------------
+
+
+def test_word_count_is_derived_from_the_inserted_text(
+    history: DictationHistory,
+) -> None:
+    entry = history.add(raw_text="uh send the report", text="send the report")
+    assert entry is not None
+    assert entry.word_count == 3
+
+
+def test_an_explicit_word_count_wins_over_the_derived_one(
+    history: DictationHistory,
+) -> None:
+    entry = history.add(raw_text="a b c", text="a b c", word_count=99)
+    assert entry is not None
+    assert entry.word_count == 99
+
+
+def test_a_failed_dictation_with_no_text_is_still_recorded(
+    history: DictationHistory,
+) -> None:
+    """The worst failure must stop being the most invisible one."""
+    entry = history.add(raw_text="", text="", outcome="failed", error="provider 401")
+    assert entry is not None
+    stored = history.list_all()
+    assert [e.outcome for e in stored] == ["failed"]
+    assert stored[0].error == "provider 401"
+    assert stored[0].word_count == 0
+
+
+def test_an_unrecoverable_outcome_with_no_text_stays_a_no_op(
+    history: DictationHistory,
+) -> None:
+    assert history.add(raw_text="", text="", outcome="inserted") is None
+
+
+def test_get_returns_one_entry_or_none(history: DictationHistory) -> None:
+    entry = history.add(raw_text="a", text="a")
+    assert entry is not None
+    assert history.get(entry.id) is not None
+    assert history.get("no-such-id") is None
+
+
+def test_set_discarded_hides_the_entry_without_deleting_it(
+    history: DictationHistory,
+) -> None:
+    entry = history.add(raw_text="a", text="a")
+    assert entry is not None
+    assert history.set_discarded(entry.id) is not None
+    assert history.list_all(include_discarded=False) == []
+    assert len(history.list_all()) == 1
+    # ...and it comes back, which is the whole point of a soft delete.
+    history.set_discarded(entry.id, False)
+    assert len(history.list_all(include_discarded=False)) == 1
+
+
+def test_set_discarded_on_an_unknown_id_is_none(history: DictationHistory) -> None:
+    assert history.set_discarded("nope") is None
+
+
+def test_update_ignores_unknown_fields_instead_of_raising(
+    history: DictationHistory, tmp_path: Path
+) -> None:
+    sidecar = str(tmp_path / "x.wav")
+    entry = history.add(raw_text="a", text="a")
+    assert entry is not None
+    assert history.update(entry.id, not_a_field="x") is None
+    updated = history.update(entry.id, audio_path=sidecar, error="boom")
+    assert updated is not None
+    assert updated.audio_path == sidecar
+    assert updated.error == "boom"
+
+
+def test_update_never_rewrites_the_id_or_timestamp(history: DictationHistory) -> None:
+    entry = history.add(raw_text="a", text="a")
+    assert entry is not None
+    assert history.update(entry.id, id="hijacked", created_at="1999") is None
+    assert history.get(entry.id) is not None
+
+
+def test_history_written_before_the_new_fields_reads_as_defaults(
+    tmp_path: Path,
+) -> None:
+    """An install that predates word_count/discarded/audio/error still loads."""
+    path = tmp_path / "old.json"
+    path.write_text(
+        '{"version": 1, "entries": ['
+        '{"id": "a", "created_at": "2026-07-28T00:00:00+00:00",'
+        ' "raw_text": "hi", "text": "hi", "outcome": "inserted"}'
+        "]}",
+        encoding="utf-8",
+    )
+    entry = DictationHistory(path).list_all()[0]
+    assert entry.word_count == 0
+    assert entry.discarded is False
+    assert entry.audio_path is None
+    assert entry.error is None
+
+
+def test_public_dict_never_leaks_the_audio_path(history: DictationHistory) -> None:
+    entry = history.add(raw_text="a", text="a")
+    assert entry is not None
+    history.update(entry.id, audio_path=str(_missing_wav()))
+    stored = history.get(entry.id)
+    assert stored is not None
+    payload = stored.to_dict()
+    assert "audio_path" not in payload
+    assert payload["audio_available"] is False
+    assert set(payload) == {
+        "id", "created_at", "raw_text", "text", "language", "duration_s",
+        "outcome", "method", "removed_words", "cleanup_reason", "word_count",
+        "discarded", "audio_available", "error",
+    }
+
+
+def test_public_dict_reports_audio_that_is_actually_on_disk(
+    history: DictationHistory, tmp_path: Path
+) -> None:
+    from jarvis.dictation.audio import save_dictation_audio
+
+    entry = history.add(raw_text="", text="", outcome="failed")
+    assert entry is not None
+    path = save_dictation_audio(entry.id, b"\x00\x01" * 800, directory=tmp_path / "a")
+    assert path is not None
+    history.update(entry.id, audio_path=str(path))
+    stored = history.get(entry.id)
+    assert stored is not None
+    assert stored.to_dict()["audio_available"] is True
+
+
+def test_delete_also_removes_the_audio_sidecar(
+    history: DictationHistory, tmp_path: Path
+) -> None:
+    from jarvis.dictation.audio import save_dictation_audio
+
+    entry = history.add(raw_text="", text="", outcome="failed")
+    assert entry is not None
+    path = save_dictation_audio(entry.id, b"\x00\x01" * 800, directory=tmp_path / "a")
+    assert path is not None
+    history.update(entry.id, audio_path=str(path))
+    assert history.delete(entry.id) is True
+    assert path.exists() is False
+
+
+def test_clear_purges_history_audio_and_statistics(
+    history: DictationHistory, tmp_path: Path
+) -> None:
+    from jarvis.dictation.audio import save_dictation_audio
+
+    history.add(raw_text="a b c", text="a b c")
+    failed = history.add(raw_text="", text="", outcome="failed")
+    assert failed is not None
+    path = save_dictation_audio(
+        failed.id, b"\x00\x01" * 800, directory=history.audio_dir
+    )
+    assert path is not None
+    history.update(failed.id, audio_path=str(path))
+    assert history.stats().summary()["totals"]["words"] == 3
+
+    assert history.clear() is True
+    assert history.list_all() == []
+    assert path.exists() is False
+    assert history.stats().summary()["totals"]["words"] == 0
+    assert history.stats().summary()["streak"]["current_days"] == 0
+
+
+def test_statistics_sidecar_sits_next_to_the_history_file(
+    history: DictationHistory,
+) -> None:
+    """A history in a temp directory must not write into the real user data."""
+    assert history.stats_path.parent == history.path.parent
+    assert history.stats_path.name == "dictation_stats.json"
+    assert history.audio_dir.parent == history.path.parent
+
+
+def test_add_feeds_the_lifetime_counters(history: DictationHistory) -> None:
+    history.add(raw_text="one two three", text="one two three", duration_s=6.0)
+    history.add(raw_text="four five", text="four five", duration_s=3.0)
+    summary = history.stats().summary()
+    assert summary["source"] == "lifetime"
+    assert summary["totals"]["dictations"] == 2
+    assert summary["totals"]["words"] == 5
+    assert summary["today"]["words"] == 5
+    assert summary["streak"]["current_days"] == 1
+
+
+def test_a_failed_dictation_does_not_move_the_words_per_minute(
+    history: DictationHistory,
+) -> None:
+    history.add(raw_text="one two three", text="one two three", duration_s=60.0)
+    history.add(raw_text="", text="", outcome="failed", duration_s=60.0)
+    totals = history.stats().summary()["totals"]
+    assert totals["dictations"] == 1
+    assert totals["wpm"] == 3.0
+
+
+# --------------------------------------------------------------------------
 # Pruning
 # --------------------------------------------------------------------------
 
@@ -174,3 +378,96 @@ def test_unparseable_timestamp_is_kept_not_silently_discarded() -> None:
 
 def test_zero_cap_keeps_nothing() -> None:
     assert _prune([_entry(1)], max_entries=0, retention_days=0) == []
+
+
+# --------------------------------------------------------------------------
+# Pruning must not strand a pending Restore
+# --------------------------------------------------------------------------
+
+
+def _recoverable(tmp_path: Path, name: str, *, discarded: bool = False):
+    """An entry that ended badly and whose audio is really on disk."""
+    from jarvis.dictation.audio import save_dictation_audio
+    from jarvis.dictation.history import DictationEntry
+
+    path = save_dictation_audio(name, b"\x00\x01" * 800, directory=tmp_path)
+    assert path is not None
+    return DictationEntry(
+        id=name,
+        created_at=datetime.now(UTC).isoformat(),
+        raw_text="",
+        text="",
+        outcome="failed",
+        discarded=discarded,
+        audio_path=str(path),
+    )
+
+
+def test_count_cap_never_evicts_an_entry_whose_audio_a_restore_still_needs(
+    tmp_path: Path,
+) -> None:
+    """Otherwise the row vanishes while the recording stays on disk."""
+    pending = _recoverable(tmp_path, "pending")
+    ordinary = [_entry(0.1, f"x{i}") for i in range(5)]
+    kept = _prune([*ordinary, pending], max_entries=2, retention_days=0)
+    assert pending in kept
+    assert len([e for e in kept if e.audio_path is None]) == 2
+
+
+def test_a_discarded_entry_with_audio_survives_the_cap_too(tmp_path: Path) -> None:
+    pending = _recoverable(tmp_path, "discarded-one", discarded=True)
+    kept = _prune([_entry(0.1, "a"), pending], max_entries=1, retention_days=0)
+    assert pending in kept
+
+
+def test_the_exemption_needs_the_audio_to_actually_exist(tmp_path: Path) -> None:
+    """A stored path whose file is gone is not a pending recovery."""
+    from jarvis.dictation.history import DictationEntry
+
+    ghost = DictationEntry(
+        id="ghost",
+        created_at=datetime.now(UTC).isoformat(),
+        raw_text="",
+        text="",
+        outcome="failed",
+        audio_path=str(tmp_path / "never-written.wav"),
+    )
+    kept = _prune([_entry(0.1, "a"), ghost], max_entries=1, retention_days=0)
+    assert ghost not in kept
+
+
+def test_a_successful_entry_with_audio_is_not_exempt(tmp_path: Path) -> None:
+    """Only outcomes the user lost something to hold a Restore open."""
+    from jarvis.dictation.audio import save_dictation_audio
+    from jarvis.dictation.history import DictationEntry
+
+    path = save_dictation_audio("ok", b"\x00\x01" * 800, directory=tmp_path)
+    assert path is not None
+    fine = DictationEntry(
+        id="ok",
+        created_at=datetime.now(UTC).isoformat(),
+        raw_text="hi",
+        text="hi",
+        outcome="inserted",
+        audio_path=str(path),
+    )
+    kept = _prune([_entry(0.1, "a"), fine], max_entries=1, retention_days=0)
+    assert fine not in kept
+
+
+def test_the_exemption_does_not_survive_the_retention_window(tmp_path: Path) -> None:
+    """Audio ages out on its own schedule; a stale row is not held open."""
+    from jarvis.dictation.audio import save_dictation_audio
+    from jarvis.dictation.history import DictationEntry
+
+    path = save_dictation_audio("old", b"\x00\x01" * 800, directory=tmp_path)
+    assert path is not None
+    stale = DictationEntry(
+        id="old",
+        created_at=(datetime.now(UTC) - timedelta(days=40)).isoformat(),
+        raw_text="",
+        text="",
+        outcome="failed",
+        audio_path=str(path),
+    )
+    assert _prune([stale], max_entries=100, retention_days=30) == []

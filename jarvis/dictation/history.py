@@ -17,6 +17,19 @@ purgeable with one call. It can be switched off entirely
 
 Storage pattern mirrors ``jarvis.speech.stt_dictionary.DictionaryStore``:
 atomic tempfile + ``os.replace`` so a crash mid-write never leaves a torn file.
+
+Two companion sidecars sit next to this one, both derived from ITS path so a
+history pointed somewhere else takes them along:
+
+* ``dictation_stats.json`` (:mod:`jarvis.dictation.stats`) — per-day counts and
+  durations, no text, never pruned. It exists because totals derived from a
+  30-day rolling window would silently stop growing.
+* ``dictation_audio/`` (:mod:`jarvis.dictation.audio`) — WAV files kept ONLY for
+  dictations that produced nothing usable, and only when the user allows it.
+  It is what makes Restore more than a button that shakes its head.
+
+Deleting the history deletes all three. Anything less would be a quiet lie
+about what the application still knows.
 """
 
 from __future__ import annotations
@@ -27,10 +40,14 @@ import os
 import tempfile
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from dataclasses import fields as fields_of
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # import-time cost stays zero on the dictation hot path
+    from jarvis.dictation.stats import DictationStats
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +71,7 @@ class DictationEntry:
     language: str = ""
     #: Seconds of audio.
     duration_s: float = 0.0
-    #: ``inserted`` | ``clipboard_only`` | ``unavailable`` | ``chat``.
+    #: One of ``jarvis.dictation.outcomes.DICTATION_OUTCOMES``.
     outcome: str = ""
     #: How it got there, e.g. ``clipboard+ctrl_v``.
     method: str = ""
@@ -62,10 +79,57 @@ class DictationEntry:
     removed_words: int = 0
     #: Why a cleanup did not apply — ``""`` when it did.
     cleanup_reason: str = ""
+    #: Words in the inserted text. Stored rather than recomputed so the
+    #: statistics sidecar and the UI can never disagree about one entry.
+    word_count: int = 0
+    #: The user hid this entry. Separate from ``outcome`` on purpose: an entry
+    #: can be both ``inserted`` and discarded, and folding the two into one
+    #: string would make that state unrepresentable (AD-6).
+    discarded: bool = False
+    #: Local path of the kept audio sidecar, or ``None``. NEVER serialised to
+    #: an API response — the wire shape exposes ``audio_available`` instead,
+    #: because a filesystem path in a JSON body is an information leak that
+    #: buys the client nothing.
+    audio_path: str | None = None
+    #: Why transcription failed, when it did. ``None`` on every other path.
+    error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_storage_dict(self) -> dict[str, Any]:
+        """The full on-disk shape, including ``audio_path``. Sidecar only."""
         return asdict(self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The API shape: no ``audio_path``, plus a resolved availability flag.
+
+        The SAFE shape is the default one on purpose. A serialiser that leaks
+        by default and has to be opted out of is a leak waiting for the one
+        call site that forgets — so the on-disk shape is the one that needs an
+        explicit name (:meth:`to_storage_dict`), not the other way round.
+
+        ``audio_available`` is a live filesystem check rather than a stored
+        boolean, because the retention prune deletes sidecars behind the
+        history's back — a cached flag would offer the user a Restore button
+        for audio that is no longer there.
+        """
+        from jarvis.dictation.audio import audio_exists
+
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "raw_text": self.raw_text,
+            "text": self.text,
+            "language": self.language,
+            "duration_s": self.duration_s,
+            "outcome": self.outcome,
+            "method": self.method,
+            "removed_words": self.removed_words,
+            "cleanup_reason": self.cleanup_reason,
+            "word_count": self.word_count,
+            "discarded": self.discarded,
+            "audio_available": audio_exists(self.audio_path),
+            "error": self.error,
+        }
 
 
 def default_history_path() -> Path:
@@ -83,17 +147,51 @@ class DictationHistory:
     "no history", which is a cosmetic loss.
     """
 
-    def __init__(self, path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | str | None = None,
+        *,
+        stats_path: Path | str | None = None,
+    ) -> None:
         self._path = Path(path) if path is not None else default_history_path()
+        # The statistics sidecar lives NEXT TO the history file rather than at
+        # a globally resolved location, so pointing the history at a temporary
+        # directory (a test, a second profile) moves both together instead of
+        # leaking counters into the real user data directory.
+        self._stats_path = (
+            Path(stats_path)
+            if stats_path is not None
+            else self._path.parent / "dictation_stats.json"
+        )
         self._lock = threading.Lock()
 
     @property
     def path(self) -> Path:
         return self._path
 
+    @property
+    def stats_path(self) -> Path:
+        return self._stats_path
+
+    @property
+    def audio_dir(self) -> Path:
+        """Where this history's audio sidecars live — beside the JSON file.
+
+        Derived rather than resolved globally for the same reason as
+        ``stats_path``: a history pointed at a temporary directory must not
+        be able to purge the real user's audio.
+        """
+        return self._path.parent / "dictation_audio"
+
+    def stats(self) -> DictationStats:
+        """The lifetime-counter sidecar bound to this history."""
+        from jarvis.dictation.stats import DictationStats
+
+        return DictationStats(self._stats_path)
+
     # -- reading ---------------------------------------------------------
 
-    def list_all(self) -> list[DictationEntry]:
+    def list_all(self, *, include_discarded: bool = True) -> list[DictationEntry]:
         """Newest first. An unreadable file reads as an empty history."""
         try:
             raw = self._path.read_text(encoding="utf-8")
@@ -124,12 +222,30 @@ class DictationHistory:
                         method=str(item.get("method") or ""),
                         removed_words=int(item.get("removed_words") or 0),
                         cleanup_reason=str(item.get("cleanup_reason") or ""),
+                        # Fields added after the first release. The reader has
+                        # always built field-by-field with .get(), so a file
+                        # written by an older install reads as these defaults
+                        # instead of failing — verified, not assumed
+                        # (test_history_written_before_the_new_fields_reads_as_defaults).
+                        word_count=int(item.get("word_count") or 0),
+                        discarded=bool(item.get("discarded") or False),
+                        audio_path=(str(item["audio_path"]) if item.get("audio_path") else None),
+                        error=(str(item["error"]) if item.get("error") else None),
                         metadata=dict(item.get("metadata") or {}),
                     )
                 )
             except (TypeError, ValueError):
                 continue  # one bad row never invalidates the rest
+        if not include_discarded:
+            entries = [e for e in entries if not e.discarded]
         return entries
+
+    def get(self, entry_id: str) -> DictationEntry | None:
+        """One entry by id, or ``None``."""
+        for entry in self.list_all():
+            if entry.id == entry_id:
+                return entry
+        return None
 
     # -- writing ---------------------------------------------------------
 
@@ -144,12 +260,24 @@ class DictationHistory:
         method: str = "",
         removed_words: int = 0,
         cleanup_reason: str = "",
+        word_count: int | None = None,
+        error: str | None = None,
         max_entries: int = 200,
         retention_days: int = 30,
     ) -> DictationEntry | None:
-        """Record one dictation and prune. ``None`` when nothing was stored."""
-        if not (raw_text or text):
+        """Record one dictation and prune. ``None`` when nothing was stored.
+
+        A dictation with no text at all is still recorded when its outcome says
+        the user lost something (``failed`` / ``cancelled`` / ``empty``) — that
+        row is the only place a later Restore can start from. Without it, the
+        worst failure this feature has is also its most invisible one.
+        """
+        from jarvis.dictation.outcomes import is_recoverable
+
+        if not (raw_text or text) and not is_recoverable(outcome):
             return None
+        from jarvis.dictation.cleanup import count_words
+
         entry = DictationEntry(
             id=uuid.uuid4().hex,
             created_at=datetime.now(UTC).isoformat(),
@@ -161,9 +289,19 @@ class DictationHistory:
             method=str(method or ""),
             removed_words=max(0, int(removed_words or 0)),
             cleanup_reason=str(cleanup_reason or ""),
+            word_count=(
+                max(0, int(word_count))
+                if word_count is not None
+                else count_words(text or raw_text)
+            ),
+            error=(str(error) if error else None),
         )
         try:
             with self._lock:
+                # Counted BEFORE the prune, so a dictation that immediately
+                # ages out of the rolling window still shows up in the lifetime
+                # totals. That ordering is the whole point of a second sidecar.
+                self._record_stats(entry)
                 entries = [entry, *self.list_all()]
                 entries = _prune(
                     entries,
@@ -176,31 +314,110 @@ class DictationHistory:
             return None
         return entry
 
+    def update(self, entry_id: str, **fields: Any) -> DictationEntry | None:
+        """Replace named fields on one entry. ``None`` when the id is unknown.
+
+        Used by the audio hand-off (``audio_path`` is only known after the
+        entry exists, because the file name is built from its id) and by a
+        Restore that re-transcribed. Unknown field names are ignored rather
+        than raised, so an older caller can never break a write.
+        """
+        allowed = {f.name for f in fields_of(DictationEntry)} - {"id", "created_at"}
+        changes = {k: v for k, v in fields.items() if k in allowed}
+        if not changes:
+            return None
+        if "raw_text" in changes:
+            changes["raw_text"] = _clip(str(changes["raw_text"] or ""))
+        if "text" in changes:
+            changes["text"] = _clip(str(changes["text"] or ""))
+        if "audio_path" in changes and changes["audio_path"] is not None:
+            changes["audio_path"] = str(changes["audio_path"])
+        try:
+            with self._lock:
+                entries = self.list_all()
+                updated: DictationEntry | None = None
+                out: list[DictationEntry] = []
+                for entry in entries:
+                    if entry.id == entry_id and updated is None:
+                        updated = replace(entry, **changes)
+                        out.append(updated)
+                    else:
+                        out.append(entry)
+                if updated is None:
+                    return None
+                self._write(out)
+                return updated
+        except Exception:  # noqa: BLE001
+            log.warning("could not update a dictation history entry", exc_info=True)
+            return None
+
+    def set_discarded(self, entry_id: str, value: bool = True) -> DictationEntry | None:
+        """Hide or un-hide one entry. The soft counterpart to :meth:`delete`.
+
+        Soft on purpose: the trash icon in the UI calls this, so a mis-click
+        stays recoverable. ``DELETE /history/{id}`` keeps hard-delete semantics
+        for anyone scripting the CLI (AD-8).
+        """
+        return self.update(entry_id, discarded=bool(value))
+
     def delete(self, entry_id: str) -> bool:
+        """Hard-delete one entry AND its audio sidecar. Irreversible."""
         try:
             with self._lock:
                 entries = self.list_all()
                 kept = [e for e in entries if e.id != entry_id]
                 if len(kept) == len(entries):
                     return False
+                doomed = [e for e in entries if e.id == entry_id]
                 self._write(kept)
-                return True
         except Exception:  # noqa: BLE001
             log.warning("could not delete a dictation history entry", exc_info=True)
             return False
+        # Outside the lock: the sidecar is a separate file and a slow unlink
+        # must not hold up another dictation being recorded.
+        for entry in doomed:
+            if entry.audio_path:
+                from jarvis.dictation.audio import delete_dictation_audio
+
+                delete_dictation_audio(entry.audio_path)
+        return True
 
     def clear(self) -> bool:
-        """Purge everything. The user-facing "delete my dictation history"."""
+        """Purge everything. The user-facing "delete my dictation history".
+
+        Deliberately total: the entries, the kept audio and the lifetime
+        counters all go. Leaving the streak standing after someone asked for
+        their dictation history to be deleted would be a quiet lie about what
+        the app still knows.
+        """
         try:
             with self._lock:
                 self._write([])
-                return True
         except Exception:  # noqa: BLE001
             log.warning("could not clear the dictation history", exc_info=True)
             return False
+        try:
+            from jarvis.dictation.audio import purge_dictation_audio
+
+            purge_dictation_audio(directory=self.audio_dir)
+            self.stats().reset()
+        except Exception:  # noqa: BLE001
+            log.warning("could not purge the dictation sidecars", exc_info=True)
+        return True
+
+    def _record_stats(self, entry: DictationEntry) -> None:
+        """Feed one entry to the lifetime counters. Never raises."""
+        try:
+            self.stats().record(
+                created_at=entry.created_at,
+                word_count=entry.word_count,
+                duration_s=entry.duration_s,
+            )
+        except Exception:  # noqa: BLE001 — a counter never costs a dictation
+            log.debug("dictation statistics write failed", exc_info=True)
 
     def _write(self, entries: list[DictationEntry]) -> None:
-        payload = {"version": 1, "entries": [e.to_dict() for e in entries]}
+        payload = {"version": 1, "entries": [e.to_storage_dict() for e in entries]}
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic tempfile + os.replace: a crash mid-write never leaves a torn
         # sidecar (same discipline as the config writer, AP-7).
@@ -226,6 +443,31 @@ def _clip(text: str) -> str:
     return value[:MAX_TEXT_LEN] + " […truncated]"
 
 
+def _holds_pending_recovery(entry: DictationEntry) -> bool:
+    """``True`` when dropping this entry would strand a Restore.
+
+    An entry the user can still recover from — one that ended badly or was
+    discarded, and whose audio is still on disk — is the ONLY thing that makes
+    the Restore button do anything. Letting the ordinary count cap evict it
+    would delete the row while leaving the audio file behind: the user sees the
+    entry vanish, the disk keeps the recording, and nobody can get either back.
+    So these are exempt from the count cap.
+
+    They are NOT exempt from the retention window: the audio itself ages out on
+    its own schedule, and an entry whose sidecar is already gone is not a
+    pending recovery any more.
+    """
+    from jarvis.dictation.outcomes import is_recoverable
+
+    if not entry.audio_path:
+        return False
+    if not (entry.discarded or is_recoverable(entry.outcome)):
+        return False
+    from jarvis.dictation.audio import audio_exists
+
+    return audio_exists(entry.audio_path)
+
+
 def _prune(
     entries: list[DictationEntry],
     *,
@@ -235,9 +477,12 @@ def _prune(
     """Drop entries past the count cap or the retention window.
 
     ``retention_days = 0`` means "keep until the count cap"; an unparseable
-    timestamp is kept rather than silently discarded.
+    timestamp is kept rather than silently discarded. ``max_entries = 0`` is an
+    explicit "keep nothing" and overrides every exemption.
     """
     cap = max(0, min(int(max_entries or 0), MAX_ENTRIES_CEILING))
+    if not cap:
+        return []
     kept = entries
     if retention_days and retention_days > 0:
         cutoff = datetime.now(UTC) - timedelta(days=int(retention_days))
@@ -253,7 +498,19 @@ def _prune(
             if created >= cutoff:
                 fresh.append(entry)
         kept = fresh
-    return kept[:cap] if cap else []
+
+    result: list[DictationEntry] = []
+    budget = cap
+    for entry in kept:  # newest first — the survivors of the cap are recent
+        if _holds_pending_recovery(entry):
+            result.append(entry)
+            continue
+        if budget > 0:
+            result.append(entry)
+            budget -= 1
+    # The exemption is bounded too: the audio retention caps how many sidecars
+    # can exist, and the absolute ceiling backstops a pathological file.
+    return result[:MAX_ENTRIES_CEILING]
 
 
 __all__ = [

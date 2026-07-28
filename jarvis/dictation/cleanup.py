@@ -141,8 +141,15 @@ def normalize_language(language: str | None) -> str | None:
     return code if code in SUPPORTED_LANGUAGES else None
 
 
-def _count_words(text: str) -> int:
-    return len(_WORD_RE.findall(text))
+def count_words(text: str) -> int:
+    """How many words a transcript contains.
+
+    Public because the history and the statistics sidecar need the SAME answer
+    the destruction ceiling uses. A second word regex living somewhere else
+    would drift from this one the first time either is touched, and then
+    "words dictated" and "words removed" would stop being comparable numbers.
+    """
+    return len(_WORD_RE.findall(text or ""))
 
 
 def _compile_patterns(language: str) -> list[re.Pattern[str]]:
@@ -214,7 +221,7 @@ def clean_transcript(
         )
     if not remove_fillers:
         return CleanupResult(
-            text=raw, raw=raw, removed_words=0, total_words=_count_words(raw),
+            text=raw, raw=raw, removed_words=0, total_words=count_words(raw),
             applied=False, reason="disabled",
         )
 
@@ -223,11 +230,11 @@ def clean_transcript(
         # Honest no-op: we would rather leave a filler in than damage a
         # sentence in a language whose rules we do not have.
         return CleanupResult(
-            text=raw, raw=raw, removed_words=0, total_words=_count_words(raw),
+            text=raw, raw=raw, removed_words=0, total_words=count_words(raw),
             applied=False, reason="no_rules",
         )
 
-    total = _count_words(raw)
+    total = count_words(raw)
     cleaned = raw
     try:
         for pattern in _PATTERN_CACHE[lang]:
@@ -239,7 +246,7 @@ def clean_transcript(
             applied=False, reason="error",
         )
 
-    remaining = _count_words(cleaned)
+    remaining = count_words(cleaned)
     removed = max(0, total - remaining)
 
     # Nothing survived — always a defect in the rules, never a valid result.
@@ -274,5 +281,6 @@ __all__ = [
     "SUPPORTED_LANGUAGES",
     "CleanupResult",
     "clean_transcript",
+    "count_words",
     "normalize_language",
 ]
