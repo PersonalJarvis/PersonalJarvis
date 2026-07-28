@@ -327,10 +327,6 @@ video/*.png
 # deferred IP risk — keep it private; the public posture is TRADEMARK.md.
 /docs/legal/trademark-brand-audit-*.html
 
-# Author email map. Its stated purpose is to keep private addresses out of the
-# public index, but the file itself publishes them in plaintext.
-/.mailmap
-
 # ============================================================
 # Pre-1.6.0 release sweep: local tool caches, audit material, and runtime
 # write paths that were reachable from inside the repo tree.

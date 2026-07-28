@@ -1,14 +1,18 @@
 # Paths exempt from the PII scrub (one gitignore-ish glob per line).
 #
-# 2026-07-20: the `.mailmap` exemption was REMOVED along with the file itself.
-# The reasoning it rested on does not survive scrutiny: `.mailmap` was exempted
-# so it could carry the real addresses as mapping keys, on the theory that this
-# defends against scrapers by rewriting them to the GitHub noreply form in the
-# web UI. But the file is world-readable in the repo, so the addresses were
-# published in plaintext to defend against them being published — the mapping
-# hides them in one view while the source shipped them in another. The file is
-# now untracked (and gitignored); a real address in ANY tracked file is a
-# finding again, with no exempt home. Do not re-add it.
+# 2026-07-20: the `.mailmap` exemption was REMOVED along with the file itself,
+# because the tracked file carried REAL personal addresses in plaintext —
+# publishing them in one view to hide them in another.
+# 2026-07-28 (maintainer directive): `.mailmap` is back and tracked, under a
+# stricter invariant that resolves the 2026-07-20 objection: the file must
+# NEVER contain a real personal e-mail address. It may only map the GitHub
+# noreply form, project-generic addresses (noreply@personaljarvis.dev), and
+# RFC-reserved placeholders (harald@example.com) onto the canonical identity.
+# This path is exempt because the generic name-scrub rules (e.g. "harald" ->
+# "sam") would otherwise corrupt the mapping keys, which must byte-match the
+# historical commit metadata to work. A real address appearing in this file is
+# STILL a finding — the sub-agent + human review remain the backstop for that.
+.mailmap
 
 # Maintainer's intentional authorship attribution (explicit decision 2026-06-26;
 # handle switched to @Ruben_Luetke on 2026-07-18):
