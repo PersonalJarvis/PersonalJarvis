@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+import jarvis.platform
+import jarvis.platform.clipboard  # noqa: F401  (binds the package attribute)
 from jarvis.core.config import DictationConfig
 from jarvis.dictation.insert import (
     CUSTOM_CHORD_KEYS,
@@ -26,6 +28,23 @@ from jarvis.dictation.insert import (
     resolve_paste_chord,
 )
 from jarvis.dictation.outcomes import DICTATION_OUTCOMES
+
+
+def _install_fake_clipboard(monkeypatch: pytest.MonkeyPatch, fake: object) -> None:
+    """Put ``fake`` where ``insert_text`` actually looks for the clipboard.
+
+    ``jarvis.dictation.insert`` reaches the module with ``from jarvis.platform
+    import clipboard``, which reads the ATTRIBUTE off the already-imported
+    ``jarvis.platform`` package and only falls back to ``sys.modules`` when
+    that attribute is missing. Replacing the ``sys.modules`` entry alone
+    therefore works exactly once -- in a run where nothing has imported the
+    real module yet -- and is silently bypassed as soon as any earlier test
+    binds the attribute. That is worse than a flaky assertion: the double
+    would be ignored and the test would drive the REAL system clipboard of
+    whoever ran the suite. Patch the attribute the code reads.
+    """
+    monkeypatch.setattr(jarvis.platform, "clipboard", fake)
+
 
 # ----------------------------------------------------------------------
 # What the field accepts
@@ -141,9 +160,7 @@ def test_a_custom_chord_reports_paste_sent_and_keeps_the_clipboard(
 
     clipboard = _Clipboard()
     actuator = _Actuator()
-    monkeypatch.setitem(
-        __import__("sys").modules, "jarvis.platform.clipboard", clipboard
-    )
+    _install_fake_clipboard(monkeypatch, clipboard)
     monkeypatch.setattr(
         insert_mod, "describe_target", lambda: insert_mod.TargetReport(True, "", "")
     )
@@ -179,12 +196,17 @@ def test_a_curated_chord_still_reports_inserted_and_restores(
     class _Clipboard:
         def __init__(self) -> None:
             self.content = "previous"
+            # Every write is recorded so the closing assertion cannot pass
+            # vacuously: a double that is never reached also never changes
+            # ``content``, which is precisely the end state this test wants.
+            self.writes: list[str] = []
 
         def read_text(self) -> str:
             return self.content
 
         def write_text(self, text: str) -> bool:
             self.content = text
+            self.writes.append(text)
             return True
 
     class _Actuator:
@@ -192,9 +214,7 @@ def test_a_curated_chord_still_reports_inserted_and_restores(
             return None
 
     clipboard = _Clipboard()
-    monkeypatch.setitem(
-        __import__("sys").modules, "jarvis.platform.clipboard", clipboard
-    )
+    _install_fake_clipboard(monkeypatch, clipboard)
     monkeypatch.setattr(
         insert_mod, "describe_target", lambda: insert_mod.TargetReport(True, "", "")
     )
@@ -208,4 +228,5 @@ def test_a_curated_chord_still_reports_inserted_and_restores(
 
     assert result.status == "inserted"
     assert result.clipboard_restored is True
+    assert clipboard.writes == ["dictated text", "previous"]
     assert clipboard.content == "previous"

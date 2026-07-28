@@ -14,6 +14,7 @@ other way round — still fails here.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,13 +69,25 @@ async def _noop_exit(_code: int) -> None:
     return None
 
 
+def _request(bus: object | None = None) -> SimpleNamespace:
+    """The one thing the open route needs from a Request: ``app.state.bus``.
+
+    Opening a workspace announces itself on the bus so every OTHER window can
+    redraw its grid instead of talking to a workspace that moved. Without a bus
+    the announcement is skipped, which is what these tests want: they are about
+    what opening DOES, and the announcement has its own suite.
+    """
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(bus=bus)))
+
+
 async def _open(registry: Registry, folder: Path, panes: int = 1) -> object:
     folder.mkdir(parents=True, exist_ok=True)
     return await routes.start_session(
+        _request(),
         routes.StartSessionRequest(
             folder=str(folder),
             terminals=[routes.TerminalRequest(agent="claude") for _ in range(panes)],
-        )
+        ),
     )
 
 
@@ -126,7 +139,9 @@ async def test_switching_starts_and_stops_nothing(
     spawns = len(fake_pty.spawns)
 
     await _open(registry, tmp_path / "beta")
-    result = await routes.activate_workspace(routes.ActivateWorkspaceRequest(id=first_id))
+    result = await routes.activate_workspace(
+        _request(), routes.ActivateWorkspaceRequest(id=first_id)
+    )
 
     assert result["active_id"] == first_id
     assert first_pty not in fake_pty.closed, "switching must not stop an agent"
@@ -147,7 +162,7 @@ async def test_the_wizard_state_keeps_every_workspace_open(
     pane = registry.session.terminals[0]
     await registry.attach(pane.name, 80, 24, _noop, _noop_exit)
 
-    result = await routes.activate_workspace(routes.ActivateWorkspaceRequest(id=None))
+    result = await routes.activate_workspace(_request(), routes.ActivateWorkspaceRequest(id=None))
 
     assert result["active_id"] is None
     assert result["state"]["session"] is None, "no workspace is on screen"
@@ -164,7 +179,7 @@ async def test_switching_to_a_workspace_that_is_gone_is_a_404(
     await _open(registry, tmp_path / "alpha")
     with pytest.raises(HTTPException) as caught:
         await routes.activate_workspace(
-            routes.ActivateWorkspaceRequest(id="ide_never_existed")
+            _request(), routes.ActivateWorkspaceRequest(id="ide_never_existed")
         )
     assert caught.value.status_code == 404
 
@@ -183,7 +198,7 @@ async def test_closing_one_workspace_stops_only_its_agents(
     second_pane = registry.get(second_id).terminals[0]
     await registry.attach(second_pane.name, 80, 24, _noop, _noop_exit, second_id)
 
-    result = await routes.close_workspace(second_id)
+    result = await routes.close_workspace(_request(), second_id)
 
     assert result["closed"] == second_id
     assert second_pane.pty_id in fake_pty.closed
@@ -199,7 +214,7 @@ async def test_closing_an_unknown_workspace_is_a_404(
 
     await _open(registry, tmp_path / "alpha")
     with pytest.raises(HTTPException) as caught:
-        await routes.close_workspace("ide_never_existed")
+        await routes.close_workspace(_request(), "ide_never_existed")
     assert caught.value.status_code == 404
 
 
@@ -210,7 +225,7 @@ async def test_the_plain_close_still_closes_the_front_one(
     await _open(registry, tmp_path / "alpha")
     second = await _open(registry, tmp_path / "beta")
 
-    result = await routes.end_session()
+    result = await routes.end_session(_request())
 
     assert result["closed"] is True
     remaining = [w["name"] for w in result["state"]["workspaces"]]

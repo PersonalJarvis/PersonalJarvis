@@ -43,7 +43,13 @@ async def test_open_route_remembers_the_user_selected_folder(
         lambda path, *, terminals, agents: remembered.append((path, terminals, agents)),
     )
 
+    # ``app.state.bus`` is all the route wants from the Request: opening a
+    # workspace announces itself so other windows redraw. No bus, no
+    # announcement — this test is about the recent-folder history.
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(bus=None)))
+
     response = await routes.start_session(
+        request,
         routes.StartSessionRequest(
             folder=str(tmp_path),
             terminals=[
@@ -51,7 +57,7 @@ async def test_open_route_remembers_the_user_selected_folder(
                 routes.TerminalRequest(agent="codex"),
                 routes.TerminalRequest(agent="claude"),
             ],
-        )
+        ),
     )
 
     assert response["ok"] is True
