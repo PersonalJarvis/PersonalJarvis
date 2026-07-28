@@ -2268,6 +2268,14 @@ class WikiContextConfig(BaseModel):
     # within one call, so an absolute cutoff would be noise.
     min_relative_score: float = 0.35
 
+    # Ambient personal knowledge — the standing identity card
+    # (jarvis/brain/identity_card.py). Unlike the per-turn snippets above this
+    # is a precomputed, LLM-free distillation of the user's own profile that
+    # rides in the CACHED system-prompt prefix. ``false`` removes the block
+    # entirely; the cap is an upper bound only (never raises the hard 600).
+    identity_card: bool = True
+    identity_card_max_chars: int = 600
+
 
 class VoiceConfig(BaseModel):
     """Voice-flow knobs that are not STT/TTS/Trigger-specific.

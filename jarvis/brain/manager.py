@@ -3544,6 +3544,23 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
 
+        # Ambient personal knowledge: the standing identity card. A
+        # precomputed, deterministic distillation of the user's own profile
+        # page + core memory — no model call, hard-capped, and rebuilt only
+        # when its sources change, so it stays in the CACHED prefix in both
+        # prompt layouts (unlike the per-turn wiki snippets below, which move
+        # to the turn context in cache-optimized mode). Absent profile =
+        # empty string = no block. Defensive: ambient knowledge must never be
+        # able to break a prompt build.
+        try:
+            from jarvis.brain.identity_card import identity_card_block
+
+            _identity_block = identity_card_block(getattr(self, "_config", None))
+            if _identity_block:
+                parts.append(_identity_block)
+        except Exception:  # noqa: BLE001
+            pass
+
         if self._core_memory is not None:
             # Mandatory: re-read BEFORE rendering. Otherwise the LLM only sees
             # facts that existed at init time — UI additions and remember-tool

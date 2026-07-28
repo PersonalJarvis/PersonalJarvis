@@ -20,7 +20,12 @@ Three independent layers, each useful on its own:
 
 1. :func:`should_consult_memory` — BEFORE retrieval. General-knowledge and
    definitional questions with no personal marker never search at all. Saves
-   the search latency and removes the failure mode at its root.
+   the search latency and removes the failure mode at its root. Three turn
+   classes DO earn a look: explicit recollection, a personal lookup, and —
+   since the ambient-knowledge pass — planning/recommendation/decision turns,
+   where the right answer depends on who is asking. Widening this gate is
+   safe precisely because gates 2 and 3 are unchanged: more turns get to ask
+   the memory, none of them get to inject an irrelevant answer.
 2. :func:`relevant_hits` — AFTER retrieval. Coverage of the question's content
    terms plus a within-call relative floor. Deliberately NOT an absolute score
    threshold: ``SearchHit.score`` is documented as comparable only within a
@@ -54,6 +59,7 @@ from jarvis.brain.wiki_relevance_vocab import (
     GENERAL_KNOWLEDGE_PHRASES,
     LOOKUP_MARKERS,
     PERSONAL_MARKERS,
+    PLANNING_PHRASES,
     RECOLLECTION_PHRASES,
 )
 
@@ -104,6 +110,13 @@ _PERSONAL_RE = _alternation(PERSONAL_MARKERS)
 # strong enough to consult even without an ownership marker.
 _MEMORY_RE = _alternation(RECOLLECTION_PHRASES)
 
+# Planning / recommendation / decision phrasing. The second turn class that
+# earns a lookup without a possessive: advice for THIS person depends on what
+# is known about them. Checked BEFORE the general-knowledge skip, because the
+# two shapes overlap ("what is the fastest way home" is both a "what is" and a
+# request for a plan) and the advice reading is the one that wants context.
+_PLANNING_RE = _alternation(PLANNING_PHRASES)
+
 # General-knowledge / definitional shape. On its own this is the world's
 # knowledge, not the user's — the tallest-tower case. Only an ownership
 # marker turns it into a memory question.
@@ -136,6 +149,7 @@ _SKIP_TOO_SHORT = MemoryVerdict(False, "too_short")
 _SKIP_GENERAL_KNOWLEDGE = MemoryVerdict(False, "general_knowledge")
 _SKIP_NO_PERSONAL_ANCHOR = MemoryVerdict(False, "no_personal_anchor")
 _CONSULT_RECOLLECTION = MemoryVerdict(True, "recollection_phrase")
+_CONSULT_PLANNING = MemoryVerdict(True, "planning_advice")
 _CONSULT_PERSONAL_LOOKUP = MemoryVerdict(True, "personal_lookup")
 
 
@@ -147,11 +161,21 @@ def should_consult_memory(user_text: str) -> MemoryVerdict:
     1. Too short / no words -> skip (greetings, "ok", "danke").
     2. Explicit recollection phrasing -> consult, even without a possessive
        ("do you remember where we were?").
-    3. General-knowledge shape WITHOUT a personal marker -> skip. This is the
+    3. Planning / recommendation / decision phrasing -> consult, also without a
+       possessive ("what should I do", "what is the fastest way to X", "any
+       ideas for the weekend"). Advice is where knowing the person changes the
+       answer, so this turn class earns a look. Checked BEFORE step 4 because
+       the two shapes overlap and the advice reading is the useful one.
+    4. General-knowledge shape WITHOUT a personal marker -> skip. This is the
        tallest-tower case and the whole reason the gate exists.
-    4. Personal marker AND a lookup shape -> consult.
-    5. Anything else -> skip, and let the brain reach for ``wiki-recall`` if it
+    5. Personal marker AND a lookup shape -> consult.
+    6. Anything else -> skip, and let the brain reach for ``wiki-recall`` if it
        decides it needs the memory (see the policy note in the module docstring).
+
+    Opening the gate is not injecting: every consult verdict still has to pass
+    :func:`relevant_hits` and arrives wrapped by :func:`frame_context_block`,
+    so a planning turn with nothing relevant in the vault produces exactly the
+    same silence it produced before this class existed.
 
     Never raises: an unusable input degrades to a skip verdict.
     """
@@ -162,6 +186,8 @@ def should_consult_memory(user_text: str) -> MemoryVerdict:
         return _SKIP_TOO_SHORT
     if _MEMORY_RE.search(folded):
         return _CONSULT_RECOLLECTION
+    if _PLANNING_RE.search(folded):
+        return _CONSULT_PLANNING
     personal = bool(_PERSONAL_RE.search(folded))
     if _WORLD_KNOWLEDGE_RE.search(folded) and not personal:
         return _SKIP_GENERAL_KNOWLEDGE

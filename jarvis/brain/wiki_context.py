@@ -13,9 +13,11 @@ Relevance contract (``jarvis.brain.wiki_relevance``):
     back is what welds unrelated personal facts onto general-knowledge answers.
     Three gates, in order:
 
-    1. BEFORE searching, ``should_consult_memory`` skips turns that are not
-       questions about the user's own life.  A general-knowledge question never
-       touches the vault at all — no latency, no context, no non-sequitur.
+    1. BEFORE searching, ``should_consult_memory`` skips turns that neither ask
+       about the user's own life nor ask for a course of action for them
+       (planning / recommendation / decision turns, where the right answer
+       depends on who is asking).  A general-knowledge question never touches
+       the vault at all — no latency, no context, no non-sequitur.
     2. AFTER searching, ``relevant_hits`` drops hits that merely share a common
        word with the question.
     3. AT injection, ``frame_context_block`` states that the notes may be

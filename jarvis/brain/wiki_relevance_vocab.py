@@ -19,6 +19,7 @@ from __future__ import annotations
 __all__ = [
     "PERSONAL_MARKERS",
     "RECOLLECTION_PHRASES",
+    "PLANNING_PHRASES",
     "GENERAL_KNOWLEDGE_PHRASES",
     "LOOKUP_MARKERS",
 ]
@@ -50,6 +51,51 @@ RECOLLECTION_PHRASES: tuple[str, ...] = (
     "were we", "did we", "what did i", "when did i", "when was i",
     # es
     "te acuerdas", "recuerdas", "cuando fui", "cuando estuve",
+)
+
+#: Planning / recommendation / decision shape — the second turn class that is
+#: worth a memory lookup even without a possessive. "What should I do", "what
+#: is the fastest way to X", "any ideas for the weekend": the user is asking
+#: for a course of action, and a course of action for THIS person depends on
+#: what is known about them. These fire on their own (like the recollection
+#: phrases), so they are deliberately COMPOUND rather than bare superlatives:
+#: "fastest way" is an advice request, "fastest animal" is a quiz question.
+#: Firing here only opens the retrieval — the post-search relevance filter and
+#: the framed injection still decide whether anything reaches the model, so a
+#: planning turn with no matching note produces silence exactly as before.
+PLANNING_PHRASES: tuple[str, ...] = (
+    # de
+    "was soll ich", "was sollen wir", "soll ich", "sollte ich", "sollen wir",
+    "was mache ich", "was machen wir", "was tue ich",
+    "wie gehe ich vor", "wie gehe ich am besten", "wie kann ich am besten",
+    "am besten", "beste weg", "besten weg", "bester weg",
+    "schnellste weg", "schnellsten weg", "einfachste weg", "einfachsten weg",
+    "beste option", "beste moeglichkeit", "welche option",
+    "hast du ideen", "irgendwelche ideen", "ideen fuer", "idee fuer",
+    "vorschlaege", "vorschlag fuer", "tipps fuer", "tipp fuer",
+    "empfiehl", "empfiehlst du", "empfehlen", "empfehlung",
+    "was wuerdest du", "was raetst du", "rate mir",
+    "lohnt sich", "lohnt es sich",
+    "hilf mir", "entscheiden", "entscheidung", "plan fuer", "planen wir",
+    # en
+    "what should i", "what should we", "should i", "should we",
+    "what do i do", "what do we do", "how should i", "how should we",
+    "what would you do", "what would you recommend", "how do i best",
+    "best way", "fastest way", "quickest way", "easiest way", "smartest way",
+    "best option", "best approach", "which option",
+    "any ideas", "some ideas", "ideas for", "any suggestions",
+    "suggestions for", "any tips", "tips for", "any advice", "advice on",
+    "recommend", "recommendation", "recommendations",
+    "help me decide", "help me plan", "plan my", "plan for",
+    "worth it", "is it worth",
+    # es
+    "que deberia", "deberia", "deberiamos", "que hago", "que hacemos",
+    "mejor manera", "mejor forma", "mejor opcion", "mejor camino",
+    "manera mas rapida", "forma mas rapida",
+    "alguna idea", "algunas ideas", "ideas para", "alguna sugerencia",
+    "sugerencias para", "consejos para", "algun consejo",
+    "recomienda", "recomiendas", "recomendacion", "recomendaciones",
+    "que harias", "vale la pena", "ayudame a decidir",
 )
 
 #: Definitional / general-knowledge shape. On its own this asks about the
