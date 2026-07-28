@@ -853,6 +853,8 @@ class DesktopApp:
 
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
+        # Off-loop stall reporter, armed once the backend loop starts serving.
+        self._loop_watchdog: Any = None
         self._server: WebServer | None = None
         # Serve-first bootstrap: binds the admin port before the heavy build so
         # /api/health answers immediately and the window can appear (see
@@ -1978,12 +1980,51 @@ class DesktopApp:
 
             loop.create_task(_heavy_backend_bg(), name="heavy-backend")
             loop.call_soon(self._start_virtual_cursor)
+            # Watch this loop from OFF it, for the rest of the process's life.
+            # Everything the user touches — every WebSocket frame, every route,
+            # every brain turn — is serialized through the loop below, so one
+            # synchronous call on it stops all of them at once. That failure
+            # reaches the user as "Not responding" in the title bar and as
+            # keystrokes arriving seconds late in an Agentic-IDE pane, and it
+            # cannot be diagnosed from the inside: the diagnostics route that
+            # measures loop lag runs ON the loop and answers nothing while it
+            # is wedged (2026-07-28 — ten minutes of silence, health included,
+            # and a sampling profiler attached to the live process was the only
+            # way to learn it was a TOML parse). Costs one sleeping thread.
+            self._start_loop_watchdog(loop)
             loop.run_forever()
         finally:
+            self._stop_loop_watchdog()
             try:
                 loop.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # ---- Event-loop watchdog -------------------------------------------------
+
+    def _start_loop_watchdog(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Arm the off-loop stall reporter. Never fatal — it is a diagnostic."""
+        try:
+            from jarvis.core.loop_watchdog import EventLoopWatchdog
+
+            watchdog = EventLoopWatchdog(loop)
+            watchdog.start()
+            self._loop_watchdog = watchdog
+        except Exception:  # noqa: BLE001 — a watchdog must never break boot
+            from loguru import logger as _wd_log
+
+            _wd_log.opt(exception=True).debug("Event-loop watchdog not armed.")
+
+    def _stop_loop_watchdog(self) -> None:
+        """Retire the watchdog with the loop it watches."""
+        watchdog = getattr(self, "_loop_watchdog", None)
+        if watchdog is None:
+            return
+        self._loop_watchdog = None
+        try:
+            watchdog.stop()
+        except Exception:  # noqa: BLE001, S110 — teardown of a diagnostic
+            pass
 
     def _start_virtual_cursor(self) -> None:
         """Arm the Jarvis cursor identity and (optionally) the click-pulse overlay.
