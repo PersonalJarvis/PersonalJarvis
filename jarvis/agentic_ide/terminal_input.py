@@ -16,6 +16,17 @@ Two halves, and both are needed:
   the reply is written before the CLI can finish waiting. No network is in that
   path, which is the whole point — a faster browser would not have fixed this,
   only made it rarer.
+
+  Being in the right PROCESS turned out not to be enough: routed through the
+  output pump it still had to wait for the event loop, and a workspace launch
+  is the busiest that loop ever gets — several panes spawning at once, which is
+  precisely when a starting CLI asks. Measured against a 300 ms stall the reply
+  came 203-234 ms late and landed in the prompt anyway. So ``feed`` is wired as
+  the PTY's ``on_probe`` (``jarvis/terminal/pty_manager.py``) and runs in the
+  READER THREAD, on the bytes as they come off the PTY: 0 ms under the same
+  load. It is therefore called from that thread and from nowhere else, which is
+  what keeps its ``_tail`` free of locking; ``appearance`` is assigned from the
+  loop, a lone attribute swap that a reader can only ever see whole.
 * :func:`is_terminal_report_only` drops the browser's own copy of those replies
   on the way in. Unconditionally, because once the backend answers, a report
   arriving from a browser is by definition a duplicate. An earlier version

@@ -66,6 +66,23 @@ repaints itself continuously, so the newest bytes are the screen and stale ones
 are overwritten within a frame anyway. Dropping the newest instead would show a
 viewer an old screen forever, and holding everything would trade a bounded
 delay for an unbounded one plus unbounded memory.
+
+## Why one kind of output is answered before the pump ever sees it
+
+That pump is the right shape for a VIEWER and the wrong shape for a QUESTION.
+A coding CLI asks its terminal what it is and which colours it draws on while
+it starts, then reads the answer within milliseconds and gives up. Routed
+through the pump, the reply is scheduled behind whatever else the loop is doing
+— and a workspace launch is the busiest the loop ever gets, with several panes
+spawning at once. Measured here, a loop held for 300 ms delayed the answer by
+203-234 ms: the reply then arrives after the CLI stopped listening and its
+prompt editor has opened, where the bytes appear as a line of
+``11;rgb:1212/1414/1a1a`` the user never typed.
+
+``on_probe`` therefore runs in the READER THREAD, on the bytes as they come off
+the PTY, and whatever it returns is written straight back. Same measurement,
+same load: 0 ms. Nothing else moves off the pump — this is for replies that are
+useless once late, not for output a human reads.
 """
 from __future__ import annotations
 
@@ -84,6 +101,11 @@ from .backend import PtyHandle, make_pty_backend
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
 ClosedCallback = Callable[[str, int], Awaitable[None]]
+#: Called in the reader thread with each raw read; whatever it returns is
+#: written straight back to the PTY (empty for the overwhelming majority of
+#: output). Synchronous and cheap by contract — it runs on the path that drains
+#: the PTY, so anything slow here becomes back-pressure on the child.
+ProbeCallback = Callable[[str], str]
 
 #: How much output one PTY may have waiting for its viewer before the oldest
 #: is dropped. Generous enough to cover several full repaints of a busy
@@ -126,6 +148,11 @@ class PtySession:
     #: Guards the two fields above — written by the reader thread, read by the
     #: pump on the event loop.
     _buffer_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    #: Serializes writes INTO the child. Two threads reach the PTY: the event
+    #: loop carrying what the user typed, and the reader thread answering the
+    #: emulator queries (``on_probe``). Interleaving those would tear an escape
+    #: sequence in half, which a terminal cannot resynchronise from.
+    _write_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     #: Set (from the loop, via ``call_soon_threadsafe``) when output is waiting.
     _wake: asyncio.Event = field(default_factory=asyncio.Event, init=False)
     _pump: asyncio.Task[None] | None = field(default=None, init=False)
@@ -178,6 +205,11 @@ class PtySession:
     # ------------------------------------------------------------------
     # Consumer side — called from the pump, on the event loop
     # ------------------------------------------------------------------
+    def write(self, data: str) -> None:
+        """Write into the child, from whichever thread is holding the bytes."""
+        with self._write_lock:
+            self.proc.write(data)
+
     def take(self) -> str:
         """Everything that arrived since the last take, as ONE chunk."""
         with self._buffer_lock:
@@ -222,6 +254,7 @@ class PtyManager:
         on_output: OutputCallback,
         on_closed: ClosedCallback,
         env: Mapping[str, str] | None = None,
+        on_probe: ProbeCallback | None = None,
     ) -> PtySession:
         """Starts a new PTY session and registers the I/O callbacks.
 
@@ -231,6 +264,13 @@ class PtyManager:
         ``on_closed`` is awaited exactly once, after the final flush — so a
         caller can never be told the child exited while output it produced is
         still in the buffer.
+
+        ``on_probe`` is the exception, and runs in the READER THREAD instead:
+        it is handed each raw read and whatever it returns goes straight back
+        into the PTY. That is for answers a child stops waiting for within
+        milliseconds — the loop is at its busiest exactly while panes are
+        starting, which is when those questions get asked (module docstring).
+        The same output still reaches ``on_output`` afterwards, unchanged.
 
         The PTY is created through the backend seam (`make_pty_backend()`):
         Winpty on Windows, ptyprocess on POSIX, or a null backend that raises a
@@ -287,7 +327,7 @@ class PtyManager:
         session.reader_thread = threading.Thread(
             target=self._reader_loop,
             name=f"pty-reader-{terminal_id[:8]}",
-            args=(session, loop),
+            args=(session, loop, on_probe),
             daemon=True,
         )
         with self._lock:
@@ -316,7 +356,7 @@ class PtyManager:
         if session is None:
             return False
         try:
-            session.proc.write(data)
+            session.write(data)
             return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("PTY write failed", terminal_id=terminal_id, error=str(exc))
@@ -523,13 +563,17 @@ class PtyManager:
         self,
         session: PtySession,
         loop: asyncio.AbstractEventLoop,
+        on_probe: ProbeCallback | None = None,
     ) -> None:
         """Blocking read-loop — runs in its own daemon thread (AD-9: unchanged).
 
         It hands every read straight to the session buffer and never touches
-        the caller's callbacks: scheduling a coroutine per read is precisely the
-        cost this module exists to avoid, and it is also what let a slow viewer
-        build an unbounded queue.
+        the caller's async callbacks: scheduling a coroutine per read is
+        precisely the cost this module exists to avoid, and it is also what let
+        a slow viewer build an unbounded queue.
+
+        ``on_probe`` is the one thing answered from HERE rather than from the
+        pump, because its answer is worthless once late (module docstring).
         """
         proc = session.proc
         stop_flag = session.stop_flag
@@ -562,6 +606,30 @@ class PtyManager:
                     text = data.decode("utf-8", errors="replace")
                 else:
                     text = str(data)
+
+                # BEFORE the buffer, so a question the child is holding its
+                # breath for is answered without waiting on the event loop.
+                # Never fatal: a probe that raises must not take the reader
+                # thread — and with it the pane's whole output — down with it.
+                if on_probe is not None:
+                    try:
+                        reply = on_probe(text)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "PTY probe failed",
+                            terminal_id=session.terminal_id,
+                            error=str(exc),
+                        )
+                    else:
+                        if reply:
+                            try:
+                                session.write(reply)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.debug(
+                                    "PTY probe reply could not be written",
+                                    terminal_id=session.terminal_id,
+                                    error=str(exc),
+                                )
 
                 session.offer(text, loop)
         finally:

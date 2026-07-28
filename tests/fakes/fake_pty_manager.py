@@ -50,6 +50,10 @@ class FakePtyManager:
     # Callbacks per live terminal, so a test can make an agent SPEAK (see
     # ``emit``) rather than only observe what was typed at it.
     _callbacks: dict[str, tuple[Any, Any]] = field(default_factory=dict)
+    # The synchronous probe the real manager runs in its reader thread, on the
+    # bytes as they come off the PTY. Kept apart from the callbacks above
+    # because it runs BEFORE them and its answer is a write, not a view.
+    _probes: dict[str, Any] = field(default_factory=dict)
 
     async def spawn(
         self,
@@ -61,6 +65,7 @@ class FakePtyManager:
         on_output: Any,
         on_closed: Any,
         env: Any = None,
+        on_probe: Any = None,
     ) -> FakePtySession:
         if self.spawn_error:
             raise RuntimeError(self.spawn_error)
@@ -75,6 +80,7 @@ class FakePtyManager:
                 "rows": rows,
                 "on_output": on_output,
                 "on_closed": on_closed,
+                "on_probe": on_probe,
                 # The environment a pane was started with — how a test proves
                 # which subscription an agent actually runs on.
                 "env": dict(env) if env is not None else None,
@@ -82,6 +88,8 @@ class FakePtyManager:
         )
         self._live.add(terminal_id)
         self._callbacks[terminal_id] = (on_output, on_closed)
+        if on_probe is not None:
+            self._probes[terminal_id] = on_probe
         return FakePtySession(terminal_id=terminal_id, shell_id=shell_id)
 
     def write(self, terminal_id: str, data: str) -> bool:
@@ -123,6 +131,7 @@ class FakePtyManager:
     def close(self, terminal_id: str) -> bool:
         self.closed.append(terminal_id)
         self._callbacks.pop(terminal_id, None)
+        self._probes.pop(terminal_id, None)
         return self._live.discard(terminal_id) is None and True
 
     def has(self, terminal_id: str) -> bool:
@@ -141,13 +150,20 @@ class FakePtyManager:
     async def emit(self, terminal_id: str | None, text: str) -> None:
         """Make the agent in this terminal print ``text``.
 
-        The real reader thread calls the registry's output callback; this is the
-        same call, so everything downstream of it — transcript, replay buffer,
-        the viewer — is exercised exactly as it is in production.
+        Mirrors the real reader thread in ORDER as well as effect: the probe
+        sees the bytes first and anything it answers is written back before the
+        output callback runs, so a test cannot pass against a version that
+        answers from the pump. Everything downstream — transcript, replay
+        buffer, the viewer — is then exercised exactly as in production.
         """
         callbacks = self._callbacks.get(terminal_id or "")
         if callbacks is None:
             raise AssertionError(f"no live terminal {terminal_id!r} to emit from")
+        probe = self._probes.get(terminal_id or "")
+        if probe is not None:
+            reply = probe(text)
+            if reply:
+                self.write(terminal_id or "", reply)
         await callbacks[0](terminal_id, text)
 
     async def die(self, terminal_id: str | None, code: int = 1) -> None:

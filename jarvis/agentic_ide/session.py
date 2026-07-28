@@ -2262,16 +2262,6 @@ class Registry:
         # the viewer that happened to start the agent would keep writing into a
         # dead socket forever, and the viewer that came later would see nothing.
         async def _output(tid: str, text: str) -> None:
-            # FIRST, before anything that could yield: a CLI asking its terminal
-            # for the device type or the screen colours reads the answer within
-            # milliseconds of asking. Answering here rather than in the browser
-            # keeps the whole exchange inside this process — a reply that has to
-            # cross two WebSocket hops arrives after the CLI stopped listening,
-            # and then appears as pasted-looking junk in its prompt. Addressed to
-            # `tid` rather than `term.pty_id`, which is assigned a moment later.
-            replies = term.queries.feed(text)
-            if replies:
-                manager.write(tid, replies)
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
@@ -2339,6 +2329,15 @@ class Registry:
                     on_output=_output,
                     on_closed=_closed,
                     env=env,
+                    # In the READER THREAD, not here: a CLI asking its terminal
+                    # for the device type or the screen colours reads the answer
+                    # within milliseconds of asking, and this event loop is at
+                    # its busiest while panes are starting — which is exactly
+                    # when the question is asked. Answered from the pump, the
+                    # reply was measured 203-234 ms late under a 300 ms stall
+                    # and landed in the CLI's prompt as junk the user never
+                    # typed. Off the loop it is immediate.
+                    on_probe=term.queries.feed,
                 )
             except Exception as exc:  # noqa: BLE001 - surfaced to the pane
                 term.status = "error"
