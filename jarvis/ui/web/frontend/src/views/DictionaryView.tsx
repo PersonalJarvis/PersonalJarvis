@@ -190,6 +190,13 @@ export function DictionaryView({ hideHeader = false }: DictionaryViewProps = {})
           <p className="mt-3 text-[11px] text-muted-foreground">
             {t("dictionary.applies_note")}
           </p>
+          {/* The corrections already reach dictation — the pipeline wraps the
+              same speech-to-text handle a dictation uses — but nothing said so,
+              and a vocabulary you do not know applies is a vocabulary you do not
+              use. */}
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t("dictionary.applies_to_dictation")}
+          </p>
         </div>
       </div>
 
