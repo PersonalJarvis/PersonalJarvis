@@ -129,7 +129,7 @@ ddgs==9.14.3
 # transports (missing Host/Origin validation, unverified session principal,
 # cross-client task access) are fixed there — never resolve lower
 # (Dependabot #48-#51).
-mcp>=1.28.1
+mcp>=1.28.1,<2
 
 # CLI (setup wizard + jarvisctl control CLI)
 rich>=13.9
