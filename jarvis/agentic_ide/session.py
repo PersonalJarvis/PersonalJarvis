@@ -493,6 +493,78 @@ def _redirected_home(term: Terminal) -> Path | None:
     return agent_accounts.config_dir_for(term.agent, term.account)  # type: ignore[arg-type]
 
 
+#: Environment markers left behind by the coding-agent session that STARTED this
+#: app, which a pane must never inherit.
+#:
+#: The app is regularly launched from inside a coding CLI — a contributor running
+#: ``run.bat`` from an agent's terminal, the in-app restart (which hands the new
+#: process its predecessor's environment, so one such launch survives every
+#: restart afterwards). A CLI that finds these variables believes it is a NESTED
+#: run of itself, and Claude Code answers that by switching its transcript off:
+#: "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION". A pane whose
+#: conversation is never written to disk cannot be continued afterwards, so every
+#: pane came back with an empty history while the restore point looked healthy —
+#: it held a session id for a conversation that was never recorded (found
+#: 2026-07-28: not one transcript on disk for a whole morning's work).
+#:
+#: Deliberately an explicit list rather than a ``CLAUDE_*`` prefix sweep: the same
+#: namespace carries credentials (``CLAUDE_CODE_OAUTH_TOKEN``), the account
+#: redirection this module sets itself (``CLAUDE_CONFIG_DIR``) and settings a user
+#: legitimately exports for every terminal they open. Only markers that identify
+#: a RUNNING session belong here — add new ones as CLIs introduce them.
+PARENT_AGENT_SESSION_VARS: frozenset[str] = frozenset(
+    {
+        # Claude Code (and every launch profile that borrows its binary).
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+        "CLAUDE_CODE_NO_FLICKER",
+        "CLAUDE_CODE_USE_POWERSHELL_TOOL",
+        "CLAUDE_EFFORT",
+        "CLAUDE_PID",
+        "CLAUDE_PLUGIN_DATA",
+        # Codex: a pane inside a parent's sandbox refuses work it may do.
+        "CODEX_SANDBOX",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+    }
+)
+
+#: Said once per process, not once per pane: a full grid would otherwise repeat
+#: the same line a dozen times for one cause.
+_parent_session_reported = False
+
+
+def _without_parent_agent_session(env: dict[str, str] | None) -> dict[str, str] | None:
+    """``env`` with the parent session's markers removed.
+
+    ``None`` in and nothing to strip means ``None`` out — plain inheritance, the
+    spawn this app produced before any of this existed. Stripping is what makes a
+    pane a TOP-LEVEL session of its CLI, which is the only kind that records a
+    conversation and can therefore be resumed.
+    """
+    global _parent_session_reported
+
+    source = os.environ if env is None else env
+    present = sorted(name for name in PARENT_AGENT_SESSION_VARS if name in source)
+    if not present:
+        return env
+    cleaned = dict(source)
+    for name in present:
+        cleaned.pop(name, None)
+    if not _parent_session_reported:
+        _parent_session_reported = True
+        logger.info(
+            "Agentic IDE: this app was started from a coding-agent session; "
+            "dropping {} from every pane so its CLI runs as its own session "
+            "and can be resumed later",
+            ", ".join(present),
+        )
+    return cleaned
+
+
 def _spawn_env(term: Terminal) -> dict[str, str] | None:
     """The child environment that puts this pane on its own subscription.
 
@@ -542,7 +614,7 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
 
     overlay = agent_spawn_overlay(term.agent)
     if not overlay:
-        return env
+        return _without_parent_agent_session(env)
     env = dict(os.environ if env is None else env)
     for key, value in overlay.items():
         # An empty value means "remove this variable from the child". A GLM pane
@@ -553,7 +625,7 @@ def _spawn_env(term: Terminal) -> dict[str, str] | None:
             env[key] = value
         else:
             env.pop(key, None)
-    return env
+    return _without_parent_agent_session(env)
 
 
 def agent_spawn_overlay(agent: str) -> dict[str, str]:

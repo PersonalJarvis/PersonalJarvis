@@ -394,7 +394,13 @@ def test_the_environment_reaches_a_pane_through_the_real_spawn_path(
     assert kimi_env["KIMI_CODE_NO_AUTO_UPDATE"] == "1"
 
     # A CLI that declares nothing still inherits the machine's environment
-    # untouched — the behaviour every pane had before any of this existed.
+    # untouched — the behaviour every pane had before any of this existed. True of
+    # an app started from a plain terminal; one started from a coding-agent
+    # session strips that session's markers instead (test_parent_session_env), so
+    # they are cleared here rather than letting the launching terminal decide
+    # whether this passes.
+    for marker in ide_session.PARENT_AGENT_SESSION_VARS:
+        monkeypatch.delenv(marker, raising=False)
     assert registry._prepare_spawn(_stub_pane("claude"), str(tmp_path)) is None
 
 

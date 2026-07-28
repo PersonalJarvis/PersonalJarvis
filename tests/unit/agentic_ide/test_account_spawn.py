@@ -23,6 +23,22 @@ from jarvis.agentic_ide.session import Registry, SessionError
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
+@pytest.fixture(autouse=True)
+def _launched_from_a_plain_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Assert the ACCOUNT, on a spawn nothing else is interfering with.
+
+    Several assertions here read "no environment was passed at all", which is the
+    promise to every user who never opens the account switcher. That promise holds
+    for an app started from a plain terminal; an app started from a coding-agent
+    session hands its panes an environment on purpose, with that session's markers
+    removed (``test_parent_session_env``). Without this fixture the same suite
+    would pass or fail depending on which terminal it was launched from — and CI
+    runs it from one of each.
+    """
+    for marker in session_mod.PARENT_AGENT_SESSION_VARS:
+        monkeypatch.delenv(marker, raising=False)
+
+
 @pytest.fixture
 def fake_pty() -> FakePtyManager:
     return FakePtyManager()
@@ -263,7 +279,9 @@ async def test_a_pane_on_the_builtin_account_spawns_exactly_as_it_always_did(
     """No environment is passed at all — plain inheritance, byte for byte.
 
     This is the promise to everyone who never opens the switcher: adding the
-    feature changed nothing about how their panes start.
+    feature changed nothing about how their panes start. Read together with
+    ``_launched_from_a_plain_shell`` above, which is what makes "at all" a
+    statement about this code rather than about the terminal running the suite.
     """
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     await _attach(registry, registry.session.terminals[0].name)
