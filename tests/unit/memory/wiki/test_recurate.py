@@ -180,7 +180,10 @@ async def test_dry_run_proposes_but_writes_nothing(stack) -> None:
     assert report.error == ""
     assert report.applied is False
     assert report.backup_path is None
-    assert [str(u.target_path) for u in report.proposals] == ["entities/ruben.md"]
+    # as_posix(), not str(): the assertion is about WHICH page was proposed, not
+    # about the host's path separator. str() yields backslashes on Windows and
+    # failed there while passing on POSIX.
+    assert [u.target_path.as_posix() for u in report.proposals] == ["entities/ruben.md"]
     # Dry-run must leave the vault byte-identical.
     on_disk = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
     assert on_disk == PROFILE_BODY

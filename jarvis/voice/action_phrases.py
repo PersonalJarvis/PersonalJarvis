@@ -418,13 +418,13 @@ _PHRASES: dict[str, dict[str, str]] = {
     # misheard name from a wrong pane, and hearing "I understood Ilies" is what
     # makes "no, Ellis" the obvious next thing to say.
     "ide_terminal_clarify_one": {
-        "de": "Ich habe {spoken} verstanden — meinst du {name}?",  # i18n-allow
-        "en": "I heard {spoken} — did you mean {name}?",
+        "de": "Ich habe {spoken} verstanden. Meinst du {name}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {name}?",
         "es": "Entendí {spoken}: ¿te refieres a {name}?",
     },
     "ide_terminal_clarify_many": {
-        "de": "Ich habe {spoken} verstanden — meinst du {names}?",  # i18n-allow
-        "en": "I heard {spoken} — did you mean {names}?",
+        "de": "Ich habe {spoken} verstanden. Meinst du {names}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {names}?",
         "es": "Entendí {spoken}: ¿te refieres a {names}?",
     },
     # The separator for the final pair of an alternative list ("Maggie or Max").
@@ -447,16 +447,16 @@ _PHRASES: dict[str, dict[str, str]] = {
     # The two halves are said in one sentence on purpose: the user has to hear
     # which agents actually got the work before being asked about the rest.
     "ide_terminal_clarify_also": {
-        "de": "Ich habe außerdem {spoken} verstanden — meinst du {names}?",  # i18n-allow
-        "en": "I also heard {spoken} — did you mean {names}?",
+        "de": "Ich habe außerdem {spoken} verstanden. Meinst du {names}?",  # i18n-allow
+        "en": "I also heard {spoken}. Did you mean {names}?",
         "es": "También entendí {spoken}: ¿te refieres a {names}?",
     },
     # The user addressed several panes and only one call-sign survived speech
     # recognition. Saying which one was placed is the load-bearing half: it is
     # what stops the user believing a second agent is working when none is.
     "ide_terminal_who_else": {
-        "de": "Ich konnte nur {names} zuordnen — wer sollte noch ran?",  # i18n-allow
-        "en": "I could only place {names} — who else did you mean?",
+        "de": "Ich konnte nur {names} zuordnen. Wer sollte noch ran?",  # i18n-allow
+        "en": "I could only place {names}. Who else did you mean?",
         "es": "Solo pude identificar a {names}: ¿quién más?",
     },
     "ide_terminals_nowhere": {

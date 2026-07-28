@@ -70,7 +70,12 @@ def _macos_script(argv: Sequence[str], cwd: Path, env: Mapping[str, str] | None)
         if env
         else ""
     )
-    command = f"cd {shlex.quote(str(cwd))} && {assignments}{shlex.join(argv)}"
+    # Terminal.app always runs on a real POSIX host, so the working directory
+    # must be forward-slash formatted regardless of which pathlib flavour built
+    # `cwd`. On real macOS str(cwd) is already POSIX and this is a no-op; it
+    # only matters when cwd came through a WindowsPath (a cross-platform test).
+    posix_cwd = str(cwd).replace("\\", "/")
+    command = f"cd {shlex.quote(posix_cwd)} && {assignments}{shlex.join(argv)}"
     apple_string = command.replace("\\", "\\\\").replace('"', '\\"')
     return f'tell application "Terminal"\nactivate\ndo script "{apple_string}"\nend tell'
 

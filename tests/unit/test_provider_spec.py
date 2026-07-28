@@ -27,15 +27,17 @@ def test_every_secret_key_exists_in_wizard() -> None:
     for spec in PROVIDERS:
         for key in spec.secret_keys:
             assert key in wizard_keys, (
-                f"Provider '{spec.id}' referenziert secret_key '{key}', "
-                f"is not declared in wizard.SECRETS"
+                f"Provider '{spec.id}' references secret_key '{key}', "
+                f"which is not declared in wizard.SECRETS"
             )
 
 
 def test_only_subscription_cli_providers_use_cli_login() -> None:
     """A login CLI belongs to the subscription/login providers only. Codex logs
     in via ``codex login``; Antigravity drives the bare ``agy`` binary (it has
-    no ``login`` subcommand). Every pure API-key / local provider has none."""
+    no ``login`` subcommand); the Claude subscription signs in with the
+    ``/login`` slash command of the ``claude`` CLI. Every pure API-key / local
+    provider has none."""
     for spec in PROVIDERS:
         assert spec.auth_mode != "subscription_cli"  # never the legacy literal
         if spec.id == "codex":
@@ -44,6 +46,9 @@ def test_only_subscription_cli_providers_use_cli_login() -> None:
         elif spec.id == "antigravity":
             assert spec.auth_mode == "antigravity"
             assert spec.login_cli == ("agy",)
+        elif spec.id == "claude-cli":
+            assert spec.auth_mode == "claude_cli"
+            assert spec.login_cli == ("claude", "/login")
         else:
             assert spec.login_cli is None, f"{spec.id}: unexpected login_cli"
 

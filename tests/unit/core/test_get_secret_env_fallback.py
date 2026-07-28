@@ -8,8 +8,30 @@ the caller passes none.
 from __future__ import annotations
 
 import keyring
+import pytest
 
 from jarvis.core.config import get_secret
+
+
+@pytest.fixture(autouse=True)
+def _isolated_credential_backend(monkeypatch, tmp_path):
+    """Pin the process-wide credential-backend state for every test here.
+
+    ``get_secret`` retains a platform backend and reads it DIRECTLY whenever the
+    local-file store is the active keyring (``_FILE_BACKEND_ACTIVE`` in
+    ``jarvis/core/config.py``). That state is module-global, so any earlier test
+    in the same session whose keyring access failed leaves it set — and these
+    tests then consult the host's REAL credential store instead of the patched
+    keyring. Two consequences, both observed: they fail in a full-suite run
+    while passing in isolation, and the assertion diff prints the host's real
+    API key into the log. Pinning the backend, plus a throwaway DATA_DIR for the
+    file fallback, makes them hermetic on any host.
+    """
+    from jarvis.core import config as cfg
+
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", False, raising=False)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None, raising=False)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path, raising=False)
 
 
 def test_get_secret_derives_env_fallback_from_key(monkeypatch):

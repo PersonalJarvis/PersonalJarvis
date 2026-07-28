@@ -277,7 +277,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         signup_url="https://claude.ai",
         credential_help=(
             "Write Agentic IDE task briefs over your Claude subscription via the "
-            "Claude Code CLI — sign in below, no API key needed. Too slow to "
+            "Claude Code CLI — no API key needed. Sign in from the UltraWiki "
+            "model panel, or run 'claude /login' in a terminal. Too slow to "
             "start for spoken replies, so it is not offered as a voice brain."
         ),
     ),
