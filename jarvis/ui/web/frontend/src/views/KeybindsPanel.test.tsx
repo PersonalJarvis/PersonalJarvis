@@ -2,9 +2,23 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeybindsPanel } from "./SettingsView";
 
+// All four keybind actions, as the backend reports them (KEYBIND_ACTIONS in
+// jarvis/core/config_writer.py). Settings renders three of them — hands-free
+// dictation lives in the voice section's Shortcuts tab — but the panel must
+// stay correct when the config carries an action it does not render.
 const FULL = {
-  keybinds: { call: "f3+f4", hangup: "f1+f2" },
-  defaults: { call: "f3+f4", hangup: "f1+f2" },
+  keybinds: {
+    call: "f3+f4",
+    hangup: "f1+f2",
+    dictate: "ctrl+right_alt+j",
+    dictate_toggle: "ctrl+right_alt+space",
+  },
+  defaults: {
+    call: "f3+f4",
+    hangup: "f1+f2",
+    dictate: "ctrl+right_alt+j",
+    dictate_toggle: "ctrl+right_alt+space",
+  },
   suggestions: [],
   restart_required: true,
 };
@@ -20,7 +34,7 @@ function stubFetch() {
 
 /** The combo field's visible text with whitespace collapsed ("F3+F4") —
  * works for both the plain string and the kbd-chip rendering. */
-function comboText(action: "call" | "hangup"): string {
+function comboText(action: "call" | "hangup" | "dictate"): string {
   return (
     screen
       .getByTestId(`combo-field-${action}`)
@@ -37,6 +51,16 @@ describe("KeybindsPanel", () => {
     expect(comboText("hangup")).toBe("F1+F2");
     expect(screen.queryByTestId("combo-field-ptt")).toBeNull();
     expect(screen.queryByText(/push-to-talk/i)).toBeNull();
+  });
+
+  it("renders the dictation row and leaves hands-free to the voice section", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+    // The right Alt key is named the way its keycap reads, not "Right-Alt".
+    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
+    // Hands-free dictation is a real action, but its row lives in the voice
+    // section's Shortcuts tab next to push-to-talk — not duplicated here.
+    expect(screen.queryByTestId("combo-field-dictate_toggle")).toBeNull();
   });
 
   it("captures a two-key chord (F7 + F8) pressed simultaneously", async () => {

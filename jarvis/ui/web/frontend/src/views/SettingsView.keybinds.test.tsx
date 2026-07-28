@@ -16,9 +16,17 @@ vi.mock("@/i18n", async (importOriginal) => {
 });
 
 const { saveKeybind, state } = vi.hoisted(() => {
+  // All four backend actions (KEYBIND_ACTIONS) — Settings renders three of
+  // them; hands-free dictation lives in the voice section's Shortcuts tab.
+  const keybinds = {
+    call: "f3+f4",
+    hangup: "f1+f2",
+    dictate: "ctrl+right_alt+j",
+    dictate_toggle: "ctrl+right_alt+space",
+  };
   const defaultConfig = {
-    keybinds: { call: "f3+f4", hangup: "f1+f2" },
-    defaults: { call: "f3+f4", hangup: "f1+f2" },
+    keybinds,
+    defaults: { ...keybinds },
     suggestions: [] as string[],
     restart_required: false,
   };
@@ -60,7 +68,10 @@ describe("KeybindsPanel — Clear button", () => {
     render(<KeybindsPanel />);
     expect(screen.queryByTestId("clear-keybind-call")).not.toBeNull();
     expect(screen.queryByTestId("clear-keybind-hangup")).not.toBeNull();
+    expect(screen.queryByTestId("clear-keybind-dictate")).not.toBeNull();
     expect(screen.queryByTestId("clear-keybind-ptt")).toBeNull();
+    // Hands-free dictation is bound in the voice section, not here.
+    expect(screen.queryByTestId("clear-keybind-dictate_toggle")).toBeNull();
   });
 
   it("clicking Clear saves an empty hotkey for that action", async () => {

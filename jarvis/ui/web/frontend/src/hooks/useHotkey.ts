@@ -223,6 +223,14 @@ const _SOLO_SAFE_TOKENS = new Set([
   ..._NAV_SOLO_TOKENS,
 ]);
 
+/**
+ * Keys the OS keeps for itself no matter what the combo looks like — mirrors
+ * ``_RESERVED_SOLO_KEYS`` in ``jarvis/trigger/hotkey.py``. F12 is permanently
+ * claimed by the debugger. Without this rule the recorder happily let the user
+ * build an F12 combo and only the Save round-trip said no.
+ */
+const _RESERVED_TOKENS = new Set(["f12"]);
+
 /** Live validation result for a combo being built in the keybind recorder. */
 export type ComboValidation =
   | { status: "empty" }
@@ -234,6 +242,7 @@ export type ComboValidation =
         | "only_modifiers"
         | "solo_typing_key"
         | "windows_reserved"
+        | "f12_reserved"
         | "alt_f4"
         | "ctrl_c";
     }
@@ -266,6 +275,11 @@ export function validateCombo(
 
   if (keys.length === 0) return { status: "error", reason: "only_modifiers" };
   if (mods.includes("win")) return { status: "error", reason: "windows_reserved" };
+  // Reserved regardless of the modifiers around it — same order as the backend
+  // (windows-key rule first, then the reserved key, then the OS shortcuts).
+  if (keys.some((k) => _RESERVED_TOKENS.has(k))) {
+    return { status: "error", reason: "f12_reserved" };
+  }
   if ((mods.includes("alt") || mods.includes("right_alt")) && keys.includes("f4")) {
     return { status: "error", reason: "alt_f4" };
   }
@@ -297,12 +311,21 @@ export function validateCombo(
 }
 
 // Mirrors KEYBIND_ACTIONS in jarvis/core/config_writer.py — keep in sync.
-export type KeybindAction = "call" | "hangup" | "dictate";
+// "dictate" is push-to-talk (hold), "dictate_toggle" is hands-free (press once
+// to start, again to stop).
+export type KeybindAction = "call" | "hangup" | "dictate" | "dictate_toggle";
 
-/** Response of GET /api/settings/keybinds. */
+/**
+ * Response of GET /api/settings/keybinds.
+ *
+ * `Partial` on purpose: the frontend and the backend are updated separately, so
+ * a build that already knows a new action can talk to a backend that does not
+ * report it yet. Every read must therefore default (`?? ""`) instead of
+ * assuming a string — an undefined combo used to crash the whole panel.
+ */
 export interface KeybindsConfig {
-  keybinds: Record<KeybindAction, string>;
-  defaults: Record<KeybindAction, string>;
+  keybinds: Partial<Record<KeybindAction, string>>;
+  defaults: Partial<Record<KeybindAction, string>>;
   suggestions: string[];
   restart_required: boolean;
 }

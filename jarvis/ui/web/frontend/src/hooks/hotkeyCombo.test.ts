@@ -204,6 +204,23 @@ describe("validateCombo", () => {
     });
   });
 
+  it("rejects F12 in any combo (permanently reserved by the debugger)", () => {
+    // The backend's _RESERVED_SOLO_KEYS rejects f12 no matter what modifiers
+    // surround it. Without the mirror rule the recorder let the user build the
+    // combo and only the Save round-trip said no.
+    expect(validateCombo("f12")).toEqual({
+      status: "error",
+      reason: "f12_reserved",
+    });
+    expect(validateCombo("ctrl+shift+f12")).toEqual({
+      status: "error",
+      reason: "f12_reserved",
+    });
+    // Its neighbours stay perfectly bindable.
+    expect(validateCombo("f11").status).toBe("ok");
+    expect(validateCombo("ctrl+shift+f13").status).toBe("ok");
+  });
+
   it("rejects the OS-critical shortcuts Alt+F4 and Ctrl+C", () => {
     expect(validateCombo("alt+f4")).toEqual({ status: "error", reason: "alt_f4" });
     expect(validateCombo("ctrl+c")).toEqual({ status: "error", reason: "ctrl_c" });
