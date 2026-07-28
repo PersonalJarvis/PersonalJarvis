@@ -1110,10 +1110,15 @@ class SchedulerConfig(BaseModel):
     periodic_interval_minutes: int = 30
     lock_path: Path = Path("data/wiki_curator.lock")
     lock_stale_after_seconds: int = 300
-    # A durable candidate should become visible in the vault without waiting
-    # for unrelated future conversation. The background consolidator may still
-    # coalesce candidates that arrive concurrently.
-    consolidate_after_candidates: int = 1
+    # A durable candidate must become visible in the vault promptly, but not
+    # necessarily on its own dedicated judge run: each Stage-2 run re-sends an
+    # ~11k-char system prompt plus full neighbour page bodies, so firing per
+    # candidate multiplied that fixed cost across every fact-yielding turn
+    # (2026-07-28 cost audit). Three coalesces an active conversation's burst
+    # into one run, and the age flush below still bounds how long a LONE
+    # candidate can wait — that pair is what keeps spec A4's visibility
+    # promise.
+    consolidate_after_candidates: int = 3
     # Age-based flush (spec A4): even below the count threshold, pending
     # candidates older than this become a JOURNAL trigger so a quiet fresh
     # install still produces visible pages. 0 disables the age flush.

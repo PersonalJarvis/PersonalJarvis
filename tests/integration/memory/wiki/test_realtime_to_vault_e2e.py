@@ -16,6 +16,7 @@ from jarvis.core.config import (
     BrainProviderConfig,
     JarvisConfig,
     MemoryConfig,
+    SchedulerConfig,
     WikiMemoryConfig,
 )
 from jarvis.core.events import VoiceSessionEnded, VoiceTurnCompleted
@@ -197,6 +198,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             providers={"test-provider": BrainProviderConfig(model="test-model")},
         ),
         memory=MemoryConfig(wiki=WikiMemoryConfig()),
+        # This E2E drives one fact per short call and expects each to land
+        # in the vault immediately, so it pins per-candidate consolidation
+        # explicitly (the SHIPPED default batches 3 per judge run since the
+        # 2026-07-28 cost audit).
+        wiki_scheduler=SchedulerConfig(consolidate_after_candidates=1),
     )
     assert config.memory.wiki.voice_bridge.rate_limit_seconds == 0
     assert config.wiki_scheduler.consolidate_after_candidates == 1

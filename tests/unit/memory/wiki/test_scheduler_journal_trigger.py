@@ -276,7 +276,9 @@ async def test_journal_trigger_without_consolidator_skips(tmp_path: Path) -> Non
 
 
 def test_scheduler_config_has_journal_pressure_threshold() -> None:
-    assert SchedulerConfig().consolidate_after_candidates == 1
+    # 3 since the 2026-07-28 cost audit — see test_journal_age_flush for
+    # why the age flush keeps spec A4's visibility promise at this value.
+    assert SchedulerConfig().consolidate_after_candidates == 3
 
 
 # ---------------------------------------------------------------------------
