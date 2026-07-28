@@ -13,6 +13,12 @@ import { robustCopy } from "@/lib/clipboard";
  */
 export const DICTATION_OUTCOMES = [
   "inserted",
+  // A user-recorded paste shortcut went out to the focused window and nothing
+  // came back — Jarvis does not paste, it ASKS the app in front to paste, and
+  // an app that does not bind that combination simply ignores it. There is
+  // nothing to read back, so this deliberately does not claim an insertion.
+  // (No quoted words in this block: the parity test scans it with a regex.)
+  "paste_sent",
   "clipboard_only",
   "unavailable",
   "chat",
@@ -122,6 +128,31 @@ export interface DictationChoices {
   language: string[];
 }
 
+/**
+ * The keys that also accept a RECORDED value, described by the backend rather
+ * than mirrored here.
+ *
+ * The token vocabulary travels over the wire on purpose: a hand-kept copy in
+ * the frontend is the AP-4 drift trap, and the cost of getting it wrong is a
+ * recorder that happily captures a key the actuator cannot send, which then
+ * fails silently at paste time. Everything is optional — an older backend
+ * serves no `custom` block at all, and the recorder then simply lets the
+ * backend be the judge on save.
+ */
+export interface DictationCustomField {
+  allowed?: boolean;
+  /** How tokens are joined ("+"). */
+  separator?: string;
+  modifiers?: string[];
+  keys?: string[];
+  /** English sentence describing what the custom value can and cannot do. */
+  detail?: string;
+}
+
+export interface DictationCustom {
+  paste_chord?: DictationCustomField;
+}
+
 /** Result of POST /api/dictation/history/{id}/restore. */
 export interface DictationRestoreResult {
   ok: boolean;
@@ -147,6 +178,7 @@ export function useDictation() {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [settings, setSettings] = useState<DictationSettings | null>(null);
   const [choices, setChoices] = useState<DictationChoices | null>(null);
+  const [custom, setCustom] = useState<DictationCustom | null>(null);
   const [entries, setEntries] = useState<DictationEntry[]>([]);
   const [stats, setStats] = useState<DictationStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -196,9 +228,11 @@ export function useDictation() {
       const data = await unwrap<{
         settings: DictationSettings;
         choices: DictationChoices;
+        custom?: DictationCustom;
       }>(await fetch("/api/dictation/settings"));
       setSettings(data.settings);
       setChoices(data.choices);
+      setCustom(data.custom ?? null);
       await Promise.all([refetchStatus(), refetchHistory(), refetchStats()]);
     } catch (e) {
       setError((e as Error).message);
@@ -314,6 +348,7 @@ export function useDictation() {
     status,
     settings,
     choices,
+    custom,
     entries,
     stats,
     loading,

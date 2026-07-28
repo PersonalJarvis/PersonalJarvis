@@ -16,13 +16,17 @@ vi.mock("@/i18n", async (importOriginal) => {
 });
 
 const { saveKeybind, state } = vi.hoisted(() => {
-  // All four backend actions (KEYBIND_ACTIONS) — Settings renders three of
-  // them; hands-free dictation lives in the voice section's Shortcuts tab.
+  // The full backend action set (KEYBIND_ACTIONS). Settings renders only Call
+  // and Hangup — every dictation shortcut lives in the voice section's
+  // Shortcuts tab. The payload still carries all of them here on purpose: the
+  // rows differ between the two surfaces, the DATA never does, or Call and
+  // Hangup would lose their collision check against the dictation combos.
   const keybinds = {
     call: "f3+f4",
     hangup: "f1+f2",
     dictate: "ctrl+right_alt+j",
     dictate_toggle: "ctrl+right_alt+space",
+    paste_last: "ctrl+alt+v",
   };
   const defaultConfig = {
     keybinds,
@@ -68,10 +72,27 @@ describe("KeybindsPanel — Clear button", () => {
     render(<KeybindsPanel />);
     expect(screen.queryByTestId("clear-keybind-call")).not.toBeNull();
     expect(screen.queryByTestId("clear-keybind-hangup")).not.toBeNull();
-    expect(screen.queryByTestId("clear-keybind-dictate")).not.toBeNull();
     expect(screen.queryByTestId("clear-keybind-ptt")).toBeNull();
-    // Hands-free dictation is bound in the voice section, not here.
+  });
+
+  it("binds calling and hanging up only — every dictation key lives elsewhere", () => {
+    render(<KeybindsPanel />);
+    // This panel is about reaching the assistant and letting it go. All three
+    // dictation shortcuts are edited on ONE surface (the voice section's
+    // Shortcuts tab); a second, unsynced row for any of them here would let the
+    // same key be changed in two places with two different answers.
+    expect(screen.queryByTestId("clear-keybind-dictate")).toBeNull();
     expect(screen.queryByTestId("clear-keybind-dictate_toggle")).toBeNull();
+    expect(screen.queryByTestId("clear-keybind-paste_last")).toBeNull();
+  });
+
+  it("still receives the dictation combos it has to detect collisions against", () => {
+    // Dropping the ROWS is a rendering decision, not a data one. If the panel
+    // ever started filtering the payload, Call could be saved onto a combo a
+    // dictation key already owns and one of the two would silently go dead.
+    expect(state.config.keybinds.dictate).toBe("ctrl+right_alt+j");
+    expect(state.config.keybinds.dictate_toggle).toBe("ctrl+right_alt+space");
+    expect(state.config.keybinds.paste_last).toBe("ctrl+alt+v");
   });
 
   it("clicking Clear saves an empty hotkey for that action", async () => {

@@ -749,19 +749,27 @@ function WakeWordPanel() {
 const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
   { action: "call", labelKey: "settings_view.keybinds.call_label" },
   { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
-  { action: "dictate", labelKey: "settings_view.keybinds.dictate_label" },
 ];
 
 /**
- * Editable Call, Hangup and Dictation keybinds, one row each. The user clicks
- * Record and presses a combination, or resets to default, then saves. The
- * backend validator is the authority — an unsafe combo or a collision with
- * another action is rejected with a reason shown as a toast. A successful save
- * surfaces a restart-required hint.
+ * Editable Call and Hangup keybinds, one row each — the two keys that start
+ * and end a conversation. The user clicks Record and presses a combination, or
+ * resets to default, then saves. The backend validator is the authority — an
+ * unsafe combo or a collision with another action is rejected with a reason
+ * shown as a toast. A successful save surfaces a restart-required hint.
  *
- * Hands-free dictation (`dictate_toggle`) is deliberately NOT a row here: the
- * two dictation shortcuts belong together, and the voice section's Shortcuts
- * tab is where they live side by side. The row component is shared.
+ * NO dictation row lives here. Dictation is a different act — it never reaches
+ * the brain, it types into whatever window is in front, and it now has three
+ * shortcuts of its own (hold, hands-free, paste again). Those belong together
+ * on ONE surface, and that surface is the voice section's Shortcuts tab. This
+ * panel is deliberately NOT synced with it: the two answer different questions,
+ * and a row duplicated across both would let a user change the same key in two
+ * places and see two different truths.
+ *
+ * The row component itself is shared, so the recorder, the live validation and
+ * the collision check behave identically in both places — the collision check
+ * in particular still spans EVERY action, dictation included, because the
+ * backend keeps serving the whole set. Fewer rows here, never less data.
  */
 export function KeybindsPanel() {
   const t = useT();
