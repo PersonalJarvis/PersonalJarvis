@@ -5,6 +5,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/dictation/status    → capability + live state + the shortcuts.
     POST   /api/dictation/start     → begin a dictation ({"target": ...}).
     POST   /api/dictation/stop      → finish the running one.
+    POST   /api/dictation/paste-last → insert the last dictation again.
     GET    /api/dictation/history   → recent dictations (raw + cleaned).
     GET    /api/dictation/stats     → lifetime totals, today, day streak.
     DELETE /api/dictation/history   → purge everything (destructive).
@@ -218,6 +219,18 @@ class StartBody(BaseModel):
     )
 
 
+class PasteLastBody(BaseModel):
+    """Which saved dictation to insert again. Empty body = the newest one."""
+
+    entry_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of a history entry to insert. Omit for the most recent "
+            "dictation that still has text."
+        ),
+    )
+
+
 class SettingsBody(BaseModel):
     """Partial update — only the keys present are changed."""
 
@@ -314,6 +327,10 @@ async def get_status(request: Request) -> dict[str, Any]:
         # both can be armed at once. Reported separately for the same reason:
         # a UI that had to infer it from ``mode`` could not show the two rows.
         "hotkey_toggle": str(getattr(trigger, "hotkey_dictate_toggle", "") or ""),
+        # "Insert the last dictation again" — its own action and its own row,
+        # because it needs neither a microphone nor a provider and therefore
+        # stays useful on a host where dictation itself cannot run.
+        "hotkey_paste_last": str(getattr(trigger, "hotkey_paste_last", "") or ""),
         "mode": str(getattr(dictation, "mode", "hold")),
         "target": str(getattr(dictation, "target", "auto")),
         "insertion": insertion,
@@ -374,6 +391,59 @@ async def stop() -> dict[str, Any]:
         log.warning("dictation stop failed: %s", exc, exc_info=True)
         stopped = False
     return {"ok": True, "stopped": stopped, "active": False}
+
+
+@router.post("/paste-last")
+def paste_last(body: PasteLastBody, request: Request) -> dict[str, Any]:
+    """Insert the most recent dictation into the focused field again.
+
+    The recovery action for a paste that landed nowhere. It reads the local
+    history rather than the clipboard, and that is not an implementation
+    detail: a successful paste deliberately puts the PREVIOUS clipboard
+    content back, so the transcript is off the clipboard within a second. The
+    history is the only durable copy — which is also why this refuses honestly
+    when the history is switched off instead of keeping a hidden copy behind
+    the user's privacy setting.
+
+    Needs no microphone, no speech-to-text and no speech pipeline, so it works
+    on a host where dictation itself cannot run. It goes through the SAME
+    delivery path a fresh dictation uses, so the two can never drift apart.
+
+    Where insertion is impossible — Wayland, a headless host, an elevated
+    window in front, macOS secure input — this is still a 200: the text goes
+    to the clipboard and the answer carries the plain-English sentence
+    explaining what happened, exactly as a normal dictation would. 409 means
+    the history is off, 404 means there is nothing saved to paste.
+
+    Plain ``def`` on purpose: it parses the whole history file and sleeps
+    around the paste chord, which is blocking work FastAPI absorbs in its
+    threadpool but which must never sit on the loop a live voice turn shares.
+    """
+    from jarvis.dictation.insert import insert_last_dictation
+
+    result = insert_last_dictation(
+        entry_id=body.entry_id, settings=_dictation_cfg(request)
+    )
+    if result.reason == "history_disabled":
+        raise HTTPException(status_code=409, detail=result.detail)
+    if result.reason == "not_found":
+        raise HTTPException(status_code=404, detail=result.detail)
+
+    insertion = result.insert
+    return {
+        "ok": result.ok,
+        "entry_id": result.entry_id,
+        # The text travels in the body so a CLI or SSH user still gets their
+        # words on a host where nothing can be typed into anything.
+        "text": result.text,
+        "status": getattr(insertion, "status", "unavailable"),
+        "detail": result.detail,
+        "method": getattr(insertion, "method", ""),
+        "clipboard_holds_text": bool(
+            getattr(insertion, "clipboard_holds_text", False)
+        ),
+        "clipboard_restored": bool(getattr(insertion, "clipboard_restored", False)),
+    }
 
 
 # ----------------------------------------------------------------------
@@ -593,11 +663,23 @@ async def get_settings(request: Request) -> dict[str, Any]:
     ``choices`` is what every dropdown in the UI is built from, and it is
     hand-maintained: a key added to ``DICTATION_SETTING_KEYS`` without an entry
     here renders an empty list the user cannot pick anything out of. The
-    language list is the one exception — it is derived from
-    ``DICTATION_LANGUAGES`` so adding a locale means touching one place.
+    language and paste-chord lists are the exceptions — they are derived from
+    ``DICTATION_LANGUAGES`` and ``PASTE_CHORDS`` so adding one means touching
+    one place.
+
+    ``custom`` describes the keys that also accept a RECORDED value, and it
+    carries the accepted token vocabulary rather than expecting the frontend to
+    keep its own copy — a hand-mirrored key list is the AP-4 drift trap, and
+    the cost of getting it wrong here is a recorder that happily captures a key
+    the actuator cannot send, which then fails silently at paste time.
     """
     from jarvis.core.config import DICTATION_LANGUAGES
     from jarvis.core.config_writer import DICTATION_SETTING_KEYS
+    from jarvis.dictation.insert import (
+        CUSTOM_CHORD_KEYS,
+        CUSTOM_CHORD_MODIFIERS,
+        PASTE_CHORDS,
+    )
 
     dictation = _dictation_cfg(request)
     values = {key: getattr(dictation, key, None) for key in DICTATION_SETTING_KEYS}
@@ -607,8 +689,26 @@ async def get_settings(request: Request) -> dict[str, Any]:
             "mode": ["hold", "toggle"],
             "target": ["auto", "insert", "chat"],
             "insert_method": ["clipboard", "type"],
-            "paste_chord": ["auto", "ctrl_v", "ctrl_shift_v", "shift_insert"],
+            "paste_chord": ["auto", *PASTE_CHORDS],
             "language": list(DICTATION_LANGUAGES),
+        },
+        "custom": {
+            "paste_chord": {
+                "allowed": True,
+                "separator": "+",
+                "modifiers": sorted(set(CUSTOM_CHORD_MODIFIERS.values())),
+                "keys": sorted(set(CUSTOM_CHORD_KEYS.values())),
+                # The honest label for the feature. Jarvis does not paste — it
+                # asks the app in front to paste by sending this combination,
+                # so a combination that app does not bind does nothing, and the
+                # result is reported as "paste_sent", never as "inserted".
+                "detail": (
+                    "The paste shortcut of the app you dictate into. A "
+                    "shortcut that app does not use does nothing, and there is "
+                    "no way to tell from here — so the text is left on your "
+                    "clipboard instead of being cleaned up afterwards."
+                ),
+            }
         },
     }
 
@@ -637,6 +737,19 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
     }
     if not updates:
         raise HTTPException(status_code=400, detail="No settings were provided.")
+
+    if "paste_chord" in updates:
+        # The model validator falls back to "auto" instead of raising, because
+        # a hand-edited config must never fail to load (AP-16). That is the
+        # wrong answer for someone who just recorded a shortcut, though: they
+        # would see the setting silently revert. So the same normalizer runs
+        # here, where its rejection sentence can actually reach the user.
+        from jarvis.dictation.insert import normalize_paste_chord
+
+        canonical, problem = normalize_paste_chord(str(updates["paste_chord"]))
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+        updates["paste_chord"] = canonical
 
     dictation = _dictation_cfg(request)
     current = {

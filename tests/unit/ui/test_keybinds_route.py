@@ -4,6 +4,13 @@ The exact-dict assertions below are a deliberate tripwire, not an oversight: a
 keybind action that reaches ``KEYBIND_ACTIONS`` but not this route is the AP-4
 drift class (the UI renders a row whose value and default are both undefined).
 Extend them when an action is added; never relax them to a subset check.
+
+The route serves the FULL action set on purpose, and must keep doing so even
+though the Settings panel now renders only Call and Hangup. The two surfaces
+show different ROWS; they must not be given different DATA. A Settings panel
+that could not see the dictation combos would lose collision detection against
+them, and the user could bind Call onto a dictation chord with no warning until
+the server rejected the save.
 """
 from __future__ import annotations
 
@@ -42,12 +49,14 @@ def test_get_returns_every_action_plus_defaults() -> None:
         "hangup": "f1+f2",
         "dictate": "ctrl+right_alt+j",
         "dictate_toggle": "ctrl+right_alt+space",
+        "paste_last": "ctrl+alt+v",
     }
     assert body["defaults"] == {
         "call": "f3+f4",
         "hangup": "f1+f2",
         "dictate": "ctrl+right_alt+j",
         "dictate_toggle": "ctrl+right_alt+space",
+        "paste_last": "ctrl+alt+v",
     }
     assert "push_to_talk" not in body
     assert body["restart_required"] is True
@@ -160,6 +169,63 @@ def test_put_rejects_a_dictation_combo_that_collides_with_the_other_one() -> Non
     )
     assert resp.status_code == 400
     assert "dictate_toggle" in resp.json()["detail"]
+
+
+def test_put_paste_last_is_accepted_and_live_applies_under_its_action_name() -> None:
+    """"Insert the last dictation again" is a first-class action, not a rider
+    on the dictation keys: it needs no microphone and no provider, so it stays
+    useful on a host where dictation itself cannot run."""
+    calls: list[dict] = []
+
+    class _FakePipeline:
+        def set_keybinds(self, **kw):  # noqa: ANN003
+            calls.append(kw)
+
+    client = _client()
+    client.app.state.speech_pipeline = _FakePipeline()
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "paste_last", "hotkey": "CTRL+SHIFT+B", "persist": False},
+    )
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["action"] == "paste_last"
+    assert body["hotkey"] == "ctrl+shift+b"
+    assert calls == [{"paste_last": ["ctrl+shift+b"]}]
+
+
+def test_put_paste_last_guards_against_colliding_with_dictation() -> None:
+    """All five ship bound, so every pair has to guard every other pair."""
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "paste_last", "hotkey": "ctrl+right_alt+j", "persist": False},
+    )
+    assert resp.status_code == 400
+    assert "dictate" in resp.json()["detail"]
+
+
+def test_paste_last_can_be_cleared_like_any_other_action() -> None:
+    """Unbound is a valid state: the action is also
+    ``jarvis api dictation paste-last``, which is the Wayland path."""
+    client = _client()
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "paste_last", "hotkey": "", "persist": False},
+    )
+    assert resp.status_code == 200
+    assert client.get("/api/settings/keybinds").json()["keybinds"]["paste_last"] == ""
+
+
+def test_the_route_serves_every_action_even_though_settings_shows_two() -> None:
+    """The Settings panel renders Call + Hangup only; the PAYLOAD stays whole.
+
+    Trimming it there would strip Call/Hangup of collision detection against
+    the dictation combos — the surfaces differ in rows, never in data.
+    """
+    body = _client().get("/api/settings/keybinds").json()
+    for action in ("dictate", "dictate_toggle", "paste_last"):
+        assert action in body["keybinds"], action
+        assert action in body["defaults"], action
 
 
 def test_retired_ptt_hotkey_route_is_not_mounted() -> None:

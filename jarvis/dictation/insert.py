@@ -42,6 +42,11 @@ log = logging.getLogger(__name__)
 #: Paste chords by name. ``auto`` resolves per platform at call time.
 #: Ctrl+V is wrong in many terminals (it is an interrupt or a literal there),
 #: which is why the two alternatives exist as an explicit user choice.
+#:
+#: These four are the CURATED set: every one of them is a chord that means
+#: "paste" somewhere real, so when it is sent and no error comes back, calling
+#: the result ``inserted`` is a claim we are entitled to make. A user-recorded
+#: chord carries no such warrant — see :data:`CUSTOM_CHORD_KEYS` below.
 PASTE_CHORDS: dict[str, list[str]] = {
     "ctrl_v": ["ctrl", "v"],
     "ctrl_shift_v": ["ctrl", "shift", "v"],
@@ -49,7 +54,76 @@ PASTE_CHORDS: dict[str, list[str]] = {
     "cmd_v": ["cmd", "v"],
 }
 
-InsertStatus = Literal["inserted", "clipboard_only", "unavailable"]
+#: Modifier tokens a custom paste chord may use, mapped to their canonical
+#: spelling. ``cmd`` and ``win`` stay apart on purpose: both resolve on both
+#: actuator backends, and folding one into the other would make the UI show a
+#: Mac user "Win" (or a Windows user "Cmd") for the key they actually pressed.
+CUSTOM_CHORD_MODIFIERS: dict[str, str] = {
+    "ctrl": "ctrl",
+    "control": "ctrl",
+    "alt": "alt",
+    "option": "alt",
+    "menu": "alt",
+    "shift": "shift",
+    "win": "win",
+    "windows": "win",
+    "lwin": "win",
+    "cmd": "cmd",
+    "command": "cmd",
+    "meta": "cmd",
+    "super": "cmd",
+}
+
+#: Canonical modifier order, so ``v+shift+ctrl`` and ``ctrl+shift+v`` are the
+#: same stored value rather than two configs that behave identically and look
+#: different in the UI.
+_MODIFIER_ORDER: tuple[str, ...] = ("ctrl", "alt", "shift", "win", "cmd")
+
+#: Non-modifier tokens a custom paste chord may use, mapped to their canonical
+#: spelling. Deliberately the INTERSECTION of what both actuator backends can
+#: send (``jarvis/cu/actuate/windows.py::_VK_TABLE`` and
+#: ``jarvis/cu/actuate/posix.py::_pynput_key_table``): a chord accepted here
+#: cannot be one that works on Windows and raises ``Unknown key`` on Linux —
+#: which would turn every paste on that host into a clipboard fallback. The
+#: numpad / add / subtract / decimal keys exist only in the Windows table, so
+#: they are refused rather than accepted-and-broken.
+CUSTOM_CHORD_KEYS: dict[str, str] = {
+    **{letter: letter for letter in "abcdefghijklmnopqrstuvwxyz"},
+    **{digit: digit for digit in "0123456789"},
+    **{f"f{i}": f"f{i}" for i in range(1, 13)},
+    "esc": "esc",
+    "escape": "esc",
+    "enter": "enter",
+    "return": "enter",
+    "tab": "tab",
+    "space": "space",
+    "spacebar": "space",
+    "backspace": "backspace",
+    "back": "backspace",
+    "delete": "delete",
+    "del": "delete",
+    "insert": "insert",
+    "ins": "insert",
+    "home": "home",
+    "end": "end",
+    "pageup": "pageup",
+    "pgup": "pageup",
+    "pagedown": "pagedown",
+    "pgdn": "pagedown",
+    "left": "left",
+    "up": "up",
+    "right": "right",
+    "down": "down",
+}
+
+#: ``paste_sent`` exists because Jarvis does not paste — it asks the foreground
+#: application to paste by sending a synthetic chord, and an application that
+#: does not bind that chord simply ignores it. There is no error and nothing to
+#: read back (see the module docstring), so for a chord we did not curate the
+#: only true statement is "the keystroke went out; what the app did with it is
+#: unknown". Reporting ``inserted`` there would be the exact lie this module
+#: exists to avoid.
+InsertStatus = Literal["inserted", "paste_sent", "clipboard_only", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,35 +143,124 @@ class InsertResult:
     """What actually happened to the dictated text.
 
     ``clipboard_only`` is a SUCCESS state, not a failure: the text is one
-    Ctrl+V away and the user was told so. Only ``unavailable`` means the text
-    could not even be parked.
+    Ctrl+V away and the user was told so. ``paste_sent`` is the honest middle
+    ground for a user-recorded chord (the keystroke went out, the outcome is
+    unknown, so the transcript is left on the clipboard). Only ``unavailable``
+    means the text could not even be parked.
     """
 
     status: InsertStatus
     detail: str
     #: True when the transcript is sitting on the clipboard right now.
     clipboard_holds_text: bool
-    #: e.g. ``"clipboard+ctrl_v"`` / ``"type"`` / ``""``.
+    #: e.g. ``"clipboard+ctrl_v"`` / ``"clipboard+ctrl+shift+insert"`` /
+    #: ``"type"`` / ``""``.
     method: str = ""
     #: True when the previous clipboard content was put back.
     clipboard_restored: bool = False
 
     @property
     def ok(self) -> bool:
-        """The text reached the user one way or another."""
-        return self.status in ("inserted", "clipboard_only")
+        """The text reached the user one way or another.
+
+        ``paste_sent`` counts: the transcript is deliberately still on the
+        clipboard in that case, so the user has their words either way.
+        """
+        return self.status in ("inserted", "paste_sent", "clipboard_only")
+
+
+def normalize_paste_chord(value: str) -> tuple[str, str]:
+    """``(canonical_value, problem)`` for one configured paste chord.
+
+    ``problem`` is ``""`` when the value was understood, otherwise a
+    user-facing English sentence explaining what is wrong with it. The
+    canonical value is always usable — an unusable input degrades to ``auto``
+    rather than raising, because a hand-edited config must never fail
+    validation (AP-16) and a bad value must never cost someone a dictation.
+
+    Three shapes are accepted:
+
+    * ``auto`` (and empty) — resolved per platform at paste time;
+    * one of the curated :data:`PASTE_CHORDS` names (``ctrl_shift_v``, …);
+    * a recorded combo written with ``+`` (``ctrl+shift+insert``). It is
+      canonicalized — aliases folded, modifiers ordered — and, when it happens
+      to spell out a curated chord, reported under the curated NAME so the two
+      spellings cannot behave differently.
+    """
+    text = str(value or "").strip().lower()
+    if not text or text == "auto":
+        return "auto", ""
+    if text in PASTE_CHORDS:
+        return text, ""
+    if "+" not in text:
+        return "auto", (
+            f"'{value}' is not a paste shortcut. Pick one of the offered "
+            "shortcuts, or record a combination such as Ctrl+Shift+V."
+        )
+
+    modifiers: list[str] = []
+    keys: list[str] = []
+    for raw in text.split("+"):
+        token = raw.strip()
+        if not token:
+            continue
+        if token in CUSTOM_CHORD_MODIFIERS:
+            canonical = CUSTOM_CHORD_MODIFIERS[token]
+            if canonical not in modifiers:
+                modifiers.append(canonical)
+            continue
+        if token in CUSTOM_CHORD_KEYS:
+            canonical = CUSTOM_CHORD_KEYS[token]
+            if canonical not in keys:
+                keys.append(canonical)
+            continue
+        return "auto", (
+            f"'{token}' is not a key this computer can send. Use letters, "
+            "digits, F1–F12, the arrow keys, or Enter / Tab / Space / "
+            "Insert / Delete / Home / End / Page Up / Page Down."
+        )
+
+    if not keys:
+        return "auto", (
+            "A paste shortcut needs a real key, not only Ctrl / Alt / Shift."
+        )
+
+    ordered = [m for m in _MODIFIER_ORDER if m in modifiers] + keys
+    for name, chord in PASTE_CHORDS.items():
+        if chord == ordered:
+            # Recorded by hand but identical to a curated chord: store it under
+            # the curated name so it also gets the curated chord's honesty.
+            return name, ""
+    return "+".join(ordered), ""
+
+
+def paste_chord_is_curated(label: str) -> bool:
+    """Is this the label of a chord we know actually means "paste"?
+
+    The curated names (and ``auto``, which resolves to one of them) are chords
+    that paste in real applications, so a sent-without-error chord may honestly
+    be reported as ``inserted``. A recorded combo carries no such warrant.
+    """
+    return str(label or "").strip().lower() in PASTE_CHORDS
 
 
 def resolve_paste_chord(name: str = "auto") -> tuple[str, list[str]]:
     """``("ctrl_v", ["ctrl", "v"])`` — the chord to send and its label.
 
-    ``auto`` picks Command+V on macOS and Ctrl+V everywhere else. An unknown
-    name falls back to ``auto`` rather than raising: a bad config value must
-    not stop a dictation.
+    ``auto`` picks Command+V on macOS and Ctrl+V everywhere else. A recorded
+    combo (``"ctrl+shift+insert"``) comes back under its own canonical label
+    and its own key list. An unknown name falls back to ``auto`` rather than
+    raising: a bad config value must not stop a dictation.
     """
     key = (name or "auto").strip().lower()
-    if key == "auto" or key not in PASTE_CHORDS:
-        key = "cmd_v" if sys.platform == "darwin" else "ctrl_v"
+    if key not in PASTE_CHORDS:
+        canonical, problem = normalize_paste_chord(key)
+        if problem or canonical == "auto":
+            key = "cmd_v" if sys.platform == "darwin" else "ctrl_v"
+        elif canonical in PASTE_CHORDS:
+            key = canonical
+        else:
+            return canonical, canonical.split("+")
     return key, list(PASTE_CHORDS[key])
 
 
@@ -365,6 +528,25 @@ def insert_text(
         # snatches the text away before the target app has read it.
         time.sleep(delay_after_ms / 1000.0)
 
+    if not paste_chord_is_curated(chord_name):
+        # A recorded chord. It was sent without error, but "sent" is not
+        # "pasted": an application that does not bind this combination simply
+        # ignores it, and there is nothing to read back (module docstring).
+        # So the clipboard is deliberately NOT restored — putting the previous
+        # content back here would delete the one copy the user can still reach
+        # if the chord landed nowhere.
+        return InsertResult(
+            status="paste_sent",
+            detail=(
+                f"The shortcut {chord_name.replace('+', ' + ')} was sent. If "
+                "the app it went to does not paste on that shortcut, nothing "
+                "happened there — the text is still on your clipboard."
+            ),
+            clipboard_holds_text=parked,
+            method=f"clipboard+{chord_name}",
+            clipboard_restored=False,
+        )
+
     restored = _restore(clipboard, previous) if restore_clipboard else False
     return InsertResult(
         status="inserted",
@@ -372,6 +554,122 @@ def insert_text(
         clipboard_holds_text=not restored,
         method=f"clipboard+{chord_name}",
         clipboard_restored=restored,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RepeatResult:
+    """What happened when the last dictation was inserted a second time.
+
+    ``reason`` is the machine-readable half and is ``""`` on success; the REST
+    layer turns it into a status code and the voice layer speaks ``detail``.
+    """
+
+    ok: bool
+    #: ``""`` | ``history_disabled`` | ``not_found`` | ``insert``.
+    reason: str
+    #: English, user-facing sentence. Empty only when nothing needs saying.
+    detail: str
+    #: The history entry that was re-inserted, when there was one.
+    entry_id: str = ""
+    text: str = ""
+    #: The delivery report, when insertion was actually attempted.
+    insert: InsertResult | None = None
+
+
+def insert_last_dictation(
+    *,
+    entry_id: str | None = None,
+    settings: object | None = None,
+) -> RepeatResult:
+    """Insert the most recent dictation into the focused field again. Never raises.
+
+    This exists because a paste can land nowhere and the user only notices a
+    second later, by which time the clipboard is no help: on a successful paste
+    :func:`insert_text` puts the PREVIOUS clipboard content back on purpose, so
+    the transcript is gone from there within a second. The local history is the
+    only durable copy, which is why this reads from it rather than from the
+    clipboard — and why it refuses honestly when the history is switched off
+    instead of quietly keeping a hidden copy behind the user's privacy setting.
+
+    No microphone, no speech-to-text and no speech pipeline are involved: it is
+    a history read plus the SAME delivery path a fresh dictation uses, so a
+    fix to one can never leave the other behind.
+
+    ``settings`` is a ``DictationConfig``-shaped object (the live one from the
+    app config); every value is read with a fallback, so a partial stand-in or
+    ``None`` still works. ``entry_id`` picks one specific entry; the default is
+    the newest one that still has text and has not been discarded.
+    """
+
+    def _get(key: str, fallback: object) -> object:
+        return getattr(settings, key, fallback) if settings is not None else fallback
+
+    def _get_int(key: str, fallback: int) -> int:
+        """A hand-edited config can hold anything; a delay is never worth a crash."""
+        try:
+            return int(_get(key, fallback))  # type: ignore[call-overload]
+        except (TypeError, ValueError):
+            return fallback
+
+    if not bool(_get("history_enabled", True)):
+        return RepeatResult(
+            ok=False,
+            reason="history_disabled",
+            detail=(
+                "The dictation history is switched off, so there is no saved "
+                "text to paste again. Turn the history on in the dictation "
+                "settings if you want this shortcut to work."
+            ),
+        )
+
+    try:
+        from jarvis.dictation.history import DictationHistory
+
+        entries = DictationHistory().list_all(include_discarded=entry_id is not None)
+    except Exception as exc:  # noqa: BLE001 — an unreadable history is "nothing to paste"
+        log.warning("dictation history unreadable for a repeat paste: %s", exc)
+        entries = []
+
+    chosen = None
+    for entry in entries:
+        if entry_id is not None:
+            if entry.id == entry_id:
+                chosen = entry
+                break
+            continue
+        if str(getattr(entry, "text", "") or "").strip():
+            chosen = entry
+            break
+
+    text = str(getattr(chosen, "text", "") or "").strip() if chosen is not None else ""
+    if chosen is None or not text:
+        return RepeatResult(
+            ok=False,
+            reason="not_found",
+            detail=(
+                "There is no saved dictation to paste again."
+                if entry_id is None
+                else "That dictation is not in the history, or it has no text."
+            ),
+            entry_id=str(getattr(chosen, "id", "") or "") if chosen is not None else "",
+        )
+
+    result = insert_text(
+        text,
+        method=str(_get("insert_method", "clipboard")),
+        paste_chord=str(_get("paste_chord", "auto")),
+        delay_ms=_get_int("paste_delay_ms", 120),
+        delay_after_ms=_get_int("paste_delay_after_ms", 120),
+        restore_clipboard=bool(_get("restore_clipboard", True)),
+    )
+    return RepeatResult(
+        ok=result.ok,
+        reason="" if result.ok else "insert",
+        detail=result.detail,
+        entry_id=str(chosen.id),
+        text=text,
+        insert=result,
     )
 
 
@@ -396,13 +694,19 @@ def _restore(clipboard_module: object, previous: str | None) -> bool:
 
 
 __all__ = [
+    "CUSTOM_CHORD_KEYS",
+    "CUSTOM_CHORD_MODIFIERS",
     "PASTE_CHORDS",
     "InsertResult",
     "InsertStatus",
+    "RepeatResult",
     "TargetReport",
     "describe_target",
     "foreground_is_this_app",
+    "insert_last_dictation",
     "insert_text",
+    "normalize_paste_chord",
+    "paste_chord_is_curated",
     "resolve_paste_chord",
     "resolve_target",
 ]

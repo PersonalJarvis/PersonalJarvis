@@ -570,7 +570,7 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle")
+KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle", "paste_last")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
@@ -585,7 +585,147 @@ KEYBIND_TOML_KEY = {
     # separate action rather than a mode flag, so a user can arm a hold key and
     # a toggle key at the same time.
     "dictate_toggle": "hotkey_dictate_toggle",
+    # Insert the most recent dictation again — the recovery key for a paste
+    # that landed nowhere. Needs no microphone and no speech-to-text; it reads
+    # the local history, because a successful paste restores the previous
+    # clipboard content and therefore takes the transcript back off the
+    # clipboard within a second.
+    "paste_last": "hotkey_paste_last",
 }
+
+#: One-time marker under ``[trigger]`` recording that the dictation-shortcut
+#: backfill below has already run on this install. It is deliberately NOT a
+#: user setting; see :func:`migrate_dictation_hotkey_defaults`.
+DICTATION_HOTKEY_MIGRATION_KEY = "dictation_hotkeys_migrated"
+
+#: The keys the backfill may touch, in the order it reports them.
+_DICTATION_HOTKEY_FIELDS = ("hotkey_dictate", "hotkey_dictate_toggle")
+
+
+def _combo_key_set(combo: object) -> set[str]:
+    """Key SET of a combo — the unit the keybind collision rule compares."""
+    return {p.strip() for p in str(combo or "").strip().lower().split("+") if p.strip()}
+
+
+def migrate_dictation_hotkey_defaults(*, path: Path = DEFAULT_CONFIG_FILE) -> bool:
+    """One-time backfill of the dictation shortcuts. Runs exactly once, ever.
+
+    The problem it fixes (BUG-010 config drift). ``hotkey_dictate`` shipped as
+    ``""`` for a while, so every install from that period has ``hotkey_dictate
+    = ""`` written into its ``jarvis.toml``. A persisted empty string beats the
+    code default, so when the default became a real combo those installs kept
+    reading "no key assigned" — while ``hotkey_dictate_toggle``, which was
+    never persisted because it did not exist yet, WAS armed from the new
+    default. Same feature, two different answers, decided by which key happened
+    to be in the file.
+
+    Why ``""`` is not simply treated as "use the default": that would make the
+    Clear button impossible. An unbound shortcut is a state the user is
+    entitled to, and it has to survive restarts. So the two cases are told
+    apart by a MARKER rather than by the value:
+
+    * marker absent  -> this install has never been through the migration, so
+      an empty value is stale rather than chosen: write the current default.
+    * marker present -> every empty value from here on was chosen by the user
+      and is left alone forever.
+
+    The marker is written the first time the migration has a stale value to
+    consider, and never otherwise: this function is reached from
+    ``load_config``, so a config file that has nothing to heal must come back
+    from a load byte-identical. The OTHER writer of the marker is
+    :func:`set_keybind` — an explicit save of a dictation shortcut, empty or
+    not, is proof the user has seen the value and chosen it, so it stamps the
+    marker too. Between them, an install where the keys are simply ABSENT is
+    never rewritten by a boot, and a Clear performed there is still permanent.
+
+    A default is skipped (while the marker is still written) when its key set
+    is a subset or superset of another shortcut already in the file: the
+    polling hotkey backend fires on subsets, so backfilling there would hand
+    the user two shortcuts that trigger each other. Better an unbound row the
+    user can fill in than a config the keybind route itself would refuse to
+    save.
+
+    Returns True when the file was rewritten. Best-effort by design: a missing
+    file, unparsable TOML or a failed write degrades to a logged no-op — a boot
+    heal must never break a boot.
+    """
+    try:
+        if path == DEFAULT_CONFIG_FILE:
+            from jarvis.core.config import resolve_config_path  # noqa: PLC0415
+
+            path = resolve_config_path()
+        if not path.exists():
+            # Nothing persisted yet, so nothing can be stale: a fresh install
+            # gets the code defaults, and the marker is written the first time
+            # anything else touches the file.
+            return False
+        with _WRITE_LOCK:
+            raw = path.read_text(encoding="utf-8")
+            had_bom = raw.startswith(_BOM)
+            if had_bom:
+                raw = raw[len(_BOM) :]
+            # Fast path: healed installs pay one file read, never a TOML parse.
+            if DICTATION_HOTKEY_MIGRATION_KEY in raw:
+                return False
+
+            from jarvis.core.config import TriggerConfig  # noqa: PLC0415
+
+            shipped = TriggerConfig()
+            doc: TOMLDocument = tomlkit.parse(raw)
+            trigger = doc.get("trigger")
+            if trigger is None:
+                # Nothing under [trigger] is persisted, so nothing can be
+                # stale: the code defaults already apply and there is nothing
+                # to heal. Returning without a write is what keeps a plain
+                # ``load_config`` from mutating a file it only had to read.
+                return False
+
+            backfilled: list[str] = []
+            considered = False
+            for field in _DICTATION_HOTKEY_FIELDS:
+                default = str(getattr(shipped, field, "") or "")
+                if not default:
+                    continue
+                current = trigger.get(field)
+                if current is None or str(current).strip():
+                    # Absent (the code default already applies) or already set
+                    # by the user — either way, not this migration's business.
+                    continue
+                considered = True
+                keys = _combo_key_set(default)
+                taken = [
+                    _combo_key_set(trigger.get(other))
+                    for other in KEYBIND_TOML_KEY.values()
+                    if other != field and trigger.get(other) is not None
+                ]
+                if any(other and (keys <= other or other <= keys) for other in taken):
+                    log.info(
+                        "Dictation shortcut %s left unbound: the shipped default "
+                        "%r overlaps a shortcut this install already uses.",
+                        field,
+                        default,
+                    )
+                    continue
+                trigger[field] = default
+                backfilled.append(field)
+
+            if not considered:
+                return False
+
+            trigger[DICTATION_HOTKEY_MIGRATION_KEY] = True
+            out = tomlkit.dumps(doc)
+            if had_bom:
+                out = _BOM + out
+            _atomic_write(path, out)
+        log.info(
+            "Dictation shortcut migration applied to %s (backfilled: %s).",
+            path,
+            ", ".join(backfilled) or "nothing",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — a boot heal must never raise
+        log.warning("Dictation shortcut migration skipped: %s", exc)
+        return False
 
 
 def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -597,11 +737,26 @@ def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -
     apply). Takes effect on the next SpeechPipeline bootstrap (a Jarvis restart):
     bindings are armed once at pipeline start via ``TriggerConfig.resolve_hotkeys``
     plus the ``hotkey_hangup`` read at the call sites.
+
+    Saving a DICTATION shortcut also stamps the one-time migration marker (see
+    :func:`migrate_dictation_hotkey_defaults`). An explicit save — including
+    clearing the row — is proof the user has seen this shortcut and chosen its
+    value, so the backfill must never reach it afterwards. Without the stamp,
+    Clear would work until the next restart and then quietly undo itself.
     """
     try:
         key = KEYBIND_TOML_KEY[action]
     except KeyError:
         raise ValueError(f"unknown keybind action: {action!r}") from None
+    if key in _DICTATION_HOTKEY_FIELDS:
+        _patch_table(
+            path,
+            "trigger",
+            key,
+            hotkey,
+            extra={DICTATION_HOTKEY_MIGRATION_KEY: True},
+        )
+        return
     _patch_table(path, "trigger", key, hotkey)
 
 
@@ -1679,7 +1834,12 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
 
 
 def _patch_table(
-    path: Path, table: str, key: str, value: str | bool | int | float | list[str]
+    path: Path,
+    table: str,
+    key: str,
+    value: str | bool | int | float | list[str],
+    *,
+    extra: dict[str, str | bool | int | float | list[str]] | None = None,
 ) -> None:
     """Set ``[table] key = value`` in the TOML file.
 
@@ -1689,6 +1849,12 @@ def _patch_table(
     autostart toggle), an ``int``/``float`` (the dictation delays and caps), or
     a ``list[str]`` (serialised as a TOML array — used by ``[team_proxy]
     local_providers``).
+
+    ``extra`` writes further keys into the SAME table in the SAME atomic write.
+    It exists for values that must land together or not at all — the dictation
+    migration marker beside the shortcut it vouches for; two separate writes
+    could be interrupted between them and leave a shortcut the backfill would
+    then overwrite again.
     """
     path = _ensure_writable_config_path(path)
 
@@ -1703,6 +1869,8 @@ def _patch_table(
             section = tomlkit.table()
             doc[table] = section
         section[key] = value
+        for extra_key, extra_value in (extra or {}).items():
+            section[extra_key] = extra_value
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out

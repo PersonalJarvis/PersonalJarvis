@@ -16,6 +16,14 @@ What each value means
 ---------------------
 ``inserted``
     The text was typed or pasted into the focused window. The happy path.
+``paste_sent``
+    A user-recorded paste shortcut was sent to the focused window and no error
+    came back — but Jarvis does not paste, it asks the application in front to
+    paste, and an application that does not bind that shortcut simply ignores
+    it. There is nothing to read back, so this is as far as honesty reaches:
+    the keystroke went out, the result is unknown, and the text is left on the
+    clipboard instead of being restored away. Only ever produced for a custom
+    chord; the curated ones report ``inserted``.
 ``clipboard_only``
     Insertion was not possible, so the text was left on the clipboard. The
     user still has their words; they just have to paste them.
@@ -48,6 +56,7 @@ from typing import Final
 #: Mirrored in TypeScript as ``DICTATION_OUTCOMES`` and pinned by a parity test.
 DICTATION_OUTCOMES: Final[tuple[str, ...]] = (
     "inserted",
+    "paste_sent",
     "clipboard_only",
     "unavailable",
     "chat",

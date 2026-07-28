@@ -355,6 +355,23 @@ class TriggerConfig(BaseModel):
     # stays honoured for installs that configured it, and only changes how
     # ``hotkey_dictate`` behaves.
     hotkey_dictate_toggle: str = "ctrl+right_alt+space"
+    # Insert the most recent dictation into the focused field AGAIN — the
+    # recovery key for a paste that landed nowhere. It exists because the
+    # clipboard is not a fallback here: a successful paste deliberately puts
+    # the previous clipboard content back, so the transcript is gone from the
+    # clipboard a second later and the local history is the only durable copy.
+    #
+    # Ships bound for the same reason the two dictation keys do (a recovery
+    # action nobody can find is not a recovery action). Ctrl+Alt+V is the
+    # documented suggestion; it does overlap with "Paste Special" in some
+    # office suites, and because the hotkey backend POLLS key state rather than
+    # registering with the OS, the key is not swallowed — both would fire.
+    # Clearing the row is one click, and an empty value stays fully valid: the
+    # action is also `jarvis api dictation paste-last`, which is the documented
+    # Wayland path (there the compositor, not the app, owns global shortcuts).
+    # A macOS user can record a Command-based combination instead; the
+    # validator accepts `cmd+...` on darwin.
+    hotkey_paste_last: str = "ctrl+alt+v"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -2514,9 +2531,19 @@ class DictationConfig(BaseModel):
     insert_method: Literal["clipboard", "type"] = "clipboard"
 
     #: Which paste chord to send. ``auto`` = Cmd+V on macOS, Ctrl+V elsewhere.
-    #: Many terminals do not paste on Ctrl+V, which is why the two explicit
-    #: alternatives exist.
-    paste_chord: Literal["auto", "ctrl_v", "ctrl_shift_v", "shift_insert"] = "auto"
+    #: Many terminals do not paste on Ctrl+V, which is why the curated
+    #: alternatives exist (``ctrl_v`` | ``ctrl_shift_v`` | ``shift_insert`` |
+    #: ``cmd_v``, all in ``jarvis.dictation.insert.PASTE_CHORDS``).
+    #:
+    #: A recorded combination is also accepted, written with ``+``
+    #: (``"ctrl+shift+insert"``) — the paste shortcut of whatever application
+    #: you dictate into. It is a plain ``str`` rather than a ``Literal`` for
+    #: exactly that reason; the validator below normalizes it and falls back to
+    #: ``auto`` on anything it cannot send, because a hand-edited config must
+    #: never fail validation (AP-16). A custom chord is reported honestly at
+    #: delivery time: Jarvis cannot know whether the target app pasted, so the
+    #: outcome is ``paste_sent``, not ``inserted``.
+    paste_chord: str = "auto"
 
     #: Pause after writing the clipboard, before sending the chord. Too short
     #: and the target app pastes the PREVIOUS clipboard content.
@@ -2587,6 +2614,21 @@ class DictationConfig(BaseModel):
     #: Keep at most this many audio files. ``0`` disables the count cap (the
     #: age cap still applies); it does not mean "delete everything".
     audio_max_files: int = Field(default=20, ge=0, le=1000)
+
+    @field_validator("paste_chord", mode="before")
+    @classmethod
+    def _coerce_paste_chord(cls, value: object) -> str:
+        """Normalize only — an unusable value falls back to ``auto``.
+
+        The rejection message is thrown away here on purpose: this validator
+        runs on every config load, including one triggered by the self-mod
+        pipeline, and an exception there costs a boot (AP-16). The REST layer
+        calls ``normalize_paste_chord`` directly so a user who types a bad
+        chord gets the sentence instead of a silent fallback.
+        """
+        from jarvis.dictation.insert import normalize_paste_chord
+
+        return normalize_paste_chord(str(value or ""))[0]
 
     @field_validator("language", mode="before")
     @classmethod
@@ -3198,6 +3240,30 @@ def _migrate_worker_env_vars() -> None:
             os.environ[new_name] = old_val  # process-local only, no setx
 
 
+#: Paths whose dictation-shortcut backfill has already been attempted in THIS
+#: process. The on-disk marker is the durable guard; this only keeps a hot
+#: ``load_config`` loop from re-reading the file for a migration that is done.
+_DICTATION_HOTKEY_HEALED: set[Path] = set()
+
+
+def _heal_dictation_hotkeys_once(path: Path) -> None:
+    """Run the one-time dictation-shortcut backfill. Never raises, never blocks.
+
+    Kept to one cheap file read per process: the writer itself short-circuits
+    on a string probe once the marker is in the file, and this set stops even
+    that read from repeating.
+    """
+    if path in _DICTATION_HOTKEY_HEALED:
+        return
+    _DICTATION_HOTKEY_HEALED.add(path)
+    try:
+        from jarvis.core.config_writer import migrate_dictation_hotkey_defaults
+
+        migrate_dictation_hotkey_defaults(path=path)
+    except Exception:  # noqa: BLE001, S110 — a boot heal must never block a load
+        pass
+
+
 def load_config(
     config_file: Path | None = None,
     profile: str | None = None,
@@ -3215,6 +3281,13 @@ def load_config(
     """
     if config_file is None:
         config_file = resolve_config_path()
+        # One-time dictation-shortcut backfill BEFORE the file is read, so the
+        # very first boot after the update already sees the healed values
+        # (BUG-010 config drift; see config_writer for why a marker and not an
+        # empty-means-default rule). Only for the RESOLVED path: a caller that
+        # names a file explicitly — a test, a doctor script — gets it read, not
+        # rewritten. Process-local guard so repeated loads cost nothing.
+        _heal_dictation_hotkeys_once(config_file)
     if not config_file.exists():
         # No config file → pure defaults (useful for tests)
         data: dict[str, Any] = {}

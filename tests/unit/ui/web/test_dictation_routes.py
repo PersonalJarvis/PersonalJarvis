@@ -227,6 +227,50 @@ def test_put_settings_rejects_an_unknown_language(client: TestClient) -> None:
     assert body["settings"]["language"] == "auto"
 
 
+def test_settings_offer_the_curated_paste_chords_plus_a_custom_option(
+    client: TestClient,
+) -> None:
+    """The dropdown keeps its known-good chords; the recorder is the extra."""
+    from jarvis.dictation.insert import PASTE_CHORDS
+
+    body = client.get("/api/dictation/settings").json()
+
+    assert body["choices"]["paste_chord"] == ["auto", *PASTE_CHORDS]
+    custom = body["custom"]["paste_chord"]
+    assert custom["allowed"] is True
+    assert custom["separator"] == "+"
+    # The accepted vocabulary is SERVED, not mirrored by hand in the frontend:
+    # a recorder that captures a key the actuator cannot send fails silently at
+    # paste time, which is the exact AP-4 trap a hand-copied list sets.
+    assert "ctrl" in custom["modifiers"]
+    assert "insert" in custom["keys"]
+    assert custom["detail"]
+
+
+def test_put_settings_accepts_a_recorded_paste_chord(client: TestClient) -> None:
+    body = client.put(
+        "/api/dictation/settings",
+        json={"paste_chord": "Shift + Ctrl + Insert", "persist": False},
+    ).json()
+
+    assert body["settings"]["paste_chord"] == "ctrl+shift+insert"
+
+
+def test_put_settings_400s_on_a_paste_chord_it_cannot_send(
+    client: TestClient,
+) -> None:
+    """The model falls back to ``auto`` so a hand-edited file still loads
+    (AP-16) — but someone who just recorded a shortcut has to be TOLD, or the
+    setting appears to revert on its own."""
+    resp = client.put(
+        "/api/dictation/settings",
+        json={"paste_chord": "ctrl+dragon", "persist": False},
+    )
+
+    assert resp.status_code == 400
+    assert "dragon" in resp.json()["detail"]
+
+
 # ----------------------------------------------------------------------
 # Status
 # ----------------------------------------------------------------------
@@ -247,6 +291,151 @@ def test_status_reports_an_unbound_hands_free_key_as_empty(client: TestClient) -
 
     assert "hotkey_toggle" in body
     assert isinstance(body["hotkey_toggle"], str)
+
+
+def test_status_reports_the_paste_last_shortcut(app: FastAPI) -> None:
+    """Its own row: it needs no microphone, so it stays useful where dictation
+    itself cannot run."""
+    app.state.config.trigger.hotkey_paste_last = "ctrl+shift+b"
+
+    body = TestClient(app).get("/api/dictation/status").json()
+
+    assert body["hotkey_paste_last"] == "ctrl+shift+b"
+
+
+# ----------------------------------------------------------------------
+# Paste the last dictation again
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def _delivers(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make ``insert_text`` succeed and record what it was handed."""
+    from jarvis.dictation import insert as insert_mod
+
+    delivered: list[str] = []
+
+    def _fake_insert(text: str, **kwargs: Any) -> Any:
+        delivered.append(text)
+        return insert_mod.InsertResult(
+            status="inserted",
+            detail="",
+            clipboard_holds_text=False,
+            method="clipboard+ctrl_v",
+            clipboard_restored=True,
+        )
+
+    monkeypatch.setattr(insert_mod, "insert_text", _fake_insert)
+    return delivered
+
+
+def test_paste_last_inserts_the_newest_dictation(
+    client: TestClient, _delivers: list[str]
+) -> None:
+    _add(text="the first one")
+    _add(text="the most recent one")
+
+    body = client.post("/api/dictation/paste-last", json={}).json()
+
+    assert body["ok"] is True
+    assert body["text"] == "the most recent one"
+    assert body["status"] == "inserted"
+    assert _delivers == ["the most recent one"]
+
+
+def test_paste_last_can_target_one_entry_by_id(
+    client: TestClient, _delivers: list[str]
+) -> None:
+    wanted = _add(text="the one I meant")
+    _add(text="a newer one")
+
+    body = client.post(
+        "/api/dictation/paste-last", json={"entry_id": wanted.id}
+    ).json()
+
+    assert body["entry_id"] == wanted.id
+    assert _delivers == ["the one I meant"]
+
+
+def test_paste_last_skips_discarded_entries(
+    client: TestClient, _delivers: list[str]
+) -> None:
+    """An entry the user hid is not the one they mean by "that again"."""
+    keep = _add(text="keep me")
+    hidden = _add(text="hidden")
+    _history().set_discarded(hidden.id, True)
+
+    body = client.post("/api/dictation/paste-last", json={}).json()
+
+    assert body["entry_id"] == keep.id
+
+
+def test_paste_last_409s_when_the_history_is_switched_off(app: FastAPI) -> None:
+    """Never keep a hidden copy to work around the user's privacy setting."""
+    app.state.config.dictation.history_enabled = False
+
+    resp = TestClient(app).post("/api/dictation/paste-last", json={})
+
+    assert resp.status_code == 409
+    assert "history" in resp.json()["detail"].lower()
+
+
+def test_paste_last_404s_when_there_is_nothing_saved(client: TestClient) -> None:
+    resp = client.post("/api/dictation/paste-last", json={})
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]
+
+
+def test_paste_last_404s_on_an_unknown_id(client: TestClient) -> None:
+    _add(text="something")
+
+    resp = client.post("/api/dictation/paste-last", json={"entry_id": "nope"})
+
+    assert resp.status_code == 404
+
+
+def test_paste_last_says_why_when_insertion_is_impossible(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wayland / headless / an elevated window in front: a 200 with the
+    sentence, never a silent no-op and never a 500. The clipboard is not a
+    fallback here — a normal paste restores the previous content — so the text
+    also travels in the body for a CLI or SSH user."""
+    from jarvis.dictation import insert as insert_mod
+
+    _add(text="my words")
+    monkeypatch.setattr(
+        insert_mod,
+        "describe_target",
+        lambda: insert_mod.TargetReport(
+            can_insert=False,
+            reason="wayland",
+            detail="Wayland blocks one program from typing into another.",
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.clipboard.write_text", lambda text: True, raising=False
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.clipboard.read_text", lambda: "", raising=False
+    )
+
+    body = client.post("/api/dictation/paste-last", json={}).json()
+
+    assert body["status"] == "clipboard_only"
+    assert "Wayland" in body["detail"]
+    assert body["text"] == "my words"
+
+
+def test_paste_last_needs_no_speech_pipeline(
+    client: TestClient, _delivers: list[str]
+) -> None:
+    """No microphone, no provider, no pipeline — it is a history read plus the
+    same delivery path a fresh dictation uses."""
+    _add(text="still works")
+
+    assert client.post("/api/dictation/paste-last", json={}).json()["ok"] is True
 
 
 # ----------------------------------------------------------------------
