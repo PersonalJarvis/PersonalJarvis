@@ -1,1 +1,0 @@
-import{f as r}from"./index-DQHu9wli.js";function t(e){return e==="de"?"de-DE":e==="es"?"es-ES":"en-US"}function o(){return t(r())}function f(e,n){return e.toLocaleString(n)}function i(e){return e<=0?"0ms":e>=1e3?`${(e/1e3).toFixed(1)}s`:`${Math.round(e)}ms`}export{i as a,f,t as l,o as u};
