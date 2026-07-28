@@ -7492,10 +7492,11 @@ Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 
 ## BUG-109: every dictation app, text expander, and auto-type tool goes dead inside the Jarvis window — the desktop app was running elevated (HIGH, FIXED 2026-07-25)
 
-**Symptom (desktop field report).** Dictation software — Wispr Flow in the
-report, but the class is open: Windows Voice Access, superwhisper, Talon,
-text expanders, clipboard managers, password-manager auto-type — works
-everywhere on the machine except inside the Personal Jarvis desktop window.
+**Symptom (desktop field report).** Dictation software — one commercial
+dictation app in the report, but the class is open: the OS's own accessibility
+voice control, other voice-typing tools, text expanders, clipboard managers,
+password-manager auto-type — works everywhere on the machine except inside the
+Personal Jarvis desktop window.
 The user speaks, the dictation app records and reports success, and no text
 ever appears in the Jarvis chat box. Nothing logs an error on either side, so
 from the outside it reads as "Jarvis breaks my dictation app".

@@ -8,7 +8,7 @@ import { useInputIsolation } from "@/hooks/useInputIsolation";
 /**
  * App-wide alert: outside input software cannot type into this window.
  *
- * Dictation apps (Wispr Flow, Voice Access, superwhisper, Talon, …), text
+ * Dictation and voice-typing apps, OS accessibility voice control, text
  * expanders, clipboard managers, and password-manager auto-type all inject
  * synthetic keystrokes into the focused window. Windows blocks that for any
  * window owned by a higher-integrity process, so while the app runs elevated

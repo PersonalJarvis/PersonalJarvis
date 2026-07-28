@@ -21,7 +21,8 @@
  * insert text the same way: put it on the clipboard and send Ctrl+V. Their own
  * logs then report success — they sent the keystroke, and nobody tells them it
  * was swallowed — so the failure surfaces only as "my dictation does nothing
- * in that window" (confirmed against Wispr Flow's insertion log, 2026-07-26).
+ * in that window" (confirmed 2026-07-26 against the insertion log of a
+ * commercial dictation app, which recorded the paste as delivered).
  *
  * ## How it is fixed, and why not more simply
  *
@@ -144,9 +145,9 @@ export function installPasteBridge(
     disarm();
     const mine = generation;
     // Read the clipboard NOW rather than when the timer fires, and that timing
-    // is load-bearing. Dictation tools (Wispr Flow and every tool shaped like
-    // it) insert text by putting it on the clipboard, sending Ctrl+V, and then
-    // putting the user's PREVIOUS clipboard back. Asking for the clipboard
+    // is load-bearing. Dictation and voice-typing tools insert text by putting
+    // it on the clipboard, sending Ctrl+V, and then putting the user's PREVIOUS
+    // clipboard back — measured 2026-07-26. Asking for the clipboard
     // after the wait can land on the far side of that restore and paste the
     // wrong text — intermittently, which is the worst way for it to be wrong.
     // The wait below is only there to give the browser its chance; it waits on

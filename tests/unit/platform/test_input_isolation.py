@@ -2,10 +2,10 @@
 
 The failure this pins down (live forensic 2026-07-25): the desktop app was
 running elevated, so Windows UIPI silently discarded every synthetic keystroke
-and automation query coming from ordinary user software. Dictation apps (Wispr
-Flow and friends), text expanders, and password-manager auto-type all went dead
-INSIDE the Jarvis window while working everywhere else — with no error anywhere,
-because Windows does not report a UIPI drop to the sender.
+and automation query coming from ordinary user software. Dictation and
+voice-typing apps, text expanders, and password-manager auto-type all went dead
+INSIDE the desktop window while working everywhere else — with no error
+anywhere, because Windows does not report a UIPI drop to the sender.
 
 These tests never read the host's real privilege state: they inject it, so the
 same assertions hold on a maintainer's elevated Windows box, a CI container, and

@@ -1,10 +1,10 @@
 """Can ordinary user software still type into our window?
 
-Dictation apps (Wispr Flow, Windows Voice Access, superwhisper, Talon, ...),
-text expanders, clipboard managers, and password-manager auto-type all work the
-same way: they synthesize keystrokes or a clipboard paste into whichever window
-currently has focus, and they locate the target field through the OS accessibility
-tree. Both of those are privilege-gated.
+Dictation and voice-typing apps, OS accessibility voice control, text expanders,
+clipboard managers, and password-manager auto-type all work the same way: they
+synthesize keystrokes or a clipboard paste into whichever window currently has
+focus, and they locate the target field through the OS accessibility tree. Both
+of those are privilege-gated.
 
 **Windows UIPI (User Interface Privilege Isolation).** A process may not send
 synthetic input to — nor read the automation tree of — a window owned by a
