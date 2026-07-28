@@ -490,3 +490,79 @@ async def test_a_distillation_payload_lands_as_an_absolute_dated_row(store):
     assert stored["occurred_at"] == "2026-03-13T19:30:00Z"
     assert stored["recorded_at"] == RECORDED_ISO
     assert stored["time_anchor"] == "relative"
+
+
+async def test_a_low_confidence_event_links_but_never_invents_a_person(store):
+    """The People view is a curated surface. An uncertain derivation may
+    enrich what the user already has; it must not add rows to it."""
+    known = await store.resolve_identity(name="Marlow Vance")
+    item_id = await add_item(store)
+    await store.replace_events(
+        item_id,
+        [
+            DerivedEvent(
+                kind=EventKind.OTHER,
+                title="Something happened",
+                summary="",
+                time=EventTime.build(
+                    datetime(2026, 3, 13, tzinfo=UTC),
+                    TimePrecision.DAY,
+                    TimeAnchor.ABSOLUTE,
+                    recorded_at=RECORDED,
+                ),
+                participants=("Marlow Vance", "Somebody Unknown"),
+                place="Nowhere Town",
+                confidence=0.35,
+            )
+        ],
+    )
+    stored = (await store.list_events())[0]
+    by_name = {p["display_name"]: p["entity_id"] for p in stored["participants"]}
+    assert by_name["Marlow Vance"] == known.entity_id  # linked to the known one
+    assert by_name["Somebody Unknown"] is None  # spelling kept, no new row
+    assert stored["place"] == "Nowhere Town"
+    assert stored["place_entity_id"] is None
+    assert [p["display_name"] for p in await store.list_people(kind=None, limit=50)] == [
+        "Marlow Vance"
+    ]
+
+
+async def test_a_confident_event_still_creates_the_people_it_names(store):
+    item_id = await add_item(store)
+    await store.replace_events(item_id, [event(participants=("Nadia Brix",))])
+    stored = (await store.list_events())[0]
+    assert stored["participants"][0]["entity_id"] is not None
+    assert "Nadia Brix" in {
+        person["display_name"]
+        for person in await store.list_people(kind=None, limit=50)
+    }
+
+
+async def test_the_event_leg_reports_both_clocks(store):
+    """``timestamp_utc`` is what the hit is about; ``recorded_utc`` is how old
+    the record is. Ranking may only ever decay by the second one."""
+    item_id = await add_item(store, timestamp_utc="2026-03-14T08:00:00Z")
+    await store.replace_events(item_id, [event()])
+    hits = await store.search_events("Marlow", k=5)
+    assert hits[0].timestamp_utc == "2026-03-13T19:30:00Z"
+    assert hits[0].recorded_utc == "2026-03-14T08:00:00Z"
+
+
+async def test_the_backfill_reader_walks_distilled_items_once(store):
+    """The lane that gives an ALREADY distilled corpus its events without a
+    single model call — it reads the distillation that is already stored."""
+    from jarvis.ultrawiki.types import DocType
+
+    first = await add_item(store, "chat-a")
+    second = await add_item(store, "chat-b")
+    await add_item(store, "chat-c")  # no distillation at all
+    await store.add_document(
+        first, DocType.SUMMARY, "text", distill_json='{"summary": "on 2026-02-02"}'
+    )
+    await store.add_document(second, DocType.SUMMARY, "text", distill_json='{"a": 1}')
+
+    rows = await store.items_with_distillation(limit=50)
+    assert [row["id"] for row in rows] == [first, second]
+    assert rows[0]["distill_json"] == '{"summary": "on 2026-02-02"}'
+    assert rows[0]["timestamp_utc"] == RECORDED_ISO
+    assert await store.items_with_distillation(after_id=second, limit=50) == []

@@ -21,7 +21,9 @@ The contract this module keeps:
 - **Participants link through the identity layer, never around it.** Names are
   resolved with :meth:`IdentityMixin.resolve_identity`, which merges only on
   deterministic evidence and otherwise proposes; an unresolvable participant
-  keeps its spelling and stays searchable rather than being dropped.
+  keeps its spelling and stays searchable rather than being dropped. Linking
+  is cheap and always allowed; CREATING a person is gated on the event's own
+  confidence, because a new entity outlives the guess that produced it.
 - **The keyword card is stored, not recomputed.** ``search_text`` lives on the
   row, so both dialects index the identical text and a search cannot depend
   on which engine answered.
@@ -129,9 +131,12 @@ class EventMixin:
         store against itself.
 
         ``create_entities=False`` links participants and places only to
-        entities that already exist — the conservative mode for low-confidence
-        derivations, where creating a row per mentioned name would flood the
-        People view with noise.
+        entities that already exist — a hard "read-only identity" switch for
+        callers that must not touch the People view at all. Leaving it on does
+        NOT mean every name becomes a person: an event below
+        :data:`~jarvis.ultrawiki.events.ENTITY_CREATE_CONFIDENCE` links but
+        never creates, so a low-confidence derivation cannot flood the People
+        view with whatever it happened to name.
         """
         item_id = int(item_id)
         resolved = await self._ev_resolve_names(events, create_entities=create_entities)
@@ -162,32 +167,47 @@ class EventMixin:
         to ``None`` and is stored by its spelling — an honest "I know the name,
         not who it is" beats guessing, and guessing is the wrong-merge failure
         the whole identity layer exists to prevent.
+
+        Creating an entity is gated TWICE, because it is the only irreversible
+        half of this: the caller has to allow it at all, and the name has to
+        appear in at least one event confident enough to be worth a row
+        (:data:`~jarvis.ultrawiki.events.ENTITY_CREATE_CONFIDENCE`). Below
+        that the name still LINKS to whoever the user already curated and is
+        otherwise stored as plain text — searchable, and nobody new in the
+        People view.
         """
+        from jarvis.ultrawiki.events import (  # noqa: PLC0415 — lazy (AP-26)
+            ENTITY_CREATE_CONFIDENCE,
+        )
         from jarvis.ultrawiki.identity import EntityKind  # noqa: PLC0415 — lazy (AP-26)
 
-        wanted: list[tuple[str, str]] = []
-        seen: set[tuple[str, str]] = set()
+        wanted: list[tuple[str, Any]] = []
+        best: dict[tuple[str, str], float] = {}
         for event in events:
+            confidence = float(event.confidence)
             for name in event.participants:
-                key = ("person", name.casefold())
-                if key not in seen:
-                    seen.add(key)
+                slot = ("person", name.casefold())
+                if slot not in best:
                     wanted.append((name, EntityKind.PERSON))
+                best[slot] = max(best.get(slot, 0.0), confidence)
             if event.place:
-                key = ("place", event.place.casefold())
-                if key not in seen:
-                    seen.add(key)
+                slot = ("place", event.place.casefold())
+                if slot not in best:
                     wanted.append((event.place, EntityKind.PLACE))
+                best[slot] = max(best.get(slot, 0.0), confidence)
 
         out: dict[tuple[str, str], int | None] = {}
         for name, kind in wanted:
             slot = ("person" if kind is EntityKind.PERSON else "place", name.casefold())
+            may_create = create_entities and (
+                best.get(slot, 0.0) >= ENTITY_CREATE_CONFIDENCE
+            )
             try:
                 resolution = await self.resolve_identity(  # type: ignore[attr-defined]
                     name=name,
                     kind=kind,
                     source_ref="uw_events",
-                    create=create_entities,
+                    create=may_create,
                 )
             except Exception:  # noqa: BLE001 — a refused link never fails an event
                 log.debug("event identity resolution failed for %r", name, exc_info=True)
@@ -446,7 +466,9 @@ class EventMixin:
         as one more ranked list (design doc 01, principle 5: no single scorer
         is trusted). ``timestamp_utc`` carries the event's OWN ``occurred_at``
         rather than the evidence item's — the date the user asked about is the
-        date the answer should be ordered and decayed by.
+        date the answer should be SHOWN with — while ``recorded_utc`` keeps
+        the item's own stamp, so ranking can still tell an old note from a
+        fresh note about an old day.
         """
         if not query or not query.strip():
             return []
@@ -458,7 +480,7 @@ class EventMixin:
                 "SELECT e.id AS event_id, e.item_id, e.kind, e.title,"
                 " e.summary, e.occurred_at, e.occurred_end, e.occurred_precision,"
                 " e.place_raw, e.search_text,"
-                " i.source_id, i.permalink, i.areas_json,"
+                " i.source_id, i.permalink, i.areas_json, i.timestamp_utc,"
                 " ts_rank(e.search_tsv, websearch_to_tsquery('simple', ?)) AS raw_score"
                 " FROM uw_events e JOIN uw_items i ON i.id = e.item_id"
                 " WHERE e.search_tsv @@ websearch_to_tsquery('simple', ?)"
@@ -473,7 +495,7 @@ class EventMixin:
                 "SELECT e.id AS event_id, e.item_id, e.kind, e.title,"
                 " e.summary, e.occurred_at, e.occurred_end, e.occurred_precision,"
                 " e.place_raw, e.search_text,"
-                " i.source_id, i.permalink, i.areas_json,"
+                " i.source_id, i.permalink, i.areas_json, i.timestamp_utc,"
                 " bm25(uw_event_fts, 0.0, 3.0, 1.0) AS raw_score"
                 " FROM uw_event_fts JOIN uw_events e ON e.id = uw_event_fts.event_id"
                 " JOIN uw_items i ON i.id = e.item_id"
@@ -524,7 +546,51 @@ class EventMixin:
             timestamp_utc=str(data.get("occurred_at") or ""),
             score=round(score, 4),
             matched_by=("event",),
+            recorded_utc=str(data.get("timestamp_utc") or ""),
         )
+
+    # -- backfill over an ALREADY distilled corpus ---------------------------
+
+    async def items_with_distillation(
+        self, *, after_id: int = 0, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Distilled items whose stored distillation can yield events, by id.
+
+        The reader behind the backfill lane. An install that distilled its
+        corpus before the event tables existed never passes through the
+        distillation stage again — that stage claims items that are NOT yet
+        distilled — so without this its events would only ever appear for
+        content imported afterwards.
+
+        Nothing here costs a model call: the distillation JSON is already on
+        the row, and ``events.derive_events`` is pure arithmetic over it. The
+        cursor is the caller's (``after_id``), so the pass is resumable and
+        each item is visited once.
+        """
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        rows = await self._ev_rows(
+            conn,
+            "SELECT i.id AS id, i.title AS title, i.timestamp_utc AS timestamp_utc,"
+            " d.distill_json AS distill_json"
+            " FROM uw_items i JOIN uw_documents d ON d.item_id = i.id"
+            " WHERE i.id > ? AND i.deleted_at IS NULL AND d.doc_type = 'summary'"
+            "   AND d.distill_json IS NOT NULL AND d.distill_json != ''"
+            " ORDER BY i.id, d.id DESC LIMIT ?",
+            (int(after_id), max(1, int(limit))),
+        )
+        out: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            data = dict(row)
+            item_id = _as_int(data.get("id"))
+            if item_id is None or item_id in out:
+                continue  # one item can hold several summary documents
+            out[item_id] = {
+                "id": item_id,
+                "title": str(data.get("title") or ""),
+                "timestamp_utc": str(data.get("timestamp_utc") or ""),
+                "distill_json": str(data.get("distill_json") or ""),
+            }
+        return [out[key] for key in sorted(out)]
 
     async def event_counts(self) -> dict[str, int]:
         """``{kind: n}`` over live events, plus ``total`` — the surface's badge."""

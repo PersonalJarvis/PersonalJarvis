@@ -47,6 +47,7 @@ from typing import Any
 from jarvis.ultrawiki.types import content_hash_for
 
 __all__ = [
+    "ENTITY_CREATE_CONFIDENCE",
     "EVENT_KIND_VALUES",
     "EVENT_VERSION",
     "MAX_EVENTS_PER_ITEM",
@@ -144,9 +145,18 @@ MAX_LEGACY_EVENTS = 2
 
 #: Confidence floor/ceiling and the values the two derivation paths assign
 #: when the source offers none. The legacy path scores LOW on purpose: it
-#: knows a date and some names, and nothing about what actually happened.
+#: knows a date, and nothing about what actually happened.
 DEFAULT_CONFIDENCE = 0.5
 LEGACY_CONFIDENCE = 0.35
+
+#: An event below this confidence may LINK its participants and place to
+#: entities that already exist, but never CREATES one. Creating is the
+#: expensive direction: a new row shows up in the People view, seeds the merge
+#: queue with its near-names, and outlives the guess that produced it — while
+#: linking a name the user already curated costs nothing and is reversible by
+#: re-derivation. So an uncertain event enriches what is known and never
+#: invents anybody.
+ENTITY_CREATE_CONFIDENCE = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +866,13 @@ def _legacy_events(
     recognized without understanding the sentence; guessing a KIND from words
     would need a per-language lexicon, and shipping one for two languages is
     how a feature quietly stops existing for everyone else.
+
+    **No participants.** The pre-v2 document has no field that means "people
+    who were there". ``entities`` is defined as *mentioned people, places,
+    organizations, projects, systems* — one bag of everything the item names —
+    so reading it as a guest list turns cities, vendors and file formats into
+    people, and the People view fills up with software. An event with a date
+    and no names is worth having; an event with the wrong names is not.
     """
     question = _clean(distill.get("question"), MAX_TITLE_CHARS)
     summary = _clean(distill.get("summary"), MAX_SUMMARY_CHARS)
@@ -864,7 +881,6 @@ def _legacy_events(
     dates = scan_absolute_dates(haystack)
     if not dates:
         return []
-    participants = tuple(_names(distill.get("entities")))
     title = question or fallback_title or summary[:MAX_TITLE_CHARS]
     return [
         DerivedEvent(
@@ -874,7 +890,6 @@ def _legacy_events(
             time=EventTime.build(
                 moment, precision, TimeAnchor.ABSOLUTE, recorded_at=recorded
             ),
-            participants=participants,
             confidence=LEGACY_CONFIDENCE,
         )
         for moment, precision in dates

@@ -361,8 +361,22 @@ def test_a_pre_v2_distillation_still_yields_an_event_when_it_states_a_date():
     assert events[0].time.occurred_at == "2026-02-02T00:00:00Z"
     assert events[0].time.anchor is TimeAnchor.ABSOLUTE
     assert events[0].kind is EventKind.OTHER  # no kind can be known without a lexicon
-    assert events[0].participants == ("Marlow Vance", "Porto Verde")
-    assert events[0].confidence < 0.5  # honest: a date and some names, no story
+    assert events[0].confidence < 0.5  # honest: a date and no story
+
+
+def test_the_legacy_path_never_turns_mentioned_entities_into_participants():
+    """``entities`` is one bag of people, places, organizations AND systems —
+    reading it as a guest list is how a city and a database end up in the
+    People view. A legacy event carries a date and no names."""
+    legacy = {
+        "question": "When did the Porto Verde trip start?",
+        "summary": "The trip began on 2026-02-02 and ran for a week.",
+        "entities": ["Marlow Vance", "Porto Verde", "Postgres", "Acme GmbH"],
+    }
+    events = derive_events(distill=legacy, recorded_at=ANCHOR_ISO)
+    assert len(events) == 1
+    assert events[0].participants == ()
+    assert events[0].place == ""
 
 
 def test_a_pre_v2_distillation_without_a_date_yields_nothing():
