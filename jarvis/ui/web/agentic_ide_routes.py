@@ -2542,17 +2542,93 @@ def _current_prompt_writer() -> str:
         return "auto"
 
 
+def _provider_label(provider: str) -> str:
+    """A provider's own display name, falling back to its id.
+
+    The picker must name the CLI the user actually connected. Reading it from
+    the provider card rather than mapping ids here is what keeps that true for
+    a CLI this file has never heard of (AP-21).
+    """
+    try:
+        from .provider_spec import get_spec
+
+        spec = get_spec(provider)
+        return str(getattr(spec, "label", "") or provider) if spec else provider
+    except Exception:  # noqa: BLE001 - a label is decoration, the id is the value
+        return provider
+
+
+def _tool_model_option() -> PromptWriterOption:
+    """The "use the model I already picked" option, named so it is recognisable.
+
+    The label carries the actual selection because that is the whole question
+    the user is answering. "Tool Model" alone tells someone nothing about which
+    model would write their briefs; "Tool Model (Gemini)" does, and an install
+    with nothing pinned says so instead of offering a choice that cannot run.
+    """
+    try:
+        from jarvis.brain.resolver import _tool_model_selection
+        from jarvis.core.config import load_config
+
+        provider, model = _tool_model_selection(load_config())
+    except Exception:  # noqa: BLE001 - a settings page must still render
+        log.info("prompt-writer: tool-model probe failed", exc_info=True)
+        provider, model = "auto", None
+
+    if provider == "auto":
+        return PromptWriterOption(
+            id="tool_model",
+            label="Tool Model (none selected yet)",
+            connected=False,
+        )
+    # Plain ASCII separator: this label is rendered in the desktop UI but also
+    # printed by `jarvis api agentic-ide prompt-writer`, and a terminal's
+    # encoding is not ours to assume (CLAUDE.md §5, Windows defaults to cp1252).
+    detail = f"{_provider_label(provider)}"
+    if model:
+        detail = f"{detail} - {model}"
+    return PromptWriterOption(
+        id="tool_model",
+        label=f"Tool Model ({detail})",
+        connected=_tool_model_usable(provider),
+    )
+
+
+def _tool_model_usable(provider: str) -> bool:
+    """Whether the pinned Tool Model could write right now.
+
+    Checked without instantiating anything: a settings page asks this on every
+    render, and the two things that actually block it — the provider not being
+    in this build, and its credential being absent — are both cheap to read.
+    """
+    try:
+        from jarvis.brain.app_control import is_credential_present
+        from jarvis.brain.provider_registry import BrainProviderRegistry
+
+        from .provider_spec import get_spec
+
+        spec = get_spec(provider)
+        if spec is None or provider not in set(BrainProviderRegistry().available()):
+            return False
+        return bool(is_credential_present(spec))
+    except Exception:  # noqa: BLE001 - unknown means "do not promise it works"
+        log.info("prompt-writer: tool-model usability probe failed", exc_info=True)
+        return False
+
+
 def _writer_options() -> list[PromptWriterOption]:
+    candidates = _writer_candidates()
     options = [
         PromptWriterOption(
             id="auto",
             label="Automatic (a connected subscription, else the API model)",
             connected=True,
         ),
+        _tool_model_option(),
         PromptWriterOption(
             id="subscription",
-            label="Any connected subscription (never an API key)",
-            connected=any(connected for _id, connected in _writer_candidates()),
+            label="Any connected coding CLI (never an API key)",
+            connected=any(connected for _id, connected in candidates),
         ),
         PromptWriterOption(
             id="api",
@@ -2560,9 +2636,11 @@ def _writer_options() -> list[PromptWriterOption]:
             connected=True,
         ),
     ]
-    for provider, connected in _writer_candidates():
+    for provider, connected in candidates:
         options.append(
-            PromptWriterOption(id=provider, label=provider, connected=connected)
+            PromptWriterOption(
+                id=provider, label=_provider_label(provider), connected=connected
+            )
         )
     return options
 
@@ -2604,13 +2682,17 @@ async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
             ),
         )
     if not match.connected:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"'{requested}' is not signed in on this machine. Connect it "
-                "first, or choose 'auto'."
-            ),
+        # Name the actual blocker. "Not signed in" is true of a coding CLI and
+        # nonsense about a Tool Model, and a user sent to fix the wrong thing
+        # gives up on the setting rather than on the diagnosis.
+        detail = (
+            "No usable Tool Model is configured. Pick one in the Tool Model "
+            "settings — with its API key entered — then choose it here."
+            if requested == "tool_model"
+            else f"'{match.label}' is not signed in on this machine. Connect it "
+            "first, or choose 'auto'."
         )
+        raise HTTPException(status_code=409, detail=detail)
     _persist_prompt_writer(requested)
     return PromptWriterState(prompt_writer=requested, options=_writer_options())
 

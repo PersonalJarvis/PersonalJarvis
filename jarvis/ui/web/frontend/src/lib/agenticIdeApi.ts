@@ -1059,3 +1059,37 @@ export async function composePrompt(
     files: data.files ?? [],
   };
 }
+
+// --------------------------------------------------------- prompt writer
+/** One choice for who writes Agentic-IDE task briefs. */
+export type PromptWriterOption = {
+  id: string;
+  label: string;
+  /** False when this option cannot write right now — an unconnected CLI, or
+   *  a Tool Model that is unset or missing its key. The picker disables it
+   *  rather than hiding it, because "why can I not pick that" is the question
+   *  the user needs answered on this screen. */
+  connected: boolean;
+};
+
+export type PromptWriterState = {
+  prompt_writer: string;
+  options: PromptWriterOption[];
+};
+
+export function fetchPromptWriter(): Promise<PromptWriterState> {
+  return getJson<PromptWriterState>("/api/agentic-ide/prompt-writer");
+}
+
+/** Persist who writes the briefs. Rejects with the server's own reason — it
+ *  names the actual blocker (a CLI that is not signed in, a Tool Model with no
+ *  key), which is what the user has to act on. */
+export async function savePromptWriter(id: string): Promise<PromptWriterState> {
+  const res = await fetch("/api/agentic-ide/prompt-writer", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt_writer: id }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as PromptWriterState;
+}

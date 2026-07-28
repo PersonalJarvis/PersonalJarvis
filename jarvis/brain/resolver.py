@@ -232,6 +232,92 @@ def resolve_quality_brain(
     return None
 
 
+def _tool_model_selection(config: JarvisConfig) -> tuple[str, str | None]:
+    """The Tool Model the user picked: ``(provider, model)``.
+
+    Mirrors what the Tool Model settings tab persists and displays, so the two
+    can never disagree about which model the user chose. Both halves are read
+    the same defensive way that tab reads them:
+
+    * The tier carries the provider, under the canonical ``tool_model`` name
+      with ``computer_use`` still accepted as its read-time alias.
+    * The MODEL is a per-provider override — a user who picks a provider
+      usually means "that provider's tool model", not its chat default — with
+      the provider's plain ``model`` as the floor when no override is set.
+
+    ``("auto", None)`` means the user never pinned one; the caller decides what
+    that is worth. Never raises: a malformed section reads as unset.
+    """
+    try:
+        brain_cfg = config.brain
+        tier = getattr(brain_cfg, "tool_model", None) or getattr(
+            brain_cfg, "computer_use", None
+        )
+        provider = str(getattr(tier, "provider", None) or "auto").strip() or "auto"
+        if provider == "auto":
+            return "auto", None
+        provider_cfg = brain_cfg.providers.get(provider)
+        model = (
+            getattr(provider_cfg, "tool_model", None)
+            or getattr(provider_cfg, "cu_model", None)
+            or getattr(provider_cfg, "model", None)
+        )
+        return provider, (str(model).strip() or None) if model else None
+    except Exception:  # noqa: BLE001 - an unreadable section is an unset one
+        log.info("tool-model selection could not be read", exc_info=True)
+        return "auto", None
+
+
+def resolve_tool_model_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """The user's configured Tool Model as a Brain, or None.
+
+    Exists because "which model does my own work" is a question the user has
+    already answered once, in the Tool Model tab, and callers whose OUTPUT is
+    the product should be able to honour that answer instead of running a
+    separate chain that lands somewhere else. The Agentic IDE's prompt writer
+    is the first: a user who deliberately pointed the Tool Model at a strong
+    model and then found their task briefs written by whichever coding CLI
+    happened to be signed in has been given a setting that does not settle
+    anything.
+
+    Deliberately NOT a chain. A tier resolver walks candidates until one
+    answers, which is right when the goal is that a core path never dies; here
+    the goal is the opposite — do what the user picked, or say you could not.
+    Falling through to a different model would reintroduce exactly the silent
+    substitution this resolver exists to end.
+
+    Returns None when no Tool Model is pinned (``auto``), when the pinned
+    provider is not installed in this build, or when it cannot be instantiated
+    — a missing key being the ordinary case. Never raises.
+    """
+    _ensure_bus_subscription(bus)
+    provider, model = _tool_model_selection(config)
+    if provider == "auto":
+        log.debug("resolve_tool_model_brain: no Tool Model pinned")
+        return None
+
+    cache_key = (provider, model or "")
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        brain = _get_registry().instantiate(
+            provider, **({"model": model} if model else {}),
+        )
+    except Exception as exc:  # noqa: BLE001 - a caller must degrade, not crash
+        log.info(
+            "resolve_tool_model_brain: %s/%s not instantiable (%s)",
+            provider, model or "<default>", type(exc).__name__,
+        )
+        return None
+    _cache[cache_key] = brain
+    return brain
+
+
 def resolve_vision_brain(
     config: JarvisConfig,
     *,

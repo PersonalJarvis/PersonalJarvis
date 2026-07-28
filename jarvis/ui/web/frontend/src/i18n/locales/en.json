@@ -3289,5 +3289,15 @@
       "confirm": "Close selected",
       "close_failed": "These terminals could not be closed: {0}"
     }
+  },
+  "prompt_writer": {
+    "title": "Who writes the task briefs",
+    "description": "When you speak an instruction to a pane, a model turns it into a written brief first. Choose which one: your Tool Model, billed per token against its API key, or a coding CLI you are already subscribed to.",
+    "connected_clis": "Connected coding CLIs",
+    "not_connected": "Not signed in on this machine",
+    "tool_model_unset": "No Tool Model selected yet",
+    "loading": "Reading the current setting...",
+    "unavailable": "The current setting could not be read.",
+    "save_failed": "That choice could not be saved."
   }
 }

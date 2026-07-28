@@ -147,3 +147,70 @@ def test_both_call_sites_use_this_module() -> None:
         assert (
             "resolve_quality_brain" not in source
         ), f"{module.__name__} still resolves its own writer"
+
+
+def test_tool_model_pin_uses_the_model_the_user_picked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of the setting: honour the Tool Model, nothing else."""
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("tool_model"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: "tool-brain")
+    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
+    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+
+    brain, source = writer.resolve_writer()
+
+    assert brain == "tool-brain"
+    assert source.startswith("tool_model")
+
+
+def test_tool_model_pin_never_reaches_a_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user picks the Tool Model precisely to stop a coding CLI writing their
+    briefs; probing one anyway would spend a plan they chose not to use."""
+    probed: list[int] = []
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("tool_model"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: "tool-brain")
+    monkeypatch.setattr(
+        writer, "_subscription", lambda cfg, timeout: probed.append(1) or "sub-brain"
+    )
+
+    brain, _source = writer.resolve_writer()
+
+    assert brain == "tool-brain"
+    assert not probed
+
+
+def test_an_unusable_tool_model_degrades_instead_of_substituting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Use the model I picked" and "use whatever is left" are different
+    answers. Landing on a third model would make the setting meaningless in
+    exactly the way it was added to fix."""
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("tool_model"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
+
+    brain, source = writer.resolve_writer()
+
+    assert brain is None
+    assert source == ""
+
+
+def test_a_raising_tool_model_costs_the_brief_not_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every failure in this module degrades; none may reach the caller."""
+
+    def _boom(_cfg: object) -> object:
+        raise RuntimeError("provider exploded")
+
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("tool_model"))
+    monkeypatch.setattr(writer, "_tool_model", _boom)
+
+    brain, source = writer.resolve_writer()
+
+    assert brain is None
+    assert source == ""

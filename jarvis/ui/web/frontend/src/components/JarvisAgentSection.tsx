@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowUp, Bot, CreditCard, FlaskConical, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
+import { PromptWriterCard } from "@/components/PromptWriterCard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -237,6 +238,12 @@ export function JarvisAgentSection({
       {/* The model pin sits right under the status strip — it is the setting
           users come back for, so it must not hide below the provider cards. */}
       <SubagentModelCard status={bridge} onSaved={reload} />
+
+      {/* Who writes the Agentic-IDE briefs. Sits next to the model pin because
+          it is the same kind of decision — which model does work on the user's
+          behalf — and because the two columns below are exactly the choice it
+          is about: a subscription login on the left, an API key on the right. */}
+      <PromptWriterCard />
 
       {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
           compatibility fallback and are labelled honestly on the relevant card. */}

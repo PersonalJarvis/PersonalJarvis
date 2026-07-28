@@ -3288,5 +3288,15 @@
       "confirm": "Ausgewählte schließen",
       "close_failed": "Diese Terminals konnten nicht geschlossen werden: {0}"
     }
+  },
+  "prompt_writer": {
+    "title": "Wer die Aufgaben-Briefings schreibt",
+    "description": "Wenn du einem Fenster eine Anweisung sprichst, macht ein Modell daraus zuerst ein schriftliches Briefing. Wähle welches: dein Tool-Modell, das über seinen API-Schlüssel pro Token abgerechnet wird, oder eine Coding-CLI, die du ohnehin abonniert hast.",
+    "connected_clis": "Verbundene Coding-CLIs",
+    "not_connected": "Auf diesem Gerät nicht angemeldet",
+    "tool_model_unset": "Noch kein Tool-Modell ausgewählt",
+    "loading": "Aktuelle Einstellung wird gelesen...",
+    "unavailable": "Die aktuelle Einstellung konnte nicht gelesen werden.",
+    "save_failed": "Diese Auswahl konnte nicht gespeichert werden."
   }
 }

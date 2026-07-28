@@ -3288,5 +3288,15 @@
       "confirm": "Cerrar seleccionados",
       "close_failed": "No se pudieron cerrar estos terminales: {0}"
     }
+  },
+  "prompt_writer": {
+    "title": "Quién escribe los briefings de tareas",
+    "description": "Cuando le hablas una instrucción a un panel, primero un modelo la convierte en un briefing escrito. Elige cuál: tu Modelo de Herramientas, facturado por token con su clave API, o una CLI de programación a la que ya estás suscrito.",
+    "connected_clis": "CLIs de programación conectadas",
+    "not_connected": "No has iniciado sesión en este equipo",
+    "tool_model_unset": "Aún no has seleccionado un Modelo de Herramientas",
+    "loading": "Leyendo la configuración actual...",
+    "unavailable": "No se pudo leer la configuración actual.",
+    "save_failed": "No se pudo guardar esa selección."
   }
 }
