@@ -3,7 +3,7 @@
  * to answer on its own.
  *
  * A shared e-mail, phone number or address-book entry is proof, and the layer
- * merges on it silently. A similar NAME is not: "Ruben Lütke" and "R. Lütke"
+ * merges on it silently. A similar NAME is not: "Alex Rivera" and "A. Rivera"
  * are the same person often enough to be worth asking about and different
  * often enough that guessing corrupts the knowledge base. Everything in this
  * queue is that second case, and nothing in it has been merged.
