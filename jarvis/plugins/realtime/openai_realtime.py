@@ -112,6 +112,43 @@ class _ProviderEvent:
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
+    # Token counts of one finished response (see _usage_from_response) —
+    # previously discarded, leaving 100% of Realtime-API spend unmetered.
+    usage: dict[str, int] | None = None
+
+
+def _usage_from_response(response: Any) -> dict[str, int] | None:
+    """Token counts of one response.done payload, or None when empty.
+
+    ``input_cached`` rides along because OpenAI bills cached input at a
+    tenth of the text rate — pricing it as fresh input would overstate the
+    dominant share of a long call.
+    """
+    usage_obj = getattr(response, "usage", None)
+    if usage_obj is None:
+        return None
+
+    def _count(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    total_in = _count(getattr(usage_obj, "input_tokens", None))
+    total_out = _count(getattr(usage_obj, "output_tokens", None))
+    if total_in <= 0 and total_out <= 0:
+        return None
+    in_details = getattr(usage_obj, "input_token_details", None)
+    out_details = getattr(usage_obj, "output_token_details", None)
+    return {
+        "input_total": total_in,
+        "output_total": total_out,
+        "input_text": _count(getattr(in_details, "text_tokens", None)),
+        "input_audio": _count(getattr(in_details, "audio_tokens", None)),
+        "input_cached": _count(getattr(in_details, "cached_tokens", None)),
+        "output_text": _count(getattr(out_details, "text_tokens", None)),
+        "output_audio": _count(getattr(out_details, "audio_tokens", None)),
+    }
 
 
 def _error_code(event: Any) -> str:
@@ -475,6 +512,12 @@ class _OpenAIRealtimeSession:
             elif len(self._accepted_response_ids) == 1:
                 self._accepted_response_ids.pop()
             self._response_idle.set()
+            usage = _usage_from_response(getattr(event, "response", None))
+            if usage is not None:
+                # Every response bills its own pass over the session context,
+                # including tool-call generations that never reach
+                # turn_complete — report each one.
+                yield _ProviderEvent(type="usage", usage=usage)
             status_error = _response_status_error(event)
             if status_error:
                 # response.done is emitted for completed, failed, and
@@ -557,6 +600,15 @@ class _OpenAIRealtimeSession:
                 if isinstance(tool, dict) and tool.get("name")
             ]
             update["tool_choice"] = "auto" if update["tools"] else "none"
+        if self._session_contract is not None:
+            # The orchestrator rebuilds its ~20k-character instruction block
+            # every turn even when nothing in it changed. Re-sending an
+            # identical value is pure cost: it invalidates the provider's
+            # prompt-cache prefix and re-bills the block at the fresh-input
+            # rate. Only differences travel.
+            for key in ("instructions", "tools", "tool_choice"):
+                if key in update and self._session_contract.get(key) == update[key]:
+                    del update[key]
         if len(update) > 1:
             if self._session_contract is not None:
                 for key in ("instructions", "tools", "tool_choice"):

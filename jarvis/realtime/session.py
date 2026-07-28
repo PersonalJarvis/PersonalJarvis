@@ -459,6 +459,13 @@ def _requires_jarvis_action(text: str) -> bool:
     return plan_turn(text).requires_orchestrator
 
 
+# Ceiling for a delegate reply injected into the provider context. ~4 000
+# characters is roughly three spoken minutes — far beyond any real voice
+# answer, small enough to stop a runaway tool result from riding along in
+# every later turn of the call.
+_DELEGATE_RESULT_MAX_CHARS = 4_000
+
+
 def _delegate_result_prompt(
     text: str,
     *,
@@ -476,6 +483,17 @@ def _delegate_result_prompt(
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     status = "success" if success else "failure"
+    # The injected result lives in the provider context for the REST OF THE
+    # CALL and is re-billed as input on every later turn (at audio-session
+    # rates). A spoken reply is short by design; only a pathological
+    # delegate answer exceeds this, and its tail would never be voiced
+    # anyway. Cut at a sentence boundary where one exists.
+    if len(text) > _DELEGATE_RESULT_MAX_CHARS:
+        cut = text[:_DELEGATE_RESULT_MAX_CHARS]
+        dot = cut.rfind(". ")
+        if dot > _DELEGATE_RESULT_MAX_CHARS // 2:
+            cut = cut[: dot + 1]
+        text = cut + " [result shortened]"
     framing = (
         (
             "This is the outcome of the user's earlier request, which finished "
@@ -1049,6 +1067,13 @@ class RealtimeVoiceSession:
         self._failure_detail = ""
         self._active_model = ""
         self._active_voice = ""
+        # Live-channel token usage accumulated since the last published turn.
+        # Providers report one "usage" event per finished generation; a turn
+        # may span several generations (tool call + rendering), so the fold
+        # is a plain per-key sum. Without this the Live API's own spend —
+        # audio in AND out, re-billed context included — never reached the
+        # recorder at all (2026-07-28 cost audit: 100% unmetered).
+        self._turn_usage: dict[str, int] = {}
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker: Any = None
@@ -2397,6 +2422,12 @@ class RealtimeVoiceSession:
                     )
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
+                elif event.type == "usage" and event.usage is not None:
+                    for key, value in event.usage.items():
+                        if isinstance(value, int) and value > 0:
+                            self._turn_usage[key] = (
+                                self._turn_usage.get(key, 0) + value
+                            )
                 elif event.type == "audio_delta" and event.audio is not None:
                     delegate_state = self._delegate_turns.get(self._turn_id)
                     if (
@@ -3527,6 +3558,65 @@ class RealtimeVoiceSession:
             else {}
         )
 
+    async def _publish_live_usage(self) -> None:
+        """Meter the Live channel's own tokens into the current turn.
+
+        Audio tokens bill at 4-40x the text rate, so the split matters;
+        counts the provider could not split are priced as text — a floor,
+        never an overstatement. Cached input (OpenAI reports it) bills at a
+        tenth of the fresh text rate. The recorder SUMS BrainTurnCompleted
+        events per turn, so this adds cleanly on top of any delegate spend.
+        Accumulation resets here; usage between turns folds into the next
+        published turn rather than vanishing.
+        """
+        usage, self._turn_usage = self._turn_usage, {}
+        if not usage or self._bus is None:
+            return
+        try:
+            from jarvis.brain.cost import (
+                PRICING_USD_PER_MTOK,
+                calculate_realtime_cost_usd,
+            )
+            from jarvis.core.events import BrainTurnCompleted
+
+            text_in = usage.get("input_text", 0)
+            audio_in = usage.get("input_audio", 0)
+            text_out = usage.get("output_text", 0)
+            audio_out = usage.get("output_audio", 0)
+            cached_in = usage.get("input_cached", 0)
+            total_in = max(usage.get("input_total", 0), text_in + audio_in)
+            total_out = max(usage.get("output_total", 0), text_out + audio_out)
+            unsplit_in = max(0, total_in - text_in - audio_in)
+            unsplit_out = max(0, total_out - text_out - audio_out)
+            fresh_text_in = max(0, text_in + unsplit_in - cached_in)
+            cost = calculate_realtime_cost_usd(
+                self._active_model,
+                fresh_text_in,
+                text_out + unsplit_out,
+                audio_in,
+                audio_out,
+            )
+            rates = PRICING_USD_PER_MTOK.get(self._active_model)
+            if cached_in > 0 and rates is not None:
+                cost += cached_in * rates[0] * 0.1 / 1_000_000
+            await self._bus.publish(
+                BrainTurnCompleted(
+                    **self._event_trace_kwargs(),
+                    source_layer=f"realtime.{self.active_provider}",
+                    tokens_in=total_in,
+                    tokens_out=total_out,
+                    cost_usd=cost,
+                    finish_reason="realtime_usage",
+                    provider=self.active_provider,
+                    model=self._active_model,
+                )
+            )
+        except Exception:  # noqa: BLE001 -- metering never breaks the call
+            log.debug(
+                "realtime[%s] failed to publish live usage", self.session_id,
+                exc_info=True,
+            )
+
     def _turn_has_activity(self) -> bool:
         return bool(
             self._input_turn_observed
@@ -3819,6 +3909,7 @@ class RealtimeVoiceSession:
                     VoiceTurnCompleted,
                 )
 
+                await self._publish_live_usage()
                 if external_update is not None:
                     # This was an out-of-band status/readback, not a user turn.
                     # Preserve the existing SpeechSpoken track while recording

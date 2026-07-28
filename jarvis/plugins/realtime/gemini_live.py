@@ -20,6 +20,80 @@ _MODEL = "gemini-3.1-flash-live-preview"
 _INPUT_RATE = 16_000
 _OUTPUT_RATE = 24_000
 
+# Live sessions accumulate audio (~25 tok/s) plus transcripts plus tool
+# traffic and re-bill the FULL context on every model turn — without a
+# sliding window that is quadratic in call length, and it is also what
+# makes Gemini end long calls via GoAway when the context ceiling nears.
+# Compression trades verbatim recall of the oldest audio for a bounded
+# context; the orchestrator separately keeps a 20-turn text transcript for
+# rebuilds, so nothing the user said is lost to the conversation logic.
+_COMPRESSION_TRIGGER_TOKENS = 32_000
+_COMPRESSION_TARGET_TOKENS = 16_000
+
+
+def _compression_kwargs(types: Any) -> dict[str, Any]:
+    """Sliding-window compression config, or {} on an SDK without it.
+
+    Probed by SDK capability, never a model-name pin (AP-21) — same pattern
+    as the HistoryConfig probe above. Without compression the Live API
+    re-bills the whole accumulated call (audio in AND out) on every model
+    turn AND hard-ends long calls at the context ceiling.
+    """
+    compression_cls = getattr(types, "ContextWindowCompressionConfig", None)
+    sliding_cls = getattr(types, "SlidingWindow", None)
+    if compression_cls is None or sliding_cls is None:
+        log.info(
+            "gemini-live: installed google-genai SDK has no context-window "
+            "compression; long calls re-bill their full history each turn"
+        )
+        return {}
+    return {
+        "context_window_compression": compression_cls(
+            trigger_tokens=_COMPRESSION_TRIGGER_TOKENS,
+            sliding_window=sliding_cls(
+                target_tokens=_COMPRESSION_TARGET_TOKENS
+            ),
+        )
+    }
+
+
+def _usage_from_metadata(md: Any) -> dict[str, int] | None:
+    """Token counts of one generation as a flat dict, or None when empty.
+
+    Modality detail lists are optional on the wire; totals are authoritative.
+    Keys: input_total/output_total plus the text/audio split when reported.
+    """
+    def _count(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    total_in = _count(getattr(md, "prompt_token_count", None))
+    total_out = _count(getattr(md, "response_token_count", None))
+    if total_in <= 0 and total_out <= 0:
+        return None
+    usage = {
+        "input_total": total_in,
+        "output_total": total_out,
+        "input_text": 0,
+        "input_audio": 0,
+        "output_text": 0,
+        "output_audio": 0,
+    }
+    for attr, text_key, audio_key in (
+        ("prompt_tokens_details", "input_text", "input_audio"),
+        ("response_tokens_details", "output_text", "output_audio"),
+    ):
+        for detail in tuple(getattr(md, attr, None) or ()):
+            modality = getattr(detail, "modality", None)
+            name = str(getattr(modality, "name", None) or modality or "").upper()
+            count = _count(getattr(detail, "token_count", None))
+            if count <= 0:
+                continue
+            usage[audio_key if "AUDIO" in name else text_key] += count
+    return usage
+
 
 @dataclass(frozen=True, slots=True)
 class _PcmChunk:
@@ -42,6 +116,10 @@ class _ProviderEvent:
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
+    # Token counts of one finished generation (see _usage_from_metadata).
+    # The Live channel was previously the only brain path whose spend was
+    # invisible to the recorder — 100% of Live-API tokens went unmetered.
+    usage: dict[str, int] | None = None
 
 
 class _GeminiLiveSession:
@@ -84,6 +162,11 @@ class _GeminiLiveSession:
         self._client = client
         self.session_id = session_id
         self._closed = False
+        # Latest usage_metadata snapshot of the CURRENT generation. Emitted
+        # once per generation boundary (tool call, turn end, barge-in) so the
+        # orchestrator can sum generations without double counting the
+        # progressive snapshots some SDK versions repeat mid-generation.
+        self._pending_usage: dict[str, int] | None = None
 
     async def send_audio(self, chunk: Any) -> None:
         from google.genai import types  # lazy (AP-26)
@@ -121,10 +204,21 @@ class _GeminiLiveSession:
                         audio=_PcmChunk(pcm=bytes(data), sample_rate=_OUTPUT_RATE),
                     )
 
+                usage_metadata = getattr(message, "usage_metadata", None)
+                if usage_metadata is not None:
+                    usage = _usage_from_metadata(usage_metadata)
+                    if usage is not None:
+                        self._pending_usage = usage
+
                 tool_call = getattr(message, "tool_call", None)
                 function_calls = tuple(
                     getattr(tool_call, "function_calls", None) or ()
                 )
+                if function_calls and self._pending_usage is not None:
+                    # A tool call ends this generation; report its usage now so
+                    # the follow-up generation's snapshot cannot overwrite it.
+                    yield _ProviderEvent(type="usage", usage=self._pending_usage)
+                    self._pending_usage = None
                 for function_call in function_calls:
                     raw_args = getattr(function_call, "args", None) or {}
                     if hasattr(raw_args, "model_dump"):
@@ -158,6 +252,13 @@ class _GeminiLiveSession:
                     # the same server-content message. Emit it first so the shared
                     # session closes the old turn before adopting the new words.
                     if bool(getattr(content, "interrupted", False)):
+                        if self._pending_usage is not None:
+                            # Barge-in ends the generation; its tokens were
+                            # still billed.
+                            yield _ProviderEvent(
+                                type="usage", usage=self._pending_usage
+                            )
+                            self._pending_usage = None
                         yield _ProviderEvent(type="interrupted")
 
                     input_transcription = getattr(
@@ -193,6 +294,11 @@ class _GeminiLiveSession:
                                 "may have been cut short by the server",
                                 reason_name,
                             )
+                        if self._pending_usage is not None:
+                            yield _ProviderEvent(
+                                type="usage", usage=self._pending_usage
+                            )
+                            self._pending_usage = None
                         if not function_calls:
                             yield _ProviderEvent(type="turn_complete")
 
@@ -522,6 +628,7 @@ class GeminiLiveProvider:
                 if seed_declared
                 else {}
             ),
+            **_compression_kwargs(types),
         )
         connection_cm = client.aio.live.connect(
             model=str(getattr(cfg, "model", "") or _MODEL),
