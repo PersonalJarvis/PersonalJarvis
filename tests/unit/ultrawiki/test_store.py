@@ -496,6 +496,94 @@ async def test_existing_database_migrates_to_the_shadow_space_key(tmp_path):
         await migrated.close()
 
 
+async def test_reconcile_space_registers_a_switch_no_caller_announced(store):
+    """The forensic of 2026-07-28, as a contract.
+
+    Registering a model switch lived in ONE caller (PUT /settings). Every other
+    legitimate way the setting changes — the activation route behind the
+    Normal/Ultra switch, a voice-driven config change, a hand-edited
+    jarvis.toml, a config carried over from another machine — wrote the new
+    model and left the store pinned to the old one. The store then rejected
+    every vector the configured provider produced: the embed lane failed 100 %
+    of its work for days while the surface still read "still filling up".
+
+    A rule enforced in one caller is not enforced. `reconcile_space` is what
+    the pipeline asks on every pass, so the guarantee no longer depends on
+    which door the user walked through.
+    """
+    await add_source(store)
+    _item, doc = await _seed_embedded_item(store, 0)
+    await store.store_embedding(doc, model="model-a", dim=4, vector=[1, 0, 0, 0])
+
+    # The live model needs nothing and must stay cheap — this runs every pass.
+    assert await store.reconcile_space("model-a") == "active"
+    assert await store.reembed_status() == {}
+    # An empty model name is "the slot has not resolved one yet", never a
+    # reason to tear down a vector space.
+    assert await store.reconcile_space("  ") == "unknown"
+    assert await store.reembed_status() == {}
+
+    # A model belonging to NEITHER space is exactly the bricked state. It is
+    # registered as a background rebuild, not left to fail per item.
+    assert await store.reconcile_space("model-b") == "started"
+    assert (await store.reembed_status())["model"] == "model-b"
+    # The live space is untouched: search keeps answering while it rebuilds.
+    assert await store.get_meta(META_EMBED_MODEL) == "model-a"
+
+    # Idempotent: the next pass finds the rebuild already running and must not
+    # restart it (that would discard every vector produced so far).
+    assert await store.reconcile_space("model-b") == "rebuilding"
+    assert (await store.reembed_status())["model"] == "model-b"
+
+    # And the point of the whole exercise: the vector the provider produces is
+    # now accepted instead of raising.
+    await store.store_embedding(doc, model="model-b", dim=3, vector=[1, 0, 0])
+
+
+async def test_a_flagged_reembed_item_is_never_left_unclaimable(tmp_path):
+    """A flagged item that no worker can claim stalls the rebuild forever.
+
+    ``_reembed_remaining`` counts ``reembed_pending = 1``; ``claim_batch`` only
+    selects the PREDECESSOR state of the stage it feeds. An item flagged while
+    sitting in ``embedded`` satisfies neither — the counter waits for it and no
+    worker can reach it. On the maintainer's store nine such rows stranded a
+    4 712-item rebuild at 4 703, which also kept the distill stage standing
+    aside for a rebuild that could never finish: summaries stopped permanently.
+    """
+    path = tmp_path / "ultrawiki.db"
+    store = UltraStore(path)
+    try:
+        await add_source(store)
+        item_id, doc_id = await _seed_embedded_item(store, 0)
+        await store.store_embedding(doc_id, model="model-a", dim=4, vector=[1, 0, 0, 0])
+        await store.mark_stage_done(item_id, ItemState.EMBEDDED)
+        assert await store.begin_reembed("model-b") is True
+
+        # Reproduce the damage the adopt path caused: flag the item WITHOUT
+        # demoting it (begin_reembed demotes; _adopt_running_reembed did not).
+        conn = await store._ensure_open()
+        await conn.execute(
+            "UPDATE uw_items SET state = ?, reembed_pending = 1 WHERE id = ?",
+            (ItemState.EMBEDDED.value, item_id),
+        )
+
+        # The deadlock: counted as outstanding, unreachable by any worker.
+        assert (await store.reembed_status())["remaining"] == 1
+        assert await store.claim_batch(ItemState.EMBEDDED) == []
+    finally:
+        await store.close()
+
+    reopened = UltraStore(path)
+    try:
+        claimed = await reopened.claim_batch(ItemState.EMBEDDED)
+        assert [row["id"] for row in claimed] == [item_id]
+        # Still owed to the rebuild — the repair restores reachability, it does
+        # not silently declare the work done.
+        assert (await reopened.reembed_status())["remaining"] == 1
+    finally:
+        await reopened.close()
+
+
 async def test_switching_back_mid_rebuild_costs_nothing(store):
     """The reversibility half: an abandoned rebuild must not have damaged the
     live space, so changing your mind is free rather than a second full run."""

@@ -128,6 +128,19 @@ class UltraStoreError(RuntimeError):
     """Raised for store-contract violations (e.g. embedding-dim mismatch)."""
 
 
+class EmbeddingSpaceMismatch(UltraStoreError):
+    """A vector was offered for a space this store neither serves nor builds.
+
+    Its own type because the CALLER's correct response differs from every
+    other store error: this is a CONFIGURATION fault, not a poisoned item.
+    Charging it as a per-item retry (the generic handler) burns five attempts
+    on innocent content and then dead-letters it, so a single mis-registered
+    model switch quietly destroys the corpus item by item while the surface
+    still reads "still filling up" (forensic 2026-07-28). Callers pause the
+    stage instead and leave the backlog exactly where it is.
+    """
+
+
 def sanitize_conn_error(exc: BaseException, conn_str: str = "") -> str:
     """``"TypeName: message"`` with every credential scrubbed out.
 
@@ -582,6 +595,7 @@ class UltraStore(IdentityMixin, EventMixin):
             await run_migrations(conn, directory=_MIGRATIONS_DIR)
             await self._apply_column_migrations(conn)
             await self._adopt_running_reembed(conn)
+            await self._repair_unclaimable_reembed(conn)
             self._conn = conn
 
     @staticmethod
@@ -647,6 +661,38 @@ class UltraStore(IdentityMixin, EventMixin):
             "UltraWiki: adopted a rebuild that was already running — %d item(s) "
             "moved to the front of the embed queue",
             flagged,
+        )
+
+    @staticmethod
+    async def _repair_unclaimable_reembed(conn: aiosqlite.Connection) -> None:
+        """Enforce the invariant every rebuild depends on: a FLAGGED item must
+        be CLAIMABLE.
+
+        ``_reembed_remaining`` counts ``reembed_pending = 1``; ``claim_batch``
+        only ever selects the PREDECESSOR state of the stage it feeds. An item
+        that is flagged while sitting in ``embedded``/``distilled`` therefore
+        satisfies neither: the counter waits for it forever and no worker can
+        ever reach it. The promotion never fires, and because the distill stage
+        stands aside for a running rebuild (``reembed-priority``), summaries
+        stop too — permanently, from a handful of rows.
+
+        ``begin_reembed`` demotes correctly; ``_adopt_running_reembed`` did not,
+        which is how nine such rows stranded a 4 712-item rebuild at 4 703 (the
+        2026-07-28 forensic). Rather than trust every future writer of the flag
+        to remember, the invariant is restored on open: cheap (the partial
+        index ``idx_uw_items_reembed_pending`` answers it), idempotent, and a
+        no-op in the overwhelmingly common case of no rebuild at all.
+        """
+        await conn.execute(
+            "UPDATE uw_items SET state = ?, updated_at = ?"
+            " WHERE reembed_pending = 1 AND deleted_at IS NULL"
+            "   AND state IN (?, ?)",
+            (
+                ItemState.KEYWORD_INDEXED.value,
+                _iso_utc(),
+                ItemState.EMBEDDED.value,
+                ItemState.DISTILLED.value,
+            ),
         )
 
     async def close(self) -> None:
@@ -1699,7 +1745,7 @@ class UltraStore(IdentityMixin, EventMixin):
             )
             await self.begin_reembed(model, dim=dim)
             return False
-        raise UltraStoreError(
+        raise EmbeddingSpaceMismatch(
             "embedding space mismatch: the store is pinned to "
             f"model={pinned_model!r} dim={pinned_dim} but got "
             f"model={model!r} dim={dim}. Changing the embedding model goes "
@@ -2136,6 +2182,46 @@ class UltraStore(IdentityMixin, EventMixin):
             active_model,
         )
         return True
+
+    async def reconcile_space(self, model: str) -> str:
+        """Make the store agree with the model the pipeline is about to use.
+
+        **Why this exists (forensic 2026-07-28).** Registering a model switch
+        used to live in exactly ONE caller — the settings route. Every other
+        way the same value can legitimately change wrote the config and left
+        the store pinned to the previous model: the activation route behind
+        the Normal/Ultra switch, a voice-driven config change, a hand-edited
+        ``jarvis.toml``, a config carried over from another machine. The store
+        then rejected every vector the configured provider produced, the embed
+        lane failed 100 % of its work for days, and the surface still read
+        "still filling up" — because nothing on the failing side ever compared
+        the two values. A rule enforced in one caller is not enforced.
+
+        So the reconciliation happens HERE, next to the pins it protects, and
+        the pipeline calls it with the model it actually resolved. Cheap by
+        design (two primary-key reads in the steady state) because it runs on
+        every pass.
+
+        Returns ``"active"`` (the model serves live search), ``"rebuilding"``
+        (a rebuild into it is already under way), ``"started"`` (this call
+        registered the switch) or ``"unknown"`` (no model to check).
+        """
+        model = str(model or "").strip()
+        if not model:
+            return "unknown"
+        pinned_model, _pinned_dim = await self._pinned_space()
+        # No pin yet: the first vector of an empty store defines the space.
+        if pinned_model is None or pinned_model == model:
+            return "active"
+        pending_model, _pending_dim = await self._pending_space()
+        if pending_model == model:
+            return "rebuilding"
+        # The configured model belongs to NEITHER space. This is the exact
+        # state that used to brick the lane. `begin_reembed` is the sanctioned
+        # switch: live vectors and the ANN index keep answering search
+        # untouched while the new space is built alongside them.
+        started = await self.begin_reembed(model)
+        return "started" if started else "active"
 
     async def reembed_is_running(self) -> bool:
         """Is a model switch rebuilding the vector space right now?
@@ -2922,6 +3008,7 @@ class PostgresStore(IdentityMixin, EventMixin):
                 for statement in self.ddl_statements():
                     await conn.execute(statement)
                 await self._adopt_running_reembed(conn)
+                await self._repair_unclaimable_reembed(conn)
             self._conn = conn
 
     @staticmethod
@@ -2955,6 +3042,21 @@ class PostgresStore(IdentityMixin, EventMixin):
             "UltraWiki: adopted a rebuild that was already running — %d item(s) "
             "moved to the front of the embed queue",
             flagged,
+        )
+
+    @staticmethod
+    async def _repair_unclaimable_reembed(conn: Any) -> None:
+        """Postgres twin of :meth:`UltraStore._repair_unclaimable_reembed`."""
+        await conn.execute(
+            "UPDATE uw_items SET state = %s, updated_at = %s"
+            " WHERE reembed_pending = 1 AND deleted_at IS NULL"
+            "   AND state IN (%s, %s)",
+            (
+                ItemState.KEYWORD_INDEXED.value,
+                _iso_utc(),
+                ItemState.EMBEDDED.value,
+                ItemState.DISTILLED.value,
+            ),
         )
 
     async def close(self) -> None:
@@ -3718,7 +3820,7 @@ class PostgresStore(IdentityMixin, EventMixin):
             )
             await self.begin_reembed(model, dim=dim)
             return False
-        raise UltraStoreError(
+        raise EmbeddingSpaceMismatch(
             "embedding space mismatch: the store is pinned to "
             f"model={pinned_model!r} dim={pinned_dim} but got "
             f"model={model!r} dim={dim}. Changing the embedding model goes "
@@ -4026,6 +4128,20 @@ class PostgresStore(IdentityMixin, EventMixin):
             active_model,
         )
         return True
+
+    async def reconcile_space(self, model: str) -> str:
+        """Postgres twin of :meth:`UltraStore.reconcile_space`."""
+        model = str(model or "").strip()
+        if not model:
+            return "unknown"
+        pinned_model, _pinned_dim = await self._pinned_space()
+        if pinned_model is None or pinned_model == model:
+            return "active"
+        pending_model, _pending_dim = await self._pending_space()
+        if pending_model == model:
+            return "rebuilding"
+        started = await self.begin_reembed(model)
+        return "started" if started else "active"
 
     async def reembed_is_running(self) -> bool:
         """Postgres twin of :meth:`UltraStore.reembed_is_running`."""
@@ -4391,6 +4507,7 @@ __all__ = [
     "META_PENDING_EMBED_DIM",
     "META_PENDING_EMBED_MODEL",
     "PG_CONNECT_TIMEOUT_S",
+    "EmbeddingSpaceMismatch",
     "PostgresStore",
     "UltraStore",
     "UltraStoreError",

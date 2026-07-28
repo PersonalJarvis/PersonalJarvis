@@ -461,6 +461,42 @@ class PipelineWorker:
             log.debug("UltraWiki: rebuild probe failed", exc_info=True)
             return False
 
+    async def _reconcile_embedding_space(self, model: str) -> None:
+        """Keep the store's vector space in step with the configured model.
+
+        The switch is registered by whoever changes the setting — but only ONE
+        of the paths that can change it ever did (the settings route). The
+        activation route behind the Normal/Ultra switch, a voice-driven config
+        change, a hand-edited ``jarvis.toml`` and a config restored from
+        another machine all wrote the new model and left the store pinned to
+        the old one. The result was silent and total: every vector rejected,
+        every item charged a retry, the whole corpus on its way to the
+        dead-letter state, and a surface that still said "still filling up".
+
+        Asking the store once per pass — with the model this pass will really
+        use, after the slot resolved it — makes the guarantee independent of
+        which door the user walked through. Never raises: an unreconcilable
+        store still gets its honest per-item failure below.
+        """
+        reconcile = getattr(self._store, "reconcile_space", None)
+        if reconcile is None:  # an older embedded store, or a test fake
+            return
+        try:
+            verdict = str(await reconcile(model) or "")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — reconciliation never kills the lane
+            log.debug("UltraWiki: embedding-space reconciliation failed", exc_info=True)
+            return
+        if verdict == "started":
+            log.warning(
+                "UltraWiki: the configured embedding model %r did not match the "
+                "stored vector space — a background rebuild was registered. "
+                "Semantic search keeps answering from the current vectors until "
+                "it completes.",
+                model,
+            )
+
     async def _promote_pass(self) -> None:
         """Swap in a finished embedding rebuild (see
         ``UltraStore.promote_pending_space``).
@@ -490,6 +526,20 @@ class PipelineWorker:
         return self._now_fn() if self._now_fn is not None else None
 
     async def _retry(self, item: dict[str, Any], stage: str, exc: BaseException) -> None:
+        from jarvis.ultrawiki.store import (  # noqa: PLC0415 — lazy (AP-26)
+            EmbeddingSpaceMismatch,
+        )
+
+        if isinstance(exc, EmbeddingSpaceMismatch):
+            # A configuration fault, not a poisoned item. Charging it here cost
+            # the item an attempt, and five attempts dead-letter it: a single
+            # mis-registered model switch was quietly converting the entire
+            # corpus into `failed` at 32 items a pass, one innocent item at a
+            # time, while the surface reported a healthy backlog. The lane
+            # pauses instead and the backlog waits, intact, for the space to
+            # agree again (`_reconcile_embedding_space`).
+            self._note_stage_pause(stage, str(exc), key="embed-space-mismatch")
+            return
         log.warning(
             "UltraWiki %s stage failed for item %s (%s): %s",
             stage,
@@ -856,6 +906,7 @@ class PipelineWorker:
             # A stable dedup key, because the sentence carries a countdown.
             self._note_stage_pause("embed", cooldown, key="embed-cooldown")
             return 0
+        await self._reconcile_embedding_space(model)
         self._clear_stage_pause("embed")
         items = await self._store.claim_batch(
             ItemState.EMBEDDED, limit=EMBED_BATCH, now=self._claim_now()

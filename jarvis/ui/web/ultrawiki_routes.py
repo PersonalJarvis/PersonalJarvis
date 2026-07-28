@@ -1042,6 +1042,34 @@ async def activate_mode(body: ActivateBody, request: Request) -> dict[str, Any]:
 
     enabled_persisted, enabled_error = _persist_enabled(True)
     _apply_live(request, {}, enabled=True)
+
+    # Activation can CHANGE the embedding model (the wizard asks for it, and
+    # the Normal/Ultra switch re-sends the configured provider), so this route
+    # owes the store the same registration PUT /settings performs. Without it
+    # the config named one model while the store stayed pinned to another,
+    # every vector was rejected, and the embed lane failed 100 % of its work
+    # in silence — the 2026-07-28 forensic. `reconcile_space` is idempotent
+    # and a no-op when the model already matches, so the ordinary "switch
+    # Ultra back on" path costs two primary-key reads.
+    space_rebuild = ""
+    try:
+        store = await _store_of(service)
+        verdict = await store.reconcile_space(
+            _effective_embedding_model(_uw_cfg(request), values)
+        )
+        if verdict == "started":
+            space_rebuild = "started"
+        elif verdict == "rebuilding":
+            space_rebuild = "running"
+    except Exception:  # noqa: BLE001 — activation succeeded; the pipeline retries
+        # `_reconcile_embedding_space` asks again on every pass, so a failure
+        # here delays the rebuild by one pass instead of losing it.
+        log.warning(
+            "UltraWiki: could not reconcile the embedding space during "
+            "activation; the pipeline reconciles on its next pass",
+            exc_info=True,
+        )
+
     # The pipeline only starts while the mode is on, so it is started here —
     # after the flip, never before it.
     await service.ensure_started()
@@ -1049,6 +1077,7 @@ async def activate_mode(body: ActivateBody, request: Request) -> dict[str, Any]:
     response: dict[str, Any] = {
         "ok": True,
         "enabled": True,
+        "embedding_space_rebuild": space_rebuild,
         "persisted": slots_persisted and enabled_persisted,
         **result,
         "next_steps": (

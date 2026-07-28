@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from jarvis.ultrawiki.pipeline import EMBED_BATCH, MAX_EMBED_CHARS, PipelineWorker
-from jarvis.ultrawiki.store import UltraStore
+from jarvis.ultrawiki.store import MAX_ATTEMPTS, EmbeddingSpaceMismatch, UltraStore
 from jarvis.ultrawiki.types import ConsentState, ItemState, RawItem
 
 VECTOR = [0.1, 0.2, 0.3]
@@ -216,6 +216,96 @@ async def test_not_ready_backend_claims_no_embed_work(store):
     assert counts.keyword_indexed == 1
     assert counts.embedded == 0
     assert backend.embed_calls == []
+
+
+# ---------------------------------------------------------------------------
+# A vector-space pin the config has outgrown (forensic 2026-07-28)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_stale_vector_space_pin_is_reconciled_not_dead_lettered(store):
+    """Changing the embedding model outside PUT /settings must still work.
+
+    The maintainer switched the model with the Normal/Ultra switch — a real,
+    visible UI act. That route wrote the config and never registered the switch
+    with the store, so every vector the new provider produced was rejected. The
+    lane failed 100 % of its work for a day, and because the rejection was
+    charged as a per-item retry, the corpus was five attempts away from
+    dead-lettering itself item by item while the screen said "still filling up".
+
+    The worker now reconciles with the model it actually resolved, so the
+    rebuild starts on the next pass no matter who changed the setting.
+    """
+    await store.upsert_items("src1", [make_item(1)])
+    cfg = make_cfg()
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        cfg,
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+    await worker.run_once()
+    assert (await store.counts()).embedded == 1  # pin is now "fake-model"
+
+    # The switch, exactly as a bypassing route leaves it: config says one
+    # model, the store is still pinned to the other.
+    cfg.ultrawiki.embedding_model = "other-model"
+    await store.upsert_items("src1", [make_item(2)])
+
+    for _ in range(MAX_ATTEMPTS + 1):
+        await worker.run_once()
+
+    # Not one item was charged an attempt, let alone dead-lettered.
+    counts = await store.counts()
+    assert counts.failed == 0
+    item = await store.get_item_by_external_id("src1", "ext-0002")
+    assert item is not None
+    assert item["attempt_count"] == 0
+
+    # And the lane is moving again: the switch was registered as a background
+    # rebuild, with the live vectors still serving search until it completes.
+    assert (await store.reembed_status())["model"] == "other-model"
+    assert item["state"] == ItemState.EMBEDDED.value
+
+
+async def test_a_space_mismatch_pauses_the_lane_and_charges_no_attempt(store):
+    """The second half of the same defect, isolated.
+
+    Reconciliation cannot close every gap — a provider may answer with a model
+    id nobody configured. Whatever the cause, a vector-space mismatch is a
+    CONFIGURATION fault: it says nothing about the item that happened to be in
+    the batch, so charging it an attempt (and dead-lettering it on the fifth)
+    destroys innocent content to report a settings problem.
+    """
+    await store.upsert_items("src1", [make_item(1)])
+
+    async def refuse(*args: Any, **kwargs: Any) -> None:
+        raise EmbeddingSpaceMismatch("embedding space mismatch: pinned to model-a")
+
+    async def already_fine(model: str) -> str:
+        return "active"  # reconciliation sees nothing to do
+
+    store.store_embedding = refuse  # type: ignore[method-assign]
+    store.reconcile_space = already_fine  # type: ignore[method-assign]
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=FakeEmbeddingBackend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    for _ in range(MAX_ATTEMPTS + 1):
+        await worker.run_once()
+
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item is not None
+    # The backlog waits, intact, exactly where it was.
+    assert item["state"] == ItemState.KEYWORD_INDEXED.value
+    assert item["attempt_count"] == 0
+    assert (await store.counts()).failed == 0
 
 
 # ---------------------------------------------------------------------------
