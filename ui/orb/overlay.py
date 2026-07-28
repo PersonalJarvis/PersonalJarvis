@@ -23,8 +23,10 @@ Rendering pipeline:
 Public API:
     overlay = OrbOverlay(style="mascot")    # SWG/Gigi PNG
     overlay.start()                         # blocks until mainloop exit
-    overlay.show(mode="listen")
+    overlay.show(mode="listen")             # voice modes: idle/listen/speak/think
     overlay.show(mode="speak")
+    overlay.show(mode="dictate")            # dictation modes: recording ...
+    overlay.show(mode="dictate_transcribing")  # ... and transcribing
     overlay.hide()
     overlay.set_level(0.42)
     overlay.set_style("mascot")             # runtime switch, no restart
@@ -61,6 +63,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
+from jarvis.ui.jarvisbar.modes import MODES
 from ui.orb.animations import (
     ANIMATION_REGISTRY,
     Animation,
@@ -238,6 +241,48 @@ def _transcript_visible_line_count(text_height: int, line_height: int) -> int:
 def _transcript_body_height(line_count: int, line_height: int) -> int:
     visible_lines = max(1, min(TRANSCRIPT_MAX_VISIBLE_LINES, line_count))
     return (BUBBLE_PADDING_Y * 2) + (max(1, line_height) * visible_lines)
+
+
+def mode_energy(mode: str, t: float, ext_level: float | None) -> float:
+    """Return the raw drive level (0..1) the mascot renders ``mode`` with.
+
+    The mascot has exactly one expressive channel: energy. It feeds the halo
+    threshold, the breathing scale and the brightness, so "what a mode looks
+    like" on this surface *is* the curve this function returns. Pulled out of
+    :meth:`MascotRenderer.render` so the per-mode contract is directly testable
+    without a Tk root, a PNG asset or a frame buffer.
+
+    Voice modes keep their historical behaviour to the letter: a live level
+    (mic or TTS loudness) always wins, and each mode has its own synthetic
+    fallback curve.
+
+    The two dictation modes are deliberately NOT variations of ``listen``:
+
+    * ``dictate`` — recording. The dictation session feeds the very same mic
+      level channel, so the live signal drives the halo exactly like the bar's
+      equalizer. It is clamped up from a floor, because a quiet moment while
+      recording must still read as "I am listening", never as a dead mascot.
+    * ``dictate_transcribing`` — the key is released and the mic feed has
+      stopped, so the last sample would otherwise freeze the mascot at whatever
+      loudness the user happened to end on. This mode therefore ignores the
+      stale level outright and runs a steady work pulse instead — the mascot's
+      equivalent of the bar's orbital core.
+    """
+    if mode == "dictate":
+        live = 0.0 if ext_level is None else max(0.0, min(1.0, ext_level))
+        floor = 0.22 + 0.14 * math.sin(t * 1.6)
+        return max(0.0, min(1.0, max(live, floor)))
+    if mode == "dictate_transcribing":
+        return max(0.0, min(1.0, 0.30 + 0.16 * math.sin(t * 2.2)))
+    if ext_level is not None:
+        return max(0.0, min(1.0, ext_level))
+    if mode == "speak":
+        return 0.35 + 0.25 * math.sin(t * 1.8) + 0.1 * math.sin(t * 3.3)
+    if mode == "think":
+        return 0.2 + 0.12 * math.sin(t * 2.5)
+    if mode == "listen":
+        return 0.25 + 0.18 * math.sin(t * 1.4) + 0.08 * math.sin(t * 2.7)
+    return 0.0
 
 
 def _resolve_mascot_path(path_str: str | None) -> Path | None:
@@ -598,17 +643,9 @@ class MascotRenderer:
     # ------------------------------------------------------------------
 
     def render(self, t: float, mode: str, ext_level: float | None) -> Image.Image:
-        # Level smoothing mirrors the previous voice-reactive dynamics.
-        if ext_level is not None:
-            raw = max(0.0, min(1.0, ext_level))
-        elif mode == "speak":
-            raw = 0.35 + 0.25 * math.sin(t * 1.8) + 0.1 * math.sin(t * 3.3)
-        elif mode == "think":
-            raw = 0.2 + 0.12 * math.sin(t * 2.5)
-        elif mode == "listen":
-            raw = 0.25 + 0.18 * math.sin(t * 1.4) + 0.08 * math.sin(t * 2.7)
-        else:
-            raw = 0.0
+        # Level smoothing mirrors the previous voice-reactive dynamics; the
+        # per-mode curve itself lives in ``mode_energy`` so it stays testable.
+        raw = mode_energy(mode, t, ext_level)
         self._level += (raw - self._level) * 0.08
         breath = 0.5 + 0.5 * math.sin(t * 0.9)
         energy = max(self._level, breath * 0.1)
@@ -2008,6 +2045,22 @@ class OrbOverlay:
     SHOW_MIN_DURATION_S: float = 2.5
 
     def show(self, mode: str = "listen") -> None:
+        """Reveal the mascot in ``mode``. Thread-safe.
+
+        The mode is validated SYNCHRONOUSLY, on the caller's thread, before the
+        reveal is queued. That ordering is the contract, not a detail: the work
+        itself is handed to the Tk thread, so a mode rejected inside ``_show``
+        would be dropped later, on another thread, where no exception can ever
+        reach the caller — the call would return "successfully" and the user
+        would simply see nothing. Callers that keep a fallback look for a
+        surface which cannot render a mode depend on hearing about the
+        rejection here.
+
+        Raises ``ValueError`` for a mode outside the shared vocabulary.
+        """
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
+
         def _show() -> None:
             self._cancel_pending_hide()
             self._set_mode(mode)
@@ -2220,6 +2273,12 @@ class OrbOverlay:
         self._enqueue_ui(_stop)
 
     def set_mode(self, mode: str) -> None:
+        """Repaint the mascot in ``mode`` without touching visibility.
+
+        Validated synchronously for the same reason as :meth:`show` — see there.
+        """
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
         self._enqueue_ui(lambda: self._set_mode(mode))
 
     def set_level(self, level: float) -> None:
@@ -2353,8 +2412,10 @@ class OrbOverlay:
     # --- Internal --------------------------------------------------------
 
     def _set_mode(self, mode: str) -> None:
-        if mode not in ("idle", "listen", "speak", "think"):
-            raise ValueError(f"Unknown mode: {mode}")
+        """Apply ``mode`` on the Tk thread. The public entry points already
+        validated it; this stays a guard for the internal call sites."""
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
         self._mode = mode
 
     def _enqueue_ui(self, fn) -> None:

@@ -947,13 +947,28 @@ class OrbBusBridge:
     def _show_dictation_mode(self, mode: str) -> None:
         """Drive the current surface into a dictation coarse mode.
 
-        Every JarvisBar surface accepts the dictation modes. The mascot orb is
-        an older surface that validates against the four voice modes and raises
-        on anything else; for it the honest equivalent of "recording" is its
-        listening look, which carries no destructive affordance (the mascot has
-        no close-X — only drag and the four-click mute gesture), so falling back
-        cannot arm one. A surface that rejects both is left alone: a missing
-        visual is cosmetic, and it must never break the bus.
+        Every surface this app ships renders both dictation modes natively: the
+        JarvisBar as the equalizer and the orbital core, the mascot orb as a
+        mic-driven halo and a steady work pulse (``overlay.mode_energy``). So on
+        every display style a dictation is actually visible, which is the whole
+        point of the feature.
+
+        The fallback below is for a surface this bridge does not own — an older
+        or third-party one that only knows the four voice modes. For such a
+        surface the honest equivalent of "recording" is its listening look,
+        which on the mascot carries no destructive affordance (it has no
+        close-X — only drag and the four-click mute gesture), so falling back
+        cannot arm one.
+
+        It only works because a surface reports the rejection SYNCHRONOUSLY, on
+        this thread. A surface that queues the call onto its own UI thread and
+        validates there returns "successfully" and drops the mode later, where
+        no exception can reach us — the failure that left the mascot showing
+        nothing at all. ``OrbOverlay.show`` validates before it queues for
+        exactly this reason.
+
+        A surface that rejects both modes is left alone: a missing visual is
+        cosmetic, and it must never break the bus.
         """
         try:
             self._orb.show(mode=mode)
