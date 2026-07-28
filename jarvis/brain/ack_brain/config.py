@@ -1,7 +1,18 @@
 """Pydantic config models for the Pre-Thinking Ack Flash-Brain.
 
-Maps the [ack_brain] section of jarvis.toml. Default `enabled = False`
-so the feature is opt-in until the user explicitly turns it on.
+Maps the [ack_brain] section of jarvis.toml. Two switches, opposite defaults:
+
+- ``enabled = True`` — the subsystem master. ON by default; it keeps the
+  GROUNDED spoken output wired (the per-tool ack and the spawn announcement,
+  both emitted only after a real tool call / worker spawn).
+- ``preamble_enabled = False`` — the SPECULATIVE pre-thinking preamble. OFF by
+  default since 2026-06-21: it fired on every utterance with no grounding in
+  the action the deep brain actually took, reached first token at a median
+  2.98 s, and was the only spoken output on 22 % of preamble turns.
+
+(This docstring used to claim `enabled = False` / "opt-in until the user turns
+it on", which described the pre-2026-06-21 shape and contradicted the field
+defaults below.)
 """
 from __future__ import annotations
 
@@ -70,9 +81,11 @@ class _ProvidersBundle(BaseModel):
 class AckBrainConfig(BaseModel):
     """Root config for the Pre-Thinking Ack Flash-Brain.
 
-    Mapped from the [ack_brain] section of jarvis.toml. The feature is
-    opt-in: until enabled=True is set explicitly, the AckGenerator is
-    not instantiated and the existing silent-fallback path is used.
+    Mapped from the [ack_brain] section of jarvis.toml. ``enabled`` defaults to
+    True (see the field comment below) and gates the whole subsystem; the
+    speculative preamble is separately gated by ``preamble_enabled``, which
+    defaults to False. Setting ``enabled = false`` takes the grounded spawn
+    announcement down with it and restores the fully silent path.
     """
 
     model_config = ConfigDict(extra="forbid")

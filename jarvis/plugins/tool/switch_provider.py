@@ -1,8 +1,16 @@
 """``switch-provider`` tool — change the active brain/TTS/STT/subagent provider.
 
 Router-tier, ``monitor`` (runs immediately, audited — no up-front confirmation).
-This is the voice/chat path for "switch from Grok to Gemini", "use OpenAI for the
-brain", "change TTS to Cartesia", etc.
+This is the voice/chat path for "switch the voice to Cartesia", "use Groq for
+speech recognition", "put the subagent on codex", etc.
+
+NOT the brain, though the ``tier`` schema still accepts it: a ``brain`` switch is
+REFUSED here with ``provider_switch_locked`` and never reaches
+``apply_provider_switch``. The active brain provider is the user's hard choice
+and changes only through the control CLI or the desktop app's manual switch
+(``actor=AuditActor.USER``) — see ``jarvis/core/self_mod/provider_lock.py`` and
+``tests/unit/plugins/tool/test_switch_provider_brain_lock.py``. Jarvis itself,
+which is what calls this tool, is exactly the actor the lock excludes.
 
 A provider switch is REVERSIBLE and the tool speaks an honest post-change readback
 (old -> new), so an STT mishear of the provider name is caught *after* the fact —
@@ -45,13 +53,18 @@ class SwitchProviderTool:
     # ``ask`` is the one tier in ``always_confirm_tiers``). Forensic 2026-06-26.
     risk_tier: ClassVar[str] = "monitor"
     description: ClassVar[str] = (
-        "Switch which AI provider is active for a given tier: 'brain' (the main "
-        "assistant model), 'tts' (text-to-speech voice), 'stt' (speech-to-text), or "
-        "'subagent' (the heavy background worker). Use this for requests like "
-        "'switch from Grok to Gemini', 'use OpenAI for the brain', or 'change the "
-        "voice to Cartesia'. This only changes which provider is ACTIVE — the "
+        "Switch which AI provider is active for a given tier: 'tts' (text-to-speech "
+        "voice), 'stt' (speech-to-text), or 'subagent' (the heavy background "
+        "worker). Use this for requests like 'change the voice to Cartesia', 'use "
+        "Groq for speech recognition', or 'put the subagent on codex'. "
+        "The 'brain' tier is DELIBERATELY NOT switchable this way: the active "
+        "assistant model is the user's own choice and can only be changed by them "
+        "in the desktop app or the CLI. Do not call this tool for 'switch to "
+        "Gemini', 'use OpenAI', or any other request about the main model — it "
+        "will be refused. Tell the user where to change it instead. "
+        "This only changes which provider is ACTIVE — the "
         "target provider's API key must already be saved (it does NOT set keys). "
-        "If the key is missing, it says so. Brain and TTS take effect immediately; "
+        "If the key is missing, it says so. TTS takes effect immediately; "
         "STT and subagent need a restart."
     )
     schema: ClassVar[dict[str, Any]] = {
