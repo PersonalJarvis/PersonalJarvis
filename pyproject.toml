@@ -162,7 +162,12 @@ dependencies = [
     # transports (missing Host/Origin validation, unverified session
     # principal, cross-client task access) are fixed there — never resolve
     # lower (Dependabot #48-#51).
-    "mcp>=1.28.1",
+    # Ceiling <2: mcp 2.0.0 removes the low-level Server decorator API
+    # (@server.list_tools / @server.call_tool become constructor parameters)
+    # and stops auto-wrapping return values, which breaks
+    # jarvis/missions/workers/broker_stdio.py at import time. Lift the
+    # ceiling only together with a deliberate 2.x migration of that adapter.
+    "mcp>=1.28.1,<2",
     "rich>=13.9",
     # jarvisctl control CLI (jarvis/cli_ctl/): Typer command surface + platformdirs
     # for cross-platform per-user config/cache dirs. Pure-Python, VPS-safe.
