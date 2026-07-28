@@ -180,6 +180,52 @@ def test_a_closed_capture_gate_is_named_without_guessing() -> None:
 
 
 # --------------------------------------------------------------------------
+# Every gated site names the REAL reason
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_state_loop_names_the_dictation_instead_of_guessing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hardcoded reason here once sent a live diagnosis after the wrong cause.
+
+    The state loop is the backstop that drops an activation edge; it closes for
+    a mute and for a running dictation too, so "the desktop window is not
+    available" is a guess that can be flatly wrong.
+    """
+    pipe = _gate_pipeline()
+    pipe._call_event = asyncio.Event()
+    pipe._ptt_mode = False
+    pipe._dictation_task = asyncio.create_task(_blocking_task())
+    pipe._dictation_wake_block_until = time.time() + 300.0
+
+    aborted = asyncio.Event()
+
+    async def _abort() -> None:
+        aborted.set()
+
+    pipe._abort_pending_wake_handoff = _abort  # type: ignore[method-assign]
+
+    loop_task = asyncio.create_task(pipe._state_loop())
+    try:
+        with caplog.at_level("INFO", logger="jarvis.speech.pipeline"):
+            pipe._call_event.set()
+            await asyncio.wait_for(aborted.wait(), timeout=1.0)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("a dictation is running" in m for m in messages), messages
+        assert not any("desktop activation is unavailable" in m for m in messages)
+    finally:
+        loop_task.cancel()
+        pipe._dictation_task.cancel()
+        for task in (loop_task, pipe._dictation_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+# --------------------------------------------------------------------------
 # The bar must not flicker out of its dictation look
 # --------------------------------------------------------------------------
 

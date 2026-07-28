@@ -9,9 +9,11 @@ debugger, was accepted.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
+import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.config import DictationConfig, TriggerConfig
 from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
@@ -221,7 +223,13 @@ class _RecordingPipeline(SpeechPipeline):
 
 
 def test_press_starts_once_even_though_the_backend_polls() -> None:
-    """The Windows backend re-fires on_press while the chord is held."""
+    """The Windows backend re-fires on_press while the chord is held.
+
+    This pins the idempotency of a HELD key — repeats that arrive inside the
+    grace window are one dictation. It deliberately does NOT pin the latch as
+    permanent: a press that arrives long after the last one is a fresh press,
+    which is what keeps a lost key-up from disabling the shortcut (below).
+    """
     pipe = _RecordingPipeline()
     pipe._on_dictate_press()
     pipe._on_dictate_press()
@@ -229,6 +237,71 @@ def test_press_starts_once_even_though_the_backend_polls() -> None:
     # "auto" is the shipped [dictation].target; it is resolved against the live
     # foreground window when the recording ENDS, not here.
     assert pipe.started == ["auto"]
+
+
+def test_a_hold_is_still_one_dictation_late_inside_the_grace_window() -> None:
+    """A slow poll tick is still the same hold, not a new press."""
+    pipe = _RecordingPipeline()
+    pipe._on_dictate_press()
+    pipe._dictate_key_seen_at = time.monotonic() - (
+        pipeline_mod._DICTATE_HOLD_REPEAT_GRACE_S - 0.5
+    )
+    pipe._on_dictate_press()
+    assert pipe.started == ["auto"]
+    assert pipe._dictate_key_down is True
+
+
+def test_a_lost_key_up_never_swallows_the_next_press() -> None:
+    """The stuck-latch defect: no error, no way back except an app restart.
+
+    A key-up edge really can go missing — the pynput and Quartz backends clear
+    their own chord state WITHOUT firing ``on_release`` when the input
+    permission is revoked mid-chord, and a focus change, a UAC prompt or an RDP
+    reconnect can do the same. The latch has to heal itself.
+    """
+    pipe = _RecordingPipeline()
+    pipe._on_dictate_press()
+    assert pipe._dictate_key_down is True
+
+    # The release never arrives; time passes; the user presses again. The
+    # earlier dictation is already over (duration cap), so nothing to stop.
+    pipe._dictate_key_seen_at = time.monotonic() - (
+        pipeline_mod._DICTATE_HOLD_REPEAT_GRACE_S + 1.0
+    )
+    pipe._on_dictate_press()
+
+    assert pipe.started == ["auto", "auto"], "the shortcut must keep working"
+    assert pipe._dictate_key_down is True
+    assert pipe.stopped == 0
+
+
+def test_a_stale_press_ends_an_orphaned_recording_instead_of_stacking_one() -> None:
+    """A lost key-up leaves the microphone open; the next press is the release.
+
+    Starting a second dictation on top is impossible anyway (the lane refuses
+    while one runs), so the honest repair is to finish and deliver the orphan.
+    The latch is clear afterwards, so the following press records normally.
+    """
+    pipe = _RecordingPipeline()
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    pipe._on_dictate_press()
+    pipe._dictation_task = _RunningTask()  # type: ignore[assignment]
+    pipe._dictate_key_seen_at = time.monotonic() - (
+        pipeline_mod._DICTATE_HOLD_REPEAT_GRACE_S + 1.0
+    )
+    pipe._on_dictate_press()
+
+    assert pipe.stopped == 1
+    assert pipe.started == ["auto"]
+    assert pipe._dictate_key_down is False
+
+    pipe._dictation_task = None
+    pipe._on_dictate_press()
+    assert pipe.started == ["auto", "auto"]
 
 
 def test_the_key_follows_the_configured_target() -> None:

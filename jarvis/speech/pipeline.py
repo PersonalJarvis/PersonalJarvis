@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 import numpy as np
@@ -634,6 +634,32 @@ def _feed_live_mic_level(chunk: AudioChunk) -> None:
     samples = pcm_bytes_to_np(chunk.pcm)
     if samples.size:
         mic_level.feed(float(np.sqrt(np.mean(np.square(samples)))))
+
+
+class _ChunkSource(Protocol):
+    """Anything one lane can drain audio frames from.
+
+    Satisfied by both ``MicrophoneCapture`` (a lane that opened the device
+    itself) and ``_SessionInputBuffer`` (a lane that took over a stream some
+    other lane already had open). Having the two behind one shape is what lets
+    the dictation lane accept either without a second native input stream.
+    """
+
+    def stream(self) -> AsyncIterator[AudioChunk]: ...
+
+
+# How long a dictation waits for an ambiguous wake-microphone lease to end
+# before it gives up. Only reachable if the handoff itself failed; the honest
+# outcome is a refused dictation, never a second stream on the same device.
+_DICTATION_WAKE_RELEASE_TIMEOUT_S = 3.0
+
+# Longest gap between two "dictation key is down" reports that still counts as
+# ONE hold. The polling hotkey backend re-reports a held chord every few tens of
+# milliseconds, and the edge-driven backends (pynput / Quartz) report a press
+# exactly once per real chord-down — so nothing legitimate lands anywhere near
+# this window, while a press past it can only be a fresh press or a key-up that
+# was never delivered. See ``SpeechPipeline._on_dictate_press``.
+_DICTATE_HOLD_REPEAT_GRACE_S = 2.0
 
 
 class _SessionInputBuffer:
@@ -1351,6 +1377,10 @@ class SpeechPipeline:
         # ``_ptt_mode`` for the dictation lane so a repeated press edge (the
         # Windows backend polls and re-fires on_press while held) is idempotent.
         self._dictate_key_down = False
+        # Monotonic time of the last press edge that reported the key as down.
+        # It is what makes the latch above self-healing: see
+        # ``_on_dictate_press`` and ``_DICTATE_HOLD_REPEAT_GRACE_S``.
+        self._dictate_key_seen_at = 0.0
         # ``self._stt`` is the LOCAL FasterWhisperProvider used by the wake
         # backstop + VAD endpoint-probe (many calls/sec, a cloud round-trip
         # would be too slow). In the cloud-first lightweight path it is None:
@@ -4731,9 +4761,45 @@ class SpeechPipeline:
         Idempotent by design: the Windows backend polls, so ``on_press`` fires
         again on every poll while the chord is held. Only the first edge from
         "key up" starts anything.
+
+        **The latch heals itself.** A key-up edge can be lost — the pynput and
+        Quartz backends clear their own chord state without firing ``on_release``
+        when the input permission is revoked mid-chord, and a focus change, a
+        UAC prompt or an RDP reconnect can do the same. A latch that only a
+        release could clear then swallowed EVERY later press, which presents as
+        "the dictation shortcut just stopped working" with no error and no way
+        back except an app restart. So a press that arrives long after the last
+        one reported the key down is treated as what it physically is — a fresh
+        press on a key nobody is holding — not as a repeat.
+
+        The two cases are told apart by TIME, not by guessing: a real hold
+        re-reports itself every poll tick on the polling backend (tens of
+        milliseconds), while the edge-driven backends report a press exactly once
+        per real chord-down. Anything past the grace window is therefore either a
+        lost key-up or a genuinely new press, and both want the same repair.
         """
-        if self._dictate_key_down:
-            return
+        now = time.monotonic()
+        last_seen = float(getattr(self, "_dictate_key_seen_at", 0.0))
+        latched = bool(getattr(self, "_dictate_key_down", False))
+        stale = latched and (now - last_seen) > _DICTATE_HOLD_REPEAT_GRACE_S
+        self._dictate_key_seen_at = now
+        if latched and not stale:
+            return  # the same hold, re-reported by a polling backend
+        if stale:
+            log.info(
+                "Dictation key-up edge was lost %.1fs ago — clearing the stale "
+                "hold latch so the shortcut keeps working.",
+                now - last_seen,
+            )
+            self._dictate_key_down = False
+            if self.dictation_active():
+                # The orphaned recording is still running with the microphone
+                # open. Treat this press as the release that never arrived:
+                # finish and deliver what was said instead of starting a second
+                # dictation on top of it. The latch is clear, so the user's next
+                # press starts a fresh one.
+                self.stop_dictation()
+                return
         self._dictate_key_down = True
         if not self.start_dictation(target=self._configured_dictation_target()):
             # Could not start (mic busy, a voice session is live, no STT). Drop
@@ -5324,6 +5390,96 @@ class SpeechPipeline:
             finally:
                 await buffer.close()
 
+    async def _release_unclaimed_wake_handoff(self) -> None:
+        """Give back a wake stream that was offered but never taken.
+
+        The wake owner parks on ``buffer.released`` once it has offered its
+        stream, so a claimer that unwinds between the offer and the claim would
+        strand it there — it cannot even reach its own cleanup. Closing the
+        buffer here is the release signal. Safe to call when nothing is pending,
+        and it never suspends for an offered handoff (that buffer has no pump
+        task), so it also works from inside a task being cancelled.
+        """
+        buffer = getattr(self, "_wake_handoff_buffer", None)
+        ready = getattr(self, "_wake_handoff_ready", None)
+        if buffer is None and (ready is None or not ready.is_set()):
+            return
+        self._wake_handoff_buffer = None
+        if ready is not None:
+            ready.clear()
+        if buffer is not None:
+            await buffer.close()
+
+    async def _claim_wake_capture_for_dictation(self) -> _SessionInputBuffer | None:
+        """Take the wake microphone over for a dictation, or return ``None``.
+
+        A dictation is a session start like any other: whatever already owns the
+        input device hands the live stream over, so the two never run side by
+        side. Without this the common case — the wake loop sitting in
+        ``_run_parallel_wake``, its steady state whenever Jarvis is idle — meant
+        a dictation key press opened a SECOND native input stream on the same
+        device for the whole dictation (AP-24 / the BUG-014 family).
+
+        ``None`` means "no wake stream exists"; the caller then opens exactly one
+        capture of its own. A pipeline built via ``__new__`` (the unit-test
+        pattern) has no wake plumbing at all and takes the same path.
+        """
+        if getattr(self, "_wake_handoff_ready", None) is None:
+            return None
+        try:
+            return await self._claim_wake_capture_for_session()
+        except asyncio.CancelledError:
+            # A dictation cancelled INSIDE the handoff window would otherwise
+            # leave the wake loop waiting forever on a stream nobody will ever
+            # release: permanently deaf with an app restart as the only cure
+            # (BUG-037). Give the offered stream back before unwinding.
+            await self._release_unclaimed_wake_handoff()
+            raise
+        except Exception as exc:  # noqa: BLE001 — never a crashed dictation
+            log.warning("Dictation could not take over the wake microphone: %s", exc)
+            await self._release_unclaimed_wake_handoff()
+        # The lease ended ambiguously. Waiting for the wake side to finish
+        # closing is the only safe way to reach a fallback capture; opening one
+        # now could be the second stream this whole path exists to prevent.
+        try:
+            await asyncio.wait_for(
+                self._wake_capture_released.wait(),
+                timeout=_DICTATION_WAKE_RELEASE_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise RuntimeError(
+                "The wake microphone did not release in time; refusing to open "
+                "a second input stream for this dictation."
+            ) from None
+        return None
+
+    @asynccontextmanager
+    async def _capture_dictation_input(self) -> AsyncIterator[_ChunkSource]:
+        """Own exactly ONE microphone for the duration of a dictation.
+
+        Mirrors ``_capture_first_session_input``: borrow the live wake stream
+        when there is one, otherwise open a single fallback capture. On the way
+        out the borrowed stream is closed and the wake owner is awaited, so the
+        wake loop re-arms its own microphone as soon as the dictation's block on
+        activation lifts — including on the crash path, because the release runs
+        in a ``finally``.
+        """
+        buffer = await self._claim_wake_capture_for_dictation()
+        if buffer is not None:
+            try:
+                yield buffer
+            finally:
+                # ``close()`` sets ``released`` before it awaits anything, so
+                # the wake owner is freed even if this task is being cancelled.
+                await buffer.close()
+                await self._wake_capture_released.wait()
+            return
+
+        async with MicrophoneCapture(
+            device=self._input_device, device_priority=self._input_priority
+        ) as mic:
+            yield mic
+
     def _wake_listening_enabled(self) -> bool:
         return self._openwakeword_enabled or self._whisper_wake_enabled
 
@@ -5637,10 +5793,31 @@ class SpeechPipeline:
                     # Jarvis goes deaf immediately — without touching the OS mic.
                     # (A fresh mute while IDLE is already handled by _wake_loop's
                     # _activation_allowed() gate, which never opens the mic.)
-                    if getattr(self, "_muted", False):
-                        continue
+                    muted = getattr(self, "_muted", False)
+                    # A dictation is the second way this stream stops belonging
+                    # to the wake word. It is the same STATE gate the activation
+                    # predicate uses (never transcript content — AP-27).
+                    dictating = self._dictation_blocks_activation()
                     if handoff_buffer is not None:
+                        # The stream has been handed to whoever claimed it. Mute
+                        # still starves a VOICE session (input-only mute), but
+                        # never the dictation lane: an explicit dictation press
+                        # is the user deliberately speaking into their own text
+                        # field, and the lane's own fallback capture has always
+                        # ignored mute. Dropping frames here would make a
+                        # dictation silently record nothing whenever the wake
+                        # microphone happened to be the one it took over.
+                        if muted and not dictating:
+                            continue
                         handoff_buffer.put(chunk)
+                        continue
+                    if muted or dictating:
+                        # Nothing claimed the stream, so these frames would go
+                        # to the wake detectors. While a dictation is running
+                        # they are the user's dictated words: feeding them to a
+                        # detector both risks tripping the wake word mid-
+                        # dictation and shares this native engine with the
+                        # dictation's own transcription (AP-24).
                         continue
                     ring_bytes.extend(chunk.pcm)
                     if len(ring_bytes) > RING_MAX:
@@ -5990,9 +6167,13 @@ class SpeechPipeline:
                                         max(0.0, self._wake_lock_until - now),
                                     )
                                 else:
+                                    # Same resolver as every other gated site —
+                                    # a hardcoded guess here named the wrong
+                                    # cause during a live diagnosis.
                                     log.info(
-                                        "Wake detection discarded: desktop "
-                                        "activation is unavailable."
+                                        "Wake detection discarded: %s.",
+                                        self._activation_block_reason()
+                                        or "activation not allowed",
                                     )
                                 break
                             # The UI consumes WakeWordDetected plus supervisor
@@ -6045,7 +6226,13 @@ class SpeechPipeline:
             # Ignore activation edges that arrive inside the speaker-echo lock.
             now = time.time()
             if not self._activation_allowed():
-                log.info("Voice call ignored: desktop activation is unavailable.")
+                # Resolved, never guessed: this backstop closes for a mute and
+                # for a running dictation too, and a log line that names the
+                # window instead is exactly what misled an earlier diagnosis.
+                log.info(
+                    "Voice call ignored: %s.",
+                    self._activation_block_reason() or "activation not allowed",
+                )
                 # A discarded call consumes any PTT arming with it — otherwise a
                 # stale ``_ptt_mode`` would reroute the NEXT (wake-word) call
                 # into the raw-recording path that has no key to release.
@@ -7705,7 +7892,8 @@ class SpeechPipeline:
     async def _dictation_session(self) -> None:
         """Capture mic audio, transcribe it in segments, deliver the result.
 
-        A stripped-down ``_ptt_session``: open the mic, drain into a buffer,
+        A stripped-down ``_ptt_session``: take the one microphone over (or open
+        it when nothing else holds it), drain into a buffer,
         publish a live ``DictationTranscript`` while speaking, and on the stop
         event (or the max-duration cap) produce the final text, clean it, and —
         when the target is ``insert`` — paste it into the focused field of
@@ -7883,12 +8071,14 @@ class SpeechPipeline:
         # up" and never runs the delivery twice.
         finished = False
         try:
-            async with MicrophoneCapture(
-                device=self._input_device, device_priority=self._input_priority
-            ) as mic:
+            # ONE microphone owner at a time: this takes the live wake stream
+            # over when there is one and opens its own capture otherwise, so a
+            # dictation never runs a second native input stream beside the wake
+            # loop's (AP-24). The wake side gets its stream back on exit.
+            async with self._capture_dictation_input() as source:
 
                 async def _drain() -> None:
-                    async for chunk in mic.stream():
+                    async for chunk in source.stream():
                         buffer.extend(chunk.pcm)
                         # Feed the live loudness so the bar's equalizer moves
                         # while dictating — same normalized RMS as the VAD and
