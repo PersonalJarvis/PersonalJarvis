@@ -41,10 +41,11 @@ diagnosis: the color of the visible box tells you which layer broke.
 * **Magenta padding** → the frame is correct, but the *window* is not keying it
   out. `-transparentcolor` was rejected, or the layered attributes were lost
   (window recreated, moved across monitors, re-shown after `withdraw`).
-* **Black padding** → the padding is not magenta any more. Either an RGBA path
-  ran where a color-key path was expected (magenta with `alpha=0` resolves to
-  `(0,0,0)` when flattened without a backdrop), or something composited the
-  window's alpha channel against an empty black buffer.
+* **Black padding** → nothing is keying the padding out, because what is on
+  screen is no longer the window Jarvis owns. On Windows this is almost always
+  the **ghost window** (§4). Otherwise: an RGBA path ran where a color-key path
+  was expected (magenta with `alpha=0` resolves to `(0,0,0)` when flattened
+  without a backdrop).
 * **Opaque grey/appearance-colored padding** → macOS Tk backing (BUG-075).
 
 ---
@@ -87,7 +88,7 @@ removes the Tk dependency but replaces it with a PySide6 one.
 
 ---
 
-## 3. Windows: measured, and the color key is working
+## 3. Windows: the color key works — while the window is being pumped
 
 Measured on a live Windows 11 install, 4K display, with the bar running
 (2026-07-28):
@@ -111,38 +112,65 @@ A colorkey + alpha 0.6 : black=0   (backdrop visible through the padding)
 B colorkey only        : black=0   goldish=406 (pill visible)
 ```
 
-**Zero black pixels in either case.** The color key keys out correctly on
-Windows, including in combination with window alpha.
+**Zero black pixels in either case** — *while the window is being pumped*. That
+qualifier is the whole story, and missing it once cost a wrong diagnosis: the
+color key is not a property of the pixels, it is a property of **the window**,
+and it protects the padding only for as long as that window is the thing on
+screen.
 
 ---
 
-## 4. The capture trap — why a screenshot can lie
+## 4. The ghost window — why the padding turns black on Windows (BUG-118)
 
-The reported screenshot's padding measures **pure `(0,0,0)`**, while the pill
-itself carries the exact renderer constants (`PILL_BORDER (215,182,105)`,
-`PILL_BG (14,13,12)`). So the *frame* reached the screen intact and only the
-padding is wrong — and it is wrong in the one color the renderer never emits.
+When a top-level window stops pumping messages for roughly five seconds,
+Windows hides it and puts a stand-in window of class `Ghost` at the same
+rectangle, painted by the DWM rather than by the app. **The ghost is an
+ordinary window: it carries no `WS_EX_LAYERED`,** so the magenta colour key is
+never applied to it and the entire window rectangle lands on screen as an
+opaque black box around the pill.
 
-Capture APIs disagree wildly about layered windows, which is reproducible:
+Measured on the live app, both windows present at once:
 
-* `PIL.ImageGrab.grab()` over the bar's rectangle returned the desktop **without
-  the bar at all** — that BitBlt path skips layered windows.
-* `BitBlt` with and without `CAPTUREBLT` both showed the padding correctly
-  transparent.
-* Capture stacks built on DWM thumbnails / `Windows.Graphics.Capture` (Snipping
-  Tool, Game Bar, ShareX, meeting-share pipelines) hand back **BGRA**. A
-  color-keyed layered window's dropped pixels arrive as `alpha = 0` with RGB
-  zeroed; flattening that to BGRX without a backdrop yields exactly
-  `(0,0,0)` — a black rectangle of precisely the window size.
+```
+hwnd=4004742  class='TkTopLevel'  pid=88416(app)  HUNG=True  LAYERED=True   key=0x00ff00ff
+hwnd=8196144  class='Ghost'       pid=1340(dwm)   HUNG=True  LAYERED=False  no key
+              identical rect 1873,2031 93x39      screen over it: black=3141
+```
 
-Hence the rule for triaging any future report:
+Reproduced from first principles — a color-keyed frameless Tk window showing a
+real renderer frame, whose UI thread is then deliberately blocked:
 
-> **A black box in a screenshot is not evidence of a black box on screen.**
-> Confirm on the physical display, or with a capture path known to composite
-> layered windows, before touching the transparency code.
+```
+control (no fix):  before stall black=0   during stall black=1982 / 2870
+with the fix:      before stall black=0   during stall black=0
+```
 
-Conversely, a black box that persists *on the physical display* is a real
-defect — and on macOS that is the expected failure mode, per §2.
+**This does not require the app to be broken.** The bar paints from a Tk loop,
+and that loop stops pumping whenever *another* thread holds the GIL through a
+long CPU-bound stretch. The trigger in the field was exactly that: the backend
+thread sat `active+gil` inside `load_config()` → `JarvisConfig(**data)` on the
+event loop, reached from `resolve_provider_endpoint()` in `_ensure_client` on
+every brain call (same family as the freeze fixed in `325af16d`, which cached
+the TOML parse but not the pydantic construction above it).
+
+So the user-visible symptom of a **stall** is a **rendering defect**, which is
+why this reads as "the bar has a black border" rather than "the app is busy".
+
+**Fix.** `disable_windows_app_ghosting()` (`jarvis/core/process_utils.py`),
+called from both color-key surfaces — the bar (`jarvis/ui/jarvisbar/overlay.py`)
+and the mascot (`ui/orb/overlay.py`). `DisableProcessWindowsGhosting` is
+process-wide and cannot be undone, which is the right trade: a frameless
+click-through overlay gains nothing from a ghost (no title bar to grey out, no
+close button to offer), and the app keeps its Restart control, the tray icon,
+and Task Manager as ways out of a hang. Windows-only, a logged no-op elsewhere.
+Guards: `tests/unit/core/test_process_utils_ghosting.py`.
+
+**Note on captures.** Screenshot APIs also disagree about layered windows —
+`PIL.ImageGrab.grab()` over the bar's rectangle returned the desktop *without
+the bar at all*, while `BitBlt` with `CAPTUREBLT` composited it correctly. So a
+capture can hide the bar, and it is worth knowing which path you are measuring
+with; but it was **not** the cause here, and a black box on the physical
+display is always real.
 
 ---
 
@@ -163,6 +191,12 @@ defect — and on macOS that is the expected failure mode, per §2.
 4. **The Tk macOS branch in `overlay.py` is now unreachable for the bar** (the
    host selects Qt on Darwin) but still present, so a future reader may fix the
    wrong branch.
+5. **The bar shares a process — and a GIL — with the backend.** On Windows and
+   Linux the bar paints in-process, so any long CPU-bound stretch elsewhere
+   freezes its paint loop. Ghosting is now off, so that no longer *looks* like
+   a rendering bug, but the bar still stops animating. macOS does not have this
+   coupling: there the bar lives in its own companion process. Moving the
+   Windows/Linux bar out of process would remove the class entirely.
 
 ---
 

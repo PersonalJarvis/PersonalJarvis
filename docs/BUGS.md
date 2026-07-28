@@ -6523,14 +6523,10 @@ periodic ordering operation does not activate the helper application. Keep
 compositor workarounds behind a platform backend instead of changing a
 rendering path already proven on another OS.
 
-**Triage note (2026-07-28).** A later Windows screenshot showed the same black
-rectangle, but a live measurement proved the Windows color key was keying out
-correctly (zero black pixels on screen) — the black padding was produced by the
-screen-capture path, not by the compositor. Because a real defect and a capture
-artifact are indistinguishable in a screenshot, and the two have unrelated
-fixes, confirm the box on the physical display before changing transparency
-code. Per-OS mechanics, the color-of-the-box decision table, and the measured
-Windows evidence:
+**Sequel on Windows (2026-07-28).** The same black rectangle was then reported
+on Windows, where the colour key measurably works. It has a different cause —
+Windows' ghost window over a stalled bar — and its own entry: BUG-118. Per-OS
+mechanics and the colour-of-the-box decision table:
 [`docs/overlay-transparency.md`](overlay-transparency.md).
 
 ---
@@ -8185,3 +8181,62 @@ with two variables changed the accepted retry proves nothing.
 Related: BUG-019 (stale-cache recovery in the same except block), AP-21
 (capability probes), AP-22 (the single-provider brick this produced live:
 gemini 400 + openai 429 left zero reachable tool-tier families).
+
+---
+
+## BUG-118: black rectangle around the JarvisBar on Windows — a stalled paint loop gets an unlayered ghost window (MEDIUM, FIXED 2026-07-28)
+
+**Symptom (maintainer field report).** An opaque black box around the bar's
+pill, surviving a restart. Read as a rendering regression of the macOS defect
+BUG-093, but on Windows, where the colour-key path was believed proven.
+
+**Root cause.** The bar's magenta colour key is a property of the WINDOW, not
+of the pixels: `-transparentcolor` sets `LWA_COLORKEY` on the layered window
+Jarvis owns. When a top-level window stops pumping messages for ~5 s, Windows
+hides it and substitutes a stand-in window of class `Ghost`, painted by the DWM
+at the identical rectangle. That stand-in carries **no `WS_EX_LAYERED`**, so
+the key is never applied to it and the whole window rect lands on screen as
+opaque black. Measured with both windows alive at once: `TkTopLevel` (app pid,
+`LAYERED=True`, `key=0x00ff00ff`) and `Ghost` (dwm pid, `LAYERED=False`),
+`IsHungAppWindow=True` on both, `black=3141` on screen over the rect.
+
+Reaching this needs no crash. The bar paints from an in-process Tk loop, so it
+stops pumping whenever ANOTHER thread holds the GIL through a long CPU-bound
+stretch. The live trigger was the backend thread sitting `active+gil` in
+`load_config()` → `JarvisConfig(**data)`, reached from
+`resolve_provider_endpoint()` in `claude_api._ensure_client` on every brain
+call — the pydantic half of the freeze whose TOML half `325af16d` cached. So a
+STALL presented itself as a RENDERING defect, which is why it was first
+mis-triaged (as a screen-capture artifact, on the strength of an isolated probe
+whose window was never stalled).
+
+**Fix.** `disable_windows_app_ghosting()` in `jarvis/core/process_utils.py`,
+called from both colour-key surfaces: the bar (`jarvis/ui/jarvisbar/overlay.py`)
+and the mascot (`ui/orb/overlay.py`). `DisableProcessWindowsGhosting` is
+process-wide and irreversible, which is the right trade — a frameless
+click-through overlay gains nothing from a ghost (no title bar to grey out, no
+close button to offer), while the app keeps its own Restart control, the tray
+icon, and Task Manager as ways out of a hang. Windows-only; a no-op returning
+False on macOS/Linux, which substitute nothing.
+
+**Proof.** A color-keyed frameless Tk window showing a real renderer frame,
+with its UI thread deliberately blocked past the threshold, measured from a
+second thread: control `before black=0 / during black=1982` of 2870; with the
+fix `before black=0 / during black=0`.
+
+**Guards.** `tests/unit/core/test_process_utils_ghosting.py` — no-op off
+Windows without touching ctypes, disables on Windows, idempotent second call
+never re-enters user32, a failing API degrades to False instead of taking the
+overlay boot down, and the helper stays exported.
+
+**Still open (separate defect).** The stall itself. Ghosting-off stops it
+LOOKING like a rendering bug; the bar still freezes while the GIL is held. The
+in-process bar is Windows/Linux-only coupling — macOS already runs it in a
+companion process (BUG-093), which is immune by construction.
+
+**Class rule.** A compositor-level transparency trick protects only the window
+you own, and only while that window is the one on screen. Before concluding
+that a transparency path works, check it in the state the report describes —
+an unstalled probe cannot falsify a stall-triggered defect. When a UI defect's
+rectangle matches a window exactly and its colour is one the renderer never
+emits, suspect a substituted window before suspecting the renderer.

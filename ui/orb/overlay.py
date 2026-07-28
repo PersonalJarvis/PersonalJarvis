@@ -1492,6 +1492,23 @@ class OrbOverlay:
         else:
             self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             self._root.configure(bg=COLOR_KEY_HEX)
+            # The colour key belongs to THIS window only. Once this Tk loop
+            # stops pumping — any long GIL-holding stretch on another thread
+            # does it — Windows paints an unlayered ``Ghost`` stand-in over the
+            # same rectangle, and the keyed-out padding arrives as an opaque
+            # black box around the mascot. Same defect as the bar's.
+            try:
+                from jarvis.core.process_utils import disable_windows_app_ghosting
+
+                disable_windows_app_ghosting()
+            except Exception:  # noqa: BLE001 — cosmetic; the orb must still boot
+                import logging
+
+                logging.getLogger("jarvis.orb").debug(
+                    "window-ghosting suppression unavailable — a stalled orb may "
+                    "show an opaque box",
+                    exc_info=True,
+                )
         # Apply the Jarvis icon BEFORE hiding from the task switcher: Windows
         # caches the taskbar entry on first show, so even a brief flash with
         # the default pythonw icon sticks. Belt-and-suspenders: stable AppID

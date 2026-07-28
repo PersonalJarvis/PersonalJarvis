@@ -739,6 +739,16 @@ class JarvisBarOverlay:
             except tk.TclError:
                 log.warning("transparentcolor unsupported — bar will show its key colour")
             root.configure(bg=COLOR_KEY_HEX)
+            # The colour key only ever applies to the window WE own. Once this
+            # Tk loop stops pumping — which any long GIL-holding stretch on
+            # another thread is enough to cause — Windows hides that window and
+            # paints an unlayered ``Ghost`` stand-in over the same rectangle,
+            # so the keyed-out padding arrives on screen as an opaque BLACK box
+            # around the pill. Turn the stand-in off rather than let a stall
+            # present itself as a rendering defect.
+            from jarvis.core.process_utils import disable_windows_app_ghosting
+
+            disable_windows_app_ghosting()
         # Window-level alpha ON TOP of the color key: the magenta stays fully
         # keyed out (verified — no bleed) while the pill itself goes
         # semi-transparent, so the desktop shows through it (glass look).
@@ -1281,7 +1291,11 @@ class JarvisBarOverlay:
                     hovered=self._hovered,
                     muted=self._muted,
                     drop_state=drop_visual,
-                    drop_elapsed=now - self._drop_visual_t0,
+                    # Same getattr guard as the level stamp above, and for the
+                    # same reason: a ``__new__``-built test/hot-reload instance
+                    # skips __init__, and a missing stamp must read as "no drop
+                    # in flight" rather than blow the frame away.
+                    drop_elapsed=now - getattr(self, "_drop_visual_t0", 0.0),
                 )
                 if getattr(self, "_mac_transparent", False):
                     # macOS: no color key — carry real per-pixel alpha instead.
@@ -1541,9 +1555,12 @@ class JarvisBarOverlay:
         retire a verdict once its animation has run out — doing it here means
         the bar also falls back out of the fast-path veto and can settle again.
         """
-        state = self._drop_visual
+        # getattr, like the level stamp in the frame loop: a ``__new__``-built
+        # test/hot-reload instance skips __init__, and an unset drop state must
+        # read as "nothing in flight" rather than kill the whole frame.
+        state = getattr(self, "_drop_visual", renderer.DROP_STATE_NONE)
         if state in (renderer.DROP_STATE_OK, renderer.DROP_STATE_REJECTED):
-            elapsed = time.perf_counter() - self._drop_visual_t0
+            elapsed = time.perf_counter() - getattr(self, "_drop_visual_t0", 0.0)
             if elapsed >= renderer.DROP_CONFIRM_TOTAL_S:
                 self._drop_visual = renderer.DROP_STATE_NONE
                 return renderer.DROP_STATE_NONE
