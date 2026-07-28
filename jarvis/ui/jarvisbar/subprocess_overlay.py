@@ -38,6 +38,13 @@ import weakref
 from collections.abc import Callable
 from typing import IO, Any
 
+# The SAME coarse-mode tuple every other layer validates against — imported,
+# never copied. ``jarvis.ui.jarvisbar.modes`` has no imports at all, so this
+# stays a pure IPC proxy with no numpy/PIL in the parent process. The
+# hand-copied predecessor is precisely why ``show("dictate")`` was a silent
+# no-op on the macOS surface for weeks (AP-4 / BUG-008).
+from jarvis.ui.jarvisbar.modes import MODES as _MODES
+
 log = logging.getLogger("jarvis.ui.jarvisbar")
 
 
@@ -64,10 +71,6 @@ def _respawn_after_backoff_weakly(
         )
         return
     surface._respawn_after_backoff(attempt)
-
-# Kept in sync with renderer.MODES without importing numpy/PIL into the
-# parent for a pure IPC proxy; the host-side bar re-validates every mode.
-_MODES = ("idle", "listen", "speak", "think")
 
 _HOST_MODULE = "jarvis.ui.jarvisbar.host"
 

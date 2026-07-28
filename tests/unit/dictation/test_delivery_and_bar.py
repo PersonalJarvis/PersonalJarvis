@@ -629,9 +629,37 @@ async def test_a_crash_inside_delivery_does_not_double_publish(
 
 
 def test_dictate_renders_as_the_equalizer() -> None:
-    """Dictation is the user talking — never the thinking indicator."""
+    """A SPEAKING dictation is the user talking — never the thinking indicator,
+    not even during a silent pause mid-sentence."""
     assert renderer.visual_mode("dictate", 99.0, hold_s=0.4) == "speak"
     assert renderer.visual_mode("dictate", 0.0, hold_s=0.4) == "speak"
+    # Not even a TTS playback flag may steal the recording look.
+    assert renderer.visual_mode("dictate", 0.0, hold_s=0.4, playback_active=True) == "speak"
+
+
+def test_the_transcribing_phase_renders_as_the_thinking_core() -> None:
+    """Recording has stopped and the mic feed is gone — the equalizer would
+    claim the bar is still listening. Decided by the mode alone, so a level
+    sample still fresh from the last word cannot overrule it."""
+    assert renderer.visual_mode("dictate_transcribing", 99.0, hold_s=0.4) == "think"
+    assert renderer.visual_mode("dictate_transcribing", 0.0, hold_s=0.4) == "think"
+
+
+def test_both_dictation_modes_open_the_pill_to_its_active_size() -> None:
+    """The hover hit-box is computed from the COARSE mode while the pill is
+    drawn from the effective one; if they disagree the user hovers a pill that
+    is not where they see it."""
+    active = renderer.target_pill_size("listen", hovered=False)
+    for mode in renderer.DICTATION_MODES:
+        assert renderer.target_pill_size(mode, hovered=False) == active
+
+
+def test_the_dictation_modes_are_accepted_by_the_surfaces() -> None:
+    """The gap that made the whole lane dead on arrival: the modes were handled
+    by the pure helpers but missing from the tuple every surface validates
+    against, so every ``show("dictate")`` was silently dropped."""
+    for mode in renderer.DICTATION_MODES:
+        assert mode in renderer.MODES
 
 
 @pytest.mark.parametrize(
@@ -658,10 +686,13 @@ def test_existing_visual_modes_are_unchanged(
 
 
 @pytest.mark.parametrize("x", [10, 100, 400, 700])
-def test_clicking_the_bar_during_dictation_does_nothing(x: int) -> None:
-    """Without this, a stray click would start a voice session mid-dictation."""
-    assert interaction.resolve_click(x, 800, "dictate", hovered=True, pill_w=400) == "none"
-    assert interaction.resolve_click(x, 800, "dictate", hovered=False) == "none"
+@pytest.mark.parametrize("mode", renderer.DICTATION_MODES)
+def test_clicking_the_bar_during_dictation_does_nothing(x: int, mode: str) -> None:
+    """Without this, a stray click would start a voice session mid-dictation —
+    and on the mute zone it would deafen Jarvis while the user is dictating.
+    Both dictation phases are inert, not just the recording one."""
+    assert interaction.resolve_click(x, 800, mode, hovered=True, pill_w=400) == "none"
+    assert interaction.resolve_click(x, 800, mode, hovered=False) == "none"
 
 
 def test_existing_click_zones_are_unchanged() -> None:

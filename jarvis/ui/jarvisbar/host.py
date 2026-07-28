@@ -92,6 +92,10 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     if op == "stop":
         return False
     if op == "show":
+        # The mode string is forwarded VERBATIM — this protocol carries no mode
+        # list of its own, so a new coarse mode reaches the hosted surface with
+        # no change here. The surface re-validates against the one canonical
+        # tuple (``jarvis.ui.jarvisbar.modes.MODES``).
         _call(surface, "show", str(msg.get("mode", "listen")))
     elif op == "hide":
         _call(surface, "hide")

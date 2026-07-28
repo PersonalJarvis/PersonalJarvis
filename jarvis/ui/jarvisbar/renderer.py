@@ -12,6 +12,9 @@ State → look:
                sparks counter-orbiting on tilted ellipses (synthetic,
                ignores level). Replaced the old travelling sine wave,
                which read as a generic-AI visual.
+- ``dictate``              → the equalizer, driven by the dictation mic level.
+- ``dictate_transcribing`` → the orbital core: recording has stopped and the
+               transcription is running, so there IS something to represent.
 
 Gold only appears during activity; idle dots stay muted.
 """
@@ -22,6 +25,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+# The coarse-mode vocabulary lives in ONE dependency-free module so the
+# numpy/PIL-free IPC proxy can import the same tuple instead of hand-copying it
+# (AP-4). ``MODES`` is re-exported here because every surface already validates
+# against ``renderer.MODES``.
+from jarvis.ui.jarvisbar.modes import (  # noqa: F401 — re-exported as renderer.MODES
+    DICTATION_MODES,
+    MODES,
+)
 
 COLOR_KEY_RGB = (255, 0, 255)
 
@@ -404,7 +416,8 @@ _N_DOTS = 7  # dots in the standby row
 _DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
 _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 
-MODES = ("idle", "listen", "speak", "think")
+# MODES / DICTATION_MODES are imported at the top of this module — see the note
+# there. Nothing in this package may restate them (test_mode_parity.py).
 
 # A level sample is trusted only this long. The feeders (mic ~30-100 ms
 # cadence, TTS ~60 ms blocks) stream continuously while sound exists; when a
@@ -479,8 +492,14 @@ def target_pill_size(
     size"), which is both a punishing target to release a file on and far too
     small to render a legible tick in. Opening on the first drag-enter turns
     the sliver into a real landing zone and gives the confirmation room to
-    show."""
-    if mode in ("listen", "speak", "think"):
+    show.
+
+    The dictation modes are ACTIVE too. Callers pass either the EFFECTIVE mode
+    (``render``, where a dictation mode has already resolved to ``speak`` /
+    ``think``) or the COARSE mode (the Qt surface's hover-footprint probe) — so
+    listing them keeps the hit-box the user can hover in step with the pill the
+    renderer actually draws during a dictation."""
+    if mode in ("listen", "speak", "think") or mode in DICTATION_MODES:
         return ACTIVE_W, ACTIVE_H
     if hovered or muted or drop_open:
         return OPEN_W, OPEN_H
@@ -543,17 +562,25 @@ def visual_mode(
     ``hold_s`` bridges the short gaps between words/sentences so the bars don't
     flap back on every micro-pause.
 
-    ``dictate`` is the fifth coarse mode (dictation runs outside the voice
-    state machine entirely). It always renders as the equalizer: dictation is
-    the user talking, the mic level is being fed, and there is nothing for a
-    thinking indicator to represent. Handled BEFORE the audio-activity branches
-    so a silent pause mid-dictation shows still bars rather than falling
-    through to the thinking core.
+    Dictation runs outside the voice state machine entirely and has two modes
+    of its own, both resolved BEFORE the audio-activity branches so neither can
+    be overruled by a stale level sample:
+
+    - ``dictate`` (the user is speaking into the dictation mic) always renders
+      as the equalizer. A SPEAKING dictation must never show the thinking core:
+      the mic level is being fed, so a silent pause mid-sentence shows still
+      bars rather than falling through and pretending to think.
+    - ``dictate_transcribing`` (the key was released, the transcription is
+      running) renders as the orbital core. Here there genuinely IS work in
+      flight to represent, and the mic feed has stopped — showing the equalizer
+      would claim the bar is still listening when it is not.
     """
     if coarse_mode == "idle":
         return "idle"
     if coarse_mode == "dictate":
         return "speak"
+    if coarse_mode == "dictate_transcribing":
+        return "think"
     if playback_active or seconds_since_audible < hold_s:
         return "speak"
     if coarse_mode == "think":

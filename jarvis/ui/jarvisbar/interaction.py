@@ -15,6 +15,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Dependency-free import (no numpy/PIL): this module stays cheap enough for the
+# IPC proxy and the pure unit tests.
+from jarvis.ui.jarvisbar.modes import DICTATION_MODES
+
 
 # --------------------------------------------------------------------------- #
 # Pure geometry helpers (no I/O)                                              #
@@ -68,15 +72,16 @@ def resolve_click(
     trap (live bug 2026-06-19): the old code hung up on ANY click in the left
     40% of the bar, decoupled from the visible affordance.
 
-    ``dictate`` (a dictation is recording) is inert on purpose: without this
-    branch it would fall through to "not active" and a stray click would START
-    A VOICE SESSION in the middle of dictating. There is always another way to
+    EVERY dictation mode (``dictate`` while recording, ``dictate_transcribing``
+    while the text is being produced) is inert on purpose: without this branch
+    they would fall through to "not active" and a stray click would START A
+    VOICE SESSION in the middle of dictating. There is always another way to
     stop — release the key, press it again in toggle mode, the Dictation view,
     or ``jarvis api dictation stop`` — so an inert bar costs nothing and cannot
     misfire.
     """
     frac = x / max(1, width)
-    if mode == "dictate":
+    if mode in DICTATION_MODES:
         return "none"
     active = mode in ("listen", "think", "speak")
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
