@@ -580,7 +580,7 @@ function prettyProviderName(id: string): string {
   const map: Record<string, string> = {
     "claude-api": "Claude (API)",
     "openrouter": "OpenRouter",
-    "ollama-local": "Ollama (lokal)",
+    "ollama-local": "Ollama (local)",
     "ollama-cloud": "Ollama (Cloud)",
     "gemini": "Gemini",
     "openai": "OpenAI",
