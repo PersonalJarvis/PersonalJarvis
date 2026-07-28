@@ -405,6 +405,15 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "The workspace is full, {max} terminals are already running.",
         "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
     },
+    # A coding CLI this workspace does not offer was named in a fleet request.
+    # Said out loud rather than dropped: a name nobody recognises used to fall
+    # out of the parse without a word, so the user counted the panes and found
+    # one missing with nothing anywhere to explain it.
+    "ide_terminal_kind_unknown": {
+        "de": "Für {name} gibt es keine Terminal-Art. Verfügbar: {available}.",  # i18n-allow
+        "en": "There is no {name} terminal kind. Available: {available}.",
+        "es": "No hay un tipo de terminal {name}. Disponibles: {available}.",
+    },
     # No workspace was open, so one was opened in the most recent folder. The
     # folder is named on purpose: it is an assumption, and hearing it is how the
     # user catches a wrong one before an agent starts working in it.

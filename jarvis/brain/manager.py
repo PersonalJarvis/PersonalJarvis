@@ -1216,6 +1216,23 @@ def _recent_agent(recent: Any) -> str:
     return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
+def _available_terminal_kinds() -> str:
+    """The coding CLIs this workspace can open, as a spoken list.
+
+    Read from the registry rather than written out here: a list kept in a
+    sentence drifts from the one the workspace actually has, and the whole
+    reason this sentence exists is to tell the user something true when they
+    named a CLI that is not on it.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        names = [agent.display_name for agent in workspace_agents.coding_agents()]
+    except Exception:  # noqa: BLE001 - a phrase must never break a turn
+        return ""
+    return ", ".join(names)
+
+
 def _terminals_spawned_line(
     names: list[str], *, requested: int, folder: str | None, lang: str
 ) -> str:
@@ -6394,6 +6411,24 @@ class BrainManager:
         #: Spoken back with the panes that DID open — a fleet that came up short
         #: without saying so is the failure this whole path is shaped around.
         refused: list[str] = []
+        # A CLI this app has no terminal kind for. It is answered even when it
+        # is the ONLY thing that was asked for, which is why it is collected
+        # before anything is opened.
+        for unknown in request.unsupported:
+            refused.append(
+                action_phrase(
+                    "ide_terminal_kind_unknown",
+                    out_lang,
+                    name=unknown,
+                    available=_available_terminal_kinds(),
+                )
+            )
+
+        if not request.groups:
+            # Nothing openable was asked for — the only CLI named is one this
+            # workspace does not have. Answering is the whole job here; opening
+            # a substitute pane would grant a request that was just refused.
+            return " ".join(refused) if refused else None
 
         try:
             if registry.session is None:

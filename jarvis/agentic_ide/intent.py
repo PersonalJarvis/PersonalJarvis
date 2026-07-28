@@ -1132,6 +1132,15 @@ class SpawnTerminalsRequest:
     utterance: str
     """The original utterance, unmodified."""
 
+    unsupported: tuple[str, ...] = ()
+    """Coding CLIs the user counted that this workspace does not offer.
+
+    Named rather than dropped. A product this app has no terminal kind for used
+    to fall out of the parse without a word — "two Claudes and one Gemini Code"
+    opened two panes, and the third was missing with nothing anywhere saying
+    why. The caller speaks these back next to the panes that did open.
+    """
+
     groups: tuple[SpawnGroup, ...] = ()
     """The requested fleet, in the order the user said it.
 
@@ -1283,13 +1292,24 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
         return 1
 
     found: list[tuple[int, SpawnGroup]] = []
-    for match in _AGENT_RE.finditer(text):
+    # Both kinds of product name in ONE pass, in speech order: the CLIs this
+    # workspace has, and the ones it does not. The second kind opens nothing,
+    # but it still SPENDS its count — otherwise "one Gemini Code terminal"
+    # would be refused by name and opened anyway as an unnamed pane, which is
+    # two answers to one request.
+    mentions = sorted(
+        [(m.start(), True, m) for m in _AGENT_RE.finditer(text)]
+        + [(m.start(), False, m) for m in _UNSUPPORTED_CLI_RE.finditer(text)],
+        key=lambda item: item[0],
+    )
+    for start, supported, match in mentions:
+        if not supported:
+            _count_before(start)
+            continue
         agent = _canonical_agent(match.group("agent"))
         if agent is None:
             continue
-        found.append(
-            (match.start(), SpawnGroup(count=_count_before(match.start()), agent=agent))
-        )
+        found.append((start, SpawnGroup(count=_count_before(start), agent=agent)))
 
     # A count that no CLI name claimed, sitting in front of the pane noun, is a
     # group of its own: "two terminals and one Codex" is three panes, and the
@@ -1383,6 +1403,58 @@ _FLEET_BRIEF_RE = re.compile(
     r"anweis\w*|beauftrag\w*|gib\w*\s+.*\baufgabe\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
+
+
+#: Coding CLIs that exist in the world but not as a terminal kind here.
+#:
+#: Matching DATA, not a wish list: every one of these is a product a user may
+#: reasonably name in a fleet request, and the point is to ANSWER for it rather
+#: than let it disappear. Spellings by ear are included for the same reason the
+#: supported CLIs carry them — a transcript writes what it hears ("Giming Code"
+#: for Gemini, maintainer report 2026-07-28).
+#:
+#: Deliberately short and unambiguous. A word that is also ordinary English
+#: ("cursor", "continue") is left out: refusing a request over a word the user
+#: did not mean as a product would be worse than the silence this replaces.
+_UNSUPPORTED_CLI_SPELLINGS: dict[str, str] = {
+    "gemini": "Gemini",
+    "gemeni": "Gemini",
+    "gimini": "Gemini",
+    "giming": "Gemini",
+    "jemini": "Gemini",
+    "antigravity": "Antigravity",
+    "aider": "Aider",
+    "windsurf": "Windsurf",
+    "copilot": "Copilot",
+}
+
+_UNSUPPORTED_CLI_RE = re.compile(
+    r"\b(?P<name>" + "|".join(sorted(_UNSUPPORTED_CLI_SPELLINGS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _unsupported_clis(text: str) -> tuple[str, ...]:
+    """Products named in ``text`` that this workspace has no terminal kind for.
+
+    Only COUNTED mentions, on the same reasoning as
+    ``_counted_agent_mentions``: "does Gemini support this?" names a product
+    without asking for a pane of it, and answering that with a refusal would be
+    a new way of getting the request wrong.
+    """
+    counts = _count_tokens(text)
+    out: list[str] = []
+    for match in _UNSUPPORTED_CLI_RE.finditer(text):
+        counted = any(
+            end <= match.start() and match.start() - end <= _COUNT_AGENT_MAX_GAP
+            for _start, end, _value in counts
+        )
+        if not counted:
+            continue
+        label = _UNSUPPORTED_CLI_SPELLINGS[match.group("name").casefold()]
+        if label not in out:
+            out.append(label)
+    return tuple(out)
 
 
 #: The verb that means a BACKGROUND worker, not a pane.
@@ -1790,6 +1862,8 @@ def detect_spawn(
 
     parse_text = addressed_text
 
+    unsupported = _unsupported_clis(parse_text)
+
     groups = _spoken_groups(parse_text)
     if groups:
         return SpawnTerminalsRequest(
@@ -1797,6 +1871,21 @@ def detect_spawn(
             agent=groups[0].agent,
             utterance=text,
             groups=groups,
+            unsupported=unsupported,
+        )
+
+    if unsupported and not groups:
+        # Everything that was counted was counted for a CLI this workspace does
+        # not have. Falling through would read the number again and open that
+        # many panes of whatever CLI happened to be inherited — refusing the
+        # request by name and then granting it anyway, which is two answers to
+        # one question. No groups means no panes; the caller says why.
+        return SpawnTerminalsRequest(
+            count=0,
+            agent=None,
+            utterance=text,
+            groups=(),
+            unsupported=unsupported,
         )
 
     agent_match = _AGENT_RE.search(parse_text)
@@ -1809,6 +1898,7 @@ def detect_spawn(
         agent=agent,
         utterance=text,
         groups=(SpawnGroup(count=count, agent=agent),),
+        unsupported=unsupported,
     )
 
 

@@ -170,3 +170,40 @@ def test_spawning_agents_is_still_a_background_request() -> None:
     """"Spawn" means a worker, even when it names a coding CLI (AP-5 margin)."""
     # i18n-allow: spoken input under test
     assert intent.detect_spawn("Spawne 5 Claude Codes") is None
+
+
+# ------------------------------------------------ CLIs this workspace has not
+# Maintainer decision 2026-07-28: the workspace keeps its five coding CLIs, and
+# a request for one it does not have gets an honest answer. Silence was the old
+# behaviour and the worst of the three options — the pane count came up short
+# with nothing anywhere saying why.
+
+
+def test_a_cli_the_workspace_does_not_have_is_named_not_dropped() -> None:
+    request = intent.detect_spawn(
+        "open two Claude Code terminals and one Gemini terminal"
+    )
+    assert request is not None
+    assert [(g.count, g.agent) for g in request.groups] == [(2, "claude")]
+    assert request.unsupported == ("Gemini",)
+
+
+def test_a_misheard_unsupported_name_is_recognised_too() -> None:
+    request = intent.detect_spawn("open one Giming Code terminal and two Codex")
+    assert request is not None
+    assert request.unsupported == ("Gemini",)
+    assert [(g.count, g.agent) for g in request.groups] == [(2, "codex")]
+
+
+def test_asking_only_for_a_cli_that_is_missing_opens_nothing() -> None:
+    """Refusing by name and opening a substitute would be two answers."""
+    request = intent.detect_spawn("open three Gemini terminals")
+    assert request is not None
+    assert request.groups == ()
+    assert request.count == 0
+    assert request.unsupported == ("Gemini",)
+
+
+def test_naming_an_unsupported_cli_without_counting_it_is_not_a_request() -> None:
+    # i18n-allow: spoken input under test
+    assert intent.detect_spawn("unterstützt Gemini das eigentlich auch") is None
