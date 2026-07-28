@@ -280,3 +280,37 @@ def test_concurrent_recording_loses_no_count(tmp_path: Path) -> None:
     totals = DictationStats(path).summary()["totals"]
     assert totals["dictations"] == workers * rounds
     assert totals["words"] == workers * rounds * 3
+
+
+def test_entries_written_before_word_count_existed_still_count() -> None:
+    """A history from before the stats feature must not read as "never dictated".
+
+    Field report 2026-07-28: every row already on disk carried ``word_count=0``
+    because the field did not exist when it was written, and the derived
+    summary skipped anything with no words. The panel therefore showed 0 words,
+    0 dictations and a 0-day streak while the list right below it displayed
+    seven real dictations — the single most visible number in the section,
+    wrong for every existing install.
+    """
+    from jarvis.dictation.stats import summarize_entries
+
+    class _Row:
+        def __init__(self, text: str, word_count: int, created_at: str) -> None:
+            self.text = text
+            self.raw_text = text
+            self.word_count = word_count
+            self.created_at = created_at
+            self.duration_s = 2.0
+
+    now = datetime.now(UTC).isoformat()
+    summary = summarize_entries(
+        [
+            _Row("hello there friend", 0, now),  # pre-upgrade row
+            _Row("counted already", 2, now),  # post-upgrade row
+            _Row("", 0, now),  # genuinely empty: still nothing
+        ]
+    )
+
+    assert summary["totals"]["dictations"] == 2
+    assert summary["totals"]["words"] == 5
+    assert summary["today"]["words"] == 5

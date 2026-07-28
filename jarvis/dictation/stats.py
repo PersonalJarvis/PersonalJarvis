@@ -380,6 +380,14 @@ def summarize_entries(
     for entry in entries or ():
         words = _as_int(getattr(entry, "word_count", 0))
         if words <= 0:
+            # Entries recorded before ``word_count`` existed carry a zero they
+            # never earned, and skipping them made a full history read as "you
+            # have never dictated anything" — the one number this panel exists
+            # to show. Counting the stored transcript recovers them; an entry
+            # that genuinely holds no text (failed, cancelled, empty) still
+            # counts as nothing and is skipped below.
+            words = _words_in_text(entry)
+        if words <= 0:
             continue
         day = local_day(getattr(entry, "created_at", "")) or today_key()
         seconds = max(0.0, _as_float(getattr(entry, "duration_s", 0.0)))
@@ -396,6 +404,28 @@ def summarize_entries(
     return _summary_payload(
         source="window", totals=totals, days=days, by_day_limit=by_day_limit
     )
+
+
+def _words_in_text(entry: Any) -> int:
+    """Word count of an entry's transcript, for rows that never stored one.
+
+    Uses the SAME counter the cleanup and the sidecar use, so a back-filled
+    number is comparable with a recorded one rather than merely similar.
+    Imported lazily: this module is read by REST handlers, and the cleanup
+    module carries the per-language filler tables.
+    """
+    text = str(getattr(entry, "text", "") or "") or str(
+        getattr(entry, "raw_text", "") or ""
+    )
+    if not text.strip():
+        return 0
+    try:
+        from jarvis.dictation.cleanup import count_words
+
+        return max(0, int(count_words(text)))
+    except Exception:  # noqa: BLE001 — a missing counter is "no words", never a 500
+        log.debug("word back-fill failed for a history entry", exc_info=True)
+        return 0
 
 
 def _as_int(value: Any) -> int:
