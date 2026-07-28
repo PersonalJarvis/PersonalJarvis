@@ -237,10 +237,10 @@ def test_a_configured_glm_pane_carries_the_endpoint_and_hides_a_stray_key(
 ) -> None:
     from jarvis.agentic_ide import session as ide_session
 
-    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: "tok")
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: "tok")  # noqa: S105
     overlay = ide_session.agent_spawn_overlay("glm")
     assert overlay["ANTHROPIC_BASE_URL"].startswith("http")
-    assert overlay["ANTHROPIC_AUTH_TOKEN"] == "tok"
+    assert overlay["ANTHROPIC_AUTH_TOKEN"] == "tok"  # noqa: S105
     assert int(overlay["API_TIMEOUT_MS"]) >= 60_000
     # Empty means "remove from the child": a host key would otherwise outrank
     # the token and the pane would quietly answer from the other vendor.
@@ -262,10 +262,10 @@ def test_the_glm_environment_pins_no_model_the_user_did_not_choose(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Vendor docs disagree on the ids, so a guessed default fails at request time."""
-    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: "tok")
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: "tok")  # noqa: S105
     env = workspace_agents.glm_spawn_env()
     assert env is not None
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "tok"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "tok"  # noqa: S105
     assert "ANTHROPIC_DEFAULT_SONNET_MODEL" not in env
 
 

@@ -26,7 +26,6 @@ from jarvis.workspace.agents import (
     register_agent,
 )
 
-
 # The entries this build promises. A SUPERSET assertion, deliberately: pinning
 # the exact set is what froze the registry at two providers and turned every
 # later addition into a test edit, which is the opposite of what an open
