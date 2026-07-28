@@ -228,6 +228,142 @@ def test_the_route_serves_every_action_even_though_settings_shows_two() -> None:
         assert action in body["defaults"], action
 
 
+def test_put_rejects_a_left_alt_spelling_of_a_bound_right_alt_shortcut() -> None:
+    """THE collision bug: the route compared RAW tokens, so two spellings of
+    ONE registration both passed. ``ctrl+left_alt+k`` and ``ctrl+right_alt+k``
+    normalize to the same chord (Windows cannot tell the Alt keys apart), so
+    saving both left the user with two bound-looking rows, one of them silently
+    dead. The route must delegate to ``combos_collide`` and refuse with a
+    reason that names the other action."""
+    client = _client()
+    assert (
+        client.put(
+            "/api/settings/keybinds",
+            json={"action": "hangup", "hotkey": "ctrl+right_alt+k", "persist": False},
+        ).status_code
+        == 200
+    )
+
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "ctrl+left_alt+k", "persist": False},
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "hangup" in detail
+    assert "ctrl+right_alt+k" in detail
+
+
+def test_put_rejects_a_super_spelling_of_a_bound_win_shortcut() -> None:
+    """Same root cause, other fold: win / super / meta are one key."""
+    client = _client()
+    assert (
+        client.put(
+            "/api/settings/keybinds",
+            json={"action": "hangup", "hotkey": "ctrl+win+k", "persist": False},
+        ).status_code
+        == 200
+    )
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "ctrl+super+k", "persist": False},
+    )
+    assert resp.status_code == 400
+    assert "hangup" in resp.json()["detail"]
+
+
+def test_suggestions_are_filtered_on_the_normalized_collision_rule(monkeypatch) -> None:
+    """A quick-pick that merely SPELLS a bound chord differently is still a
+    guaranteed 400 on click, so it must not be offered."""
+    from jarvis.ui.web import settings_routes
+
+    monkeypatch.setattr(
+        settings_routes, "_KEYBIND_SUGGESTIONS", ["ctrl+left_alt+j", "ctrl+shift+j"]
+    )
+    body = _client().get("/api/settings/keybinds").json()
+    # dictate ships as ctrl+right_alt+j — the same registration.
+    assert body["suggestions"] == ["ctrl+shift+j"]
+
+
+# ----------------------------------------------------------------------
+# Mouse-button shortcuts: offered only where the host can actually fire one.
+# ----------------------------------------------------------------------
+
+
+def _patch_mouse_probe(monkeypatch, supported: bool, reason: str = "") -> None:
+    """Pin the capability probe so the assertions do not depend on the host."""
+    from jarvis.trigger import hotkey as hotkey_mod
+
+    monkeypatch.setattr(hotkey_mod, "mouse_hotkeys_available", lambda *a, **k: (supported, reason))
+
+
+def test_get_reports_mouse_button_support_from_the_capability_probe(monkeypatch) -> None:
+    """The UI hides the mouse cluster on a host that cannot fire one; it can
+    only do that if the route SERVES the probe's verdict."""
+    _patch_mouse_probe(monkeypatch, True)
+    body = _client().get("/api/settings/keybinds").json()
+    assert body["mouse_buttons"] == {"supported": True, "reason": ""}
+
+
+def test_get_reports_an_honest_english_reason_when_mouse_is_unsupported(
+    monkeypatch,
+) -> None:
+    _patch_mouse_probe(
+        monkeypatch,
+        False,
+        "Wayland does not let an application watch the mouse buttons globally.",
+    )
+    body = _client().get("/api/settings/keybinds").json()
+    assert body["mouse_buttons"]["supported"] is False
+    assert "Wayland" in body["mouse_buttons"]["reason"]
+
+
+def test_put_refuses_a_mouse_shortcut_the_host_can_never_fire(monkeypatch) -> None:
+    """Accepting it would leave the user with a shortcut that looks bound and
+    does nothing — the exact silent dishonesty the probe exists to prevent."""
+    _patch_mouse_probe(monkeypatch, False, "Mouse-button shortcuts need the pynput package.")
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "ctrl+alt+mouse_x1", "persist": False},
+    )
+    assert resp.status_code == 400
+    assert "pynput" in resp.json()["detail"]
+
+
+def test_put_refuses_an_ALIAS_spelling_of_an_unsupported_mouse_button(
+    monkeypatch,
+) -> None:
+    """``mouse_back`` is ``mouse_x1`` — the check reads the NORMALIZED tokens,
+    so a friendlier spelling cannot walk around the probe."""
+    _patch_mouse_probe(monkeypatch, False, "This system cannot watch mouse buttons.")
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "ctrl+alt+mouse_back", "persist": False},
+    )
+    assert resp.status_code == 400
+
+
+def test_put_accepts_a_mouse_shortcut_where_the_probe_says_it_works(monkeypatch) -> None:
+    _patch_mouse_probe(monkeypatch, True)
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "ctrl+alt+mouse_x1", "persist": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hotkey"] == "ctrl+alt+mouse_x1"
+
+
+def test_put_does_not_consult_the_mouse_probe_for_a_key_only_combo(monkeypatch) -> None:
+    """A keyboard shortcut must stay saveable on a host without mouse support —
+    the probe gates the mouse cluster, never the whole route."""
+    _patch_mouse_probe(monkeypatch, False, "No global mouse buttons here.")
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "call", "hotkey": "f7+f8", "persist": False},
+    )
+    assert resp.status_code == 200
+
+
 def test_retired_ptt_hotkey_route_is_not_mounted() -> None:
     assert _client().get("/api/settings/ptt-hotkey").status_code == 404
 

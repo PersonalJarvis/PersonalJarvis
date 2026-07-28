@@ -1263,27 +1263,25 @@ _KEYBIND_SUGGESTIONS = [
 ]
 
 
-def _combo_keys(combo: str) -> set[str]:
-    """The key SET of a combo — the unit the collision rule compares."""
-    return {p.strip() for p in str(combo or "").strip().lower().split("+") if p.strip()}
-
-
 def _available_suggestions(bound: dict[str, str]) -> list[str]:
     """Quick-picks minus everything that would be rejected on save.
 
-    The collision rule refuses a combo whose key set is a subset or superset of
-    another action's. Offering such a chord as a one-click suggestion is a
-    guaranteed 400 the moment the user clicks it, so it is filtered out here
-    instead — the server owns the rule, so the server owns the list.
+    The collision rule lives in ONE place —
+    ``jarvis.trigger.hotkey.combos_collide`` — and this list must be filtered
+    by exactly that function, never by a hand-rolled token comparison. A raw
+    token comparison here would leave a quick-pick in the list that the save
+    route then refuses (``ctrl+left_alt+…`` and ``ctrl+right_alt+…`` are the
+    same registration), which is a guaranteed 400 the moment the user clicks
+    it. The server owns the rule, so the server owns the list.
     """
-    taken = [_combo_keys(c) for c in bound.values() if c and c.strip()]
-    out: list[str] = []
-    for suggestion in _KEYBIND_SUGGESTIONS:
-        keys = _combo_keys(suggestion)
-        if any(keys <= other or other <= keys for other in taken):
-            continue
-        out.append(suggestion)
-    return out
+    from jarvis.trigger.hotkey import combos_collide
+
+    taken = [c for c in bound.values() if c and c.strip()]
+    return [
+        suggestion
+        for suggestion in _KEYBIND_SUGGESTIONS
+        if not any(combos_collide(suggestion, other) for other in taken)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1326,6 +1324,7 @@ class KeybindBody(BaseModel):
 async def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
     from jarvis.core.config_writer import KEYBIND_TOML_KEY
+    from jarvis.trigger.hotkey import mouse_hotkeys_available
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1335,6 +1334,13 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
     current = _keybind_values(trig)
+    # Can THIS host fire a mouse-button shortcut at all? Asked of the one
+    # capability probe, never of a platform name (AP-21/AP-23): it is false on
+    # Wayland, on macOS without pyobjc Quartz and on Linux without the opt-in
+    # pynput extra. Without this field the picker offered mouse buttons
+    # everywhere and they silently never fired on those hosts; with it the UI
+    # hides the cluster and prints the probe's own English sentence.
+    mouse_ok, mouse_reason = mouse_hotkeys_available()
     return {
         "keybinds": current,
         # DERIVED, never a hand-written dict. A literal map here is the AP-4
@@ -1345,6 +1351,7 @@ async def get_keybinds(request: Request) -> dict[str, object]:
             action: str(getattr(d, field, "")) for action, field in KEYBIND_TOML_KEY.items()
         },
         "suggestions": _available_suggestions(current),
+        "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
         "restart_required": restart_required,
     }
 
@@ -1352,7 +1359,13 @@ async def get_keybinds(request: Request) -> dict[str, object]:
 @router.put("/keybinds")
 async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
-    from jarvis.trigger.hotkey import validate_hotkey
+    from jarvis.trigger.hotkey import (
+        MOUSE_BUTTON_TOKENS,
+        combos_collide,
+        mouse_hotkeys_available,
+        normalized_combo_tokens,
+        validate_hotkey,
+    )
 
     action = body.action.strip().lower()
     if action not in KEYBIND_ACTIONS:
@@ -1370,32 +1383,40 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         if not ok:
             raise HTTPException(status_code=400, detail=reason)
 
-        # Collision check: one chord can't both answer and hang up. Exact
-        # equality is not enough — the polling hotkey backend matches a combo
-        # as soon as its keys are down, so a key-set SUBSET of another
-        # action's combo fires both (call=f1 + hangup=f1+f2 → F1+F2 triggers
-        # call AND hangup). Reject any subset/superset relation between the
-        # key sets, in both directions.
-        new_keys = {p.strip() for p in hotkey.split("+") if p.strip()}
+        # A mouse button is only offerable where the host can actually watch
+        # the buttons globally. Asked of the ONE capability probe, never of a
+        # platform name (AP-21/AP-23): accepting a shortcut that can never
+        # fire here — Wayland, macOS without pyobjc Quartz, Linux without the
+        # pynput extra — is the silent dishonesty this project refuses. The
+        # tokens are read from the NORMALIZED combo so the alias spellings
+        # (``mouse_back`` → ``mouse_x1``) are caught too.
+        if normalized_combo_tokens(hotkey) & MOUSE_BUTTON_TOKENS:
+            mouse_ok, mouse_reason = mouse_hotkeys_available()
+            if not mouse_ok:
+                raise HTTPException(status_code=400, detail=mouse_reason)
+
+        # Collision check: one chord can't both answer and hang up. Delegated
+        # to ``combos_collide`` — the ONE place that knows two shortcuts are
+        # the same registration. Comparing RAW tokens here (what this route
+        # used to do) accepted ``ctrl+left_alt+j`` alongside
+        # ``ctrl+right_alt+j``: both normalize to the same chord, so the
+        # second registration lost the race and that action silently never
+        # fired. The rule itself is unchanged — identical sets collide, and so
+        # does any subset/superset pair, because the polling backend matches a
+        # combo as soon as its keys are down (call=f1 + hangup=f1+f2 → F1+F2
+        # triggers both). An unbound other action never collides.
         for other_action, other_combo in _keybind_values(trig).items():
             if other_action == action:
                 continue
-            other_keys = {
-                p.strip() for p in other_combo.strip().lower().split("+") if p.strip()
-            }
-            if not other_keys:
-                # The other action is itself unbound (Clear button) — an
-                # empty key-set is a subset of every combo, so without this
-                # guard EVERY save would be rejected as "overlapping" the
-                # moment any one action is cleared.
-                continue
-            if new_keys <= other_keys or other_keys <= new_keys:
+            if combos_collide(hotkey, other_combo):
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         f"'{hotkey}' overlaps with '{other_action}' "
-                        f"('{other_combo.strip().lower()}') — pressing one would "
-                        "trigger both. Pick keys that don't contain each other."
+                        f"('{other_combo.strip().lower()}') — the two end up as "
+                        "the same shortcut, so pressing it would trigger both "
+                        "(or one of them would never fire). Pick keys that "
+                        "don't contain each other."
                     ),
                 )
     # else: hotkey == "" is an explicit "unbind this action" request (Settings
@@ -1920,13 +1941,13 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
 async def get_input_isolation() -> dict[str, object]:
     """Report whether outside input software can reach this app's window.
 
-    Dictation apps (Wispr Flow, Voice Access, superwhisper, ...), text expanders,
-    clipboard managers, and password-manager auto-type all inject synthetic
-    keystrokes into the focused window and locate the field through the OS
-    accessibility tree. Windows blocks BOTH for any window owned by a
-    higher-integrity process — so while this app runs elevated they appear to do
-    nothing here while still working in every other app, with no error anywhere
-    (Windows does not report a UIPI drop to the sender).
+    Third-party dictation and speech-to-text tools, text expanders, clipboard
+    managers, and password-manager auto-type all inject synthetic keystrokes
+    into the focused window and locate the field through the OS accessibility
+    tree. Windows blocks BOTH for any window owned by a higher-integrity
+    process — so while this app runs elevated they appear to do nothing here
+    while still working in every other app, with no error anywhere (Windows
+    does not report a UIPI drop to the sender).
 
     Deliberately cheap, uncached, and unauthenticated-safe: it reads only this
     process's own privilege state, so the desktop UI can poll it on mount.
