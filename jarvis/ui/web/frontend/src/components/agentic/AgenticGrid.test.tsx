@@ -1796,3 +1796,62 @@ describe("the workspace header row", () => {
     expect(screen.getByTestId("agentic-toolbar").textContent).toContain("project");
   });
 });
+
+/**
+ * Panes arrive from outside this grid — spoken across the room, or from the
+ * CLI — so nothing draws the user's eye to the change, and a workspace taller
+ * than its viewport puts the new pane below the fold entirely. Reported
+ * 2026-07-28 as terminals that "just don't load": they had loaded, off-screen
+ * and unannounced.
+ */
+describe("panes that appear from outside the grid", () => {
+  it("scrolls the newest pane into view and marks what just arrived", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    const grid = (session: SessionState) => (
+      <AgenticGrid
+        session={session}
+        focusMode={false}
+        onToggleFocus={vi.fn()}
+        onClose={vi.fn()}
+        onSessionChanged={vi.fn()}
+      />
+    );
+
+    const view = render(
+      grid(
+        sessionWith([
+          ["T1", 0],
+          ["T2", 1],
+        ]),
+      ),
+    );
+
+    // Nothing was announced on mount: a restored workspace's panes are not news.
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    view.rerender(
+      grid(
+        sessionWith([
+          ["T1", 0],
+          ["T2", 1],
+          ["T3", 2],
+          ["T4", 3],
+        ]),
+      ),
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    // The panes that arrived wear a ring; the ones that were already there
+    // must not, or "what is new" says nothing at all.
+    expect(screen.getByTestId("pane-cell-T4").className).toContain("ring-2");
+    expect(screen.getByTestId("pane-cell-T3").className).toContain("ring-2");
+    expect(screen.getByTestId("pane-cell-T1").className).not.toContain("ring-2");
+
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+});

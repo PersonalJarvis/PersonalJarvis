@@ -569,3 +569,79 @@ describe("pane refit", () => {
     });
   });
 });
+
+/**
+ * A pane opened by voice used to be an empty black rectangle for seconds on
+ * end, and "open two more terminals" therefore looked like it had silently
+ * failed (maintainer report 2026-07-28). The pane now says it is starting until
+ * its agent draws something.
+ */
+describe("pane start-up feedback", () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver = ResizeObserverHarness;
+    terminalHarness.handlers.current = null;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("says which CLI it is starting while the pane is still blank", () => {
+    render(
+      <AgenticTerminal
+        name="T5"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    expect(screen.getByTestId("agentic-pane-starting-T5").textContent).toContain(
+      "Starting Claude Code",
+    );
+  });
+
+  it("gets out of the way as soon as the agent draws its first byte", () => {
+    render(
+      <AgenticTerminal
+        name="T5"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.(
+        "Claude Code v2.1.220" as never,
+      );
+    });
+
+    expect(screen.queryByTestId("agentic-pane-starting-T5")).toBeNull();
+  });
+
+  /**
+   * The overlay must never cover a pane the user could otherwise act on: an
+   * exited or unreachable pane has a restart button and a reason of its own,
+   * and a hopeful spinner over either would be a lie.
+   */
+  it("stands down when the pane reports trouble rather than progress", () => {
+    render(
+      <AgenticTerminal
+        name="T5"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    act(() => {
+      terminalHarness.handlers.current?.onTrouble?.(
+        "This terminal is no longer part of the open workspace." as never,
+        false as never,
+      );
+    });
+
+    expect(screen.queryByTestId("agentic-pane-starting-T5")).toBeNull();
+  });
+});

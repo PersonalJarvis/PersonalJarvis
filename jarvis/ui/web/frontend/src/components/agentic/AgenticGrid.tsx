@@ -907,6 +907,46 @@ export function AgenticGrid({
   );
 
   /*
+   * A pane that appears has to be SEEN appearing.
+   *
+   * Panes arrive from outside this grid — "open two more Claude Code terminals"
+   * spoken across the room, or the CLI — and the user is not the one who
+   * pressed anything, so nothing draws their eye to the change. Worse, a
+   * workspace taller than its viewport puts the new pane BELOW the fold, where
+   * the honest answer to "did that work?" is a screen that looks untouched.
+   * Reported 2026-07-28 as terminals that "just don't load": they had loaded,
+   * off-screen and unannounced.
+   *
+   * Two things, both brief: the newest pane is scrolled to, and every pane that
+   * just arrived wears a ring for a moment. The ring is on the CELL rather than
+   * inside the terminal so it cannot be mistaken for the focus border, and it
+   * expires on its own — a permanent marker would become furniture.
+   */
+  const [justOpened, setJustOpened] = useState<Set<string>>(() => new Set());
+  // Null until the first render has been seen: on mount every pane is "new",
+  // and announcing a restored workspace's eight panes would be a light show.
+  const knownPanes = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const names = session.terminals.map((term) => term.name);
+    const known = knownPanes.current;
+    knownPanes.current = new Set(names);
+    if (known === null) return;
+    const fresh = names.filter((name) => !known.has(name));
+    if (fresh.length === 0) return;
+    setJustOpened(new Set(fresh));
+    // The LAST one: panes are appended, so the newest is the one whose arrival
+    // could have pushed the grid past its viewport. Probed rather than assumed —
+    // `scrollIntoView` is absent in jsdom and in some embedded WebViews, and the
+    // ring below is the half of this that matters most anyway.
+    const newest = paneNodes.current.get(fresh[fresh.length - 1]);
+    if (typeof newest?.scrollIntoView === "function") {
+      newest.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
+    return () => window.clearTimeout(timer);
+  }, [session.terminals]);
+
+  /*
    * When a pane may be picked up at all.
    *
    * Not while a pane is maximized (the others are hidden with CSS, so there is
@@ -1402,6 +1442,12 @@ export function AgenticGrid({
                 "absolute min-h-0 min-w-0 rounded-lg",
                 selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                // Just arrived — see `justOpened`. Second to the selection ring
+                // deliberately: selection is a thing the user is DOING, and it
+                // must keep its own answer while panes come and go.
+                justOpened.has(term.name) &&
+                  !selectedTerminals.has(term.name) &&
+                  "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
                 maximized !== null && !isMaximized && "hidden",
               )}
               style={isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}

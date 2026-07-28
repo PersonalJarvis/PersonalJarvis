@@ -79,6 +79,7 @@ import { robustPaste } from "@/lib/clipboard";
 import { installPasteBridge } from "./terminalPaste";
 import { createKeyEventChain } from "./terminalKeyChain";
 import { installNewlineBridge } from "./terminalNewline";
+import { cancelPaneReflow, queuePaneReflow } from "./paneReflowQueue";
 import {
   boxOnScreen,
   OffscreenBuffer,
@@ -291,6 +292,22 @@ export function AgenticTerminal({
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
   const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
+  /*
+   * Has this pane's agent drawn anything yet?
+   *
+   * A pane opened by voice is an EMPTY BLACK RECTANGLE for several seconds: the
+   * grid renders it the moment the workspace state arrives, and the CLI inside
+   * it only paints once the socket is up, a cold-start slot is free and the
+   * process has booted — measured at 2.6-2.8 s on a healthy machine, longer
+   * while the grid is busy relaying itself out. Nothing said so, so "open two
+   * more terminals" looked like it had silently failed and the panes were
+   * closed and asked for again (maintainer report 2026-07-28).
+   *
+   * Flipped by the first byte the agent writes, never back — a pane that has
+   * painted once is a pane the user can read, whatever its socket does later.
+   * Reconnects therefore stay quiet: the replayed screen is already there.
+   */
+  const [painted, setPainted] = useState(false);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -311,6 +328,10 @@ export function AgenticTerminal({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    // A restart builds a brand-new terminal on a blank screen, so the pane owes
+    // the user the same "it is coming up" answer it owed on its first mount.
+    setPainted(false);
 
     const term = new Terminal({
       convertEol: false,
@@ -517,6 +538,12 @@ export function AgenticTerminal({
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
     const writeToPane = (text: string) => {
+      if (!text) return;
+      // The first byte is what retires the "starting" overlay — and it is taken
+      // HERE rather than at the socket, so a pane whose output is parked
+      // offscreen still counts as painted. It has a screen; nobody is looking
+      // at it. Cheap to call per chunk: React bails out on an unchanged value.
+      setPainted(true);
       if (!paneVisible) recheckParked();
       if (paneVisible) {
         term.write(text);
@@ -672,6 +699,11 @@ export function AgenticTerminal({
     // sends a PTY resize the agent redraws for. Unthrottled that is the visible
     // flicker while resizing.
     let resizeTimer: number | undefined;
+    // The queued form of `sendResize`, kept as ONE stable function so the queue
+    // can recognise this pane's pending reflow — both to skip a duplicate and
+    // to drop it when the pane goes away. See ./paneReflowQueue for why panes
+    // must not reflow in the same frame as each other.
+    const reflow = () => sendResize();
     const scheduleResize = () => {
       // Nothing at all while a seam or the prompt bar is being dragged: the
       // pane is mid-gesture, every size it could measure is about to be
@@ -681,7 +713,7 @@ export function AgenticTerminal({
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         resizeTimer = undefined;
-        sendResize();
+        queuePaneReflow(reflow);
       }, 80);
     };
 
@@ -753,6 +785,9 @@ export function AgenticTerminal({
     return () => {
       disposed = true;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+      // A queued reflow outlives the pane by up to a frame, and would then fit
+      // a disposed terminal inside a detached element.
+      cancelPaneReflow(reflow);
       window.removeEventListener("resize", scheduleResize);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
@@ -995,6 +1030,30 @@ export function AgenticTerminal({
           epoch={termEpoch}
           appearance={appearance}
         />
+        {/*
+          The pane says it is starting, instead of being a black rectangle.
+
+          Only until the agent's first byte, and only while nothing has gone
+          wrong: an exited or unreachable pane has its own, more specific
+          answer in the header and must not be covered by a hopeful spinner.
+          `pointer-events-none` throughout — the terminal underneath keeps
+          every click and keystroke, so typing into a pane that is still
+          booting behaves exactly as it did before.
+        */}
+        {!painted && visibleStatus === "connecting" && (
+          <div
+            data-testid={`agentic-pane-starting-${name}`}
+            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+          >
+            <div
+              className="flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm text-muted-foreground"
+              style={{ background: chrome.shell, borderColor: chrome.border }}
+            >
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span>Starting {displayName}…</span>
+            </div>
+          </div>
+        )}
       </div>
       {(dragging || attaching) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
