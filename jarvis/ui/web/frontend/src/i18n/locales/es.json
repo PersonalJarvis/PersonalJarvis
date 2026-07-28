@@ -2974,7 +2974,11 @@
       "deactivate_title": "¿Volver al wiki normal?",
       "deactivate_body": "No se borra nada: cada elemento ingerido, cada embedding y cada fuente permanecen en el disco. El modo Ultra solo se pausa, y al reactivarlo continúa exactamente donde lo dejaste.",
       "deactivate_confirm": "Cambiar a Normal",
-      "cancel": "Cancelar"
+      "cancel": "Cancelar",
+      "status_unknown": "El modo del wiki aún no se puede leer — la aplicación todavía está arrancando. Se vuelve a intentar.",
+      "probing": "Comprobando qué modo del wiki está activo…",
+      "probe_stalled": "El modo del wiki sigue sin poder leerse — el backend no responde. No se cambió nada; tu modo y sus ajustes siguen intactos.",
+      "probe_retry": "Comprobar de nuevo"
     },
     "panel": {
       "tab_ask": "Preguntar",

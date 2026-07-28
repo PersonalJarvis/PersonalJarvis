@@ -629,7 +629,10 @@ def test_routes_are_honest_while_the_service_is_unwired(env) -> None:
         assert status.status_code == 200
         body = status.json()
         assert body["started"] is False
-        assert body["slots"] == {}
+        # The stored CHOICES are still known (they live in the config, not in
+        # the service), and nothing claims to be ready.
+        assert body["slots"]["embedding"]["ready"] is False
+        assert body["slots"]["storage"]["ready"] is False
         assert body["sources"] == []
         assert body["pipeline"]["running"] is False
         assert body["pipeline"]["state"] == "paused"
@@ -638,6 +641,58 @@ def test_routes_are_honest_while_the_service_is_unwired(env) -> None:
         assert "search_legs" in body
     finally:
         env.server.app.state.ultrawiki = env.service
+
+
+def test_status_reports_the_stored_choices_while_the_service_is_unwired(
+    env,
+) -> None:
+    """A restart must not look like a fresh install.
+
+    The window comes back before the backend finishes starting, so the very
+    first `/status` of a session is answered with `app.state.ultrawiki` still
+    `None`. When that answer carried no slots, the Normal/Ultra switch read
+    "never configured" and reopened the ONE-TIME activation wizard on an
+    install that had been running Ultra for weeks — offering to re-pick the
+    embedding model, which re-embeds the whole corpus.
+    """
+    _activate(env)
+    env.server.app.state.ultrawiki = None
+    try:
+        body = env.client.get("/api/ultrawiki/status").json()
+        # The mode itself survives: it is read from the config, not the service.
+        assert body["enabled"] is True
+        # And so does the answer the wizard gate depends on.
+        assert body["configured"] is True
+        assert body["slots"]["embedding"]["provider"] == "gemini"
+        assert body["slots"]["embedding"]["model"] == "fake-embed"
+        assert body["slots"]["storage"]["configured"] == "sqlite"
+    finally:
+        env.server.app.state.ultrawiki = env.service
+
+
+def test_status_reports_not_configured_before_the_first_activation(env) -> None:
+    """The flag is a real answer in both directions — a fresh install still
+    gets the wizard."""
+    body = env.client.get("/api/ultrawiki/status").json()
+    assert body["configured"] is False
+    assert body["enabled"] is False
+
+
+def test_status_keeps_reporting_configured_after_switching_back_to_normal(
+    env,
+) -> None:
+    """Deactivating is not un-configuring (D-9).
+
+    Switching to Normal and back must re-activate with the stored choices,
+    never walk the user through the one-time wizard again.
+    """
+    _activate(env)
+    assert env.client.post("/api/ultrawiki/deactivate").status_code == 200
+
+    body = env.client.get("/api/ultrawiki/status").json()
+    assert body["enabled"] is False
+    assert body["configured"] is True
+    assert body["slots"]["embedding"]["provider"] == "gemini"
 
 
 # ---------------------------------------------------------------------------

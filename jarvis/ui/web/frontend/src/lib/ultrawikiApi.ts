@@ -440,6 +440,16 @@ export interface UltraWikiSearchLeg {
 
 export interface UltraWikiStatus {
   enabled: boolean;
+  /**
+   * Has the one-time activation wizard ever completed on this install?
+   * Answered from the stored config (`jarvis/ui/web/ultrawiki_routes.py::
+   * _is_configured`), so it is the same answer while the app is still
+   * booting. NEVER derive this from `slots.embedding.provider`: the slot
+   * report needs the running service, and reading its emptiness as "never
+   * configured" is what reopened the wizard after every restart.
+   * Optional so an older backend simply reads as "unknown" here.
+   */
+  configured?: boolean;
   started: boolean;
   db_backend: string;
   backend_in_use: string;

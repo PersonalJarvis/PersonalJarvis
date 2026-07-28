@@ -2975,7 +2975,11 @@
       "deactivate_title": "Switch back to the normal wiki?",
       "deactivate_body": "Nothing is deleted: every ingested item, embedding, and source stays on disk. Ultra mode only pauses, and switching it back on picks up exactly where you left off.",
       "deactivate_confirm": "Switch to Normal",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "status_unknown": "The wiki mode is not readable yet — the app is still starting. Trying again.",
+      "probing": "Checking which wiki mode is active…",
+      "probe_stalled": "The wiki mode is still not readable — the backend has not answered. Nothing was changed; your mode and its settings are safe.",
+      "probe_retry": "Check again"
     },
     "panel": {
       "tab_ask": "Ask",

@@ -43,7 +43,10 @@ import { BacklinksPanel } from "@/components/wiki/BacklinksPanel";
 import { ObsidianStatus } from "@/components/wiki/ObsidianStatus";
 import { ObsidianSetupDialog } from "@/components/wiki/ObsidianSetupDialog";
 import { UltraModeSwitch } from "@/components/ultrawiki/UltraModeSwitch";
-import { fetchUltraWikiStatus } from "@/lib/ultrawikiApi";
+import {
+  fetchUltraWikiStatus,
+  type UltraWikiStatus,
+} from "@/lib/ultrawikiApi";
 import type { ObsidianStatus as ObsidianStatusType } from "@/types/setup";
 
 // Agent C owns WikiGraph. Lazy import so the graph bundle (~120 KB minified)
@@ -106,14 +109,41 @@ export function WikiView(): JSX.Element {
   });
 
   // UltraWiki mode (D-5): `GET /api/ultrawiki/status` → `enabled` is the one
-  // source of truth for which body this section renders. `null` = backend
-  // unreachable → the normal wiki stands.
+  // source of truth for which body this section renders.
+  //
+  // `null` means the backend has not answered YET — it does not mean the mode
+  // is off. Reading it as off is how the in-app Restart dropped people who run
+  // Ultra back into the normal wiki: the window reloads while the backend is
+  // still coming up, the poll-safe fetcher swallows that as a successful
+  // `null`, and with no retry and no interval the section stayed wrong for the
+  // rest of the session. So: keep asking until it answers once, and until then
+  // render neither body rather than the wrong one.
   const ultraStatusQuery = useQuery({
     queryKey: ["ultrawiki", "status"],
     queryFn: fetchUltraWikiStatus,
     staleTime: 5_000,
+    refetchInterval: (query) => (query.state.data == null ? 3_000 : false),
   });
-  const ultraEnabled = ultraStatusQuery.data?.enabled === true;
+  // The last CONFIRMED answer. A later blip must not flip the section back to
+  // the normal wiki behind the user's back either.
+  const [lastKnownUltra, setLastKnownUltra] = useState<UltraWikiStatus | null>(
+    null,
+  );
+  const [unansweredProbes, setUnansweredProbes] = useState(0);
+  const ultraProbe = ultraStatusQuery.data;
+  const ultraProbeAt = ultraStatusQuery.dataUpdatedAt;
+  useEffect(() => {
+    if (ultraProbe) {
+      setLastKnownUltra(ultraProbe);
+      setUnansweredProbes(0);
+    } else if (ultraProbeAt > 0) {
+      setUnansweredProbes((n) => n + 1);
+    }
+  }, [ultraProbe, ultraProbeAt]);
+
+  const ultraStatus = ultraProbe ?? lastKnownUltra;
+  const ultraModeKnown = ultraStatus != null;
+  const ultraEnabled = ultraStatus?.enabled === true;
 
   // When a slug is selected (via tree click, graph click, or wikilink),
   // automatically swap to the page tab.
@@ -210,14 +240,16 @@ export function WikiView(): JSX.Element {
   // the header counts that store. It used to read "31 pages · 732 wikilinks"
   // above a screen reporting 4 712 items, which is two different corpora
   // described as one and the first thing that made the section unreadable.
-  const ultraProgress = ultraStatusQuery.data?.progress ?? null;
+  const ultraProgress = ultraStatus?.progress ?? null;
   const ultraSubtitle = ultraProgress
     ? t("ultrawiki.panel.header_subtitle")
         .replace("{0}", ultraProgress.total.toLocaleString("en-US").replace(/,/g, " "))
-        .replace("{1}", String(ultraStatusQuery.data?.sources.length ?? 0))
+        .replace("{1}", String(ultraStatus?.sources.length ?? 0))
     : t("ultrawiki.panel.loading");
 
-  const subtitle = ultraEnabled
+  const subtitle = !ultraModeKnown
+    ? t("ultrawiki.mode.probing")
+    : ultraEnabled
     ? ultraSubtitle
     : treeQuery.isLoading
       ? t("wiki_view.loading_vault")
@@ -237,14 +269,16 @@ export function WikiView(): JSX.Element {
         </div>
         <div className="flex shrink-0 items-center gap-3 pt-4">
           <UltraModeSwitch
-            status={ultraStatusQuery.data ?? null}
+            status={ultraStatus}
             onModeChanged={() => void ultraStatusQuery.refetch()}
           />
           {/* The vault pill belongs to the vault. In Ultra mode nothing on
               screen comes from Obsidian, and "Obsidian: connected" over a
               store it is not answering from reads as a claim about THIS
-              screen. It returns the moment the switch goes back to Normal. */}
-          {!ultraEnabled && (
+              screen. It returns the moment the switch goes back to Normal.
+              While the mode is still unknown it stays out too — the pill
+              would be the only thing on screen making a claim. */}
+          {ultraModeKnown && !ultraEnabled && (
             <ObsidianStatus
               onOpenSetup={(s) => {
                 setSetupHint(s);
@@ -255,7 +289,15 @@ export function WikiView(): JSX.Element {
         </div>
       </div>
 
-      {ultraEnabled ? (
+      {!ultraModeKnown ? (
+        // Which mode owns this section is not known yet. Showing the normal
+        // wiki here would be a claim, not a placeholder — and the wrong one
+        // for everyone running Ultra.
+        <ModeProbe
+          unansweredProbes={unansweredProbes}
+          onRetry={() => void ultraStatusQuery.refetch()}
+        />
+      ) : ultraEnabled ? (
         // Ultra mode owns the entire body below the header (D-5 either-or);
         // the normal wiki surfaces stay untouched, ready for the switch back.
         <Suspense fallback={<GraphSkeleton />}>
@@ -765,6 +807,52 @@ function EmptyState() {
           </code>{" "}
           {t("wiki_view.manual_c")}
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown while `GET /api/ultrawiki/status` has not answered once — typically
+ * the few seconds after the in-app Restart, when the window is already back
+ * but the backend is still coming up.
+ *
+ * It waits quietly at first because that is the normal case, and only says
+ * something once the silence has lasted long enough to be a real problem.
+ * Rendering the normal wiki instead would be a claim about which mode owns
+ * this section, and the wrong one for every Ultra install.
+ */
+function ModeProbe({
+  unansweredProbes,
+  onRetry,
+}: {
+  unansweredProbes: number;
+  onRetry: () => void;
+}): JSX.Element {
+  const t = useT();
+  // ~3 polls at 3 s: past a slow-but-normal start, into "this is not coming".
+  const stalled = unansweredProbes >= 3;
+  return (
+    <div
+      className="flex flex-1 items-center justify-center p-6"
+      data-testid="wiki-mode-probe"
+      data-stalled={stalled ? "true" : "false"}
+    >
+      <div className="max-w-md rounded-xl border border-border bg-card/40 px-6 py-5 text-center">
+        <p className="text-sm text-muted-foreground">
+          {t(stalled ? "ultrawiki.mode.probe_stalled" : "ultrawiki.mode.probing")}
+        </p>
+        {stalled && (
+          <button
+            type="button"
+            onClick={onRetry}
+            data-testid="wiki-mode-probe-retry"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
+          >
+            <RefreshCw className="h-3 w-3" aria-hidden />
+            {t("ultrawiki.mode.probe_retry")}
+          </button>
+        )}
       </div>
     </div>
   );

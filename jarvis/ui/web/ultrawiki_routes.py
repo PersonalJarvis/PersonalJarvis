@@ -223,6 +223,56 @@ def _apply_live(request: Request, values: dict[str, str], *, enabled: bool | Non
             log.debug("in-memory ultrawiki.enabled update skipped: %s", exc)
 
 
+def _is_configured(uw: Any) -> bool:
+    """Has the one-time activation wizard ever been completed on this install?
+
+    The single question the Normal/Ultra switch needs before deciding between
+    "re-activate with the stored choices" and "walk the user through the
+    wizard". It is answered from the CONFIG alone — the embedding slot is the
+    one choice activation cannot proceed without, and once written it survives
+    every restart.
+
+    Deliberately NOT derived from the live slot report: that one also probes
+    credentials and only exists once the service is wired, so during boot it
+    is empty. A client reading emptiness as "never configured" is exactly how
+    a restart reopened the one-time wizard on an install that had been running
+    Ultra for weeks, and offered to re-embed a corpus it had already embedded.
+    Configured and ready are different questions; this answers only the first.
+    """
+    return bool(str(getattr(uw, "embedding_provider", "") or "").strip())
+
+
+def _slots_from_config(uw: Any) -> dict[str, Any]:
+    """The stored slot choices, without asking the (not yet wired) service.
+
+    Same shape as the live report minus everything that needs a probe: no
+    ``ready``/``reason``/``available``, because a booting app genuinely does
+    not know those yet and inventing them would be the dishonesty this whole
+    payload exists to avoid.
+    """
+
+    def slot(provider_key: str, model_key: str) -> dict[str, Any]:
+        return {
+            "provider": str(getattr(uw, provider_key, "") or "").strip(),
+            "model": str(getattr(uw, model_key, "") or "").strip(),
+            "ready": False,
+            "reason": "the UltraWiki service has not started yet",
+        }
+
+    return {
+        "embedding": slot("embedding_provider", "embedding_model"),
+        "distill": slot("distill_provider", "distill_model"),
+        "rerank": slot("rerank_provider", "rerank_model"),
+        "storage": {
+            "configured": str(getattr(uw, "db_backend", "sqlite") or "sqlite"),
+            "in_use": "",
+            "ready": False,
+            "reason": "the store has not been opened yet",
+            "vector": {},
+        },
+    }
+
+
 def _search_legs(cfg: Any) -> dict[str, Any]:
     """Honest per-leg availability report (keyword / vector / rerank).
 
@@ -330,10 +380,16 @@ async def get_status(request: Request) -> dict[str, Any]:
     if service is None:
         return {
             "enabled": enabled,
+            # Whether the wizard has ever run. Answered from the config, so it
+            # is the SAME answer before and after the service wires itself —
+            # see _is_configured for the restart bug that demanded it.
+            "configured": _is_configured(uw),
             "started": False,
             "db_backend": configured_backend,
             "backend_in_use": "",
-            "slots": {},
+            # The stored choices, not an empty dict: a booting app still knows
+            # what the user picked, and saying otherwise reopens the wizard.
+            "slots": _slots_from_config(uw),
             "reembed": {},
             "counts": {},
             # Same shape as a live answer, so no client has to special-case a
@@ -370,6 +426,7 @@ async def get_status(request: Request) -> dict[str, Any]:
     }
     return {
         "enabled": bool(data.get("enabled", enabled)),
+        "configured": _is_configured(uw),
         "started": started,
         "db_backend": str(backend.get("configured") or configured_backend),
         "backend_in_use": str(backend.get("in_use") or ""),

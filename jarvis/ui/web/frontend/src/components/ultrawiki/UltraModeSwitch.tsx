@@ -51,17 +51,41 @@ export function UltraModeSwitch({
 
   const enabled = status?.enabled === true;
   // "Configured before" = an embedding provider was ever chosen; only then can
-  // activation succeed without the wizard's one-time slot choices.
+  // activation succeed without the wizard's one-time slot choices. The backend
+  // answers this from the stored config (`configured`), which survives a
+  // restart and is already true while the service is still starting. The slot
+  // fallback only covers a backend older than that field — deriving the answer
+  // from the slot report alone is what reopened the wizard on every restart
+  // and offered to re-embed a corpus that was already embedded.
   const configuredProvider = status?.slots?.embedding?.provider ?? "";
+  const configured =
+    status?.configured === undefined
+      ? configuredProvider !== ""
+      : status.configured === true;
+  // `null` = the backend has not answered yet (the app is still booting after
+  // the in-app Restart). That is NOT "never configured", so the click asks
+  // again instead of walking a returning user through a one-time wizard.
+  const statusKnown = status !== null;
 
   async function switchToUltra() {
     if (enabled || pending) return;
-    if (!configuredProvider) {
+    if (!statusKnown) {
+      pushToast("error", t("ultrawiki.mode.status_unknown"));
+      onModeChanged();
+      return;
+    }
+    // The provider name has to come along for the re-activation POST, so a
+    // backend that claims `configured` without naming one still gets the
+    // wizard rather than a 400.
+    if (!configured || !configuredProvider) {
       setWizardOpen(true);
       return;
     }
     setPending(true);
     try {
+      // Re-activate with the STORED choices — no model, no storage backend, so
+      // the backend keeps every value the user picked the first time and the
+      // corpus is never re-embedded for switching modes back and forth.
       await activateUltraWiki({ embedding_provider: configuredProvider });
       pushToast("success", t("ultrawiki.mode.activated"));
       onModeChanged();

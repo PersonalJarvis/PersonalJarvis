@@ -2974,7 +2974,11 @@
       "deactivate_title": "Zurück zum normalen Wiki wechseln?",
       "deactivate_body": "Es wird nichts gelöscht: Jedes aufgenommene Element, jedes Embedding und jede Quelle bleibt auf der Festplatte. Der Ultra-Modus pausiert nur — beim Wiedereinschalten geht es genau dort weiter, wo du aufgehört hast.",
       "deactivate_confirm": "Zu Normal wechseln",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "status_unknown": "Der Wiki-Modus ist noch nicht lesbar — die App startet gerade. Es wird erneut versucht.",
+      "probing": "Es wird geprüft, welcher Wiki-Modus aktiv ist…",
+      "probe_stalled": "Der Wiki-Modus ist weiterhin nicht lesbar — das Backend antwortet nicht. Es wurde nichts geändert; dein Modus und seine Einstellungen bleiben erhalten.",
+      "probe_retry": "Erneut prüfen"
     },
     "panel": {
       "tab_ask": "Fragen",
