@@ -31,8 +31,14 @@ from __future__ import annotations
 import time
 
 # Per-terminal output shown in the block. Enough to say what an agent is doing,
-# small enough that ten panes do not crowd out the conversation.
+# small enough that ten panes do not crowd out the conversation. Past
+# _CROWDED_AT panes the per-pane share shrinks: the block is hard-capped at
+# _MAX_CHARS, and six lines each meant the cap silently dropped the LAST panes
+# entirely — three lines each keeps every pane visible AND costs fewer of the
+# ~1 100 uncacheable input tokens this block adds to every turn.
 _LINES_PER_TERMINAL = 6
+_LINES_PER_TERMINAL_CROWDED = 3
+_CROWDED_AT = 5
 _MAX_CHARS = 4500
 
 _HEADER = (
@@ -78,7 +84,7 @@ _HEADER = (
 )
 
 
-def _terminal_block(term) -> list[str]:  # noqa: ANN001 - Terminal, avoid import cycle
+def _terminal_block(term, tail_lines: int = _LINES_PER_TERMINAL) -> list[str]:  # noqa: ANN001 - Terminal, avoid import cycle
     status = term.status
     bits = [f"{term.name} ({term.display_name}) — {status}"]
     if status == "live" and term.last_output_at:
@@ -93,7 +99,7 @@ def _terminal_block(term) -> list[str]:  # noqa: ANN001 - Terminal, avoid import
     lines = [f"- {', '.join(bits)}"]
     if term.last_prompt:
         lines.append(f'  last prompt sent: "{term.last_prompt[:200]}"')
-    tail = term.transcript.tail(_LINES_PER_TERMINAL)
+    tail = term.transcript.tail(tail_lines)
     if tail:
         lines.append("  recent output:")
         lines.extend(f"    {line[:200]}" for line in tail)
@@ -115,9 +121,14 @@ def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
     parts.extend(session.profile.summary_lines())
     parts.append("")
     if session.terminals:
+        tail_lines = (
+            _LINES_PER_TERMINAL
+            if len(session.terminals) < _CROWDED_AT
+            else _LINES_PER_TERMINAL_CROWDED
+        )
         parts.append(f"Terminals in this workspace ({len(session.terminals)}):")
         for term in session.terminals:
-            parts.extend(_terminal_block(term))
+            parts.extend(_terminal_block(term, tail_lines))
     else:
         parts.append("No terminals are open in this workspace yet.")
 

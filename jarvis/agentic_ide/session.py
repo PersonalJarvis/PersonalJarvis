@@ -797,7 +797,12 @@ class Terminal:
                 None if self.last_output_at is None else round(time.time() - self.last_output_at, 1)
             ),
             "prompts_sent": self.prompts_sent,
-            "last_prompt": self.last_prompt,
+            # A composed brief runs to MAX_PROMPT_CHARS (6 000); nothing reads
+            # more than the opening line back (the UI never renders the field
+            # at all), while the full text used to ride along in every /state
+            # poll AND every model-facing status payload — per pane. 200 chars
+            # matches the focus block's per-pane budget.
+            "last_prompt": self.last_prompt[:200],
             "submitted": self.submitted,
             "lines_captured": len(lines),
             # What this pane is doing, in the two lengths the header needs: one
@@ -889,6 +894,41 @@ class Session:
             "created_at": self.created_at,
             "focus_mode": self.focus_mode,
             "terminals": [t.to_dict() for t in self.terminals],
+        }
+
+    def to_brief(self) -> dict[str, Any]:
+        """This workspace as a language model needs it to steer the panes.
+
+        Deliberately not ``to_dict``: the full state runs to ~25 000
+        characters (profiles, prompts, transcript statistics), which a
+        tool-result cap then slices mid-JSON — the model pays thousands of
+        input tokens per loop iteration for a broken fragment. Steering
+        needs exactly: which pane, which agent, alive or not, busy or idle,
+        and one recap line of what it is doing.
+        """
+        terminals = []
+        for term in self.terminals:
+            lines = term.transcript.lines()
+            summary = recap_engine.recap_for(term, lines=lines)
+            terminals.append(
+                {
+                    "name": term.name,
+                    "agent": term.agent,
+                    "status": term.status,
+                    "accepts_prompts": accepts_prompts(term.agent),
+                    "idle_seconds": (
+                        None
+                        if term.last_output_at is None
+                        else round(time.time() - term.last_output_at, 1)
+                    ),
+                    "recap": summary.headline,
+                }
+            )
+        return {
+            "folder": self.folder,
+            "name": self.name,
+            "focus_mode": self.focus_mode,
+            "terminals": terminals,
         }
 
     def to_card(self, *, active: bool) -> dict[str, Any]:
@@ -1022,6 +1062,20 @@ class Registry:
             "active_id": self._active,
             "workspaces": self.workspaces(),
             "accounts": self.active_accounts(),
+        }
+
+    def brief_state(self) -> dict[str, Any]:
+        """The workspace as the voice/tool model reads it — see ``to_brief``."""
+        session = self.session
+        return {
+            "active": session is not None,
+            "workspace": session.to_brief() if session else None,
+            "max_terminals": MAX_TERMINALS,
+            "other_workspaces": [
+                {"name": s.name, "terminals": len(s.terminals)}
+                for s in self._sessions.values()
+                if session is None or s.id != session.id
+            ],
         }
 
     # ------------------------------------------------------------- accounts

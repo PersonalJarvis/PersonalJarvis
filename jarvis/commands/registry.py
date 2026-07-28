@@ -635,7 +635,11 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "focused coding mode is on."
             ),
             method="GET",
-            path="/api/agentic-ide/state",
+            # The brief projection, deliberately not /state: the full state is
+            # a ~25 000-character UI snapshot whose tail the tool-result cap
+            # slices off mid-JSON — the model paid ~2 000 input tokens per
+            # loop iteration for a broken fragment (2026-07-28 cost audit).
+            path="/api/agentic-ide/state/brief",
             ui_section="agentic-ide",
             voice_aliases={
                 "de": ("was läuft in der agentic ide",),  # i18n-allow: input vocab
@@ -662,6 +666,13 @@ def _build_registry() -> tuple[AppCommand, ...]:
                     "lines": {
                         "type": "integer",
                         "default": 40,
+                        # Model-facing ceiling only; the REST route itself
+                        # clamps at 300 for the UI. Past ~60 lines the
+                        # tool-result cap truncates the report anyway, so a
+                        # larger ask just burns input tokens on every
+                        # further loop iteration (2026-07-28 cost audit).
+                        "minimum": 1,
+                        "maximum": 60,
                         "description": "How many recent output lines to read.",
                     },
                 },

@@ -245,7 +245,7 @@ Cancel a running or scheduled task by id.
 
 Report the open Agentic-IDE workspace: which folder, which coding agents run in which named terminals, and whether the focused coding mode is on.
 
-- **Endpoint:** `GET /api/agentic-ide/state`
+- **Endpoint:** `GET /api/agentic-ide/state/brief`
 - **Arguments:** none
 - **Requires confirmation:** no
 - **Desktop UI section:** `agentic-ide`

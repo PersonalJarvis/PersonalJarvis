@@ -794,6 +794,19 @@ async def get_state() -> dict:
     return get_registry().state()
 
 
+@router.get("/state/brief", summary="Agentic-IDE workspace state, briefly")
+async def get_state_brief() -> dict:
+    """The workspace as a language model needs it to steer the panes.
+
+    Pane names, agents, status, idleness, and one recap line each — never
+    transcripts, prompts, or project profiles. This is what the
+    ``agentic-ide-status`` voice command reads; the full ``/state`` payload
+    is the UI's and runs ~25 000 characters, which a model-facing
+    tool-result cap would slice mid-JSON.
+    """
+    return get_registry().brief_state()
+
+
 @router.get("/agents", response_model=AgentsResponse, summary="Coding agents available")
 async def get_agents() -> AgentsResponse:
     """What this machine can open in a terminal, and how to install it.
