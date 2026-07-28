@@ -2166,7 +2166,7 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
     return (
         f"No terminal called {wanted!r}. Running: {running or 'none'}. "
         "Call-signs are the panes' positions (T1, T2, …), assigned by the "
-        "workspace and not requestable, so opening another pane will NOT "
+        "workspace and cannot be requested, so opening another pane will NOT "
         "produce this name and retrying this "
         "prompt after a spawn fails the same way. Either prompt one of the "
         "panes listed above, or open and brief a new one in ONE call: "
