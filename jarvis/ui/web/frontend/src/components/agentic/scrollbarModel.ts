@@ -18,9 +18,34 @@
  *   Whenever the user returns to the live end the count re-anchors at zero,
  *   so the one position that matters is always right.
  *
+ * ## The three anchors that keep the count honest
+ *
+ * Pure counting drifts, and the drift was visible in the product within a day:
+ * notches relayed at the transcript's TOP are silently ignored by the CLI but
+ * were still counted, so the claimed position inflated — and after scrolling
+ * back down the thumb hung mid-track at the live end. Probed against the real
+ * CLI (2026-07-28, hidden pty): an ignored notch emits ZERO bytes, so the
+ * stream cannot tell. What CAN tell, and what the count is anchored to:
+ *
+ * 1. **The scrolled-back overlay.** Claude Code paints "Jump to bottom
+ *    (ctrl+End)" onto the screen whenever the view left the live end, and
+ *    erases it there. Once a pane has seen that overlay ONCE (capability
+ *    learned, not provider-gated), its absence is proof of "at the newest
+ *    output" and snaps the count to zero — the anchor that ends thumb-stuck-
+ *    mid-track. Its presence floors the count at one notch.
+ * 2. **The saturation brake.** Up-notches whose repaint never arrives (the
+ *    transcript region above the overlay unchanged once the pty had time to
+ *    answer) were ignored by the CLI: they are un-counted, and further ups are
+ *    neither counted nor relayed until the screen moves again. The top stops
+ *    being scrollable-forever.
+ * 3. **The measured ceiling.** The moment the brake engages, the total travel
+ *    to the top is KNOWN, and the thumb maps the real span — top means top.
+ *
+ * An application that paints no overlay keeps the plain counted behaviour.
  * An earlier generation of this feature tried to MEASURE the second kind by
- * nudging the application and comparing screens, and every unreadable screen
- * came out as "nothing to scroll". Nothing in this module measures anything.
+ * nudging the application and comparing screens as its ONLY source of truth,
+ * and every unreadable screen came out as "nothing to scroll". The brake
+ * fails the other way: judging nothing, it merely keeps the old estimate.
  */
 
 /** Lines one relayed wheel notch moves a full-screen CLI (measured: ~3). */
@@ -37,9 +62,10 @@ export const MIN_THUMB_PX = 24;
  * without a ceiling floods the pty with mouse reports it will spend seconds
  * working through — long after the hand has stopped. The next move sends the
  * remainder anyway, because each step is computed against what has actually
- * been relayed so far.
+ * been relayed so far. Kept small also to bound how far a burst can overrun
+ * the transcript's top before the saturation brake can see it.
  */
-export const MAX_NOTCHES_PER_STEP = 90;
+export const MAX_NOTCHES_PER_STEP = 30;
 
 /** What a pane can scroll right now, in lines. */
 export interface ScrollView {
@@ -91,12 +117,166 @@ export function exactView(
 }
 
 /**
- * The view of a pane whose application owns the screen: the distance
- * travelled from the live end, plus one screenful of assumed headroom.
+ * The view of a pane whose application owns the screen.
+ *
+ * With the top never reached, the span is the distance travelled plus one
+ * screenful of assumed headroom, so there is always somewhere left to go.
+ * Once the top HAS been reached the total is known ({@link Travel.ceiling})
+ * and the span is that measurement — the thumb can then genuinely say "top".
  */
-export function travelView(travelled: number, rows: number): ScrollView {
+export function travelView(
+  travelled: number,
+  rows: number,
+  ceiling: number | null = null,
+): ScrollView {
   const back = Math.max(0, Math.round(travelled));
-  return { kind: "travel", above: back + rows, back, rows };
+  const above = ceiling === null ? back + rows : Math.max(back, ceiling);
+  return { kind: "travel", above, back, rows };
+}
+
+// ---------------------------------------------------------------- travel
+
+/**
+ * How long the pty gets to answer an up-notch before an unchanged screen
+ * counts as proof the notch fell off the top. The CLI answers a notch in
+ * 1–30 ms (measured); the margin covers the socket and a busy render loop.
+ */
+export const SETTLE_MS = 350;
+
+/**
+ * Overlays a full-screen CLI paints while its view is away from the live
+ * end. Matched against the visible screen; the row that matches also splits
+ * the transcript (above it) from the animated chrome (below it), which is
+ * why the fingerprint in {@link screenTravel} covers only the rows above.
+ */
+export const SCROLLED_BACK_MARKERS = [/Jump to bottom/i];
+
+/** What a full-screen CLI's pane knows about where it stands. */
+export interface Travel {
+  /** Best estimate of lines back from the live end. */
+  travelled: number;
+  /** This application paints a scrolled-back overlay — learned, never assumed. */
+  markerSeen: boolean;
+  /** Total travel measured at the transcript's top, once reached. */
+  ceiling: number | null;
+  /** Up-lines counted but not yet confirmed by a repaint. */
+  pendingUp: number;
+  /** When the newest unconfirmed up was counted. */
+  lastUpAt: number;
+  /** The transcript region's last known content, for the brake. */
+  fingerprint: string | null;
+  /** Ups are known to be falling off the top right now. */
+  saturated: boolean;
+}
+
+export function freshTravel(): Travel {
+  return {
+    travelled: 0,
+    markerSeen: false,
+    ceiling: null,
+    pendingUp: 0,
+    lastUpAt: 0,
+    fingerprint: null,
+    saturated: false,
+  };
+}
+
+/** What one look at the screen saw — see {@link readScreen} in the component. */
+export interface ScreenGlance {
+  /** Index of the scrolled-back overlay's row, or -1 when absent. */
+  markerRow: number;
+  /** Content of the transcript region above the overlay ("" without one). */
+  fingerprint: string;
+}
+
+/** The count after one observed wheel event (real or relayed alike). */
+export function wheelTravel(travel: Travel, deltaY: number, now: number): Travel {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return travel;
+  if (deltaY > 0) {
+    // Towards the live end: a down always has somewhere to go while the
+    // count is positive, and leaving the top ends the saturation.
+    return {
+      ...travel,
+      travelled: Math.max(0, travel.travelled - LINES_PER_NOTCH),
+      pendingUp: 0,
+      saturated: false,
+    };
+  }
+  // Away from the live end. While saturated these are known to be ignored by
+  // the application — counting them is exactly the inflation this fixes.
+  if (travel.saturated) return travel;
+  return {
+    ...travel,
+    travelled: travel.travelled + LINES_PER_NOTCH,
+    pendingUp: travel.pendingUp + LINES_PER_NOTCH,
+    lastUpAt: now,
+  };
+}
+
+/**
+ * Reconcile the count with what the screen actually shows.
+ *
+ * `glance` is null when the screen could not be read — the estimate then
+ * simply stands, which is the fail-open this module owes its history.
+ */
+export function screenTravel(
+  travel: Travel,
+  glance: ScreenGlance | null,
+  now: number,
+): Travel {
+  if (!glance) return travel;
+
+  if (glance.markerRow < 0) {
+    // No overlay. From an application known to paint one, that is proof of
+    // the live end — the anchor that ends "thumb stuck mid-track".
+    if (!travel.markerSeen) return travel;
+    if (
+      travel.travelled === 0 &&
+      travel.pendingUp === 0 &&
+      !travel.saturated
+    ) {
+      return travel;
+    }
+    return {
+      ...travel,
+      travelled: 0,
+      pendingUp: 0,
+      saturated: false,
+      fingerprint: null,
+    };
+  }
+
+  let next: Travel = travel.markerSeen
+    ? travel
+    : { ...travel, markerSeen: true };
+
+  if (next.fingerprint !== glance.fingerprint) {
+    // The transcript moved: whatever was pending has been answered.
+    next = {
+      ...next,
+      fingerprint: glance.fingerprint,
+      pendingUp: 0,
+      saturated: false,
+    };
+  } else if (next.pendingUp > 0 && now - next.lastUpAt >= SETTLE_MS) {
+    // Counted ups, an answered pty, an unmoved screen: those notches fell
+    // off the top. Un-count them and remember where the top IS.
+    const travelled = Math.max(0, next.travelled - next.pendingUp);
+    next = {
+      ...next,
+      travelled,
+      pendingUp: 0,
+      saturated: true,
+      ceiling: travelled,
+    };
+  }
+
+  // The overlay itself says the view is away from the live end — a count of
+  // zero would draw the thumb at a bottom the application denies.
+  if (next.travelled === 0) {
+    next = { ...next, travelled: LINES_PER_NOTCH };
+  }
+  return next;
 }
 
 /** Is there anywhere for this pane to go? */
@@ -144,17 +324,3 @@ export function notchesFor(lines: number): number {
   return clamp(whole, -MAX_NOTCHES_PER_STEP, MAX_NOTCHES_PER_STEP);
 }
 
-/**
- * The travel count after one observed wheel event.
- *
- * Counted per event rather than per delta pixel: the application scrolls per
- * received notch, and both a gentle and a violent turn of a real wheel arrive
- * as one event per notch. The count can only be an estimate either way — what
- * keeps it honest is the clamp at zero, where it re-anchors against the one
- * position the application also stops at.
- */
-export function countWheel(travelled: number, deltaY: number): number {
-  if (!Number.isFinite(deltaY) || deltaY === 0) return travelled;
-  const step = deltaY < 0 ? LINES_PER_NOTCH : -LINES_PER_NOTCH;
-  return Math.max(0, travelled + step);
-}

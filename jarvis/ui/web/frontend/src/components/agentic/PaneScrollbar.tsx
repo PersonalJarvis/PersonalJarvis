@@ -44,13 +44,19 @@ import { cn } from "@/lib/utils";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
   backAtThumbTop,
-  countWheel,
+  exactView,
+  freshTravel,
   hasScroll,
   notchesFor,
+  screenTravel,
+  SCROLLED_BACK_MARKERS,
+  SETTLE_MS,
   thumbBox,
-  type ScrollView,
-  exactView,
   travelView,
+  wheelTravel,
+  type ScreenGlance,
+  type ScrollView,
+  type Travel,
 } from "./scrollbarModel";
 
 /** How long the bar lingers after the pointer leaves, so it cannot flicker. */
@@ -75,12 +81,14 @@ function appOwnsScreen(term: Terminal | null): boolean {
  */
 export function readScrollView(
   term: Terminal | null,
-  travelled: number,
+  travel: Travel,
 ): ScrollView | null {
   const buffer = term?.buffer?.active;
   const rows = term?.rows ?? 0;
   if (!term || !buffer || rows < 1) return null;
-  if (appOwnsScreen(term)) return travelView(travelled, rows);
+  if (appOwnsScreen(term)) {
+    return travelView(travel.travelled, rows, travel.ceiling);
+  }
   const view = exactView(
     buffer.length ?? rows,
     buffer.baseY ?? 0,
@@ -88,6 +96,39 @@ export function readScrollView(
     rows,
   );
   return hasScroll(view) ? view : null;
+}
+
+/**
+ * One look at an application-held pane's screen: is the scrolled-back
+ * overlay up, and what does the transcript region above it say?
+ *
+ * The overlay's row splits the screen — transcript above, the CLI's animated
+ * chrome (spinner, input box, status bars) below — so the fingerprint stops
+ * there: a spinner repainting every frame must not read as "the transcript
+ * moved". Returns null when the buffer cannot be read; the caller keeps its
+ * estimate rather than inventing one.
+ */
+export function readScreen(term: Terminal | null): ScreenGlance | null {
+  const buffer = term?.buffer?.active;
+  const rows = term?.rows ?? 0;
+  if (!term || !buffer || typeof buffer.getLine !== "function" || rows < 1) {
+    return null;
+  }
+  try {
+    const text: string[] = [];
+    for (let y = 0; y < rows; y += 1) {
+      text.push(buffer.getLine(y)?.translateToString(true) ?? "");
+    }
+    const markerRow = text.findIndex((row) =>
+      SCROLLED_BACK_MARKERS.some((marker) => marker.test(row)),
+    );
+    return {
+      markerRow,
+      fingerprint: markerRow > 0 ? text.slice(0, markerRow).join("\n") : "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -154,10 +195,11 @@ export function PaneScrollbar({
   // would trail the pointer that is holding it.
   const [heldTopPx, setHeldTopPx] = useState<number | null>(null);
 
-  // Lines a full-screen CLI has been scrolled away from its live end, counted
-  // off the wheel traffic — the user's own turns and this bar's relays alike,
-  // since both pass the same observer below.
-  const travelledRef = useRef(0);
+  // Where a full-screen CLI's pane stands, counted off the wheel traffic —
+  // the user's own turns and this bar's relays alike, since both pass the
+  // same observer below — and reconciled against the screen's own anchors
+  // (see ./scrollbarModel, "the three anchors").
+  const travelRef = useRef<Travel>(freshTravel());
   // Which kind of pane the last reading saw. A CLI that enters or leaves the
   // alternate screen mid-session (a shell running `less`) starts a different
   // history, and a count carried across that line would describe the old one.
@@ -172,7 +214,7 @@ export function PaneScrollbar({
 
   // A replaced terminal is a fresh transcript.
   useEffect(() => {
-    travelledRef.current = 0;
+    travelRef.current = freshTravel();
     lastKindRef.current = null;
     setView(null);
   }, [epoch]);
@@ -214,7 +256,11 @@ export function PaneScrollbar({
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY === 0) return;
       if (appOwnsScreen(getTerminal())) {
-        travelledRef.current = countWheel(travelledRef.current, event.deltaY);
+        travelRef.current = wheelTravel(
+          travelRef.current,
+          event.deltaY,
+          Date.now(),
+        );
       }
       scheduleRef.current?.();
       setFlashing(true);
@@ -239,21 +285,35 @@ export function PaneScrollbar({
     const term = getTerminal();
     if (!term) return;
     let frame: number | undefined;
+    let settleTimer: number | undefined;
 
     const sync = () => {
       frame = undefined;
-      const next = readScrollView(term, travelledRef.current);
-      // Crossing between a terminal-held and an application-held screen resets
-      // the count: it described a history that is no longer on stage.
-      if (next && lastKindRef.current && next.kind !== lastKindRef.current) {
-        travelledRef.current = 0;
+      const appHeld = appOwnsScreen(term);
+      // Crossing between a terminal-held and an application-held screen
+      // resets the count: it described a history that is no longer on stage.
+      const kind: ScrollView["kind"] = appHeld ? "travel" : "exact";
+      if (lastKindRef.current && kind !== lastKindRef.current) {
+        travelRef.current = freshTravel();
       }
-      if (next) lastKindRef.current = next.kind;
-      const settled =
-        next && next.kind === "travel"
-          ? readScrollView(term, travelledRef.current)
-          : next;
-      setView((current) => (sameView(current, settled) ? current : settled));
+      lastKindRef.current = kind;
+      if (appHeld) {
+        // Reconcile the count with the screen's own anchors — the overlay
+        // and the saturation brake (see ./scrollbarModel).
+        travelRef.current = screenTravel(
+          travelRef.current,
+          readScreen(term),
+          Date.now(),
+        );
+        // Unconfirmed ups need a second look once the pty has had its say,
+        // even if no event arrives to prompt one.
+        if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+        if (travelRef.current.pendingUp > 0) {
+          settleTimer = window.setTimeout(schedule, SETTLE_MS + 50);
+        }
+      }
+      const next = readScrollView(term, travelRef.current);
+      setView((current) => (sameView(current, next) ? current : next));
     };
     const schedule = () => {
       if (frame === undefined) frame = requestAnimationFrame(sync);
@@ -270,6 +330,7 @@ export function PaneScrollbar({
     return () => {
       scheduleRef.current = null;
       if (frame !== undefined) cancelAnimationFrame(frame);
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       for (const subscription of subscriptions) subscription?.dispose();
     };
   }, [shown, getTerminal, epoch]);
@@ -298,6 +359,9 @@ export function PaneScrollbar({
       const term = getTerminal();
       if (!term || lines === 0) return;
       if (appOwnsScreen(term)) {
+        // Nothing above the top: while the brake holds, an up-notch would be
+        // ignored by the application and only pollute its pty.
+        if (lines > 0 && travelRef.current.saturated) return;
         const notches = notchesFor(lines);
         relayNotches(
           hostRef.current,
@@ -319,7 +383,7 @@ export function PaneScrollbar({
       if (appOwnsScreen(term)) {
         // Asked in notches, against what has actually been relayed so far —
         // the observer above moves the count as each notch goes past.
-        scrollBy(wanted - travelledRef.current);
+        scrollBy(wanted - travelRef.current.travelled);
         return;
       }
       // A terminal that owns its scrollback is told the line outright, so a

@@ -20,6 +20,8 @@ interface TermState {
   viewportY: number;
   baseY: number;
   mouseTrackingMode: string;
+  /** What the screen shows, for the overlay anchor; row index → text. */
+  lines: string[];
 }
 
 function fakeTerminal(overrides: Partial<TermState> = {}) {
@@ -30,6 +32,7 @@ function fakeTerminal(overrides: Partial<TermState> = {}) {
     viewportY: 976,
     baseY: 976,
     mouseTrackingMode: "none",
+    lines: [],
     ...overrides,
   };
   const listeners: Record<string, (() => void)[]> = {};
@@ -59,6 +62,9 @@ function fakeTerminal(overrides: Partial<TermState> = {}) {
         },
         get baseY() {
           return state.baseY;
+        },
+        getLine(y: number) {
+          return { translateToString: () => state.lines[y] ?? "" };
         },
       },
       onBufferChange: on("bufferChange"),
@@ -317,6 +323,47 @@ describe("PaneScrollbar", () => {
     // Forward far past the live end: the count clamps, the thumb comes home.
     for (let i = 0; i < 8; i += 1) fireEvent.wheel(host(), { deltaY: 1 });
     await waitFor(() => expect(thumbTop() + thumbHeight()).toBe(TRACK_PX));
+  });
+
+  /*
+   * The reported bug, at the level the user met it: the pane stood at its
+   * newest output while the thumb hung mid-track, because notches the CLI had
+   * silently ignored at the transcript's top stayed counted. The CLI's own
+   * scrolled-back overlay is the anchor: the moment it leaves the screen, the
+   * thumb comes home — no wheel traffic required.
+   */
+  it("snaps home the moment the CLI's scrolled-back overlay disappears", async () => {
+    const { state, term, fire } = appTerminal(24);
+    state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
+    state.lines[20] = "  86   Jump to bottom (ctrl+End) ↓";
+    render(<Harness term={term} />);
+
+    // A pile of wheel-ups, some of which the CLI ignored at its top.
+    for (let i = 0; i < 40; i += 1) fireEvent.wheel(host(), { deltaY: -1 });
+    reachThePane();
+    expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX);
+
+    // The CLI returns to the live end and erases its overlay.
+    state.lines[20] = "";
+    fire("render");
+
+    await waitFor(() => expect(thumbTop() + thumbHeight()).toBe(TRACK_PX));
+  });
+
+  it("keeps standing away from the live end while the overlay is up", async () => {
+    const { state, term } = appTerminal(24);
+    state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
+    state.lines[20] = "  12   Jump to bottom (ctrl+End) ↓";
+    render(<Harness term={term} />);
+
+    // Enough wheel-downs to clamp any count to zero — but the CLI's screen
+    // still says the view is away, and the overlay outranks the count.
+    for (let i = 0; i < 10; i += 1) fireEvent.wheel(host(), { deltaY: 1 });
+    reachThePane();
+
+    await waitFor(() =>
+      expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX),
+    );
   });
 
   it("starts a fresh terminal's count from zero", async () => {
