@@ -4,6 +4,8 @@ Detection runs against a fake prober — no real CLI is ever invoked.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from jarvis.clis.spec import CliSpec, CliStatus
@@ -227,3 +229,93 @@ def test_registering_a_taken_name_is_refused() -> None:
     """Two things answering to one name is a pane running the wrong tool."""
     with pytest.raises(ValueError):
         register_agent(make_cli_agent("codex", "Impostor", binary="nope"))
+
+
+class CountingProber:
+    """Counts how many detection sweeps actually reach the machine."""
+
+    def __init__(self) -> None:
+        self.sweeps = 0
+
+    async def probe_all(self, specs) -> dict[str, CliStatus]:  # noqa: ANN001
+        self.sweeps += 1
+        # Yield once, so concurrent callers really do overlap in the test.
+        await asyncio.sleep(0)
+        return {s.name: CliStatus(installed=True, version="1.0.0") for s in specs}
+
+
+@pytest.fixture
+def _no_cached_detection():
+    """Run against a cold cache and leave one behind."""
+    from jarvis.workspace import agents as registry
+
+    registry.invalidate_agent_detection()
+    yield
+    registry.invalidate_agent_detection()
+
+
+@pytest.mark.asyncio
+async def test_detection_is_cached_between_reads(monkeypatch, _no_cached_detection) -> None:
+    """A repeated read must not restart a subprocess per CLI.
+
+    The sweep spawns one process per registered CLI — on Windows an npm shim,
+    so cmd -> conhost -> node — and the shared event loop stalls while it runs.
+    The Agentic-IDE view re-reads its state on every workspace change, and each
+    of those used to pay for a fresh sweep, which the wake microphone (delivered
+    on that same loop) paid for as added latency.
+    """
+    from jarvis.workspace import agents as registry
+
+    prober = CountingProber()
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: prober)
+
+    first = await detect_agents()
+    second = await detect_agents()
+
+    assert prober.sweeps == 1
+    assert [i.name for i in first] == [i.name for i in second]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reads_share_one_sweep(monkeypatch, _no_cached_detection) -> None:
+    """Six panes asking at once are six answers, not six subprocess bursts."""
+    from jarvis.workspace import agents as registry
+
+    prober = CountingProber()
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: prober)
+
+    answers = await asyncio.gather(*(detect_agents() for _ in range(6)))
+
+    assert prober.sweeps == 1
+    assert all(a for a in answers)
+
+
+@pytest.mark.asyncio
+async def test_force_and_invalidate_reach_the_machine_again(
+    monkeypatch, _no_cached_detection
+) -> None:
+    """A CLI installed while the app runs must not wait out the TTL."""
+    from jarvis.workspace import agents as registry
+
+    prober = CountingProber()
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: prober)
+
+    await detect_agents()
+    await detect_agents(force=True)
+    registry.invalidate_agent_detection()
+    await detect_agents()
+
+    assert prober.sweeps == 3
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_prober_never_reads_or_fills_the_cache(
+    _no_cached_detection,
+) -> None:
+    """Handing over a prober is asking for THAT prober's answer."""
+    from jarvis.workspace import agents as registry
+
+    mine = FakeProber({"claude": CliStatus(installed=True, version="9.9.9")})
+    infos = {i.name: i for i in await detect_agents(mine)}
+    assert infos["claude"].version == "9.9.9"
+    assert registry._detection_cache is None

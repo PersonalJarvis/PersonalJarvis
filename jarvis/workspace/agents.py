@@ -28,7 +28,9 @@ rather than handing the PTY an argv that cannot start.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -828,7 +830,43 @@ class AgentInfo:
     description: str = ""
 
 
-async def detect_agents(prober: CliStatusProber | None = None) -> list[AgentInfo]:
+#: How long a completed detection sweep answers for.
+#:
+#: A sweep is not a lookup — it starts ONE subprocess per registered CLI, and on
+#: Windows every one of those is an npm shim, so `claude --version` is really
+#: cmd.exe -> conhost -> node. Measured on the maintainer's machine: 1.1-1.4 s
+#: wall for five CLIs, and while it runs the shared event loop stalls for up to
+#: 1.7 s (probed with /api/health, which is answered on that same loop).
+#:
+#: That loop is where the wake microphone is delivered, three hops per 100 ms
+#: block with two seconds of buffer behind it, so an uncached sweep is heard as
+#: "the wake word takes longer in the Agentic IDE" — the view re-reads its whole
+#: state on every workspace change, and each of those reads paid for a fresh
+#: sweep. Nothing a sweep answers changes on that timescale: a CLI is installed
+#: or it is not.
+_DETECTION_TTL_S = 30.0
+
+#: Last completed sweep: (monotonic timestamp, result).
+_detection_cache: tuple[float, list[AgentInfo]] | None = None
+#: The sweep currently running, so N callers arriving together (a grid of panes
+#: all asking at once) share ONE burst of subprocesses instead of N.
+_detection_task: asyncio.Task[list[AgentInfo]] | None = None
+
+
+def invalidate_agent_detection() -> None:
+    """Forget the cached sweep — the next read probes the machine again.
+
+    For callers that KNOW the answer just changed (a CLI was installed or
+    removed from inside the app). A user watching an install does not want to
+    wait out the TTL to see it appear.
+    """
+    global _detection_cache
+    _detection_cache = None
+
+
+async def detect_agents(
+    prober: CliStatusProber | None = None, *, force: bool = False
+) -> list[AgentInfo]:
     """Probe every registered entry and report what this machine can run.
 
     CLI entries go through the shared prober; the plain terminal answers from
@@ -836,8 +874,50 @@ async def detect_agents(prober: CliStatusProber | None = None) -> list[AgentInfo
     installed" is not a question a ``--version`` probe can ask. Its reported
     version is the shell that would actually open ("PowerShell 7", "zsh"), which
     is the one thing a user picking it wants to know.
+
+    Answered from a short-lived cache (``_DETECTION_TTL_S``) unless ``force`` is
+    set, because the sweep is expensive enough to be felt elsewhere in the app —
+    see the constant. An explicit ``prober`` (tests, and any caller supplying
+    its own probing strategy) always runs a real sweep and never touches the
+    cache: a caller that hands over the prober is asking for THAT prober's
+    answer.
     """
-    prober = prober or CliStatusProber()
+    if prober is not None:
+        return await _sweep_agents(prober)
+
+    global _detection_cache, _detection_task
+    cached = _detection_cache
+    if (
+        not force
+        and cached is not None
+        and time.monotonic() - cached[0] < _DETECTION_TTL_S
+    ):
+        return list(cached[1])
+
+    running = _detection_task
+    if running is not None and not running.done():
+        try:
+            same_loop = running.get_loop() is asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - no loop is not reachable here
+            same_loop = False
+        if same_loop:
+            # Shielded: a browser that navigates away mid-sweep must not cancel
+            # the sweep the other five panes are waiting on.
+            return list(await asyncio.shield(running))
+
+    task = asyncio.ensure_future(_sweep_agents(CliStatusProber()))
+    _detection_task = task
+    try:
+        infos = await asyncio.shield(task)
+    finally:
+        if _detection_task is task:
+            _detection_task = None
+    _detection_cache = (time.monotonic(), infos)
+    return list(infos)
+
+
+async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
+    """One real detection pass — a subprocess per registered CLI."""
     specs = [a.spec for a in _AGENTS.values() if a.spec is not None]
     statuses = await prober.probe_all(specs) if specs else {}
     shell = default_shell()
@@ -959,6 +1039,7 @@ __all__ = [
     "get_agent",
     "glm_spawn_env",
     "install_command",
+    "invalidate_agent_detection",
     "kimi_generation",
     "list_agents",
     "make_cli_agent",
