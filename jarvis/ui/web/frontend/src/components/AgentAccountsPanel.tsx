@@ -47,13 +47,6 @@ import {
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 
-const PLATFORM_LABEL: Record<AccountPlatform, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-};
-
-const PLATFORMS: AccountPlatform[] = ["claude", "codex"];
-
 /** How the switch is applied — see `onActivate`. */
 type Activate = (
   platform: AccountPlatform,
@@ -140,11 +133,17 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
       )}
 
       <div className="grid gap-4 md:grid-cols-2 md:items-start">
-        {PLATFORMS.map((platform) => (
+        {/*
+          * Rendered from what the API returned, never from a list kept here.
+          * The backend decides which CLIs can hold several subscriptions, and a
+          * hardcoded list fails in the one way nobody catches: the payload is
+          * right, the card is simply absent, and the feature looks unbuilt.
+          */}
+        {(data?.platforms ?? []).map((group) => (
           <PlatformCard
-            key={platform}
-            platform={platform}
-            group={groupFor(data, platform)}
+            key={group.platform}
+            platform={group.platform}
+            group={group}
             busy={busy}
             run={run}
             activate={onActivate ?? setActiveAgentAccount}
@@ -190,7 +189,7 @@ function PlatformCard({
         className="absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full bg-violet-400/60"
       />
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold">{PLATFORM_LABEL[platform]}</h4>
+        <h4 className="text-sm font-semibold">{group?.display_name || platform}</h4>
         <span className="text-[11px] text-muted-foreground">
           {accounts.length} {t("agent_accounts.accounts")}
         </span>

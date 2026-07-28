@@ -223,4 +223,52 @@ describe("AgentAccountsPanel", () => {
       expect(screen.getByRole("alert").textContent).toContain("backend is warming up");
     });
   });
+
+  it("renders a CLI this file has never heard of, using the name the API sent", async () => {
+    /*
+     * The regression this whole panel needed a guard for. It used to map over a
+     * list of platform ids written here, so a CLI the BACKEND supports was
+     * simply not drawn — and nothing failed: the payload was right, the fetch
+     * succeeded, and the section was absent. A test that only ever feeds it the
+     * two ids it already knows would pass with the feature invisible.
+     */
+    vi.mocked(fetchAgentAccounts).mockResolvedValue({
+      platforms: [
+        {
+          platform: "acme",
+          display_name: "Acme Coder",
+          active_account: "acme:default",
+          accounts: [
+            account({
+              id: "acme:default",
+              platform: "acme",
+              label: "Default Acme login",
+              config_dir: "/home/u/.acme",
+            }),
+          ],
+        },
+      ],
+    } as never);
+    render(<AgentAccountsPanel />);
+
+    // The heading comes from the payload, not from a label map here.
+    await waitFor(() => expect(screen.getByText("Acme Coder")).toBeTruthy());
+    expect(screen.getByText("Default Acme login")).toBeTruthy();
+  });
+
+  it("falls back to the platform id when an older backend sends no name", async () => {
+    vi.mocked(fetchAgentAccounts).mockResolvedValue({
+      platforms: [
+        {
+          platform: "acme",
+          active_account: "acme:default",
+          accounts: [
+            account({ id: "acme:default", platform: "acme", label: "Only seat" }),
+          ],
+        },
+      ],
+    } as never);
+    render(<AgentAccountsPanel />);
+    await waitFor(() => expect(screen.getByText("acme")).toBeTruthy());
+  });
 });

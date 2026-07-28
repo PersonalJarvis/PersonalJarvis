@@ -4,8 +4,16 @@
 // stale one here is worse than elsewhere: it would show the wrong plan as the
 // active one right after the user switched.
 
-/** Which coding CLI a subscription belongs to. */
-export type AccountPlatform = "claude" | "codex";
+/**
+ * Which coding CLI a subscription belongs to — the backend's registry id.
+ *
+ * Deliberately an open `string` and not a union of the two ids that happened to
+ * exist when this was written. Which CLIs can hold several subscriptions is
+ * decided by the backend registry and can grow; a closed union here would not
+ * merely be out of date, it would make the compiler reject correct code that
+ * renders a platform the API actually returned.
+ */
+export type AccountPlatform = string;
 
 /**
  * One registered subscription.
@@ -35,6 +43,14 @@ export interface AgentAccount {
 
 export interface AccountPlatformGroup {
   platform: AccountPlatform;
+  /**
+   * What to show as the section heading. Sent by the backend so the UI needs no
+   * id-to-label map of its own: a second list of product names is a second
+   * place for a new CLI to go missing, and it goes missing invisibly — the API
+   * answers correctly and the section is simply never drawn. Optional because
+   * an older backend does not send it; fall back to the id.
+   */
+  display_name?: string;
   active_account: string;
   accounts: AgentAccount[];
 }

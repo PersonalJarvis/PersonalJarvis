@@ -237,10 +237,12 @@ export function AgenticIdeView() {
 
   /** The registered subscriptions of one CLI, for the wizard's per-pane picker. */
   const accountsFor = useCallback(
+    // No id guard: the backend already answers only for the CLIs that HAVE
+    // switchable subscriptions, so a list here could only ever disagree with
+    // it — and it would disagree silently, by hiding a picker for a CLI whose
+    // seats the API just returned.
     (platform: string): AgentAccount[] =>
-      platform === "claude" || platform === "codex"
-        ? (groupFor(accounts, platform)?.accounts ?? [])
-        : [],
+      groupFor(accounts, platform)?.accounts ?? [],
     [accounts],
   );
 
@@ -769,9 +771,9 @@ export function AgenticIdeView() {
 
           {meta && installed.length === 0 && (
             <Callout tone="warn">
-              Neither Claude Code nor Codex was found on this machine’s PATH.
-              Install one from the CLIs page, then come back — the wizard picks
-              it up automatically.
+              No coding-agent CLI was found on this machine’s PATH. Install
+              one from the CLIs page, then come back — the wizard picks it up
+              automatically.
               <button
                 type="button"
                 className="btn-ghost mt-2"

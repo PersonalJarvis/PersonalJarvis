@@ -72,12 +72,26 @@ def _platform(value: str) -> str:
     return value
 
 
+def _display_name(platform: str) -> str:
+    """What this CLI is called on screen, from the one registry that knows."""
+    from jarvis.workspace.agents import get_agent
+
+    entry = get_agent(platform)
+    return entry.display_name if entry is not None else platform
+
+
 def _collect() -> dict[str, Any]:
     """Every account of every platform, described, plus who is active."""
     return {
         "platforms": [
             {
                 "platform": platform,
+                # Sent so the UI renders whatever platforms this build has,
+                # rather than keeping its own id-to-label map — a second list of
+                # product names is a second place for a new CLI to be missing,
+                # and the way it goes missing is invisible: the backend answers
+                # correctly and the section simply is not drawn.
+                "display_name": _display_name(platform),
                 "active_account": agent_accounts.active_account(platform).id,
                 "accounts": [s.to_dict() for s in agent_accounts.snapshots(platform)],
             }
