@@ -34,10 +34,36 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from typing import IO, Any
 
 log = logging.getLogger("jarvis.ui.jarvisbar")
+
+
+def _respawn_after_backoff_weakly(
+    weak_surface: weakref.ReferenceType[SubprocessBarOverlay],
+    attempt: int,
+    backoff: float,
+) -> None:
+    """Serve a respawn backoff without keeping the overlay alive.
+
+    Deliberately a module function taking a weak reference, not a bound
+    method: a sleeping thread that holds the surface strongly resurrects an
+    overlay nobody wants anymore, and spawns a REAL host process — with a real
+    window — once the sleep ends. An overlay that has been dropped has no bar
+    to restore, so the correct respawn is none.
+    """
+    time.sleep(backoff)
+    surface = weak_surface()
+    if surface is None:
+        log.debug(
+            "JarvisBar respawn attempt %d abandoned — the overlay it belonged "
+            "to was released during the backoff.",
+            attempt,
+        )
+        return
+    surface._respawn_after_backoff(attempt)
 
 # Kept in sync with renderer.MODES without importing numpy/PIL into the
 # parent for a pure IPC proxy; the host-side bar re-validates every mode.
@@ -380,22 +406,30 @@ class SubprocessBarOverlay:
                 self._RESPAWN_MAX_ATTEMPTS,
                 self._RESPAWN_BACKOFF_SECONDS,
             )
+            # The thread must NOT hold this surface alive across the backoff.
+            # A bound method would: the sleeping thread keeps a strong ref, so
+            # an overlay nobody wants anymore still reaches Popen minutes later
+            # and puts a real bar window on the user's screen. That is exactly
+            # how a unit run leaked a second, permanently visible bar — the
+            # test's Popen fake was long unpatched by the time the sleep ended.
+            # A weakref makes "nobody holds this overlay" mean "no respawn".
             threading.Thread(
-                target=self._respawn_after_backoff,
-                args=(attempt,),
+                target=_respawn_after_backoff_weakly,
+                args=(weakref.ref(self), attempt, self._RESPAWN_BACKOFF_SECONDS),
                 name=f"{self._RESPAWN_THREAD_NAME}-{attempt}",
                 daemon=True,
             ).start()
 
     def _respawn_after_backoff(self, attempt: int) -> None:
-        """Wait out the backoff, then respawn — runs on its own daemon thread.
+        """Respawn the host — runs on its own daemon thread, backoff already served.
 
-        Never touches the caller's thread or the app's event loop: the sleep
-        and the Popen call both happen here. A death within the backoff
-        window (``stop()`` called while waiting) aborts the attempt instead
-        of spawning a host nobody wants anymore.
+        Never touches the caller's thread or the app's event loop: the Popen
+        call happens here. The backoff itself is served by
+        :func:`_respawn_after_backoff_weakly`, which holds only a weak
+        reference while it sleeps. A death within that window (``stop()``
+        called while waiting) aborts the attempt instead of spawning a host
+        nobody wants anymore.
         """
-        time.sleep(self._RESPAWN_BACKOFF_SECONDS)
         if self._stopping:
             return
 

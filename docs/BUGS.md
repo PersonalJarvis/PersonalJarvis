@@ -8240,3 +8240,51 @@ that a transparency path works, check it in the state the report describes —
 an unstalled probe cannot falsify a stall-triggered defect. When a UI defect's
 rectangle matches a window exactly and its colour is one the renderer never
 emits, suspect a substituted window before suspecting the renderer.
+
+---
+
+## BUG-119: a unit run leaves a SECOND, permanently visible JarvisBar on the developer's desktop (MEDIUM, FIXED 2026-07-28)
+
+**Symptom (maintainer field report).** Two bars on screen at once, slightly
+offset and of different sizes. The second one belonged to no Jarvis instance:
+`python -m jarvis.ui.jarvisbar.host`, parented to
+`pytest tests/unit -q --timeout=180`, still visible long after that test had
+moved on. Different geometry from the app's own bar (72x30 vs 93x39) because it
+booted from a different scale — the tell that it was a foreign process, not a
+duplicated window.
+
+**Root cause.** `SubprocessBarOverlay` schedules its bounded auto-respawn as
+`threading.Thread(target=self._respawn_after_backoff, ...)`. A **bound method
+keeps the surface alive**, so the thread holds the whole overlay across its
+5 s backoff. In a test the fake host's scripted stdout EOFs immediately, the
+pump reads "host is gone", and a respawn is scheduled — but by the time the
+sleep ends, `monkeypatch` has reverted and `subprocess.Popen` is REAL again.
+The respawn then starts a genuine host process, which on Windows builds a real
+Tk bar (`QT_QPA_PLATFORM=offscreen` binds Qt only, and the Qt host test is
+Darwin-gated anyway) and shows it on the developer's desktop, where nothing
+ever reaps it.
+
+`test_subprocess_overlay.py` already carried an autouse fixture marking every
+live proxy `_stopping` for exactly this reason — but it is per-file, so any
+other module that constructs one is unprotected, and it only papers over a
+lifetime bug in the production path.
+
+**Fix.** The backoff is served by a module-level
+`_respawn_after_backoff_weakly(weakref.ref(surface), attempt, backoff)`, which
+sleeps holding only a **weak** reference and abandons the attempt when the
+overlay has been released. "Nobody holds this overlay" now means "there is no
+bar to restore, so do not spawn a host". The live path is unchanged: the
+desktop app holds its surface, so real respawns still fire.
+
+**Guards.** `tests/unit/ui/jarvisbar/test_subprocess_overlay.py` — a released
+surface abandons its pending respawn, a live one still respawns, and (the real
+regression) a proxy with a respawn pending is still garbage-collectable once
+dropped. Verified sharp: with the previous bound-method target that last
+assertion fails.
+
+**Class rule.** A thread that sleeps on behalf of an object must not own it.
+Any delayed retry/backoff/watchdog that targets a bound method silently extends
+its subject's lifetime past the point where anything wants it — and when the
+retry's side effect is spawning a process or a window, the leak becomes
+user-visible on a machine nobody is testing on. Hold the subject weakly and
+treat collection as cancellation.

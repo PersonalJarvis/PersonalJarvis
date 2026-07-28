@@ -12,6 +12,7 @@ import gc
 import io
 import json
 import threading
+import weakref
 
 import pytest
 
@@ -584,3 +585,61 @@ def test_mascot_surface_contract_matches_the_bar_proxy() -> None:
         assert getattr(SubprocessMascotOverlay, name, None) is not None, name
     # Same reset-path contract as NullOverlay: no _root instance attribute.
     assert not hasattr(SubprocessMascotOverlay(), "_root")
+
+
+# --------------------------------------------------------------------------- #
+# A released overlay must never respawn (leaked a second visible bar)          #
+# --------------------------------------------------------------------------- #
+def test_a_released_overlay_abandons_its_pending_respawn() -> None:
+    """The backoff thread must hold the surface WEAKLY.
+
+    A bound-method thread target keeps a dropped overlay alive across the
+    backoff and then calls the real ``subprocess.Popen`` — which is how a unit
+    run left a second, permanently visible bar on the developer's desktop long
+    after the test that created it had finished.
+    """
+    calls: list[int] = []
+
+    class _Surface:
+        def _respawn_after_backoff(self, attempt: int) -> None:
+            calls.append(attempt)
+
+    surface = _Surface()
+    ref = weakref.ref(surface)
+    del surface
+    gc.collect()
+    assert ref() is None, "the fake surface must be collectable"
+
+    mod._respawn_after_backoff_weakly(ref, 1, 0.0)
+    assert calls == [], "a released overlay must not spawn a host"
+
+
+def test_a_live_overlay_still_respawns_after_the_backoff() -> None:
+    """The weakref must not break the feature it guards."""
+    calls: list[int] = []
+
+    class _Surface:
+        def _respawn_after_backoff(self, attempt: int) -> None:
+            calls.append(attempt)
+
+    surface = _Surface()
+    mod._respawn_after_backoff_weakly(weakref.ref(surface), 2, 0.0)
+    assert calls == [2]
+
+
+def test_a_pending_respawn_does_not_keep_the_overlay_alive(monkeypatch) -> None:
+    """End to end on the real proxy: schedule a respawn, drop every reference,
+    and the overlay must still be collectable — proof no thread holds it."""
+    monkeypatch.setattr(SubprocessBarOverlay, "_RESPAWN_BACKOFF_SECONDS", 30.0)
+    surface, proc = _started_proxy(monkeypatch)
+    proc._returncode = 1  # the host died -> a respawn gets scheduled
+    surface._log_dead_once()
+    assert surface._respawn_attempts == 1, "the respawn must actually be pending"
+
+    ref = weakref.ref(surface)
+    del surface, proc
+    gc.collect()
+    assert ref() is None, (
+        "a thread is still holding the overlay across its backoff — it will "
+        "spawn a real host window once the sleep ends"
+    )
