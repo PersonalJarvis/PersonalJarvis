@@ -345,7 +345,23 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     assert fallback_pcm in pipe._player.pcm
     assert surface_tts.calls == [("An error occurred.", "en-US")]
     assert pipe._tts.calls == []
-    assert pipe._test_states[-2:] == [
+    # Collapsed to real transitions rather than a tail window. This fake
+    # scripts the whole turn INSIDE handle_control, so the pipeline's
+    # once-per-session post-handshake LISTENING lands AFTER the surface render
+    # instead of before it — live, the provider pump delivers these frames long
+    # after the handshake returned. A tail window therefore saw
+    # [LISTENING, LISTENING] and read as "the speaking state is gone", while
+    # the emergency phrase had in fact played (asserted above). Collapsing
+    # duplicates pins all four genuine transitions and holds under either
+    # scheduling order; the sibling interim-audio test does the same.
+    transitions = [
+        state
+        for index, state in enumerate(pipe._test_states)
+        if index == 0 or state != pipe._test_states[index - 1]
+    ]
+    assert transitions == [
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.LISTENING,
         pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
         pipeline_mod.TurnTakingState.LISTENING,
     ]
