@@ -32,8 +32,10 @@
  * * **Measuring before the font is ready.** FitAddon derives the column count
  *   from one measured character. Run before the web font loads, it measures
  *   the fallback font, computes the wrong column count, and the agent then
- *   formats for a width the pane does not have. Hence the re-fit once
- *   `document.fonts.ready` resolves.
+ *   formats for a width the pane does not have. Worse, xterm keeps drawing the
+ *   real font's wider glyphs into that too-narrow grid, so the text smears
+ *   across its own columns. Neither `document.fonts.ready` nor a re-fit fixes
+ *   this — see `@/lib/terminalFont`, which does.
  * * **Renderer.** The DOM renderer draws each cell as an element; with a TUI
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
@@ -76,6 +78,11 @@ import { attachToTerminal } from "@/lib/agenticIdeApi";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustPaste } from "@/lib/clipboard";
+import {
+  TERMINAL_FONT_STACK,
+  alignTerminalCells,
+  syncTerminalFont,
+} from "@/lib/terminalFont";
 import { installPasteBridge } from "./terminalPaste";
 import { createKeyEventChain } from "./terminalKeyChain";
 import { installNewlineBridge } from "./terminalNewline";
@@ -365,8 +372,10 @@ export function AgenticTerminal({
 
     const term = new Terminal({
       convertEol: false,
-      fontFamily:
-        "'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, 'Courier New', monospace",
+      // Shared with the measurement in ./../../lib/terminalFont: a pane that
+      // measured a different stack from the one it draws with is the bug that
+      // module exists to prevent.
+      fontFamily: TERMINAL_FONT_STACK,
       fontSize: initialRef.current.fontSize,
       // Roomier than a console default — the single biggest readability win for
       // an agent that prints prose, diffs and file trees rather than log lines.
@@ -756,22 +765,17 @@ export function AgenticTerminal({
     });
 
     // The mount-time fit measured whatever font was loaded at that moment. If
-    // the display font arrives afterwards the cell width changes underneath the
-    // already-computed column count, and the agent then formats its output for a
-    // width the pane does not have — text wrapping in the wrong places, which is
-    // exactly the reported symptom. Re-fit once fonts settle.
-    let fontsSettled = false;
-    const refitOnFonts = () => {
-      if (disposed || fontsSettled) return;
-      fontsSettled = true;
+    // the display font arrives afterwards, the cell width changes underneath the
+    // already-computed column count: the agent formats its output for a width
+    // the pane does not have, and every glyph is painted wider than the cell it
+    // owns until the line has drifted a full column out of its grid. Both are
+    // the reported symptom. See ./../../lib/terminalFont for why waiting on
+    // `document.fonts.ready` and re-fitting cannot fix either.
+    const disposeFontSync = syncTerminalFont(term, () => {
+      if (disposed) return;
       term.clearTextureAtlas?.();
       sendResize();
-    };
-    if (typeof document !== "undefined" && document.fonts?.ready) {
-      void document.fonts.ready.then(refitOnFonts).catch(() => undefined);
-    } else {
-      refitOnFonts();
-    }
+    });
 
     // Resizes are coalesced: dragging a split or the window fires the observer
     // dozens of times a second, and every fit both reflows xterm's buffer and
@@ -873,6 +877,7 @@ export function AgenticTerminal({
       }
       ro.disconnect();
       io?.disconnect();
+      disposeFontSync();
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
@@ -904,6 +909,10 @@ export function AgenticTerminal({
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = fontSize;
+    // A new size is a new glyph advance, and so a new fraction of a pixel for
+    // the canvas renderer to floor away. Re-align before the fit below, or the
+    // pane spends this size with its glyphs overhanging their cells.
+    alignTerminalCells(term);
     term.clearTextureAtlas?.();
     // Changing the font size changes the COLUMN COUNT. Fitting locally without
     // telling the terminal process leaves the agent formatting for the old

@@ -21,6 +21,7 @@ import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
 import { useT } from "@/i18n";
 import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
+import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 import {
   disposeTerminal,
   getTerminal,
@@ -72,8 +73,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
     if (!term) {
       term = new Terminal({
         convertEol: true,
-        fontFamily:
-          "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+        fontFamily: TERMINAL_FONT_STACK,
         fontSize: 12,
         lineHeight: 1.2,
         cursorBlink: false,
@@ -111,6 +111,14 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       }
     };
     window.addEventListener("resize", handleResize);
+
+    // The fit above measured whatever font had loaded by then; if the display
+    // font arrives later, the cell grid keeps the fallback's width while the
+    // wider real glyphs are drawn into it — see ../../lib/terminalFont.
+    const disposeFontSync = syncTerminalFont(term, () => {
+      termRef.current?.clearTextureAtlas?.();
+      handleResize();
+    });
 
     let ws: WebSocket | null = null;
     let disposed = false;
@@ -195,6 +203,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
     return () => {
       disposed = true;
       window.removeEventListener("resize", handleResize);
+      disposeFontSync();
       try {
         wsRef.current?.close(1000, "unmount");
       } catch {
