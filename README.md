@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
+  <b>Talk to your computer — and watch it do the work: an open-source voice agent with full command of your PC.</b>
 </p>
 
 ---
@@ -36,7 +36,8 @@ and it runs everywhere — headless server to full voice desktop.
 | *"When the download finishes, ping me on Telegram."* | A when-then trigger arms itself and messages you the moment it fires. |
 | *"Open the browser and pull up the weather."* | Jarvis takes mouse and keyboard and does it on your screen. |
 
-Every one of these works today, out of the box.
+Every one of these is implemented today, not a roadmap entry — a few of them on top of
+optional setup: a provider key, Node.js for heavy missions, the Twilio line for phone calls.
 
 ## See it in action
 
@@ -118,33 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 > dependencies, prefetches the voice models, and launches the app. Keys land in your OS
 > credential manager, never in the repo. Re-running the same one-liner updates in place.
 
-**Uninstall** — one command as well. Removes the install folder, the autostart entry, and
-the keychain entries; add `--dry-run` to preview, `--yes` to skip the confirmation:
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
-```
-
-```bash
-# macOS · Linux
-bash ~/.personal-jarvis/install/uninstall.sh
-```
-
-Both run the uninstaller **that is already on your disk**. If it is missing or
-refuses to start — installs from 1.1.0 / 1.1.1 shipped one that could not run on
-macOS at all — skip it and use the app's own uninstall directly. Same job, no
-bootstrap involved; add `--dry-run` first to see what it would remove:
-
-```bash
-# macOS · Linux
-~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
-```
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
-```
+Removing it again is one command too — see [**Uninstall**](#uninstall).
 
 <details>
 <summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
@@ -290,6 +265,36 @@ fallback = "grok-voice"    # cross-provider fallback is the norm everywhere
 Overrides cascade `jarvis.toml → ENV` (`JARVIS__SECTION__KEY=…`). **Secrets
 never go in this file** — API keys live in your OS credential manager (or
 `.env`), entered in-app.
+
+## Uninstall
+
+**Uninstall** — one command as well. Removes the install folder, the autostart entry, and
+the keychain entries; add `--dry-run` to preview, `--yes` to skip the confirmation:
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS · Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
+Both run the uninstaller **that is already on your disk**. If it is missing or
+refuses to start — installs from 1.1.0 / 1.1.1 shipped one that could not run on
+macOS at all — skip it and use the app's own uninstall directly. Same job, no
+bootstrap involved; add `--dry-run` first to see what it would remove:
+
+```bash
+# macOS · Linux
+~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
+```
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
+```
 
 ## Privacy
 
