@@ -1711,6 +1711,81 @@ class UltraWikiService:
             raise ValueError(f"unknown source {source_id!r}")
         return int(await store.requeue_failed(source_id))
 
+    # -- identity (design doc 05 · D-10) -------------------------------------
+
+    async def seed_identities(self, *, contact_store: Any = None) -> dict[str, Any]:
+        """Seed entities from the user's address book; idempotent and re-runnable.
+
+        Safe to call on every activation: a second pass links instead of
+        duplicating. Runs off the boot path like every other service action.
+        ``contact_store`` is a test seam; production resolves the real one.
+        """
+        await self.ensure_started()
+        from jarvis.ultrawiki.identity_store import (  # noqa: PLC0415 — lazy (AP-26)
+            seed_from_contacts,
+        )
+
+        report = await seed_from_contacts(
+            self._require_store(), contact_store=contact_store
+        )
+        return report.to_dict()
+
+    async def list_people(
+        self, *, query: str = "", limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """The People view's list: live person entities, name-ordered."""
+        await self.ensure_started()
+        return await self._require_store().list_people(
+            query=query, limit=limit, offset=offset
+        )
+
+    async def person_profile(self, entity_id: int) -> dict[str, Any] | None:
+        """One person's identifiers, merge history and open proposals."""
+        await self.ensure_started()
+        return await self._require_store().get_person(int(entity_id))
+
+    async def identity_queue(
+        self, *, status: str | None = "pending", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Merge proposals awaiting a decision (``status=None`` for all)."""
+        await self.ensure_started()
+        return await self._require_store().list_confirm_queue(
+            status=status, limit=limit
+        )
+
+    async def confirm_identity_merge(
+        self, queue_id: int, *, decided_by: str = "user"
+    ) -> dict[str, Any]:
+        """Apply one proposal. Returns the audit id that reverses it."""
+        await self.ensure_started()
+        merge_id = await self._require_store().confirm_merge(
+            int(queue_id), decided_by=decided_by
+        )
+        return {"queue_id": int(queue_id), "merge_id": int(merge_id)}
+
+    async def reject_identity_merge(
+        self, queue_id: int, *, decided_by: str = "user"
+    ) -> dict[str, Any]:
+        """Decline one proposal permanently (never asked about again)."""
+        await self.ensure_started()
+        await self._require_store().reject_merge(int(queue_id), decided_by=decided_by)
+        return {"queue_id": int(queue_id), "status": "rejected"}
+
+    async def unmerge_identity(self, merge_id: int) -> dict[str, Any]:
+        """Undo one merge, restoring both identities exactly as they were."""
+        await self.ensure_started()
+        await self._require_store().unmerge(int(merge_id))
+        return {"merge_id": int(merge_id), "status": "undone"}
+
+    async def identity_merge_log(
+        self, *, entity_id: int | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """The audit trail: every merge, its evidence, and whether it stands."""
+        await self.ensure_started()
+        return await self._require_store().list_merge_log(
+            entity_id=entity_id, limit=limit
+        )
+
     # -- search --------------------------------------------------------------
 
     async def search(self, query: str, **kwargs: Any) -> Any:

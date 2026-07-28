@@ -50,6 +50,13 @@ from urllib.parse import quote
 
 import aiosqlite
 
+from jarvis.ultrawiki.identity import (
+    MERGEABLE_TIERS,
+    EntityKind,
+    IdentifierKind,
+    QueueStatus,
+)
+from jarvis.ultrawiki.identity_store import IdentityMixin
 from jarvis.ultrawiki.types import (
     STATE_ORDER,
     ConsentState,
@@ -514,7 +521,7 @@ _DISTILLED_FINGERPRINT_SQL = (
 # ---------------------------------------------------------------------------
 
 
-class UltraStore:
+class UltraStore(IdentityMixin):
     """Async SQLite store for UltraWiki (the universal reference backend).
 
     One instance = one ``aiosqlite`` connection, opened lazily on first use
@@ -749,6 +756,19 @@ class UltraStore:
         row = await cur.fetchone()
         await cur.close()
         return row
+
+    async def _id_insert(
+        self, conn: aiosqlite.Connection, sql: str, params: Sequence[Any]
+    ) -> int:
+        """Identity-layer INSERT hook: SQLite reports the id via ``lastrowid``.
+
+        Deliberately not ``RETURNING``: that needs SQLite ≥ 3.35, and the
+        headless-Linux floor may run whatever the distro ships.
+        """
+        cur = await conn.execute(sql, params)
+        row_id = int(cur.lastrowid or 0)
+        await cur.close()
+        return row_id
 
     # -- sources & consent -------------------------------------------------
 
@@ -2559,7 +2579,7 @@ class UltraStore:
 # ---------------------------------------------------------------------------
 
 
-class PostgresStore:
+class PostgresStore(IdentityMixin):
     """Postgres backend behind the same public surface as :class:`UltraStore`.
 
     - The keyword leg is a generated ``tsvector`` column with a GIN index,
@@ -2574,12 +2594,22 @@ class PostgresStore:
     SQLite is the reference backend; this class mirrors its semantics.
     """
 
+    #: The identity layer writes its SQL once, in the SQLite dialect;
+    #: :meth:`IdentityMixin._id_sql` rewrites the placeholders for psycopg.
+    _IDENTITY_PARAM = "%s"
+
     def __init__(self, conn_str: str) -> None:
         self._conn_str = conn_str
         self._conn: Any = None
         self._lock = asyncio.Lock()
         self._vec_state: tuple[bool, str] | None = None
         self._vec_dim: int | None = None
+
+    async def _id_insert(self, conn: Any, sql: str, params: Sequence[Any]) -> int:
+        """Identity-layer INSERT hook: Postgres reports the id via RETURNING."""
+        cur = await conn.execute(f"{sql} RETURNING id", params)
+        row = await cur.fetchone()
+        return int(row["id"])
 
     # -- DDL -----------------------------------------------------------------
 
@@ -2593,6 +2623,12 @@ class PostgresStore:
         states = ", ".join(f"'{state.value}'" for state in ItemState)
         consents = ", ".join(f"'{consent.value}'" for consent in ConsentState)
         doc_types = ", ".join(f"'{doc.value}'" for doc in DocType)
+        entity_kinds = ", ".join(f"'{kind.value}'" for kind in EntityKind)
+        identifier_kinds = ", ".join(f"'{kind.value}'" for kind in IdentifierKind)
+        queue_states = ", ".join(f"'{status.value}'" for status in QueueStatus)
+        merge_tiers = ", ".join(
+            f"'{tier.value}'" for tier in sorted(MERGEABLE_TIERS, key=str)
+        )
         return [
             "CREATE TABLE IF NOT EXISTS uw_meta ("
             " key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -2684,6 +2720,68 @@ class PostgresStore:
             " model TEXT NOT NULL, result_json TEXT NOT NULL,"
             " created_at TEXT NOT NULL,"
             " PRIMARY KEY (content_hash, prompt_version, model))",
+            # Identity layer (design doc 05 · D-10) — the Postgres twin of
+            # migrations/0003_identity.sql. Same tables, same constraints, same
+            # partial indexes; only the key types differ.
+            "CREATE TABLE IF NOT EXISTS uw_entities ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " kind TEXT NOT NULL DEFAULT 'person'"
+            f" CHECK (kind IN ({entity_kinds})),"
+            " display_name TEXT NOT NULL,"
+            " canonical_key TEXT NOT NULL DEFAULT '',"
+            " merged_into BIGINT REFERENCES uw_entities(id) ON DELETE SET NULL,"
+            " source_ref TEXT NOT NULL DEFAULT '',"
+            " profile_json TEXT NOT NULL DEFAULT '{}',"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_entities_live"
+            " ON uw_entities(merged_into, kind)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_entities_key"
+            " ON uw_entities(canonical_key)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_uw_entities_source_ref"
+            " ON uw_entities(source_ref) WHERE source_ref != ''",
+            "CREATE TABLE IF NOT EXISTS uw_identifiers ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " entity_id BIGINT NOT NULL"
+            "  REFERENCES uw_entities(id) ON DELETE CASCADE,"
+            f" kind TEXT NOT NULL CHECK (kind IN ({identifier_kinds})),"
+            " value TEXT NOT NULL, display_value TEXT NOT NULL DEFAULT '',"
+            " value_len INTEGER NOT NULL DEFAULT 0,"
+            " source_ref TEXT NOT NULL DEFAULT '',"
+            " created_at TEXT NOT NULL)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_uw_identifiers_unique"
+            " ON uw_identifiers(entity_id, kind, value)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_identifiers_value"
+            " ON uw_identifiers(kind, value)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_identifiers_len"
+            " ON uw_identifiers(kind, value_len)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_identifiers_entity"
+            " ON uw_identifiers(entity_id)",
+            "CREATE TABLE IF NOT EXISTS uw_confirm_queue ("
+            " id BIGSERIAL PRIMARY KEY, pair_key TEXT NOT NULL UNIQUE,"
+            " left_entity_id BIGINT NOT NULL"
+            "  REFERENCES uw_entities(id) ON DELETE CASCADE,"
+            " right_entity_id BIGINT NOT NULL"
+            "  REFERENCES uw_entities(id) ON DELETE CASCADE,"
+            " status TEXT NOT NULL DEFAULT 'pending'"
+            f" CHECK (status IN ({queue_states})),"
+            " score DOUBLE PRECISION NOT NULL DEFAULT 0,"
+            " evidence_json TEXT NOT NULL DEFAULT '[]',"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL,"
+            " decided_at TEXT, decided_by TEXT)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_confirm_queue_status"
+            " ON uw_confirm_queue(status, score DESC, id)",
+            "CREATE TABLE IF NOT EXISTS uw_merge_log ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " winner_id BIGINT NOT NULL, loser_id BIGINT NOT NULL,"
+            f" tier TEXT NOT NULL CHECK (tier IN ({merge_tiers})),"
+            " reason TEXT NOT NULL DEFAULT '',"
+            " evidence_json TEXT NOT NULL DEFAULT '[]',"
+            " undo_json TEXT NOT NULL DEFAULT '{}',"
+            " queue_id BIGINT, merged_at TEXT NOT NULL, undone_at TEXT)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_merge_log_winner"
+            " ON uw_merge_log(winner_id, undone_at)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_merge_log_loser"
+            " ON uw_merge_log(loser_id, undone_at)",
             # The same additive columns for databases created before the
             # feature that introduced them. Postgres HAS `ADD COLUMN IF NOT
             # EXISTS`, so the SQLite pragma dance is unnecessary here — but the

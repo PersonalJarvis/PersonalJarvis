@@ -26,7 +26,14 @@ The contract:
 
 Shipped so far: `0001` (multi-chunk documents), `0002` (the shadow embedding
 space — widening the `uw_embeddings` key so a model switch can build the new
-vector space alongside the live one). The Postgres backend applies its DDL
-idempotently from `PostgresStore.ddl_statements()`, including the in-place
-key widening that mirrors `0002`; it receives its own version tracking when a
-change ships that idempotent DDL cannot express.
+vector space alongside the live one), `0003` (the identity layer: entities,
+identifiers, the confirmation queue and the reversible merge log). The
+Postgres backend applies its DDL idempotently from
+`PostgresStore.ddl_statements()`, including the in-place key widening that
+mirrors `0002` and the identity tables that mirror `0003`; it receives its own
+version tracking when a change ships that idempotent DDL cannot express.
+
+A migration that only ADDS tables (like `0003`) is still the right home for
+them: keeping one dialect-complete DDL per feature in one numbered file beats
+splitting it between here and `schema.sql`, and the runner applies pending
+files to fresh databases too (a new store starts at `user_version = 0`).

@@ -165,3 +165,8 @@ CREATE TABLE IF NOT EXISTS uw_distill_cache (
     created_at     TEXT NOT NULL,
     PRIMARY KEY (content_hash, prompt_version, model)
 );
+
+-- The identity layer (uw_entities / uw_identifiers / uw_confirm_queue /
+-- uw_merge_log, design doc 05) ships as migrations/0003_identity.sql rather
+-- than as part of this file, so its DDL exists exactly once per dialect. The
+-- runner applies it to fresh and existing databases alike.
