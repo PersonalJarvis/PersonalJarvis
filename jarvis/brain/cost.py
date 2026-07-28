@@ -55,9 +55,22 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash": (0.075, 0.30),
     "gemini-2.5-flash-lite": (0.075, 0.30),
     "gemini-3.1-flash-tts-preview": (0.075, 0.30),  # TTS, same rate
+    # 2026-07-28 cost audit: the 3.5/3.6 flash generation is ~20x pricier
+    # than 2.5-flash; these entries were missing, so the live install
+    # tallied its dominant spend as $0.00 (verified against the OpenRouter
+    # /api/v1/models pricing feed on 2026-07-28).
+    "gemini-3.5-flash": (1.50, 9.0),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.6-flash": (1.50, 7.50),
+    # Live API model — TEXT rates; audio rates live in
+    # REALTIME_AUDIO_PRICING_USD_PER_MTOK below.
+    "gemini-3.1-flash-live-preview": (0.75, 4.50),
     # ── OpenAI (Frontier: GPT-5.5 + 5.5-pro, released 2026-04-23) ──
     "gpt-5.5": (5.0, 30.0),
-    "gpt-5.5-pro": (15.0, 60.0),
+    "gpt-5.5-pro": (30.0, 180.0),  # corrected 2026-07-28 (OpenRouter feed)
+    # Realtime API — TEXT rates; audio rates in the realtime table below.
+    "gpt-realtime-2.1": (4.0, 16.0),
+    "gpt-realtime-2.1-mini": (0.60, 2.40),
     "gpt-5": (3.0, 15.0),
     "gpt-5-mini": (0.30, 1.20),
     "gpt-4o": (2.50, 10.0),
@@ -75,11 +88,14 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # ── DeepSeek ────────────────────────────────────────────────────
     "deepseek-chat": (0.27, 1.10),
     "deepseek-reasoner": (0.55, 2.19),
-    # ── OpenRouter (proxied Anthropic models, same price) ──────────────
+    # ── OpenRouter (proxied models, same price as the origin) ──────────
     "anthropic/claude-haiku-4.5": (0.80, 4.0),
     "anthropic/claude-opus-4.8": (15.0, 75.0),
     "anthropic/claude-opus-4.7": (15.0, 75.0),
     "anthropic/claude-sonnet-4.6": (3.0, 15.0),
+    "google/gemini-3.5-flash": (1.50, 9.0),
+    "google/gemini-3.5-flash-lite": (0.30, 2.50),
+    "google/gemini-3.6-flash": (1.50, 7.50),
     # ── Mistral (same ordering) ──────────────────────────────────────
     "mistral-small-3.1": (0.20, 0.60),
     "mistral-large-3": (3.0, 9.0),
@@ -113,4 +129,50 @@ def calculate_cost_usd(
     return (max(0, tokens_in) * in_rate + max(0, tokens_out) * out_rate) / 1_000_000
 
 
-__all__ = ["PRICING_USD_PER_MTOK", "calculate_cost_usd"]
+# Realtime/Live API audio token rates (USD per 1M AUDIO tokens).
+# Audio tokens are billed 4-40x above the same model's text tokens, so
+# realtime cost accounting that prices everything at text rates
+# understates the bill dramatically. Sources (2026-07-28):
+# - Google Live API: gemini-3.1-flash-live-preview $3.00 in / $12.00 out
+# - OpenAI Realtime: gpt-realtime-2.1 $32 in / $64 out,
+#   gpt-realtime-2.1-mini $10 in / $20 out
+REALTIME_AUDIO_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
+    "gemini-3.1-flash-live-preview": (3.0, 12.0),
+    "gpt-realtime-2.1": (32.0, 64.0),
+    "gpt-realtime-2.1-mini": (10.0, 20.0),
+}
+
+
+def calculate_realtime_cost_usd(
+    model: str | None,
+    text_in: int,
+    text_out: int,
+    audio_in: int,
+    audio_out: int,
+) -> float:
+    """Return the cost of a realtime/Live turn with per-modality rates.
+
+    Text tokens use ``PRICING_USD_PER_MTOK``; audio tokens use
+    ``REALTIME_AUDIO_PRICING_USD_PER_MTOK``. A model missing from the
+    audio table falls back to its text rates for the audio share (still
+    better than 0.0), and a fully unknown model returns 0.0 like
+    :func:`calculate_cost_usd`.
+    """
+    if not model:
+        return 0.0
+    total = calculate_cost_usd(model, text_in, text_out)
+    audio_rates = REALTIME_AUDIO_PRICING_USD_PER_MTOK.get(model)
+    if audio_rates is None:
+        total += calculate_cost_usd(model, audio_in, audio_out)
+    else:
+        a_in, a_out = audio_rates
+        total += (max(0, audio_in) * a_in + max(0, audio_out) * a_out) / 1_000_000
+    return total
+
+
+__all__ = [
+    "PRICING_USD_PER_MTOK",
+    "REALTIME_AUDIO_PRICING_USD_PER_MTOK",
+    "calculate_cost_usd",
+    "calculate_realtime_cost_usd",
+]
