@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import { PaneScrollbar } from "./PaneScrollbar";
-import { LINES_PER_NOTCH } from "./scrollbarModel";
+import { LINES_PER_NOTCH, SETTLE_MS } from "./scrollbarModel";
 
 const REGION = { top: 0, bottom: 300, left: 0, right: 400 };
 const TRACK_PX = 300;
@@ -364,6 +364,55 @@ describe("PaneScrollbar", () => {
     await waitFor(() =>
       expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX),
     );
+  });
+
+  /*
+   * The pinned-pane deadlock, end to end: the brake engages MID-DRAG (the
+   * CLI stopped answering), and the rest of the drag must still send one
+   * probe notch per step instead of going dead — the escape hatch that lets
+   * a wrongly-braked pane free itself.
+   */
+  it("keeps probing upward while the brake holds", async () => {
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const { state, term, fire } = appTerminal(24);
+    state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
+    state.lines[20] = "  12   Jump to bottom (ctrl+End) ↓";
+    render(<Harness term={term} />);
+    reachThePane();
+
+    // Prove movement once — a brake without proven movement must not engage.
+    // Then WAIT for the frame that carries the sync: the change must be on
+    // record before the drag below piles up unconfirmed notches.
+    state.lines[0] = "transcript moved";
+    fire("render");
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(bar()!.dataset.kind).toBe("travel");
+
+    // Grab the thumb and pull: the burst is relayed, the screen stays still.
+    const seen = watchScreen();
+    fireEvent.pointerDown(thumb(), { clientY: 250, pointerId: 1 });
+    dragTo(thumb(), 220);
+    expect(seen.length).toBeGreaterThan(0);
+
+    // The pty stays silent past the settle window: the brake engages.
+    clock += SETTLE_MS + 100;
+    fire("render");
+    await waitFor(() =>
+      expect(bar()!.getAttribute("aria-valuemax")).toBe("3"),
+    );
+
+    // Further pulling probes with exactly one notch per step, never a burst.
+    const before = seen.length;
+    dragTo(thumb(), 100);
+    fireEvent.pointerUp(thumb(), { pointerId: 1 });
+    expect(seen.length - before).toBe(1);
+    expect(seen[seen.length - 1]).toBe(-1);
   });
 
   it("starts a fresh terminal's count from zero", async () => {

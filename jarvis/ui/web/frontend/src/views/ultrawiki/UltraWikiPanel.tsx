@@ -31,6 +31,7 @@ import {
   MessageCircleQuestion,
   Plug,
   Settings2,
+  UsersRound,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -47,8 +48,22 @@ import { ContentsPanel } from "@/components/ultrawiki/ContentsPanel";
 import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
 import { ExplorePanel } from "@/components/ultrawiki/ExplorePanel";
+import { PeoplePanel } from "@/components/ultrawiki/PeoplePanel";
 
-type UltraTab = "overview" | "explore" | "ask" | "sources" | "contents" | "settings";
+type UltraTab =
+  | "overview"
+  | "explore"
+  | "people"
+  | "ask"
+  | "sources"
+  | "contents"
+  | "settings";
+
+/** Tabs that own their scrolling: a workspace, not a document (see below). */
+const SELF_SCROLLING: ReadonlySet<UltraTab> = new Set<UltraTab>([
+  "explore",
+  "people",
+]);
 
 export function UltraWikiPanel(): JSX.Element {
   const t = useT();
@@ -158,6 +173,13 @@ export function UltraWikiPanel(): JSX.Element {
           testId="ultrawiki-tab-explore"
         />
         <UltraTabButton
+          active={tab === "people"}
+          onClick={() => setTab("people")}
+          icon={<UsersRound className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.people.tab")}
+          testId="ultrawiki-tab-people"
+        />
+        <UltraTabButton
           active={tab === "ask"}
           onClick={() => setTab("ask")}
           icon={<MessageCircleQuestion className="h-3.5 w-3.5" aria-hidden />}
@@ -187,14 +209,14 @@ export function UltraWikiPanel(): JSX.Element {
         />
       </div>
 
-      {/* Explore is the one tab that manages its own scrolling: it is a
-          three-column workspace whose map fills the height it is given, and
-          an outer scroll container would let that height grow without limit
-          instead of pinning it to the window. */}
+      {/* Explore and People manage their own scrolling: both are column
+          workspaces whose panes fill the height they are given, and an outer
+          scroll container would let that height grow without limit instead of
+          pinning it to the window. */}
       <div
         className={cn(
           "min-h-0 flex-1",
-          tab === "explore"
+          SELF_SCROLLING.has(tab)
             ? "overflow-hidden"
             : "scrollbar-jarvis overflow-y-auto",
         )}
@@ -212,6 +234,9 @@ export function UltraWikiPanel(): JSX.Element {
             onOpenSources={() => setTab("sources")}
             onOpenSettings={() => setTab("settings")}
           />
+        )}
+        {tab === "people" && (
+          <PeoplePanel onOpenSources={() => setTab("sources")} />
         )}
         {tab === "ask" && (
           <AskPanel

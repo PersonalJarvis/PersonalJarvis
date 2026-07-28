@@ -139,9 +139,12 @@ export function travelView(
 /**
  * How long the pty gets to answer an up-notch before an unchanged screen
  * counts as proof the notch fell off the top. The CLI answers a notch in
- * 1–30 ms (measured); the margin covers the socket and a busy render loop.
+ * 1–30 ms when idle (measured), but a CLI mid-task plus a loaded render
+ * loop can stretch far past that — and a wrong verdict here once pinned a
+ * pane's thumb to a false top (2026-07-28). Hence the generous window AND
+ * the `moved` requirement in {@link screenTravel}.
  */
-export const SETTLE_MS = 350;
+export const SETTLE_MS = 500;
 
 /**
  * Overlays a full-screen CLI paints while its view is away from the live
@@ -167,6 +170,17 @@ export interface Travel {
   fingerprint: string | null;
   /** Ups are known to be falling off the top right now. */
   saturated: boolean;
+  /**
+   * The transcript has been SEEN to move during this scroll-back episode.
+   *
+   * The brake's precondition, and the fix for the pinned-thumb deadlock: a
+   * busy CLI can leave the screen unchanged long past {@link SETTLE_MS}
+   * without a single notch having fallen off the top. Genuinely reaching
+   * the top requires having scrolled through content first, which repaints
+   * — so an episode that never moved proves latency, not a boundary, and
+   * must neither saturate nor measure a ceiling.
+   */
+  moved: boolean;
 }
 
 export function freshTravel(): Travel {
@@ -178,6 +192,7 @@ export function freshTravel(): Travel {
     lastUpAt: 0,
     fingerprint: null,
     saturated: false,
+    moved: false,
   };
 }
 
@@ -228,12 +243,14 @@ export function screenTravel(
 
   if (glance.markerRow < 0) {
     // No overlay. From an application known to paint one, that is proof of
-    // the live end — the anchor that ends "thumb stuck mid-track".
+    // the live end — the anchor that ends "thumb stuck mid-track". It also
+    // closes the scroll-back episode: the next one proves movement afresh.
     if (!travel.markerSeen) return travel;
     if (
       travel.travelled === 0 &&
       travel.pendingUp === 0 &&
-      !travel.saturated
+      !travel.saturated &&
+      !travel.moved
     ) {
       return travel;
     }
@@ -243,6 +260,7 @@ export function screenTravel(
       pendingUp: 0,
       saturated: false,
       fingerprint: null,
+      moved: false,
     };
   }
 
@@ -251,24 +269,31 @@ export function screenTravel(
     : { ...travel, markerSeen: true };
 
   if (next.fingerprint !== glance.fingerprint) {
-    // The transcript moved: whatever was pending has been answered.
+    // The transcript moved: whatever was pending has been answered. Only a
+    // CHANGE proves movement — the episode's first look merely records.
     next = {
       ...next,
       fingerprint: glance.fingerprint,
       pendingUp: 0,
       saturated: false,
+      moved: next.moved || next.fingerprint !== null,
     };
   } else if (next.pendingUp > 0 && now - next.lastUpAt >= SETTLE_MS) {
-    // Counted ups, an answered pty, an unmoved screen: those notches fell
-    // off the top. Un-count them and remember where the top IS.
+    // Counted ups, an answered pty, an unmoved screen: those notches did
+    // nothing, so they leave the count either way. But they only prove a
+    // TOP when this episode has scrolled before — an episode that never
+    // moved is a busy CLI, and a ceiling measured from it pinned a pane's
+    // thumb to a false top with every further relay refused (2026-07-28).
     const travelled = Math.max(0, next.travelled - next.pendingUp);
-    next = {
-      ...next,
-      travelled,
-      pendingUp: 0,
-      saturated: true,
-      ceiling: travelled,
-    };
+    next = next.moved
+      ? {
+          ...next,
+          travelled,
+          pendingUp: 0,
+          saturated: true,
+          ceiling: Math.max(travelled, LINES_PER_NOTCH),
+        }
+      : { ...next, travelled, pendingUp: 0 };
   }
 
   // The overlay itself says the view is away from the live end — a count of

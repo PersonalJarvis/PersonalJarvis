@@ -359,9 +359,15 @@ export function PaneScrollbar({
       const term = getTerminal();
       if (!term || lines === 0) return;
       if (appOwnsScreen(term)) {
-        // Nothing above the top: while the brake holds, an up-notch would be
-        // ignored by the application and only pollute its pty.
-        if (lines > 0 && travelRef.current.saturated) return;
+        // While the brake holds, an up-drag relays ONE probe notch instead
+        // of a burst. At a genuine top it is ignored and costs nothing; at a
+        // false one (a CLI that was merely busy) it moves the screen, the
+        // fingerprint changes, and the brake releases itself — the escape
+        // hatch that keeps a wrong verdict from pinning the pane for good.
+        if (lines > 0 && travelRef.current.saturated) {
+          relayNotches(hostRef.current, -1, 1);
+          return;
+        }
         const notches = notchesFor(lines);
         relayNotches(
           hostRef.current,

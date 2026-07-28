@@ -195,7 +195,7 @@ describe("screenTravel", () => {
 
   it("un-counts ups the application ignored at the top, and measures it", () => {
     // The user's other reported bug: scrolling past a top nobody can see.
-    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0 };
+    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0, moved: true };
     const next = screenTravel(
       t,
       { markerRow: 22, fingerprint: "same" },
@@ -207,7 +207,7 @@ describe("screenTravel", () => {
   });
 
   it("waits for the pty before judging an unmoved screen", () => {
-    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0 };
+    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0, moved: true };
     const next = screenTravel(
       t,
       { markerRow: 22, fingerprint: "same" },
@@ -215,6 +215,52 @@ describe("screenTravel", () => {
     );
     expect(next.travelled).toBe(90);
     expect(next.saturated).toBe(false);
+  });
+
+  it("never calls an episode that has not moved a top", () => {
+    // The pinned-thumb deadlock: a busy CLI leaves the screen unchanged far
+    // past the settle window without a single notch having reached the top.
+    // The ups still leave the count, but no brake and no false ceiling.
+    const t: Travel = { ...seen(30), pendingUp: 30, lastUpAt: 0 };
+    const next = screenTravel(
+      t,
+      { markerRow: 22, fingerprint: "same" },
+      SETTLE_MS,
+    );
+    expect(next.travelled).toBe(3);
+    expect(next.saturated).toBe(false);
+    expect(next.ceiling).toBeNull();
+  });
+
+  it("a fingerprint CHANGE proves movement; the first look only records", () => {
+    const first = screenTravel(
+      freshTravel(),
+      { markerRow: 22, fingerprint: "a" },
+      0,
+    );
+    expect(first.moved).toBe(false);
+    const second = screenTravel(
+      first,
+      { markerRow: 22, fingerprint: "b" },
+      1,
+    );
+    expect(second.moved).toBe(true);
+  });
+
+  it("closing the episode at the live end demands fresh proof next time", () => {
+    const t: Travel = { ...seen(60), moved: true };
+    const home = screenTravel(t, { markerRow: -1, fingerprint: "" }, 0);
+    expect(home.moved).toBe(false);
+  });
+
+  it("keeps the ceiling graspable however small the measured top", () => {
+    const t: Travel = { ...seen(3), pendingUp: 3, lastUpAt: 0, moved: true };
+    const next = screenTravel(
+      t,
+      { markerRow: 22, fingerprint: "same" },
+      SETTLE_MS,
+    );
+    expect(next.ceiling).toBeGreaterThanOrEqual(LINES_PER_NOTCH);
   });
 
   it("floors the count while the overlay says the view is away", () => {
