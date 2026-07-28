@@ -11,6 +11,9 @@ implementation:
 * Restore must degrade to an honest sentence on a host with no speech-to-text
   provider, never a 500.
 * every route must answer sanely with no speech pipeline at all (headless).
+* no OpenAPI description may hardcode an assistant name, and no ``async``
+  handler may reach the filesystem inline — both are contract, so both are
+  guarded here rather than left to review.
 
 The fixture boots a bare ``FastAPI()`` with only this router, and sandboxes
 ``LOCALAPPDATA`` so the history, the counter sidecar and the audio directory all
@@ -19,6 +22,10 @@ land in ``tmp_path`` instead of the developer's real profile.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -557,6 +564,132 @@ def test_every_read_route_answers_without_a_speech_pipeline(
         "active": False,
     }
     assert client.post("/api/dictation/start", json={"target": "auto"}).status_code == 503
+
+
+# ----------------------------------------------------------------------
+# Contract — brand-neutral copy, and no blocking I/O on the event loop
+# ----------------------------------------------------------------------
+
+
+#: Literals that legitimately contain the project name: a command the reader
+#: types and a file they open. Those are not brand labels, so they are stripped
+#: before the brand check rather than exempting the whole description.
+_COMMAND_LITERALS = ("jarvis api", "jarvisctl", "jarvis.toml")
+
+
+def _described_strings(node: Any) -> Iterator[str]:
+    """Every ``description`` / ``summary`` string anywhere in an OpenAPI doc."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("description", "summary") and isinstance(value, str):
+                yield value
+            else:
+                yield from _described_strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _described_strings(item)
+
+
+def test_no_openapi_description_hardcodes_an_assistant_name(app: FastAPI) -> None:
+    """CLAUDE.md §4: a user-visible string never carries a fixed brand.
+
+    These descriptions are user-visible twice over — the /docs page and the
+    generated ``jarvis api dictation --help`` — so a sentence naming the
+    assistant reads wrong for every user whose wake word is something else.
+    """
+    offenders = []
+    for text in _described_strings(app.openapi()):
+        stripped = text
+        for literal in _COMMAND_LITERALS:
+            stripped = stripped.replace(literal, "")
+        if "jarvis" in stripped.lower():
+            offenders.append(text)
+
+    assert offenders == []
+
+
+#: Callables that hit the filesystem. Names, not source substrings, so a call
+#: that lives in a nested ``def`` handed to ``asyncio.to_thread`` is correctly
+#: read as threaded instead of failing the guard.
+_BLOCKING_CALLS = frozenset(
+    {
+        "DictationHistory",
+        "audio_exists",
+        "set_dictation_setting",
+        "load_dictation_audio",
+    }
+)
+
+
+def _calls_made_directly(func: Any) -> set[str]:
+    """Names this function calls in its OWN body — nested ``def``s excluded.
+
+    A call inside a nested function is not on the event loop: the only thing
+    this module does with one is hand it to ``asyncio.to_thread``.
+    """
+    outer = ast.parse(textwrap.dedent(inspect.getsource(func))).body[0]
+    found: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call):
+                target = child.func
+                if isinstance(target, ast.Name):
+                    found.add(target.id)
+                elif isinstance(target, ast.Attribute):
+                    found.add(target.attr)
+            visit(child)
+
+    visit(outer)
+    return found
+
+
+def test_async_handlers_keep_blocking_file_io_off_the_event_loop() -> None:
+    """A sync ``def`` may block (threadpool); an ``async def`` may not.
+
+    The history is parsed whole on every read and rewritten on every write, and
+    the loop it would block is the one a live voice WebSocket turn runs on.
+    Asserting the SHAPE rather than a timing, because a stopwatch assertion is
+    flaky on a loaded CI box and would not name the cause when it fails.
+    """
+    checked = 0
+    for route in dictation_router.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not inspect.iscoroutinefunction(endpoint):
+            continue
+        checked += 1
+        inline = _calls_made_directly(endpoint) & _BLOCKING_CALLS
+        assert not inline, (
+            f"{endpoint.__name__} is async and calls {sorted(inline)} inline — "
+            "push it through asyncio.to_thread or make the handler sync def"
+        )
+
+    assert checked, "no async endpoint was inspected — the guard went blind"
+
+
+def test_the_filesystem_routes_run_in_the_threadpool() -> None:
+    """The history/stats CRUD is sync ``def`` so FastAPI absorbs the blocking.
+
+    Pinned by name because turning one of these back into ``async def`` is
+    exactly the regression this pairs with: it would look harmless and put a
+    whole-file JSON parse back on the voice loop.
+    """
+    sync_endpoints = {
+        route.endpoint.__name__
+        for route in dictation_router.routes
+        if getattr(route, "endpoint", None) is not None
+        and not inspect.iscoroutinefunction(route.endpoint)
+    }
+
+    assert {
+        "get_history",
+        "get_stats",
+        "discard_history_entry",
+        "clear_history",
+        "delete_history_entry",
+    } <= sync_endpoints
 
 
 def test_routes_survive_an_app_with_no_config_at_all() -> None:

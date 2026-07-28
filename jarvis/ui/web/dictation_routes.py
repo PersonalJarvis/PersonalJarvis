@@ -30,11 +30,28 @@ cannot bind one itself.
 
 No Brain dependency, so it works headless and with a MockBrain; on a host with
 no microphone the status endpoint answers honestly instead of 500-ing.
+
+**Sync or async is a deliberate choice per handler, not a style.** The history
+is a JSON file that is parsed whole on every read and rewritten on every write,
+and a purge unlinks every audio sidecar — blocking work that must never sit on
+the event loop a live voice WebSocket shares. Two shapes, no third:
+
+* Everything that only touches the history/stats files is a plain ``def``, so
+  FastAPI runs it in its threadpool and the blocking call costs the loop
+  nothing (the precedent this follows is ``dictionary_routes.py``).
+* Everything that touches the *running pipeline* stays ``async def``, because
+  those calls are loop-affine: ``start_dictation`` needs
+  ``asyncio.get_running_loop()`` and would return a false "could not start"
+  from a worker thread, and ``stop_dictation`` / ``set_keybinds`` set an
+  ``asyncio.Event``. Where such a handler also has blocking work to do
+  (``PUT /settings`` persisting, restore's re-transcription) that work goes
+  through ``asyncio.to_thread`` — never half of it.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -43,6 +60,14 @@ from pydantic import BaseModel, Field
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dictation", tags=["dictation"])
+
+#: Serializes read-modify-write on the history across the per-request
+#: ``DictationHistory`` instances. The store's own lock is per instance and
+#: every handler builds a fresh one, so once these handlers run in FastAPI's
+#: threadpool two of them really can interleave — where the old all-``async``
+#: shape had the event loop serializing them for free. Same pattern, and the
+#: same reason, as ``dictionary_routes._LOCK``.
+_LOCK = threading.Lock()
 
 #: What a Restore says when there is simply no provider to ask. Not an error:
 #: the entry still comes back, it just comes back without its words. Phrased as
@@ -146,6 +171,32 @@ async def _retranscribe_from_audio(
     return text, detected, None
 
 
+def _read_for_restore(entry_id: str) -> tuple[Any, bool]:
+    """``(entry, has_audio)`` for one id — ``(None, False)`` when it is gone.
+
+    Blocking on both counts: it parses the whole history file and then stats
+    the audio sidecar. Bundled into one helper so the restore handler, which
+    has to stay ``async`` for the transcription await, reaches the filesystem
+    through a single ``to_thread`` hop instead of three.
+    """
+    from jarvis.dictation.audio import audio_exists
+    from jarvis.dictation.history import DictationHistory
+
+    with _LOCK:
+        entry = DictationHistory().get(entry_id)
+    if entry is None:
+        return None, False
+    return entry, audio_exists(entry.audio_path)
+
+
+def _write_restore(entry_id: str, changes: dict[str, Any]) -> Any:
+    """Apply a restore's changes. Blocking — it rewrites the history file."""
+    from jarvis.dictation.history import DictationHistory
+
+    with _LOCK:
+        return DictationHistory().update(entry_id, **changes)
+
+
 # ----------------------------------------------------------------------
 # Request models
 # ----------------------------------------------------------------------
@@ -155,9 +206,14 @@ class StartBody(BaseModel):
     target: str = Field(
         default="auto",
         description=(
-            "auto = follow [dictation].target (insert, unless Jarvis itself is "
-            "the window in front); insert = always paste into the app in front; "
-            "chat = only publish the transcript (fills the chat composer)"
+            # No assistant name here on purpose: this description is served in
+            # /docs and in the generated CLI help, and a user-visible string
+            # never carries a fixed brand (CLAUDE.md §4). The sentence is about
+            # this app's own window, so it needs no name at all.
+            "auto = follow [dictation].target (insert, unless this app's own "
+            "window is the one in front); insert = always paste into the app "
+            "in front; chat = only publish the transcript (fills the chat "
+            "composer)"
         ),
     )
 
@@ -266,7 +322,12 @@ async def get_status(request: Request) -> dict[str, Any]:
 
 @router.post("/start")
 async def start(body: StartBody, request: Request) -> dict[str, Any]:
-    """Begin a dictation. 409 when the mic is busy, 503 when there is none."""
+    """Begin a dictation. 409 when the mic is busy, 503 when there is none.
+
+    Must stay ``async``: ``start_dictation`` calls ``get_running_loop()`` and
+    creates the session task on it, so from a threadpool worker it would
+    return a false "could not start" on a host that dictates fine.
+    """
     pipeline = _pipeline()
     if pipeline is None:
         raise HTTPException(
@@ -299,7 +360,11 @@ async def start(body: StartBody, request: Request) -> dict[str, Any]:
 
 @router.post("/stop")
 async def stop() -> dict[str, Any]:
-    """Finish the running dictation. Idempotent: stopping nothing is not an error."""
+    """Finish the running dictation. Idempotent: stopping nothing is not an error.
+
+    ``async`` for the same reason as ``start``: the stop signal is an
+    ``asyncio.Event``, which belongs to the pipeline's loop thread.
+    """
     pipeline = _pipeline()
     if pipeline is None:
         return {"ok": True, "stopped": False, "active": False}
@@ -317,7 +382,7 @@ async def stop() -> dict[str, Any]:
 
 
 @router.get("/history")
-async def get_history(
+def get_history(
     limit: int = 50,
     include_discarded: bool = Query(
         default=False,
@@ -344,12 +409,14 @@ async def get_history(
     from jarvis.dictation.history import DictationHistory
 
     capped = max(1, min(int(limit or 50), 500))
-    entries = DictationHistory().list_all(include_discarded=include_discarded)[:capped]
+    with _LOCK:
+        entries = DictationHistory().list_all(include_discarded=include_discarded)
+    entries = entries[:capped]
     return {"entries": [e.to_dict() for e in entries], "count": len(entries)}
 
 
 @router.get("/stats")
-async def get_stats(request: Request) -> dict[str, Any]:
+def get_stats(request: Request) -> dict[str, Any]:
     """Lifetime dictation totals, today's numbers and the day streak.
 
     ``source`` is the honest part and the UI must label the panel from it:
@@ -368,13 +435,14 @@ async def get_stats(request: Request) -> dict[str, Any]:
     from jarvis.dictation.stats import DEFAULT_BY_DAY_LIMIT, summarize_entries
 
     history = DictationHistory()
-    counters = history.stats()
-    if counters.exists:
-        payload = counters.summary(by_day_limit=DEFAULT_BY_DAY_LIMIT)
-    else:
-        payload = summarize_entries(
-            history.list_all(), by_day_limit=DEFAULT_BY_DAY_LIMIT
-        )
+    with _LOCK:
+        counters = history.stats()
+        if counters.exists:
+            payload = counters.summary(by_day_limit=DEFAULT_BY_DAY_LIMIT)
+        else:
+            payload = summarize_entries(
+                history.list_all(), by_day_limit=DEFAULT_BY_DAY_LIMIT
+            )
 
     dictation = _dictation_cfg(request)
     payload["window"] = {
@@ -385,7 +453,7 @@ async def get_stats(request: Request) -> dict[str, Any]:
 
 
 @router.post("/history/{entry_id}/discard")
-async def discard_history_entry(entry_id: str) -> dict[str, Any]:
+def discard_history_entry(entry_id: str) -> dict[str, Any]:
     """Hide one entry without deleting it — the recoverable trash icon.
 
     Soft on purpose. ``discarded`` is a boolean beside the outcome rather than
@@ -395,9 +463,10 @@ async def discard_history_entry(entry_id: str) -> dict[str, Any]:
     from jarvis.dictation.history import DictationHistory
 
     history = DictationHistory()
-    if history.get(entry_id) is None:
-        raise HTTPException(status_code=404, detail="No dictation has that id.")
-    updated = history.set_discarded(entry_id, True)
+    with _LOCK:
+        if history.get(entry_id) is None:
+            raise HTTPException(status_code=404, detail="No dictation has that id.")
+        updated = history.set_discarded(entry_id, True)
     if updated is None:
         raise HTTPException(
             status_code=500, detail="The dictation entry could not be updated."
@@ -420,18 +489,20 @@ async def restore_history_entry(entry_id: str, request: Request) -> dict[str, An
     Never a 500 on a missing provider. A host with no speech-to-text reachable
     still restores the entry and says why the words did not come back; that is
     a disappointment, not a failed request.
-    """
-    from jarvis.dictation.audio import audio_exists
-    from jarvis.dictation.cleanup import count_words
-    from jarvis.dictation.history import DictationHistory
 
-    history = DictationHistory()
-    entry = history.get(entry_id)
+    The one handler here that genuinely has to await, so it is also the one
+    that has to thread by hand: every filesystem touch goes through
+    ``asyncio.to_thread``, and the lock is taken inside those helpers rather
+    than held across the transcription — a restore that waits on a slow
+    provider must not freeze every other history call for the duration.
+    """
+    from jarvis.dictation.cleanup import count_words
+
+    entry, has_audio = await asyncio.to_thread(_read_for_restore, entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="No dictation has that id.")
 
     has_text = bool(entry.text or entry.raw_text)
-    has_audio = audio_exists(entry.audio_path)
     if not has_text and not has_audio:
         raise HTTPException(
             status_code=409,
@@ -463,7 +534,7 @@ async def restore_history_entry(entry_id: str, request: Request) -> dict[str, An
                 error=None,
             )
 
-    updated = history.update(entry_id, **changes)
+    updated = await asyncio.to_thread(_write_restore, entry_id, changes)
     if updated is None:
         raise HTTPException(
             status_code=500, detail="The dictation entry could not be updated."
@@ -480,7 +551,7 @@ async def restore_history_entry(entry_id: str, request: Request) -> dict[str, An
     "/history",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def clear_history() -> dict[str, Any]:
+def clear_history() -> dict[str, Any]:
     """Purge the whole dictation history. Irreversible.
 
     Deliberately total: the entries, every kept audio sidecar and the lifetime
@@ -490,11 +561,13 @@ async def clear_history() -> dict[str, Any]:
     """
     from jarvis.dictation.history import DictationHistory
 
-    return {"ok": bool(DictationHistory().clear())}
+    with _LOCK:
+        cleared = bool(DictationHistory().clear())
+    return {"ok": cleared}
 
 
 @router.delete("/history/{entry_id}")
-async def delete_history_entry(entry_id: str) -> dict[str, Any]:
+def delete_history_entry(entry_id: str) -> dict[str, Any]:
     """Drop one entry and its audio (idempotent — an absent id is not an error).
 
     Hard delete, kept that way on purpose: this is the contract anyone
@@ -503,7 +576,9 @@ async def delete_history_entry(entry_id: str) -> dict[str, Any]:
     """
     from jarvis.dictation.history import DictationHistory
 
-    return {"removed": bool(DictationHistory().delete(entry_id))}
+    with _LOCK:
+        removed = bool(DictationHistory().delete(entry_id))
+    return {"removed": removed}
 
 
 # ----------------------------------------------------------------------
@@ -547,6 +622,11 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
     the app then refuses to boot from. Applies live to the running pipeline;
     ``max_seconds`` and the shortcut itself take effect immediately, and the
     rest are read per dictation anyway.
+
+    Stays ``async`` for the live-apply, not for the write: ``set_keybinds``
+    sets an ``asyncio.Event`` and so belongs on the loop thread, while writing
+    ``jarvis.toml`` (lock + tempfile + replace, once per changed key) does not
+    — that part is pushed to a worker thread.
     """
     from jarvis.core.config import DictationConfig
 
@@ -581,9 +661,12 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
     if body.persist:
         from jarvis.core import config_writer
 
-        try:
+        def _persist() -> None:
             for key in updates:
                 config_writer.set_dictation_setting(key, getattr(validated, key))
+
+        try:
+            await asyncio.to_thread(_persist)
             persisted = True
         except Exception as exc:  # noqa: BLE001
             log.warning("dictation settings persist failed: %s", exc)
