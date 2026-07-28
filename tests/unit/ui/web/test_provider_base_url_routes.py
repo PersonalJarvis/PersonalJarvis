@@ -112,7 +112,7 @@ def test_set_provider_base_url_writes_quoted_table(tmp_path, monkeypatch) -> Non
     from jarvis.core import config_writer
 
     # Keep the best-effort drift-guard baseline sync away from the real file.
-    monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a, **k: None)
+    monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a, **k: None)  # i18n-allow: identifier, named after config-soll.json
     toml_path = tmp_path / "jarvis.toml"
     toml_path.write_text('[brain]\nprimary = "gemini"\n', encoding="utf-8")
 
@@ -133,7 +133,7 @@ def test_set_provider_base_url_preserves_bom(tmp_path, monkeypatch) -> None:
     """BOM-safe like every writer here (AP-7 / BUG-018)."""
     from jarvis.core import config_writer
 
-    monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a, **k: None)
+    monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a, **k: None)  # i18n-allow: identifier, named after config-soll.json
     toml_path = tmp_path / "jarvis.toml"
     toml_path.write_text('﻿[brain]\nprimary = "gemini"\n', encoding="utf-8")
 
