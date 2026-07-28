@@ -405,7 +405,48 @@ def test_update_settings_without_changes_is_noop(env) -> None:
         "changed": [],
         "persisted": True,
         "reembed_started": False,
+        "embedding_space_rebuild": "active",
     }
+
+
+def test_picking_the_already_configured_model_still_repairs_the_store(env) -> None:
+    """The trap that locked a maintainer out of his own repair path.
+
+    "Nothing to WRITE" was treated as "nothing to DO". Once the config named
+    one embedding model while the store was still pinned to another — however
+    that divergence arose — the store rejected every vector the provider
+    produced and the embed lane failed 100 % of its work. Re-picking the model
+    in the settings screen was the obvious fix, and it hit this branch: the
+    values matched the config, `changed` came back empty, the screen reported
+    success, and the store was never told. The one screen that exists to
+    resolve the divergence was the one screen that could not, and clicking
+    again only made it more certain (forensic 2026-07-28).
+    """
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    # The divergence: the config names a model the store has never seen. This
+    # is reachable through every path that writes config without registering
+    # the switch — the activation route, a voice config change, a hand-edited
+    # jarvis.toml, a config carried over from another machine.
+    env.cfg.ultrawiki.embedding_model = "fake-embed-2"
+
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"embedding_model": "fake-embed-2"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["changed"] == []  # still nothing to write...
+    assert body["embedding_space_rebuild"] == "started"  # ...but plenty to do
+    assert body["reembed_started"] is True
+
+    # The store now builds the space the config actually names, and semantic
+    # search keeps answering from the live vectors until it is complete.
+    status = env.client.get("/api/ultrawiki/status").json()
+    assert status["reembed"].get("model") == "fake-embed-2"
+    assert status["slots"]["storage"]["vector"]["ready"] is True
 
 
 # ---------------------------------------------------------------------------

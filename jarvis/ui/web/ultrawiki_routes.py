@@ -1051,24 +1051,7 @@ async def activate_mode(body: ActivateBody, request: Request) -> dict[str, Any]:
     # in silence — the 2026-07-28 forensic. `reconcile_space` is idempotent
     # and a no-op when the model already matches, so the ordinary "switch
     # Ultra back on" path costs two primary-key reads.
-    space_rebuild = ""
-    try:
-        store = await _store_of(service)
-        verdict = await store.reconcile_space(
-            _effective_embedding_model(_uw_cfg(request), values)
-        )
-        if verdict == "started":
-            space_rebuild = "started"
-        elif verdict == "rebuilding":
-            space_rebuild = "running"
-    except Exception:  # noqa: BLE001 — activation succeeded; the pipeline retries
-        # `_reconcile_embedding_space` asks again on every pass, so a failure
-        # here delays the rebuild by one pass instead of losing it.
-        log.warning(
-            "UltraWiki: could not reconcile the embedding space during "
-            "activation; the pipeline reconciles on its next pass",
-            exc_info=True,
-        )
+    space_rebuild = await _register_embedding_space(service, _uw_cfg(request), values)
 
     # The pipeline only starts while the mode is on, so it is started here —
     # after the flip, never before it.
@@ -1179,6 +1162,31 @@ def _effective_embedding_model(uw: Any, changes: dict[str, str]) -> str:
     return embeddings_mod.DEFAULT_MODELS.get(provider.strip(), "")
 
 
+async def _register_embedding_space(
+    service: Any, uw: Any, changes: dict[str, str]
+) -> str:
+    """Tell the store which vector space the config now names.
+
+    Returns the store's verdict — ``"started"`` (a rebuild was registered),
+    ``"rebuilding"``, ``"active"`` — or ``""`` when the store could not be
+    asked. Never raises: the pipeline reconciles again on its next pass, so a
+    failure here delays the switch, it does not lose it.
+    """
+    model = _effective_embedding_model(uw, changes)
+    if not model:
+        return ""
+    try:
+        store = await _store_of(service)
+        return str(await store.reconcile_space(model) or "")
+    except Exception:  # noqa: BLE001 — a settings save must not 500 on this
+        log.warning(
+            "UltraWiki: could not reconcile the embedding space; the pipeline "
+            "reconciles on its next pass",
+            exc_info=True,
+        )
+        return ""
+
+
 @router.put(
     "/settings",
     summary="Change UltraWiki slot settings",
@@ -1219,7 +1227,23 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
     }
     ranking_changes = _ranking_changes(body, uw)
     if not changes and not ranking_changes:
-        return {"ok": True, "changed": [], "persisted": True, "reembed_started": False}
+        # Nothing to WRITE — but "the config already says this" is not the same
+        # as "the store already does this", and treating them as equal is what
+        # locked a maintainer out of his own repair path for a day (forensic
+        # 2026-07-28). The config named gemini-embedding-001 while the store was
+        # still pinned to text-embedding-3-large, so every vector was rejected;
+        # re-picking Gemini produced exactly this branch — `changed: []`, a
+        # cheerful 200, and nothing done. The screen that exists to fix the
+        # divergence was the one screen that could not, and the harder he tried
+        # the more certain it became.
+        verdict = await _register_embedding_space(service, uw, {})
+        return {
+            "ok": True,
+            "changed": [],
+            "persisted": True,
+            "reembed_started": verdict in ("started", "rebuilding"),
+            "embedding_space_rebuild": verdict,
+        }
 
     if "db_backend" in changes and changes["db_backend"] not in ("sqlite", "postgres"):
         raise HTTPException(

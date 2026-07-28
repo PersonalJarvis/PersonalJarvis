@@ -44,11 +44,15 @@ from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
+    DICTATION_REFUSAL_REASONS,
     ActionPlanned,
     AnnouncementRequested,
     AudioOutFirst,
     BrainTTFT,
     DictationCompleted,
+    DictationRefused,
+    DictationStarted,
+    DictationTranscribing,
     DictationTranscript,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
@@ -1328,6 +1332,16 @@ class SpeechPipeline:
         self._dictation_max_s = float(
             getattr(self._dictation_cfg, "max_seconds", 300.0) or 300.0
         )
+        # Strong references to fire-and-forget bus publishes (see
+        # ``_publish_event_soon``); entries remove themselves when they finish.
+        self._detached_publishes: set[asyncio.Task[None]] = set()
+        # Deadline that BOUNDS the wake-word block a dictation imposes. 0.0 is
+        # "no block", so an instance that never dictates can never go deaf.
+        self._dictation_wake_block_until = 0.0
+        # Whether the current dictation already published its terminal
+        # ``DictationCompleted``. Starts True ("nothing owed") so no teardown
+        # can fire a completion for a dictation that never ran.
+        self._dictation_completion_published = True
         # Where the finished transcript goes for the CURRENT dictation run:
         # "chat" only publishes the transcript event (the chat composer's mic
         # button), "insert" additionally pastes it into the focused field of
@@ -2844,6 +2858,54 @@ class SpeechPipeline:
             log.warning("Voice capture permission gate failed closed: %s", exc)
             return False
 
+    def _dictation_blocks_activation(self) -> bool:
+        """True while a running dictation must keep the wake word silent.
+
+        The maintainer's contract: a dictation turn owns the microphone, so the
+        words being dictated must never trip the wake word (and two native input
+        streams must never race for the same device — BUG-014 / AP-24).
+
+        This is a STATE gate, not the content gate AP-27 forbids: it asks
+        whether an application task is alive, with zero reference to audio or to
+        any transcript, exactly like the three gates it sits beside
+        (``_wake_lock_until``, mute, ``_state != IDLE``). It changes WHEN wake is
+        listened to, never HOW a candidate is judged.
+
+        Two independent things must BOTH hold for wake to stay blocked:
+
+        1. ``_dictation_task`` is alive. Derived from ``task.done()``, never a
+           bare bool somebody has to remember to clear — a crashed, cancelled or
+           returned task is ``done()``, so the block lifts by itself.
+        2. The watchdog deadline has not passed. ``_dictation_wake_block_until``
+           is a timestamp set at start, mirroring ``_wake_lock_until``. A task
+           that somehow hangs forever therefore still cannot deafen the wake
+           word beyond it.
+
+        Both defaults fail OPEN (no task → False, missing deadline → 0.0 →
+        False), because the failure this guards against is BUG-037: permanently
+        deaf with no visible cause and only a restart to fix.
+        """
+        task = getattr(self, "_dictation_task", None)
+        if task is None or task.done():
+            return False
+        return time.time() < float(getattr(self, "_dictation_wake_block_until", 0.0))
+
+    def _activation_block_reason(self) -> str:
+        """The honest English reason ``_activation_allowed`` is saying no.
+
+        One source for every log line that reports the closed gate. It exists
+        because those lines used to hardcode two guesses ("muted" /
+        "window not visible?"), and the wrong guess once misled a live freeze
+        diagnosis. Returns an empty string when the gate is open.
+        """
+        if getattr(self, "_muted", False):
+            return "voice is muted"
+        if self._dictation_blocks_activation():
+            return "a dictation is running"
+        if not self._capture_permission_allowed():
+            return "microphone capture is not permitted (desktop window not visible?)"
+        return ""
+
     def _activation_allowed(self) -> bool:
         """True when external UI/lifecycle state permits voice activation.
 
@@ -2851,11 +2913,22 @@ class SpeechPipeline:
         return False so the wake-loop ignores every detection. The loop
         keeps spinning; unmuting is one bool flip away.
 
+        A running dictation closes the same gate (``_dictation_blocks_activation``)
+        — one edit reaches all three wake gates (loop entry, pre-emit, state
+        loop) plus the push-to-talk and ``request_voice_session`` entry points,
+        because this predicate is the only one all of them consult.
+
         ``getattr`` defaults to False for pipelines constructed via
         ``__new__`` (used by privacy/vision unit tests that bypass
         ``__init__``) — those instances are never muted by definition.
+
+        NB: ``dictation_available`` / ``start_dictation`` deliberately consult
+        ``_capture_permission_allowed`` and NOT this predicate. Routing them
+        through here would make a dictation forbid its own successor.
         """
         if getattr(self, "_muted", False):
+            return False
+        if self._dictation_blocks_activation():
             return False
         return self._capture_permission_allowed()
 
@@ -2924,6 +2997,49 @@ class SpeechPipeline:
             await self._bus.publish(event)
         except Exception as exc:  # noqa: BLE001
             log.warning("%s publish failed: %s", type(event).__name__, exc)
+
+    def _publish_event_soon(self, event: Any) -> None:
+        """Publish from SYNCHRONOUS code without blocking the caller.
+
+        ``start_dictation`` and the dictation teardown both have to announce
+        themselves from places that cannot ``await``: a plain method, and a
+        ``finally`` in a task that may already be cancelled. Scheduling the
+        publish as its own task keeps both honest — a cancelled dictation still
+        gets its terminal event out, and a broken subscriber can never propagate
+        back into the caller (AP-18).
+
+        A missing bus or a missing loop is a clean no-op: unit tests build
+        pipelines via ``__new__`` and must not need an event bus to exercise the
+        dictation lane.
+        """
+        if getattr(self, "_bus", None) is None:
+            return
+
+        def _spawn(loop: asyncio.AbstractEventLoop) -> None:
+            # Hold a strong reference until the publish finishes: the event loop
+            # only keeps a weak one, so a fire-and-forget task can be collected
+            # mid-flight and the event would simply vanish.
+            pending = getattr(self, "_detached_publishes", None)
+            if pending is None:
+                pending = set()
+                self._detached_publishes = pending
+            task = loop.create_task(self._publish_event(event))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
+
+        try:
+            _spawn(asyncio.get_running_loop())
+            return
+        except RuntimeError:
+            pass
+        owner = getattr(self, "_runtime_loop", None)
+        if owner is None or not owner.is_running():
+            log.debug("%s not published: no running loop.", type(event).__name__)
+            return
+        try:
+            owner.call_soon_threadsafe(_spawn, owner)
+        except RuntimeError as exc:
+            log.debug("%s publish scheduling failed: %s", type(event).__name__, exc)
 
     async def _publish_utterance_captured(self, pcm: bytes) -> None:
         duration_ms = int((len(pcm) / 2) / 16_000 * 1000)
@@ -4657,7 +4773,15 @@ class SpeechPipeline:
         if self._ptt_mode or self._state != PipelineState.IDLE:
             return
         if not self._activation_allowed():
-            log.info("PTT press ignored: Desktop-App not visible.")
+            # Push-to-talk is gated by the SAME predicate as wake, so a running
+            # dictation refuses it too — deliberately: both lanes open their own
+            # microphone stream, and two native input streams on one device is
+            # the BUG-014 family. The reason is resolved, never guessed, so the
+            # log cannot claim "window not visible" during a dictation.
+            log.info(
+                "PTT press ignored: %s",
+                self._activation_block_reason() or "activation not allowed",
+            )
             return
         # NB: the post-hangup wake-lock is deliberately NOT consulted here. That
         # lock exists to stop Jarvis' own TTS tail from re-triggering the *wake
@@ -4705,7 +4829,10 @@ class SpeechPipeline:
             log.info("request_voice_session ignored: pipeline not idle.")
             return False
         if not self._activation_allowed():
-            log.info("request_voice_session ignored: activation not allowed.")
+            log.info(
+                "request_voice_session ignored: %s",
+                self._activation_block_reason() or "activation not allowed",
+            )
             return False
         if seed_messages:
             brain = getattr(self, "_brain", None)
@@ -5240,17 +5367,14 @@ class SpeechPipeline:
             if not self._activation_allowed():
                 now = time.time()
                 if now - gate_blocked_logged_at > 30.0:
-                    # Name the REAL reason: mute is checked first in
-                    # _activation_allowed, so a muted user must not be told the
-                    # window is hidden (that misled a live freeze diagnosis).
-                    reason = (
-                        "voice is muted"
-                        if getattr(self, "_muted", False)
-                        else "desktop window not visible?"
-                    )
+                    # Name the REAL reason. This line used to guess between two
+                    # causes and the wrong guess once misled a live freeze
+                    # diagnosis, so the reason comes from ONE resolver that
+                    # knows every branch of the gate — including a running
+                    # dictation, which is the third way to close it.
                     log.info(
-                        "Wake-Loop wartet — Activation-Gate geschlossen (%s).",
-                        reason,
+                        "Wake loop is waiting — activation gate closed (%s).",
+                        self._activation_block_reason() or "reason unknown",
                     )
                     gate_blocked_logged_at = now
                 await asyncio.sleep(0.25)
@@ -5281,6 +5405,11 @@ class SpeechPipeline:
         """
         if self._state != PipelineState.IDLE:
             return False
+        if self._dictation_blocks_activation():
+            # A dictation leaves ``_state`` at IDLE on purpose, so without this
+            # clause an unverified candidate would still flash the bar out of
+            # its dictation look and back, mid-recording.
+            return False
         plan = getattr(self, "_wake_plan", None)
         if plan is None:
             return True
@@ -5300,6 +5429,8 @@ class SpeechPipeline:
         """
         if active and self._state != PipelineState.IDLE:
             return  # a session is already running; nothing to reveal
+        if active and self._dictation_blocks_activation():
+            return  # a dictation owns the bar; never flash the wake look over it
         if active:
             self._begin_wake_preroll()
         else:
@@ -7434,28 +7565,59 @@ class SpeechPipeline:
 
         Returns ``False`` when it cannot start — a voice/PTT session is active,
         the pipeline is busy, dictation is already running, or no STT is wired.
-        The caller (hotkey edge, WS handler, REST route) turns ``False`` into an
-        honest message rather than silently doing nothing.
+
+        **Every refusal is announced**, not just logged: each one publishes a
+        ``DictationRefused`` carrying a stable reason token and a finished
+        English sentence. Before that, a refused shortcut produced a
+        ``log.info`` in a file the desktop app cannot display (CLAUDE.md §9), so
+        the key simply did nothing and the user had no way to learn why. The
+        boolean return is unchanged, so every existing caller (hotkey edge, WS
+        handler, REST route) keeps working.
 
         This NEVER routes to the brain: it spawns ``_dictation_session`` which
-        only publishes ``DictationTranscript`` / ``DictationCompleted`` events.
+        only publishes ``DictationStarted`` / ``DictationTranscript`` /
+        ``DictationTranscribing`` / ``DictationCompleted`` events.
         """
         if not self._capture_permission_allowed():
-            log.info("start_dictation ignored: microphone access is not ready.")
+            self._refuse_dictation(
+                "microphone_unavailable",
+                "Microphone access is not ready — check the microphone "
+                "permission and make sure the desktop window is available.",
+            )
             return False
         if self._utterance_stt is None:
-            log.info("start_dictation ignored: no STT provider.")
+            self._refuse_dictation(
+                "no_stt",
+                "No speech-to-text provider is configured, so there is nothing "
+                "to transcribe with. Add a provider key in Settings.",
+            )
             return False
         if self._dictation_task is not None and not self._dictation_task.done():
-            log.info("start_dictation ignored: dictation already running.")
+            self._refuse_dictation(
+                "already_running",
+                "A dictation is already recording.",
+            )
             return False
         if self._ptt_mode or self._state != PipelineState.IDLE:
-            log.info("start_dictation ignored: pipeline not idle.")
+            # Deliberate: a live voice conversation owns the microphone, and the
+            # dictation lane opens its own stream. Preempting the session on a
+            # keypress was considered and rejected — a hold gesture released
+            # before the handover finished would leave a dictation nobody stops,
+            # running to the duration cap. Refusing is the honest behaviour; the
+            # defect was that the refusal was SILENT.
+            self._refuse_dictation(
+                "voice_session_active",
+                "A voice conversation is running and is using the microphone. "
+                "Hang up first, then dictate.",
+            )
             return False
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            log.warning("start_dictation: no running loop.")
+            self._refuse_dictation(
+                "pipeline_not_running",
+                "The voice pipeline is not running, so dictation cannot start.",
+            )
             return False
         # A fresh dictation session must NOT inherit a stale hangup. ``_hangup_event``
         # is set by every "auflegen" and is otherwise only cleared when the next
@@ -7474,6 +7636,30 @@ class SpeechPipeline:
         # resolving at start would have sent that text to the chat box.
         self._dictation_target = target if target in ("insert", "chat") else "auto"
         self._dictation_stop_event = asyncio.Event()
+        # Watchdog deadline for the wake-word block (see
+        # ``_dictation_blocks_activation``). It is a TIMESTAMP, copying the
+        # ``_wake_lock_until`` pattern, so a dictation task that somehow never
+        # terminates still cannot leave the wake word deaf forever — the worst
+        # case is bounded instead of needing an app restart (BUG-037). The
+        # allowance on top of the recording cap covers the closing
+        # transcription, which runs after the microphone is already released.
+        self._dictation_wake_block_until = (
+            time.time() + float(getattr(self, "_dictation_max_s", 300.0) or 300.0) + 60.0
+        )
+        # Reset BEFORE the task exists: the teardown guarantee below reads this
+        # to decide whether a terminal event still has to be published.
+        self._dictation_completion_published = False
+        # Announce the turn BEFORE the first audio frame. Queued ahead of the
+        # session task on purpose: nothing has opened the microphone yet when
+        # this method returns, so a UI surface can show "listening" at key-down
+        # speed instead of waiting for the first partial transcript — which
+        # costs a partial interval plus an STT round-trip, and for a short press
+        # never arrives at all.
+        self._publish_event_soon(
+            DictationStarted(
+                source_layer="speech.dictation", target=self._dictation_target
+            )
+        )
         self._dictation_task = loop.create_task(
             self._dictation_session(), name="dictation"
         )
@@ -7482,6 +7668,27 @@ class SpeechPipeline:
             self._dictation_target,
         )
         return True
+
+    def _refuse_dictation(self, reason: str, detail: str) -> None:
+        """Log AND announce a refused dictation start.
+
+        ``reason`` must come from ``DICTATION_REFUSAL_REASONS`` — the single
+        vocabulary for this value, checked here so a new branch that forgets to
+        extend it is caught in the log instead of reaching a UI that has never
+        heard of the token (AP-4 / BUG-008).
+        """
+        if reason not in DICTATION_REFUSAL_REASONS:
+            log.warning(
+                "Unknown dictation refusal reason %r — add it to "
+                "DICTATION_REFUSAL_REASONS.",
+                reason,
+            )
+        log.info("start_dictation refused (%s): %s", reason, detail)
+        self._publish_event_soon(
+            DictationRefused(
+                source_layer="speech.dictation", reason=reason, detail=detail
+            )
+        )
 
     def dictation_active(self) -> bool:
         """Is a dictation running right now? (REST/UI status, cheap.)"""
@@ -7524,6 +7731,19 @@ class SpeechPipeline:
         """
         stt = self._utterance_stt
         if stt is None:
+            # ``start_dictation`` already refused this case; only a provider
+            # swapped out between the two calls can land here. Close the turn
+            # anyway, so a surface that opened on ``DictationStarted`` can never
+            # be left showing a dictation that is not running.
+            self._dictation_completion_published = True
+            self._publish_event_soon(
+                DictationCompleted(
+                    source_layer="speech.dictation",
+                    outcome="failed",
+                    detail="No speech-to-text provider is available.",
+                    error="no_stt",
+                )
+            )
             return
         # ``getattr`` defaults keep pipelines built via ``__new__`` working —
         # a widely used pattern in this repo's unit tests, which bypass
@@ -7708,6 +7928,18 @@ class SpeechPipeline:
                         except (asyncio.CancelledError, Exception):  # noqa: BLE001
                             pass
 
+            # The microphone lease is now closed on EVERY end path — key
+            # release, hands-free toggle, duration cap, REST/WS stop. That is
+            # the honest moment to say "no longer listening, still working":
+            # announce it here rather than from ``stop_dictation``, which only
+            # sets an event and does not know when the stream actually stopped.
+            # A hangup skips it: nothing will be transcribed, and
+            # ``DictationCompleted`` follows immediately.
+            if not hung_up:
+                await self._publish_event(
+                    DictationTranscribing(source_layer="speech.dictation")
+                )
+
             # The mic lease is closed before waiting on the probe, so releasing
             # the key always ends the recording even if a probe call is slow.
             if probe_task is not None:
@@ -7780,6 +8012,27 @@ class SpeechPipeline:
                     )
                 except Exception:  # noqa: BLE001
                     pass
+        finally:
+            # Terminal-event guarantee. Consumers open on ``DictationStarted``
+            # and close on ``DictationCompleted``, so any path that ends without
+            # a completion leaves a surface showing a dictation that is not
+            # running — and, until the task is collected, the wake-word block
+            # depends on the same task, not on this event, so the two can never
+            # disagree. ``asyncio.CancelledError`` is a ``BaseException`` and
+            # skips the handler above; a crash inside ``_finish_dictation`` can
+            # also abort before it publishes. Both land here. Scheduled rather
+            # than awaited, because awaiting inside a cancelled task is not
+            # reliable.
+            if not getattr(self, "_dictation_completion_published", True):
+                self._dictation_completion_published = True
+                self._publish_event_soon(
+                    DictationCompleted(
+                        source_layer="speech.dictation",
+                        outcome="cancelled",
+                        detail="The dictation ended before it produced text.",
+                        duration_s=max(0.0, time.monotonic() - started_at),
+                    )
+                )
 
     async def _finish_dictation(
         self,
@@ -7882,6 +8135,10 @@ class SpeechPipeline:
             detail = insert_result.detail
             method = insert_result.method
 
+        # Mark the turn closed BEFORE the publish attempt: this flag answers
+        # "does the teardown still owe a terminal event", and a publish that
+        # raised is not a reason to fire a second, contradictory completion.
+        self._dictation_completion_published = True
         try:
             await self._publish_event(
                 DictationCompleted(
