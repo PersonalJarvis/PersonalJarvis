@@ -38,9 +38,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
 from jarvis.ultrawiki.identity import (
@@ -1079,6 +1081,33 @@ class IdentityMixin:
         (provenance); stamping the ENTITY's own provenance is the separate,
         idempotent :meth:`set_entity_source_ref`.
         """
+        async with self._txn() as conn:  # type: ignore[attr-defined]
+            return await self._id_resolve_one(
+                conn,
+                name=name,
+                emails=emails,
+                phones=phones,
+                handles=handles,
+                contact_slug=contact_slug,
+                kind=kind,
+                source_ref=source_ref,
+                create=create,
+            )
+
+    async def _id_resolve_one(
+        self,
+        conn: Any,
+        *,
+        name: str = "",
+        emails: Sequence[str] = (),
+        phones: Sequence[str] = (),
+        handles: Sequence[str] = (),
+        contact_slug: str = "",
+        kind: EntityKind | str = EntityKind.PERSON,
+        source_ref: str = "",
+        create: bool = True,
+    ) -> Resolution:
+        """:meth:`resolve_identity` for a transaction the caller already owns."""
         observed = self._id_observe(
             name=name,
             emails=emails,
@@ -1086,19 +1115,41 @@ class IdentityMixin:
             handles=handles,
             contact_slug=contact_slug,
         )
-        name_value = normalize_name(name) if name else None
-        now = _utc_now_iso()
+        return await self._id_resolve(
+            conn,
+            observed,
+            name_value=normalize_name(name) if name else None,
+            display_name=str(name or "").strip(),
+            kind=kind,
+            source_ref=source_ref,
+            create=create,
+            now=_utc_now_iso(),
+        )
+
+    @asynccontextmanager
+    async def identity_batch(
+        self,
+    ) -> AsyncIterator[Callable[..., Awaitable[Resolution]]]:
+        """Resolve SEVERAL observations inside ONE transaction.
+
+        :meth:`resolve_identity` opens its own transaction per call, which is
+        right for a single observation and wasteful for a document that names a
+        dozen people: N names cost N ``BEGIN``/``COMMIT`` round trips and N
+        turns of the store lock. Yields a callable with
+        :meth:`resolve_identity`'s keyword signature, bound to one open
+        transaction.
+
+        The trade belongs to the caller and is deliberately not hidden: one
+        transaction is ONE failure domain. A statement that raises inside the
+        block rolls the WHOLE batch back — including the entities earlier calls
+        created — so a caller that must not lose the rest catches the exception
+        and replays the observations through :meth:`resolve_identity`, which is
+        independent per call. Not a fallback for convenience: on Postgres a
+        failed statement poisons the surrounding transaction, so continuing
+        inside the block is not an option in the first place.
+        """
         async with self._txn() as conn:  # type: ignore[attr-defined]
-            return await self._id_resolve(
-                conn,
-                observed,
-                name_value=name_value,
-                display_name=str(name or "").strip(),
-                kind=kind,
-                source_ref=source_ref,
-                create=create,
-                now=now,
-            )
+            yield partial(self._id_resolve_one, conn)
 
     @staticmethod
     def _id_observe(

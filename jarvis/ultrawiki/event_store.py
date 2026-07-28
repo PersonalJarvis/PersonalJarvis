@@ -24,6 +24,12 @@ The contract this module keeps:
   keeps its spelling and stays searchable rather than being dropped. Linking
   is cheap and always allowed; CREATING a person is gated on the event's own
   confidence, because a new entity outlives the guess that produced it.
+- **One item spends a bounded identity budget.** The per-event caps multiply
+  out to sixty candidate scans and hundreds of queued proposals per document,
+  which would defeat the identity layer's "the queue stays short by design".
+  ``MAX_IDENTITY_NAMES_PER_ITEM`` / ``MAX_ENTITIES_CREATED_PER_ITEM`` /
+  ``MAX_IDENTITY_PROPOSALS_PER_ITEM`` bound the whole item; the excess links
+  or keeps its spelling, deterministically, and nothing raises.
 - **The keyword card is stored, not recomputed.** ``search_text`` lives on the
   row, so both dialects index the identical text and a search cannot depend
   on which engine answered.
@@ -137,8 +143,16 @@ class EventMixin:
         :data:`~jarvis.ultrawiki.events.ENTITY_CREATE_CONFIDENCE` links but
         never creates, so a low-confidence derivation cannot flood the People
         view with whatever it happened to name.
+
+        Storing NOTHING for an item that already has nothing writes nothing at
+        all. That is the overwhelmingly common case — most items yield no
+        events — and without the check the empty case would be the most
+        expensive thing on the pass: one write transaction and one DELETE round
+        trip per item, forever, to delete zero rows.
         """
         item_id = int(item_id)
+        if not events and not await self._ev_has_events(item_id):
+            return []
         resolved = await self._ev_resolve_names(events, create_entities=create_entities)
         now = _utc_now_iso()
         new_ids: list[int] = []
@@ -166,7 +180,9 @@ class EventMixin:
         A name the identity layer refuses to decide (several live holders) maps
         to ``None`` and is stored by its spelling — an honest "I know the name,
         not who it is" beats guessing, and guessing is the wrong-merge failure
-        the whole identity layer exists to prevent.
+        the whole identity layer exists to prevent. A name this method never
+        got to at all lands in the same place, which is why exceeding a budget
+        below degrades instead of failing.
 
         Creating an entity is gated TWICE, because it is the only irreversible
         half of this: the caller has to allow it at all, and the name has to
@@ -175,9 +191,14 @@ class EventMixin:
         that the name still LINKS to whoever the user already curated and is
         otherwise stored as plain text — searchable, and nobody new in the
         People view.
+
+        Everything here is bounded PER ITEM, not per event
+        (:data:`~jarvis.ultrawiki.events.MAX_IDENTITY_NAMES_PER_ITEM` and
+        friends): one document must not be able to spend sixty fuzzy candidate
+        scans or fill the confirmation queue by itself.
         """
         from jarvis.ultrawiki.events import (  # noqa: PLC0415 — lazy (AP-26)
-            ENTITY_CREATE_CONFIDENCE,
+            MAX_IDENTITY_NAMES_PER_ITEM,
         )
         from jarvis.ultrawiki.identity import EntityKind  # noqa: PLC0415 — lazy (AP-26)
 
@@ -196,25 +217,115 @@ class EventMixin:
                     wanted.append((event.place, EntityKind.PLACE))
                 best[slot] = max(best.get(slot, 0.0), confidence)
 
+        if len(wanted) > MAX_IDENTITY_NAMES_PER_ITEM:
+            log.info(
+                "UltraWiki events: item names %d distinct entities, resolving the"
+                " first %d — the rest keep their spelling and stay searchable",
+                len(wanted),
+                MAX_IDENTITY_NAMES_PER_ITEM,
+            )
+            wanted = wanted[:MAX_IDENTITY_NAMES_PER_ITEM]
+        if not wanted:
+            return {}
+
+        # One transaction for the whole document instead of one per name. The
+        # batch is all-or-nothing by construction, so a failure inside it
+        # replays through the independent per-name path rather than costing the
+        # item every participant it had already resolved.
+        batch = getattr(self, "identity_batch", None)
+        if callable(batch):
+            try:
+                async with batch() as resolve:
+                    return await self._ev_resolve_with(
+                        resolve, wanted, best, create_entities=create_entities
+                    )
+            except Exception:  # noqa: BLE001 — identity never fails an event
+                log.debug(
+                    "batched event identity resolution failed — replaying the"
+                    " %d names one transaction at a time",
+                    len(wanted),
+                    exc_info=True,
+                )
+        return await self._ev_resolve_with(
+            self.resolve_identity,  # type: ignore[attr-defined]
+            wanted,
+            best,
+            create_entities=create_entities,
+            isolate=True,
+        )
+
+    async def _ev_resolve_with(
+        self,
+        resolve: Any,
+        wanted: Sequence[tuple[str, Any]],
+        best: dict[tuple[str, str], float],
+        *,
+        create_entities: bool,
+        isolate: bool = False,
+    ) -> dict[tuple[str, str], int | None]:
+        """Run *wanted* through *resolve*, spending the per-item budgets.
+
+        ``isolate`` contains a failing name to itself; the batched caller must
+        leave it off, because a raise there has already rolled its transaction
+        back and nothing after it can be trusted.
+        """
+        from jarvis.ultrawiki.events import (  # noqa: PLC0415 — lazy (AP-26)
+            ENTITY_CREATE_CONFIDENCE,
+            MAX_ENTITIES_CREATED_PER_ITEM,
+            MAX_IDENTITY_PROPOSALS_PER_ITEM,
+        )
+        from jarvis.ultrawiki.identity import (  # noqa: PLC0415 — lazy (AP-26)
+            MAX_PROPOSALS,
+            EntityKind,
+        )
+
         out: dict[tuple[str, str], int | None] = {}
+        created = 0
+        queued = 0
         for name, kind in wanted:
             slot = ("person" if kind is EntityKind.PERSON else "place", name.casefold())
-            may_create = create_entities and (
-                best.get(slot, 0.0) >= ENTITY_CREATE_CONFIDENCE
+            # Both budgets gate CREATION only. A name that arrives after they
+            # are spent still links to an entity the user already curated — the
+            # cap withholds new rows, it does not withhold knowledge.
+            #
+            # The queue budget RESERVES a full proposal batch rather than
+            # merely checking the running total, so the documented ceiling is
+            # literally true: one item can never leave more than
+            # MAX_IDENTITY_PROPOSALS_PER_ITEM pending pairs behind.
+            may_create = (
+                create_entities
+                and best.get(slot, 0.0) >= ENTITY_CREATE_CONFIDENCE
+                and created < MAX_ENTITIES_CREATED_PER_ITEM
+                and queued + MAX_PROPOSALS <= MAX_IDENTITY_PROPOSALS_PER_ITEM
             )
             try:
-                resolution = await self.resolve_identity(  # type: ignore[attr-defined]
+                resolution = await resolve(
                     name=name,
                     kind=kind,
                     source_ref="uw_events",
                     create=may_create,
                 )
-            except Exception:  # noqa: BLE001 — a refused link never fails an event
+            except Exception:
+                if not isolate:
+                    raise
                 log.debug("event identity resolution failed for %r", name, exc_info=True)
                 out[slot] = None
                 continue
             out[slot] = _as_int(getattr(resolution, "entity_id", None))
+            if getattr(resolution, "created", False):
+                created += 1
+            queued += len(getattr(resolution, "queued", ()) or ())
         return out
+
+    async def _ev_has_events(self, item_id: int) -> bool:
+        """Cheap "is there anything to clear" probe, outside any transaction."""
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        row = await self._ev_row(
+            conn,
+            "SELECT 1 AS present FROM uw_events WHERE item_id = ? LIMIT 1",
+            (int(item_id),),
+        )
+        return row is not None
 
     async def _ev_insert(
         self,

@@ -1242,7 +1242,9 @@ class PipelineWorker:
             if not events:
                 # Still a replace: an item that USED to yield events and no
                 # longer does must lose them, or a corrected source leaves the
-                # old answer standing.
+                # old answer standing. The store answers the common case (an
+                # item that never had any) with one indexed lookup and no write
+                # transaction, so the empty majority costs almost nothing.
                 await replace(int(item["id"]), [])
                 return
             await replace(int(item["id"]), events)

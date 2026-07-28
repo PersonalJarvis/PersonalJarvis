@@ -11,18 +11,24 @@ no model. What it proves:
    it, and an unresolvable name keeps its spelling instead of vanishing,
 5. the bi-temporal window matches by OVERLAP, so a coarse event is not
    invisible to a question about a day inside it,
-6. both dialects declare the same logical schema.
+6. both dialects declare the same logical schema,
+7. one item spends a BOUNDED identity budget, and storing nothing for an item
+   that has nothing writes nothing at all.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from jarvis.ultrawiki.events import (
+    MAX_ENTITIES_CREATED_PER_ITEM,
+    MAX_IDENTITY_NAMES_PER_ITEM,
+    MAX_IDENTITY_PROPOSALS_PER_ITEM,
     DerivedEvent,
     EventKind,
     EventTime,
@@ -546,6 +552,220 @@ async def test_the_event_leg_reports_both_clocks(store):
     hits = await store.search_events("Marlow", k=5)
     assert hits[0].timestamp_utc == "2026-03-13T19:30:00Z"
     assert hits[0].recorded_utc == "2026-03-14T08:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# Per-item identity budget — one document is never unbounded work
+# ---------------------------------------------------------------------------
+
+
+def crowd(prefix: str, count: int) -> tuple[str, ...]:
+    """``count`` distinct participant names in a stable order."""
+    return tuple(f"{prefix} {index:02d}" for index in range(1, count + 1))
+
+
+#: Names dissimilar enough that none of them proposes itself to another, so a
+#: test about the CREATION budget is not decided by the proposal budget.
+UNRELATED_NAMES = (
+    "Ada Kestrel",
+    "Boris Nwosu",
+    "Chandra Vella",
+    "Devi Oyelaran",
+    "Emil Rousseau",
+    "Farah Kimathi",
+    "Goran Petrov",
+    "Hana Ishikawa",
+    "Ivo Bergqvist",
+    "Juno Almeida",
+    "Kiran Adeyemi",
+    "Lena Vukovic",
+)
+
+
+def guest_list(names: tuple[str, ...]) -> list[DerivedEvent]:
+    """Two realistically shaped events splitting *names* between them."""
+    half = len(names) // 2
+    return [
+        event(title="Reception", participants=names[:half], place=""),
+        event(
+            title="Afterparty",
+            when=datetime(2026, 3, 13, 23, 0, tzinfo=UTC),
+            participants=names[half:],
+            place="",
+        ),
+    ]
+
+
+def linked_names(rows: list[dict]) -> dict[str, object]:
+    return {
+        participant["display_name"]: participant["entity_id"]
+        for row in rows
+        for participant in row["participants"]
+    }
+
+
+async def test_one_item_resolves_a_bounded_number_of_distinct_names(store):
+    """The per-EVENT caps multiply out to sixty resolutions per document; the
+    per-item budget is what keeps one import from paying all of them."""
+    names = crowd("Guest", MAX_IDENTITY_NAMES_PER_ITEM + 6)
+    for name in names:  # already curated, so creation is not what is measured
+        await store.upsert_entity(display_name=name)
+    item_id = await add_item(store)
+    await store.replace_events(item_id, guest_list(names))
+
+    resolved = linked_names(await store.list_events())
+    # Nothing is dropped from the EVENT — the evidence stays complete.
+    assert set(resolved) == set(names)
+    linked = {name for name, entity in resolved.items() if entity is not None}
+    # ...but only the budgeted prefix reached the identity layer, and which
+    # names those are is decided by document order alone.
+    assert linked == set(names[:MAX_IDENTITY_NAMES_PER_ITEM])
+
+
+async def test_the_name_budget_drops_the_same_names_on_every_pass(store):
+    """A cap that drops a different tail each time would make re-derivation
+    non-idempotent, which is the one thing this write path may not be."""
+    names = crowd("Guest", MAX_IDENTITY_NAMES_PER_ITEM + 6)
+    for name in names:
+        await store.upsert_entity(display_name=name)
+    item_id = await add_item(store)
+
+    await store.replace_events(item_id, guest_list(names))
+    first = linked_names(await store.list_events())
+    await store.replace_events(item_id, guest_list(names))
+    second = linked_names(await store.list_events())
+
+    assert first == second
+
+
+async def test_one_item_creates_a_bounded_number_of_new_people(store):
+    """A new row in the People view outlives the guess that produced it, so
+    the irreversible direction is capped hardest."""
+    names = UNRELATED_NAMES
+    assert len(names) > MAX_ENTITIES_CREATED_PER_ITEM
+    item_id = await add_item(store)
+    await store.replace_events(item_id, [event(participants=names, place="")])
+
+    people = await store.list_people(kind=None, limit=100)
+    assert len(people) == MAX_ENTITIES_CREATED_PER_ITEM
+    assert {person["display_name"] for person in people} == set(
+        names[:MAX_ENTITIES_CREATED_PER_ITEM]
+    )
+    # The names past the cap are still ON the event, spelled out and
+    # searchable — the budget withholds rows, never evidence.
+    resolved = linked_names(await store.list_events())
+    assert set(resolved) == set(names)
+    assert all(resolved[name] is None for name in names[MAX_ENTITIES_CREATED_PER_ITEM:])
+
+
+async def test_a_name_past_the_budget_still_links_to_a_known_person(store):
+    """Degradation withholds CREATION, not knowledge: a curated person named
+    after the budget is spent must still be linked."""
+    known = await store.upsert_entity(display_name="Marlow Vance")
+    names = (*UNRELATED_NAMES, "Marlow Vance")
+    item_id = await add_item(store)
+    await store.replace_events(item_id, [event(participants=names, place="")])
+
+    assert linked_names(await store.list_events())["Marlow Vance"] == known
+
+
+async def test_one_item_never_floods_the_confirmation_queue(store):
+    """The queue is only useful while a human can still work through it."""
+    for name in crowd("Person", 6):
+        await store.upsert_entity(display_name=name)
+    before = (await store.identity_counts())["pending_confirmations"]
+    item_id = await add_item(store)
+    # Every one of these is a near-name of all six curated ones, so without a
+    # per-item budget each creation would queue its own full proposal batch.
+    newcomers = crowd("Persona", 10)
+    await store.replace_events(item_id, [event(participants=newcomers, place="")])
+
+    counts = await store.identity_counts()
+    added = counts["pending_confirmations"] - before
+    assert 0 < added <= MAX_IDENTITY_PROPOSALS_PER_ITEM
+    # The budget stopped creation early rather than raising.
+    resolved = linked_names(await store.list_events())
+    assert set(resolved) == set(newcomers)
+    assert any(entity is None for entity in resolved.values())
+
+
+async def test_a_failed_identity_batch_replays_the_names_one_by_one(store):
+    """One transaction is ONE failure domain: a rollback mid-batch must cost
+    the item nothing, because identity may never fail an event."""
+    real_batch = store.identity_batch
+    attempts = {"batch": 0}
+
+    @asynccontextmanager
+    async def failing_batch():
+        attempts["batch"] += 1
+        async with real_batch() as resolve:
+            seen = 0
+
+            async def wrapped(**kwargs):
+                nonlocal seen
+                seen += 1
+                if seen > 1:  # the first name is already written — and lost
+                    raise RuntimeError("batch refused")
+                return await resolve(**kwargs)
+
+            yield wrapped
+
+    store.identity_batch = failing_batch
+    try:
+        item_id = await add_item(store)
+        await store.replace_events(item_id, [event()])
+    finally:
+        del store.identity_batch
+
+    stored = (await store.list_events())[0]
+    assert attempts["batch"] == 1
+    assert stored["participants"][0]["entity_id"] is not None
+    assert stored["place_entity_id"] is not None
+    # The rolled-back half must not survive as a duplicate.
+    assert len(await store.list_people(kind=None, limit=50)) == 2
+
+
+# ---------------------------------------------------------------------------
+# The empty case — most items yield no events at all
+# ---------------------------------------------------------------------------
+
+
+def spy_on_transactions(store, monkeypatch) -> list[str]:
+    """Record every write transaction the store opens from here on."""
+    opened: list[str] = []
+    original = store._txn
+
+    def spy():
+        opened.append("txn")
+        return original()
+
+    monkeypatch.setattr(store, "_txn", spy)
+    return opened
+
+
+async def test_an_item_that_never_had_events_is_not_written_at_all(
+    store, monkeypatch
+):
+    """The overwhelming majority of items derive nothing; a write transaction
+    each would make the empty case the most expensive thing on the pass."""
+    item_id = await add_item(store)
+    opened = spy_on_transactions(store, monkeypatch)
+
+    assert await store.replace_events(item_id, []) == []
+
+    assert opened == []
+
+
+async def test_an_item_that_HAD_events_is_still_cleared(store, monkeypatch):
+    """The early-out may not resurrect a corrected source's old answer."""
+    item_id = await add_item(store)
+    await store.replace_events(item_id, [event()])
+    opened = spy_on_transactions(store, monkeypatch)
+
+    await store.replace_events(item_id, [])
+
+    assert opened  # the clearing write really happened
+    assert await store.list_events() == []
 
 
 async def test_the_backfill_reader_walks_distilled_items_once(store):

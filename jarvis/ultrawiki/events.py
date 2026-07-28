@@ -50,7 +50,10 @@ __all__ = [
     "ENTITY_CREATE_CONFIDENCE",
     "EVENT_KIND_VALUES",
     "EVENT_VERSION",
+    "MAX_ENTITIES_CREATED_PER_ITEM",
     "MAX_EVENTS_PER_ITEM",
+    "MAX_IDENTITY_NAMES_PER_ITEM",
+    "MAX_IDENTITY_PROPOSALS_PER_ITEM",
     "MAX_PARTICIPANTS",
     "RELATIVE_VOCABULARY",
     "TIME_ANCHOR_VALUES",
@@ -148,6 +151,41 @@ MAX_LEGACY_EVENTS = 2
 #: knows a date, and nothing about what actually happened.
 DEFAULT_CONFIDENCE = 0.5
 LEGACY_CONFIDENCE = 0.35
+
+#: Per-ITEM identity budget. The caps above bound one EVENT; multiplied out
+#: they leave one document free to spend 5 x 12 participants + 5 places = 65
+#: identity resolutions, each of which scans up to
+#: :data:`~jarvis.ultrawiki.identity.FUZZY_CANDIDATE_LIMIT` names and may
+#: queue :data:`~jarvis.ultrawiki.identity.MAX_PROPOSALS` proposals — roughly
+#: 300 pending rows from a SINGLE import, against the identity layer's design
+#: property that the confirmation queue stays short enough for a human to
+#: actually work through.
+#:
+#: The three budgets below bound the whole item instead, and each one is set
+#: so that a genuinely busy real document still lands intact:
+#:
+#: - Names: one full :data:`MAX_PARTICIPANTS` roster (a dozen people is
+#:   already an unusually crowded note) plus room for the places and a few
+#:   names the other events add. Real documents repeat their people, so this
+#:   is only ever reached by an extraction that invented names.
+#: - Creations: the irreversible half — a new row in the People view outlives
+#:   the guess that produced it — so it is bounded well below the name budget.
+#: - Proposals: what one import may add to the confirmation queue. Ten pairs
+#:   is already more than anyone triages in one sitting. Enforced by RESERVING
+#:   a whole :data:`~jarvis.ultrawiki.identity.MAX_PROPOSALS` batch before each
+#:   creating resolution, so the number is a hard ceiling rather than an
+#:   average that a final batch can overshoot.
+#:
+#: Exceeding a budget is never an error: the excess names still LINK to
+#: whoever the user already curated and are otherwise stored by their spelling
+#: (searchable, nobody new invented). The drop is deterministic — document
+#: order, first come first served — so the name budget selects the same prefix
+#: on every pass over unchanged content. The creation budget converges instead
+#: of repeating: a person an earlier pass created is simply linked by the next
+#: one, which is what re-derivation is supposed to do.
+MAX_IDENTITY_NAMES_PER_ITEM = 16
+MAX_ENTITIES_CREATED_PER_ITEM = 8
+MAX_IDENTITY_PROPOSALS_PER_ITEM = 10
 
 #: An event below this confidence may LINK its participants and place to
 #: entities that already exist, but never CREATES one. Creating is the
