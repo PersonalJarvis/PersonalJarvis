@@ -108,7 +108,23 @@ export interface TerminalState {
   last_output_at: number | null;
   idle_seconds: number | null;
   prompts_sent: number;
+  /** The opening of the last delivered prompt — an excerpt, not the whole brief. */
   last_prompt: string;
+  /** Its true length, so an excerpt is never presented as the whole thing. */
+  last_prompt_chars?: number;
+  /**
+   * When this pane was last handed a prompt (epoch seconds), null if never.
+   *
+   * The durable half of the delivery receipt. A pane proves a prompt arrived
+   * by echoing it, and that proof is absent in precisely the situations where
+   * it is needed — output parked while the pane was off screen, an emulator
+   * that never painted, a socket reconnecting, a CLI redrawing its input box
+   * out of view. This is read at mount and at every poll, so the receipt is
+   * still there for someone who looks a quarter of an hour later.
+   */
+  last_prompt_at?: number | null;
+  /** Did the last prompt start the agent, or is it still in the input box? */
+  submitted?: boolean | null;
   lines_captured: number;
   /** Which subscription this pane runs on (see agentAccountsApi). */
   account?: string | null;
@@ -420,6 +436,39 @@ export function fetchTerminalRecaps(
     ? `?workspace_id=${encodeURIComponent(workspaceId)}`
     : "";
   return getJson<RecapsResponse>(`/api/agentic-ide/recaps${query}`);
+}
+
+/** The exact prompt a pane was last sent, as `/terminals/{name}/prompt` reports it. */
+export interface LastPrompt {
+  name: string;
+  /** The brief as it was written into the pane, unabridged. */
+  text: string;
+  chars: number;
+  /** Epoch seconds; null when this pane has never been sent anything. */
+  at: number | null;
+  submitted: boolean | null;
+  prompts_sent: number;
+}
+
+/**
+ * Read back, word for word, what a pane was last told to do.
+ *
+ * The proof half of a delivery, and its own request on purpose: a composed
+ * brief runs to thousands of characters, so the workspace state carries only
+ * an excerpt, a length and a timestamp — enough to render the receipt. This is
+ * what a user gets when they open that receipt, and it is the only form of
+ * "I sent it" that can be checked rather than believed.
+ */
+export function fetchLastPrompt(
+  name: string,
+  workspaceId?: string,
+): Promise<LastPrompt> {
+  const query = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
+  return getJson<LastPrompt>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt${query}`,
+  );
 }
 
 function recapUrl(name: string, workspaceId?: string, suffix = ""): string {

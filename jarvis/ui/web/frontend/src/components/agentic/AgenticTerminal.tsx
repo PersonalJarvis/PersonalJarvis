@@ -88,7 +88,22 @@ import {
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollbar } from "./PaneScrollbar";
-import { openPaneSocket, type PaneSocket } from "./paneSocket";
+import {
+  openPaneSocket,
+  type PaneSocket,
+  type PromptDelivery,
+} from "./paneSocket";
+import { PromptReceipt } from "./PromptReceipt";
+
+/**
+ * How old a delivery may be and still raise its receipt on a fresh connection.
+ *
+ * Only applies to the receipt recovered from the HANDSHAKE — a prompt arriving
+ * live always shows one. Half an hour comfortably covers "I looked away and
+ * came back" while keeping a reopened workspace from re-announcing deliveries
+ * the user long since watched play out.
+ */
+const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -308,6 +323,21 @@ export function AgenticTerminal({
    * Reconnects therefore stay quiet: the replayed screen is already there.
    */
   const [painted, setPainted] = useState(false);
+  /**
+   * The delivery this pane is currently showing a receipt for, if any.
+   *
+   * Held here rather than derived from the terminal's contents because the
+   * terminal is precisely what cannot be trusted to show it — see
+   * ./PromptReceipt for the four ways a delivered prompt fails to reach the
+   * screen. Fed from two independent sources so that neither being unavailable
+   * loses the proof: the socket's `prompt` frame (instant, lossy) and the
+   * pane's `last_prompt_at` in the workspace state (durable, one poll late).
+   */
+  const [receipt, setReceipt] = useState<PromptDelivery | null>(null);
+  /** The delivery the user has already waved away; never shown again. */
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  /** Briefly true right after a delivery — draws the eye to the right pane. */
+  const [justDelivered, setJustDelivered] = useState(false);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -634,8 +664,57 @@ export function AgenticTerminal({
           requestAnimationFrame(sendResize);
         },
         onOutput: (text) => writeToPane(text),
-        onReady: ({ resumed, reattached }) => {
+        /**
+         * A prompt just landed in this pane — make that impossible to miss.
+         *
+         * Three things, and the order matters. The pane is un-parked FIRST:
+         * whatever the observer believes, output held back now is output the
+         * user will not see while they are looking straight at the receipt
+         * telling them it arrived. Then it is scrolled into the viewport,
+         * because a receipt drawn on a pane two screens down is no better than
+         * no receipt. Only then does it flash, which is the part that is merely
+         * nice.
+         *
+         * None of this depends on the agent echoing anything, which is the
+         * whole point: this path is what remains true when the terminal is a
+         * black rectangle.
+         */
+        onPrompt: (delivery) => {
+          if (disposed) return;
+          showPane();
+          setReceipt(delivery);
+          setJustDelivered(true);
+          window.setTimeout(() => setJustDelivered(false), 2_000);
+          try {
+            container.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          } catch {
+            // Older engines take no options object; position is a nicety and
+            // the receipt is legible wherever the pane happens to sit.
+            container.scrollIntoView();
+          }
+        },
+        onReady: ({ resumed, reattached, lastPrompt }) => {
           troubleShown = null;
+          // What this pane was told BEFORE this socket existed. A reload, a
+          // reconnect or a second window opened afterwards would otherwise
+          // show no receipt at all for a prompt that really was delivered —
+          // and that viewer is exactly the one with reason to doubt it.
+          //
+          // Bounded by age, because "durable" and "permanent" are different
+          // requirements. The receipt answers a question that is asked in the
+          // minutes after a delivery ("did that actually go?"); re-raising
+          // yesterday's every time a workspace is reopened would train the
+          // user to close it unread, which is how the next real one gets
+          // missed. Older deliveries stay readable on demand — the pane's
+          // state keeps them, and `GET /terminals/{name}/prompt` returns the
+          // text in full.
+          if (
+            lastPrompt?.at !== null &&
+            lastPrompt !== null &&
+            Date.now() - lastPrompt.at * 1000 < RECEIPT_MAX_AGE_MS
+          ) {
+            setReceipt(lastPrompt);
+          }
           // Say which of THREE things happened. They look identical on screen and
           // only differ when it matters: an agent that never stopped still holds
           // everything, a resumed one re-read its history, and a fresh one will
@@ -967,6 +1046,12 @@ export function AgenticTerminal({
           ? "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.35),0_8px_24px_-12px_rgba(0,0,0,0.5)]"
           : "shadow-[0_4px_16px_-10px_rgba(0,0,0,0.4)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
+        // A prompt just landed here. Two seconds of ring, for the one job the
+        // receipt below cannot do: telling the user WHICH pane out of eight to
+        // look at. Colour and shadow only — nothing moves, because a pane that
+        // jumps while an agent is drawing into it is worse than a quiet one.
+        justDelivered &&
+          "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.6),0_0_28px_-4px_hsl(var(--primary)/0.55)]",
         // Lifted out of the grid while it is being carried: the pane stays where
         // it is (moving it under the cursor would tear down nothing but would
         // reflow every other pane on every mouse move) and says so by fading.
@@ -1040,6 +1125,29 @@ export function AgenticTerminal({
           every click and keystroke, so typing into a pane that is still
           booting behaves exactly as it did before.
         */}
+        {/*
+          Proof that this pane was handed a prompt, drawn by the app rather
+          than read out of the agent's screen.
+
+          Sits INSIDE the terminal region so it points at the pane it is
+          talking about, and above the scrollbar overlay so a fleet of panes
+          cannot bury it. It is the answer to the failure this whole file keeps
+          circling: a delivery that really happened, on a pane that showed
+          nothing, told to a user who then had every reason to believe Jarvis
+          had invented it. See ./PromptReceipt.
+        */}
+        {receipt && receipt.at !== null && receipt.at !== dismissedAt && (
+          <PromptReceipt
+            key={receipt.at}
+            terminal={name}
+            workspaceId={workspaceId}
+            at={receipt.at}
+            preview={receipt.text}
+            chars={receipt.chars}
+            submitted={receipt.submitted}
+            onDismiss={() => setDismissedAt(receipt.at)}
+          />
+        )}
         {!painted && visibleStatus === "connecting" && (
           <div
             data-testid={`agentic-pane-starting-${name}`}
