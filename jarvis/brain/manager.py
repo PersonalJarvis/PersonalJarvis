@@ -36,6 +36,7 @@ from collections.abc import (
     Sequence,
 )
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
@@ -1214,6 +1215,42 @@ def _recent_agent(recent: Any) -> str:
     if not counts:
         return "claude"
     return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+@dataclass(slots=True)
+class _PendingCliChoice:
+    """A "did you mean Claude Code or Codex?" waiting for its answer.
+
+    Kept on the manager rather than inside the detector for the same reason the
+    pane-name question is: the detector answers "is this clear?", and only the
+    turn loop knows what to do about it and when the answer arrives.
+
+    The whole fleet is held, not just the unclear part. "Two Klaudi terminals
+    and one Codex" is ONE request, and opening the Codex pane while asking about
+    the other two would leave the user answering a question about a workspace
+    that had already changed under them.
+    """
+
+    groups: tuple[Any, ...]
+    """The parsed fleet. Every group with no CLI takes the answered one."""
+
+    utterance: str
+    candidates: tuple[str, ...]
+    """CLI display names offered, best first. The answer names one of these."""
+
+    asked_at: float
+    """``time.monotonic()`` — the window is short on purpose (see TTL)."""
+
+
+#: How long the CLI question stays answerable.
+#:
+#: Two minutes, the same bound as the pane-name question and the delegation
+#: offer: long enough for "uh… Codex", short enough that a forgotten question
+#: cannot open panes in the middle of an unrelated turn later on.
+_CLI_QUESTION_TTL_S = 120.0
+
+#: A short reply is an ANSWER; a sentence is the user moving on.
+_CLI_ANSWER_MAX_WORDS = 6
 
 
 def _available_terminal_kinds() -> str:
@@ -6389,8 +6426,14 @@ class BrainManager:
         except Exception:  # noqa: BLE001 - optional surface
             return None
 
+        # A question asked last turn is answered BEFORE anything is parsed
+        # again: "Codex" on its own is not a spawn request and would otherwise
+        # fall through to the ordinary brain, leaving the user's answer — and
+        # the fleet it was about — to evaporate.
+        answered = self._answer_pending_cli_question(user_text)
+
         try:
-            request = ide_intent.detect_spawn(user_text)
+            request = answered or ide_intent.detect_spawn(user_text)
         except Exception:  # noqa: BLE001 - detection must never break a turn
             return None
         if request is None:
@@ -6404,6 +6447,34 @@ class BrainManager:
             conversation_language=self._conversation_language,
         )
         from jarvis.voice.action_phrases import action_phrase
+
+        # The name did not clearly reach one CLI. ASK — this is the maintainer's
+        # directive of 2026-07-28 and the same rule the pane-name question
+        # follows: whatever is unsure becomes a question rather than an action,
+        # because the question costs one word and the guess costs an agent
+        # working on the wrong plan until somebody notices.
+        if request.uncertain_cli:
+            unclear = request.uncertain_cli[0]
+            self._pending_cli_choice = _PendingCliChoice(
+                groups=tuple(request.groups),
+                utterance=request.utterance,
+                candidates=unclear.candidates,
+                asked_at=time.monotonic(),
+            )
+            if len(unclear.candidates) == 1:
+                return action_phrase(
+                    "ide_terminal_kind_unclear_one",
+                    out_lang,
+                    spoken=unclear.spoken,
+                    first=unclear.candidates[0],
+                )
+            return action_phrase(
+                "ide_terminal_kind_unclear",
+                out_lang,
+                spoken=unclear.spoken,
+                first=unclear.candidates[0],
+                second=unclear.candidates[1],
+            )
 
         registry = get_registry()
         folder_label: str | None = None
@@ -6580,6 +6651,81 @@ class BrainManager:
         if briefing_queued:
             line = f"{line} {action_phrase('ide_terminals_briefing_queued', out_lang)}"
         return line
+
+    def _answer_pending_cli_question(self, user_text: str) -> Any | None:
+        """The held fleet with its CLI filled in, or ``None``.
+
+        Consumes the question either way. A question that has been answered,
+        declined, or simply talked past must never open panes on a later turn —
+        the same rule the pane-name window follows, and for the same reason: a
+        forgotten "yes" that opens four terminals ten minutes later is worse
+        than never having asked.
+
+        Three shapes count as an answer, in falling directness: naming a CLI
+        ("Codex", "Claude Code"), agreeing when only one was offered ("yes"),
+        and naming its position ("the first one"). Anything longer than a few
+        words is the user moving on.
+        """
+        pending = getattr(self, "_pending_cli_choice", None)
+        if pending is None:
+            return None
+        text = (user_text or "").strip()
+        if not text:
+            return None
+        if time.monotonic() - pending.asked_at > _CLI_QUESTION_TTL_S:
+            self._pending_cli_choice = None
+            return None
+        if len(text.split()) > _CLI_ANSWER_MAX_WORDS:
+            # Not an answer. The question is spent rather than left armed: the
+            # user has moved on, and a stale question would answer a sentence
+            # they never meant as one.
+            self._pending_cli_choice = None
+            return None
+
+        from jarvis.agentic_ide import intent as ide_intent
+
+        chosen: str | None = None
+        # A CLI named outright wins, wherever in the short answer it sits.
+        for size in (3, 2, 1):
+            words = text.replace(",", " ").split()
+            for start in range(len(words) - size + 1):
+                agent = ide_intent.canonical_agent(" ".join(words[start : start + size]))
+                if agent is not None:
+                    chosen = agent
+                    break
+            if chosen is not None:
+                break
+        if chosen is None and len(pending.candidates) == 1:
+            # "Yes" answers a question that offered exactly one name. With two
+            # on the table it answers nothing, so it is not accepted there.
+            from jarvis.agentic_ide.clarify import classify_short_answer
+
+            if classify_short_answer(text) == "confirm":
+                chosen = ide_intent.canonical_agent(pending.candidates[0])
+        self._pending_cli_choice = None
+        if chosen is None:
+            return None
+
+        from jarvis.agentic_ide.intent import SpawnGroup, SpawnTerminalsRequest
+
+        groups = tuple(
+            SpawnGroup(count=g.count, agent=g.agent or chosen) for g in pending.groups
+        )
+        if not groups:
+            groups = (SpawnGroup(count=1, agent=chosen),)
+        log.info(
+            "Agentic IDE: the unclear CLI was answered with %s — opening %d pane(s)",
+            chosen,
+            sum(g.count for g in groups),
+        )
+        return SpawnTerminalsRequest(
+            count=sum(g.count for g in groups),
+            agent=groups[0].agent,
+            # The ORIGINAL request, so a brief that rode along with it still
+            # reaches the panes it was written for.
+            utterance=pending.utterance,
+            groups=groups,
+        )
 
     def _is_explicit_heavy_request(self, user_text: str) -> bool:
         """Return whether the user semantically requested a heavy worker."""

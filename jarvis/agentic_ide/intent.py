@@ -1083,6 +1083,17 @@ def _depluralized(name: str) -> list[str]:
     return out
 
 
+def canonical_agent(raw: str) -> str | None:
+    """The CLI a spoken name means, or ``None``.
+
+    The public face of ``_canonical_agent``, for the callers outside this module
+    that have to read a CLI name the same way the parser does — the spawn path's
+    "did you mean Claude Code or Codex?" answer, above all. Reading it a second
+    way there would mean a name the parser accepts and the answer does not.
+    """
+    return _canonical_agent(raw)
+
+
 def _standalone_spellings() -> dict[str, str]:
     """Spelling → CLI, for the spellings that name a product on their own."""
     return {
@@ -1109,6 +1120,17 @@ def _open_verbs(text: str) -> list[re.Match[str]]:
 
 
 @dataclass(frozen=True, slots=True)
+class UncertainCli:
+    """A word standing where a CLI name belongs, and the CLIs it could be."""
+
+    spoken: str
+    """The word as the transcript spelled it ("Klaudi", "Codecks")."""
+
+    candidates: tuple[str, ...]
+    """CLI names it could mean, best first. Never empty, never certain."""
+
+
+@dataclass(frozen=True, slots=True)
 class SpawnGroup:
     """One "N of agent X" part of a spawn request."""
 
@@ -1131,6 +1153,19 @@ class SpawnTerminalsRequest:
 
     utterance: str
     """The original utterance, unmodified."""
+
+    uncertain_cli: tuple[UncertainCli, ...] = ()
+    """Words that stand where a CLI name belongs but name none of them clearly.
+
+    The caller ASKS rather than acts on these — the maintainer's directive of
+    2026-07-28: "wenn unklar ist, ob Claude Code oder Codex gemeint ist, soll
+    er einfach nachfragen".  # i18n-allow: quoted maintainer directive
+
+    Same asymmetry the pane-name question is built on (see ``clarify``): a
+    needless question costs one word, while a wrong guess opens the wrong
+    coding agent, on the wrong subscription, and the user finds out when it
+    starts answering in the wrong style.
+    """
 
     unsupported: tuple[str, ...] = ()
     """Coding CLIs the user counted that this workspace does not offer.
@@ -1454,6 +1489,124 @@ def _unsupported_clis(text: str) -> tuple[str, ...]:
         label = _UNSUPPORTED_CLI_SPELLINGS[match.group("name").casefold()]
         if label not in out:
             out.append(label)
+    return tuple(out)
+
+
+#: How close a word must come to a CLI's name to be worth asking about.
+#:
+#: The same floor the pane-name question uses (``names._NEAR_MISS_FLOOR``), and
+#: deliberately the same NUMBER rather than a second opinion about closeness:
+#: two thresholds for one notion is how a word ends up uncertain to one path and
+#: certain to another, which is the gap that produced turns with neither an
+#: action nor a question.
+_CLI_NEAR_MISS_FLOOR = 0.55
+
+#: Words that stand between a count and a CLI name without being either.
+#:
+#: They occupy the same position a garbled product name would, so without this
+#: every one of them would be held up as "did you mean Claude Code?".
+_CLI_POSITION_NOISE = frozenset(
+    {
+        "neue", "neuen", "weitere", "weiteren", "zusätzliche", "zusaetzliche",  # i18n-allow: input vocab
+        "new", "more", "extra", "additional", "other", "another",
+        "otros", "otras", "más", "mas", "nuevos", "nuevas",  # i18n-allow: input vocab
+        "de", "del", "von", "vom", "of", "the", "a", "an", "und", "and", "y",  # i18n-allow: input vocab
+        "bitte", "please", "por", "favor", "mir", "me", "uns", "us",  # i18n-allow: input vocab
+    }
+)
+
+
+def _cli_display_names() -> dict[str, str]:
+    """CLI key → the name a question should say out loud."""
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        return {agent.name: agent.display_name for agent in workspace_agents.coding_agents()}
+    except Exception:  # noqa: BLE001 - a question must never break a turn
+        return {}
+
+
+def _closest_clis(word: str) -> tuple[tuple[str, float], ...]:
+    """The CLIs ``word`` almost names, best first, or ``()``.
+
+    Scored against every accepted SPELLING of every CLI and reduced to the best
+    per CLI, because the spellings are what speech actually produces — "Klaudi"
+    is nowhere near the string "claude code" but sits right next to "klaude".
+    """
+    from .names import similarity
+
+    best: dict[str, float] = {}
+    for agent, spellings in _agent_spellings().items():
+        for spelling in spellings:
+            score = similarity(word, spelling)
+            if score > best.get(agent, 0.0):
+                best[agent] = score
+    scored = [(agent, score) for agent, score in best.items() if score >= _CLI_NEAR_MISS_FLOOR]
+    return tuple(sorted(scored, key=lambda item: (-item[1], item[0])))
+
+
+def _uncertain_clis(text: str) -> tuple[UncertainCli, ...]:
+    """Words standing where a CLI name belongs that name none of them clearly.
+
+    Two questions have to be answered before a word qualifies, and both are
+    narrow on purpose — a question the user did not need is still a cost:
+
+    1. **Is it in a CLI's position?** Directly behind a count ("two Klaudi") or
+       directly in front of the pane noun ("Klaudi terminals"). A word anywhere
+       else in the sentence is not a garbled product name, it is a word.
+    2. **Does it come close to one?** Scored on the resolver's own scale. A word
+       that resembles nothing — "two NASA Cloud Code terminals", where NASA is
+       simply debris between the count and the real name — scores below the
+       floor against every CLI and is left alone.
+
+    A word that resolves EXACTLY is never here: that is certainty, and the
+    acting path owns it.
+    """
+    counts = _count_tokens(text)
+    pane_nouns = [(m.start(), m.end()) for m in _PANE_NOUN_RE.finditer(text)]
+    known = [
+        (m.start(), m.end())
+        for m in _AGENT_RE.finditer(text)
+        if _canonical_agent(m.group("agent")) is not None
+    ]
+    display = _cli_display_names()
+
+    out: list[UncertainCli] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"\b[^\W\d_]{3,}\b", text, re.UNICODE):
+        word = match.group(0)
+        folded = word.casefold()
+        if folded in _CLI_POSITION_NOISE or folded in seen:
+            continue
+        if _count_of(word) is not None or _canonical_agent(word) is not None:
+            continue
+        if _PANE_NOUN_RE.fullmatch(word) or _UNSUPPORTED_CLI_RE.fullmatch(word):
+            continue
+        # Inside, or overlapping, a name that WAS recognised: not a candidate.
+        if any(start <= match.start() < end for start, end in known):
+            continue
+        behind_count = any(
+            end <= match.start() and match.start() - end <= 3 for _s, end, _v in counts
+        )
+        before_pane = any(
+            match.end() <= start and start - match.end() <= 3 for start, _e in pane_nouns
+        )
+        if not behind_count and not before_pane:
+            continue
+        # The real name may follow it ("two NASA Cloud Code terminals"): the
+        # group is not in doubt, so neither is this word.
+        if any(0 <= start - match.end() <= 12 for start, _end in known):
+            continue
+        candidates = _closest_clis(word)
+        if not candidates:
+            continue
+        seen.add(folded)
+        out.append(
+            UncertainCli(
+                spoken=word,
+                candidates=tuple(display.get(agent, agent) for agent, _score in candidates[:3]),
+            )
+        )
     return tuple(out)
 
 
@@ -1863,6 +2016,7 @@ def detect_spawn(
     parse_text = addressed_text
 
     unsupported = _unsupported_clis(parse_text)
+    uncertain_cli = _uncertain_clis(parse_text)
 
     groups = _spoken_groups(parse_text)
     if groups:
@@ -1872,6 +2026,7 @@ def detect_spawn(
             utterance=text,
             groups=groups,
             unsupported=unsupported,
+            uncertain_cli=uncertain_cli,
         )
 
     if unsupported and not groups:
@@ -1886,6 +2041,7 @@ def detect_spawn(
             utterance=text,
             groups=(),
             unsupported=unsupported,
+            uncertain_cli=uncertain_cli,
         )
 
     agent_match = _AGENT_RE.search(parse_text)
@@ -1899,6 +2055,7 @@ def detect_spawn(
         utterance=text,
         groups=(SpawnGroup(count=count, agent=agent),),
         unsupported=unsupported,
+        uncertain_cli=uncertain_cli,
     )
 
 

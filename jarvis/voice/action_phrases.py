@@ -405,6 +405,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "The workspace is full, {max} terminals are already running.",
         "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
     },
+    # The name came through garbled and lands between two coding CLIs. Asked
+    # rather than guessed (maintainer directive 2026-07-28): a needless question
+    # costs one word, a wrong guess opens the wrong agent on the wrong plan.
+    "ide_terminal_kind_unclear": {
+        "de": "Ich habe {spoken} verstanden. Meintest du {first} oder {second}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {first} or {second}?",
+        "es": "Escuché {spoken}: ¿te refieres a {first} o a {second}?",
+    },
+    "ide_terminal_kind_unclear_one": {
+        "de": "Ich habe {spoken} verstanden. Meintest du {first}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {first}?",
+        "es": "Escuché {spoken}: ¿te refieres a {first}?",
+    },
     # A coding CLI this workspace does not offer was named in a fleet request.
     # Said out loud rather than dropped: a name nobody recognises used to fall
     # out of the parse without a word, so the user counted the panes and found

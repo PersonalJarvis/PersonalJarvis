@@ -715,6 +715,17 @@ class ClarificationWindow:
         return (decided, pending.utterance) if decided else None
 
 
+def classify_short_answer(text: str, language: str = "de") -> str:
+    """``"confirm"`` / ``"veto"`` / ``"unknown"`` for a short spoken answer.
+
+    Public because more than one question is asked of the workspace now — the
+    pane-name one here, and the coding-CLI one in the spawn path — and both
+    have to read a "yes" the same way. A second classifier would drift, and the
+    drift would show up as one question honouring an answer the other ignores.
+    """
+    return _classify(text, language)
+
+
 def _classify(text: str, language: str) -> str:
     """Yes/no verdict for a short answer, across every supported language.
 
@@ -747,6 +758,7 @@ __all__ = [
     "ClarificationWindow",
     "UncertainName",
     "addresses_workspace",
+    "classify_short_answer",
     "detect_clarification",
     "is_outside_world_talk",
     "is_part_of_full_name",

@@ -474,3 +474,103 @@ async def test_the_conditional_brief_carries_the_task_and_not_the_fallback(
     instruction = str(captured["instruction"])
     assert "empty area" in instruction
     assert "open a new one" not in instruction, "the fallback is not the work"
+
+
+# ------------------------------------------------- asking which CLI was meant
+# Maintainer directive 2026-07-28: "Wenn das sich irgendwie unklar ist mit dem
+# Namen, ob jetzt zum Beispiel Claude Code oder Codex gemeint ist ... dann soll
+# er einfach nachfragen."  # i18n-allow: quoted maintainer directive
+#
+# Speech recognition writes a product name by ear, and the spellings it invents
+# are open-ended — no alias table finishes that job. What the table cannot place
+# used to be guessed away silently: the count went to the pane noun and panes
+# opened on whatever CLI happened to be inherited, so the user asked for two of
+# one agent and got two of another, with nothing said.
+
+
+async def test_an_unclear_cli_name_is_asked_about_rather_than_guessed(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1)
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path("open two Klohd terminals")
+
+    assert reply is not None
+    assert "Klohd" in reply
+    assert "Claude Code" in reply
+    # Nothing was opened on a guess.
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 1
+
+
+async def test_naming_the_cli_in_the_answer_opens_the_whole_fleet(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1, agent="claude")
+
+    await mgr._run_agentic_ide_spawn_fast_path("open two Klohd terminals and one Codex")
+    reply = await mgr._run_agentic_ide_spawn_fast_path("Codex")
+
+    assert reply is not None
+    assert registry.session is not None
+    # One pane was already open; the answered fleet adds three.
+    agents = [t.agent for t in registry.session.terminals]
+    assert len(agents) == 4
+    assert agents.count("codex") == 3, (
+        "the answer has to fill in the group that was unclear AND keep the one "
+        "that was not"
+    )
+
+
+async def test_yes_answers_a_question_that_offered_one_name(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1)
+
+    asked = await mgr._run_agentic_ide_spawn_fast_path("open two Klaudi terminals")
+    assert asked is not None and "Claude Code" in asked
+
+    await mgr._run_agentic_ide_spawn_fast_path("yes")
+
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 3
+
+
+async def test_the_question_is_spent_when_the_user_moves_on(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    """A forgotten question must never open panes during a later turn."""
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1)
+
+    await mgr._run_agentic_ide_spawn_fast_path("open two Klohd terminals")
+    moved_on = await mgr._run_agentic_ide_spawn_fast_path(
+        "actually never mind, what does the wake word do again"
+    )
+
+    assert moved_on is None
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 1
+    # And the answer is gone with it: a "Codex" now is a fresh turn, not the
+    # missing half of a question nobody is holding any more.
+    assert getattr(mgr, "_pending_cli_choice", None) is None
+
+
+async def test_a_clearly_named_cli_never_asks(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    """The question must not become the new nagging (clarify mandate)."""
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 1)
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path(
+        "open two Codex terminals and one Claude Code terminal"
+    )
+
+    assert reply is not None
+    assert "did you mean" not in reply.lower()
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 4
