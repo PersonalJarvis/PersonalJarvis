@@ -1,5 +1,13 @@
 /**
- * Physical keyboard layout data for the visual keybind picker (KeyboardMap).
+ * Physical INPUT vocabulary for the visual keybind picker (KeyboardMap): the
+ * keyboard layout, the bindable mouse buttons, and the host keyboard family.
+ *
+ * Dependency direction (deliberate, do not invert): this module imports
+ * NOTHING. ``@/hooks/useHotkey`` imports FROM here for the platform probe and
+ * the mouse vocabulary. Reversing it would put a module-scope call to a hook
+ * module in the import graph of every component that renders a keybind row —
+ * and that module is mocked wholesale in several view tests, so the call would
+ * resolve to ``undefined`` at import time.
  *
  * The layout is a compact TKL ("tenkeyless") arrangement — the form factor that
  * still carries everything a voice keybind can use: the function row, the main
@@ -28,6 +36,12 @@ export interface KeyCap {
   width?: number;
   /** Drawn for context but not bindable (punctuation / CapsLock). */
   dead?: boolean;
+  /**
+   * Explicit bindable token, for caps whose ``code`` is not a keyboard code —
+   * the mouse buttons, whose "code" is synthesized by the recorder. When set it
+   * wins over the ``codeToModifierToken``/``codeToKeyToken`` lookup.
+   */
+  token?: string;
 }
 
 export type KeyRow = KeyCap[];
@@ -178,3 +192,66 @@ export function detectKeyboardPlatform(): KeyboardPlatform {
   const probe = `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`;
   return /Mac|iPhone|iPad|iPod/i.test(probe) ? "mac" : "pc";
 }
+
+// ---------------------------------------------------------------------------
+// Mouse buttons
+// ---------------------------------------------------------------------------
+
+/**
+ * The mouse buttons a shortcut may contain — the exact tokens the hotkey
+ * backends register (``MOUSE_BUTTON_TOKENS`` in
+ * ``jarvis/trigger/backends/global_hotkeys.py``, consumed by all three OS
+ * backends). Keep the spelling identical: a token the backend does not know
+ * makes the whole combo unregisterable.
+ *
+ * The LEFT and RIGHT buttons are deliberately absent, on every platform. The
+ * OS "swap mouse buttons" setting is applied below the level the backends read
+ * at, so a shortcut recorded as "left" fires on the physical right button for a
+ * left-handed user — and binding the primary click globally makes the machine
+ * unusable anyway. Middle / X1 / X2 are unaffected by the swap.
+ */
+export const MOUSE_BUTTON_TOKENS = [
+  "mouse_middle",
+  "mouse_x1",
+  "mouse_x2",
+] as const;
+
+/**
+ * DOM ``MouseEvent.button`` → jarvis token. 1 = middle, 3 = X1 (Back),
+ * 4 = X2 (Forward). Returns null for the primary (0) and secondary (2)
+ * buttons, which stay ordinary clicks so the recorder's own controls — Save,
+ * the on-screen keys — remain operable while it is capturing.
+ */
+export function mouseButtonToToken(button: number): string | null {
+  switch (button) {
+    case 1:
+      return "mouse_middle";
+    case 3:
+      return "mouse_x1";
+    case 4:
+      return "mouse_x2";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The synthetic "code" a mouse button gets in the recorder's held-set, so the
+ * press highlight, the full-release commit and the on-screen cap all key off
+ * one identifier the way a real ``event.code`` does.
+ */
+export function mouseButtonCode(button: number): string {
+  return `MouseButton${button}`;
+}
+
+/**
+ * The bindable mouse buttons as caps for the picker. Click-to-assign matters
+ * here for the same reason it does for the Windows key: a side button may be
+ * consumed as Back/Forward navigation before the recorder sees it, and the
+ * middle button can start autoscroll.
+ */
+export const MOUSE_CAPS: KeyCap[] = [
+  { code: mouseButtonCode(1), label: "Middle", token: "mouse_middle" },
+  { code: mouseButtonCode(3), label: "Back", token: "mouse_x1" },
+  { code: mouseButtonCode(4), label: "Forward", token: "mouse_x2" },
+];

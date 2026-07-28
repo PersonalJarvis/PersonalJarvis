@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeybindsPanel } from "./SettingsView";
+// Resolved through the real i18n layer, not hardcoded: the locale strings are
+// owned by another surface, so the assertion pins the KEY the component uses
+// rather than a copy of the English wording.
+import { translate } from "@/i18n";
 
 // All four keybind actions, as the backend reports them (KEYBIND_ACTIONS in
 // jarvis/core/config_writer.py). Settings renders three of them — hands-free
@@ -53,14 +57,19 @@ describe("KeybindsPanel", () => {
     expect(screen.queryByText(/push-to-talk/i)).toBeNull();
   });
 
-  it("renders the dictation row and leaves hands-free to the voice section", async () => {
+  it("never duplicates a dictation row that belongs to the voice section", async () => {
     stubFetch();
     render(<KeybindsPanel />);
-    // The right Alt key is named the way its keycap reads, not "Right-Alt".
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
     // Hands-free dictation is a real action, but its row lives in the voice
-    // section's Shortcuts tab next to push-to-talk — not duplicated here.
+    // section's Shortcuts tab — never duplicated here. Push-to-talk is moving
+    // the same way (Settings keeps Call and Hangup); while it is still rendered
+    // here it must at least name the right Alt key the way its keycap reads,
+    // not "Right-Alt".
     expect(screen.queryByTestId("combo-field-dictate_toggle")).toBeNull();
+    if (screen.queryByTestId("combo-field-dictate")) {
+      expect(comboText("dictate")).toBe("Ctrl+AltGr+J");
+    }
   });
 
   it("captures a two-key chord (F7 + F8) pressed simultaneously", async () => {
@@ -215,7 +224,7 @@ describe("KeybindsPanel", () => {
     expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("keeps a clicked modifier visible and blocks saving until a real key lands", async () => {
+  it("saves a modifier-only combo (Ctrl+Win) and cautions instead of blocking", async () => {
     stubFetch();
     render(<KeybindsPanel />);
 
@@ -227,17 +236,75 @@ describe("KeybindsPanel", () => {
     fireEvent.click(screen.getByTestId("key-F3"));
     fireEvent.click(screen.getByTestId("key-F4"));
     fireEvent.click(screen.getByTestId("key-ControlLeft"));
+    fireEvent.click(screen.getByTestId("key-MetaLeft"));
 
-    // The clicked modifier stays visibly selected (the old composeCombo
-    // collapsed a modifier-only state to "" and silently dropped it).
+    // The clicked modifiers stay visibly selected (the old composeCombo
+    // collapsed a modifier-only state to "" and silently dropped it) …
     expect(
       screen.getByTestId("key-ControlLeft").getAttribute("aria-pressed"),
     ).toBe("true");
     expect(
-      screen.getByTestId("keybind-validation-call").textContent,
-    ).toMatch(/real key/i);
+      screen.getByTestId("key-MetaLeft").getAttribute("aria-pressed"),
+    ).toBe("true");
+    // … and the combo is a real, saveable one. Inverted from the old "blocks
+    // saving until a real key lands": the user owns their keyboard, so the
+    // prefix behaviour is a sentence, not a wall.
+    expect(comboText("call")).toBe("Ctrl+Win");
+    expect(screen.getByTestId("keybind-validation-call")).toBeTruthy();
     const saveButtons = screen.getAllByRole("button", { name: /save/i });
-    expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("records Ctrl+Win from a physical chord (the gesture used to vanish)", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    // Holding two modifiers used to record literally nothing — chordToCombo
+    // returned null with no key in the held set, so the field stayed blank and
+    // the gesture expired silently.
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyDown(window, {
+      code: "MetaLeft",
+      key: "Meta",
+      ctrlKey: true,
+      metaKey: true,
+    });
+    fireEvent.keyUp(window, { code: "MetaLeft", key: "Meta", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "ControlLeft", key: "Control" });
+
+    await waitFor(() => expect(comboText("call")).toBe("Ctrl+Win"));
+  });
+
+  it("records a mouse side button without the press dismissing the recorder", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    // Button 3 is X1 ("Back"). A captured press must not reach the page as an
+    // ordinary click, or it would navigate the app away mid-recording.
+    const down = fireEvent.mouseDown(window, { button: 3 });
+    expect(down).toBe(false); // preventDefault() was called
+    fireEvent.mouseUp(window, { button: 3 });
+
+    await waitFor(() => expect(comboText("call")).toBe("MouseBack"));
+  });
+
+  it("leaves the primary mouse button alone so the picker stays clickable", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    // Left-clicking anything while armed must behave normally — the Save
+    // button and the on-screen keys are operated with it.
+    expect(fireEvent.mouseDown(window, { button: 0 })).toBe(true);
+    expect(comboText("call")).toBe("F3+F4");
   });
 
   it("applies rapid-fire key toggles cumulatively (functional state update)", async () => {
@@ -261,7 +328,7 @@ describe("KeybindsPanel", () => {
     expect(comboText("call")).toBe("Q");
   });
 
-  it("marks the Windows key as reserved (not clickable) on the keyboard", async () => {
+  it("offers the Windows key for click-to-assign (it is not reserved)", async () => {
     stubFetch();
     render(<KeybindsPanel />);
 
@@ -270,8 +337,50 @@ describe("KeybindsPanel", () => {
     );
     fireEvent.click(recordButtons[0]);
 
+    // Inverted: the cap used to be drawn dead with a "reserved by the system"
+    // tooltip. Clicking it is the path that MATTERS for this key — pressing it
+    // physically makes Windows open Start and pull focus out of the app
+    // mid-recording, so the on-screen key has to work.
     const winKey = screen.getByTestId("key-MetaLeft") as HTMLButtonElement;
-    expect(winKey.disabled).toBe(true);
+    expect(winKey.disabled).toBe(false);
+    fireEvent.click(winKey);
+    expect(winKey.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("offers the bindable mouse buttons on the picker", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+
+    const recordButtons = await waitFor(() =>
+      screen.getAllByRole("button", { name: /record/i }),
+    );
+    fireEvent.click(recordButtons[0]); // Call row (f3+f4)
+
+    fireEvent.click(screen.getByTestId("key-F3"));
+    fireEvent.click(screen.getByTestId("key-F4"));
+    fireEvent.click(screen.getByTestId("key-MouseButton1")); // middle button
+
+    expect(comboText("call")).toBe("MiddleClick");
+  });
+
+  it("says what to do while the recorder is empty and armed", async () => {
+    stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+    // Strip the current combo so the field is in the bare recording state that
+    // "looked ugly": it used to say only that a mode was on, which reads as a
+    // broken field. It now names the gesture, and the line under it spells out
+    // how the gesture ends.
+    fireEvent.click(screen.getByTestId("key-F3"));
+    fireEvent.click(screen.getByTestId("key-F4"));
+
+    expect(screen.getByTestId("combo-field-call").textContent).toContain(
+      translate("settings_view.keybinds.record_prompt"),
+    );
+    expect(screen.getByText(translate("settings_view.keybinds.record_prompt_hint")))
+      .toBeTruthy();
   });
 
   it("closes the recorder after a successful save (no stale-snapshot Esc)", async () => {

@@ -5,6 +5,7 @@ import {
   codeToModifierToken,
   composeCombo,
   comboTokens,
+  normalizedComboTokens,
   validateCombo,
 } from "./useHotkey";
 
@@ -91,7 +92,16 @@ describe("codeToModifierToken", () => {
     expect(codeToModifierToken("ShiftRight")).toBe("shift");
     expect(codeToModifierToken("AltLeft")).toBe("alt");
     expect(codeToModifierToken("AltRight")).toBe("right_alt");
-    expect(codeToModifierToken("MetaLeft")).toBe("win");
+    expect(codeToModifierToken("MetaLeft", "pc")).toBe("win");
+  });
+
+  it("names the Meta key the way the host's keyboard does", () => {
+    // The same physical key, two vocabularies the backends genuinely tell
+    // apart. Emitting "win" on a Mac produced a combo the Mac backend cannot
+    // match, and made "cmd" — the token it DOES want — unreachable from the UI.
+    expect(codeToModifierToken("MetaLeft", "mac")).toBe("cmd");
+    expect(codeToModifierToken("MetaRight", "mac")).toBe("cmd");
+    expect(codeToModifierToken("MetaRight", "pc")).toBe("win");
   });
 
   it("returns null for non-modifier codes", () => {
@@ -155,12 +165,55 @@ describe("chordToCombo", () => {
     expect(chordToCombo(ev("KeyA", { shiftKey: true }), ["a"])).toBe("shift+a");
   });
 
-  it("returns null while only modifiers are held (no real key yet)", () => {
-    expect(chordToCombo(ev("ControlLeft", { ctrlKey: true }), [])).toBeNull();
+  it("records a modifier-only chord instead of dropping it", () => {
+    // This used to return null the moment no non-modifier key was held, which
+    // is why holding Ctrl+Win recorded literally NOTHING: the field stayed
+    // blank and the gesture expired on the idle timer with no feedback at all.
+    // The combo is legal (the backends register it happily), so the recorder
+    // has to be able to produce it.
+    expect(
+      chordToCombo(ev("MetaLeft", { ctrlKey: true, metaKey: true }), [], "pc"),
+    ).toBe("ctrl+win");
+    expect(chordToCombo(ev("ControlLeft", { ctrlKey: true }), [])).toBe("ctrl");
+    expect(
+      chordToCombo(ev("MetaLeft", { ctrlKey: true, metaKey: true }), [], "mac"),
+    ).toBe("ctrl+cmd");
+  });
+
+  it("returns null only when nothing at all is held", () => {
+    expect(chordToCombo(ev("Escape"), [])).toBeNull();
+  });
+
+  it("keeps the Meta key in a chord with a real key", () => {
+    expect(chordToCombo(ev("KeyJ", { metaKey: true }), ["j"], "pc")).toBe("win+j");
+    expect(chordToCombo(ev("KeyJ", { metaKey: true }), ["j"], "mac")).toBe("cmd+j");
+  });
+
+  it("builds a mouse-button chord (the token names the backends register)", () => {
+    // A mouse press carries the modifier flags but no `code`; the held-set is
+    // the same one the keys use, so Ctrl + side button is one ordinary chord.
+    expect(chordToCombo(ev("", { ctrlKey: true }), ["mouse_x1"])).toBe(
+      "ctrl+mouse_x1",
+    );
+    expect(chordToCombo(ev(""), ["mouse_middle"])).toBe("mouse_middle");
   });
 
   it("de-duplicates repeated tokens from key-repeat", () => {
     expect(chordToCombo(ev("KeyA"), ["a", "a"])).toBe("a");
+  });
+});
+
+describe("normalizedComboTokens", () => {
+  it("folds the spellings the Windows backend cannot tell apart", () => {
+    // ctrl+left_alt+j and ctrl+right_alt+j are ONE registration. Comparing the
+    // raw tokens accepted both and the second then died at register time,
+    // leaving a bound-looking row that does nothing.
+    expect([...normalizedComboTokens("ctrl+left_alt+j")].sort()).toEqual(
+      [...normalizedComboTokens("ctrl+right_alt+j")].sort(),
+    );
+    expect([...normalizedComboTokens("ctrl+super+space")].sort()).toEqual(
+      [...normalizedComboTokens("ctrl+win+space")].sort(),
+    );
   });
 });
 
@@ -170,62 +223,74 @@ describe("validateCombo", () => {
     expect(validateCombo("   ").status).toBe("empty");
   });
 
-  it("rejects a modifier-only combo with a reason", () => {
-    expect(validateCombo("ctrl+shift")).toEqual({
-      status: "error",
-      reason: "only_modifiers",
-    });
+  it("accepts a modifier-only combo and cautions that it fires on any superset", () => {
+    // Inverted on purpose (maintainer directive 2026-07-28: any combination is
+    // selectable). The refusal it replaces made Ctrl+Win unbindable while
+    // claiming it "cannot be a trigger" — untrue: the backends register it and
+    // it fires. What IS true is the prefix behaviour, so that is now said out
+    // loud instead of used as a wall. A silent acceptance would be the real
+    // regression, so the caution is asserted, not just the status.
+    const v = validateCombo("ctrl+win");
+    expect(v.status).toBe("ok");
+    expect(v.cautions).toContain("modifier_only");
+    expect(validateCombo("ctrl+shift").cautions).toContain("modifier_only");
   });
 
-  it("rejects a solo typing key (letters, digits, space, enter)", () => {
+  it("accepts a solo typing key (letters, digits, space, enter) with a caution", () => {
     for (const combo of ["j", "5", "space", "enter", "tab", "numpad_5"]) {
-      expect(validateCombo(combo)).toEqual({
-        status: "error",
-        reason: "solo_typing_key",
-      });
+      const v = validateCombo(combo);
+      expect(v.status).toBe("ok");
+      expect(v.cautions).toContain("solo_typing_key");
     }
   });
 
-  it("accepts solo function keys (mirrors the backend rule)", () => {
-    expect(validateCombo("f5").status).toBe("ok");
-    expect(validateCombo("f13").status).toBe("ok");
+  it("accepts solo function keys with no caution at all (mirrors the backend rule)", () => {
+    expect(validateCombo("f5")).toEqual({ status: "ok", cautions: [] });
+    expect(validateCombo("f13")).toEqual({ status: "ok", cautions: [] });
   });
 
   it("accepts solo navigation keys but warns they fire while navigating", () => {
-    expect(validateCombo("up")).toEqual({ status: "warning", reason: "solo_nav" });
-    expect(validateCombo("home")).toEqual({ status: "warning", reason: "solo_nav" });
-    expect(validateCombo("ctrl+up").status).toBe("ok");
+    expect(validateCombo("up").cautions).toEqual(["solo_nav"]);
+    expect(validateCombo("home").cautions).toEqual(["solo_nav"]);
+    expect(validateCombo("ctrl+up")).toEqual({ status: "ok", cautions: [] });
   });
 
-  it("rejects Windows-key combos (reserved by the OS)", () => {
-    expect(validateCombo("win+j")).toEqual({
-      status: "error",
-      reason: "windows_reserved",
-    });
+  it("accepts Windows-key combos — the backend polls, the shell cannot claim them first", () => {
+    // Inverted: the old refusal's own justification (the shell owns Win
+    // shortcuts) does not hold for this app, whose Windows backend reads the
+    // key state instead of registering a hotkey with the shell.
+    expect(validateCombo("win+j")).toEqual({ status: "ok", cautions: [] });
+    // A Win chord the desktop ALSO acts on is cautioned, not refused.
+    expect(validateCombo("win+d", {}, "pc").cautions).toContain("os_shortcut");
   });
 
-  it("rejects F12 in any combo (permanently reserved by the debugger)", () => {
-    // The backend's _RESERVED_SOLO_KEYS rejects f12 no matter what modifiers
-    // surround it. Without the mirror rule the recorder let the user build the
-    // combo and only the Save round-trip said no.
-    expect(validateCombo("f12")).toEqual({
-      status: "error",
-      reason: "f12_reserved",
-    });
-    expect(validateCombo("ctrl+shift+f12")).toEqual({
-      status: "error",
-      reason: "f12_reserved",
-    });
-    // Its neighbours stay perfectly bindable.
-    expect(validateCombo("f11").status).toBe("ok");
-    expect(validateCombo("ctrl+shift+f13").status).toBe("ok");
+  it("accepts F12 in any combo but says the debugger takes it too", () => {
+    expect(validateCombo("f12").cautions).toEqual(["os_shortcut"]);
+    expect(validateCombo("ctrl+shift+f12").cautions).toEqual(["os_shortcut"]);
+    // Its neighbours stay caution-free.
+    expect(validateCombo("f11").cautions).toEqual([]);
+    expect(validateCombo("ctrl+shift+f13").cautions).toEqual([]);
   });
 
-  it("rejects the OS-critical shortcuts Alt+F4 and Ctrl+C", () => {
-    expect(validateCombo("alt+f4")).toEqual({ status: "error", reason: "alt_f4" });
-    expect(validateCombo("ctrl+c")).toEqual({ status: "error", reason: "ctrl_c" });
-    // A richer combo that merely contains them stays allowed.
-    expect(validateCombo("ctrl+shift+c").status).toBe("ok");
+  it("accepts the OS-critical shortcuts Alt+F4 and Ctrl+C with a caution", () => {
+    expect(validateCombo("alt+f4").cautions).toEqual(["os_shortcut"]);
+    expect(validateCombo("ctrl+c").cautions).toEqual(["os_shortcut"]);
+    // A richer combo that merely contains them stays silent.
+    expect(validateCombo("ctrl+shift+c").cautions).toEqual([]);
+  });
+
+  it("cautions a Command chord macOS keeps for itself", () => {
+    expect(validateCombo("cmd+q").cautions).toContain("os_shortcut");
+    expect(validateCombo("cmd+shift+q").cautions).toEqual([]);
+  });
+
+  it("accepts mouse buttons and says the click is not swallowed", () => {
+    const v = validateCombo("mouse_x1");
+    expect(v.status).toBe("ok");
+    expect(v.cautions).toEqual(["mouse_button"]);
+    // A bare mouse button is NOT a "fires while you type" case.
+    expect(v.cautions).not.toContain("solo_typing_key");
+    expect(validateCombo("ctrl+mouse_middle").cautions).toEqual(["mouse_button"]);
   });
 
   it("rejects an overlap (subset/superset) with another action's combo", () => {
@@ -234,12 +299,22 @@ describe("validateCombo", () => {
       status: "error",
       reason: "collision",
       conflict: { action: "hangup", combo: "f1+f2" },
+      cautions: [],
     });
     expect(validateCombo("f3+f4+f5", others)).toEqual({
       status: "error",
       reason: "collision",
       conflict: { action: "call", combo: "f3+f4" },
+      cautions: [],
     });
+  });
+
+  it("catches an overlap that only appears after normalization", () => {
+    // The two spellings are ONE registration on Windows; comparing raw tokens
+    // let the user save both and silently killed the second.
+    expect(
+      validateCombo("ctrl+left_alt+j", { call: "ctrl+right_alt+j" }).reason,
+    ).toBe("collision");
   });
 
   it("allows sharing a modifier with another action (no chord overlap)", () => {

@@ -8,13 +8,18 @@ import {
   composeCombo,
   comboTokens,
   validateCombo,
+  type ComboCaution,
   type ComboValidation,
   type KeybindAction,
   type KeybindsConfig,
   type KeybindSaveResult,
 } from "@/hooks/useHotkey";
 import { KeyboardMap } from "@/views/settings/KeyboardMap";
-import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
+import {
+  detectKeyboardPlatform,
+  mouseButtonCode,
+  mouseButtonToToken,
+} from "@/views/settings/keyboardLayout";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
@@ -36,8 +41,21 @@ export function formatCombo(combo: string): string {
     right_alt: _KB_PLATFORM === "mac" ? "⌥" : "AltGr",
     altgr: _KB_PLATFORM === "mac" ? "⌥" : "AltGr",
     shift: "Shift",
-    win: "Win",
+    // Same physical key, two vocabularies: it is Command on a Mac keyboard and
+    // the Windows key on a PC one. Rendering "Win" on a Mac named a cap that
+    // machine does not have, and a Command combo fell through to a raw "CMD".
+    win: _KB_PLATFORM === "mac" ? "⌘" : "Win",
+    window: _KB_PLATFORM === "mac" ? "⌘" : "Win",
+    super: _KB_PLATFORM === "mac" ? "⌘" : "Win",
+    meta: _KB_PLATFORM === "mac" ? "⌘" : "Win",
+    cmd: "⌘",
+    command: "⌘",
     space: "Space",
+    // Mouse buttons, named the way the hardware and the browser do (X1/X2 are
+    // Back/Forward in every application that uses them).
+    mouse_middle: "Middle Click",
+    mouse_x1: "Mouse Back",
+    mouse_x2: "Mouse Fwd",
     // Navigation / editing cluster + numpad operators (the backend key names).
     up: "↑",
     down: "↓",
@@ -80,6 +98,24 @@ export const ACTION_LABEL_KEY: Record<KeybindAction, string> = {
   hangup: "settings_view.keybinds.hangup_label",
   dictate: "settings_view.keybinds.dictate_label",
   dictate_toggle: "settings_view.keybinds.dictate_toggle_label",
+  paste_last: "settings_view.keybinds.paste_last_label",
+};
+
+/**
+ * The localized sentence for each non-blocking caution.
+ *
+ * ``mouse_button`` deliberately shares the OS-shortcut sentence: a bound mouse
+ * button is not swallowed either — whatever you are pointing at still gets its
+ * click — which is exactly what that sentence promises. It stays a separate
+ * reason so a dedicated string can be pointed at it later without touching the
+ * rule that produces it.
+ */
+const CAUTION_KEY: Record<ComboCaution, string> = {
+  modifier_only: "settings_view.keybinds.caution_modifier_only",
+  os_shortcut: "settings_view.keybinds.caution_os_shortcut",
+  mouse_button: "settings_view.keybinds.caution_os_shortcut",
+  solo_typing_key: "settings_view.keybinds.validation.solo_typing_key",
+  solo_nav: "settings_view.keybinds.validation.solo_nav",
 };
 
 /** The combo rendered as keycap chips ("Ctrl + F5" → [Ctrl] + [F5]). */
@@ -99,13 +135,20 @@ export function ComboChips({ combo }: { combo: string }) {
   );
 }
 
-/** The localized live-validation message for the combo being built, or null. */
+/**
+ * The localized live message for the combo being built, or null.
+ *
+ * A collision is the one BLOCKING message (the backend route rejects it with a
+ * 400). Everything else is a caution: the combo is saveable, the sentence only
+ * says what else will happen when it fires. Several cautions can apply at once
+ * — they are joined into ONE line, because a second line makes the on-screen
+ * keyboard below jump on every click.
+ */
 export function validationText(
   v: ComboValidation,
   t: (key: string) => string,
 ): string | null {
-  if (v.status !== "error" && v.status !== "warning") return null;
-  if (v.reason === "collision") {
+  if (v.status === "error" && v.reason === "collision" && v.conflict) {
     // The conflict carries the ACTION ID (unique); the message names it the way
     // the UI labels that row. An id the frontend does not know yet (a newer
     // backend) falls back to the raw id instead of rendering an empty name.
@@ -114,7 +157,12 @@ export function validationText(
       .replace("{action}", labelKey ? t(labelKey) : v.conflict.action)
       .replace("{combo}", formatCombo(v.conflict.combo));
   }
-  return t(`settings_view.keybinds.validation.${v.reason}`);
+  const cautions = v.cautions ?? [];
+  if (cautions.length === 0) return null;
+  // De-duplicated by SENTENCE, not by reason: two reasons deliberately share
+  // one string, and printing it twice reads like a stutter.
+  const sentences = [...new Set(cautions.map((c) => t(CAUTION_KEY[c])))];
+  return sentences.join(" ");
 }
 
 export interface KeybindRowProps {
@@ -324,12 +372,79 @@ export function KeybindRow({
       }
     }
 
+    // A MouseEvent carries the same modifier flags a KeyboardEvent does, but no
+    // `code` — the modifier reader only consults `code` to tell AltGr from a
+    // plain Alt, which a mouse press cannot be.
+    function asKeyEventLike(e: MouseEvent) {
+      return {
+        code: "",
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        getModifierState: (k: string) => e.getModifierState(k),
+      };
+    }
+
+    // Mouse buttons join the SAME held-set the keys use, so Ctrl + side button
+    // records as one chord and the commit-on-full-release rule needs no special
+    // case. The primary and secondary buttons are never captured: the recorder's
+    // own controls (Save, the on-screen keys) have to stay clickable while it
+    // is armed, and the OS "swap buttons" setting makes those two unreliable to
+    // bind anyway.
+    function onMouseDown(e: MouseEvent) {
+      const tok = mouseButtonToToken(e.button);
+      if (tok === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const code = mouseButtonCode(e.button);
+      pressed.add(code);
+      setPressedCodes(new Set(pressed));
+      held.add(tok);
+      const next = chordToCombo(asKeyEventLike(e), held);
+      if (next) {
+        pending = next;
+        setCombo(next);
+        setSaved(false);
+      }
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(commit, 900);
+    }
+
+    function onMouseUp(e: MouseEvent) {
+      const tok = mouseButtonToToken(e.button);
+      if (tok === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pressed.delete(mouseButtonCode(e.button));
+      setPressedCodes(new Set(pressed));
+      if (pressed.size === 0 && pending) {
+        if (idle) clearTimeout(idle);
+        commit();
+      }
+    }
+
+    // The side buttons are Back/Forward and the middle button starts autoscroll;
+    // suppressing the follow-up event keeps a recording gesture from navigating
+    // the app out from under itself.
+    function onAuxClick(e: MouseEvent) {
+      if (mouseButtonToToken(e.button) === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("mousedown", onMouseDown, true);
+    window.addEventListener("mouseup", onMouseUp, true);
+    window.addEventListener("auxclick", onAuxClick, true);
     return () => {
       if (idle) clearTimeout(idle);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("mousedown", onMouseDown, true);
+      window.removeEventListener("mouseup", onMouseUp, true);
+      window.removeEventListener("auxclick", onAuxClick, true);
     };
   }, [capturing]);
 
@@ -416,9 +531,11 @@ export function KeybindRow({
       {combo ? (
         <ComboChips combo={combo} />
       ) : (
-        <span className="text-muted-foreground">
+        <span className={capturing ? "text-foreground" : "text-muted-foreground"}>
           {capturing
-            ? t("settings_view.keybinds.recording")
+            ? // Say what to DO, not that a mode is on: the bare "recording"
+              // state read as a broken field ("it just went empty").
+              t("settings_view.keybinds.record_prompt")
             : loading
               ? "—"
               : t("settings_view.keybinds.unbound")}
@@ -427,9 +544,9 @@ export function KeybindRow({
     </button>
   );
 
-  // ONE stable status line: the validation message when there is one, the
-  // recording hint otherwise. Two separately appearing lines made the keyboard
-  // below jump vertically on every combo click.
+  // ONE stable status line: the blocking message when there is one, otherwise
+  // the cautions, otherwise the recording hint. Two separately appearing lines
+  // made the keyboard below jump vertically on every combo click.
   const statusLine = (capturing || validationMsg) && (
     <p
       data-testid={validationMsg ? `keybind-validation-${action}` : undefined}
@@ -441,7 +558,7 @@ export function KeybindRow({
           : "text-muted-foreground"
       }`}
     >
-      {validationMsg ?? t("settings_view.keybinds.recording_hint")}
+      {validationMsg ?? t("settings_view.keybinds.record_prompt_hint")}
     </p>
   );
 
@@ -452,6 +569,9 @@ export function KeybindRow({
       boundTokens={boundTokens}
       platform={_KB_PLATFORM}
       onToggleToken={onToggleToken}
+      // Absent until the route serves the probe — see KeybindsConfig.
+      mouseSupported={config?.mouse_buttons?.supported ?? true}
+      mouseReason={config?.mouse_buttons?.reason}
     />
   );
 
