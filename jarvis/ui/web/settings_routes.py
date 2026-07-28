@@ -1375,13 +1375,19 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
 
+    # Everything the save accepts but the user should still know about. Sent
+    # back with the response so the UI can show it without a second request.
+    cautions: list[str] = []
+
     if hotkey:
         # The backend is the authority — a browser key-capture cannot be
         # trusted to filter OS-critical / unusable combos (AltGr detection is
         # unreliable there).
-        ok, reason = validate_hotkey(hotkey)
+        verdict = validate_hotkey(hotkey)
+        ok, reason = verdict.ok, verdict.reason
         if not ok:
             raise HTTPException(status_code=400, detail=reason)
+        cautions.extend(getattr(verdict, "cautions", ()) or ())
 
         # A mouse button is only offerable where the host can actually watch
         # the buttons globally. Asked of the ONE capability probe, never of a
@@ -1405,20 +1411,43 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         # does any subset/superset pair, because the polling backend matches a
         # combo as soon as its keys are down (call=f1 + hangup=f1+f2 → F1+F2
         # triggers both). An unbound other action never collides.
+        # Two DIFFERENT actions on the SAME registration is the one case
+        # nothing downstream can resolve: the backend sees one chord and no
+        # rule can say which action the user meant. That stays refused.
+        #
+        # An overlap where one combo merely CONTAINS the other is a different
+        # thing, and refusing it broke the maintainer's stated requirement that
+        # any combination be usable: a modifier-only chord like ctrl+alt is a
+        # subset of nearly every other shortcut, so the rule rejected almost
+        # every one of them. The consequence is real but it is the user's to
+        # accept, so it is now reported as a caution and the save goes through.
+        mine = normalized_combo_tokens(hotkey)
         for other_action, other_combo in _keybind_values(trig).items():
-            if other_action == action:
+            if other_action == action or not other_combo.strip():
                 continue
-            if combos_collide(hotkey, other_combo):
+            theirs = normalized_combo_tokens(other_combo)
+            if not combos_collide(hotkey, other_combo):
+                continue
+            if mine == theirs:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"'{hotkey}' overlaps with '{other_action}' "
-                        f"('{other_combo.strip().lower()}') — the two end up as "
-                        "the same shortcut, so pressing it would trigger both "
-                        "(or one of them would never fire). Pick keys that "
-                        "don't contain each other."
+                        f"'{hotkey}' is already the shortcut for "
+                        f"'{other_action}' ('{other_combo.strip().lower()}') — "
+                        "the two are the same key press, so nothing could tell "
+                        "them apart. Clear that one first, or pick other keys."
                     ),
                 )
+            wider, narrow = (
+                (other_combo.strip().lower(), hotkey)
+                if mine < theirs
+                else (hotkey, other_combo.strip().lower())
+            )
+            cautions.append(
+                f"'{narrow}' is contained in '{wider}' ('{other_action}'), so "
+                f"pressing '{wider}' triggers both. Clear one of them if that "
+                "is not what you want."
+            )
     # else: hotkey == "" is an explicit "unbind this action" request (Settings
     # Clear button) — skip validate_hotkey (that rule exists for "still
     # recording", not "cleared on purpose") and skip the collision check
@@ -1464,6 +1493,10 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         # needed. Otherwise it takes effect on the next voice start.
         "applied_live": applied_live,
         "restart_required": not applied_live,
+        # Accepted, but worth knowing: a modifier-only chord that also fires
+        # inside longer ones, an OS shortcut the system may take first, or an
+        # overlap with another action. Sentences, ready to show.
+        "cautions": cautions,
     }
 
 

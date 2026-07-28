@@ -1530,7 +1530,8 @@
         "hint": "Press keys or click them to build the combo",
         "reserved": "Reserved by the system"
       },
-      "dictate_toggle_label": "Hands-free dictation"
+      "dictate_toggle_label": "Hands-free dictation",
+      "caution_overlap": "This is contained in another shortcut, so pressing the longer one triggers both. Clear one of them if that is not what you want."
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",

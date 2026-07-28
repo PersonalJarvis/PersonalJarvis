@@ -1529,7 +1529,8 @@
         "hint": "Tasten drücken oder anklicken, um die Kombi zu bauen",
         "reserved": "Vom System reserviert"
       },
-      "dictate_toggle_label": "Freihändiges Diktat"
+      "dictate_toggle_label": "Freihändiges Diktat",
+      "caution_overlap": "Diese Kombination steckt in einem anderen Kürzel — die längere auszulösen löst beide aus. Lösche eines davon, wenn du das nicht willst."
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manueller Pfad für Windows-PATH-Probleme. Leer lassen nutzt 'codex' aus PATH.",

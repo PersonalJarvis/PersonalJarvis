@@ -293,20 +293,29 @@ describe("validateCombo", () => {
     expect(validateCombo("ctrl+mouse_middle").cautions).toEqual(["mouse_button"]);
   });
 
-  it("rejects an overlap (subset/superset) with another action's combo", () => {
+  it("allows an overlap with another action but says what it costs", () => {
+    // This used to be a hard rejection, and that is what made the headline
+    // requirement impossible: a modifier-only chord is a subset of nearly
+    // every other shortcut, so almost nothing could be saved. The overlap is
+    // real, so it comes back as a caution naming the other action.
     const others = { hangup: "f1+f2", call: "f3+f4" };
-    expect(validateCombo("f1", others)).toEqual({
-      status: "error",
-      reason: "collision",
-      conflict: { action: "hangup", combo: "f1+f2" },
-      cautions: [],
-    });
-    expect(validateCombo("f3+f4+f5", others)).toEqual({
-      status: "error",
-      reason: "collision",
-      conflict: { action: "call", combo: "f3+f4" },
-      cautions: [],
-    });
+    const subset = validateCombo("f1", others);
+    expect(subset.status).toBe("ok");
+    expect(subset.cautions).toContain("overlap");
+    expect(subset.conflict).toEqual({ action: "hangup", combo: "f1+f2" });
+
+    const superset = validateCombo("f3+f4+f5", others);
+    expect(superset.status).toBe("ok");
+    expect(superset.cautions).toContain("overlap");
+    expect(superset.conflict).toEqual({ action: "call", combo: "f3+f4" });
+  });
+
+  it("still rejects the very same registration twice", () => {
+    // The one ambiguity nothing downstream can resolve: two actions on one
+    // chord give the backend a single press and no way to tell them apart.
+    const verdict = validateCombo("f1+f2", { hangup: "f1+f2" });
+    expect(verdict.status).toBe("error");
+    expect(verdict.reason).toBe("collision");
   });
 
   it("catches an overlap that only appears after normalization", () => {

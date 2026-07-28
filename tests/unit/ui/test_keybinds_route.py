@@ -379,12 +379,19 @@ def test_put_call_accepts_and_normalizes_case() -> None:
     assert body["restart_required"] is True
 
 
-def test_put_rejects_unsafe_combo() -> None:
+def test_put_accepts_a_risky_combo_but_says_what_it_costs() -> None:
+    """A bare typing key is allowed now, and the answer explains the cost.
+
+    The maintainer's requirement is that ANY combination be usable. What used
+    to be a refusal is a caution: the save goes through and the response
+    carries a finished sentence the UI shows.
+    """
     resp = _client().put(
         "/api/settings/keybinds",
         json={"action": "hangup", "hotkey": "j", "persist": False},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    assert resp.json()["cautions"], "a risky combo must never be accepted silently"
 
 
 def test_put_rejects_unknown_action() -> None:
@@ -414,23 +421,45 @@ def test_put_rejects_collision_with_other_action() -> None:
 
 
 def test_put_rejects_subset_collision() -> None:
-    """A combo whose keys are a SUBSET of another action's combo must be
-    rejected: with hangup=f1+f2, binding call to bare f1 would make every
-    F1+F2 press fire BOTH actions (the polling backend matches subsets)."""
+    """A combo CONTAINED in another action's combo is accepted with a caution.
+
+    It used to be refused, and that refusal is what broke the headline
+    requirement: a modifier-only chord like ctrl+alt is a subset of nearly
+    every other shortcut, so almost nothing could be saved. The overlap is
+    real — pressing the longer chord fires both — so the answer names the
+    other action instead of hiding it.
+    """
     resp = _client().put(
         "/api/settings/keybinds",
         json={"action": "call", "hotkey": "f1", "persist": False},
     )
-    assert resp.status_code == 400
-    assert "hangup" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert any("hangup" in c for c in resp.json()["cautions"])
 
 
-def test_put_rejects_superset_collision() -> None:
+def test_put_cautions_on_a_superset_collision() -> None:
     """Superset direction too: with call=f3+f4, binding hangup to f3+f4+f5
-    would fire call as soon as F3+F4 land mid-chord."""
+    fires call as soon as F3+F4 land mid-chord. Allowed, and said out loud."""
     resp = _client().put(
         "/api/settings/keybinds",
         json={"action": "hangup", "hotkey": "f3+f4+f5", "persist": False},
+    )
+    assert resp.status_code == 200
+    assert any("call" in c for c in resp.json()["cautions"])
+
+
+def test_put_still_refuses_the_very_same_combo_twice() -> None:
+    """The ONE overlap nothing can resolve stays a refusal.
+
+    Two actions on the identical registration give the backend one chord and
+    no way to say which action was meant. A caution would be useless there —
+    there is no behaviour for the user to accept, only an ambiguity.
+    """
+    client = _client()
+    current = client.get("/api/settings/keybinds").json()["keybinds"]["call"]
+    resp = client.put(
+        "/api/settings/keybinds",
+        json={"action": "hangup", "hotkey": current, "persist": False},
     )
     assert resp.status_code == 400
     assert "call" in resp.json()["detail"]

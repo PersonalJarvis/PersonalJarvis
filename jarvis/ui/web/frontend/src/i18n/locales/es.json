@@ -1529,7 +1529,8 @@
         "hint": "Pulsa teclas o haz clic en ellas para crear la combinación",
         "reserved": "Reservada por el sistema"
       },
-      "dictate_toggle_label": "Dictado manos libres"
+      "dictate_toggle_label": "Dictado manos libres",
+      "caution_overlap": "Esta combinación está contenida en otro atajo, así que pulsar el más largo activa ambos. Borra uno si no es lo que quieres."
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Ruta manual para problemas de PATH en Windows. Vacío usa 'codex' del PATH.",

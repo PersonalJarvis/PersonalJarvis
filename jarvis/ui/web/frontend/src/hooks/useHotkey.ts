@@ -366,6 +366,7 @@ export type ComboCaution =
   | "solo_typing_key"
   | "solo_nav"
   | "os_shortcut"
+  | "overlap"
   | "mouse_button";
 
 /**
@@ -456,12 +457,21 @@ export function validateCombo(
   const unique = [...new Set(cautions)];
 
   const normalized = normalizedComboTokens(combo);
+  let overlap: { action: string; combo: string } | undefined;
   const isSubset = (a: Set<string>, b: Set<string>) =>
     [...a].every((t) => b.has(t));
+  // Mirrors the route: the SAME registration twice is the one ambiguity
+  // nothing can resolve and stays an error. A merely overlapping pair — one
+  // combo contained in the other — is accepted with a caution, because
+  // refusing it made almost every modifier-only chord unsavable, which is the
+  // opposite of "any combination works".
   for (const [action, other] of Object.entries(others)) {
     const otherTokens = normalizedComboTokens(other);
     if (otherTokens.size === 0) continue;
-    if (isSubset(normalized, otherTokens) || isSubset(otherTokens, normalized)) {
+    const mineInTheirs = isSubset(normalized, otherTokens);
+    const theirsInMine = isSubset(otherTokens, normalized);
+    if (!mineInTheirs && !theirsInMine) continue;
+    if (mineInTheirs && theirsInMine) {
       return {
         status: "error",
         reason: "collision",
@@ -469,9 +479,11 @@ export function validateCombo(
         cautions: unique,
       };
     }
+    unique.push("overlap");
+    overlap = { action, combo: other.trim().toLowerCase() };
   }
 
-  return { status: "ok", cautions: unique };
+  return { status: "ok", cautions: [...new Set(unique)], conflict: overlap };
 }
 
 // Mirrors KEYBIND_ACTIONS in jarvis/core/config_writer.py — keep in sync.

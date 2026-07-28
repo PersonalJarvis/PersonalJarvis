@@ -114,6 +114,7 @@ const CAUTION_KEY: Record<ComboCaution, string> = {
   modifier_only: "settings_view.keybinds.caution_modifier_only",
   os_shortcut: "settings_view.keybinds.caution_os_shortcut",
   mouse_button: "settings_view.keybinds.caution_os_shortcut",
+  overlap: "settings_view.keybinds.caution_overlap",
   solo_typing_key: "settings_view.keybinds.validation.solo_typing_key",
   solo_nav: "settings_view.keybinds.validation.solo_nav",
 };
