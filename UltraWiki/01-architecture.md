@@ -101,6 +101,25 @@ Column lists are indicative, not final DDL.
   are always absolute (relative expressions are resolved against the source
   item's own timestamp at extraction time — "next Friday" is never stored as
   text).
+  **Shipped (2026-07-28, `migrations/0004_events.sql`).** Three properties
+  worth stating because they are load-bearing rather than incidental:
+  - **Bi-temporal.** `occurred_at`/`occurred_end` are VALID time (when it
+    happened); `recorded_at` is TRANSACTION time (when the source recorded the
+    statement). A Monday message about a Friday dinner answers both "when was
+    it" and "when did I plan it". `occurred_end` is always filled — from
+    `occurred_precision` when the source gave no end — so a month-precision
+    event still matches a query about one day inside it.
+  - **No new model call.** Events ride the per-document distillation that
+    already runs: prompt version 2 emits an `events` array in the SAME call.
+    The model normalizes LANGUAGE (a relative expression in any language
+    becomes one token of a closed English vocabulary); the deterministic
+    resolver in `jarvis/ultrawiki/events.py` does the arithmetic. A corpus
+    distilled under version 1 still yields events wherever its stored
+    distillation states an absolute date, without being re-distilled.
+  - **`time_anchor` is the honesty column** (`absolute` / `relative` /
+    `recorded`): an event anchored merely on the item's own timestamp is worth
+    far less than one whose source spelled the date out, and a surface that
+    cannot tell them apart will state a guess as a fact.
 - **`uw_areas`** — named source bundles (D-12): `id, name, icon, is_default`.
   A source belongs to one or more areas; items inherit their source's areas at
   ingest time so scoping is a cheap indexed filter, not a join cascade.

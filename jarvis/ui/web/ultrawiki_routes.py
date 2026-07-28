@@ -60,6 +60,7 @@ _RANKING_KEYS = (
     "rerank_min_score",
     "rrf_keyword_weight",
     "rrf_vector_weight",
+    "rrf_event_weight",
     "recency_half_life_days",
 )
 
@@ -68,6 +69,7 @@ _RANKING_BOUNDS: dict[str, tuple[float, float]] = {
     "rerank_min_score": (0.0, 10.0),  # the shared 0-10 relevance scale
     "rrf_keyword_weight": (0.0, 10.0),
     "rrf_vector_weight": (0.0, 10.0),
+    "rrf_event_weight": (0.0, 10.0),
     "recency_half_life_days": (0.0, 36500.0),  # a century is "effectively off"
 }
 
@@ -1119,6 +1121,9 @@ class UpdateSettingsBody(BaseModel):
     rerank_min_score: float | None = None
     rrf_keyword_weight: float | None = None
     rrf_vector_weight: float | None = None
+    #: Weight of the episodic-event leg (design doc 01, uw_events). 0 silences
+    #: it without removing the stored events.
+    rrf_event_weight: float | None = None
     recency_half_life_days: float | None = None
     confirm_reembed: bool = False
 
@@ -2173,6 +2178,83 @@ async def get_platform_export(platform_id: str) -> dict[str, Any]:
             ),
         )
     return platform_guide.as_dict(entry)
+
+
+# ---------------------------------------------------------------------------
+# Episodic events (design doc 01 · uw_events)
+# ---------------------------------------------------------------------------
+
+
+def _event_kind_or_400(raw: str) -> str | None:
+    """Validate an event-kind filter against the canonical enum, or 400."""
+    wanted = (raw or "").strip()
+    if not wanted:
+        return None
+    from jarvis.ultrawiki.events import EventKind  # noqa: PLC0415 — lazy (AP-26)
+
+    known = {member.value for member in EventKind}
+    if wanted not in known:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown event kind {wanted!r} (one of: "
+                f"{', '.join(sorted(known))})"
+            ),
+        )
+    return wanted
+
+
+@router.get("/events", summary="List episodic events with their absolute dates")
+async def list_events(
+    request: Request,
+    since: str = Query(
+        default="",
+        description="ISO-8601 lower bound on when the event HAPPENED (valid time)",
+    ),
+    until: str = Query(
+        default="", description="ISO-8601 upper bound on when the event happened"
+    ),
+    kind: str = Query(
+        default="",
+        description="Only events of this kind (meal, travel, meeting, purchase, milestone, other)",
+    ),
+    entity_id: int | None = Query(
+        default=None, description="Only events this person/place took part in"
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """What happened, when, where and with whom — newest first.
+
+    The window bounds VALID time (when it happened), never the recorded time,
+    and matches by overlap: an event the source only pinned down to a month is
+    returned for a question about a day inside it. Every row carries an
+    absolute ``occurred_at`` plus ``time_anchor``, which says whether the
+    source stated that date, whether it was resolved from a relative
+    expression, or whether it is merely the moment the item was recorded.
+    """
+    service = _service(request)
+    store = await _store_of(service)
+    rows = await store.list_events(
+        since=since.strip() or None,
+        until=until.strip() or None,
+        kind=_event_kind_or_400(kind),
+        entity_id=entity_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"events": rows, "total": len(rows), "limit": limit, "offset": offset}
+
+
+@router.get("/events/{event_id}", summary="Read one episodic event in full")
+async def get_event(event_id: int, request: Request) -> dict[str, Any]:
+    """One event with its participants, place and evidence permalink."""
+    service = _service(request)
+    store = await _store_of(service)
+    event = await store.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail=f"unknown event {event_id}")
+    return event
 
 
 # ---------------------------------------------------------------------------

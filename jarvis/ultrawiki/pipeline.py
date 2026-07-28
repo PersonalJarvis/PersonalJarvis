@@ -1088,6 +1088,9 @@ class PipelineWorker:
                 "resolution": getattr(result, "resolution", ""),
                 "entities": list(getattr(result, "entities", []) or []),
                 "refs": list(getattr(result, "refs", []) or []),
+                # Prompt version 2. Cached alongside everything else, so a
+                # re-run never pays for the events either.
+                "events": list(getattr(result, "events", []) or []),
             }
             raw_json = str(getattr(result, "raw_json", "") or "")
             if not raw_json:
@@ -1123,11 +1126,61 @@ class PipelineWorker:
             await self._store.distill_cache_put(
                 content_hash, prompt_version, cache_model, raw_json
             )
+        await self._derive_events(item, fields)
         return bool(
             await self._store.mark_stage_done(
                 int(item["id"]), ItemState.DISTILLED, **self._claim_guard(item)
             )
         )
+
+    async def _derive_events(
+        self, item: dict[str, Any], fields: dict[str, Any]
+    ) -> None:
+        """Turn this item's distillation into episodic events (design doc 01).
+
+        Rides the distillation that just ran: **no model call, no network, no
+        extra pass**. Purely deterministic work over data already in hand, so
+        it costs a few hundred microseconds on the slowest stage of the write
+        path and nothing at all on the read path.
+
+        Never fatal. A store without the event tables (a third-party backend,
+        a test fake), a derivation that raises, a database that refuses the
+        write — all of them leave the item distilled and searchable. Events
+        are an accelerator for episodic questions, not a precondition for
+        having a memory at all.
+        """
+        ultrawiki = getattr(self._cfg, "ultrawiki", None)
+        if not bool(getattr(ultrawiki, "events_enabled", True)):
+            return
+        replace = getattr(self._store, "replace_events", None)
+        if not callable(replace):
+            return
+        try:
+            from jarvis.ultrawiki.events import (  # noqa: PLC0415 — lazy (AP-26)
+                derive_events,
+            )
+
+            events = derive_events(
+                distill=fields,
+                title=str(item.get("title") or ""),
+                recorded_at=str(item.get("timestamp_utc") or ""),
+            )
+            if not events:
+                # Still a replace: an item that USED to yield events and no
+                # longer does must lose them, or a corrected source leaves the
+                # old answer standing.
+                await replace(int(item["id"]), [])
+                return
+            await replace(int(item["id"]), events)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — events never block a distillation
+            log.warning(
+                "event derivation failed for item %s — the item stays "
+                "distilled and searchable without episodic rows",
+                item.get("id"),
+                exc_info=True,
+            )
 
     # -- media enrichment ----------------------------------------------------
 

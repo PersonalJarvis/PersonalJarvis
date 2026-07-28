@@ -98,7 +98,12 @@ def test_both_dialects_declare_the_same_identity_tables_and_indexes():
 
 
 def test_migration_is_numbered_after_the_current_head():
-    """Forward-only: a new file never renumbers or rewrites a shipped one."""
+    """Forward-only: a new file never renumbers or rewrites a shipped one.
+
+    The numbers must stay gapless and strictly ascending, and the identity
+    layer must keep the slot it shipped in — later features append, they never
+    renumber a file thousands of installs have already applied.
+    """
     directory = Path(jarvis.ultrawiki.__file__).parent / "migrations"
     numbers = sorted(
         int(path.name[:4])
@@ -106,4 +111,6 @@ def test_migration_is_numbered_after_the_current_head():
         if re.match(r"^\d{4}_", path.name)
     )
     assert numbers == list(range(1, len(numbers) + 1))
-    assert numbers[-1] == 3
+    assert [path.name for path in directory.glob("0003_*.sql")] == [
+        "0003_identity.sql"
+    ]

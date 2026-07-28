@@ -1786,6 +1786,59 @@ class UltraWikiService:
             entity_id=entity_id, limit=limit
         )
 
+    # -- episodic events (design doc 01 · uw_events) -------------------------
+
+    async def list_events(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kind: str | None = None,
+        entity_id: int | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Episodic events in a time window, newest first.
+
+        ``since``/``until`` bound the VALID time (when it happened), not the
+        recorded time, and match by overlap — an event that spans a month is
+        returned for a query about one day inside it.
+        """
+        await self.ensure_started()
+        return await self._require_store().list_events(
+            since=since,
+            until=until,
+            kind=kind,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def events_between(
+        self,
+        start: str,
+        end: str,
+        *,
+        kind: str | None = None,
+        entity_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """The design's ``events_between`` primitive (doc 03) — cheap, LLM-free."""
+        await self.ensure_started()
+        return await self._require_store().events_between(
+            start, end, kind=kind, entity_id=entity_id, limit=limit
+        )
+
+    async def event_detail(self, event_id: int) -> dict[str, Any] | None:
+        """One event with its participants, place and evidence."""
+        await self.ensure_started()
+        return await self._require_store().get_event(int(event_id))
+
+    async def event_counts(self) -> dict[str, int]:
+        """How many events of each kind the store holds."""
+        await self.ensure_started()
+        return await self._require_store().event_counts()
+
     # -- search --------------------------------------------------------------
 
     async def search(self, query: str, **kwargs: Any) -> Any:

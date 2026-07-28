@@ -17,6 +17,28 @@ Caching contract (design doc 02, determinism economics): results are cached on
 ``(content_hash, PROMPT_VERSION, model)``. Bump :data:`PROMPT_VERSION` on ANY
 prompt change so improved prompts re-enrich incrementally instead of serving
 stale cached distillations.
+
+**Version 2 — episodic events.** The document now also carries an ``events``
+array (design doc 01, ``uw_events``). It rides the SAME call: extracting
+events costs no extra round trip, no extra model, and nothing on the read
+path. Two rules make that array safe to consume:
+
+- ``when`` is either ISO-8601 (whenever the source states a date outright) or
+  ONE token from a closed English relative vocabulary
+  (:data:`jarvis.ultrawiki.events.RELATIVE_VOCABULARY`). The model therefore
+  does the LANGUAGE normalization — a German or Spanish source arrives already
+  translated — while ``jarvis/ultrawiki/events.py`` does the arithmetic that
+  turns the token into an absolute instant. No per-language phrase table, so
+  the feature works for every locale rather than the two somebody tested.
+- The model never computes a date. Asking an LLM to add five days to a
+  timestamp is asking for a wrong answer that looks right; the resolver
+  anchors every relative expression against the item's own timestamp.
+
+The bump invalidates every cached distillation, so a corpus re-distills
+incrementally in the background at the cheap router tier. Nothing is lost
+meanwhile: items keep their existing summary document until the new one
+lands, and events are also derived from PRE-v2 distillations wherever they
+state an absolute date (``events.derive_events``'s legacy path).
 """
 
 from __future__ import annotations
@@ -49,7 +71,9 @@ __all__ = [
 ]
 
 #: Part of the distillation cache key — bump on EVERY prompt change.
-PROMPT_VERSION = 1
+#: 1 = question/summary/resolution/entities/refs.
+#: 2 = + the ``events`` array (episodic facts, same call).
+PROMPT_VERSION = 2
 
 #: Raw bodies are truncated before prompting; a distillation summarizes, it
 #: does not need six-figure transcripts, and the marker keeps the cut honest.
@@ -84,6 +108,11 @@ class DistillResult:
     resolution: str = ""
     entities: list[str] = field(default_factory=list)
     refs: list[str] = field(default_factory=list)
+    #: Episodic facts (prompt version 2). Raw payload dicts, deliberately NOT
+    #: parsed here: turning ``when`` into an absolute instant needs the item's
+    #: own timestamp, which the distiller does not have and must not guess.
+    #: ``jarvis.ultrawiki.events.derive_events`` owns that step.
+    events: list[dict[str, Any]] = field(default_factory=list)
     raw_json: str = ""  # the JSON exactly as the provider produced it
 
 
@@ -91,6 +120,19 @@ def _truncate_body(body: str) -> str:
     if len(body) <= _BODY_TRUNCATE_CHARS:
         return body
     return body[:_BODY_TRUNCATE_CHARS] + _TRUNCATION_MARKER
+
+
+#: The closed relative vocabulary the prompt is allowed to emit, spelled out
+#: for the model. It MUST stay in sync with
+#: ``jarvis.ultrawiki.events.RELATIVE_VOCABULARY`` — a token invented here
+#: resolves to nothing and the event silently falls back to the item's own
+#: timestamp. ``tests/unit/ultrawiki/test_events.py`` pins the pair together.
+_RELATIVE_TOKENS = (
+    "today|yesterday|tomorrow|this <weekday>|last <weekday>|next <weekday>|"
+    "last week|next week|last month|next month|last year|next year|"
+    "<n> days ago|<n> weeks ago|<n> months ago|<n> years ago|"
+    "in <n> days|in <n> weeks|in <n> months|in <n> years"
+)
 
 
 def build_distill_prompt(*, title: str, body: str, source_kind: str) -> str:
@@ -110,11 +152,34 @@ def build_distill_prompt(*, title: str, body: str, source_kind: str) -> str:
         'ask it","summary":"a 2-4 sentence factual summary","resolution":"the '
         'outcome, decision, or answer; empty string if none","entities":'
         '["mentioned people, places, organizations, projects, systems"],'
-        '"refs":["explicit references to other documents, URLs, or ids"]}\n'
-        "Rules: no markdown fences; no additional keys; entities and refs are\n"
-        "arrays of short strings; use empty values where the item provides\n"
-        "nothing; never invent facts.\n"
-        "</output_format>"
+        '"refs":["explicit references to other documents, URLs, or ids"],'
+        '"events":[{"kind":"meal|travel|meeting|purchase|milestone|other",'
+        '"title":"short name of what happened","when":"see the time rules",'
+        '"when_end":"same format, empty unless the item states an end",'
+        '"where":"place name, empty if none","participants":["people who were '
+        'there"],"confidence":0.0}]}\n'
+        "Rules: no markdown fences; no additional keys; entities, refs and\n"
+        "participants are arrays of short strings; use empty values where the\n"
+        "item provides nothing; never invent facts.\n"
+        "</output_format>\n"
+        "<event_rules>\n"
+        "An event is something that HAPPENED or is scheduled to happen at a\n"
+        "point in time: a meal, a trip, a meeting, a purchase, a milestone.\n"
+        'Return "events":[] when the item records none — most items record\n'
+        "none, and an invented event poisons the memory permanently.\n"
+        "Time format for when / when_end, in this order of preference:\n"
+        "1. The item states an absolute date or time: return ISO-8601\n"
+        '   ("2026-03-14", "2026-03-14T19:30", "2026-03" for a whole month,\n'
+        '   "2026" for a whole year). Never shift or reformat the date.\n'
+        "2. The item uses a relative expression, in ANY language: translate it\n"
+        "   to EXACTLY ONE of these English tokens, optionally followed by\n"
+        f'   " at HH:MM" or a daypart word:\n   {_RELATIVE_TOKENS}\n'
+        "3. Neither applies: return an empty string.\n"
+        "NEVER compute a date yourself and never guess a year: the system\n"
+        "resolves relative tokens against the item's own timestamp.\n"
+        "confidence is 0.0-1.0: how sure you are the event really happened as\n"
+        "described.\n"
+        "</event_rules>"
     )
 
 
@@ -174,6 +239,19 @@ def _string_list(value: Any) -> list[str]:
     return []
 
 
+def _event_list(value: Any) -> list[dict[str, Any]]:
+    """Salvage the ``events`` array into ``list[dict]``; junk entries drop.
+
+    Deliberately structure-only: no field is validated or resolved here.
+    ``events.derive_events`` is the single place that decides what a payload
+    means, so a provider quirk cannot produce two different interpretations
+    depending on which layer looked at it first.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(entry) for entry in value if isinstance(entry, dict)]
+
+
 def _result_from(raw_json: str, parsed: dict[str, Any]) -> DistillResult:
     """Salvage whatever keys arrived; missing keys become empty values."""
     return DistillResult(
@@ -182,6 +260,7 @@ def _result_from(raw_json: str, parsed: dict[str, Any]) -> DistillResult:
         resolution=str(parsed.get("resolution") or "").strip(),
         entities=_string_list(parsed.get("entities")),
         refs=_string_list(parsed.get("refs")),
+        events=_event_list(parsed.get("events")),
         raw_json=raw_json,
     )
 
@@ -258,7 +337,10 @@ async def distill_text(
         ),
         system=_SYSTEM_PROMPT,
         temperature=0.1,  # normalization, not creativity
-        max_tokens=1600,
+        # Raised with prompt version 2: the events array shares this budget,
+        # and a truncated JSON object is an unparseable one — the whole
+        # distillation would be retried for the sake of a few tokens.
+        max_tokens=2000,
         stream=True,
     )
 

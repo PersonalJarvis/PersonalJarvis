@@ -2227,6 +2227,17 @@ class UltraWikiConfig(BaseModel):
     # the article's default; 0 silences a leg without removing it.
     rrf_keyword_weight: float = 1.0
     rrf_vector_weight: float = 1.0
+    # The episodic-event leg (jarvis/ultrawiki/events.py). Events are
+    # precomputed answers to "when did X happen", so they are weighted like
+    # any other list rather than allowed to veto one: consensus still decides
+    # (design doc 01, principle 5). 0 silences the leg.
+    rrf_event_weight: float = 1.0
+
+    # -- episodic events (design doc 01, uw_events) --------------------------
+    # Derive events from the distillation that already ran. Costs no extra
+    # model call and nothing on the read path; false stops the derivation and
+    # leaves existing rows untouched.
+    events_enabled: bool = True
     # Age decay on the fused score: 0.5 ** (age_days / half_life). Stale
     # answers lose when relevance is otherwise equal. 0 disables the decay
     # (the epsilon-sized recency tiebreak still settles exact ties).

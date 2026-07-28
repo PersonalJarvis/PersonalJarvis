@@ -170,3 +170,6 @@ CREATE TABLE IF NOT EXISTS uw_distill_cache (
 -- uw_merge_log, design doc 05) ships as migrations/0003_identity.sql rather
 -- than as part of this file, so its DDL exists exactly once per dialect. The
 -- runner applies it to fresh and existing databases alike.
+--
+-- Episodic events (uw_events / uw_event_participants / uw_event_fts, design
+-- doc 01) ship the same way as migrations/0004_events.sql.

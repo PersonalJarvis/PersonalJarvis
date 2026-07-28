@@ -50,6 +50,12 @@ from urllib.parse import quote
 
 import aiosqlite
 
+from jarvis.ultrawiki.event_store import EventMixin
+from jarvis.ultrawiki.events import (
+    EVENT_KIND_VALUES,
+    TIME_ANCHOR_VALUES,
+    TIME_PRECISION_VALUES,
+)
 from jarvis.ultrawiki.identity import (
     MERGEABLE_TIERS,
     EntityKind,
@@ -521,7 +527,7 @@ _DISTILLED_FINGERPRINT_SQL = (
 # ---------------------------------------------------------------------------
 
 
-class UltraStore(IdentityMixin):
+class UltraStore(IdentityMixin, EventMixin):
     """Async SQLite store for UltraWiki (the universal reference backend).
 
     One instance = one ``aiosqlite`` connection, opened lazily on first use
@@ -1052,11 +1058,16 @@ class UltraStore(IdentityMixin):
     async def _purge_derived(
         self, conn: aiosqlite.Connection, item_ids: Sequence[int]
     ) -> None:
-        """Remove FTS rows, documents (cascading embeddings) and — when the
-        vec index is live on this connection — vector rows for *item_ids*.
+        """Remove FTS rows, documents (cascading embeddings), derived events
+        and — when the vec index is live on this connection — vector rows for
+        *item_ids*.
 
         Vector rows a session without the extension cannot delete are
         reconciled on the next :meth:`_ensure_vec` (stale-row sweep).
+
+        Events belong here for the same reason documents do: they were derived
+        from text that has just changed or been tombstoned, so leaving them
+        would let a sentence that no longer exists keep answering questions.
         """
         if not item_ids:
             return
@@ -1066,6 +1077,7 @@ class UltraStore(IdentityMixin):
                 f"DELETE FROM uw_fts WHERE item_id IN ({marks})",  # noqa: S608 — placeholders only
                 chunk,
             )
+            await self._ev_purge(conn, chunk)
             doc_rows = await self._fetchall(
                 conn,
                 f"SELECT id FROM uw_documents WHERE item_id IN ({marks})",  # noqa: S608 — placeholders only
@@ -2579,7 +2591,7 @@ class UltraStore(IdentityMixin):
 # ---------------------------------------------------------------------------
 
 
-class PostgresStore(IdentityMixin):
+class PostgresStore(IdentityMixin, EventMixin):
     """Postgres backend behind the same public surface as :class:`UltraStore`.
 
     - The keyword leg is a generated ``tsvector`` column with a GIN index,
@@ -2597,6 +2609,10 @@ class PostgresStore(IdentityMixin):
     #: The identity layer writes its SQL once, in the SQLite dialect;
     #: :meth:`IdentityMixin._id_sql` rewrites the placeholders for psycopg.
     _IDENTITY_PARAM = "%s"
+
+    #: The event keyword leg is the one thing the engines cannot share: a
+    #: generated ``tsvector`` column here, an FTS5 side table on SQLite.
+    _EVENT_DIALECT = "postgres"
 
     def __init__(self, conn_str: str) -> None:
         self._conn_str = conn_str
@@ -2629,6 +2645,9 @@ class PostgresStore(IdentityMixin):
         merge_tiers = ", ".join(
             f"'{tier.value}'" for tier in sorted(MERGEABLE_TIERS, key=str)
         )
+        event_kinds = ", ".join(f"'{value}'" for value in EVENT_KIND_VALUES)
+        precisions = ", ".join(f"'{value}'" for value in TIME_PRECISION_VALUES)
+        anchors = ", ".join(f"'{value}'" for value in TIME_ANCHOR_VALUES)
         return [
             "CREATE TABLE IF NOT EXISTS uw_meta ("
             " key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -2782,6 +2801,57 @@ class PostgresStore(IdentityMixin):
             " ON uw_merge_log(winner_id, undone_at)",
             "CREATE INDEX IF NOT EXISTS idx_uw_merge_log_loser"
             " ON uw_merge_log(loser_id, undone_at)",
+            # Episodic events (design doc 01 · uw_events) — the Postgres twin
+            # of migrations/0004_events.sql. Same columns, same CHECK lists
+            # (derived from jarvis/ultrawiki/events.py), same overlap-friendly
+            # occurred_at/occurred_end pair; the FTS5 side table is replaced by
+            # a generated tsvector on the stored card, so both engines index
+            # the identical text.
+            "CREATE TABLE IF NOT EXISTS uw_events ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " item_id BIGINT NOT NULL REFERENCES uw_items(id) ON DELETE CASCADE,"
+            " kind TEXT NOT NULL DEFAULT 'other'"
+            f" CHECK (kind IN ({event_kinds})),"
+            " title TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',"
+            " occurred_at TEXT NOT NULL, occurred_end TEXT NOT NULL,"
+            " occurred_precision TEXT NOT NULL DEFAULT 'day'"
+            f" CHECK (occurred_precision IN ({precisions})),"
+            " time_anchor TEXT NOT NULL DEFAULT 'recorded'"
+            f" CHECK (time_anchor IN ({anchors})),"
+            " recorded_at TEXT NOT NULL,"
+            " place_entity_id BIGINT REFERENCES uw_entities(id) ON DELETE SET NULL,"
+            " place_raw TEXT NOT NULL DEFAULT '',"
+            " confidence DOUBLE PRECISION NOT NULL DEFAULT 0,"
+            " extraction_version INTEGER NOT NULL DEFAULT 0,"
+            " dedupe_key TEXT NOT NULL DEFAULT '',"
+            " evidence_json TEXT NOT NULL DEFAULT '[]',"
+            " search_text TEXT NOT NULL DEFAULT '',"
+            " created_at TEXT NOT NULL,"
+            " search_tsv tsvector GENERATED ALWAYS AS"
+            "  (to_tsvector('simple',"
+            "   coalesce(title, '') || ' ' || coalesce(search_text, ''))) STORED)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_uw_events_dedupe"
+            " ON uw_events(item_id, dedupe_key)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_occurred"
+            " ON uw_events(occurred_at, id)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_kind_time"
+            " ON uw_events(kind, occurred_at)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_item ON uw_events(item_id)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_recorded"
+            " ON uw_events(recorded_at)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_place"
+            " ON uw_events(place_entity_id)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_events_tsv"
+            " ON uw_events USING GIN (search_tsv)",
+            "CREATE TABLE IF NOT EXISTS uw_event_participants ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " event_id BIGINT NOT NULL REFERENCES uw_events(id) ON DELETE CASCADE,"
+            " entity_id BIGINT REFERENCES uw_entities(id) ON DELETE SET NULL,"
+            " display_name TEXT NOT NULL DEFAULT '')",
+            "CREATE INDEX IF NOT EXISTS idx_uw_event_participants_event"
+            " ON uw_event_participants(event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_event_participants_entity"
+            " ON uw_event_participants(entity_id)",
             # The same additive columns for databases created before the
             # feature that introduced them. Postgres HAS `ADD COLUMN IF NOT
             # EXISTS`, so the SQLite pragma dance is unnecessary here — but the
@@ -3163,8 +3233,8 @@ class PostgresStore(IdentityMixin):
 
     async def _purge_derived(self, conn: Any, item_ids: Sequence[int]) -> None:
         """Postgres twin of the SQLite purge: the tsvector column follows the
-        row automatically, documents/embeddings cascade; only pgvector rows
-        need an explicit delete when the index is live."""
+        row automatically, documents/embeddings/event participants cascade;
+        only pgvector rows need an explicit delete when the index is live."""
         if not item_ids:
             return
         ids = list(item_ids)
@@ -3177,6 +3247,7 @@ class PostgresStore(IdentityMixin):
         await conn.execute(
             "DELETE FROM uw_documents WHERE item_id = ANY(%s)", (ids,)
         )
+        await conn.execute("DELETE FROM uw_events WHERE item_id = ANY(%s)", (ids,))
 
     @staticmethod
     def _item_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:

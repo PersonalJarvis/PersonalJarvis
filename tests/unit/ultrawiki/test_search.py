@@ -139,6 +139,7 @@ def make_cfg(**overrides) -> SimpleNamespace:
         "rerank_min_score": 4.0,
         "rrf_keyword_weight": 1.0,
         "rrf_vector_weight": 1.0,
+        "rrf_event_weight": 1.0,
         "recency_half_life_days": 180.0,
         "ollama_endpoint": "http://localhost:11434",
     }
@@ -543,6 +544,7 @@ def test_search_status_reports_the_live_ranking_knobs():
         make_cfg(
             rrf_keyword_weight=2.0,
             rrf_vector_weight=0.5,
+            rrf_event_weight=0.25,
             recency_half_life_days=30,
             rerank_min_score=6,
             rerank_timeout_s=8,
@@ -552,6 +554,7 @@ def test_search_status_reports_the_live_ranking_knobs():
     assert status["ranking"] == {
         "keyword_weight": 2.0,
         "vector_weight": 0.5,
+        "event_weight": 0.25,
         "recency_half_life_days": 30.0,
         "rerank_min_score": 6.0,
         "rerank_timeout_s": 8.0,

@@ -120,6 +120,28 @@ event**, and the synthesis stage merely verbalizes it with its citations.
 Vector search over documents is the safety net for whatever extraction did
 not anticipate, not the primary episodic path.
 
+**Shipped (2026-07-28): the event leg.** Events reach the read path as a
+THIRD ranked list beside keyword and vector — its own keyword index over a
+stored card that carries the absolute date in several written forms, the
+place and the participants (FTS5 on SQLite, a generated `tsvector` on
+Postgres). Consequences:
+
+- It is fused, never privileged: `[ultrawiki].rrf_event_weight` (default 1.0,
+  `0` silences the leg) enters the same RRF sum as every other list, so a
+  precomputed event still has to win on consensus (principle 5). What the leg
+  DOES get is the representative slot when an event and its evidence item
+  merge — an event card states the date, the place and who was there, which
+  is the better citation for an episodic question than a fragment of chat.
+- Event hits are ranked and age-decayed by the event's own `occurred_at`, not
+  by when the message that mentioned it was written.
+- The leg is optional in the strict sense: a store without the episodic
+  tables (a third-party backend, a corpus that predates them) returns nothing
+  and every other leg answers unchanged.
+- `events_between` ships as the design's primitive
+  (`GET /api/ultrawiki/events`, `GET /api/ultrawiki/events/{id}`, and
+  therefore `jarvis api ultrawiki list-events` / `get-event`) — cheap,
+  LLM-free, narrow in and out.
+
 ## Voice from day one (D-8): the latency budget
 
 The realtime voice pipeline queries UltraWiki in v1. Budget to first spoken

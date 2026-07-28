@@ -3,7 +3,7 @@
 The read path, stage by stage (the Cerebras knowledge-base pipeline, adapted
 to a single-user store):
 
-    keyword leg  ·  vector leg        (concurrent, plus the IDF probe)
+    keyword leg  ·  vector leg  ·  event leg   (concurrent, + the IDF probe)
               │
               ▼
     RRF FUSION  score(d) = Σ_legs weight / (60 + rank)
@@ -30,8 +30,18 @@ lesson the normal wiki already paid for once.
 **Nothing here may brick a search.** Every stage degrades on its own: no/dead
 embedding provider => keyword answers alone; no/dead rerank provider => fusion
 order stands; a store without the ranking-signal methods => neutral weights; a
-failing context expansion => bare snippets. ``matched_by`` and ``rerank_score``
-report honestly what actually ran.
+store without the episodic tables => no event leg; a failing context expansion
+=> bare snippets. ``matched_by`` and ``rerank_score`` report honestly what
+actually ran.
+
+**Events are a leg, not an oracle.** The episodic leg (design doc 01,
+``uw_events``) contributes precomputed answers to "when did X happen" — each
+one already carrying its absolute date, its place and its participants — but
+it is fused like every other list rather than allowed to veto them. Its hits
+are ranked by the event's OWN ``occurred_at``, which is the date the question
+was about; when an event and its evidence item both match, the event's card
+becomes the representative, because a bare fragment of chat is the worse
+citation for an episodic question.
 
 Heavy/optional pieces (httpx-backed embedding + rerank adapters) are imported
 lazily inside the functions (AP-26); this module itself is stdlib + types only.
@@ -164,6 +174,7 @@ def ranking_settings(cfg: Any) -> dict[str, float]:
         "recency_half_life_days": max(
             0.0, _float_setting(cfg, "recency_half_life_days", 180.0)
         ),
+        "event_weight": max(0.0, _float_setting(cfg, "rrf_event_weight", 1.0)),
         "rerank_min_score": max(0.0, _float_setting(cfg, "rerank_min_score", 4.0)),
         # Hard wall-clock bound on the WHOLE rerank stage (all provider
         # attempts together). Without it, a chain of dead/hung providers can
@@ -214,9 +225,9 @@ async def hybrid_search(
 
     ``timings`` (optional) is filled with the wall-clock cost of every stage
     that ran, in milliseconds (``keyword_ms``, ``vector_ms`` with its
-    ``vector_embed_ms`` / ``vector_ann_ms`` split, ``signals_ms``,
-    ``rerank_ms``, ``context_ms``, ``total_ms``) — the query text itself is
-    never logged, only durations and counts.
+    ``vector_embed_ms`` / ``vector_ann_ms`` split, ``event_ms``,
+    ``signals_ms``, ``rerank_ms``, ``context_ms``, ``total_ms``) — the query
+    text itself is never logged, only durations and counts.
 
     An empty/blank query returns ``[]`` without touching any leg.
     """
@@ -227,12 +238,15 @@ async def hybrid_search(
     vector_coro = _vector_leg(store, cfg, query, area_id=area_id, timings=sink)
     if vector_timeout_s and vector_timeout_s > 0:
         vector_coro = _bounded_vector_leg(vector_coro, vector_timeout_s)
-    keyword_hits, vector_hits, signals = await asyncio.gather(
+    keyword_hits, vector_hits, event_hits, signals = await asyncio.gather(
         _timed("keyword_ms", store.keyword_search(query, k=LEG_POOL, area_id=area_id), sink),
         _timed("vector_ms", vector_coro, sink),
+        _timed("event_ms", _event_leg(store, cfg, query, area_id=area_id), sink),
         _timed("signals_ms", _term_signals(store, query), sink),
     )
-    fused = _fuse(keyword_hits, vector_hits, cfg=cfg, signals=signals)
+    fused = _fuse(
+        keyword_hits, vector_hits, cfg=cfg, signals=signals, event_hits=event_hits
+    )
     if not fused:
         _finish_timings(sink, started, results=0)
         return []
@@ -488,6 +502,29 @@ async def _vector_leg(
 # ---------------------------------------------------------------------------
 
 
+async def _event_leg(
+    store: Any, cfg: Any, query: str, *, area_id: str | None = None
+) -> list[SearchResult]:
+    """The episodic leg: precomputed events matched by their keyword card.
+
+    Silent and empty on every store that does not have one — a third-party
+    backend, a test fake, an install whose corpus predates the event tables.
+    A leg that raises would take the whole search down with it for a feature
+    that is, by design, an accelerator.
+    """
+    if ranking_settings(cfg)["event_weight"] <= 0:
+        return []
+    search_events = getattr(store, "search_events", None)
+    if not callable(search_events):
+        return []
+    try:
+        hits = await search_events(query, k=LEG_POOL, area_id=area_id)
+    except Exception:  # noqa: BLE001 — an optional leg never fails a search
+        log.debug("event leg unavailable", exc_info=True)
+        return []
+    return list(hits or [])
+
+
 def query_terms(query: str) -> list[str]:
     """Distinct lowercased query tokens, order preserved."""
     return list(dict.fromkeys(match.group(0).lower() for match in _TOKEN_RE.finditer(query)))
@@ -592,25 +629,40 @@ def _fuse(
     *,
     cfg: Any = None,
     signals: dict[str, float] | None = None,
+    event_hits: list[SearchResult] | None = None,
 ) -> list[SearchResult]:
-    """RRF-fuse the two ranked lists; merge duplicates by ``item_id``.
+    """RRF-fuse the ranked lists; merge duplicates by ``item_id``.
 
     The fused score is ``sum(weight / (RRF_K + rank))`` over the legs the item
     appeared in, scaled by the term-rarity signal and the age decay, plus a
     strictly-tiebreak-sized recency bonus derived from the candidates
     themselves (newer ``timestamp_utc`` wins ties — no extra DB query).
-    ``matched_by`` is the union of the contributing legs; snippet and citation
-    fields come from the keyword occurrence when both legs matched (its
-    snippet is query-specific).
+    ``matched_by`` is the union of the contributing legs.
+
+    The representative (the row whose title, snippet and timestamp survive the
+    merge) is taken from the FIRST leg that produced the item, and the legs
+    are walked event → keyword → vector on purpose: an event card states the
+    date, the place and who was there, a keyword snippet is query-specific
+    prose, and a vector hit is neither. For an episodic question that ordering
+    is the difference between "on 14 March 2026 in Porto Verde with …" and a
+    fragment of the chat that happened to mention it.
     """
     knobs = ranking_settings(cfg)
-    weights = {"keyword": knobs["keyword_weight"], "vector": knobs["vector_weight"]}
+    weights = {
+        "event": knobs["event_weight"],
+        "keyword": knobs["keyword_weight"],
+        "vector": knobs["vector_weight"],
+    }
     half_life = knobs["recency_half_life_days"]
 
     rrf_score: dict[int, float] = {}
     matched: dict[int, list[str]] = {}
     representative: dict[int, SearchResult] = {}
-    for leg_name, hits in (("keyword", keyword_hits), ("vector", vector_hits)):
+    for leg_name, hits in (
+        ("event", list(event_hits or [])),
+        ("keyword", keyword_hits),
+        ("vector", vector_hits),
+    ):
         weight = weights[leg_name]
         for rank, hit in enumerate(hits, start=1):
             rrf_score[hit.item_id] = (

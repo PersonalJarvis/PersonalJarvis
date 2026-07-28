@@ -1,0 +1,546 @@
+"""The SQL half of UltraWiki episodic events (design doc 01 · ``uw_events``).
+
+:class:`EventMixin` is inherited by BOTH store backends, so the event rules
+exist exactly once. Like :class:`~jarvis.ultrawiki.identity_store.IdentityMixin`
+it relies only on the small surface both backends already provide — ``_txn()``,
+``_fetchall()``, ``_fetchone()``, ``_ensure_open()``, ``_id_sql()`` and the
+``_id_insert()`` dialect hook — plus one further hook of its own,
+:attr:`EventMixin._EVENT_DIALECT`, because the keyword index is the one thing
+the two engines genuinely cannot express the same way (FTS5 virtual table vs a
+generated ``tsvector`` column).
+
+The contract this module keeps:
+
+- **Re-derivation is idempotent.** :meth:`replace_events` replaces an item's
+  whole event set inside one transaction, keyed by
+  :attr:`~jarvis.ultrawiki.events.DerivedEvent.dedupe_key`, so a second
+  pipeline pass over unchanged content changes nothing.
+- **Events die with their evidence.** ``item_id`` cascades, and a content
+  CHANGE purges them alongside the stale documents and FTS rows — an event
+  derived from a sentence that no longer exists must not keep answering.
+- **Participants link through the identity layer, never around it.** Names are
+  resolved with :meth:`IdentityMixin.resolve_identity`, which merges only on
+  deterministic evidence and otherwise proposes; an unresolvable participant
+  keeps its spelling and stays searchable rather than being dropped.
+- **The keyword card is stored, not recomputed.** ``search_text`` lives on the
+  row, so both dialects index the identical text and a search cannot depend
+  on which engine answered.
+
+Nothing here calls a model or touches the network; derivation runs on the
+write path inside the distillation stage that produced its input (AP-9/AP-26).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any
+
+from jarvis.ultrawiki.events import (
+    EVENT_VERSION,
+    DerivedEvent,
+    EventKind,
+    TimePrecision,
+    format_occurred,
+)
+from jarvis.ultrawiki.types import SearchResult
+
+log = logging.getLogger(__name__)
+
+__all__ = ["EventMixin"]
+
+#: Pool size of the event keyword leg before fusion; the same order of
+#: magnitude as the item legs so no leg can dominate the RRF purely by
+#: returning more rows.
+EVENT_LEG_POOL = 30
+
+_FTS_QUOTE_STRIP_RE = re.compile(r'["\']')
+
+#: Cap on the stored card, so one pathological event cannot bloat the index.
+_MAX_CARD_CHARS = 2000
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _match_expr(query: str) -> str:
+    """OR-combined quoted tokens; quoting neutralizes FTS5 operators.
+
+    Mirrors ``store._fts_match_expr``; duplicated deliberately rather than
+    imported, because ``store`` imports this module and the cycle would make
+    both unimportable.
+    """
+    tokens = [_FTS_QUOTE_STRIP_RE.sub("", tok) for tok in str(query or "").split() if tok.strip()]
+    return " OR ".join(f'"{tok}"' for tok in tokens if tok)
+
+
+def _normalize_bm25(raw: float) -> float:
+    """FTS5 bm25 (lower = better, usually negative) -> [0, 1] higher-is-better."""
+    return 1.0 / (1.0 + max(0.0, float(raw)))
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+class EventMixin:
+    """Episodic events: storage, bi-temporal queries and the keyword leg."""
+
+    # -- dialect hook --------------------------------------------------------
+
+    #: ``"sqlite"`` (FTS5 side table) or ``"postgres"`` (generated tsvector).
+    #: The ONLY difference between the two backends in this module.
+    _EVENT_DIALECT: str = "sqlite"
+
+    # -- tiny query helpers (shared with the identity layer's translation) ---
+
+    async def _ev_rows(self, conn: Any, sql: str, params: Sequence[Any] = ()) -> list[Any]:
+        return await self._fetchall(conn, self._id_sql(sql), params)  # type: ignore[attr-defined]
+
+    async def _ev_row(self, conn: Any, sql: str, params: Sequence[Any] = ()) -> Any | None:
+        return await self._fetchone(conn, self._id_sql(sql), params)  # type: ignore[attr-defined]
+
+    async def _ev_exec(self, conn: Any, sql: str, params: Sequence[Any] = ()) -> None:
+        await conn.execute(self._id_sql(sql), params)  # type: ignore[attr-defined]
+
+    # -- write path ----------------------------------------------------------
+
+    async def replace_events(
+        self,
+        item_id: int,
+        events: Sequence[DerivedEvent],
+        *,
+        create_entities: bool = True,
+    ) -> list[int]:
+        """Replace one item's whole event set; returns the new event ids.
+
+        Identity resolution happens BEFORE the write transaction on purpose:
+        :meth:`resolve_identity` opens its own transaction, and nesting two
+        ``BEGIN IMMEDIATE`` blocks on one SQLite connection deadlocks the
+        store against itself.
+
+        ``create_entities=False`` links participants and places only to
+        entities that already exist — the conservative mode for low-confidence
+        derivations, where creating a row per mentioned name would flood the
+        People view with noise.
+        """
+        item_id = int(item_id)
+        resolved = await self._ev_resolve_names(events, create_entities=create_entities)
+        now = _utc_now_iso()
+        new_ids: list[int] = []
+        async with self._txn() as conn:  # type: ignore[attr-defined]
+            await self._ev_purge(conn, [item_id])
+            for event in events:
+                event_id = await self._ev_insert(
+                    conn, item_id, event, now=now, resolved=resolved
+                )
+                new_ids.append(event_id)
+                for name in event.participants:
+                    await self._ev_exec(
+                        conn,
+                        "INSERT INTO uw_event_participants"
+                        " (event_id, entity_id, display_name) VALUES (?, ?, ?)",
+                        (event_id, resolved.get(("person", name.casefold())), name),
+                    )
+        return new_ids
+
+    async def _ev_resolve_names(
+        self, events: Sequence[DerivedEvent], *, create_entities: bool
+    ) -> dict[tuple[str, str], int | None]:
+        """Map every participant/place name onto a live entity id (or ``None``).
+
+        A name the identity layer refuses to decide (several live holders) maps
+        to ``None`` and is stored by its spelling — an honest "I know the name,
+        not who it is" beats guessing, and guessing is the wrong-merge failure
+        the whole identity layer exists to prevent.
+        """
+        from jarvis.ultrawiki.identity import EntityKind  # noqa: PLC0415 — lazy (AP-26)
+
+        wanted: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for event in events:
+            for name in event.participants:
+                key = ("person", name.casefold())
+                if key not in seen:
+                    seen.add(key)
+                    wanted.append((name, EntityKind.PERSON))
+            if event.place:
+                key = ("place", event.place.casefold())
+                if key not in seen:
+                    seen.add(key)
+                    wanted.append((event.place, EntityKind.PLACE))
+
+        out: dict[tuple[str, str], int | None] = {}
+        for name, kind in wanted:
+            slot = ("person" if kind is EntityKind.PERSON else "place", name.casefold())
+            try:
+                resolution = await self.resolve_identity(  # type: ignore[attr-defined]
+                    name=name,
+                    kind=kind,
+                    source_ref="uw_events",
+                    create=create_entities,
+                )
+            except Exception:  # noqa: BLE001 — a refused link never fails an event
+                log.debug("event identity resolution failed for %r", name, exc_info=True)
+                out[slot] = None
+                continue
+            out[slot] = _as_int(getattr(resolution, "entity_id", None))
+        return out
+
+    async def _ev_insert(
+        self,
+        conn: Any,
+        item_id: int,
+        event: DerivedEvent,
+        *,
+        now: str,
+        resolved: dict[tuple[str, str], int | None],
+    ) -> int:
+        card = event.search_text()[:_MAX_CARD_CHARS]
+        place_id = (
+            resolved.get(("place", event.place.casefold())) if event.place else None
+        )
+        event_id = await self._id_insert(  # type: ignore[attr-defined]
+            conn,
+            self._id_sql(  # type: ignore[attr-defined]
+                "INSERT INTO uw_events"
+                " (item_id, kind, title, summary, occurred_at, occurred_end,"
+                "  occurred_precision, time_anchor, recorded_at, place_entity_id,"
+                "  place_raw, confidence, extraction_version, dedupe_key,"
+                "  evidence_json, search_text, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
+            (
+                item_id,
+                str(event.kind),
+                event.title,
+                event.summary,
+                event.time.occurred_at,
+                event.time.occurred_end,
+                str(event.time.precision),
+                str(event.time.anchor),
+                event.time.recorded_at,
+                place_id,
+                event.place,
+                float(event.confidence),
+                int(event.extraction_version or EVENT_VERSION),
+                event.dedupe_key,
+                json.dumps([item_id]),
+                card,
+                now,
+            ),
+        )
+        if self._EVENT_DIALECT == "sqlite":
+            await conn.execute(
+                "DELETE FROM uw_event_fts WHERE event_id = ?", (event_id,)
+            )
+            await conn.execute(
+                "INSERT INTO uw_event_fts (event_id, title, body) VALUES (?, ?, ?)",
+                (event_id, event.title, card),
+            )
+        return event_id
+
+    async def _ev_purge(self, conn: Any, item_ids: Sequence[int]) -> None:
+        """Delete every event derived from *item_ids*, index rows included.
+
+        Called by :meth:`replace_events` and by both backends' ``_purge_derived``
+        (a content change invalidates events exactly like it invalidates
+        documents and vectors).
+        """
+        ids = [int(value) for value in item_ids]
+        if not ids:
+            return
+        marks = ",".join("?" for _ in ids)
+        if self._EVENT_DIALECT == "sqlite":
+            # FTS5 has no foreign keys: its rows must go first and explicitly.
+            await conn.execute(
+                self._id_sql(  # type: ignore[attr-defined]
+                    "DELETE FROM uw_event_fts WHERE event_id IN"  # noqa: S608 — placeholder marks only
+                    f" (SELECT id FROM uw_events WHERE item_id IN ({marks}))"
+                ),
+                ids,
+            )
+        await conn.execute(
+            self._id_sql(f"DELETE FROM uw_events WHERE item_id IN ({marks})"),  # type: ignore[attr-defined]  # noqa: S608 — placeholder marks only
+            ids,
+        )
+
+    # -- read path -----------------------------------------------------------
+
+    @staticmethod
+    def _ev_row_to_dict(row: Any) -> dict[str, Any]:
+        data = dict(row)
+        precision = str(data.get("occurred_precision") or TimePrecision.DAY)
+        try:
+            evidence = json.loads(data.get("evidence_json") or "[]")
+        except (TypeError, ValueError):
+            evidence = []
+        return {
+            "id": _as_int(data.get("id")),
+            "item_id": _as_int(data.get("item_id")),
+            "kind": str(data.get("kind") or EventKind.OTHER),
+            "title": str(data.get("title") or ""),
+            "summary": str(data.get("summary") or ""),
+            "occurred_at": str(data.get("occurred_at") or ""),
+            "occurred_end": str(data.get("occurred_end") or ""),
+            "occurred_precision": precision,
+            "time_anchor": str(data.get("time_anchor") or ""),
+            "recorded_at": str(data.get("recorded_at") or ""),
+            "date_label": format_occurred(str(data.get("occurred_at") or ""), precision),
+            "place": str(data.get("place_raw") or ""),
+            "place_entity_id": _as_int(data.get("place_entity_id")),
+            "confidence": float(data.get("confidence") or 0.0),
+            "extraction_version": _as_int(data.get("extraction_version")) or 0,
+            "evidence_item_ids": [value for value in evidence if isinstance(value, int)],
+            "source_id": str(data.get("source_id") or ""),
+            "permalink": str(data.get("permalink") or ""),
+            "item_title": str(data.get("item_title") or ""),
+            "participants": [],
+        }
+
+    _EVENT_SELECT = (
+        "SELECT e.id, e.item_id, e.kind, e.title, e.summary, e.occurred_at,"
+        " e.occurred_end, e.occurred_precision, e.time_anchor, e.recorded_at,"
+        " e.place_entity_id, e.place_raw, e.confidence, e.extraction_version,"
+        " e.evidence_json, i.source_id AS source_id, i.permalink AS permalink,"
+        " i.title AS item_title"
+        " FROM uw_events e JOIN uw_items i ON i.id = e.item_id"
+    )
+
+    async def get_event(self, event_id: int) -> dict[str, Any] | None:
+        """One event with its participants, or ``None``."""
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        row = await self._ev_row(
+            conn, f"{self._EVENT_SELECT} WHERE e.id = ?", (int(event_id),)
+        )
+        if row is None:
+            return None
+        event = self._ev_row_to_dict(row)
+        await self._ev_attach_participants(conn, [event])
+        return event
+
+    async def list_events(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kind: str | None = None,
+        entity_id: int | None = None,
+        place_entity_id: int | None = None,
+        item_id: int | None = None,
+        include_deleted: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Events in a bi-temporal window, newest first.
+
+        ``since``/``until`` bound the VALID time and match by OVERLAP, not by
+        containment: an event that spans a month is returned for a query about
+        one day inside it. Containment would silently hide every coarse event,
+        which is the majority of what a personal corpus actually knows.
+        """
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        sql = self._EVENT_SELECT
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_deleted:
+            clauses.append("i.deleted_at IS NULL")
+        if since:
+            clauses.append("e.occurred_end >= ?")
+            params.append(str(since))
+        if until:
+            clauses.append("e.occurred_at <= ?")
+            params.append(str(until))
+        if kind:
+            clauses.append("e.kind = ?")
+            params.append(str(kind))
+        if place_entity_id is not None:
+            clauses.append("e.place_entity_id = ?")
+            params.append(int(place_entity_id))
+        if item_id is not None:
+            clauses.append("e.item_id = ?")
+            params.append(int(item_id))
+        if entity_id is not None:
+            # A merged-away entity id must still find its events: the identity
+            # layer forwards it, so an old citation never goes dead.
+            live = await self.resolve_entity_id(int(entity_id))  # type: ignore[attr-defined]
+            clauses.append(
+                "(e.place_entity_id = ? OR EXISTS (SELECT 1 FROM"
+                " uw_event_participants p WHERE p.event_id = e.id"
+                " AND p.entity_id = ?))"
+            )
+            target = int(live if live is not None else entity_id)
+            params.extend([target, target])
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY e.occurred_at DESC, e.id DESC LIMIT ? OFFSET ?"
+        params.extend([max(1, int(limit)), max(0, int(offset))])
+        rows = await self._ev_rows(conn, sql, params)
+        events = [self._ev_row_to_dict(row) for row in rows]
+        await self._ev_attach_participants(conn, events)
+        return events
+
+    async def events_between(
+        self,
+        start: str,
+        end: str,
+        *,
+        kind: str | None = None,
+        entity_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """The design's ``events_between`` primitive (doc 03, "primitive tools")."""
+        return await self.list_events(
+            since=start, until=end, kind=kind, entity_id=entity_id, limit=limit
+        )
+
+    async def _ev_attach_participants(
+        self, conn: Any, events: list[dict[str, Any]]
+    ) -> None:
+        """Fill in each event's participant list in one extra query."""
+        ids = [event["id"] for event in events if event.get("id") is not None]
+        if not ids:
+            return
+        marks = ",".join("?" for _ in ids)
+        rows = await self._ev_rows(
+            conn,
+            "SELECT p.event_id, p.entity_id, p.display_name"  # noqa: S608 — placeholder marks only
+            f" FROM uw_event_participants p WHERE p.event_id IN ({marks})"
+            " ORDER BY p.id",
+            ids,
+        )
+        by_event: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            data = dict(row)
+            by_event.setdefault(int(data["event_id"]), []).append(
+                {
+                    "entity_id": _as_int(data.get("entity_id")),
+                    "display_name": str(data.get("display_name") or ""),
+                }
+            )
+        for event in events:
+            event["participants"] = by_event.get(int(event["id"]), [])
+
+    async def search_events(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kind: str | None = None,
+        area_id: str | None = None,
+    ) -> list[SearchResult]:
+        """The event keyword leg, shaped exactly like the item legs.
+
+        Returns :class:`SearchResult` rows so the fusion stage can treat events
+        as one more ranked list (design doc 01, principle 5: no single scorer
+        is trusted). ``timestamp_utc`` carries the event's OWN ``occurred_at``
+        rather than the evidence item's — the date the user asked about is the
+        date the answer should be ordered and decayed by.
+        """
+        if not query or not query.strip():
+            return []
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        params: list[Any] = []
+        if self._EVENT_DIALECT == "postgres":
+            expression = query
+            sql = (
+                "SELECT e.id AS event_id, e.item_id, e.kind, e.title,"
+                " e.summary, e.occurred_at, e.occurred_end, e.occurred_precision,"
+                " e.place_raw, e.search_text,"
+                " i.source_id, i.permalink, i.areas_json,"
+                " ts_rank(e.search_tsv, websearch_to_tsquery('simple', ?)) AS raw_score"
+                " FROM uw_events e JOIN uw_items i ON i.id = e.item_id"
+                " WHERE e.search_tsv @@ websearch_to_tsquery('simple', ?)"
+                "   AND i.deleted_at IS NULL"
+            )
+            params.extend([expression, expression])
+        else:
+            expression = _match_expr(query)
+            if not expression:
+                return []
+            sql = (
+                "SELECT e.id AS event_id, e.item_id, e.kind, e.title,"
+                " e.summary, e.occurred_at, e.occurred_end, e.occurred_precision,"
+                " e.place_raw, e.search_text,"
+                " i.source_id, i.permalink, i.areas_json,"
+                " bm25(uw_event_fts, 0.0, 3.0, 1.0) AS raw_score"
+                " FROM uw_event_fts JOIN uw_events e ON e.id = uw_event_fts.event_id"
+                " JOIN uw_items i ON i.id = e.item_id"
+                " WHERE uw_event_fts MATCH ? AND i.deleted_at IS NULL"
+            )
+            params.append(expression)
+        if since:
+            sql += " AND e.occurred_end >= ?"
+            params.append(str(since))
+        if until:
+            sql += " AND e.occurred_at <= ?"
+            params.append(str(until))
+        if kind:
+            sql += " AND e.kind = ?"
+            params.append(str(kind))
+        if area_id is not None:
+            if self._EVENT_DIALECT == "postgres":
+                sql += " AND i.areas_json::jsonb @> to_jsonb(?::text)"
+            else:
+                sql += (
+                    " AND EXISTS (SELECT 1 FROM json_each(i.areas_json)"
+                    " WHERE json_each.value = ?)"
+                )
+            params.append(area_id)
+        sql += (
+            " ORDER BY raw_score DESC LIMIT ?"
+            if self._EVENT_DIALECT == "postgres"
+            else " ORDER BY raw_score LIMIT ?"
+        )
+        params.append(max(1, int(k)))
+        rows = await self._ev_rows(conn, sql, params)
+        return [self._ev_hit(dict(row)) for row in rows]
+
+    def _ev_hit(self, data: dict[str, Any]) -> SearchResult:
+        raw = float(data.get("raw_score") or 0.0)
+        score = (
+            raw / (1.0 + raw) if self._EVENT_DIALECT == "postgres" else _normalize_bm25(raw)
+        )
+        precision = str(data.get("occurred_precision") or TimePrecision.DAY)
+        label = format_occurred(str(data.get("occurred_at") or ""), precision)
+        snippet = " ".join(str(data.get("search_text") or "").split())[:400]
+        return SearchResult(
+            item_id=int(data["item_id"]),
+            source_id=str(data.get("source_id") or ""),
+            title=str(data.get("title") or ""),
+            snippet=f"{label} — {snippet}" if label else snippet,
+            permalink=str(data.get("permalink") or ""),
+            timestamp_utc=str(data.get("occurred_at") or ""),
+            score=round(score, 4),
+            matched_by=("event",),
+        )
+
+    async def event_counts(self) -> dict[str, int]:
+        """``{kind: n}`` over live events, plus ``total`` — the surface's badge."""
+        conn = await self._ensure_open()  # type: ignore[attr-defined]
+        rows = await self._ev_rows(
+            conn,
+            "SELECT e.kind AS kind, COUNT(*) AS n FROM uw_events e"
+            " JOIN uw_items i ON i.id = e.item_id"
+            " WHERE i.deleted_at IS NULL GROUP BY e.kind",
+        )
+        counts = {kind.value: 0 for kind in EventKind}
+        total = 0
+        for row in rows:
+            data = dict(row)
+            number = int(data.get("n") or 0)
+            counts[str(data.get("kind") or EventKind.OTHER)] = number
+            total += number
+        counts["total"] = total
+        return counts

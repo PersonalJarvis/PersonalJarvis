@@ -239,7 +239,10 @@ def test_prompt_truncates_long_bodies_with_a_marker():
     prompt = build_distill_prompt(title="t", body=long_body, source_kind="note")
 
     assert "truncated for distillation" in prompt
-    assert len(prompt) < 10_000
+    # The body is capped at _BODY_TRUNCATE_CHARS; the rest is the fixed
+    # scaffolding (the JSON contract plus the event/time rules of prompt
+    # version 2), which is what this headroom covers.
+    assert len(prompt) < 12_000
 
 
 async def test_request_sent_to_chain_carries_the_truncated_prompt(chain_env):
