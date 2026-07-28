@@ -16,12 +16,19 @@ The contract this module is built to keep:
 - **Ambiguity is never resolved by guessing.** An observation whose name
   points at several live entities links to none of them; it returns
   ``ResolutionKind.AMBIGUOUS`` and proposes the collisions instead.
-- **Every merge is reversible.** ``uw_merge_log`` stores the identifier rows
-  that moved, the duplicates that were dropped and the loser's own
-  bookkeeping, which is exactly what :meth:`IdentityMixin.unmerge` replays.
+- **Kinds are separate namespaces.** A person, a place and a project never
+  match, merge or get proposed to one another, whatever they share. Identity
+  is a question asked WITHIN one sort of thing.
+- **Every merge is reversible, last-in-first-out.** ``uw_merge_log`` stores
+  the identifier rows that moved, the duplicates that were dropped and the
+  loser's own bookkeeping, which is exactly what
+  :meth:`IdentityMixin.unmerge` replays — and a merge either side of which has
+  since been merged away is refused rather than half-replayed.
 - **A rejected pair stays rejected.** Undoing a merge (or rejecting a
-  proposal) is durable: the same evidence must never re-fuse the pair behind
-  the user's back, and must never ask a second time either.
+  proposal) is durable and survives later merges on BOTH sides: the same
+  evidence must never re-fuse the pair behind the user's back — not directly
+  and not through a third entity either side has absorbed — and must never
+  ask a second time.
 
 Nothing here calls a model, touches the network, or runs on the voice hot
 path; resolution happens on the write path (AP-9/AP-26).
@@ -161,6 +168,39 @@ class IdentityMixin:
         """Public: the live entity a (possibly merged-away) id now points at."""
         conn = await self._ensure_open()  # type: ignore[attr-defined]
         return await self._chain(conn, entity_id)
+
+    async def _id_closure(self, conn: Any, entity_id: int | None) -> set[int]:
+        """Every id whose merge chain ends at *entity_id* — itself included.
+
+        The inverse of :meth:`_chain`, and the set every durable per-pair
+        decision has to be read over: an id the user once judged is not the id
+        that answers for it after a merge, so a guard that only looks at the
+        two ids in front of it forgets the decision the moment either side
+        absorbs somebody else.
+        """
+        root = _as_int(entity_id)
+        if root is None:
+            return set()
+        closure = {root}
+        frontier = [root]
+        while frontier:
+            current = frontier.pop()
+            for row in await self._id_rows(
+                conn, "SELECT id FROM uw_entities WHERE merged_into = ?", (current,)
+            ):
+                child = _as_int(row["id"])
+                if child is None or child in closure:
+                    continue
+                closure.add(child)
+                frontier.append(child)
+        return closure
+
+    async def _id_kind(self, conn: Any, entity_id: int) -> str:
+        """The live kind of an entity ("" when it is gone)."""
+        row = await self._id_row(
+            conn, "SELECT kind FROM uw_entities WHERE id = ?", (int(entity_id),)
+        )
+        return "" if row is None else str(row["kind"])
 
     # -- entity CRUD ---------------------------------------------------------
 
@@ -351,9 +391,25 @@ class IdentityMixin:
         return identifier_id, True
 
     async def _id_holders(
-        self, conn: Any, kind: IdentifierKind, value: str, *, exclude: int | None
+        self,
+        conn: Any,
+        kind: IdentifierKind,
+        value: str,
+        *,
+        exclude: int | None,
+        entity_kind: EntityKind | str | None = None,
     ) -> list[int]:
-        """Live entities that already hold this exact normalized identifier."""
+        """Live entities that already hold this exact normalized identifier.
+
+        ``entity_kind`` scopes the answer to entities that ARE the same sort of
+        thing. Without it a place, a project and a person that happen to share
+        a name — or an ``info@`` mailbox printed on a company page and in a
+        colleague's signature — are candidates for one another, and the
+        deterministic tier then fuses a city into a person on evidence that was
+        never about identity at all. Kinds are separate namespaces; nothing
+        below ever crosses them.
+        """
+        wanted = str(EntityKind(entity_kind)) if entity_kind is not None else ""
         rows = await self._id_rows(
             conn,
             "SELECT DISTINCT entity_id FROM uw_identifiers"
@@ -364,6 +420,8 @@ class IdentityMixin:
         for row in rows:
             live = await self._chain(conn, _as_int(row["entity_id"]))
             if live is None or live == exclude or live in holders:
+                continue
+            if wanted and await self._id_kind(conn, live) != wanted:
                 continue
             holders.append(live)
         return holders
@@ -420,7 +478,11 @@ class IdentityMixin:
     ) -> _Attached:
         out = _Attached(entity_id=entity_id)
         holders = await self._id_holders(
-            conn, observed.kind, observed.value, exclude=entity_id
+            conn,
+            observed.kind,
+            observed.value,
+            exclude=entity_id,
+            entity_kind=await self._id_kind(conn, entity_id) or None,
         )
         if holders and observed.kind in DETERMINISTIC_KINDS:
             evidence = (
@@ -447,7 +509,13 @@ class IdentityMixin:
                 )
                 if merged_id:
                     out.merged.append(merged_id)
-            out.entity_id = winner
+            # NOT `winner`: a merge the rejected-pair guard refused leaves the
+            # caller's entity alive and separate, and the handle then belongs
+            # to the entity that was actually named. Writing it onto the winner
+            # anyway would report success while the asked-for entity gained
+            # nothing — the caller's own e-mail address landing on the person
+            # they told us it is NOT.
+            out.entity_id = await self._chain(conn, entity_id) or entity_id
         elif holders:
             evidence = (
                 MatchEvidence(
@@ -518,6 +586,11 @@ class IdentityMixin:
         right = await self._chain(conn, right_id)
         if left is None or right is None or left == right:
             return None
+        if await self._id_pair_rejected(conn, left, right):
+            # Already settled — through these two ids or through anything they
+            # have since absorbed. Asking again is the second half of the same
+            # promise the merge guard keeps.
+            return None
         key = pair_key(left, right)
         payload = json.dumps([item.to_dict() for item in evidence], ensure_ascii=False)
         row = await self._id_row(
@@ -558,12 +631,41 @@ class IdentityMixin:
         return int(row["id"])
 
     async def _id_pair_rejected(self, conn: Any, left: int, right: int) -> bool:
-        row = await self._id_row(
+        """Has the user declared these two different — directly or via a merge?
+
+        Checking the pair key of the two ids at hand is not enough, and the gap
+        is not theoretical: reject A/B, let B merge into C on a shared mailbox,
+        then let A meet C on a shared phone number, and the direct key (A, C)
+        is unknown — so the layer silently re-fuses exactly the two identities
+        the user separated, with no queue row and no prompt.
+
+        The decision therefore lives on the whole merge CLOSURE of both sides:
+        a rejection stands as long as one of its ids still answers for this
+        side and the other still answers for that one.
+        """
+        left_side = await self._id_closure(conn, left)
+        right_side = await self._id_closure(conn, right)
+        if not left_side or not right_side or left_side & right_side:
+            return False
+        ids = sorted(left_side | right_side)
+        marks = ",".join("?" for _ in ids)
+        rows = await self._id_rows(
             conn,
-            "SELECT status FROM uw_confirm_queue WHERE pair_key = ?",
-            (pair_key(left, right),),
+            "SELECT left_entity_id, right_entity_id FROM uw_confirm_queue"  # noqa: S608 — placeholder marks only
+            f" WHERE status = ? AND (left_entity_id IN ({marks})"
+            f" OR right_entity_id IN ({marks}))",
+            (str(QueueStatus.REJECTED), *ids, *ids),
         )
-        return row is not None and str(row["status"]) == str(QueueStatus.REJECTED)
+        for row in rows:
+            one = _as_int(row["left_entity_id"])
+            two = _as_int(row["right_entity_id"])
+            if one is None or two is None:
+                continue
+            if (one in left_side and two in right_side) or (
+                one in right_side and two in left_side
+            ):
+                return True
+        return False
 
     # -- merge / unmerge -----------------------------------------------------
 
@@ -621,13 +723,25 @@ class IdentityMixin:
             return 0
 
         winner_row = await self._id_row(
-            conn, "SELECT id, source_ref FROM uw_entities WHERE id = ?", (winner,)
+            conn,
+            "SELECT id, kind, source_ref FROM uw_entities WHERE id = ?",
+            (winner,),
         )
         loser_row = await self._id_row(
-            conn, "SELECT id, source_ref FROM uw_entities WHERE id = ?", (loser,)
+            conn,
+            "SELECT id, kind, source_ref FROM uw_entities WHERE id = ?",
+            (loser,),
         )
         if winner_row is None or loser_row is None:  # pragma: no cover — chain checked
             raise IdentityError("merge lost one of its entities mid-transaction")
+        if str(winner_row["kind"]) != str(loser_row["kind"]):
+            # Kinds are separate namespaces (see `_id_holders`). Fusing across
+            # them destroys BOTH rows' meaning — the city keeps answering as
+            # the person, and the person inherits the city's events.
+            raise IdentityError(
+                f"cannot merge a {loser_row['kind']} into a {winner_row['kind']}"
+                f" (entities {loser} and {winner}) — they are different kinds"
+            )
 
         held = {
             (str(row["kind"]), str(row["value"]))
@@ -756,12 +870,20 @@ class IdentityMixin:
                 raise IdentityError(f"merge {merge_log_id} was already undone")
             winner = int(row["winner_id"])
             loser = int(row["loser_id"])
+            # Merges undo strictly last-in-first-out, and BOTH sides can be
+            # shadowed. Watching only the loser misses the chain that matters
+            # most: when the WINNER was itself merged away afterwards, the
+            # identifiers this merge moved have travelled on, and replaying
+            # this undo alone puts them back on the loser while the later undo
+            # then hands them to the entity in the middle — which never owned
+            # them. The identifier ends up on a stranger and the entity that
+            # brought it is left empty.
             later = await self._id_row(
                 conn,
                 "SELECT id FROM uw_merge_log"
-                " WHERE loser_id = ? AND undone_at IS NULL AND id > ?"
+                " WHERE loser_id IN (?, ?) AND undone_at IS NULL AND id > ?"
                 " ORDER BY id LIMIT 1",
-                (loser, int(merge_log_id)),
+                (loser, winner, int(merge_log_id)),
             )
             if later is not None:
                 raise IdentityError(
@@ -1020,6 +1142,10 @@ class IdentityMixin:
         merged: list[int] = []
         queued: list[int] = []
         evidence: list[MatchEvidence] = []
+        # Every lookup below is scoped to the kind the observation claims to
+        # be: a place is never a candidate for a person, however identical the
+        # spelling or the mailbox (see `_id_holders`).
+        want_kind = EntityKind(kind)
 
         # Tier 1 — deterministic anchors.
         anchors: list[int] = []
@@ -1027,7 +1153,7 @@ class IdentityMixin:
             if item.kind not in DETERMINISTIC_KINDS:
                 continue
             for holder in await self._id_holders(
-                conn, item.kind, item.value, exclude=None
+                conn, item.kind, item.value, exclude=None, entity_kind=want_kind
             ):
                 if holder not in anchors:
                     anchors.append(holder)
@@ -1067,7 +1193,11 @@ class IdentityMixin:
         # Tier 2 — an exact name is an anchor only when it is unambiguous.
         if entity_id is None and name_value:
             holders = await self._id_holders(
-                conn, IdentifierKind.NAME, name_value, exclude=None
+                conn,
+                IdentifierKind.NAME,
+                name_value,
+                exclude=None,
+                entity_kind=want_kind,
             )
             if len(holders) == 1:
                 entity_id = holders[0]
@@ -1136,7 +1266,7 @@ class IdentityMixin:
 
         if created and name_value:
             for queue_id, score, hit in await self._id_fuzzy_proposals(
-                conn, entity_id, name_value, now=now
+                conn, entity_id, name_value, entity_kind=want_kind, now=now
             ):
                 queued.append(queue_id)
                 evidence.append(
@@ -1158,14 +1288,22 @@ class IdentityMixin:
         )
 
     async def _id_fuzzy_proposals(
-        self, conn: Any, entity_id: int, name_value: str, *, now: str
+        self,
+        conn: Any,
+        entity_id: int,
+        name_value: str,
+        *,
+        entity_kind: EntityKind | str,
+        now: str,
     ) -> list[tuple[int, float, str]]:
         """Propose the near-names of a freshly created entity.
 
         Blocking happens in SQL (length window OR shared prefix — the exact
-        predicate :func:`identity.could_match` re-applies in Python), scoring
-        happens in Python, and both are capped so one observation can never
-        flood the queue or the CPU.
+        predicate :func:`identity.could_match` re-applies in Python, and the
+        entity KIND scopes it, because two things of different sorts are not
+        near-duplicates however alike they read), scoring happens in Python,
+        and both are capped so one observation can never flood the queue or
+        the CPU.
         """
         prefix = escape_like(name_value[:PREFIX_BLOCK_CHARS])
         rows = await self._id_rows(
@@ -1173,11 +1311,13 @@ class IdentityMixin:
             "SELECT i.entity_id AS entity_id, i.value AS value"
             " FROM uw_identifiers i"
             " JOIN uw_entities e ON e.id = i.entity_id"
-            " WHERE i.kind = ? AND e.merged_into IS NULL AND i.entity_id != ?"
+            " WHERE i.kind = ? AND e.merged_into IS NULL AND e.kind = ?"
+            "   AND i.entity_id != ?"
             "   AND (i.value_len BETWEEN ? AND ? OR i.value LIKE ? ESCAPE '\\')"
             " ORDER BY i.id LIMIT ?",
             (
                 str(IdentifierKind.NAME),
+                str(EntityKind(entity_kind)),
                 entity_id,
                 max(0, len(name_value) - LEN_WINDOW),
                 len(name_value) + LEN_WINDOW,
@@ -1340,7 +1480,11 @@ class IdentityMixin:
         """Open (or decided) merge proposals, strongest evidence first.
 
         Rows whose two sides have meanwhile become the same entity are skipped
-        — the queue self-heals instead of asking about a settled question.
+        — the queue self-heals instead of asking about a settled question. So
+        are rows across two KINDS, which no current path can produce and which
+        a merge would refuse: a corpus proposed before that rule existed drops
+        its cross-kind leftovers on the next read rather than offering the user
+        a button that cannot work.
         """
         conn = await self._ensure_open()  # type: ignore[attr-defined]
         clauses: list[str] = []
@@ -1362,6 +1506,8 @@ class IdentityMixin:
             left = await self._chain(conn, _as_int(row["left_entity_id"]))
             right = await self._chain(conn, _as_int(row["right_entity_id"]))
             if left is None or right is None or left == right:
+                continue
+            if await self._id_kind(conn, left) != await self._id_kind(conn, right):
                 continue
             try:
                 evidence = json.loads(str(row["evidence_json"] or "[]"))

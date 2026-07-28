@@ -485,3 +485,135 @@ async def test_counts_report_the_live_graph(store):
     assert counts["people"] == 1
     assert counts["pending_confirmations"] == 1
     assert counts["merges"] == 0
+
+
+# ---------------------------------------------------------------------------
+# The three ways a decision used to be lost (P5 review, findings 2/3/6)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_rejection_survives_later_merges_on_both_sides(store):
+    """The gate the whole layer is measured by: zero wrong auto-merges.
+
+    Rejecting A/B and then letting B merge into C on a shared mailbox, and A
+    meet C on a shared phone number, used to fuse A and B again through the
+    back door — no queue row, no prompt, and the pair key of the two ids in
+    hand never mentioned. A rejection has to hold over the merge closure.
+    """
+    third = await store.upsert_entity(display_name="Gamma Three")
+    left = await store.upsert_entity(display_name="Alpha One")
+    right = await store.upsert_entity(display_name="Beta Two")
+    await store.unmerge(await store.merge_entities(left, right))
+    assert await store.list_confirm_queue(status=QueueStatus.REJECTED)
+
+    await store.add_identifier(right, IdentifierKind.EMAIL, "shared@example.com")
+    await store.add_identifier(third, IdentifierKind.EMAIL, "shared@example.com")
+    await store.add_identifier(third, IdentifierKind.PHONE, "+49 30 1234567")
+    await store.add_identifier(left, IdentifierKind.PHONE, "+49 30 1234567")
+
+    assert await store.resolve_entity_id(left) != await store.resolve_entity_id(right)
+
+
+async def test_a_rejection_survives_as_a_proposal_too(store):
+    """Both halves of the same promise: never re-fuse it, never re-ask it."""
+    third = await store.upsert_entity(display_name="Gamma Three")
+    left = await store.upsert_entity(display_name="Alpha One")
+    right = await store.upsert_entity(display_name="Beta Two")
+    await store.unmerge(await store.merge_entities(left, right))
+    await store.add_identifier(right, IdentifierKind.EMAIL, "shared@example.com")
+    await store.add_identifier(third, IdentifierKind.EMAIL, "shared@example.com")
+
+    # `right` now answers as `third`; proposing left/third is proposing the
+    # settled pair under a different id.
+    assert await store.resolve_entity_id(right) == third
+    result = await store.add_identifier(left, IdentifierKind.NAME, "Beta Two")
+    assert result.queued == ()
+    assert await store.list_confirm_queue(limit=50) == []
+
+
+async def test_a_chain_of_merges_undoes_byte_identically(store):
+    """Reversibility is claimed for the audit trail, not for one merge.
+
+    Lower -> Middle -> Top used to undo out of order: unmerging the FIRST
+    merge put the identifier back on Lower while the second undo then handed
+    it to Middle, which never owned it. The undo is refused unless the corpus
+    is unwound last-in-first-out.
+    """
+    lower = await store.upsert_entity(display_name="Lower")
+    middle = await store.upsert_entity(display_name="Middle")
+    top = await store.upsert_entity(display_name="Top")
+    await store.add_identifier(lower, IdentifierKind.EMAIL, "lower@example.com")
+    before = await snapshot(store)
+
+    first = await store.merge_entities(middle, lower)
+    second = await store.merge_entities(top, middle)
+    assert (await store.get_person(top))["emails"] == ["lower@example.com"]
+
+    with pytest.raises(IdentityError, match="shadowed"):
+        await store.unmerge(first)
+
+    assert await store.unmerge(second) is True
+    assert await store.unmerge(first) is True
+    assert await snapshot(store) == before
+    assert (await store.get_person(lower))["emails"] == ["lower@example.com"]
+    assert (await store.get_person(middle))["emails"] == []
+
+
+async def test_add_identifier_never_writes_to_an_entity_the_caller_did_not_name(store):
+    """A refused merge left the handle on the winner and still reported ok:
+    the caller's own entity gained nothing while the REST layer said it had."""
+    other = await store.upsert_entity(display_name="Beta Two")
+    asked = await store.upsert_entity(display_name="Alpha One")
+    await store.unmerge(await store.merge_entities(other, asked))
+
+    await store.add_identifier(other, IdentifierKind.EMAIL, "shared@example.com")
+    result = await store.add_identifier(asked, IdentifierKind.EMAIL, "shared@example.com")
+
+    assert result.entity_id == asked
+    assert result.merged == ()
+    assert (await store.get_person(asked))["emails"] == ["shared@example.com"]
+    assert (await store.get_person(other))["emails"] == ["shared@example.com"]
+
+
+# ---------------------------------------------------------------------------
+# Kinds are separate namespaces (P5 review, finding 4)
+# ---------------------------------------------------------------------------
+
+
+async def test_an_identical_name_of_another_kind_is_a_different_entity(store):
+    """A town and a person can share a name. Anchoring the town onto the
+    person made every later event of that town belong to a human being."""
+    person = await store.resolve_identity(name="Marlow", kind=EntityKind.PERSON)
+    place = await store.resolve_identity(name="Marlow", kind=EntityKind.PLACE)
+
+    assert place.entity_id != person.entity_id
+    assert place.kind is ResolutionKind.CREATED
+    assert (await store.get_entity(place.entity_id))["kind"] == str(EntityKind.PLACE)
+
+
+async def test_a_shared_identifier_never_fuses_across_kinds(store):
+    """An address printed on a company page and in a colleague's signature is
+    evidence about a mailbox, not about identity."""
+    person = await store.resolve_identity(
+        name="Ada Hart", emails=["info@example.com"], kind=EntityKind.PERSON
+    )
+    org = await store.resolve_identity(
+        name="Example GmbH", emails=["info@example.com"], kind=EntityKind.ORG
+    )
+    assert org.entity_id != person.entity_id
+    assert org.merged == ()
+    assert len(await store.list_people(kind=None, limit=10)) == 2
+
+
+async def test_near_names_of_different_kinds_are_never_proposed(store):
+    await store.resolve_identity(name="Viktoria Novak", kind=EntityKind.PERSON)
+    await store.resolve_identity(name="Viktoria Novaks", kind=EntityKind.PLACE)
+    assert await store.list_confirm_queue(limit=20) == []
+
+
+async def test_a_cross_kind_merge_is_refused_honestly(store):
+    person = await store.resolve_identity(name="Ada Hart", kind=EntityKind.PERSON)
+    place = await store.resolve_identity(name="Porto Verde", kind=EntityKind.PLACE)
+    with pytest.raises(IdentityError, match="different kinds"):
+        await store.merge_entities(person.entity_id, place.entity_id)
+    assert len(await store.list_people(kind=None, limit=10)) == 2
