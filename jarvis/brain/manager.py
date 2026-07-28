@@ -6390,6 +6390,10 @@ class BrainManager:
 
         registry = get_registry()
         folder_label: str | None = None
+        #: Why a group of the fleet could not be opened, one sentence each.
+        #: Spoken back with the panes that DID open — a fleet that came up short
+        #: without saying so is the failure this whole path is shaped around.
+        refused: list[str] = []
 
         try:
             if registry.session is None:
@@ -6418,9 +6422,30 @@ class BrainManager:
             else:
                 created = []
                 for group in request.groups:
-                    opened, _capped = await registry.add_terminals(
-                        group.count, agent=group.agent
-                    )
+                    # One group's failure is that GROUP's failure.
+                    #
+                    # A CLI that is not installed, or one whose binary vanished,
+                    # raises here — and letting that leave the loop threw away
+                    # every group behind it, including the ones that would have
+                    # opened perfectly well. "Two Claude, one Codex and one GLM"
+                    # then produced nothing but a sentence about GLM. Each group
+                    # is attempted on its own and what could not be opened is
+                    # named at the end, so a mixed fleet degrades pane by pane
+                    # instead of all at once.
+                    try:
+                        opened, _capped = await registry.add_terminals(
+                            group.count, agent=group.agent
+                        )
+                    except SessionError as exc:
+                        if "maximum" in str(exc).lower():
+                            raise
+                        log.info(
+                            "Agentic IDE spawn: %s group refused: %s",
+                            group.agent or "inherited",
+                            exc,
+                        )
+                        refused.append(str(exc))
+                        continue
                     created.extend(opened)
                     if _capped:
                         # The workspace filled up mid-fleet. Stop rather than
@@ -6442,6 +6467,11 @@ class BrainManager:
             return None
 
         if not created:
+            # Nothing opened. If a group said WHY, that sentence is the answer —
+            # "the workspace is full" would be a different claim, and usually a
+            # false one (an uninstalled CLI is not a full workspace).
+            if refused:
+                return " ".join(refused)
             return action_phrase("ide_terminals_full", out_lang, max=MAX_TERMINALS)
 
         session = registry.session
@@ -6507,6 +6537,11 @@ class BrainManager:
         line = _terminals_spawned_line(
             names, requested=request.count, folder=folder_label, lang=out_lang
         )
+        # A partial fleet says so in the same breath. The panes that opened are
+        # already named; without this the ones that did not simply were not
+        # mentioned, and a user who asked for four and got three had to count.
+        if refused:
+            line = f"{line} {' '.join(refused)}"
         if briefing_queued:
             line = f"{line} {action_phrase('ide_terminals_briefing_queued', out_lang)}"
         return line

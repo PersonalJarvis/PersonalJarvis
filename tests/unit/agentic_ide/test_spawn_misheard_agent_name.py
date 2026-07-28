@@ -87,3 +87,86 @@ def test_a_name_the_table_does_not_know_names_no_cli() -> None:
     assert intent._canonical_agent("open") is None
     assert intent._canonical_agent("cloud code") == "claude"
     assert intent._canonical_agent("open code") == "opencode"
+
+
+# --------------------------------------------------------------- mixed fleets
+# Maintainer report 2026-07-28, verbatim: "Er muss jeden Amount of Terminal
+# spawnen können ... und er muss auch genau die Anzahl an Terminals öffnen,
+# welche der User gesagt hat. Das muss auch über mehrere verschiedene Terminal-
+# Arten hinweg gehen."  # i18n-allow: quoted maintainer report under test
+#
+# What happened instead: "open two new Claude Code terminals and one Codex
+# terminal" reached the parser with "new Claude" transcribed as "NASA Cloud",
+# and the group that failed to match took the OTHER group's number with it —
+# two Claude panes opened, the Codex pane was never mentioned again.
+
+
+def test_one_unknown_word_inside_a_group_costs_nothing() -> None:
+    """The live transcript, misheard word and all."""
+    assert _groups(
+        "Could you please open two NASA Cloud Code Terminals and one Codex Terminal?"
+    ) == [(2, "claude"), (1, "codex")]
+
+
+def test_three_different_clis_in_one_breath() -> None:
+    """Counted product names ARE pane requests, even with no "terminal" said."""
+    assert _groups(
+        # i18n-allow: spoken input under test
+        "Kannst du bitte zwei Claudes aufmachen, einen Codex und ein GLM Code"
+    ) == [(2, "claude"), (1, "codex"), (1, "glm")]
+
+
+def test_a_plural_product_name_still_names_its_cli() -> None:
+    assert _groups("open two Codexes and three Claudes") == [
+        (2, "codex"),
+        (3, "claude"),
+    ]
+
+
+def test_a_group_without_a_cli_keeps_its_own_count() -> None:
+    """"two terminals and one Codex" is THREE panes, not two."""
+    assert _groups("Open two terminals and one Codex terminal") == [
+        (2, None),
+        (1, "codex"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("utterance", "expected"),
+    [
+        ("open twenty terminals", 20),
+        ("open fifty Codex terminals", 50),
+        ("mach hundert Terminals auf", 100),  # i18n-allow: spoken input under test
+        ("open a hundred Claude Code terminals", 100),
+        ("abre cincuenta terminales", 50),  # i18n-allow: spoken input under test
+    ],
+)
+def test_a_spoken_count_past_a_dozen_is_heard(utterance: str, expected: int) -> None:
+    """Numbers above twelve had no words, so they silently became ONE pane."""
+    request = intent.detect_spawn(utterance)
+    assert request is not None, utterance
+    assert request.count == expected
+
+
+def test_the_workspace_maximum_is_the_only_ceiling() -> None:
+    from jarvis.agentic_ide.session import MAX_TERMINALS
+
+    request = intent.detect_spawn(
+        f"open {MAX_TERMINALS + 40} Codex terminals"
+    )
+    assert request is not None
+    assert request.count == MAX_TERMINALS
+
+
+def test_naming_a_cli_without_counting_it_is_not_a_pane_request() -> None:
+    """The margin that keeps this from eating ordinary sentences."""
+    # i18n-allow: spoken input under test
+    assert intent.detect_spawn("öffne die Datei in Codex") is None
+    # i18n-allow: spoken input under test
+    assert intent.detect_spawn("kannst du in Codex nachschauen ob das stimmt") is None
+
+
+def test_spawning_agents_is_still_a_background_request() -> None:
+    """"Spawn" means a worker, even when it names a coding CLI (AP-5 margin)."""
+    # i18n-allow: spoken input under test
+    assert intent.detect_spawn("Spawne 5 Claude Codes") is None

@@ -858,7 +858,13 @@ _PANE_NOUN_RE = re.compile(
 # Verbs that ask for something to be opened, plus the additive markers that
 # carry the same request without a verb ("noch drei Terminals").
 _OPEN_VERB_RE = re.compile(
-    r"\b(?:spawn\w*|[oö]ffn\w*|start\w*|mach\w*|erstell\w*|f[uü]g\w*|"  # i18n-allow: German input vocabulary
+    # German separable verbs arrive both ways: "mach zwei Terminals auf" splits
+    # and matches "mach", while "zwei Terminals aufmachen" keeps the prefix
+    # attached — and a word boundary cannot see the "mach" inside it. Without
+    # the prefixes here the whole request found no verb at all and was answered
+    # with nothing (maintainer report 2026-07-28).
+    r"\b(?:spawn\w*|[oö]ffn\w*|start\w*|"
+    r"(?:auf|an|zu|hoch)?mach\w*|erstell\w*|f[uü]g\w*|"  # i18n-allow: input vocab
     r"gib|geb\w*|brauch\w*|will|h[aä]tte|"  # i18n-allow: German input vocabulary
     r"open\w*|create\w*|launch\w*|add|give|need|want|"
     r"abr\w*|cre\w*|lanz\w*|a[nñ]ad\w*|agrega\w*|dame|necesito|quiero)\b",
@@ -905,6 +911,23 @@ _NUMBER_WORDS: dict[str, int] = {
     "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
     "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11,
     "doce": 12,
+    # Past a dozen, spoken counts are the round ones — nobody asks for
+    # thirty-seven terminals out loud, and the workspace maximum is a hundred.
+    # Digits already cover every number in between; these exist because a
+    # transcript writes what it hears, and "open twenty terminals" arrived as a
+    # request for ONE (no digit, no listed word, silent fall back to the
+    # default). A count the user said and did not get is the failure this whole
+    # detector is shaped around.
+    "fünfzehn": 15, "funfzehn": 15, "fuenfzehn": 15,  # i18n-allow: number words
+    "zwanzig": 20, "dreißig": 30, "dreissig": 30, "vierzig": 40,  # i18n-allow: number words
+    "fünfzig": 50, "funfzig": 50, "fuenfzig": 50, "sechzig": 60,  # i18n-allow: number words
+    "siebzig": 70, "achtzig": 80, "neunzig": 90, "hundert": 100,  # i18n-allow: number words
+    "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fourty": 40,
+    "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    "hundred": 100,
+    "quince": 15, "veinte": 20, "treinta": 30, "cuarenta": 40,  # i18n-allow: number words
+    "cincuenta": 50, "sesenta": 60, "setenta": 70, "ochenta": 80,  # i18n-allow: number words
+    "noventa": 90, "cien": 100, "ciento": 100,  # i18n-allow: number words
 }
 
 # Which coding agent, when the user names one. Bare "claude" counts — nobody
@@ -960,6 +983,15 @@ def _spelling_pattern(spelling: str) -> str:
     return re.escape(spelling)
 
 
+#: A plural ending on a product name. People count CLIs the way they count
+#: anything else — "zwei Claudes", "two Codexes" — and the name then ends in a
+#: letter the word boundary after the spelling cannot cross, so the whole group
+#: vanished. Kept to the ``s`` plural on purpose: it is the one both spoken
+#: languages here form this way, and anything looser starts swallowing the next
+#: word.
+_PLURAL_SUFFIX = r"(?:e?s)?"
+
+
 def _agent_alternation() -> str:
     """The regex fragment matching every accepted spelling of a CLI's name.
 
@@ -967,12 +999,12 @@ def _agent_alternation() -> str:
     ``claude``) can never shadow it.
     """
     parts = [
-        rf"{_spelling_pattern(spelling)}(?:\s+code)?"
+        rf"{_spelling_pattern(spelling)}{_PLURAL_SUFFIX}(?:\s+code)?"
         for spellings in _agent_spellings().values()
         for spelling in spellings
     ]
     parts += [
-        rf"{_spelling_pattern(spelling)}\s+{re.escape(suffix)}"
+        rf"{_spelling_pattern(spelling)}\s+{re.escape(suffix)}{_PLURAL_SUFFIX}"
         for spelling, (_agent, suffix) in _agent_spellings_requiring_suffix().items()
     ]
     return "|".join(sorted(parts, key=len, reverse=True))
@@ -1014,7 +1046,41 @@ def _canonical_agent(raw: str) -> str | None:
         if base in standalone:
             return standalone[base]
     # "g l m" and "g.l.m." are the same acronym as "glm".
-    return standalone.get(re.sub(r"[\s.]+", "", name))
+    squeezed = standalone.get(re.sub(r"[\s.]+", "", name))
+    if squeezed is not None:
+        return squeezed
+    # "two Claudes", "two Codexes" — people count products the way they count
+    # anything else. Undone here rather than in the table so no entry has to
+    # list its own plural, and only as a LAST resort: a spelling that already
+    # names a CLI is never re-read, so nothing that resolves can be changed by
+    # this. The recursion is bounded — the stripped name has no plural left.
+    for singular in _depluralized(name):
+        resolved = _canonical_agent(singular)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _depluralized(name: str) -> list[str]:
+    """The singulars ``name`` could be the plural of, longest stem first.
+
+    BOTH endings are offered rather than the first that fits, because a spelling
+    can be a plausible plural two ways and only one of them is a product:
+    "clodes" is "clode" (a Claude spelling) with an s, and stripping the "es"
+    first would leave "clod" — which is a different entry that means nothing on
+    its own. Trying one and stopping dropped the group.
+
+    Applies to the LAST word only, which is where the plural sits in every shape
+    this parser sees ("cloud codes", "claudes"), and never shortens a word down
+    to nothing.
+    """
+    head, _, last = name.rpartition(" ")
+    out: list[str] = []
+    for ending in ("s", "es"):
+        if last.endswith(ending) and len(last) > len(ending) + 1:
+            trimmed = last[: -len(ending)]
+            out.append(f"{head} {trimmed}".strip() if head else trimmed)
+    return out
 
 
 def _standalone_spellings() -> dict[str, str]:
@@ -1120,42 +1186,140 @@ _COUNT_AGENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Any number, spoken or written, as its own token.
+_COUNT_TOKEN_RE = re.compile(r"\b(?:\d{1,3}|[^\W\d_]+)\b", re.UNICODE)
+
+#: How far a count may sit in front of the CLI name it belongs to.
+#:
+#: Wide enough for the words people put between them — "two of the new Claude
+#: Code terminals" — and narrow enough that a number from an earlier part of the
+#: clause cannot reach across into a group it was never about. Measured in
+#: characters rather than words because that is what the rest of this module
+#: already reasons in.
+_COUNT_AGENT_MAX_GAP = 40
+
+
+def _count_of(raw: str) -> int | None:
+    """The number a token means, or None when it is not a number at all."""
+    token = raw.casefold()
+    if token.isdigit():
+        return int(token)
+    cleaned = "".join(ch for ch in token if ch.isalpha())
+    return _NUMBER_WORDS.get(cleaned)
+
+
+def _count_tokens(text: str) -> list[tuple[int, int, int]]:
+    """Every number in ``text`` as ``(start, end, value)``, spoken forms joined.
+
+    "A hundred" is one number, not a one followed by a hundred — and read as two
+    it cost a group: the hundred went to the CLI that followed it and the stray
+    "a" was left to claim the pane noun as a second group of its own. Adjacent
+    number words are therefore combined the two ways speech actually combines
+    them, a multiplier behind a smaller number ("two hundred") and a unit behind
+    a ten ("twenty five"), and left alone otherwise.
+    """
+    raw = [
+        (match.start(), match.end(), value)
+        for match in _COUNT_TOKEN_RE.finditer(text)
+        if (value := _count_of(match.group(0))) is not None
+    ]
+    joined: list[tuple[int, int, int]] = []
+    for start, end, value in raw:
+        if joined:
+            prev_start, prev_end, prev_value = joined[-1]
+            adjacent = text[prev_end:start].strip() == ""
+            if adjacent and value >= 100 and prev_value < value:
+                joined[-1] = (prev_start, end, prev_value * value)
+                continue
+            if adjacent and 20 <= prev_value < 100 and value < 10:
+                joined[-1] = (prev_start, end, prev_value + value)
+                continue
+        joined.append((start, end, value))
+    return joined
+
 
 def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     """The fleet the utterance describes, group by group.
 
-    Returns an empty tuple when no count/agent pair is spelled out, which is the
-    common single-group case ("three more terminals") and stays with the flat
-    count/agent fields.
+    Read as a SEQUENCE of counts and CLI names rather than by matching a fixed
+    "number, filler, name" shape. The shape was the bug: the filler was a
+    whitelist of the words people were expected to say, so one word nobody had
+    listed took its whole group down with it and the request was executed
+    partially, in silence. Live on 2026-07-28, speech recognition turned "two
+    new Claude Code terminals and one Codex terminal" into "two NASA Cloud Code
+    terminals and one Codex terminal" — "NASA" broke the first pair, the second
+    pair alone was then read as the plain single-agent case, and the Codex pane
+    was never opened or mentioned.
 
-    Groups naming the SAME agent are merged: "two Codex and two more Codex" is
-    four Codex panes, and two groups would open them in two batches for no
-    reason.
+    Reading positions instead has no such failure mode: whatever sits between a
+    count and the name after it, the pair still stands. Three shapes are
+    recognised, and between them they cover everything a fleet request can say:
+
+    * ``"two Claude"`` — a count in front of a name.
+    * ``"and a Codex"`` — a name with no count of its own, which is one pane.
+    * ``"three more terminals"`` — a count in front of the pane noun with no
+      name at all, which is one group inheriting the workspace's CLI.
+
+    A count is spent at most once, so "two Codex terminals" is two panes and not
+    two plus two. Groups naming the SAME CLI are merged: "two Codex and two more
+    Codex" is four Codex panes, and opening them in two batches would only slow
+    the workspace down.
     """
     from .session import MAX_TERMINALS
 
-    found: list[SpawnGroup] = []
-    for match in _COUNT_AGENT_RE.finditer(text):
-        raw = match.group("count").casefold()
-        if raw.isdigit():
-            count = int(raw)
-        else:
-            cleaned = "".join(ch for ch in raw if ch.isalpha())
-            if cleaned not in _NUMBER_WORDS:
+    counts = _count_tokens(text)
+    spent = set()
+
+    def _count_before(start: int) -> int:
+        """The nearest unspent count in front of ``start``, or 1."""
+        for index in range(len(counts) - 1, -1, -1):
+            begin, end, value = counts[index]
+            if end > start or index in spent:
                 continue
-            count = _NUMBER_WORDS[cleaned]
+            if start - end > _COUNT_AGENT_MAX_GAP:
+                break
+            spent.add(index)
+            return max(1, value)
+        return 1
+
+    found: list[tuple[int, SpawnGroup]] = []
+    for match in _AGENT_RE.finditer(text):
         agent = _canonical_agent(match.group("agent"))
         if agent is None:
             continue
-        found.append(SpawnGroup(count=max(1, count), agent=agent))
+        found.append(
+            (match.start(), SpawnGroup(count=_count_before(match.start()), agent=agent))
+        )
 
-    if len(found) < 2:
-        # One pair is the plain single-agent request; the flat fields already
-        # describe it and going through groups would only duplicate the parse.
+    # A count that no CLI name claimed, sitting in front of the pane noun, is a
+    # group of its own: "two terminals and one Codex" is three panes, and the
+    # two that were not given a name inherit one.
+    for match in _PANE_NOUN_RE.finditer(text):
+        index = next(
+            (
+                i
+                for i in range(len(counts) - 1, -1, -1)
+                if counts[i][1] <= match.start()
+                and i not in spent
+                and match.start() - counts[i][1] <= _COUNT_AGENT_MAX_GAP
+            ),
+            None,
+        )
+        if index is None:
+            continue
+        spent.add(index)
+        found.append((counts[index][0], SpawnGroup(count=max(1, counts[index][2]), agent=None)))
+
+    if not found:
         return ()
 
+    # Back into the order the user said them: the panes are opened group by
+    # group, and a fleet that comes up in a different order than it was asked
+    # for is a fleet the user has to re-read before they can address it.
+    found.sort(key=lambda item: item[0])
+
     merged: dict[str, int] = {}
-    for group in found:
+    for _at, group in found:
         key = group.agent or ""
         merged[key] = merged.get(key, 0) + group.count
 
@@ -1221,11 +1385,51 @@ _FLEET_BRIEF_RE = re.compile(
 )
 
 
+#: The verb that means a BACKGROUND worker, not a pane.
+#:
+#: "Spawn" is the word this app uses for dispatching a Jarvis-Agent, and a
+#: request built on it stays one even when it names a coding CLI: "spawne 5
+#: Claude Codes" is five workers. That distinction is the safety margin of the
+#: whole workspace feature — stealing a genuine mission request is invisible to
+#: the user — so the product-name-as-pane-noun rule below stands down for it and
+#: only ever applies to a plain OPEN.
+_SPAWN_VERB_RE = re.compile(r"\bspawn\w*\b", re.IGNORECASE)
+
+
+def _counted_agent_mentions(clause: str) -> list[re.Match[str]]:
+    """CLI names that are being COUNTED, and therefore name panes.
+
+    "Kannst du zwei Claudes aufmachen, einen Codex und ein GLM Code" is a
+    perfectly ordinary way to ask for four terminals, and it never once says
+    "terminal" — so a parser that insists on the pane noun answers nothing at
+    all, which is what it did (maintainer report 2026-07-28). A counted product
+    name is the same request wearing the product's name instead of the noun.
+
+    Two conditions keep this narrow, and both are needed:
+
+    * **Counted.** "Open the file in Codex" names a CLI without asking for one,
+      and has no number or article in front of it; "two Claudes", "einen
+      Codex", "a GLM" all have one.
+    * **Opened, not spawned.** See ``_SPAWN_VERB_RE``.
+    """
+    if _open_verbs(clause) == [] or _SPAWN_VERB_RE.search(clause) is not None:
+        return []
+    out: list[re.Match[str]] = []
+    for match in _AGENT_RE.finditer(clause):
+        if _canonical_agent(match.group("agent")) is None:
+            continue
+        before = clause[max(0, match.start() - 24) : match.start()]
+        tokens = [t for t in _COUNT_TOKEN_RE.findall(before) if t]
+        if tokens and _count_of(tokens[-1]) is not None:
+            out.append(match)
+    return out
+
+
 def _spawn_span(text: str) -> _SpawnSpan | None:
     """The bounded clause that genuinely asks for panes to be opened."""
     for clause_match in _CLAUSE_RE.finditer(text):
         clause = clause_match.group(0)
-        panes = list(_PANE_NOUN_RE.finditer(clause))
+        panes = list(_PANE_NOUN_RE.finditer(clause)) + _counted_agent_mentions(clause)
         actors = _open_verbs(clause) + list(_ADDITIVE_RE.finditer(clause))
         if not panes or not actors:
             continue
