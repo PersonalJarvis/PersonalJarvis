@@ -156,6 +156,7 @@ def make_result(
     score: float = 0.5,
     title: str | None = None,
     snippet: str | None = None,
+    recorded_utc: str = "",
 ) -> SearchResult:
     return SearchResult(
         item_id=item_id,
@@ -166,6 +167,7 @@ def make_result(
         timestamp_utc=timestamp_utc,
         score=score,
         matched_by=matched_by,
+        recorded_utc=recorded_utc,
     )
 
 
@@ -1110,3 +1112,67 @@ async def test_cache_eviction_keeps_the_size_bounded(store, monkeypatch):
     # "one" was evicted (oldest); asking again re-embeds.
     await hybrid_search(store, cfg, "one")
     assert len(fake.calls) == 4
+
+
+# ---------------------------------------------------------------------------
+# Fusion and the event leg (P5 review, finding 7)
+# ---------------------------------------------------------------------------
+
+
+def test_fusion_decays_the_record_not_the_memory():
+    """The age factor answers "how stale is this note", not "how long ago did
+    this happen". An event card carries the event's date in ``timestamp_utc``,
+    so decaying by that demotes a note written yesterday about a dinner three
+    years ago by ~65x for having remembered something old."""
+    from jarvis.ultrawiki.search import _fuse
+
+    fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    old_event = make_result(
+        1,
+        timestamp_utc="2023-03-14T19:30:00Z",
+        matched_by=("event",),
+        recorded_utc=fresh,
+    )
+    plain = make_result(2, timestamp_utc=fresh)
+
+    fused = _fuse([plain], [], cfg=make_cfg(), event_hits=[old_event])
+    by_item = {hit.item_id: hit for hit in fused}
+    # Same single-leg RRF contribution on both, so any gap is pure decay.
+    assert by_item[1].score == pytest.approx(by_item[2].score, rel=0.02)
+    # The date the user asked about still survives for display.
+    assert by_item[1].timestamp_utc == "2023-03-14T19:30:00Z"
+
+
+def test_a_multi_event_item_votes_once_in_the_event_leg():
+    """An itinerary can produce five events. Five rows for one item would
+    stack five RRF contributions where every other item gets one."""
+    from jarvis.ultrawiki.search import _fuse
+
+    itinerary = [
+        make_result(1, matched_by=("event",), title=f"leg {n}") for n in range(5)
+    ]
+    single = [make_result(2, matched_by=("event",))]
+
+    fused = _fuse(
+        [], [], cfg=make_cfg(recency_half_life_days=0.0), event_hits=[*itinerary, *single]
+    )
+    by_item = {hit.item_id: hit for hit in fused}
+    # Item 1 keeps rank 1 and item 2 gets the NEXT dense rank, not rank 6 —
+    # a many-event item must not push the items behind it down either.
+    assert by_item[1].score == pytest.approx(1.0 / (RRF_K + 1), abs=1e-5)
+    assert by_item[2].score == pytest.approx(1.0 / (RRF_K + 2), abs=1e-5)
+    assert by_item[1].matched_by == ("event",)
+
+
+def test_an_item_matched_by_two_legs_still_counts_both():
+    from jarvis.ultrawiki.search import _fuse
+
+    fused = _fuse(
+        [make_result(1)],
+        [make_result(1, matched_by=("vector",))],
+        cfg=make_cfg(recency_half_life_days=0.0),
+        event_hits=[make_result(1, matched_by=("event",))],
+    )
+    assert len(fused) == 1
+    assert set(fused[0].matched_by) == {"event", "keyword", "vector"}
+    assert fused[0].score == pytest.approx(3.0 / (RRF_K + 1), abs=1e-3)

@@ -34,6 +34,9 @@ const HIT: UltraWikiSearchHit = {
   // the row must render without a grade chip or a context disclosure.
   rerank_score: null,
   context: [],
+  // Empty means "the item's own stamp IS timestamp_utc" — the shape every
+  // leg but the event leg produces.
+  recorded_utc: "",
 };
 
 function installFetchMock(routes: Record<string, () => unknown>) {

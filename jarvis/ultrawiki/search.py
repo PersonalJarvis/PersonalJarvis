@@ -646,6 +646,19 @@ def _fuse(
     prose, and a vector hit is neither. For an episodic question that ordering
     is the difference between "on 14 March 2026 in Porto Verde with …" and a
     fragment of the chat that happened to mention it.
+
+    Two properties the event leg makes non-obvious, both enforced here:
+
+    - **One item, one vote per leg.** An itinerary can produce five events, and
+      five rows for one ``item_id`` would otherwise stack five RRF
+      contributions where every other item gets one. Only an item's BEST rank
+      in a leg counts, and ranks are dense over distinct items, so a
+      many-event item cannot push the items behind it down either.
+    - **Ranking decays the RECORD, not the memory.** The age factor reads
+      ``recorded_utc`` (when the item entered the corpus), never the event's
+      ``occurred_at``. A note written yesterday about a dinner in 2023 is a
+      fresh record; decaying it by the dinner's date demotes it ~65× for
+      having remembered something old.
     """
     knobs = ranking_settings(cfg)
     weights = {
@@ -664,20 +677,27 @@ def _fuse(
         ("vector", vector_hits),
     ):
         weight = weights[leg_name]
-        for rank, hit in enumerate(hits, start=1):
+        rank = 0
+        for hit in hits:
+            labels = matched.setdefault(hit.item_id, [])
+            if leg_name in labels:
+                continue  # this item already voted in this leg
+            labels.append(leg_name)
+            rank += 1
             rrf_score[hit.item_id] = (
                 rrf_score.get(hit.item_id, 0.0) + weight / (RRF_K + rank)
             )
-            labels = matched.setdefault(hit.item_id, [])
-            if leg_name not in labels:
-                labels.append(leg_name)
             representative.setdefault(hit.item_id, hit)
     if not representative:
         return []
 
+    recorded = {
+        item_id: (base.recorded_utc or base.timestamp_utc)
+        for item_id, base in representative.items()
+    }
     by_recency = sorted(
         representative,
-        key=lambda item_id: _recency_key(representative[item_id].timestamp_utc),
+        key=lambda item_id: _recency_key(recorded[item_id]),
         reverse=True,
     )
     total = len(by_recency)
@@ -693,7 +713,7 @@ def _fuse(
             score=(
                 rrf_score[item_id]
                 * _signal_factor(base, signals or {})
-                * _age_factor(base.timestamp_utc, half_life, now=now)
+                * _age_factor(recorded[item_id], half_life, now=now)
                 + recency_bonus[item_id]
             ),
             matched_by=tuple(matched[item_id]),

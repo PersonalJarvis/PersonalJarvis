@@ -486,6 +486,7 @@ export interface UltraWikiSearchHit {
   title: string;
   snippet: string;
   permalink: string;
+  /** What the hit is ABOUT — an event hit carries the event's own date here. */
   timestamp_utc: string;
   /** ORDINAL fused rank score (RRF) — comparable between hits, never absolute. */
   score: number;
@@ -494,6 +495,8 @@ export interface UltraWikiSearchHit {
   rerank_score: number | null;
   /** Neighbouring evidence pulled back in after ranking; may be empty. */
   context: string[];
+  /** When the ITEM was recorded; "" means identical to timestamp_utc. */
+  recorded_utc: string;
 }
 
 export interface UltraWikiSearchResponse {

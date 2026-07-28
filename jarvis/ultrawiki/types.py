@@ -223,6 +223,16 @@ class SearchResult:
     whenever that optional stage was skipped or failed. ``context`` carries
     the neighbouring evidence pulled back in after ranking (design doc 03,
     "context expansion"); empty when expansion was skipped or unavailable.
+
+    **Two clocks, deliberately.** ``timestamp_utc`` is what this hit is ABOUT
+    and is what the surface shows — for an event hit that is when the event
+    happened, not when the message describing it was written.
+    ``recorded_utc`` is when the underlying item entered the corpus, i.e. how
+    old the RECORD is, and is the only stamp ranking may decay by. Conflating
+    them punishes a note written yesterday about a dinner three years ago as
+    if the note itself were three years old. Empty means "identical to
+    ``timestamp_utc``", which is the case for every leg that reads items
+    directly.
     """
 
     item_id: int
@@ -235,6 +245,7 @@ class SearchResult:
     matched_by: tuple[str, ...] = ()  # e.g. ("keyword", "vector")
     rerank_score: float | None = None  # absolute 0-10 grade, None = not reranked
     context: tuple[str, ...] = ()  # neighbouring sections/messages
+    recorded_utc: str = ""  # when the ITEM was recorded; "" = same as timestamp_utc
 
 
 @dataclass(frozen=True, slots=True)
