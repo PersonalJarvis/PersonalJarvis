@@ -236,3 +236,47 @@ def test_summarize_entries_skips_wordless_rows() -> None:
 
 def test_summarize_entries_tolerates_an_empty_sequence() -> None:
     assert summarize_entries([])["totals"]["words"] == 0
+
+
+# --------------------------------------------------------------------------
+# Concurrency
+# --------------------------------------------------------------------------
+
+
+def test_two_stats_at_one_path_share_one_lock(tmp_path: Path) -> None:
+    """The counters are constructed per entry recorded, never held onto."""
+    nested = tmp_path / "sub"
+    nested.mkdir()
+    direct = DictationStats(tmp_path / "dictation_stats.json")
+    roundabout = DictationStats(nested / ".." / "dictation_stats.json")
+    assert direct._lock is roundabout._lock
+
+
+def test_concurrent_recording_loses_no_count(tmp_path: Path) -> None:
+    """Read-modify-write on one file from two threads must not drop a count."""
+    import threading
+
+    path = tmp_path / "dictation_stats.json"
+    workers, rounds = 2, 40
+    start = threading.Barrier(workers, timeout=15)
+    errors: list[Exception] = []
+
+    def record() -> None:
+        try:
+            start.wait()
+            for _ in range(rounds):
+                assert DictationStats(path).record(word_count=3, duration_s=1.0)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=record) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+        assert not thread.is_alive()
+    assert not errors, errors
+
+    totals = DictationStats(path).summary()["totals"]
+    assert totals["dictations"] == workers * rounds
+    assert totals["words"] == workers * rounds * 3

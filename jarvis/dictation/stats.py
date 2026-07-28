@@ -39,13 +39,14 @@ import json
 import logging
 import os
 import tempfile
-import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date as _date
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from jarvis.dictation._locks import store_lock
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +209,11 @@ class DictationStats:
 
     def __init__(self, path: Path | str | None = None) -> None:
         self._path = Path(path) if path is not None else default_stats_path()
-        self._lock = threading.Lock()
+        # Shared per path rather than per instance: DictationHistory builds a
+        # fresh DictationStats for every entry it records, so a per-object lock
+        # would leave the counters' read-modify-write cycle unguarded against
+        # any other writer (jarvis.dictation._locks).
+        self._lock = store_lock(self._path)
 
     @property
     def path(self) -> Path:

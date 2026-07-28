@@ -38,13 +38,14 @@ import json
 import logging
 import os
 import tempfile
-import threading
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from dataclasses import fields as fields_of
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from jarvis.dictation._locks import store_lock
 
 if TYPE_CHECKING:  # import-time cost stays zero on the dictation hot path
     from jarvis.dictation.stats import DictationStats
@@ -163,7 +164,12 @@ class DictationHistory:
             if stats_path is not None
             else self._path.parent / "dictation_stats.json"
         )
-        self._lock = threading.Lock()
+        # Keyed by the PATH, not owned by this object: every call site builds a
+        # fresh DictationHistory per operation (the REST routes, the speech
+        # pipeline), so a per-instance lock would serialise nothing and two
+        # overlapping read-modify-write cycles would end with the later
+        # os.replace quietly erasing the earlier one. See jarvis.dictation._locks.
+        self._lock = store_lock(self._path)
 
     @property
     def path(self) -> Path:
@@ -448,14 +454,20 @@ def _holds_pending_recovery(entry: DictationEntry) -> bool:
 
     An entry the user can still recover from — one that ended badly or was
     discarded, and whose audio is still on disk — is the ONLY thing that makes
-    the Restore button do anything. Letting the ordinary count cap evict it
-    would delete the row while leaving the audio file behind: the user sees the
-    entry vanish, the disk keeps the recording, and nobody can get either back.
-    So these are exempt from the count cap.
+    the Restore button do anything. Dropping the row while leaving the audio
+    file behind is the worst of both worlds: the user sees the entry vanish,
+    the disk keeps the recording, and nobody can reach either again. The
+    history row IS the only handle on that file, so it survives BOTH caps —
+    the count cap and the retention window.
 
-    They are NOT exempt from the retention window: the audio itself ages out on
-    its own schedule, and an entry whose sidecar is already gone is not a
-    pending recovery any more.
+    Surviving the retention window is not an exception to the retention
+    promise, it is how the promise is kept: the row stops being exempt the
+    moment the audio ages out on its own schedule
+    (``[dictation].audio_retention_days``, enforced by
+    :func:`jarvis.dictation.audio.prune_audio`), and the next prune drops it.
+    The two retention keys are independently settable, so the alternative —
+    trusting the audio window to be the shorter one — leaves an orphaned WAV
+    behind on every configuration where it is not.
     """
     from jarvis.dictation.outcomes import is_recoverable
 
@@ -466,6 +478,21 @@ def _holds_pending_recovery(entry: DictationEntry) -> bool:
     from jarvis.dictation.audio import audio_exists
 
     return audio_exists(entry.audio_path)
+
+
+def _is_expired(entry: DictationEntry, cutoff: datetime) -> bool:
+    """``True`` when this entry is older than the retention cutoff.
+
+    An unparseable timestamp reads as "not expired": a row whose age cannot be
+    established is kept rather than silently discarded.
+    """
+    try:
+        created = datetime.fromisoformat(entry.created_at)
+    except (TypeError, ValueError):
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return created < cutoff
 
 
 def _prune(
@@ -479,31 +506,25 @@ def _prune(
     ``retention_days = 0`` means "keep until the count cap"; an unparseable
     timestamp is kept rather than silently discarded. ``max_entries = 0`` is an
     explicit "keep nothing" and overrides every exemption.
+
+    Both caps are checked in one pass, because the pending-recovery exemption
+    costs a filesystem probe per entry and applies to both of them.
     """
     cap = max(0, min(int(max_entries or 0), MAX_ENTRIES_CEILING))
     if not cap:
         return []
-    kept = entries
+    cutoff: datetime | None = None
     if retention_days and retention_days > 0:
         cutoff = datetime.now(UTC) - timedelta(days=int(retention_days))
-        fresh: list[DictationEntry] = []
-        for entry in kept:
-            try:
-                created = datetime.fromisoformat(entry.created_at)
-            except (TypeError, ValueError):
-                fresh.append(entry)
-                continue
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            if created >= cutoff:
-                fresh.append(entry)
-        kept = fresh
 
     result: list[DictationEntry] = []
     budget = cap
-    for entry in kept:  # newest first — the survivors of the cap are recent
+    for entry in entries:  # newest first — the survivors of the cap are recent
         if _holds_pending_recovery(entry):
+            # Exempt from both caps, and it does not spend the count budget.
             result.append(entry)
+            continue
+        if cutoff is not None and _is_expired(entry, cutoff):
             continue
         if budget > 0:
             result.append(entry)

@@ -7,6 +7,7 @@ on it.
 """
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -455,8 +456,17 @@ def test_a_successful_entry_with_audio_is_not_exempt(tmp_path: Path) -> None:
     assert fine not in kept
 
 
-def test_the_exemption_does_not_survive_the_retention_window(tmp_path: Path) -> None:
-    """Audio ages out on its own schedule; a stale row is not held open."""
+def test_the_retention_window_does_not_orphan_a_recoverable_recording(
+    tmp_path: Path,
+) -> None:
+    """The two retention keys are independent, so the row follows the audio.
+
+    ``history_retention_days`` and ``audio_retention_days`` are separate
+    settings with no cross-field validation, so "1 day of history, a year of
+    audio" is a legal configuration. If the time cutoff dropped the row anyway,
+    the WAV would still be on disk with nothing left pointing at it: audio the
+    user can neither restore from nor find.
+    """
     from jarvis.dictation.audio import save_dictation_audio
     from jarvis.dictation.history import DictationEntry
 
@@ -470,4 +480,150 @@ def test_the_exemption_does_not_survive_the_retention_window(tmp_path: Path) -> 
         outcome="failed",
         audio_path=str(path),
     )
+    # history_retention_days = 1 against an audio window measured in months.
+    assert _prune([stale], max_entries=100, retention_days=1) == [stale]
+    assert path.is_file()
+
+
+def test_the_row_ages_out_once_the_audio_window_has_taken_the_file(
+    tmp_path: Path,
+) -> None:
+    """The exemption ends with the recording, which is what bounds it."""
+    from jarvis.dictation.audio import prune_audio, save_dictation_audio
+    from jarvis.dictation.history import DictationEntry
+
+    path = save_dictation_audio("old", b"\x00\x01" * 800, directory=tmp_path)
+    assert path is not None
+    stale = DictationEntry(
+        id="old",
+        created_at=(datetime.now(UTC) - timedelta(days=40)).isoformat(),
+        raw_text="",
+        text="",
+        outcome="failed",
+        audio_path=str(path),
+    )
+    assert prune_audio(max_files=0, retention_days=0, directory=tmp_path) == 0
+    path.unlink()  # what the audio retention would have done on its schedule
     assert _prune([stale], max_entries=100, retention_days=30) == []
+
+
+def test_an_expired_entry_without_audio_still_ages_out(tmp_path: Path) -> None:
+    """The exemption is about a stranded recording, not about failing at all."""
+    from jarvis.dictation.history import DictationEntry
+
+    stale = DictationEntry(
+        id="old",
+        created_at=(datetime.now(UTC) - timedelta(days=40)).isoformat(),
+        raw_text="",
+        text="",
+        outcome="failed",
+    )
+    assert _prune([stale], max_entries=100, retention_days=30) == []
+
+
+def test_add_keeps_a_recoverable_row_a_short_history_window_would_drop(
+    tmp_path: Path,
+) -> None:
+    """The same configuration, driven through the real write path."""
+    from jarvis.dictation.audio import save_dictation_audio
+
+    store = DictationHistory(tmp_path / "dictation_history.json")
+    entry = store.add(raw_text="", text="", outcome="failed", retention_days=1)
+    assert entry is not None
+    wav = save_dictation_audio(entry.id, b"\x00\x01" * 800, directory=store.audio_dir)
+    assert wav is not None
+    assert store.update(entry.id, audio_path=str(wav)) is not None
+
+    # Backdate it well past the one-day history window, then write again so the
+    # prune runs over it.
+    _backdate(store, entry.id, days=30)
+    store.add(raw_text="later", text="later", retention_days=1)
+
+    kept = {e.id for e in store.list_all()}
+    assert entry.id in kept
+    assert wav.is_file()
+
+
+def _backdate(store: DictationHistory, entry_id: str, *, days: float) -> None:
+    """Rewrite one entry's timestamp on disk. ``created_at`` is immutable."""
+    import json
+
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    when = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    for item in payload["entries"]:
+        if item.get("id") == entry_id:
+            item["created_at"] = when
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# The write lock belongs to the path, not to the instance
+# --------------------------------------------------------------------------
+
+
+def test_two_stores_at_one_path_share_one_lock(tmp_path: Path) -> None:
+    """Nothing keeps an instance alive, so a per-object lock guards nothing.
+
+    Every caller builds a fresh store per operation, and two spellings of the
+    same file have to end up on the same lock or the read-modify-write cycle
+    is unguarded.
+    """
+    nested = tmp_path / "sub"
+    nested.mkdir()
+    direct = DictationHistory(tmp_path / "dictation_history.json")
+    roundabout = DictationHistory(nested / ".." / "dictation_history.json")
+    assert direct._lock is roundabout._lock
+    assert direct.stats()._lock is roundabout.stats()._lock
+
+
+def test_two_stores_at_different_paths_do_not_share_a_lock(tmp_path: Path) -> None:
+    """Two profiles must not serialise against each other for no reason."""
+    one = DictationHistory(tmp_path / "one.json")
+    two = DictationHistory(tmp_path / "two.json")
+    assert one._lock is not two._lock
+
+
+def test_a_restore_is_not_clobbered_by_a_dictation_finishing(tmp_path: Path) -> None:
+    """The race the REST endpoints introduced: two writers, one file.
+
+    A restore (read, change one row, write it all back) overlapping a
+    dictation being recorded used to end with whichever ``os.replace`` landed
+    last: the file stayed readable, one of the two updates just quietly
+    vanished. Both must survive.
+    """
+    path = tmp_path / "dictation_history.json"
+    seed = DictationHistory(path).add(raw_text="", text="", outcome="failed")
+    assert seed is not None
+
+    rounds = 30
+    start = threading.Barrier(2, timeout=15)
+    errors: list[Exception] = []
+
+    def restoring() -> None:
+        try:
+            start.wait()
+            for i in range(rounds):
+                assert DictationHistory(path).update(seed.id, text=f"restored-{i}")
+        except Exception as exc:
+            errors.append(exc)
+
+    def dictating() -> None:
+        try:
+            start.wait()
+            for i in range(rounds):
+                assert DictationHistory(path).add(raw_text=f"n{i}", text=f"n{i}")
+        except Exception as exc:
+            errors.append(exc)
+
+    workers = [threading.Thread(target=restoring), threading.Thread(target=dictating)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=60)
+        assert not worker.is_alive()
+    assert not errors, errors
+
+    entries = DictationHistory(path).list_all()
+    assert len([e for e in entries if e.text.startswith("n")]) == rounds
+    restored = [e for e in entries if e.id == seed.id]
+    assert [e.text for e in restored] == [f"restored-{rounds - 1}"]
