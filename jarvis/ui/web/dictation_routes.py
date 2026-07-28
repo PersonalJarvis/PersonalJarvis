@@ -2,14 +2,24 @@
 
 Endpoints (mounted by the WebServer in ``_build_app()``):
 
-    GET    /api/dictation/status    → capability + live state + the shortcut.
+    GET    /api/dictation/status    → capability + live state + the shortcuts.
     POST   /api/dictation/start     → begin a dictation ({"target": ...}).
     POST   /api/dictation/stop      → finish the running one.
     GET    /api/dictation/history   → recent dictations (raw + cleaned).
+    GET    /api/dictation/stats     → lifetime totals, today, day streak.
     DELETE /api/dictation/history   → purge everything (destructive).
     DELETE /api/dictation/history/{id} → drop one entry.
+    POST   /api/dictation/history/{id}/discard → soft-delete (recoverable).
+    POST   /api/dictation/history/{id}/restore → un-discard, re-transcribe.
     GET    /api/dictation/settings  → the [dictation] block.
     PUT    /api/dictation/settings  → change one or more keys.
+
+Delete has two shapes on purpose. ``DELETE /history/{id}`` keeps hard-delete
+semantics because that is the contract anyone scripting ``jarvis api dictation``
+already relies on; the UI's trash icon calls ``POST .../discard`` instead, so a
+mis-click stays recoverable. Both of them, and the full purge, take the audio
+sidecar with them — a "deleted" dictation the app still holds a recording of
+would be a quiet lie.
 
 Why REST and not only the WebSocket command the chat mic button uses: under the
 CLI-first contract (CLAUDE.md §5) a capability that exists only in the UI is not
@@ -23,15 +33,25 @@ no microphone the status endpoint answers honestly instead of 500-ing.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dictation", tags=["dictation"])
+
+#: What a Restore says when there is simply no provider to ask. Not an error:
+#: the entry still comes back, it just comes back without its words. Phrased as
+#: a fact about this host rather than as a failure of the request, because a
+#: 500 here would look like a bug in something the user did nothing wrong in.
+_NO_STT_DETAIL = (
+    "No speech-to-text provider is reachable on this computer, so the saved "
+    "audio could not be transcribed again. The entry itself was restored."
+)
 
 
 # ----------------------------------------------------------------------
@@ -61,6 +81,69 @@ def _dictation_cfg(request: Request) -> Any:
     from jarvis.core.config import DictationConfig
 
     return DictationConfig()
+
+
+def _as_int(value: Any, fallback: int) -> int:
+    """Best-effort int from a config value that a hand-edit may have mangled."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _pinned_language(request: Request) -> str | None:
+    """``[dictation].language`` as an STT argument — ``None`` means "detect"."""
+    pinned = str(getattr(_dictation_cfg(request), "language", "auto") or "").strip()
+    lowered = pinned.lower()
+    return lowered if lowered and lowered != "auto" else None
+
+
+async def _retranscribe_from_audio(
+    entry: Any, *, language: str | None
+) -> tuple[str, str, str | None]:
+    """Transcribe a kept audio sidecar again. ``(text, language, detail)``.
+
+    ``detail`` is a plain-English explanation of why nothing came back, or
+    ``None`` when it did. Every failure path returns one instead of raising:
+    the caller turns it into a normal 200 with ``retranscribed: false``, so a
+    host without a provider gets an honest sentence rather than a 500.
+    """
+    from jarvis.dictation.audio import load_dictation_audio
+
+    pipeline = _pipeline()
+    # The pipeline's final-transcription provider is the right one to reuse:
+    # it is already wrapped with the user's spoken-vocabulary corrections, so a
+    # restore spells names the same way the original dictation would have.
+    stt = getattr(pipeline, "_utterance_stt", None) if pipeline is not None else None
+    if stt is None:
+        return "", "", _NO_STT_DETAIL
+
+    # Reading and decoding a WAV is blocking work; it must not sit on the event
+    # loop that a live voice turn shares.
+    pcm = await asyncio.to_thread(load_dictation_audio, entry.audio_path)
+    if not pcm:
+        return "", "", "The saved audio for this dictation could not be read."
+
+    try:
+        if language is None:
+            transcript = await stt.transcribe_pcm(pcm)
+        else:
+            try:
+                transcript = await stt.transcribe_pcm(pcm, language=language)
+            except TypeError:
+                # A provider that predates the keyword — the contract allows a
+                # bare ``transcribe_pcm(pcm)``. Falling back beats calling the
+                # user's language pin a failure (precedent: rolling_whisper_wake).
+                transcript = await stt.transcribe_pcm(pcm)
+    except Exception as exc:  # noqa: BLE001 — a failed restore is never a 500
+        log.warning("dictation restore transcription failed: %s", exc, exc_info=True)
+        return "", "", f"Transcribing the saved audio failed: {exc}"
+
+    text = str(getattr(transcript, "text", "") or "").strip()
+    detected = str(getattr(transcript, "language", "") or "")
+    if not text:
+        return "", detected, "The saved audio produced no text — it may be silence."
+    return text, detected, None
 
 
 # ----------------------------------------------------------------------
@@ -97,6 +180,22 @@ class SettingsBody(BaseModel):
     history_enabled: bool | None = None
     history_max_entries: int | None = None
     history_retention_days: int | None = None
+    language: str | None = Field(
+        default=None,
+        description=(
+            "Language dictation is transcribed in: auto (detect per utterance, "
+            "right for almost everyone) or one supported locale"
+        ),
+    )
+    keep_failed_audio: bool | None = Field(
+        default=None,
+        description=(
+            "Keep the raw audio of a dictation that produced nothing usable, so "
+            "it can be transcribed again. Never kept for a successful one."
+        ),
+    )
+    audio_retention_days: int | None = None
+    audio_max_files: int | None = None
     persist: bool = Field(
         default=True, description="Also write the change to jarvis.toml"
     )
@@ -155,6 +254,10 @@ async def get_status(request: Request) -> dict[str, Any]:
         "active": active,
         "reason": reason,
         "hotkey": str(getattr(trigger, "hotkey_dictate", "") or ""),
+        # The hands-free key is its own action, not a mode of the hold key, so
+        # both can be armed at once. Reported separately for the same reason:
+        # a UI that had to infer it from ``mode`` could not show the two rows.
+        "hotkey_toggle": str(getattr(trigger, "hotkey_dictate_toggle", "") or ""),
         "mode": str(getattr(dictation, "mode", "hold")),
         "target": str(getattr(dictation, "target", "auto")),
         "insertion": insertion,
@@ -214,18 +317,163 @@ async def stop() -> dict[str, Any]:
 
 
 @router.get("/history")
-async def get_history(limit: int = 50) -> dict[str, Any]:
+async def get_history(
+    limit: int = 50,
+    include_discarded: bool = Query(
+        default=False,
+        description=(
+            "Also return entries the user discarded. The UI asks for them "
+            "because they are the ones Restore exists for."
+        ),
+    ),
+) -> dict[str, Any]:
     """Recent dictations, newest first — raw text alongside the cleaned text.
 
     Local-only data. It exists so a filler-cleanup can be audited after the
     fact ("did it drop a word I actually said?") and so a transcript survives
     an insertion that had to fall back to the clipboard.
+
+    Discarded entries are hidden by default, which is what a script reading
+    "the history" expects. The UI opts back in: filtering them out there would
+    strand the Restore button that makes the soft delete worth having.
+
+    The wire shape never carries ``audio_path`` — a filesystem path in a JSON
+    body is an information leak that buys the client nothing, so the entry
+    reports ``audio_available`` instead.
     """
     from jarvis.dictation.history import DictationHistory
 
     capped = max(1, min(int(limit or 50), 500))
-    entries = DictationHistory().list_all()[:capped]
+    entries = DictationHistory().list_all(include_discarded=include_discarded)[:capped]
     return {"entries": [e.to_dict() for e in entries], "count": len(entries)}
+
+
+@router.get("/stats")
+async def get_stats(request: Request) -> dict[str, Any]:
+    """Lifetime dictation totals, today's numbers and the day streak.
+
+    ``source`` is the honest part and the UI must label the panel from it:
+
+    * ``lifetime`` — the never-pruned counter sidecar answered, so the totals
+      really are all-time.
+    * ``window`` — no sidecar exists yet (an install that predates it), so the
+      numbers were derived from the rolling history window. They are real, they
+      are just bounded by the retention settings, and calling a 30-day slice
+      "all time" would be a lie the user has no way to catch.
+
+    ``window`` reports the retention settings the fallback is bounded by, so
+    the UI can name the period instead of guessing at it.
+    """
+    from jarvis.dictation.history import DictationHistory
+    from jarvis.dictation.stats import DEFAULT_BY_DAY_LIMIT, summarize_entries
+
+    history = DictationHistory()
+    counters = history.stats()
+    if counters.exists:
+        payload = counters.summary(by_day_limit=DEFAULT_BY_DAY_LIMIT)
+    else:
+        payload = summarize_entries(
+            history.list_all(), by_day_limit=DEFAULT_BY_DAY_LIMIT
+        )
+
+    dictation = _dictation_cfg(request)
+    payload["window"] = {
+        "days": _as_int(getattr(dictation, "history_retention_days", 30), 30),
+        "max_entries": _as_int(getattr(dictation, "history_max_entries", 200), 200),
+    }
+    return payload
+
+
+@router.post("/history/{entry_id}/discard")
+async def discard_history_entry(entry_id: str) -> dict[str, Any]:
+    """Hide one entry without deleting it — the recoverable trash icon.
+
+    Soft on purpose. ``discarded`` is a boolean beside the outcome rather than
+    an outcome of its own, because an entry can be both ``inserted`` and
+    discarded, and folding the two into one string makes that unrepresentable.
+    """
+    from jarvis.dictation.history import DictationHistory
+
+    history = DictationHistory()
+    if history.get(entry_id) is None:
+        raise HTTPException(status_code=404, detail="No dictation has that id.")
+    updated = history.set_discarded(entry_id, True)
+    if updated is None:
+        raise HTTPException(
+            status_code=500, detail="The dictation entry could not be updated."
+        )
+    return {"ok": True, "entry": updated.to_dict()}
+
+
+@router.post("/history/{entry_id}/restore")
+async def restore_history_entry(entry_id: str, request: Request) -> dict[str, Any]:
+    """Un-discard one entry and, when there is text to win back, re-transcribe.
+
+    Two different jobs behind one button, because from the user's side they are
+    one thing ("give me that back"):
+
+    1. A discarded entry that still has its text simply stops being hidden.
+    2. An entry that ended with nothing — a provider 401, a wedged engine, a
+       transcript that came back empty — is transcribed again from the audio
+       that was kept for exactly this moment.
+
+    Never a 500 on a missing provider. A host with no speech-to-text reachable
+    still restores the entry and says why the words did not come back; that is
+    a disappointment, not a failed request.
+    """
+    from jarvis.dictation.audio import audio_exists
+    from jarvis.dictation.cleanup import count_words
+    from jarvis.dictation.history import DictationHistory
+
+    history = DictationHistory()
+    entry = history.get(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No dictation has that id.")
+
+    has_text = bool(entry.text or entry.raw_text)
+    has_audio = audio_exists(entry.audio_path)
+    if not has_text and not has_audio:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "There is nothing to restore: this dictation has no text and no "
+                "saved audio. Keeping audio for failed dictations is what makes "
+                "one recoverable."
+            ),
+        )
+
+    changes: dict[str, Any] = {"discarded": False}
+    detail: str | None = None
+    retranscribed = False
+    if not has_text:
+        text, detected, detail = await _retranscribe_from_audio(
+            entry, language=_pinned_language(request)
+        )
+        if text:
+            retranscribed = True
+            changes.update(
+                raw_text=text,
+                text=text,
+                word_count=count_words(text),
+                language=detected or entry.language,
+                # The recorded failure is over — but the OUTCOME stays what it
+                # was. The dictation really did fail to reach the window the
+                # user was typing in; rewriting it to "inserted" would invent
+                # a delivery that never happened.
+                error=None,
+            )
+
+    updated = history.update(entry_id, **changes)
+    if updated is None:
+        raise HTTPException(
+            status_code=500, detail="The dictation entry could not be updated."
+        )
+    return {
+        "ok": True,
+        "entry": updated.to_dict(),
+        "retranscribed": retranscribed,
+        "detail": detail,
+    }
 
 
 @router.delete(
@@ -233,7 +481,13 @@ async def get_history(limit: int = 50) -> dict[str, Any]:
     openapi_extra={"x-jarvis-dangerous": True},
 )
 async def clear_history() -> dict[str, Any]:
-    """Purge the whole dictation history. Irreversible."""
+    """Purge the whole dictation history. Irreversible.
+
+    Deliberately total: the entries, every kept audio sidecar and the lifetime
+    counters all go, which is why the UI copy has to say the day streak resets.
+    Leaving the counters standing after someone asked for their dictation
+    history to be deleted would be a quiet lie about what the app still knows.
+    """
     from jarvis.dictation.history import DictationHistory
 
     return {"ok": bool(DictationHistory().clear())}
@@ -241,7 +495,12 @@ async def clear_history() -> dict[str, Any]:
 
 @router.delete("/history/{entry_id}")
 async def delete_history_entry(entry_id: str) -> dict[str, Any]:
-    """Drop one entry (idempotent — removing an absent id is not an error)."""
+    """Drop one entry and its audio (idempotent — an absent id is not an error).
+
+    Hard delete, kept that way on purpose: this is the contract anyone
+    scripting ``jarvis api dictation`` already has. The recoverable version the
+    UI's trash icon uses is ``POST /history/{id}/discard``.
+    """
     from jarvis.dictation.history import DictationHistory
 
     return {"removed": bool(DictationHistory().delete(entry_id))}
@@ -254,7 +513,15 @@ async def delete_history_entry(entry_id: str) -> dict[str, Any]:
 
 @router.get("/settings")
 async def get_settings(request: Request) -> dict[str, Any]:
-    """The live ``[dictation]`` block plus the accepted values per key."""
+    """The live ``[dictation]`` block plus the accepted values per key.
+
+    ``choices`` is what every dropdown in the UI is built from, and it is
+    hand-maintained: a key added to ``DICTATION_SETTING_KEYS`` without an entry
+    here renders an empty list the user cannot pick anything out of. The
+    language list is the one exception — it is derived from
+    ``DICTATION_LANGUAGES`` so adding a locale means touching one place.
+    """
+    from jarvis.core.config import DICTATION_LANGUAGES
     from jarvis.core.config_writer import DICTATION_SETTING_KEYS
 
     dictation = _dictation_cfg(request)
@@ -266,6 +533,7 @@ async def get_settings(request: Request) -> dict[str, Any]:
             "target": ["auto", "insert", "chat"],
             "insert_method": ["clipboard", "type"],
             "paste_chord": ["auto", "ctrl_v", "ctrl_shift_v", "shift_insert"],
+            "language": list(DICTATION_LANGUAGES),
         },
     }
 
