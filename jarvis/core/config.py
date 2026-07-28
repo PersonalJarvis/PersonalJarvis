@@ -2738,7 +2738,76 @@ class JarvisConfig(BaseModel):
 # Loading logic
 # ----------------------------------------------------------------------
 
+#: Parsed ``jarvis.toml`` payloads, keyed by path → (identity, data).
+#:
+#: ``load_config`` is called from over a hundred sites, several of them on the
+#: event loop that also serves every WebSocket — a provider building its client
+#: calls it per instantiation, and a fallback chain instantiates several
+#: providers per turn. Re-reading and re-parsing a 50 KB TOML there costs ~8 ms
+#: of blocked loop each time, and far worse than the milliseconds: ``tomllib``
+#: allocates thousands of short-lived objects per parse, so in a long-running
+#: process holding a large object graph the garbage collector starts dominating
+#: and a single parse can stall for minutes. Measured live 2026-07-28: the
+#: backend thread sat in ``tomllib`` at a fixed byte offset for over ten
+#: minutes at 88 % of a core with ``/api/health`` timing out, while the very
+#: same file parsed in 8 ms in a fresh process. The window title said
+#: "Not responding" and keystrokes typed into an Agentic-IDE pane arrived
+#: seconds late, because they queue behind this on the one loop.
+_TOML_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
+_TOML_CACHE_LOCK = threading.Lock()
+
+
+def _copy_toml_data(value: Any) -> Any:
+    """Structural copy of a parsed TOML payload.
+
+    Handing out the cached object itself is not an option: ``_apply_env_overrides``
+    writes overrides straight into the dict it is given, so the cache would
+    accumulate every override ever applied and answer later callers with a
+    config that was never on disk.
+
+    A hand-rolled walk rather than ``copy.deepcopy`` because TOML yields only
+    dicts, lists and immutable scalars (including ``datetime``), so none of
+    deepcopy's memo bookkeeping or ``__deepcopy__`` dispatch buys anything here
+    — and it is what keeps the copy cheap enough to be worth caching at all
+    (0.10 ms against 0.73 ms and an 8.18 ms parse).
+    """
+    if type(value) is dict:
+        return {key: _copy_toml_data(item) for key, item in value.items()}
+    if type(value) is list:
+        return [_copy_toml_data(item) for item in value]
+    return value
+
+
+def clear_config_cache() -> None:
+    """Forget every parsed TOML payload.
+
+    The cache invalidates itself off the file's identity, so this exists for
+    the two cases that identity cannot see: a test that rewrites a fixture
+    within one filesystem timestamp tick, and :mod:`jarvis.core.config_writer`
+    announcing a write it just made rather than waiting to be found out.
+    """
+    with _TOML_CACHE_LOCK:
+        _TOML_CACHE.clear()
+
+
 def _load_toml(path: Path) -> dict[str, Any]:
+    # Modification time AND size, because either alone is forgeable by an
+    # ordinary edit: a rewrite within the same timestamp tick keeps the mtime,
+    # and flipping a single flag keeps the size. A file we cannot stat is
+    # simply not cached — the read below then reports the real error.
+    identity: tuple[int, int] | None = None
+    try:
+        info = path.stat()
+        identity = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        identity = None
+
+    if identity is not None:
+        with _TOML_CACHE_LOCK:
+            cached = _TOML_CACHE.get(path)
+        if cached is not None and cached[0] == identity:
+            return _copy_toml_data(cached[1])
+
     # tomllib does not accept UTF-8 BOM; Windows editors (Notepad etc.)
     # write it automatically on Save-As. If the file is otherwise readable,
     # we should not silently cripple the entire brain stack — so strip the
@@ -2746,7 +2815,15 @@ def _load_toml(path: Path) -> dict[str, Any]:
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:]
-    return tomllib.loads(raw.decode("utf-8"))
+    data = tomllib.loads(raw.decode("utf-8"))
+
+    if identity is not None:
+        with _TOML_CACHE_LOCK:
+            _TOML_CACHE[path] = (identity, data)
+        # The stored payload must stay the pristine parse, so the caller gets
+        # its own copy to mutate rather than the object the cache keeps.
+        return _copy_toml_data(data)
+    return data
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

@@ -29,7 +29,7 @@ from pathlib import Path
 import tomlkit
 from tomlkit import TOMLDocument
 
-from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT
+from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT, clear_config_cache
 
 log = logging.getLogger(__name__)
 
@@ -1880,6 +1880,14 @@ def _atomic_write(path: Path, content: str) -> None:
         if was_read_only and path.exists():
             current_mode = path.stat().st_mode
             os.chmod(path, current_mode & ~stat.S_IWRITE)
+        # Announce the write rather than leaving the reader to notice it. The
+        # parsed-TOML cache does check the file's identity, but a rewrite
+        # landing inside one filesystem timestamp tick that happens to keep the
+        # byte count — flipping a flag is exactly that — would be invisible to
+        # it, and serving a stale config after a save is the BUG-010 class of
+        # failure this module exists to prevent. In ``finally`` because a
+        # replace that raised may still have gone through.
+        clear_config_cache()
 
 
 def _write_unique_temp(path: Path, content: str) -> Path:
