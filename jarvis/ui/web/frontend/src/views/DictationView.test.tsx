@@ -406,152 +406,47 @@ describe("DictationView delete semantics", () => {
 });
 
 describe("DictationView settings", () => {
-  /** Renders and waits for the settings block to arrive. */
-  async function renderSettings(
-    settings: Record<string, unknown> = SETTINGS,
-    custom: unknown = CUSTOM,
-  ) {
-    const calls = installFetchMock({
-      ...defaultRoutes(),
-      "GET /api/dictation/settings": () => ({
-        body: { settings, choices: CHOICES, custom },
-      }),
-      "PUT /api/dictation/settings": () => ({
-        body: { ok: true, settings },
-      }),
-    });
+  /**
+   * The "How dictation behaves" block is gone from this screen on purpose —
+   * every one of its six controls shipped a working default, and a wall of
+   * dropdowns and switches in front of the feature made a thing that just works
+   * look like something to configure first.
+   *
+   * Pinned as an absence rather than deleted silently: re-adding any of these
+   * controls here is a product decision, not a refactor. The `[dictation]`
+   * config keys and `PUT /api/dictation/settings` are untouched — an install
+   * that needs a different paste shortcut still has one, just not on this
+   * screen.
+   */
+  it("no longer shows the behaviour settings block", async () => {
+    installFetchMock(defaultRoutes());
     render(<DictationView />);
-    await waitFor(() =>
-      expect(screen.queryByTestId("dictation-paste-chord")).toBeTruthy(),
-    );
-    return calls;
-  }
 
-  it("no longer offers a key-behaviour dropdown", async () => {
-    await renderSettings();
-    // The two shortcut rows in the voice section's Shortcuts tab are the source
-    // of truth for hold vs hands-free. A dropdown here was a second answer to
-    // the same question, and the two could disagree.
-    expect(screen.queryByTestId("dictation-mode")).toBeNull();
-    expect(screen.queryByText("Key behaviour")).toBeNull();
-    // The rest of the block is untouched.
-    expect(screen.queryByTestId("dictation-insert-method")).toBeTruthy();
-    expect(screen.queryByTestId("dictation-target")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
+    expect(screen.queryByText("How dictation behaves")).toBeNull();
+    for (const testId of [
+      "dictation-paste-chord",
+      "dictation-insert-method",
+      "dictation-target",
+      "dictation-remove-fillers",
+      "dictation-restore-clipboard",
+      "dictation-history-enabled",
+      // Left earlier, for the same reason: the Shortcuts tab is the source of
+      // truth for hold vs hands-free.
+      "dictation-mode",
+    ]) {
+      expect(screen.queryByTestId(testId)).toBeNull();
+    }
   });
 
-  it("keeps the curated paste shortcuts one click away", async () => {
-    const calls = await renderSettings();
-    fireEvent.change(screen.getByTestId("dictation-paste-chord"), {
-      target: { value: "shift_insert" },
-    });
+  it("never writes a dictation setting from this screen", async () => {
+    const calls = installFetchMock(defaultRoutes());
+    render(<DictationView />);
 
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            c.url === "/api/dictation/settings" &&
-            (c.body as { paste_chord?: string }).paste_chord === "shift_insert",
-        ),
-      ).toBe(true),
-    );
-    // Picking a preset never opens the recorder.
-    expect(screen.queryByTestId("dictation-paste-chord-custom")).toBeNull();
-  });
-
-  it("records a custom combination and saves the combo, not a preset name", async () => {
-    const calls = await renderSettings();
-    fireEvent.change(screen.getByTestId("dictation-paste-chord"), {
-      target: { value: "__custom__" },
-    });
-    // Opening the recorder must not save anything by itself.
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
-
-    fireEvent.click(screen.getByTestId("dictation-paste-chord-record"));
-    fireEvent.keyDown(window, { code: "Insert", ctrlKey: true, shiftKey: true });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("dictation-paste-chord-combo").textContent).toBe(
-        "Ctrl + Shift + Insert",
-      ),
-    );
-    fireEvent.click(screen.getByTestId("dictation-paste-chord-save"));
-
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            (c.body as { paste_chord?: string }).paste_chord ===
-              "ctrl+shift+insert",
-        ),
-      ).toBe(true),
-    );
-  });
-
-  it("refuses a key this computer cannot send instead of saving it", async () => {
-    await renderSettings();
-    fireEvent.change(screen.getByTestId("dictation-paste-chord"), {
-      target: { value: "__custom__" },
-    });
-    fireEvent.click(screen.getByTestId("dictation-paste-chord-record"));
-    // Not in the vocabulary the backend served — accepting it would produce a
-    // shortcut that fails silently at paste time, on some hosts only.
-    fireEvent.keyDown(window, { code: "F13", ctrlKey: true });
-
-    const problem = await waitFor(() =>
-      screen.getByTestId("dictation-paste-chord-problem"),
-    );
-    expect(problem.textContent).toMatch(/cannot send/i);
-    expect(screen.getByTestId("dictation-paste-chord-combo").textContent).toBe(
-      "Press the shortcut…",
-    );
-  });
-
-  it("states the caveat wherever a custom shortcut is chosen", async () => {
-    await renderSettings({ ...SETTINGS, paste_chord: "ctrl+shift+insert" });
-    // A stored value that is not a preset IS a recorded one, so the row opens
-    // on the custom state without being asked.
-    const custom = screen.getByTestId("dictation-paste-chord-custom");
-    expect(custom).toBeTruthy();
-    expect(screen.getByTestId("dictation-paste-chord-combo").textContent).toBe(
-      "Ctrl + Shift + Insert",
-    );
-    // Jarvis asks the app in front to paste; it cannot see what happened.
-    expect(screen.getByTestId("dictation-paste-chord-caveat").textContent).toMatch(
-      /nothing is pasted/i,
-    );
-  });
-
-  it("lets the backend judge when it served no vocabulary at all", async () => {
-    // `null` and an absent `custom` block are the same thing to the hook
-    // (`data.custom ?? null`) — an older backend that never learned to
-    // describe its accepted tokens.
-    const calls = await renderSettings(SETTINGS, null);
-    fireEvent.change(screen.getByTestId("dictation-paste-chord"), {
-      target: { value: "__custom__" },
-    });
-    fireEvent.click(screen.getByTestId("dictation-paste-chord-record"));
-    fireEvent.keyDown(window, { code: "KeyB", ctrlKey: true });
-
-    // "b" is in no served list because there is no list. Refusing here would
-    // brick the feature against an older backend; the PUT route answers with a
-    // plain-English 400 if it really cannot take it.
-    await waitFor(() =>
-      expect(screen.getByTestId("dictation-paste-chord-combo").textContent).toBe(
-        "Ctrl + B",
-      ),
-    );
-    fireEvent.click(screen.getByTestId("dictation-paste-chord-save"));
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            (c.body as { paste_chord?: string }).paste_chord === "ctrl+b",
-        ),
-      ).toBe(true),
-    );
+    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
+    expect(
+      calls.some((c) => c.method === "PUT" && c.url === "/api/dictation/settings"),
+    ).toBe(false);
   });
 });
 
