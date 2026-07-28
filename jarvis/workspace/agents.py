@@ -737,13 +737,27 @@ def reserved_call_signs() -> frozenset[str]:
     Addressing a pane called "Kimi" by saying "Kimi" is a coin flip once a CLI
     is also called that, so the pool of call-signs excludes every registered
     product name and every spelling of one.
+
+    Deliberately NARROW. The obvious implementation — every word of every
+    display name — reserves "Coding" and "Plan" out of "GLM Coding Plan", and
+    since call-sign matching is fuzzy by design that in turn poisons unrelated
+    names ("coding" scores high enough to reach the call-sign "Cody"). A list
+    meant to prevent one collision would then be creating others, so only the
+    identifying token counts: the registry key, the first word of the display
+    name, and the spellings people actually say.
     """
     names: set[str] = set()
     for agent in _AGENTS.values():
+        if not agent.is_coding_agent:
+            continue
         names.add(agent.name.lower())
-        names.update(part.lower() for part in agent.display_name.split())
+        first = agent.display_name.split()
+        if first:
+            names.add(first[0].lower())
         names.update(spelling.lower() for spelling in agent.spoken_aliases)
-    return frozenset(n for n in names if n.isalpha())
+    # Single letters and anything with a space in it are not call-sign shaped,
+    # so reserving them protects nothing and only shrinks the pool.
+    return frozenset(n for n in names if n.isalpha() and len(n) > 1)
 
 
 @dataclass(slots=True)

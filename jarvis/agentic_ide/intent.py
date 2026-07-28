@@ -876,24 +876,43 @@ _NUMBER_WORDS: dict[str, int] = {
 # The user's STT dictionary repairs this too, but only for the words that user
 # thought to add; an arbitrary downloader with an empty dictionary gets the same
 # request and must get the same three panes.
-_AGENT_SPELLINGS: dict[str, tuple[str, ...]] = {
-    "claude": ("claude", "cloude", "claud", "clode", "klaude", "kloude"),
-    "codex": ("codex", "kodex", "codecs", "codeks"),
-}
+def _agent_spellings() -> dict[str, tuple[str, ...]]:
+    """Every spelling that names a CLI on its own, per registry entry."""
+    from jarvis.workspace import agents as workspace_agents
 
-# Spellings that are ordinary words in their own right, so on their own they
-# mean nothing here — "in the cloud" is not a request for a pane. They count
-# only with the product's second word behind them: "cloud code" is unmistakable.
-_AGENT_SPELLINGS_REQUIRING_CODE: dict[str, tuple[str, ...]] = {
-    "claude": ("cloud", "clawed", "clod", "loud"),
-}
+    return {
+        agent.name: agent.spoken_aliases
+        for agent in workspace_agents.coding_agents()
+        if agent.spoken_aliases
+    }
 
-_AGENT_BY_SPELLING: dict[str, str] = {
-    spelling: canonical
-    for table in (_AGENT_SPELLINGS, _AGENT_SPELLINGS_REQUIRING_CODE)
-    for canonical, spellings in table.items()
-    for spelling in spellings
-}
+
+def _agent_spellings_requiring_suffix() -> dict[str, tuple[str, str]]:
+    """Ambiguous spelling → ``(CLI, the word that must follow it)``.
+
+    Some spellings are ordinary words in their own right, so on their own they
+    mean nothing here — "in the cloud" is not a request for a pane. They count
+    only with the product's second word behind them: "cloud code" is
+    unmistakable.
+    """
+    from jarvis.workspace import agents as workspace_agents
+
+    return workspace_agents.aliases_needing_suffix()
+
+
+def _spelling_pattern(spelling: str) -> str:
+    """One spelling as a regex fragment, tolerant of how it was transcribed.
+
+    A product whose name is one word is regularly written as two ("opencode" /
+    "open code"), and an acronym arrives spaced or dotted ("GLM" / "G L M" /
+    "G.L.M."). Matching only the spelling as typed here would drop exactly the
+    transcripts this table exists to catch, so the separator between characters
+    and words is elastic in one direction: written apart, matched together.
+    """
+    tokens = spelling.split()
+    if len(tokens) > 1:
+        return r"\s+".join(re.escape(token) for token in tokens)
+    return re.escape(spelling)
 
 
 def _agent_alternation() -> str:
@@ -903,15 +922,13 @@ def _agent_alternation() -> str:
     ``claude``) can never shadow it.
     """
     parts = [
-        rf"{re.escape(spelling)}(?:\s+code)?"
-        for table in (_AGENT_SPELLINGS,)
-        for spellings in table.values()
+        rf"{_spelling_pattern(spelling)}(?:\s+code)?"
+        for spellings in _agent_spellings().values()
         for spelling in spellings
     ]
     parts += [
-        rf"{re.escape(spelling)}\s+code"
-        for spellings in _AGENT_SPELLINGS_REQUIRING_CODE.values()
-        for spelling in spellings
+        rf"{_spelling_pattern(spelling)}\s+{re.escape(suffix)}"
+        for spelling, (_agent, suffix) in _agent_spellings_requiring_suffix().items()
     ]
     return "|".join(sorted(parts, key=len, reverse=True))
 
@@ -925,14 +942,59 @@ def _canonical_agent(raw: str) -> str | None:
     """The CLI a matched name means, or ``None`` for one this parser cannot place.
 
     ``None`` is unreachable through the pattern above — every alternative it
-    offers is a key of the table — and callers still handle it, because a
-    spelling added to one and not the other must degrade to "no CLI named"
-    rather than to a wrong one.
+    offers comes from the registry — and callers still handle it, because a
+    spelling that stops resolving must degrade to "no CLI named" rather than to
+    a wrong one.
+
+    Two spellings of the same name are folded here rather than in the table: a
+    trailing product word is dropped ("codex code" is Codex), and the spaces an
+    acronym picks up in transcription are squeezed out ("g l m" is "glm"), so
+    the registry only ever has to carry the name itself.
+
+    An AMBIGUOUS spelling standing alone resolves to nothing, and that rule is
+    load-bearing in both directions. "cloud" is not a request for a Claude Code
+    pane, and "open" is the verb in "open a terminal" — reading either as a
+    product name here would not merely mis-name a pane, it would take the
+    sentence's own verb away from the parser and drop the whole request.
     """
+    standalone = _standalone_spellings()
     name = " ".join(str(raw or "").casefold().split())
+    if name in standalone:
+        return standalone[name]
+    for spelling, (agent, suffix) in _agent_spellings_requiring_suffix().items():
+        if name == f"{spelling} {suffix}":
+            return agent
     if name.endswith(" code"):
-        name = name[: -len(" code")].strip()
-    return _AGENT_BY_SPELLING.get(name)
+        base = name[: -len(" code")].strip()
+        if base in standalone:
+            return standalone[base]
+    # "g l m" and "g.l.m." are the same acronym as "glm".
+    return standalone.get(re.sub(r"[\s.]+", "", name))
+
+
+def _standalone_spellings() -> dict[str, str]:
+    """Spelling → CLI, for the spellings that name a product on their own."""
+    return {
+        spelling: agent
+        for agent, spellings in _agent_spellings().items()
+        for spelling in spellings
+    }
+
+
+def _open_verbs(text: str) -> list[re.Match[str]]:
+    """Where the utterance asks for something to be opened.
+
+    A CLI's own NAME is never one of those places, however much it looks like a
+    verb. The verb table matches ``open\\w*``, which happily swallows "opencode"
+    — and the actor positions it returns are what splits an utterance into
+    clauses, so one product name read as a verb re-cuts the sentence and a group
+    of panes goes to the wrong CLI or is dropped entirely.
+    """
+    return [
+        match
+        for match in _OPEN_VERB_RE.finditer(text)
+        if _canonical_agent(match.group(0)) is None
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1119,7 +1181,7 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
     for clause_match in _CLAUSE_RE.finditer(text):
         clause = clause_match.group(0)
         panes = list(_PANE_NOUN_RE.finditer(clause))
-        actors = list(_OPEN_VERB_RE.finditer(clause)) + list(_ADDITIVE_RE.finditer(clause))
+        actors = _open_verbs(clause) + list(_ADDITIVE_RE.finditer(clause))
         if not panes or not actors:
             continue
         pairs = [
@@ -1227,7 +1289,7 @@ def spawn_instruction(user_text: str) -> str:
     span = _spawn_span(text)
     if span is None:
         nouns = list(_AGENT_NOUN_RE.finditer(text))
-        actors = list(_OPEN_VERB_RE.finditer(text))
+        actors = _open_verbs(text)
         if nouns and actors:
             noun, actor = min(
                 ((noun, actor) for noun in nouns for actor in actors),

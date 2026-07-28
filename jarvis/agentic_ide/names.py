@@ -53,13 +53,36 @@ NAME_POOL: tuple[str, ...] = (
     "Simone", "Trent", "Hugo", "Nadia", "Rosa", "Theo", "Colby", "Marcus",
 )
 
-#: Names a pane may never carry: the fixed wake word and the coding agents
-#: themselves. Saying "Claude" to address a pane called Claude is a coin flip.
+#: Coding products a pane may never be named after, whether or not this build
+#: can run them. Saying "Claude" to address a pane called Claude is a coin flip,
+#: and the same holds for a product the user merely has installed — so the list
+#: is deliberately WIDER than the registry: a name retired from the registry
+#: tomorrow is still a name people say out loud today.
+_KNOWN_PRODUCTS: frozenset[str] = frozenset(
+    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor", "aider"}
+)
+
+
+def _reserved() -> frozenset[str]:
+    """Every name a call-sign must stay clear of, registry included.
+
+    Built at call time rather than frozen at import so a CLI registered later
+    cannot end up sharing its name with a pane — which is the one collision this
+    whole module is about, and the one nobody would notice until an instruction
+    went to the wrong place.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        return _KNOWN_PRODUCTS | workspace_agents.reserved_call_signs()
+    except Exception:  # noqa: BLE001 - naming must never fail on this
+        return _KNOWN_PRODUCTS
+
+
+#: The fixed part of that list, kept as a module constant for existing readers.
 #: The user's OWN wake word is configurable and cannot be checked here — the
 #: session layer keeps a call-sign from shadowing it at assignment time.
-RESERVED_NAMES: frozenset[str] = frozenset(
-    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor"}
-)
+RESERVED_NAMES: frozenset[str] = _reserved()
 
 # Below this similarity a spoken word is NOT treated as a terminal name. Tuned
 # so that a garbled "Mika" ("Micah", "Meeka", "Mikka") still lands while an

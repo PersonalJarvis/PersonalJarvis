@@ -78,5 +78,12 @@ def test_the_misspelling_survives_the_other_locales() -> None:
 def test_a_name_the_table_does_not_know_names_no_cli() -> None:
     """Unknown stays unknown — a near-miss must never become the wrong CLI."""
     assert intent._canonical_agent("gemini") is None
-    assert intent._canonical_agent("cloud") == "claude"
     assert intent._canonical_agent("Cloude Code") == "claude"
+    # An ambiguous spelling means NOTHING on its own, in both directions. It is
+    # not a request for a pane ("in the cloud"), and — since one such spelling
+    # is also a verb this parser looks for — reading it as a product name would
+    # take the sentence's own "open" away and drop the whole request.
+    assert intent._canonical_agent("cloud") is None
+    assert intent._canonical_agent("open") is None
+    assert intent._canonical_agent("cloud code") == "claude"
+    assert intent._canonical_agent("open code") == "opencode"
