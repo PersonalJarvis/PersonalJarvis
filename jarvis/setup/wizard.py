@@ -158,6 +158,18 @@ SECRETS: list[SecretSpec] = [
         section="brain",
     ),
     SecretSpec(
+        key="zai_api_key",
+        env_fallback="ZAI_API_KEY",
+        label="Z.ai API Key (GLM Coding Plan)",
+        help_url="https://z.ai/model-api",
+        required_for=(
+            "GLM panes in the Agentic IDE — they run the Claude Code CLI "
+            "against Z.ai's endpoint, so this key is what makes them GLM "
+            "rather than Anthropic"
+        ),
+        section="brain",
+    ),
+    SecretSpec(
         key="gemini_api_key",
         env_fallback="GEMINI_API_KEY",
         label="Google AI Studio / Gemini API Key",

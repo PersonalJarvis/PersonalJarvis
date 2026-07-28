@@ -627,13 +627,31 @@ def _discover_opencode(
     the user was having.
     """
     claimed = {str(t) for t in taken}
+    # DESC, and that single word is the whole correctness of the cap. This
+    # database is ONE global store for every project on the machine, so the
+    # limit bites long before a single project has many sessions — and a plain
+    # `LIMIT` sorts ASCENDING, which keeps the OLDEST rows and throws away the
+    # pane's own, newest one. Every pane would then come back as a fresh
+    # conversation, silently, once the machine had accumulated enough history.
+    #
+    # The bound is deliberately a row count and not a timestamp: the column's
+    # unit is not guaranteed (see `_epoch_seconds`, which reads both seconds and
+    # milliseconds), and a WHERE clause in the wrong unit filters everything out
+    # just as silently as the wrong sort order did.
+    #
+    # `parent_id IS NULL` is the CLI-specific half: it files its subagents'
+    # threads in the same table, and resuming one of those reopens a fragment of
+    # the pane's own previous run instead of the conversation.
     rows = _opencode_rows(
         home,
         "SELECT id, directory, time_created FROM session "
-        "WHERE parent_id IS NULL ORDER BY time_created LIMIT ?",
+        "WHERE parent_id IS NULL ORDER BY time_created DESC LIMIT ?",
         (_MAX_CANDIDATES,),
     )
-    for session_id, directory, created in rows:
+    # Back to oldest-first, because the rule is "the EARLIEST session at or
+    # after the pane started" — that is what lets several panes opened together
+    # queue instead of all claiming the first one.
+    for session_id, directory, created in reversed(rows):
         session_id = str(session_id or "").strip()
         if not session_id or session_id in claimed:
             continue
@@ -754,6 +772,19 @@ def _discover_kimi(
         children = list(folder.iterdir())
     except OSError:
         return None
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    # Newest first BEFORE the cap. Session folders are named with random ids, so
+    # directory order carries no recency at all — truncating it would drop the
+    # pane's own folder for an arbitrary 400 others, and the pane would come
+    # back as a fresh conversation with nothing to explain why. A pane's own
+    # session is by construction among the newest.
+    children.sort(key=_mtime, reverse=True)
     for child in children[:_MAX_CANDIDATES]:
         session_id = child.name
         if session_id in claimed or not child.is_dir():

@@ -144,6 +144,55 @@ def test_two_opencode_panes_in_one_folder_get_different_conversations(
     assert second.id != first.id
 
 
+def test_opencode_still_finds_its_session_behind_a_long_history(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """The cap must keep the NEWEST sessions, not the oldest.
+
+    This database is one global store for every project on the machine, so the
+    candidate limit bites long before a single project has many sessions. Sorted
+    the wrong way it kept the oldest rows and threw away the pane's own — and
+    the symptom was silent: every pane came back as a fresh conversation, with
+    nothing anywhere to say why.
+    """
+    db = _opencode_db(_agent_history_in_tmp)
+    started = time.time()
+    for index in range(500):
+        _add_session(db, f"ses_old_{index}", str(tmp_path / "elsewhere"), started - 9_000)
+    _add_session(db, "ses_mine", str(tmp_path), started + 1)
+    handle = agent_sessions.discover("opencode", str(tmp_path), started)
+    assert handle is not None and handle.id == "ses_mine"
+
+
+def test_kimi_still_finds_its_session_behind_a_long_history(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """Same cap, same trap: session folders carry no recency in their names.
+
+    Their ids are random, so directory order is arbitrary — truncating it
+    before sorting drops the pane's own folder for 400 unrelated ones.
+    """
+    import os
+
+    key = agent_sessions._kimi_folder_key(str(tmp_path))
+    assert key is not None
+    root = _agent_history_in_tmp / "kimi" / "sessions" / key
+    root.mkdir(parents=True)
+    started = time.time()
+    for index in range(500):
+        old = root / f"{index:04d}-old-session"
+        old.mkdir()
+        (old / "context.jsonl").write_text("{}\n", encoding="utf-8")
+        os.utime(old, (started - 9_000, started - 9_000))
+    mine = root / "zzz-mine"
+    mine.mkdir()
+    (mine / "context.jsonl").write_text("{}\n", encoding="utf-8")
+    os.utime(mine, (started + 1, started + 1))
+
+    handle = agent_sessions.discover("kimi", str(tmp_path), started)
+    assert handle is not None and handle.id == "zzz-mine"
+
+
 def test_a_missing_opencode_database_starts_fresh_instead_of_raising(
     tmp_path: Path,
 ) -> None:
@@ -247,6 +296,72 @@ def test_a_configured_glm_pane_carries_the_endpoint_and_hides_a_stray_key(
     assert overlay["ANTHROPIC_API_KEY"] == ""
     # A plain Claude Code pane in the same workspace is untouched.
     assert ide_session.agent_spawn_overlay("claude") == {}
+
+
+def _stub_pane(agent: str) -> Any:
+    """The smallest object the spawn path reads — no PTY, no registry."""
+    from jarvis.agentic_ide.session import Terminal
+
+    return Terminal(
+        key=agent,
+        name="Alex",
+        agent=agent,
+        display_name=agent,
+        index=0,
+    )
+
+
+def test_the_environment_reaches_a_pane_through_the_real_spawn_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The gap the direct-overlay tests above could not see.
+
+    Every assertion in this file up to here calls ``agent_spawn_overlay``
+    directly — and the spawn path reached it through a guard that returned
+    early for any pane without an ADDED SUBSCRIPTION, which is every pane of
+    every CLI that has no account switcher. So the overlay was correct, tested,
+    and never applied: a GLM pane opened as plain Claude Code on the user's own
+    Anthropic login, answered perfectly, and billed the wrong vendor. This test
+    exists so that gap cannot reopen.
+    """
+    from jarvis.agentic_ide import session as ide_session
+
+    registry = ide_session.Registry()
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: "tok")  # noqa: S105
+
+    env = registry._prepare_spawn(_stub_pane("glm"), str(tmp_path))
+    assert env is not None, "the GLM pane launched with no environment at all"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "tok"  # noqa: S105
+    assert env["ANTHROPIC_BASE_URL"].startswith("http")
+    # Removed, not blanked — a host key here outranks the token.
+    assert "ANTHROPIC_API_KEY" not in env
+    # PATH survives: the child environment is inherited, not replaced.
+    assert env.get("PATH")
+
+    # The updater kill-switches reach their panes too, or a CLI can swap its
+    # own binary out from under a live conversation.
+    opencode_env = registry._prepare_spawn(_stub_pane("opencode"), str(tmp_path))
+    assert opencode_env is not None
+    assert opencode_env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
+    kimi_env = registry._prepare_spawn(_stub_pane("kimi"), str(tmp_path))
+    assert kimi_env is not None
+    assert kimi_env["KIMI_CODE_NO_AUTO_UPDATE"] == "1"
+
+    # A CLI that declares nothing still inherits the machine's environment
+    # untouched — the behaviour every pane had before any of this existed.
+    assert registry._prepare_spawn(_stub_pane("claude"), str(tmp_path)) is None
+
+
+def test_an_unconfigured_glm_pane_refuses_on_the_real_spawn_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Refusing is the safety property; it has to hold where panes actually open."""
+    from jarvis.agentic_ide import session as ide_session
+
+    registry = ide_session.Registry()
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: None)
+    with pytest.raises(ide_session.SessionError):
+        registry._prepare_spawn(_stub_pane("glm"), str(tmp_path))
 
 
 def test_the_glm_environment_factory_reports_not_configured_without_a_key(

@@ -572,8 +572,8 @@ def agent_spawn_overlay(agent: str) -> dict[str, str]:
     resolved = spec.spawn_env_factory()
     if resolved is None:
         raise SessionError(
-            f"{spec.display_name} is not configured yet — add its API key in "
-            "Settings, then open the pane again."
+            f"{spec.display_name} is not configured yet — add its API key on "
+            "the API Keys page, then open the pane again."
         )
     overlay.update(resolved)
     return overlay
@@ -2127,9 +2127,14 @@ class Registry:
         """
         home = _redirected_home(term)
         if home is None:
-            # Nothing was redirected: this pane already inherits the machine's
-            # own configuration, which is exactly what a terminal does.
-            return None
+            # Nothing was REDIRECTED — but that is not the same as "nothing to
+            # do". A pane still carries whatever its CLI declares for every one
+            # of its panes, and skipping the environment here is how a launch
+            # profile silently becomes the CLI it borrows: a GLM pane would open
+            # as plain Claude Code on the user's own Anthropic login, answer
+            # perfectly, and bill the wrong vendor with nothing anywhere saying
+            # so. Only the account work below needs a redirected directory.
+            return _spawn_env(term)
         from jarvis import agent_config_parity
 
         with agent_config_parity.setup_lock(home):

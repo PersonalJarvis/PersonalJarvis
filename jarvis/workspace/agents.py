@@ -576,6 +576,11 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         kind="shell",
         needs_trust=False,
         description="This machine's own shell — no agent, just a prompt.",
+        # A shell draws no TUI input line, so waiting for one would wait
+        # forever. It is never prompted programmatically anyway (see
+        # ``accepts_prompts``), but "ready" is asked about it, and the honest
+        # answer is that a live shell is ready the moment it exists.
+        needs_input_line_wait=False,
     ),
 }
 
