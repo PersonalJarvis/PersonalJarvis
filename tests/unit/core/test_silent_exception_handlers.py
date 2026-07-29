@@ -89,6 +89,19 @@ def test_a_bare_lint_escape_is_still_counted(tmp_path):
     """) == 1
 
 
+def test_reason_on_its_own_line_counts(tmp_path):
+    """The most natural place to write a longer reason is a line of its own."""
+    assert _count(tmp_path, """
+        def f():
+            try:
+                g()
+            except OSError:
+                # The marker file is absent on every source checkout, which is
+                # the common path rather than a failure.
+                return None
+    """) == 0
+
+
 def test_reason_on_the_first_body_line_counts(tmp_path):
     assert _count(tmp_path, """
         def f():

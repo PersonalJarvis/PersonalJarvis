@@ -131,13 +131,14 @@ def _justified(lines: list[str], handler: ast.ExceptHandler) -> bool:
     probe, a best-effort cleanup on teardown. What separates those from the bug
     class is that somebody decided it, and said so. A bare ``# noqa: BLE001``
     is a lint escape, not a decision, so lint codes are stripped before the
-    prose is measured. The reason may sit on the ``except`` line or on the
-    first line of its body.
+    prose is measured. The reason may sit on the ``except`` line, on any comment
+    line between it and the first statement, or trailing that statement — all
+    three are normal ways to write it, and a gate accepting only one shape would
+    just teach people to move the comment.
     """
-    candidates = [handler.lineno]
-    if handler.body:
-        candidates.append(handler.body[0].lineno)
-    for lineno in candidates:
+    if not handler.body:
+        return False
+    for lineno in range(handler.lineno, handler.body[0].lineno + 1):
         if not 0 < lineno <= len(lines):
             continue
         match = _COMMENT.search(lines[lineno - 1])

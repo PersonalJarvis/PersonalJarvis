@@ -106,6 +106,8 @@ def _running_version() -> str:
 
         return str(jarvis.__version__)
     except (ImportError, AttributeError):
+        # A source checkout without __version__ is normal; the caller falls
+        # back to reading the version files.
         return "unknown"
 
 
@@ -123,6 +125,10 @@ def _version_on_disk(root: Path) -> str | None:
         try:
             text = (root / rel).read_text(encoding="utf-8")
         except OSError:
+            # Not "file absent" alone — an unreadable version file makes the
+            # installed version look older than it is, which shows up as an
+            # update that keeps re-offering itself. Worth a line before moving on.
+            log.debug("[update] version file %s unreadable; trying the next", rel)
             continue
         m = re.search(pattern, text, re.MULTILINE)
         if m:
@@ -142,7 +148,9 @@ def _naive_version_gt(a: str, b: str) -> bool:
 
     try:
         return parts(a) > parts(b)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - unparseable version is never "newer"
+        # Fail closed: an update is offered only when we can actually prove the
+        # remote version is higher. Never blind-update on a parse failure.
         return False
 
 
@@ -159,6 +167,8 @@ def _is_newer(latest: str, current: str) -> bool:
 
         return Version(latest) > Version(current)
     except ImportError:
+        # `packaging` is not in the torch-free base install on every host; the
+        # dotted-int compare below covers the SemVer tags releases actually use.
         return _naive_version_gt(latest, current)
     except Exception:  # noqa: BLE001 - malformed versions are never newer
         return False
@@ -173,6 +183,8 @@ def _versions_equal(left: str, right: str) -> bool:
 
         return Version(left) == Version(right)
     except ImportError:
+        # Same as _is_newer: no `packaging` on a minimal install, so fall back
+        # to an exact match on a strict dotted shape.
         dotted = re.compile(r"^\d+(?:\.\d+){2,3}$")
         return bool(dotted.fullmatch(left) and left == right)
     except Exception:  # noqa: BLE001 - malformed versions never compare equal
@@ -192,10 +204,13 @@ async def _terminate(proc: asyncio.subprocess.Process) -> None:
             await asyncio.wait_for(proc.wait(), timeout=0.05)
             return
         except (TimeoutError, asyncio.CancelledError):
+            # It ignored SIGTERM within the grace period; escalate to kill below.
             pass
         proc.kill()
         await proc.wait()
     except (ProcessLookupError, OSError):
+        # The child is already gone — which is exactly what this function is
+        # for. Nothing to report.
         pass
 
 
@@ -215,12 +230,16 @@ async def _run(cmd: list[str], *, cwd: Path, timeout_s: float) -> tuple[int, str
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
     except (FileNotFoundError, OSError, NotImplementedError) as exc:
+        # Not swallowed: the reason travels back to the caller in stderr and
+        # ends up in the update status the user sees.
         return -1, "", f"could not run {cmd[0]}: {exc}"
 
     try:
         try:
             raw_out, raw_err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
         except TimeoutError:
+            # Same contract: the timeout is reported through stderr, and the
+            # child is reaped first so no zombie survives the request.
             await _terminate(proc)
             return -1, "", f"{cmd[0]} timed out after {timeout_s:.0f}s"
         except asyncio.CancelledError:
@@ -254,7 +273,10 @@ def _repo_root() -> Path | None:
 
         # .../repo/jarvis/__init__.py -> .../repo
         return Path(jarvis.__file__).resolve().parent.parent
-    except Exception:  # noqa: BLE001 — never fatal
+    except Exception:  # noqa: BLE001 - an unlocatable checkout is not updatable
+        # Returning None makes the managed-install guard fail closed: no root,
+        # no update. Silent on purpose — this runs on every status poll, and a
+        # namespace package without __file__ is a legitimate deployment shape.
         return None
 
 
@@ -360,6 +382,7 @@ def _managed_install_profile(root: Path) -> InstallProfile:
     try:
         payload = json.loads((root / _MARKER_NAME).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        # A source checkout has no install marker; the defaults below apply.
         payload = {}
     if isinstance(payload, dict):
         profile = payload.get("profile")
@@ -401,7 +424,12 @@ def _write_pending_update(
     try:
         (root / _UPDATE_RESULT_NAME).unlink(missing_ok=True)
     except OSError:
-        pass
+        # A result file we failed to clear is read again on the next boot and
+        # reports the PREVIOUS run's outcome as if it were this one's.
+        log.warning(
+            "[update] could not clear %s; a stale result may be reported next boot",
+            _UPDATE_RESULT_NAME,
+        )
 
 
 def _read_pending_manifest(root: Path) -> dict[str, Any] | None:
@@ -413,6 +441,8 @@ def _read_pending_manifest(root: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads((root / _PENDING_UPDATE_NAME).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        # No pending update is the normal case, and a half-written marker is
+        # indistinguishable from it here; either way there is nothing to resume.
         return None
     if not isinstance(payload, dict) or payload.get("schema") != 1:
         return None
@@ -438,6 +468,8 @@ def _read_update_result(root: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads((root / _UPDATE_RESULT_NAME).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        # Absent on every boot that did not just apply an update — the common
+        # path, not a failure.
         return None
     if not isinstance(payload, dict) or not isinstance(payload.get("ok"), bool):
         return None
