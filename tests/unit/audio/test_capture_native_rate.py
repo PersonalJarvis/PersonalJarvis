@@ -48,20 +48,21 @@ async def test_native_rate_fallback_resamples_to_16khz_contract(
     await mic._try_open_stream()
 
     assert [call["samplerate"] for call in open_calls] == [16_000, native_rate]
-    assert open_calls[-1]["blocksize"] == native_rate // 10
+    expected_native_block = round(capture.BLOCKSIZE * native_rate / capture.SAMPLE_RATE)
+    assert open_calls[-1]["blocksize"] == expected_native_block
     assert mic._capture_sample_rate == native_rate
     assert mic._capture_resampler is not None
 
-    # One 100 ms native-rate callback must remain one approximately 100 ms
+    # One low-latency native-rate callback must remain one approximately 32 ms
     # downstream chunk while advertising the unchanged 16 kHz contract.
-    native_frames = np.arange(native_rate // 10, dtype="<i2").reshape(-1, 1)
+    native_frames = np.arange(expected_native_block, dtype="<i2").reshape(-1, 1)
     mic._callback(native_frames, native_frames.shape[0], None, None)
     await asyncio.sleep(0)
     chunk = mic._queue.get_nowait()
 
     assert chunk.sample_rate == 16_000
     assert chunk.channels == 1
-    assert len(chunk.pcm) // 2 == 1_600
+    assert len(chunk.pcm) // 2 == pytest.approx(capture.BLOCKSIZE, abs=1)
 
 
 @pytest.mark.asyncio

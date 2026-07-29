@@ -12,6 +12,7 @@ and performs a stateful CPU resample before yielding each chunk.
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -36,8 +37,25 @@ from jarvis.core.protocols import AudioChunk
 
 SAMPLE_RATE = 16_000       # Whisper native rate
 CHANNELS = 1               # Mono is sufficient for speech
-BLOCKSIZE = 1600           # 100 ms blocks — compromise between latency and CPU overhead
+# One native Silero frame. The previous 1,600-frame / 100 ms callback made
+# every capture consumer wait up to 100 ms before it could see speech, silence,
+# or a barge-in edge; the VAD split that block back into 512-frame pieces anyway.
+# Delivering the model's native 32 ms unit removes that fixed batching delay
+# without increasing inference work or changing the PCM presented downstream.
+BLOCKSIZE = 512
 DTYPE = "int16"
+
+CAPTURE_BLOCK_DURATION_S = BLOCKSIZE / SAMPLE_RATE
+
+
+def capture_chunks_for_duration(seconds: float) -> int:
+    """Return the default-size chunk count covering at least ``seconds``."""
+    return max(1, math.ceil(max(0.0, float(seconds)) / CAPTURE_BLOCK_DURATION_S))
+
+
+# Preserve the old bulk-queue duration after reducing the callback block size.
+# Queue bounds are time budgets, not magic chunk counts.
+DEFAULT_QUEUE_CHUNKS = capture_chunks_for_duration(2.0)
 
 
 class MicrophoneAccessError(PermissionError):
@@ -79,7 +97,7 @@ def _macos_microphone_access_gate() -> Callable[[], bool] | None:
 # yet deep enough to absorb normal scheduling jitter on a machine that keeps up
 # (which never fills it). Bulk recorders that must keep every frame
 # (push-to-talk, dictation) use the deeper default instead. See MicrophoneCapture.
-REALTIME_QUEUE_CHUNKS = 6
+REALTIME_QUEUE_CHUNKS = capture_chunks_for_duration(0.6)
 
 # Input NAMES we never open as a microphone: playback/loopback/monitor sources
 # (opening one feeds constant hiss or TTS echo into the wake path) and GPU-HDMI
@@ -654,7 +672,7 @@ class MicrophoneCapture:
         sample_rate: int = SAMPLE_RATE,
         blocksize: int = BLOCKSIZE,
         channels: int = CHANNELS,
-        max_queue_chunks: int = 20,
+        max_queue_chunks: int = DEFAULT_QUEUE_CHUNKS,
         device_priority: Sequence[str] | None = None,
         access_gate: Callable[[], bool] | None = None,
     ) -> None:
@@ -699,8 +717,9 @@ class MicrophoneCapture:
         # Queue bridges PortAudio thread → asyncio. maxsize bounds how STALE the
         # audio a consumer sees may get: with the drop-OLDEST policy in
         # ``_safe_put`` a full queue always holds the most-recent
-        # ``max_queue_chunks`` blocks, so worst-case staleness ==
-        # max_queue_chunks x 100 ms. The default 20 (~2 s) is generous back-
+        # ``max_queue_chunks`` blocks, so worst-case staleness is the queue
+        # depth times the configured block duration. The default stays at ~2 s
+        # after the low-latency 32 ms block change and is generous back-
         # pressure for a bulk consumer (push-to-talk, which records every frame).
         # A REAL-TIME detection consumer (VAD endpointing, wake) passes a SHALLOW
         # depth (~0.6 s) so that on a CPU that can't keep up the end-of-speech

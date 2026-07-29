@@ -34,6 +34,7 @@ from jarvis.audio import level_tap, mic_level
 from jarvis.audio.capture import (
     REALTIME_QUEUE_CHUNKS,
     MicrophoneCapture,
+    capture_chunks_for_duration,
     pcm_bytes_to_np,
 )
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
@@ -979,8 +980,9 @@ _DICTATION_ERROR_BACKOFF_MAX_S = 12.0
 # drops the OLDEST chunk when it overflows — correct for wake/VAD, where stale
 # audio is worse than missing audio, and exactly wrong here: for a dictation
 # every frame is the user's words. ~10 s of slack absorbs a provider stall
-# without deleting speech (the default 20 chunks is 2 s).
-_DICTATION_CAPTURE_QUEUE_CHUNKS = 100
+# without deleting speech. Express it as time so capture-block tuning never
+# silently shrinks the safety margin.
+_DICTATION_CAPTURE_QUEUE_CHUNKS = capture_chunks_for_duration(10.0)
 
 
 class _SessionInputBuffer:
@@ -6378,8 +6380,14 @@ class SpeechPipeline:
 
     async def _run_parallel_wake(self) -> None:
         """Fan one wake microphone into all detectors until the first hit."""
-        oww_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-        whisper_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        # Detector backlogs are latency budgets, not arbitrary chunk counts.
+        # Keep OWW within ~0.6 s and the slower Whisper consumer within ~1.2 s;
+        # both queues drop oldest on overflow, so an overloaded host evaluates
+        # recent audio instead of a wake word heard several seconds ago.
+        oww_queue: asyncio.Queue = asyncio.Queue(maxsize=REALTIME_QUEUE_CHUNKS)
+        whisper_queue: asyncio.Queue = asyncio.Queue(
+            maxsize=REALTIME_QUEUE_CHUNKS * 2
+        )
         detector_queues = [oww_queue] if self._openwakeword_enabled else []
         if self._whisper_wake_enabled and self._whisper_wake is not None:
             detector_queues.append(whisper_queue)
@@ -6395,7 +6403,9 @@ class SpeechPipeline:
         # needs to re-arm fanout.
         ring_bytes = bytearray()
         RING_MAX = 16_000 * 2 * 3  # ~3 s
-        recent_chunks: deque[AudioChunk] = deque(maxlen=2)  # ~200 ms overlap
+        recent_chunks: deque[AudioChunk] = deque(
+            maxlen=capture_chunks_for_duration(0.2)
+        )  # ~200 ms overlap
         wake_confirmed = False
         handoff_buffer: _SessionInputBuffer | None = None
 
@@ -6483,7 +6493,7 @@ class SpeechPipeline:
 
         async def _run_oww() -> str:
             # Capability-gated catch-up: a detector that can consume variable
-            # chunk sizes (vosk_kws) advertises how many backlogged 100 ms
+            # chunk sizes (vosk_kws) advertises how many backlogged capture
             # blocks may be coalesced into one catch-up batch, so a busy CPU
             # never leaves it grinding through seconds-stale audio (the
             # inconsistent multi-second wake delay, live 2026-07-21).
