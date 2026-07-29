@@ -32,9 +32,17 @@ class _Engine(LocalPreviewTranscriber):
     not finished loading answers "nothing yet" without transcribing anything.
     """
 
-    def __init__(self, text="hallo welt", delay=0.0, error=None):  # i18n-allow: German test fixture
+    def __init__(
+        self,
+        text="hallo welt",  # i18n-allow: German test fixture
+        delay=0.0,
+        error=None,
+        detected="",
+        probability=0.0,
+    ):
         super().__init__()
         self.text, self.delay, self.error = text, delay, error
+        self.detected, self.probability = detected, probability
         self.calls = 0
         self._model = object()  # pretend the load already completed
 
@@ -46,7 +54,7 @@ class _Engine(LocalPreviewTranscriber):
             import time
 
             time.sleep(self.delay)
-        return self.text
+        return self.text, self.detected, self.probability
 
 
 async def test_preview_text_comes_back():
@@ -169,3 +177,72 @@ def test_the_device_probe_falls_back_to_cpu_when_cuda_is_not_usable(monkeypatch)
 
     monkeypatch.setattr(builtins, "__import__", _no_torch)
     assert LocalPreviewTranscriber._pick_device() == ("cpu", "int8")
+
+
+async def test_the_audio_language_reading_is_kept_not_discarded():
+    """The decoder names the spoken language on every call; the preview keeps it.
+
+    This reading is the only one taken from the AUDIO. A cloud provider handed
+    a few seconds of speech may TRANSLATE it, and translated words look like
+    the target language to any text-based detector — so a reading taken after
+    the fact cannot replace this one.
+    """
+    # i18n-allow: German test fixture — the speech under test
+    engine = _Engine(text="hallo welt", detected="de", probability=0.99)
+
+    assert await engine.transcribe(b"\x00" * 32000) == "hallo welt"
+    assert engine.last_language == "de"
+    assert engine.last_language_probability == 0.99
+
+
+class _Segment:
+    def __init__(self, text):
+        self.text = text
+
+
+class _Info:
+    def __init__(self, language, probability):
+        self.language = language
+        self.language_probability = probability
+
+
+class _NativeModel:
+    """Stands in for the real decoder, which always names a language."""
+
+    def __init__(self, text, language, probability):
+        self._answer = (text, language, probability)
+        self.asked_for: list[str | None] = []
+
+    def transcribe(self, samples, language=None, **kwargs):
+        self.asked_for.append(language)
+        text, detected, probability = self._answer
+        return [_Segment(text)], _Info(detected, probability)
+
+
+def test_a_pinned_language_is_not_reported_back_as_a_detection():
+    """Otherwise a pin would confirm itself forever and never be re-examined.
+
+    Runs the REAL decode path — the point is what the engine does with the
+    decoder's answer, so a stub that skips that step would prove nothing.
+    """
+    engine = LocalPreviewTranscriber()
+    # The decoder is handed "de" and, as it always does, echoes a language back.
+    engine._model = _NativeModel("Hallo Welt", "de", 1.0)  # i18n-allow: German test fixture
+
+    text, detected, probability = engine._transcribe_sync(b"\x00" * 32000, "de")
+
+    assert text == "Hallo Welt"  # i18n-allow: German test fixture
+    assert detected == "", (
+        "a language the caller supplied is an instruction, not a reading"
+    )
+    assert probability == 1.0
+
+
+def test_an_unpinned_decode_reports_the_language_it_found():
+    engine = LocalPreviewTranscriber()
+    engine._model = _NativeModel("Hallo Welt", "de", 0.98)  # i18n-allow: German test fixture
+
+    text, detected, probability = engine._transcribe_sync(b"\x00" * 32000, None)
+
+    assert (detected, probability) == ("de", 0.98)
+    assert text == "Hallo Welt"  # i18n-allow: German test fixture

@@ -82,6 +82,16 @@ class LocalPreviewTranscriber:
         self._unavailable = False
         self._loading = False
         self._load_failed = False
+        #: Language of the MOST RECENT preview, as ``(code, probability)``.
+        #: The engine computes this on every call and it used to be discarded.
+        #: It is the only reading of the spoken language taken from the AUDIO
+        #: rather than from a transcript, which is what makes it worth keeping:
+        #: a cloud provider handed a few seconds of speech may silently
+        #: TRANSLATE it, and a translated sentence looks like the wrong
+        #: language to any text-based detector (BUG: German dictation
+        #: delivered in English, 2026-07-29). Empty until a preview has run.
+        self.last_language = ""
+        self.last_language_probability = 0.0
 
     @property
     def available(self) -> bool:
@@ -140,22 +150,37 @@ class LocalPreviewTranscriber:
             log.debug("Preview CUDA probe failed (%s); using CPU.", exc)
         return "cpu", "int8"
 
-    def _transcribe_sync(self, pcm: bytes, language: str | None) -> str:
+    def _transcribe_sync(self, pcm: bytes, language: str | None) -> tuple[str, str, float]:
+        """``(text, language_code, language_probability)``.
+
+        The language is reported back rather than dropped: it costs nothing
+        (the decoder already produced it) and it is an AUDIO-derived reading,
+        which no downstream text inspection can reconstruct once a provider
+        has translated the words.
+        """
         import numpy as np
 
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if samples.size == 0:
-            return ""
+            return "", "", 0.0
         model = self._model
         if model is None:  # pragma: no cover — transcribe() gates on ready
-            return ""
-        segments, _info = model.transcribe(
+            return "", "", 0.0
+        segments, info = model.transcribe(
             samples,
             language=language,
             beam_size=1,  # greedy: the preview trades a little accuracy for latency
             condition_on_previous_text=False,
         )
-        return " ".join(seg.text for seg in segments).strip()
+        text = " ".join(seg.text for seg in segments).strip()
+        # A language the CALLER pinned is not a detection — reporting it back as
+        # one would let a pin confirm itself forever.
+        detected = "" if language else str(getattr(info, "language", "") or "")
+        try:
+            probability = float(getattr(info, "language_probability", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            probability = 0.0
+        return text, detected, probability
 
     async def transcribe(self, pcm: bytes, language: str | None = None) -> str | None:
         """Preview text, or ``None`` when this tick has none.
@@ -181,10 +206,14 @@ class LocalPreviewTranscriber:
             # call on a native engine is how it wedges (AP-24).
             return None
         try:
-            return await asyncio.wait_for(
+            text, detected, probability = await asyncio.wait_for(
                 asyncio.to_thread(self._transcribe_sync, pcm, language),
                 timeout=PREVIEW_TIMEOUT_S,
             )
+            if detected:
+                self.last_language = detected
+                self.last_language_probability = probability
+            return text
         except TimeoutError:
             # Not silent: _note_failure logs the attempt and drops the engine once
             # the failures persist. Returning None is the whole handling — a

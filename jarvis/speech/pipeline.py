@@ -995,6 +995,73 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
         log.debug("dictation language detection failed", exc_info=True)
     return tag
 
+
+#: How sure the on-device detector must be before its reading is allowed to pin
+#: the rest of a session. The engine answers ~1.0 on a few seconds of clear
+#: speech and drops sharply on noise or silence, so this rejects the readings
+#: that would pin the WRONG language while costing nothing on real speech.
+_RECOGNITION_PIN_MIN_PROBABILITY = 0.6
+
+
+def resolve_recognition_language(*, pinned: str, session_language: str) -> str:
+    """Which language to ASK the provider for on the next piece of audio.
+
+    Distinct from :func:`resolve_dictation_language`, which labels a finished
+    dictation. This one runs BEFORE a transcription and decides what the
+    recogniser is told, which is a different question with a different failure:
+
+    ``auto`` reaches a provider as "no language field", i.e. "detect it
+    yourself". Whisper detects from the audio it is given, and a dictation is
+    uploaded in ~4 s segments — far too little for a confident reading. On a
+    short segment the model does not merely mislabel the language, it
+    TRANSLATES: the same German recording came back verbatim when posted whole
+    and as fluent English when posted in segments, and re-running one segment
+    flipped between the two (measured against openai/whisper-large-v3 through
+    OpenRouter, 2026-07-29). Nothing downstream can undo that — a translated
+    sentence IS English to every text-based detector — so the repair has to
+    happen before the call.
+
+    The fix is to stop asking twice. Once a session has an AUDIO-derived
+    reading of what is being spoken, every later piece is told that language
+    explicitly instead of gambling on four seconds of context. Auto-detect is
+    preserved where it belongs: the session still starts on ``auto``, and the
+    reading is renewed from the audio as the session runs, so switching
+    language mid-dictation still lands (the bilingual mandate — a static pin
+    was the 2026-06-14 bug and is not what this restores).
+
+    Precedence, and the order is the point:
+
+    1. **A user's pin wins.** It is the one signal a person can set.
+    2. **Otherwise this session's own reading**, when there is one.
+    3. **Otherwise ``auto``** — a provider that detects well on the audio it
+       has is not made worse by being asked to.
+    """
+    pin = str(pinned or "").strip().lower()
+    if pin and pin != "auto":
+        return pin
+    session = str(session_language or "").strip().lower()
+    return session or "auto"
+
+
+def accept_recognition_reading(*, language: str, probability: float) -> str:
+    """The session language an on-device reading justifies; ``""`` for none.
+
+    Gate-keeps :func:`resolve_recognition_language`'s second precedence step.
+    A reading only earns the right to steer later segments when the detector
+    was actually sure, because the cost of accepting a bad one is a whole
+    dictation pinned to a language nobody spoke.
+    """
+    code = str(language or "").strip().lower()
+    if not code or code in ("auto", "unknown", "und", "nn"):
+        return ""
+    try:
+        if float(probability) < _RECOGNITION_PIN_MIN_PROBABILITY:
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    return code
+
+
 # After this many consecutive pieces have exhausted every attempt, the provider
 # is not flaky, it is down — and continuing to retry each remaining piece would
 # make a 300 s dictation spend minutes proving it. Stop and say so: the audio is
@@ -9111,6 +9178,13 @@ class SpeechPipeline:
         dictation_language = (
             str(getattr(cfg, "language", "auto") or "auto").strip().lower() or "auto"
         )
+        # What THIS session has established is being spoken, read from the audio
+        # rather than from a transcript. Empty until a reading earns it; once
+        # set, every later segment is told this language instead of asking a
+        # 4-second clip to detect it — the whole of the German-in, English-out
+        # repair (see ``resolve_recognition_language``). It is re-read as the
+        # session runs, so a user who switches language is followed, not pinned.
+        session_language = ""
 
         async def _transcribe(
             pcm: bytes,
@@ -9150,17 +9224,20 @@ class SpeechPipeline:
             """
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
-            nonlocal stt_error, stt_error_detail
+            nonlocal stt_error, stt_error_detail, session_language
             ceiling = max(
                 float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
                 (len(pcm) / bytes_per_second)
                 * _DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S,
             )
+            ask_for = resolve_recognition_language(
+                pinned=dictation_language, session_language=session_language
+            )
             inference_active.set()
             try:
                 try:
                     transcript = await asyncio.wait_for(
-                        stt.transcribe_pcm(pcm, language=dictation_language),
+                        stt.transcribe_pcm(pcm, language=ask_for),
                         timeout=ceiling,
                     )
                 except TypeError:
@@ -9283,7 +9360,7 @@ class SpeechPipeline:
 
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
-            nonlocal last_published, language, error_backoff_s
+            nonlocal last_published, language, error_backoff_s, session_language
             from jarvis.dictation.local_preview import local_preview
             from jarvis.dictation.preview_budget import preview_budget
             from jarvis.dictation.segment import is_silent_segment
@@ -9335,13 +9412,37 @@ class SpeechPipeline:
                     # itself is never produced here.
                     engine = local_preview() if want_preview else None
                     if engine is not None:
+                        ask_local = resolve_recognition_language(
+                            pinned=dictation_language,
+                            session_language=session_language,
+                        )
                         local_text = await engine.transcribe(
                             tail,
-                            language=None if dictation_language == "auto"
-                            else dictation_language,
+                            language=None if ask_local == "auto" else ask_local,
                         )
                         if stop_event.is_set():
                             return
+                        # The reading this preview took from the AUDIO. Free —
+                        # the decoder produced it either way — and the only
+                        # reading a cloud provider's translated words cannot
+                        # contradict. It steers the segment uploads that
+                        # actually produce the transcript.
+                        if not session_language:
+                            accepted = accept_recognition_reading(
+                                language=getattr(engine, "last_language", ""),
+                                probability=getattr(
+                                    engine, "last_language_probability", 0.0
+                                ),
+                            )
+                            if accepted:
+                                session_language = accepted
+                                log.info(
+                                    "dictation recognition language established "
+                                    "from the audio: %s — later segments are "
+                                    "transcribed as that language instead of "
+                                    "re-detecting on each one.",
+                                    accepted,
+                                )
                         if local_text is not None:
                             tail_text = local_text
                             want_preview = False  # served without touching the quota
