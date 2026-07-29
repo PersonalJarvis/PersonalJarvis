@@ -9524,7 +9524,7 @@ class SpeechPipeline:
             only postpones a read; here it ends it, and the seconds behind those
             bytes are words the user said that nothing will ever transcribe.
             """
-            nonlocal language, session_peak, lost_audio_bytes
+            nonlocal language, session_peak, lost_audio_bytes, session_language
             from jarvis.dictation.segment import (
                 is_silent_segment,
                 quietest_cut,
@@ -9568,6 +9568,25 @@ class SpeechPipeline:
                     if ok:
                         if text:
                             parts.append(text)
+                        # The FIRST piece to come back decides the language for
+                        # the rest of this recording. Without it every piece is
+                        # asked to detect independently, and the answers
+                        # disagree inside one dictation — which is not a
+                        # cosmetic mislabel, because a piece detected wrongly
+                        # comes back TRANSLATED. That is the reported "it keeps
+                        # switching between German and English mid-transcript":
+                        # one paragraph in the language spoken, the next one in
+                        # English, from a single continuous recording.
+                        #
+                        # This piece is a full segment (~8 s) rather than the
+                        # ~4 s the live probe works with, so it is the best
+                        # reading available here — and it is only consulted when
+                        # neither a user pin nor the cross-dictation anchor has
+                        # already answered, both of which outrank it.
+                        if not session_language:
+                            code = str(lang or "").strip().lower()
+                            if code and code not in ("auto", "unknown", "und"):
+                                session_language = code
                         dead_streak = 0
                         piece_read = True
                         break
@@ -9904,6 +9923,42 @@ class SpeechPipeline:
         # guesses instead of waiting its turn behind them.
         readings.extend([code] * (readings.maxlen if on_device else 1))
 
+    def _prime_dictation_language_anchor(self) -> None:
+        """Seed the anchor from the stored history, once per process.
+
+        Without this the anchor is empty after every app start, so the first
+        short dictation of a session is back to asking two seconds of audio
+        which language it is — the exact case this exists to avoid. The history
+        already holds the answer: what this person dictated in yesterday is a
+        better opening guess than nothing at all.
+
+        Cheap enough to do inline (measured: ~1.6 ms for a 147 KB history) and
+        it happens on the first dictation, never at boot (AP-26). Failure is a
+        no-op: an unreadable history costs an opening guess, never a dictation.
+        """
+        if getattr(self, "_dictation_anchor_primed", False):
+            return
+        self._dictation_anchor_primed = True
+        try:
+            from jarvis.dictation.history import DictationHistory
+
+            entries = DictationHistory().list_all(include_discarded=True)
+            recent = [
+                entry
+                for entry in entries
+                if float(getattr(entry, "duration_s", 0.0) or 0.0)
+                >= self._LANGUAGE_ANCHOR_MIN_S
+            ][: self._LANGUAGE_ANCHOR_HISTORY]
+            # Oldest first, so the newest readings are the ones the bounded
+            # window keeps — a person who switched language last week must not
+            # be anchored to the language they used before that.
+            for entry in reversed(recent):
+                self._remember_dictation_language(
+                    str(getattr(entry, "language", "") or ""), on_device=False
+                )
+        except Exception:  # noqa: BLE001 — an opening guess is never worth a failure
+            log.debug("dictation language anchor priming failed", exc_info=True)
+
     def _recent_dictation_language(self) -> str:
         """The language recent dictations agree on, or ``""`` when unclear.
 
@@ -9912,6 +9967,7 @@ class SpeechPipeline:
         than the last reading, so a single mis-detected clip cannot redirect the
         next one; ties resolve to ``""``, which simply restores auto-detect.
         """
+        self._prime_dictation_language_anchor()
         readings = getattr(self, "_dictation_language_readings", None)
         if not readings:
             return ""

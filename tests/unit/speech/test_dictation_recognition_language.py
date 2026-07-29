@@ -115,10 +115,19 @@ class TestTheBugItself:
 # ---------------------------------------------------------------------------
 
 
-def _pipeline():
+def _pipeline(*, primed: bool = True):
+    """A bare pipeline for the anchor logic.
+
+    ``primed`` marks the history seed as already done, so these tests exercise
+    the arithmetic on readings they control instead of on whatever the machine
+    running them happens to have dictated. The seeding itself is tested
+    separately, against a history built for the purpose.
+    """
     from jarvis.speech.pipeline import SpeechPipeline
 
-    return SpeechPipeline.__new__(SpeechPipeline)
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_anchor_primed = primed
+    return pipe
 
 
 def test_a_fresh_pipeline_anchors_nothing() -> None:
@@ -219,3 +228,55 @@ def test_a_user_pin_still_outranks_the_anchor() -> None:
         )
         == "de"
     )
+
+
+def test_the_anchor_is_seeded_from_the_stored_history(tmp_path, monkeypatch) -> None:
+    """After an app start the anchor must not be empty.
+
+    Without seeding, the first short dictation of every session is back to
+    asking two seconds of audio which language it is — the exact case this
+    exists to avoid, reintroduced once per restart. The history already holds
+    the answer.
+
+    Only LONG entries are allowed to seed it, for the same reason only long
+    dictations vote: a short one is what the provider gets wrong, so letting it
+    seed would let the guess teach itself.
+    """
+    from jarvis.dictation.history import DictationHistory
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    path = tmp_path / "history.json"
+    store = DictationHistory(path)
+    # Two long German dictations and a pile of short ones mis-tagged English —
+    # the real shape of the bug this seed is for.
+    for _ in range(6):
+        store.add(raw_text="x", text="x", language="en", duration_s=1.5)
+    for _ in range(2):
+        store.add(raw_text="y", text="y", language="de", duration_s=12.0)
+
+    monkeypatch.setattr(
+        "jarvis.dictation.history.default_history_path", lambda: path
+    )
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+
+    assert pipe._recent_dictation_language() == "de"
+
+
+def test_seeding_happens_once_even_when_the_history_is_unreadable(
+    tmp_path, monkeypatch
+) -> None:
+    """A broken history costs an opening guess, never a dictation."""
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    calls: list[int] = []
+
+    def _boom():
+        calls.append(1)
+        raise OSError("history is on a disconnected drive")
+
+    monkeypatch.setattr("jarvis.dictation.history.default_history_path", _boom)
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+
+    assert pipe._recent_dictation_language() == ""
+    assert pipe._recent_dictation_language() == ""
+    assert len(calls) == 1, "the seed must not be retried on every dictation"
