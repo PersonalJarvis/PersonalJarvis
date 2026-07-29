@@ -8936,7 +8936,32 @@ class BrainManager:
             )
             return confirmation
 
-        switch_target = self._detect_switch_intent(user_text)
+        # An addressed Agentic-IDE pane outranks every self-configuration gate
+        # below — the same precedence the desktop gate already honours further
+        # down (``_agentic_ide_owns_turn`` there), applied here because the
+        # config gates run FIRST and therefore get the only chance to be wrong.
+        #
+        # Live 2026-07-28 20:34, coding mode on, six panes open: a spoken
+        # order to brief two of them was claimed by the reply-language gate on
+        # three unrelated words scattered across the utterance. It applied the
+        # setting and returned, so ``_run_agentic_ide_fast_path`` below never
+        # ran and no agent was briefed — while the live model, which is told
+        # none of this, reported both as working. The gate's own proximity
+        # bound (``voice_command_gate._match_language_switch``) is the first
+        # fix; this is the second, because a config gate winning a turn that
+        # NAMES A RUNNING AGENT is wrong however plausible its match looked —
+        # briefing an agent and changing a setting are not things a user can
+        # mean at the same time.
+        #
+        # Deliberately NOT applied to the cancel intercept above: stopping work
+        # is a safety control and must keep working under every phrasing.
+        # Cheap enough for the hot path — an in-memory regex sweep, no IO and
+        # no model call (AP-9/AP-11) — and it answers "no" on any fault.
+        ide_owns_turn = self._agentic_ide_owns_turn(user_text)
+
+        switch_target = (
+            None if ide_owns_turn else self._detect_switch_intent(user_text)
+        )
         if switch_target:
             confirmation = await self._apply_main_provider_switch(switch_target)
             if confirmation:
@@ -8952,7 +8977,9 @@ class BrainManager:
         # heuristic so "stell auf Englisch um" sets brain.reply_language
         # directly (live + persisted) instead of being dispatched as a worker
         # mission (2026-06-22 forensic). Provider-independent: no LLM tool-call.
-        lang_switch = self._detect_language_switch_intent(user_text)
+        lang_switch = (
+            None if ide_owns_turn else self._detect_language_switch_intent(user_text)
+        )
         if lang_switch:
             confirmation = self._apply_reply_language_switch(lang_switch)
             if confirmation:
@@ -8968,7 +8995,9 @@ class BrainManager:
         # reasoning as the language switch: runs BEFORE the force-spawn/LLM path
         # so "switch the sub-agent provider to X" sets brain.sub_jarvis.provider
         # directly instead of escalating to a worker mission (2026-06-22 forensic).
-        subagent_switch = self._detect_subagent_switch_intent(user_text)
+        subagent_switch = (
+            None if ide_owns_turn else self._detect_subagent_switch_intent(user_text)
+        )
         if subagent_switch:
             confirmation = await self._apply_subagent_provider_switch(subagent_switch)
             if confirmation:
@@ -8980,7 +9009,9 @@ class BrainManager:
                 )
                 return confirmation
 
-        depth_override = self._detect_depth_override(user_text)
+        depth_override = (
+            None if ide_owns_turn else self._detect_depth_override(user_text)
+        )
         if depth_override in ("deep", "fast"):
             self._force_level = depth_override
             confirmation = self._depth_readback(depth_override)

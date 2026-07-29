@@ -8289,3 +8289,74 @@ its subject's lifetime past the point where anything wants it — and when the
 retry's side effect is spawning a process or a window, the leak becomes
 user-visible on a machine nobody is testing on. Hold the subject weakly and
 treat collection as cancellation.
+
+## BUG-120: a spoken order to brief two coding agents changes a SETTING instead — no prompt, no thought, and a confident report that both are working (HIGH, FIXED 2026-07-29)
+
+**Symptom (maintainer field report, voice session 2026-07-28 20:34).** Coding
+mode on, six panes open. The user asked, in one long dictated paragraph, for
+two named panes to be given split work. Jarvis answered "Alles klar, ich hab <!-- i18n-allow: verbatim quote of the runtime output under investigation -->
+T1 und T5 die Aufgaben gegeben …" ("sure, I gave T1 and T5 their tasks") and <!-- i18n-allow: verbatim quote of the runtime output under investigation -->
+named what each would do. Nothing had been written to either pane. No agent was briefed, and — the part that made
+this feel different from a delivery failure — nothing had even tried: no
+composer call, no fan-out, no brain turn.
+
+**Root cause (measured from the flight recorder, not inferred).** The turn was
+routed correctly (`path=orchestrator`, `reasons=…,workspace`) and the
+addressed-terminal detector was innocent: replayed against the verbatim
+transcript, `agentic_ide.intent.detect_all` returns T1 **and** T5,
+`kind='prompt'`. What killed it sits earlier. `BrainManager.generate` runs the
+deterministic self-configuration gates BEFORE the Agentic-IDE delivery path,
+and `voice_command_gate._match_language_switch` searched the WHOLE utterance
+for each ingredient of a language command *independently, with no proximity
+requirement*:
+
+| ingredient | matched | offset | what the user actually meant |
+|---|---|---|---|
+| language alias | the word for "automatically" | 458 | describing a bug — text is NOT inserted automatically |
+| `_LANG_OUTPUT_VERB` | the verb in "ask questions" | 866 | the panes should ASK if unsure |
+| `_LANG_PREP` | "in" | 398 | "in the text field" |
+
+Three unrelated clauses, up to 468 characters apart, assembled into "switch the
+reply language to auto". The gate applied it, persisted it to `jarvis.toml` and
+returned — 283 lines above `_run_agentic_ide_fast_path`. Timing confirms it end
+to end: `realtime_delegate_completed … success=True` after **519 ms**, where a
+real delivery needs 10-21 s for the prompt composer alone. A turn reported as
+successful that had done nothing but change a setting nobody asked about.
+
+The spoken confirmation was then handed to the live model, which re-renders
+injected text in its own words — so instead of "language set to automatic" the
+user heard a detailed account of a fleet briefing that never happened.
+
+**Fix (two layers, because either alone leaves the class open).**
+
+1. `_match_language_switch` binds its ingredients to a **window** around the
+   language word (`_command_window`: 60 characters, and never across a sentence
+   boundary). Scattered co-occurrence can no longer form a command. The
+   earliest QUALIFYING language still wins, so the 2026-06-27 first-language
+   rule is untouched; a language word with no command around it is skipped
+   instead of deciding the turn. `_language_words` also switched to `finditer`,
+   so a language named twice is judged at each place it appears.
+2. A turn that NAMES A RUNNING PANE outranks the self-configuration gates
+   altogether (`ide_owns_turn` in `generate`), the same precedence the desktop
+   gate already honours further down. Briefing an agent and changing a setting
+   are not things a user can mean at the same time. Deliberately NOT applied to
+   the cancel intercept: stopping work is a safety control and must keep
+   working under every phrasing.
+
+**Guards.** `tests/unit/brain/test_config_gate_vs_agentic_ide_routing.py` — the
+trimmed live transcript no longer reads as a language switch, both addressed
+panes are briefed end to end through `generate`, and a plain "switch to
+English" still works with six panes open. The precedence is proven
+independently of fix 1 by FORCING the detector to claim a language switch and
+asserting it is still overruled. `tests/unit/brain/test_voice_command_gate.py`
+adds the clause-proximity case. Verified sharp both ways: the trimmed
+transcript resolves to `auto` under the pre-fix matcher, and the forced-match
+test fails with the precedence removed.
+
+**Class rule.** A deterministic gate that assembles an intent from ingredients
+found ANYWHERE in the utterance will eventually assemble one out of a long
+dictated paragraph — the longer users talk, the likelier it is, so this gets
+worse exactly as voice input gets more natural. Bind every ingredient to a
+window around the anchor word. And when two deterministic gates can both claim
+a turn, the one holding the MORE SPECIFIC evidence must win: a named running
+agent beats a keyword match, however plausible the keyword looked.
