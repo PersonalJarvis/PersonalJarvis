@@ -68,7 +68,11 @@ class DictationEntry:
     raw_text: str
     #: What was actually inserted (equals ``raw_text`` when no cleanup applied).
     text: str
-    #: BCP-47-ish language the STT reported, or "" when unknown.
+    #: The language of the dictation as ONE code, or "" when none was
+    #: established. Normalised at the store boundary by
+    #: :func:`_normalize_language` — never stored the way a provider happened to
+    #: spell it, because four spellings of two languages is what the live
+    #: history actually grew (AP-4).
     language: str = ""
     #: Seconds of audio.
     duration_s: float = 0.0
@@ -222,7 +226,12 @@ class DictationHistory:
                         created_at=str(item.get("created_at") or ""),
                         raw_text=str(item.get("raw_text") or ""),
                         text=str(item.get("text") or ""),
-                        language=str(item.get("language") or ""),
+                        # Normalised on the way OUT as well as on the way in:
+                        # every row already on disk was written before this
+                        # store had a boundary, so the four live spellings are
+                        # collapsed here and the next _write persists the
+                        # collapsed value (F10).
+                        language=_normalize_language(item.get("language")),
                         duration_s=float(item.get("duration_s") or 0.0),
                         outcome=str(item.get("outcome") or ""),
                         method=str(item.get("method") or ""),
@@ -233,7 +242,11 @@ class DictationHistory:
                         # written by an older install reads as these defaults
                         # instead of failing — verified, not assumed
                         # (test_history_written_before_the_new_fields_reads_as_defaults).
-                        word_count=int(item.get("word_count") or 0),
+                        # word_count is the exception: its default is a
+                        # measurable value, so a legacy row is repaired rather
+                        # than left at a zero that would then be written back
+                        # forever (F9, see _healed_word_count).
+                        word_count=_healed_word_count(item),
                         discarded=bool(item.get("discarded") or False),
                         audio_path=(str(item["audio_path"]) if item.get("audio_path") else None),
                         error=(str(item["error"]) if item.get("error") else None),
@@ -289,7 +302,7 @@ class DictationHistory:
             created_at=datetime.now(UTC).isoformat(),
             raw_text=_clip(raw_text),
             text=_clip(text),
-            language=str(language or ""),
+            language=_normalize_language(language),
             duration_s=max(0.0, float(duration_s or 0.0)),
             outcome=str(outcome or ""),
             method=str(method or ""),
@@ -336,6 +349,13 @@ class DictationHistory:
             changes["raw_text"] = _clip(str(changes["raw_text"] or ""))
         if "text" in changes:
             changes["text"] = _clip(str(changes["text"] or ""))
+        if "language" in changes:
+            # The Restore route re-transcribes and writes the language its
+            # provider reported, so this is the fourth writer into the same
+            # field. Normalising HERE rather than there is what makes the
+            # boundary a boundary: a caller cannot re-introduce a fifth
+            # spelling by forgetting to collapse its own value first.
+            changes["language"] = _normalize_language(changes["language"])
         if "audio_path" in changes and changes["audio_path"] is not None:
             changes["audio_path"] = str(changes["audio_path"])
         try:
@@ -447,6 +467,101 @@ def _clip(text: str) -> str:
     if len(value) <= MAX_TEXT_LEN:
         return value
     return value[:MAX_TEXT_LEN] + " […truncated]"
+
+
+def _healed_word_count(item: dict[str, Any]) -> int:
+    """The stored word count, recomputed when the row never carried one.
+
+    ``word_count`` was added after the first release, so every row written
+    before it defaults to zero — and a zero is indistinguishable from a
+    measured "this dictation had no words". That matters because the lifetime
+    counters skip anything at or below zero
+    (:meth:`jarvis.dictation.stats.DictationStats.record`), so a history full of
+    obvious text reported a fraction of its own words: 26 counted for 41 rows on
+    the maintainer's machine. Worse, the zero was durable — every write rewrites
+    the whole file from what was read, so a default that is never repaired on
+    read is a default that gets persisted forever.
+
+    So a missing or zero count on a row that HAS text is treated as "never
+    measured" rather than "measured as none", and recomputed with the same
+    :func:`jarvis.dictation.cleanup.count_words` the writer would have used. The
+    next :meth:`DictationHistory._write` persists it, so the repair happens once
+    per row rather than on every read.
+
+    A row with no text at all keeps its zero: a failed or empty dictation really
+    did produce no words, and inventing one would break the counters in the
+    other direction. A stored count that is not a number is treated the same way
+    as a missing one — a broken field is worth healing, never worth dropping the
+    whole row over.
+    """
+    try:
+        stored = int(item.get("word_count") or 0)
+    except (TypeError, ValueError):
+        stored = 0
+    if stored > 0:
+        return stored
+    text = str(item.get("text") or "") or str(item.get("raw_text") or "")
+    if not text.strip():
+        return 0
+    from jarvis.dictation.cleanup import count_words
+
+    return count_words(text)
+
+
+#: Tags that are an answer of "we could not tell", not a language. ``auto`` is
+#: the REQUEST ("detect it") echoed back by a provider that had no opinion;
+#: ``unknown`` / ``und`` are what a recogniser says when detection failed. All
+#: three store as "" so "not detected" stays distinguishable from a real result.
+_NON_LANGUAGE_TAGS: frozenset[str] = frozenset({"auto", "unknown", "und"})
+
+
+def _normalize_language(tag: object) -> str:
+    """Collapse a provider's language tag to ONE spelling per row (AP-4).
+
+    The live history grew four spellings for two languages — ``"English"`` 27
+    rows, ``"German"`` 9, ``"de"`` 3, ``"en"`` 1, ``""`` 1 — because every
+    writer stored whatever its provider happened to say: a Whisper cloud
+    endpoint returns the English NAME, local faster-whisper returns an ISO code,
+    a BCP-47 pin returns ``"de-DE"``. Any consumer doing
+    ``{"de": ...}.get(entry.language)`` then misses on three rows out of four,
+    which is exactly the BUG-008 / AP-4 shape. The collapse therefore happens
+    HERE, at the store boundary, on the way in AND on the way out — not in each
+    of the four writers, where the fifth one to be added would forget.
+
+    Resolution, in order:
+
+    * an empty tag, or one of :data:`_NON_LANGUAGE_TAGS`, stores as ``""``;
+    * anything :func:`jarvis.core.turn_language.normalize_language_tag` resolves
+      stores as that code — ``de`` / ``en`` / ``es``;
+    * **anything else keeps what the recogniser said**, lower-cased and reduced
+      to its primary subtag (``"ja-JP"`` -> ``"ja"``). Never coerced, never
+      dropped.
+
+    That last rule is the load-bearing one. The canonical resolver knows only
+    the three product locales and answers ``"unknown"`` for the other ~96
+    languages dictation accepts (:data:`jarvis.core.config.RECOGNITION_LANGUAGES`),
+    so folding an unresolved tag into the default locale would relabel a
+    Japanese dictation as English — a worse lie than the drift this function
+    exists to remove. Storing ``""`` is the other bad answer: it erases the only
+    record of what was actually heard and makes a detected language look like a
+    failed detection. Keeping the tag costs nothing and stays honest.
+
+    The consequence is a bounded, deliberate residue: one code per row is EXACT
+    for de/en/es and best-effort canonicalisation elsewhere, so ``"Japanese"``
+    and ``"ja"`` can still coexist as two rows. Closing that needs a language
+    NAME -> code table covering all of ``RECOGNITION_LANGUAGES``, and it belongs
+    next to the canonical resolver in :mod:`jarvis.core.turn_language` — a
+    second private copy here would be the drift it is meant to prevent.
+    """
+    value = str(tag or "").strip().lower().replace("_", "-")
+    if not value or value in _NON_LANGUAGE_TAGS:
+        return ""
+    from jarvis.core.turn_language import normalize_language_tag
+
+    code = normalize_language_tag(value)
+    if code != "unknown":
+        return code
+    return value.split("-", 1)[0]
 
 
 def _holds_pending_recovery(entry: DictationEntry) -> bool:

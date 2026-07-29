@@ -228,7 +228,15 @@ def test_update_never_rewrites_the_id_or_timestamp(history: DictationHistory) ->
 def test_history_written_before_the_new_fields_reads_as_defaults(
     tmp_path: Path,
 ) -> None:
-    """An install that predates word_count/discarded/audio/error still loads."""
+    """An install that predates word_count/discarded/audio/error still loads.
+
+    ``word_count`` is deliberately the one field that does NOT read back as its
+    default (F9): a zero on a row that plainly has text is indistinguishable
+    from a measured "this dictation had no words", and the lifetime counters
+    skip anything at or below zero — so the legacy row is repaired on read
+    instead of persisting its zero forever. The other three stay defaults,
+    because for them the default IS the honest answer for an old row.
+    """
     path = tmp_path / "old.json"
     path.write_text(
         '{"version": 1, "entries": ['
@@ -238,10 +246,27 @@ def test_history_written_before_the_new_fields_reads_as_defaults(
         encoding="utf-8",
     )
     entry = DictationHistory(path).list_all()[0]
-    assert entry.word_count == 0
+    assert entry.word_count == 1
     assert entry.discarded is False
     assert entry.audio_path is None
     assert entry.error is None
+
+
+def test_a_legacy_row_with_no_text_keeps_its_zero_word_count(
+    tmp_path: Path,
+) -> None:
+    """The other half of the F9 self-heal: a failed dictation really did produce
+    no words, so inventing one would break the counters in the other direction.
+    """
+    path = tmp_path / "old-empty.json"
+    path.write_text(
+        '{"version": 1, "entries": ['
+        '{"id": "a", "created_at": "2026-07-28T00:00:00+00:00",'
+        ' "raw_text": "", "text": "", "outcome": "failed"}'
+        "]}",
+        encoding="utf-8",
+    )
+    assert DictationHistory(path).list_all()[0].word_count == 0
 
 
 def test_public_dict_never_leaks_the_audio_path(history: DictationHistory) -> None:
