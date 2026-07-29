@@ -3313,7 +3313,7 @@ class SpeechPipeline:
             # The RAW decode, deliberately. This probe asks "did anything get
             # said in the tail?" and answers with text LENGTH plus the
             # hallucination markers. A provider-cleaned string breaks both:
-            # a tail of pure hesitation ("Ã¤hm ...") cleans down to nothing and  # i18n-allow: quoted input
+            # a tail of pure hesitation ("ähm ...") cleans down to nothing and  # i18n-allow: quoted input
             # would read as silence, so Jarvis would cut off the one person
             # who is visibly still thinking.
             raw_text = (
@@ -10066,22 +10066,16 @@ class SpeechPipeline:
                 )
                 polish_status = "provider_error"
 
-        # Publish the final transcript first: the chat composer and the bar
-        # both listen for it, and they should update even if insertion fails.
-        try:
-            await self._publish_event(
-                DictationTranscript(
-                    source_layer="speech.dictation",
-                    text=cleaned,
-                    is_final=True,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.debug("dictation final publish failed: %s", exc)
-
         # Resolve ``auto`` now: the foreground window at DELIVERY time is the
         # one the user means, not the one that happened to be in front when
         # recording started.
+        #
+        # Resolved BEFORE the publish below because the answer RIDES on that
+        # event. The UI sees a final transcript on both routes, so without it
+        # there is no way to tell "this belongs in the app" from "this is
+        # already being pasted into another program" — and a UI that guessed
+        # would write a dictation meant for a foreign window into whatever
+        # Jarvis field last had focus.
         resolved_target = target
         if target not in ("insert", "chat"):
             try:
@@ -10091,6 +10085,21 @@ class SpeechPipeline:
             except Exception:  # noqa: BLE001 — an unreadable foreground is not fatal
                 log.debug("dictation target resolution failed", exc_info=True)
                 resolved_target = "insert"
+
+        # Publish the final transcript before inserting: the app's own fields,
+        # the chat composer and the bar all listen for it, and they should
+        # update even if insertion fails.
+        try:
+            await self._publish_event(
+                DictationTranscript(
+                    source_layer="speech.dictation",
+                    text=cleaned,
+                    is_final=True,
+                    target=resolved_target,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("dictation final publish failed: %s", exc)
 
         outcome_name = "chat"
         detail = ""

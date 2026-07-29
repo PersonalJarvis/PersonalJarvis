@@ -108,9 +108,15 @@ function HistoryRow({
       ? entry.cleanup_reason
       : "";
   // Restore is offered whenever there is something to win back: a soft-deleted
-  // entry, a failed transcription, or kept audio that can be run again.
+  // entry, a transcription that failed or only partly arrived, or kept audio
+  // that can be run again. The two outcomes are named as well as the audio
+  // flag because the flag says the sidecar was WRITTEN — a write that itself
+  // failed would otherwise hide the button on exactly the rows that need it.
   const canRestore =
-    entry.discarded || entry.audio_available || entry.outcome === "failed";
+    entry.discarded ||
+    entry.audio_available ||
+    entry.outcome === "failed" ||
+    entry.outcome === "partial";
 
   return (
     <li

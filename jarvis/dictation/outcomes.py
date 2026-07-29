@@ -31,7 +31,13 @@ What each value means
     Neither insertion nor the clipboard worked (no desktop session, no
     clipboard backend). The transcript exists only in the history.
 ``chat``
-    The dictation was routed into the chat instead of the desktop.
+    The dictation was handed to Jarvis's own window instead of being typed into
+    the desktop — which is what happens whenever Jarvis itself is the
+    application in front (``insert.resolve_target``). The UI decides where it
+    lands from there: the focused field, a terminal pane, or the chat composer
+    as the fallback (``lib/dictationTarget.ts``). The name is historical — it
+    once meant "the chat box and nothing else", which is exactly why a dictation
+    into any OTHER part of the app used to disappear.
 ``partial``
     Text was produced and delivered, but part of the recording never
     transcribed at all — a provider failure that outlived every retry, on audio
