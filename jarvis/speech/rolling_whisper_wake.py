@@ -487,7 +487,14 @@ class RollingWhisperWake:
                 exc,
             )
             return False
-        unbiased = (transcript.text or "").strip()
+        # ``raw_text`` first: providers now clean their transcript, and wake
+        # verification must judge what the recognizer EMITTED, not an edited
+        # version of it. A cleaned string would also break the pairing with the
+        # word-agnostic audio checks (energy at the match site, candidate
+        # shape), which are measured against the raw decode (AP-27).
+        unbiased = (
+            getattr(transcript, "raw_text", "") or transcript.text or ""
+        ).strip()
         if unbiased and STT_HALLUCINATION_RE.search(unbiased) is None:
             log.info(
                 "echo-confirm: unprimed ear heard %r — genuine wake", unbiased[:60]
@@ -885,7 +892,11 @@ class RollingWhisperWake:
                     )
                     continue
 
-                text = transcript.text.strip()
+                # See the note at the echo-confirm pass: wake reads the
+                # recognizer's own output, never the cleaned one.
+                text = (
+                    getattr(transcript, "raw_text", "") or transcript.text or ""
+                ).strip()
                 self._last_transcript = text
 
                 # Watchdog: save the WAV so the user/I can review the recording

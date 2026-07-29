@@ -82,6 +82,10 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: What the vendor returned BEFORE the cleanup filter ran. Read by the two
+    #: callers that must not get an edited string - the dictation lane (which
+    #: owns the user's filler switch) and wake verification.
+    raw_text: str = ""
 
 
 class GroqWhisperAPI:
@@ -315,8 +319,16 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
 
 
 def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
-    """Parse Groq's OpenAI-shaped verbose_json response into a Transcript."""
-    text = str(payload.get("text", "")).strip()
+    """Parse Groq's OpenAI-shaped verbose_json response into a Transcript.
+
+    The text is filtered on the way in (see
+    :func:`jarvis.plugins.stt.transcript_filter.clean_stt_text`), which is the
+    last point where the recognizer's own artifacts can be removed before every
+    consumer downstream reads the string. The untouched payload text stays on
+    ``raw_text``, and the per-segment texts are left exactly as delivered: they
+    carry the timings the flight recorder needs and are never read as prose.
+    """
+    raw = str(payload.get("text", "")).strip()
     language = str(payload.get("language", "unknown")) or "unknown"
     segments_raw = payload.get("segments") or ()
 
@@ -339,14 +351,21 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
         except OverflowError:
             confidence = 0.0
     else:
-        confidence = 1.0 if text else 0.0
+        # Presence is judged on the RAW text: a cleanup that emptied the string
+        # is a filter defect, and reporting 0.0 would call it silence instead.
+        confidence = 1.0 if raw else 0.0
+
+    # Local import, like the credential lookup and the error mapper: the module
+    # top stays ``jarvis.*``-free (entry-point purity).
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
 
     return Transcript(
-        text=text,
+        text=clean_stt_text(raw, language=language),
         language=language,
         confidence=min(1.0, max(0.0, confidence)),
         is_partial=False,
         segments=seg_tuple,
+        raw_text=raw,
     )
 
 

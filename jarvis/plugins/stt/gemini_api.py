@@ -104,6 +104,10 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: What the model returned BEFORE the cleanup filter ran. Read by the two
+    #: callers that must not get an edited string - the dictation lane (which
+    #: owns the user's filler switch) and wake verification.
+    raw_text: str = ""
 
 
 class GeminiSTT:
@@ -368,21 +372,6 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
     return buf.getvalue()
 
 
-def _clean_transcript(text: str) -> str:
-    """Light cleanup of generative preamble artifacts — never a content filter.
-
-    A generative model occasionally wraps the transcript in matched quotes even
-    when told not to. Strip ONE matched pair of surrounding quotes. This is
-    word-agnostic and never inspects the transcript for any specific phrase
-    (AP-27): it only removes an outer quote pair, so recognized speech is
-    preserved verbatim.
-    """
-    cleaned = text.strip()
-    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
-        cleaned = cleaned[1:-1].strip()
-    return cleaned
-
-
 def _response_to_transcript(response: Any, language: str | None) -> Transcript:
     """Parse a google-genai response into a Transcript.
 
@@ -390,14 +379,29 @@ def _response_to_transcript(response: Any, language: str | None) -> Transcript:
     timings or confidence, so confidence is a plain presence signal (1.0 for
     non-empty text, else 0.0) and segments stay empty — the same convention the
     OpenRouter plugin uses when segments are absent.
+
+    The text is filtered on the way in. This plugin used to carry its own
+    two-line version of that (strip one matched quote pair, which a generative
+    model adds even when told not to); the shared filter does the same and adds
+    the artifacts every recognizer produces — repetition loops, hesitation
+    sounds, stutters, NFD umlauts. It stays word-agnostic: nothing is rejected
+    for what it says (AP-27). The untouched string stays on ``raw_text``.
     """
-    text = _clean_transcript(str(getattr(response, "text", None) or ""))
+    raw = str(getattr(response, "text", None) or "").strip()
+    tag = language or "unknown"
+    # Local import so the module top stays ``jarvis.*``-free (entry-point
+    # purity), the same seam the error mapper already uses.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
     return Transcript(
-        text=text,
-        language=language or "unknown",
-        confidence=1.0 if text else 0.0,
+        text=clean_stt_text(raw, language=tag),
+        language=tag,
+        # Presence on the RAW text: a cleanup that emptied the string is a
+        # filter defect, not silence.
+        confidence=1.0 if raw else 0.0,
         is_partial=False,
         segments=(),
+        raw_text=raw,
     )
 
 

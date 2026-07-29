@@ -704,12 +704,27 @@ class FasterWhisperProvider:
         else:
             confidence = 0.0
 
+        # The cleanup filter runs here, on the joined text only. Two things it
+        # deliberately does NOT touch:
+        #
+        # * ``seg_dicts`` keeps every segment exactly as decoded. Those carry
+        #   timings and per-segment probabilities for the flight recorder, and
+        #   re-aligning them to an edited string is not possible without
+        #   guessing where the edits landed.
+        # * ``raw_text`` keeps the joined string as decoded, because this ONE
+        #   instance is shared with the rolling-whisper wake poll loop and the
+        #   dictation lane. Wake verification has to judge what the recognizer
+        #   actually emitted, and dictation owns the user's filler switch —
+        #   both read ``raw_text`` and are unaffected by anything below.
+        from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
         return Transcript(
-            text=text,
+            text=clean_stt_text(text, language=info.language),
             language=info.language,
             confidence=confidence,
             is_partial=False,
             segments=seg_dicts,
+            raw_text=text,
         )
 
     async def stream_transcribe(

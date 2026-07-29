@@ -106,6 +106,10 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: What the vendor returned BEFORE the cleanup filter ran. Read by the two
+    #: callers that must not get an edited string - the dictation lane (which
+    #: owns the user's filler switch) and wake verification.
+    raw_text: str = ""
 
 
 class OpenAIWhisperAPI:
@@ -402,8 +406,13 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
     from the mean segment ``avg_logprob`` (``exp`` of the average); otherwise it
     is a plain presence signal (1.0 for non-empty text, else 0.0) — the same
     convention the Groq plugin uses.
+
+    The text is filtered on the way in (see
+    :func:`jarvis.plugins.stt.transcript_filter.clean_stt_text`) and the
+    untouched payload text stays on ``raw_text``. Per-segment texts are left as
+    delivered: they carry timings, and nothing reads them as prose.
     """
-    text = str(payload.get("text", "")).strip()
+    raw = str(payload.get("text", "")).strip()
     language = str(payload.get("language", "unknown")) or "unknown"
     segments_raw = payload.get("segments") or ()
 
@@ -424,14 +433,20 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
         except OverflowError:
             confidence = 0.0
     else:
-        confidence = 1.0 if text else 0.0
+        # Presence is judged on the RAW text: a cleanup that emptied the string
+        # is a filter defect, and reporting 0.0 would call it silence instead.
+        confidence = 1.0 if raw else 0.0
+
+    # Local import (entry-point purity), same seam as the error mapper.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
 
     return Transcript(
-        text=text,
+        text=clean_stt_text(raw, language=language),
         language=language,
         confidence=min(1.0, max(0.0, confidence)),
         is_partial=False,
         segments=seg_tuple,
+        raw_text=raw,
     )
 
 
