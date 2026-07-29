@@ -57,6 +57,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from jarvis.core.events import (  # noqa: E402
     DictationCompleted,
+    DictationRefused,
     DictationStarted,
     DictationTranscribing,
 )
@@ -266,6 +267,55 @@ def test_every_energy_value_stays_in_range() -> None:
         for level in (None, 0.0, 0.5, 1.0):
             for t in (0.0, 1.3, 4.7):
                 assert 0.0 <= mode_energy(mode, t, level) <= 1.0
+
+
+# --------------------------------------------------------------------------
+# The refusal look
+# --------------------------------------------------------------------------
+def test_a_refusal_never_shimmers_along_with_a_microphone_it_is_not_using() -> None:
+    """``notice`` ignores the live level outright.
+
+    The mascot shows the refusal SENTENCE in its bubble ("a voice conversation
+    is using the microphone"). A halo driven by that very microphone next to
+    that very sentence would contradict it — the same reason
+    ``dictate_transcribing`` drops its stale sample, one step further.
+    """
+    for t in (0.0, 1.1, 2.4, 5.0):
+        for level in (0.0, 0.5, 1.0):
+            assert mode_energy("notice", t, level) == pytest.approx(
+                mode_energy("notice", t, None)
+            )
+
+
+def test_a_refusal_still_looks_awake() -> None:
+    """Low, but never flat: a dead-still mascot reads as a crashed app, which is
+    exactly the impression a refused shortcut must stop giving."""
+    samples = [mode_energy("notice", t, None) for t in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5)]
+    assert all(0.05 < v < 0.35 for v in samples)
+    assert len(set(round(v, 4) for v in samples)) > 1
+
+
+async def test_the_mascot_shows_a_refusal_and_says_why() -> None:
+    """The reported bug on the mascot surface: the key press must produce BOTH
+    something on screen and the reason for it."""
+    orb, root = _headless_mascot()
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(),
+        orb=orb,
+        hide_on_idle=True,
+        idle_animations_enabled=False,
+    )
+
+    await bridge._on_dictation_refused(
+        DictationRefused(
+            reason="voice_session_active",
+            detail="A voice conversation is running and is using the microphone.",
+        )
+    )
+
+    assert root.deiconify.called, "the mascot never came up for a refused dictation"
+    assert orb._mode == "notice"
+    await _drain(bridge)
 
 
 # --------------------------------------------------------------------------

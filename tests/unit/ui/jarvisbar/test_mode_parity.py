@@ -36,8 +36,10 @@ def test_the_vocabulary_has_exactly_one_definition() -> None:
     """Nothing may restate the tuple — every layer imports the same object."""
     assert renderer.MODES is modes.MODES
     assert renderer.DICTATION_MODES is modes.DICTATION_MODES
+    assert renderer.NOTICE_MODES is modes.NOTICE_MODES
     assert subprocess_mod._MODES is modes.MODES
     assert interaction.DICTATION_MODES is modes.DICTATION_MODES
+    assert interaction.NOTICE_MODES is modes.NOTICE_MODES
 
 
 def test_no_module_hardcodes_a_mode_tuple() -> None:
@@ -66,6 +68,19 @@ def test_dictation_modes_are_part_of_the_vocabulary() -> None:
     # The four voice modes are untouched — no existing behaviour may shift.
     assert modes.VOICE_MODES == ("idle", "listen", "speak", "think")
     assert modes.DICTATION_MODES == ("dictate", "dictate_transcribing")
+
+
+def test_a_notice_is_not_a_dictation_mode() -> None:
+    """A refusal must never borrow a dictation mode.
+
+    The dictation modes assert the microphone is open; a notice is raised
+    precisely when it is not. Sharing a mode would make a declined keypress look
+    exactly like an accepted one — the failure the notice exists to end.
+    """
+    for mode in modes.NOTICE_MODES:
+        assert mode in modes.MODES
+        assert mode not in modes.DICTATION_MODES
+        assert mode not in modes.VOICE_MODES
 
 
 # --------------------------------------------------------------------------
@@ -130,6 +145,12 @@ def test_the_null_surface_swallows_every_mode(mode: str) -> None:
 # --------------------------------------------------------------------------
 # Every mode has a defined look and a defined click behaviour
 # --------------------------------------------------------------------------
+#: Every look ``renderer.render`` knows how to draw. Derived from the mode
+#: vocabulary so a new mode either resolves to an existing look or brings its
+#: own — it can never resolve to a look nothing draws.
+_RENDERABLE_LOOKS = ("idle", "speak", "think") + modes.NOTICE_MODES
+
+
 @pytest.mark.parametrize("mode", modes.MODES)
 def test_every_mode_resolves_to_a_renderable_look(mode: str) -> None:
     for seconds_since_audible in (0.0, 99.0):
@@ -137,7 +158,48 @@ def test_every_mode_resolves_to_a_renderable_look(mode: str) -> None:
             look = renderer.visual_mode(
                 mode, seconds_since_audible, hold_s=0.4, playback_active=playback
             )
-            assert look in ("idle", "speak", "think")
+            assert look in _RENDERABLE_LOOKS
+
+
+@pytest.mark.parametrize("mode", modes.NOTICE_MODES)
+def test_no_audio_signal_can_repaint_a_notice(mode: str) -> None:
+    """A notice survives live playback and a fresh level sample.
+
+    ``visual_mode`` normally lets real audio override the coarse mode. A notice
+    is raised when something did NOT happen, so letting a stale level or an
+    in-flight TTS buffer turn it into the listening/speaking look would replace
+    the answer to the user's keypress with a claim about the microphone that is
+    false.
+    """
+    for playback in (False, True):
+        for seconds_since_audible in (0.0, 0.1, 99.0):
+            assert (
+                renderer.visual_mode(
+                    mode, seconds_since_audible, hold_s=0.4, playback_active=playback
+                )
+                == mode
+            )
+
+
+def test_a_notice_is_always_legible_never_fully_faded() -> None:
+    """The breath may dim the glyph, never erase it.
+
+    An invisible "your key press did nothing" message is the bug, not a style.
+    """
+    values = [renderer.notice_alpha(t / 50.0) for t in range(400)]
+    assert min(values) >= renderer.NOTICE_ALPHA_MIN
+    assert max(values) <= 1.0
+    # It genuinely moves — a constant alpha would read as a frozen bar.
+    assert max(values) - min(values) > 0.2
+
+
+@pytest.mark.parametrize("mode", modes.NOTICE_MODES)
+def test_a_notice_opens_the_pill_without_faking_a_session(mode: str) -> None:
+    """Big enough to draw a legible mark in, small enough not to claim a turn."""
+    w, h = renderer.target_pill_size(mode, hovered=False)
+    assert (w, h) == (renderer.OPEN_W, renderer.OPEN_H)
+    assert (w, h) != (renderer.ACTIVE_W, renderer.ACTIVE_H)
+    assert w > renderer.COLLAPSED_W
 
 
 @pytest.mark.parametrize("mode", modes.MODES)
@@ -150,3 +212,19 @@ def test_every_mode_has_a_pill_size(mode: str) -> None:
 def test_every_mode_resolves_a_click(mode: str) -> None:
     action = interaction.resolve_click(400, 800, mode, hovered=True, pill_w=400)
     assert action in ("hangup", "mute", "talk", "none")
+
+
+@pytest.mark.parametrize("mode", modes.NOTICE_MODES)
+def test_a_notice_is_inert_everywhere_on_the_bar(mode: str) -> None:
+    """A transient message is not a control.
+
+    It appears unrequested under wherever the pointer happens to be and clears
+    itself again, so ANY click it resolved would be one the user aimed at
+    something else — starting a session or toggling the mic by accident.
+    """
+    for x in (0, 40, 200, 400, 600, 799):
+        for hovered in (False, True):
+            assert (
+                interaction.resolve_click(x, 800, mode, hovered=hovered, pill_w=400)
+                == "none"
+            )
