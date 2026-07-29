@@ -38,12 +38,16 @@ for :data:`SETTLE_S` before anything is filed, and the flag is armed once per
 episode: an agent that goes back to work re-arms it, and one that sits at its
 prompt for an hour is reported once.
 
-## Why in memory, and why nothing is persisted
+## What is and is not persisted
 
 An entry's whole value is the "jump to pane" behind it. Panes do not survive a
 restart of the app, so a notification that did would point at a terminal that
 no longer exists — the one thing worse than no notification. The store is a
 bounded deque and is deliberately lost with the process.
+
+One boolean does survive: whether a pane was observed actively working. The
+resume snapshot uses that evidence to distinguish genuinely interrupted work
+from a conversation that had already finished or was awaiting an answer.
 
 ## Where it runs
 
@@ -218,6 +222,10 @@ class _PaneWatch:
     #: Already reported for the CURRENT episode. Cleared when the pane changes
     #: state, so the next stop is reported again.
     announced: bool = False
+    #: The interruption evidence last checkpointed for this pane. Kept here as
+    #: well as on the terminal so an explicit prompt submission can change the
+    #: live field without making the sweep forget what is already on disk.
+    resume_needed: bool = False
 
 
 def _detail(term: Any) -> str:
@@ -259,13 +267,26 @@ class ActivityWatcher:
     def __init__(self, center: NotificationCenter) -> None:
         self.center = center
         self._panes: dict[tuple[str, str], _PaneWatch] = {}
+        self._resume_dirty = False
+
+    def take_resume_dirty(self) -> bool:
+        """Return and clear whether activity changed the resume checkpoint."""
+        changed = self._resume_dirty
+        self._resume_dirty = False
+        return changed
 
     def forget_workspace(self, workspace_id: str) -> None:
         """Drop the per-pane memory of a workspace that is gone."""
         for key in [k for k in self._panes if k[0] == workspace_id]:
             del self._panes[key]
 
-    def poll(self, registry: Registry, *, now: float | None = None) -> list[Notification]:
+    def poll(
+        self,
+        registry: Registry,
+        *,
+        now: float | None = None,
+        emit: bool = True,
+    ) -> list[Notification]:
         """Look at every pane once and file whatever has just happened."""
         moment = time.time() if now is None else now
         filed: list[Notification] = []
@@ -280,7 +301,7 @@ class ActivityWatcher:
                     continue
                 ident = (session.id, str(getattr(term, "key", "") or ""))
                 alive.add(ident)
-                entry = self._step(session, term, ident, moment)
+                entry = self._step(session, term, ident, moment, emit=emit)
                 if entry is not None:
                     filed.append(entry)
 
@@ -291,16 +312,33 @@ class ActivityWatcher:
         return filed
 
     def _step(
-        self, session: Any, term: Any, ident: tuple[str, str], now: float
+        self,
+        session: Any,
+        term: Any,
+        ident: tuple[str, str],
+        now: float,
+        *,
+        emit: bool,
     ) -> Notification | None:
-        activity = read_activity(term)
+        # ``now`` travels into the read as well: whether a clock on screen is a
+        # RUNNING one is measured against the pane's last output, and a test
+        # that places a pane on its own timeline must not be judged against the
+        # wall clock (see activity.CLOCK_FRESH_S).
+        activity = read_activity(term, now=now)
         watch = self._panes.get(ident)
 
         if watch is None:
             # First sight. Nothing is filed: the pane may have been sitting
             # finished for an hour before this watcher existed, and announcing
             # that on startup would fill the bell with history.
-            self._panes[ident] = _PaneWatch(activity=activity, since=now, announced=True)
+            watch = _PaneWatch(
+                activity=activity,
+                since=now,
+                announced=True,
+                resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
+            )
+            self._panes[ident] = watch
+            self._checkpoint_resume_state(term, activity, watch, now)
             return None
 
         if activity != watch.activity:
@@ -309,6 +347,8 @@ class ActivityWatcher:
             watch.activity = activity
             watch.since = now
             watch.announced = False
+
+        self._checkpoint_resume_state(term, activity, watch, now)
 
         if watch.announced:
             return None
@@ -325,6 +365,8 @@ class ActivityWatcher:
 
         watch.announced = True
         watch.worked = False
+        if not emit:
+            return None
         return self.center.add(
             Notification(
                 id=f"n{next(_ids)}",
@@ -340,6 +382,46 @@ class ActivityWatcher:
                 created_at=now,
             )
         )
+
+    def _checkpoint_resume_state(
+        self, term: Any, activity: Activity, watch: _PaneWatch, now: float
+    ) -> None:
+        """Remember only turns proven to have been interrupted while working.
+
+        Entering ``working`` arms the checkpoint immediately. A plain prompt
+        must remain stable for the same settle window as completion notices,
+        because coding TUIs briefly remove their busy row between tool steps.
+        Questions clear immediately: they need the user's answer, never a blind
+        continuation prompt. A resumed pane that is still offering Continue is
+        preserved while it waits at its prompt.
+        """
+        if activity == "working":
+            # A resumed CLI that is already working carried on by itself.
+            term.continuation_pending = False
+            self._set_resume_needed(term, watch, True)
+            return
+        if activity in {"asking", "failed"}:
+            term.continuation_pending = False
+            self._set_resume_needed(term, watch, False)
+            return
+        if activity == "exited":
+            if getattr(term, "exit_code", None) in (0, None):
+                term.continuation_pending = False
+                self._set_resume_needed(term, watch, False)
+            return
+        if (
+            activity == "waiting"
+            and not getattr(term, "continuation_pending", False)
+            and now - watch.since >= SETTLE_S
+        ):
+            self._set_resume_needed(term, watch, False)
+
+    def _set_resume_needed(self, term: Any, watch: _PaneWatch, needed: bool) -> None:
+        term.resume_continuation_needed = needed
+        if watch.resume_needed == needed:
+            return
+        watch.resume_needed = needed
+        self._resume_dirty = True
 
     @staticmethod
     def _kind(activity: Activity, watch: _PaneWatch) -> Kind | None:
@@ -421,6 +503,7 @@ def reset() -> None:
     """Drop everything — for tests, and for a registry that was torn down."""
     _CENTER.clear()
     _WATCHER._panes.clear()  # noqa: SLF001 - same module, one owner
+    _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
     reset_switch_cache()
 
 
@@ -447,10 +530,13 @@ async def _run(registry: Registry) -> None:
             await asyncio.sleep(SWEEP_INTERVAL_S)
             if not registry.sessions:
                 return
-            if not enabled():
-                continue
             try:
-                _WATCHER.poll(registry)
+                # Resume evidence is independent of the optional bell. Even
+                # with notifications disabled, restored panes must not be
+                # offered a blind Continue merely because history exists.
+                _WATCHER.poll(registry, emit=enabled())
+                if _WATCHER.take_resume_dirty():
+                    await registry.persist_resume_activity()
             except Exception as exc:  # noqa: BLE001 - one bad pane must not end the sweep
                 logger.warning("Agentic IDE: pane notification sweep failed: {}", exc)
     except asyncio.CancelledError:  # pragma: no cover - shutdown
@@ -484,11 +570,28 @@ def stop() -> None:
         task.cancel()
 
 
+def watching() -> bool:
+    """Is the sweep actually running right now?
+
+    Reported alongside the entries because an empty bell has two very different
+    causes — "nothing has happened" and "nobody is looking" — and they are
+    indistinguishable from the outside. They were indistinguishable from the
+    INSIDE too, the first time this feature reported nothing for an afternoon.
+    """
+    task = _sweep.task
+    return task is not None and not task.done()
+
+
 def state() -> dict[str, Any]:
     """Everything the bell needs in one response."""
     entries = _CENTER.list()
     return {
         "enabled": enabled(),
+        "watching": watching(),
+        # How many panes the sweep is holding state for. Zero while watching is
+        # true means it has not completed a pass yet; it should otherwise match
+        # the agent panes across every open workspace.
+        "panes_watched": len(_WATCHER._panes),  # noqa: SLF001 - same module, one owner
         "unread": sum(1 for entry in entries if not entry.read),
         "notifications": [entry.to_dict() for entry in entries],
     }

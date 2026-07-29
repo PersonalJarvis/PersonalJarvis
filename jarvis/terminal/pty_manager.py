@@ -83,6 +83,21 @@ prompt editor has opened, where the bytes appear as a line of
 the PTY, and whatever it returns is written straight back. Same measurement,
 same load: 0 ms. Nothing else moves off the pump — this is for replies that are
 useless once late, not for output a human reads.
+
+## Why the exit code is normalized instead of forwarded
+
+A Windows exit code is an unsigned 32-bit value, and ``pywinpty`` hands it over
+exactly as the OS stored it. A child that ended with ``-1`` therefore arrives as
+``4294967295``, which is what the pane then showed the user: "[Codex exited —
+code 4294967295]" — a ten-digit number nobody can act on, for what is really a
+plain ``-1``. :func:`normalize_exit_code` re-signs it once, here, so every layer
+above (the pane header, the resume self-healing, the log) sees one convention.
+
+The same call fixes the older half of that bug: the code used to be read as
+``int(proc.exitstatus or -1)``, which turns a CLEAN exit into ``-1`` — zero is
+falsy. So quitting an agent with ``/exit`` was reported as a crash, and the
+resume self-healing in ``jarvis/agentic_ide/session.py`` (which restarts a pane
+whose exit code is not 0) restarted agents the user had deliberately closed.
 """
 from __future__ import annotations
 
@@ -118,6 +133,32 @@ MAX_PENDING_CHARS = 256 * 1024
 #: non-blocking one spins a core per pane, which is what starves the very loop
 #: the output has to be delivered on.
 _EMPTY_READ_BACKOFF_S = 0.005
+
+#: What every layer above reads as "the child is gone and nobody could say with
+#: what code". Distinct from a real ``-1``only in intent; both mean "not a clean
+#: stop", which is the one distinction anything above actually acts on.
+UNKNOWN_EXIT_CODE = -1
+
+
+def normalize_exit_code(raw: int | None) -> int:
+    """One convention for an exit code, whatever the backend reported.
+
+    ``None`` (the backend could not tell) becomes :data:`UNKNOWN_EXIT_CODE`, and
+    a Windows unsigned DWORD is re-signed, so ``4294967295`` reads as the ``-1``
+    it always was. Everything else is passed through — including ``0``, which
+    the old ``or -1`` idiom quietly turned into a failure (module docstring).
+    """
+    if raw is None:
+        return UNKNOWN_EXIT_CODE
+    code = int(raw)
+    # Only the top half of the unsigned range is folded, which is exactly the
+    # range a C `int` would have shown as negative: a POSIX status is 0-255 and
+    # an ordinary Windows code is small, so nothing legitimate lands in it.
+    # Windows NTSTATUS values (0xC000013A — stopped by Ctrl-C) fold too; the
+    # pane translates the ones worth naming back into words.
+    if 0x8000_0000 <= code <= 0xFFFF_FFFF:
+        code -= 0x1_0000_0000
+    return code
 
 
 @dataclass(slots=True)
@@ -319,10 +360,11 @@ class PtyManager:
             session.tree.assign(pid)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "PTY could not be contained — its descendants will survive it",
-                terminal_id=terminal_id,
-                pid=pid,
-                error=str(exc),
+                "PTY could not be contained — its descendants will survive it: "
+                "terminal={} pid={} error={}",
+                terminal_id,
+                pid,
+                exc,
             )
         session.reader_thread = threading.Thread(
             target=self._reader_loop,
@@ -341,12 +383,12 @@ class PtyManager:
         )
         session.reader_thread.start()
         logger.info(
-            "PTY spawned",
-            terminal_id=terminal_id,
-            shell=shell_id,
-            pid=pid,
-            cols=cols,
-            rows=rows,
+            "PTY spawned: shell={} terminal={} pid={} size={}x{}",
+            shell_id,
+            terminal_id,
+            pid,
+            cols,
+            rows,
         )
         return session
 
@@ -359,7 +401,7 @@ class PtyManager:
             session.write(data)
             return True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("PTY write failed", terminal_id=terminal_id, error=str(exc))
+            logger.warning("PTY write failed: terminal={} error={}", terminal_id, exc)
             return False
 
     def resize(self, terminal_id: str, cols: int, rows: int) -> bool:
@@ -370,7 +412,7 @@ class PtyManager:
             session.proc.setwinsize(rows, cols)
             return True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("PTY resize failed", terminal_id=terminal_id, error=str(exc))
+            logger.warning("PTY resize failed: terminal={} error={}", terminal_id, exc)
             return False
 
     def swap_sessions(self, id_a: str, id_b: str) -> bool:
@@ -414,11 +456,12 @@ class PtyManager:
             session_b = self._sessions.get(id_b)
             if session_a is None or session_b is None:
                 logger.debug(
-                    "PTY swap refused — unknown terminal",
-                    terminal_id=id_a,
-                    other_terminal_id=id_b,
-                    a_known=session_a is not None,
-                    b_known=session_b is not None,
+                    "PTY swap refused — unknown terminal: {} (known={}) <-> {} "
+                    "(known={})",
+                    id_a,
+                    session_a is not None,
+                    id_b,
+                    session_b is not None,
                 )
                 return False
             if id_a == id_b:
@@ -427,7 +470,7 @@ class PtyManager:
             self._sessions[id_b] = session_a
             session_a.terminal_id = id_b
             session_b.terminal_id = id_a
-        logger.info("PTY sessions swapped", terminal_id=id_a, other_terminal_id=id_b)
+        logger.info("PTY sessions swapped: {} <-> {}", id_a, id_b)
         return True
 
     def close(self, terminal_id: str) -> bool:
@@ -472,9 +515,9 @@ class PtyManager:
                 tree.close()
             except Exception as exc:  # noqa: BLE001 - reaping is best-effort
                 logger.debug(
-                    "PTY tree teardown failed",
-                    terminal_id=session.terminal_id,
-                    error=str(exc),
+                    "PTY tree teardown failed: terminal={} error={}",
+                    session.terminal_id,
+                    exc,
                 )
         # No join — the reader thread is a daemon and may still be running
         # through one last read(). That's fine; Python exit cleans it up.
@@ -519,29 +562,32 @@ class PtyManager:
                     raise
                 except Exception as exc:  # noqa: BLE001 - the PTY outlives its viewer
                     logger.debug(
-                        "PTY output callback failed",
-                        terminal_id=session.terminal_id,
-                        error=str(exc),
+                        "PTY output callback failed: terminal={} error={}",
+                        session.terminal_id,
+                        exc,
                     )
             if session._finished:
                 break
 
         if session._dropped_chars:
             logger.warning(
-                "PTY viewer could not keep up — dropped the oldest output",
-                terminal_id=session.terminal_id,
-                dropped_chars=session._dropped_chars,
+                "PTY viewer could not keep up — dropped the oldest output: "
+                "terminal={} dropped_chars={}",
+                session.terminal_id,
+                session._dropped_chars,
             )
         code = session._exit_code
         try:
-            await on_closed(session.terminal_id, -1 if code is None else code)
+            await on_closed(
+                session.terminal_id, UNKNOWN_EXIT_CODE if code is None else code
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the viewer may be gone
             logger.debug(
-                "PTY close callback failed",
-                terminal_id=session.terminal_id,
-                error=str(exc),
+                "PTY close callback failed: terminal={} error={}",
+                session.terminal_id,
+                exc,
             )
         # A child that ended BY ITSELF never goes through ``_terminate``, and
         # the servers it started are exactly as orphaned as after a kill — a
@@ -554,9 +600,9 @@ class PtyManager:
                 tree.close()
             except Exception as exc:  # noqa: BLE001 - reaping is best-effort
                 logger.debug(
-                    "PTY tree teardown after exit failed",
-                    terminal_id=session.terminal_id,
-                    error=str(exc),
+                    "PTY tree teardown after exit failed: terminal={} error={}",
+                    session.terminal_id,
+                    exc,
                 )
 
     def _reader_loop(
@@ -587,9 +633,10 @@ class PtyManager:
                 except Exception as exc:  # noqa: BLE001
                     # Process closed / pipe broken — normal end of life.
                     logger.debug(
-                        "PTY read exception (process presumably dead)",
-                        terminal_id=session.terminal_id,
-                        error=str(exc),
+                        "PTY read exception (process presumably dead): "
+                        "terminal={} error={}",
+                        session.terminal_id,
+                        exc,
                     )
                     break
                 if not data:
@@ -616,9 +663,9 @@ class PtyManager:
                         reply = on_probe(text)
                     except Exception as exc:  # noqa: BLE001
                         logger.debug(
-                            "PTY probe failed",
-                            terminal_id=session.terminal_id,
-                            error=str(exc),
+                            "PTY probe failed: terminal={} error={}",
+                            session.terminal_id,
+                            exc,
                         )
                     else:
                         if reply:
@@ -626,20 +673,28 @@ class PtyManager:
                                 session.write(reply)
                             except Exception as exc:  # noqa: BLE001
                                 logger.debug(
-                                    "PTY probe reply could not be written",
-                                    terminal_id=session.terminal_id,
-                                    error=str(exc),
+                                    "PTY probe reply could not be written: "
+                                    "terminal={} error={}",
+                                    session.terminal_id,
+                                    exc,
                                 )
 
                 session.offer(text, loop)
         finally:
             try:
-                exit_code = int(proc.exitstatus or -1)
+                exit_code = normalize_exit_code(proc.exitstatus)
             except Exception:  # noqa: BLE001
-                exit_code = -1
+                exit_code = UNKNOWN_EXIT_CODE
             session.finish(exit_code, loop)
+            # Both fields go in the MESSAGE. loguru treats keyword arguments as
+            # format arguments, and the app's file sink formats `{message}`
+            # alone — so a call that only passed them as keywords logged the
+            # bare sentence, and every past pane death was recorded without
+            # saying which pane or with what code. That is the line this bug
+            # needed and did not have.
             logger.info(
-                "PTY reader terminated",
-                terminal_id=session.terminal_id,
-                exit_code=exit_code,
+                "PTY reader terminated: shell={} terminal={} exit_code={}",
+                session.shell_id,
+                session.terminal_id,
+                exit_code,
             )

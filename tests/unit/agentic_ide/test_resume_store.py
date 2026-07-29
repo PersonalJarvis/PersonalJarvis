@@ -42,6 +42,7 @@ def _workspace(folder: str) -> resume_store.SnapshotWorkspace:
                 slot=0,
                 resume=ResumeHandle(kind="claude_session", id="u-1", captured_at=1.0),
                 prompts_sent=3,
+                continuation_needed=True,
             ),
             resume_store.SnapshotTerminal(
                 key="blake", name="Blake", agent="codex", column=1, slot=0
@@ -61,6 +62,8 @@ def test_a_saved_snapshot_comes_back_intact(tmp_path: Path) -> None:
     assert loaded.workspaces[0].terminals[0].resume is not None
     assert loaded.workspaces[0].terminals[0].resume.id == "u-1"
     assert loaded.workspaces[0].terminals[1].resume is None
+    assert loaded.workspaces[0].terminals[0].continuation_needed is True
+    assert loaded.workspaces[0].terminals[1].continuation_needed is False
     assert loaded.workspaces[0].name == "Release review"
 
 
@@ -111,6 +114,7 @@ def test_a_snapshot_from_the_one_workspace_era_still_resumes(tmp_path: Path) -> 
     assert len(loaded.workspaces) == 1
     assert loaded.workspaces[0].folder == str(tmp_path)
     assert [t.name for t in loaded.workspaces[0].terminals] == ["Alex"]
+    assert loaded.workspaces[0].terminals[0].continuation_needed is False
     assert loaded.saved_at == 42.0
 
 

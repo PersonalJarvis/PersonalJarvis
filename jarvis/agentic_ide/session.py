@@ -850,6 +850,11 @@ class Terminal:
     # picked up an old transcript, "still running" means the same process has
     # been working the whole time you were looking somewhere else.
     reattached: bool = False
+    # Was this pane last observed actively working before its process went
+    # away? Persisted in the resume snapshot and kept separate from `resumed`:
+    # an existing conversation may already be finished or waiting for input,
+    # neither of which should receive a blind "continue".
+    resume_continuation_needed: bool = False
     # This pane picked its old conversation back up, and NOBODY has told it what
     # to do since. That is the state a restart leaves behind: the agent is alive
     # and holds the whole transcript, but it was killed mid-task and a resumed
@@ -1030,6 +1035,7 @@ class Terminal:
             resume=self.resume,
             prompts_sent=self.prompts_sent,
             account=self.account,
+            continuation_needed=self.resume_continuation_needed,
         )
 
 
@@ -1776,6 +1782,7 @@ class Registry:
                 slot=entry.slot,
                 resume=entry.resume,
                 prompts_sent=entry.prompts_sent,
+                resume_continuation_needed=entry.continuation_needed,
                 # The remembered account, re-validated: a pane must come back
                 # on the subscription whose history holds its conversation,
                 # and an account deleted in the meantime falls back to the
@@ -1974,6 +1981,15 @@ class Registry:
                 await asyncio.to_thread(resume_store.save, snapshot)
             except Exception as exc:  # noqa: BLE001 - the workspace comes first
                 logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
+
+    async def persist_resume_activity(self) -> None:
+        """Checkpoint activity evidence used by the interrupted-work offer.
+
+        The activity sweep calls this only when a pane crosses a meaningful
+        boundary, never for each terminal repaint. Keeping it on the registry
+        preserves the snapshot lock and last-writer ordering of `_persist`.
+        """
+        await self._persist()
 
     async def _forget(self) -> None:
         """Withdraw the resume offer, best-effort."""
@@ -2313,7 +2329,11 @@ class Registry:
         # middle of, and then waits. That is the whole reason this flag exists —
         # see the field. A fresh start clears it, so a pane that failed its
         # resume and came back empty is not reported as waiting to be nudged.
-        term.continuation_pending = term.resumed
+        # A valid conversation may already be finished or waiting for input.
+        # Offer a nudge only when the previous live pane was observed working.
+        term.continuation_pending = term.resumed and term.resume_continuation_needed
+        if not term.resumed:
+            term.resume_continuation_needed = False
 
         term.transcript.resize(cols, rows)
         # A fresh process draws a fresh screen: anything the previous one left
@@ -2652,6 +2672,7 @@ class Registry:
             # Dropping the pane off that list for a mere keypress would hide a
             # stalled agent behind an accidental one.
             term.continuation_pending = False
+            term.resume_continuation_needed = False
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -3227,6 +3248,7 @@ class Registry:
         # in its input box in full, so offering to type "continue" behind it
         # would append a second line to a prompt the user still has to send.
         term.continuation_pending = False
+        term.resume_continuation_needed = False
         if submitted is not False:
             # The conversation has (or may have) just begun, so for a CLI that
             # cannot be told its id this is the moment that id starts existing —
@@ -3448,7 +3470,7 @@ def _mark_restored_continuations(terminals: list[Terminal]) -> None:
         if term.resume is None or not accepts_prompts(term.agent):
             continue
         try:
-            term.continuation_pending = has_conversation(
+            term.continuation_pending = term.resume_continuation_needed and has_conversation(
                 term.agent, term.resume, account_home(term.agent, term.account)
             )
         except Exception as exc:  # noqa: BLE001 - a restore must never fail on this

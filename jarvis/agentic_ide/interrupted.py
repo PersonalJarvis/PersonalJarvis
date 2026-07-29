@@ -16,11 +16,12 @@ of them still had something to do.
 
 ## What counts as interrupted
 
-One flag, set in exactly one place. :attr:`Terminal.continuation_pending` is
-raised when a pane's agent process is SPAWNED onto an existing conversation, and
-cleared the moment anybody drives that pane again — a prompt from Jarvis, or a
-line the user submitted in the pane themselves. Everything here reads that flag
-rather than re-deriving the state from timestamps or transcript contents.
+Two pieces of evidence must agree. The saved pane must have been observed
+actively working before its process went away, and the resumed pane must now be
+idle at its prompt. A valid conversation alone proves neither: it may have
+finished cleanly or be waiting for the user's answer. The activity checkpoint
+is persisted with the resume snapshot; :attr:`Terminal.continuation_pending`
+then carries that decision through the current process.
 
 That matters, because the tempting heuristics are all wrong:
 
@@ -56,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from .activity import read_activity
 from .recap import condense
 from .session import SessionError, accepts_prompts
 
@@ -240,6 +242,10 @@ def scan(registry: Registry) -> list[InterruptedPane]:
     for session in registry.sessions:
         for term in session.terminals:
             if not term.continuation_pending:
+                continue
+            if term.status == "live" and read_activity(term) != "waiting":
+                # A pane already working needs no nudge, and a pane asking a
+                # question needs an answer rather than a blind "continue".
                 continue
             if not accepts_prompts(term.agent):
                 # A plain terminal is a shell. Jarvis does not type into one, so

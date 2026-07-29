@@ -32,6 +32,35 @@ BUSY_SCREEN = "\r\n✳ Cooking… (12s · ↑ 1.2k tokens · esc to interrupt)\r
 IDLE_SCREEN = "\r\n❯ \r\n"
 QUESTION_SCREEN = "\r\nDo you want to make this edit to config.py?\r\n❯ 1. Yes\r\n"
 
+# Rows copied VERBATIM off the panes of a running workspace (Claude Code
+# 2.1.220, 2026-07-29), because the first version of this detector was written
+# against an assumption instead and the assumption was wrong: it looked for
+# "esc to interrupt", this build does not draw one in these states, so no pane
+# was ever seen working and the bell stayed empty while terminals finished all
+# around it. Whatever replaces the rule has to keep answering these correctly.
+REAL_WORKING = (
+    "\r\n· Scurrying… (2m 4s · ↓ 1.6k tokens)\r\n"
+    "  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\r\n"
+)
+REAL_THINKING = "\r\n· Crystallizing… (1m 54s · thinking)\r\n"
+REAL_FINISHED = (
+    "\r\n✻ Worked for 13m 27s\r\n"
+    ">\r\n"
+    "  📁 Personal Jarvis  🌿 main  Opus 5 (1M context)\r\n"
+    "  ⏵⏵ auto mode on (shift+tab to cycle) · ⁝ for age…\r\n"
+)
+# The startup screen of a pane nobody has typed into. Its authentication banner
+# sits there for the pane's whole life — treating it as a question would make
+# every idle terminal a standing "needs input".
+REAL_STARTUP_BANNER = (
+    "\r\n           Claude Code v2.1.220\r\n"
+    " ▐▛███▜▌   Opus 5 (1M context) with xhigh effort\r\n"
+    "▝▜█████▛▘  Claude Max\r\n"
+    "  ▘▘ ▝▝    ~\\Desktop\\Personal Jarvis\r\n"
+    " ‼ 1 MCP server needs authentication · run /mcp\r\n"
+    ">\r\n"
+)
+
 
 @pytest.fixture(autouse=True)
 def _clean_store() -> Any:
@@ -65,6 +94,92 @@ async def _pane(registry: Registry, folder: Path, *, name: str = "Alex"):
 def _draw(term: Any, screen: str) -> None:
     """Put ``screen`` on the pane's replayed terminal, as its agent would."""
     term.transcript.feed(screen)
+
+
+# ------------------------------------------------- reading the REAL terminals
+async def test_a_real_working_pane_is_seen_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The row this build actually draws while it works — no interrupt hint in it.
+
+    This is the regression that made the feature do nothing on the machine it
+    was built for: the pane is plainly busy and the detector called it idle.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, REAL_WORKING)
+    term.last_output_at = 1000.0
+
+    assert read_activity(term, now=1001.0) == "working"
+
+
+async def test_a_real_thinking_pane_is_seen_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """No tokens, no hint — just the clock. Still working."""
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, REAL_THINKING)
+    term.last_output_at = 1000.0
+
+    assert read_activity(term, now=1001.0) == "working"
+
+
+async def test_a_real_finished_pane_is_seen_waiting(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """"Worked for 13m 27s" states a duration; it does not tick."""
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, REAL_FINISHED)
+    term.last_output_at = 1000.0
+
+    assert read_activity(term, now=1001.0) == "waiting"
+
+
+async def test_a_stale_clock_is_not_a_running_one(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A bracketed duration on a screen that stopped moving is text, not a clock.
+
+    Without this pairing, a frozen last frame — or an agent quoting "(3s)" in
+    its own answer — would read as an agent that is still working, and the pane
+    would never be reported at all.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, REAL_WORKING)
+    term.last_output_at = 1000.0
+
+    assert read_activity(term, now=1000.0 + 60) == "waiting"
+
+
+async def test_the_startup_banner_is_not_a_question(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """It sits there for the pane's whole life — a standing banner, not an ask."""
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, REAL_STARTUP_BANNER)
+    term.last_output_at = 1000.0
+
+    assert read_activity(term, now=1001.0) == "waiting"
+
+
+async def test_a_real_pane_finishing_files_one_entry(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """End to end on the real rows: working → finished → exactly one entry."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+
+    _draw(term, REAL_WORKING)
+    term.last_output_at = 1000.0
+    assert watcher.poll(registry, now=1000.5) == []
+
+    term.transcript.clear()
+    _draw(term, REAL_FINISHED)
+    term.last_output_at = 1002.0
+    assert watcher.poll(registry, now=1002.5) == []
+
+    filed = watcher.poll(registry, now=1002.5 + notifications.SETTLE_S + 1)
+
+    assert [entry.kind for entry in filed] == ["completed"]
 
 
 # ------------------------------------------------------------------- reading
@@ -127,6 +242,48 @@ async def test_a_pane_that_stops_working_is_reported_once(
 
     # And never again for the same stop, however long the pane sits there.
     assert watcher.poll(registry, now=400.0) == []
+
+
+async def test_only_observed_work_is_checkpointed_for_restart(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The Continue badge survives only the state that proves an interruption."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+
+    _draw(term, BUSY_SCREEN)
+    watcher.poll(registry, now=100.0, emit=False)
+    assert term.resume_continuation_needed is True
+    assert watcher.take_resume_dirty() is True
+    assert notifications.center().list() == [], "the bell switch does not disable checkpointing"
+
+    term.transcript.clear()
+    _draw(term, IDLE_SCREEN)
+    watcher.poll(registry, now=101.0, emit=False)
+    assert term.resume_continuation_needed is True, "a repaint gap must stay armed"
+    assert watcher.take_resume_dirty() is False
+
+    watcher.poll(registry, now=101.0 + notifications.SETTLE_S + 1, emit=False)
+    assert term.resume_continuation_needed is False
+    assert watcher.take_resume_dirty() is True
+
+
+async def test_a_question_clears_the_restart_checkpoint_immediately(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A question needs the user's answer; "continue" would be the wrong input."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, BUSY_SCREEN)
+    watcher.poll(registry, now=100.0)
+    watcher.take_resume_dirty()
+
+    term.transcript.clear()
+    _draw(term, QUESTION_SCREEN)
+    watcher.poll(registry, now=101.0)
+
+    assert term.resume_continuation_needed is False
+    assert watcher.take_resume_dirty() is True
 
 
 async def test_a_pane_that_was_never_busy_is_never_reported(

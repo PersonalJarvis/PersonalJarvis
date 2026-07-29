@@ -73,6 +73,7 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { usePaneFileDrag } from "./paneFileDrag";
+import { describeExit, explainExit } from "./paneExit";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
@@ -739,9 +740,9 @@ export function AgenticTerminal({
           term.focus();
         },
         onExit: (code) => {
-          report("exited", `exit code ${code}`);
+          report("exited", explainExit(code));
           writeToPane(
-            `\r\n\x1b[33m[${displayName} exited — code ${code}]\x1b[0m\r\n`,
+            `\r\n\x1b[33m${describeExit(displayName, code)}\x1b[0m\r\n`,
           );
         },
         onTrouble: (message, retrying) => {

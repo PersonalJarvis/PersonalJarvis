@@ -63,6 +63,7 @@ async def _restarted_pane(
     *,
     name: str = "Alex",
     conversation: str = "conv-1",
+    continuation_needed: bool = True,
 ):
     """A pane whose agent was spawned onto a conversation that already exists.
 
@@ -75,6 +76,7 @@ async def _restarted_pane(
     session.terminals[0].resume = ResumeHandle(
         kind="claude_session", id=conversation, captured_at=1.0
     )
+    session.terminals[0].resume_continuation_needed = continuation_needed
     term = await registry.attach(name, 100, 30, _noop, _noop_exit)
     assert term.resumed is True, "the fixture must reproduce a real resume"
     return session, term
@@ -102,6 +104,41 @@ async def test_a_pane_that_started_fresh_is_not_waiting(
     """No conversation was continued, so there is nothing to carry on with."""
     await registry.start(str(tmp_path), [{"agent": "claude", "name": "Alex"}])
     await registry.attach("Alex", 100, 30, _noop, _noop_exit)
+
+    assert interrupted.scan(registry) == []
+
+
+async def test_a_finished_conversation_is_not_called_interrupted(
+    registry: Registry, tmp_path: Path, existing_conversation: Any
+) -> None:
+    """Conversation history is not evidence that its last turn was cut off."""
+    await _restarted_pane(
+        registry,
+        tmp_path,
+        existing_conversation,
+        continuation_needed=False,
+    )
+
+    assert interrupted.scan(registry) == []
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        "\r\nCooking (12s · esc to interrupt)\r\n",
+        "\r\nDo you want to continue?\r\n❯ 1. Yes\r\n",
+    ],
+)
+async def test_a_resumed_pane_already_working_or_asking_is_not_offered_continue(
+    registry: Registry,
+    tmp_path: Path,
+    existing_conversation: Any,
+    screen: str,
+) -> None:
+    """Active work needs no nudge; a question needs an answer, not a nudge."""
+    _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
+    term.transcript.clear()
+    term.transcript.feed(screen)
 
     assert interrupted.scan(registry) == []
 
@@ -315,6 +352,7 @@ async def test_a_pane_still_starting_is_continued_when_it_comes_up(
     existing_conversation("conv-late")
     late = session.terminals[1]
     late.resume = ResumeHandle(kind="claude_session", id="conv-late", captured_at=1.0)
+    late.resume_continuation_needed = True
     late.continuation_pending = True  # what a restore establishes before any spawn
 
     report = await interrupted.continue_panes(registry)
@@ -342,6 +380,7 @@ async def test_a_restored_pane_is_listed_before_its_agent_starts(
     of twelve and told that was all of them.
     """
     existing_conversation("conv-restored")
+    existing_conversation("conv-finished")
     resume_store.save(
         resume_store.Snapshot(
             saved_at=100.0,
@@ -358,11 +397,24 @@ async def test_a_restored_pane_is_listed_before_its_agent_starts(
                                 kind="claude_session", id="conv-restored", captured_at=1.0
                             ),
                             prompts_sent=2,
+                            continuation_needed=True,
                         ),
                         # No handle at all: nothing to continue, so it must NOT
                         # be offered — that would be a promise with nothing
                         # behind it.
                         resume_store.SnapshotTerminal(key="blake", name="Blake", agent="claude"),
+                        # A valid history whose previous turn was already
+                        # settled: resumable, but not interrupted.
+                        resume_store.SnapshotTerminal(
+                            key="casey",
+                            name="Casey",
+                            agent="claude",
+                            resume=ResumeHandle(
+                                kind="claude_session", id="conv-finished", captured_at=1.0
+                            ),
+                            prompts_sent=1,
+                            continuation_needed=False,
+                        ),
                     ],
                 )
             ],

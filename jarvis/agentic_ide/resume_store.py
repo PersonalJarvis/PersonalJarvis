@@ -71,6 +71,11 @@ class SnapshotTerminal:
     # and silently start fresh. An absent value (an older snapshot) means "the
     # account that is active when it reopens" — the old behaviour exactly.
     account: str | None = None
+    # True only when the pane was observed actively working when its last live
+    # state was checkpointed.  This is the evidence the Continue control needs:
+    # a conversation existing does not mean its last turn was interrupted.
+    # Missing on older snapshots deliberately means False (fail closed).
+    continuation_needed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +87,7 @@ class SnapshotTerminal:
             "resume": self.resume.to_dict() if self.resume else None,
             "prompts_sent": self.prompts_sent,
             "account": self.account,
+            "continuation_needed": self.continuation_needed,
         }
 
     @staticmethod
@@ -105,6 +111,7 @@ class SnapshotTerminal:
                 if isinstance(data.get("account"), str)
                 else None
             ),
+            continuation_needed=data.get("continuation_needed") is True,
         )
 
 
