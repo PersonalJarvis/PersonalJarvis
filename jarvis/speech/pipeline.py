@@ -8548,6 +8548,7 @@ class SpeechPipeline:
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
             nonlocal last_published, language, error_backoff_s
+            from jarvis.dictation.preview_budget import preview_budget
             from jarvis.dictation.segment import is_silent_segment
 
             try:
@@ -8583,8 +8584,18 @@ class SpeechPipeline:
                     if segment_bytes and len(tail) > segment_bytes:
                         tail = tail[-segment_bytes:]
                     tail_text = ""
-                    if len(tail) >= min_bytes and not is_silent_segment(
-                        tail, session_peak=session_peak
+                    if (
+                        len(tail) >= min_bytes
+                        and not is_silent_segment(tail, session_peak=session_peak)
+                        # The preview is the only budgeted caller. It re-sends
+                        # the open tail on every tick and throws the answer away
+                        # on the next one, so at ~40 requests per minute of
+                        # speech it was spending the provider's per-minute limit
+                        # on a cosmetic feature — and the segment closes that
+                        # actually produce the transcript were the ones refused.
+                        # Skipping a preview costs a slightly staler line on
+                        # screen; skipping a segment costs the user their words.
+                        and preview_budget().try_spend()
                     ):
                         tail_text, lang, ok = await _transcribe(tail)
                         if stop_event.is_set():
