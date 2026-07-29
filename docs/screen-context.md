@@ -1,7 +1,7 @@
 # Screen Context — architecture, flow, privacy plan, MVP roadmap
 
 **Date:** 2026-07-29
-**Status:** design approved, Wave 1 implemented
+**Status:** Waves 1–2 implemented (service + voice wiring); Waves 3–5 scoped
 **Scope:** a local, on-demand screen-context service for the on-screen bar and
 the live voice session, on Windows, macOS and Linux, extensible to a fourth
 platform through the same adapter seam.
@@ -142,12 +142,14 @@ user speaks
 [1] intent.classify(text, locale)
     ├── NONE      → normal text turn. No capture. No prompt. (the common case)
     ├── AMBIGUOUS → Jarvis asks one short question in the turn's language,
-    │               arms a short confirmation window, and STOPS. No capture.
+    │               arms a short confirmation window, and STOPS. No capture,
+    │               and every other screen path stays shut for this turn.
     └── SCREEN / WINDOW ↓
     │
     ▼
 [2] permission check  (screen recording; accessibility for UI text)
-    ├── denied → honest, actionable message naming the OS setting. STOP.
+    ├── denied → "technical" refusal: logged, turn CONTINUES on the old path
+    │            (see Wave 2 — a missing permission is not a prohibition)
     └── granted ↓
     │
     ▼
@@ -349,19 +351,45 @@ and no provider name appears anywhere in the package.
 `jarvis api screen-context capture` returns a redacted context on Windows and an
 honest refusal in a `python:3.11-slim` container.
 
-### Wave 2 — voice-session wiring
+### Wave 2 — voice-session wiring ✅ *implemented*
 
-Replace the two-valued `vision_gate.should_attach_screenshot()` call sites with
-the three-valued verdict; route `AMBIGUOUS` to a clarifying question through
-`resolve_output_language`; make the router consume a `ScreenContext` handle
-instead of the background `VisionContextProvider` observation. Add `es` to the
-marker vocabulary (today's gate is de/en only, which violates §1's
-equal-locales rule).
+`turn.py` (the one call a conversation layer makes) plus the `RouterBrain.handle`
+wiring. Screen Context is consulted **before** the permanent-vision path and
+takes precedence when it answers; the clarifying question resolves through
+`resolve_output_language`; the model-facing description rides in the
+dispatcher's existing `turn_context` channel.
 
-**Done when:** an ambiguous voice turn ("what does that say?") produces a
-question, an explicit one ("look at this") produces a capture from the cursor's
-monitor, and a plain content question ("what did we discuss?") produces neither
-— verified in all three supported locales.
+Two decisions were made during implementation and are worth stating here,
+because both were wrong in the first draft:
+
+**It is additive, not a replacement.** The original plan was to swap out
+`vision_gate.should_attach_screenshot()`. That is wrong: the vision gate also
+fires on on-screen *action* turns ("click the button", "close this window"),
+which are not look-requests but still need an image. Replacing it would blind
+Computer-Use. The two gates answer different questions and both stay.
+
+**A refusal is typed, and the type decides the fallback.** The first draft
+ended the turn on any refusal, which would have turned every look-request on a
+headless or unpermitted host into a spoken refusal instead of a normal answer.
+Refusals are now:
+
+| Kind | Cause | Ends the turn? | Fallback path |
+|---|---|---|---|
+| `policy` | denylist match, feature switched off | yes, spoken | **shut** — falling through would photograph the very window the rule protects |
+| `technical` | no display, no permission, capture error | no | **open** — nothing was forbidden, it was merely impossible here |
+
+Collapsing those two fails in one of two quiet ways: leak a protected window,
+or break the feature on every machine without a screen.
+
+An `AMBIGUOUS` turn also shuts the fallback — attaching an image while asking
+whether to look at one is exactly what the three-valued verdict exists to
+prevent.
+
+**Verified by:** `tests/unit/brain/test_router_screen_context.py` (precedence,
+both refusal kinds, the ambiguous path) and `tests/unit/screen_context/test_turn.py`.
+Two pre-existing test files pin Screen Context to `none` via an autouse fixture,
+because they cover the permanent-vision path and would otherwise pass or fail
+depending on whether the host running them has a screen.
 
 ### Wave 3 — the indicator and the receipt
 
