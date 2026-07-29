@@ -22,28 +22,42 @@ what a person looking at the pane would see, and that is the question.
 
 ## What it looks at, and what it deliberately does not
 
-**Working** is read from the CLI's own RUNNING CLOCK — the elapsed time in
-brackets that these products tick once a second while they work, and drop the
-instant they stop:
+**Working** is answered by THREE signals, most specific first, because no
+single one covers every product or every phase of a turn. Rows below are copied
+off real sessions of the CLIs installed here, not imagined:
 
-    ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← working
-    ▌ Working (28m 55s · Esc to interrupt)     ← working
-    ✻ Worked for 13m 27s                       ← finished, no brackets
+1. **A running clock** — the bracketed elapsed time these products tick once a
+   second while they work, and drop the instant they stop::
 
-The first version of this module used the interrupt hint ("esc to interrupt")
-instead, on the reasoning that it is near-universal. It is not: the installed
-Claude Code shows one only in some states, so no pane was ever seen working, so
-nothing was ever reported finished — the bell stayed empty while terminals
-finished all around it. The clock is the better signal precisely because it is
-STRUCTURAL: a spinner word is random ("Meandering", "Scurrying"), the hint next
-to it differs per product and version, and both are English. The hint is kept
-as a second way in, for a CLI that shows one without a clock.
+       ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← Claude Code, thinking
+       • Working (1s • esc to interrupt)          ← Codex, thinking
+       ✻ Worked for 13m 27s                       ← finished, no brackets
 
-**Idle time alone is not used**, and that is load-bearing. An agent thinking
-hard about a large refactor prints nothing readable for minutes at a time,
-while a stalled one may redraw its status bar every second — the same reasoning
-:mod:`.interrupted` sets out. Freshness is used only to confirm that a clock
-already on screen is TICKING, never on its own.
+2. **An interrupt hint** ("esc to interrupt"), for a CLI that shows one without
+   a clock.
+
+3. **The pane is printing right now** — no knowledge of the CLI at all, which
+   is what makes a product nobody has measured behave correctly.
+
+Each covers a phase the others miss, and both gaps were measured rather than
+guessed. The first version of this module used the hint ALONE, reasoning that
+it is near-universal: the installed Claude Code does not draw one in the states
+that matter, so no pane was ever seen working and the bell stayed empty while
+terminals finished all around it. A clock-only rule then failed the other way —
+Codex draws its clock while it thinks and DROPS it while it writes the answer,
+so a reply still arriving read as a pane that had finished.
+
+**Idle time alone never says "finished"**, and that is load-bearing. An agent
+thinking hard about a large refactor prints nothing readable for minutes at a
+time, while a stalled one may redraw its status bar every second — the same
+reasoning :mod:`.interrupted` sets out. Freshness is used only in the positive
+direction: to confirm a clock on screen is TICKING, and to notice that output
+is arriving. Silence on its own proves nothing.
+
+**Output in the shadow of a keystroke is not the agent working.** A terminal
+echoes what a person types, so a pane being typed into is "producing output";
+without that exclusion, pausing mid-sentence while writing a prompt would read
+as an agent that just finished.
 
 **A finished pane is not read from its prose.** The rule is only ever "it was
 drawing a running clock and now it is not", so what the agent WROTE never
@@ -58,13 +72,17 @@ costs the user a more specific word and nothing else.
 
 ## Honest limits
 
-A CLI that draws neither a clock nor a hint reads as ``waiting`` for its whole
-life, so it produces no "finished" notification rather than a wrong one. An
-agent whose process WEDGES stops ticking, so it reads as finished a few seconds
-later — the wording ("finished and waiting at its prompt") is then optimistic,
-which is the one case where this is wrong in the user's favour rather than
-silent. A plain shell pane is not an agent and is left out entirely by the
-caller.
+A CLI that draws neither a clock nor a hint AND thinks in complete silence for
+longer than the settle window reads as finished while it is still thinking.
+Both CLIs measurable here show something the whole time — an agent that gave no
+sign of life for a minute would be indistinguishable from a hung one for its
+user too — but a product nobody has run cannot be promised more than this.
+
+An agent whose process WEDGES stops ticking, so it reads as finished a few
+seconds later; the wording ("finished and waiting at its prompt") is then
+optimistic, which is the one case where this is wrong in the user's favour
+rather than silent. A plain shell pane is not an agent and is left out entirely
+by the caller.
 """
 
 from __future__ import annotations
@@ -123,6 +141,19 @@ _LIVE_CLOCK_RE = re.compile(r"\(\s*(?:\d+\s*[hm]\s+)*\d+\s*s\b")
 #: has been still for longer than this is text about a clock, not a clock —
 #: an agent quoting "(3s)" in its own answer, or a frame frozen where it stopped.
 CLOCK_FRESH_S = 8.0
+
+#: How recently a pane must have printed to count as "still producing output".
+#:
+#: The THIRD signal, and the only one that needs no knowledge of the CLI at all
+#: — which is what makes the detector work for a product nobody has measured.
+#: Measured need: Codex draws its clock while it thinks and DROPS it while it
+#: writes the answer, so a clock-only rule reports "finished" in the middle of a
+#: reply that is still arriving. A pane that is printing is working, whatever it
+#: is printing and whichever product is printing it.
+#:
+#: Generous rather than tight: a streaming answer arrives in bursts with pauses
+#: between them, and each pause must not read as the end.
+OUTPUT_QUIET_S = 3.0
 
 #: Interrupt hints some CLIs draw while busy, lower-cased. The SECOND way in,
 #: kept because a CLI may show one without a clock; a product that shows neither
@@ -220,6 +251,34 @@ def _clock_running(rows: Sequence[str], term: Any, *, now: float | None = None) 
     return moment - float(last) <= CLOCK_FRESH_S
 
 
+def _printing_now(term: Any, *, now: float | None = None) -> bool:
+    """Is this pane producing output that is the AGENT's rather than an echo?
+
+    A terminal echoes every character a person types, so "bytes arrived" alone
+    would call a pane busy while somebody writes a prompt into it — and then
+    report it finished the moment they paused to think. Keystrokes are stamped
+    on the pane (``last_input_at``), and output arriving in their shadow does
+    not count.
+
+    This is the signal that needs no knowledge of the CLI, and it is what makes
+    a product nobody has measured behave correctly.
+    """
+    last_out = getattr(term, "last_output_at", None)
+    if not last_out:
+        return False
+    moment = time.time() if now is None else now
+    since = moment - float(last_out)
+    # A stamp in the FUTURE is not freshness, it is a clock that does not agree
+    # with the caller's — a pane carrying wall-clock times read on a synthetic
+    # timeline, or a machine whose clock stepped. Silence is the honest answer.
+    if since < 0 or since > OUTPUT_QUIET_S:
+        return False
+    last_in = getattr(term, "last_input_at", None)
+    if last_in and 0 <= moment - float(last_in) <= OUTPUT_QUIET_S:
+        return False
+    return True
+
+
 def read_activity(term: Any, *, now: float | None = None) -> Activity:
     """What ``term`` is doing at this instant.
 
@@ -238,11 +297,15 @@ def read_activity(term: Any, *, now: float | None = None) -> Activity:
         return "starting"
 
     rows = _visible_rows(term)
-    # The clock first: it is the signal every one of these products draws, while
-    # the hint below is the one some of them happen to.
+    # Three ways to be busy, most specific first. Each covers a phase the others
+    # miss: the clock covers thinking with nothing to show, the hint covers a
+    # CLI that shows one without a clock, and printing covers writing an answer
+    # — which is exactly when Codex drops its clock.
     if _clock_running(rows, term, now=now):
         return "working"
     if _contains(rows, (*BUSY_FRAGMENTS, *_extra_busy_fragments(getattr(term, "agent", "")))):
+        return "working"
+    if _printing_now(term, now=now):
         return "working"
     if _contains(rows, ASK_FRAGMENTS):
         return "asking"
@@ -264,6 +327,7 @@ __all__ = [
     "ASK_FRAGMENTS",
     "BUSY_FRAGMENTS",
     "CLOCK_FRESH_S",
+    "OUTPUT_QUIET_S",
     "SETTLED",
     "TAIL_ROWS",
     "Activity",

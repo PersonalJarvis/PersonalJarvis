@@ -806,6 +806,12 @@ class Terminal:
     error: str = ""
     started_at: float | None = None
     last_output_at: float | None = None
+    # When anything was last typed INTO this pane — every keystroke, not only a
+    # submitted line. It exists to keep the activity detector honest: a terminal
+    # echoes what a person types, so "this pane is producing output" means the
+    # agent is working only when nobody is at the keyboard. Without it, pausing
+    # mid-sentence in a pane reads as an agent that just finished.
+    last_input_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
     # When the last prompt was handed to this pane, as a wall-clock timestamp.
@@ -2664,6 +2670,11 @@ class Registry:
         owner, term = found
         if not term.pty_id:
             return False
+        # Somebody is typing in here. Recorded on EVERY keystroke (unlike the
+        # submit handling below), because the activity detector needs to tell
+        # the agent's own output apart from the echo of a person at the
+        # keyboard — see `activity._printing_now`.
+        term.last_input_at = time.time()
         # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
         # and a half-typed line are not an instruction.
         if "\r" in data or "\n" in data:
