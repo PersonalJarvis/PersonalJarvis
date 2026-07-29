@@ -36,6 +36,12 @@ async def _one_chunk(pcm: bytes, sample_rate: int = 24_000) -> AsyncIterator[Aud
     yield AudioChunk(pcm=pcm, sample_rate=sample_rate, timestamp_ns=0, channels=1)
 
 
+async def _twenty_ms_chunks(count: int) -> AsyncIterator[AudioChunk]:
+    pcm = b"\x01\x00" * 480
+    for _ in range(count):
+        yield AudioChunk(pcm=pcm, sample_rate=24_000, timestamp_ns=0, channels=1)
+
+
 def _make_player(monkeypatch) -> tuple[AudioPlayer, list[str]]:
     """Build an AudioPlayer with stream IO monkeypatched to record events.
 
@@ -102,6 +108,26 @@ async def test_two_sequential_play_chunks_share_one_stream(monkeypatch) -> None:
     assert len(writes) == 2, f"both calls should have written, got {writes}"
     assert player._active_stream is not None, "active stream must survive call return"
     assert player._active_source_rate == 24_000
+
+
+@pytest.mark.asyncio
+async def test_first_write_uses_low_latency_prefix_then_larger_batches(
+    monkeypatch,
+) -> None:
+    """A 20 ms provider stream reaches PortAudio after 40 ms, not 120 ms."""
+    player, _events = _make_player(monkeypatch)
+    writes: list[int] = []
+
+    def record_write(stream, arr, src_rate, dev_rate, **_kwargs):
+        writes.append(len(arr))
+
+    monkeypatch.setattr(player, "_write_samples", record_write)
+
+    await player.play_chunks(_twenty_ms_chunks(12))
+
+    assert writes[0] == 960  # 40 ms at 24 kHz
+    assert writes[1] == 2_880  # steady-state 120 ms batch
+    assert sum(writes) == 12 * 480
 
 
 @pytest.mark.asyncio

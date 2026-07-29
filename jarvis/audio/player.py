@@ -43,6 +43,11 @@ log = logging.getLogger("jarvis.audio.player")
 _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else OSError
 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
+# Start playout as soon as a small, click-safe prefix is available. Later writes
+# stay larger to preserve low CPU overhead and underrun resistance. With a
+# 20 ms provider stream this removes 80 ms from time-to-first-audio while the
+# persistent PortAudio stream keeps the waveform continuous across batches.
+TTS_FIRST_WRITE_BUFFER_MS = 40
 TTS_WRITE_BUFFER_MS = 120
 _MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
 
@@ -1121,14 +1126,20 @@ class AudioPlayer:
             pending = bytearray()
             pending_rate: int | None = None
             first_audio_published = False
+            wrote_audio = False
             last_flushed_sample = 0
 
             async def _flush_pending(*, final: bool = False) -> bool:
                 nonlocal pending, pending_rate, first_audio_published
-                nonlocal last_flushed_sample
+                nonlocal last_flushed_sample, wrote_audio
                 if not pending or pending_rate is None:
                     return True
-                min_bytes = int(pending_rate * TTS_WRITE_BUFFER_MS / 1000) * 2
+                target_ms = (
+                    TTS_WRITE_BUFFER_MS
+                    if wrote_audio
+                    else TTS_FIRST_WRITE_BUFFER_MS
+                )
+                min_bytes = int(pending_rate * target_ms / 1000) * 2
                 if not final and len(pending) < min_bytes:
                     return True
                 if should_play is not None and not should_play():
@@ -1169,6 +1180,8 @@ class AudioPlayer:
                     dev_rate,
                     playback_generation=playback_generation,
                 )
+                if arr.size:
+                    wrote_audio = True
                 with stream_state_lock:
                     playback_superseded = (
                         getattr(self, "_playback_generation", 0)
