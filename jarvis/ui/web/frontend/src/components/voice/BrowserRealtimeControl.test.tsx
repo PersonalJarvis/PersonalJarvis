@@ -145,7 +145,10 @@ describe("BrowserRealtimeControl", () => {
     await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
 
     act(() => {
-      useEventStore.setState({ transcription: "wie spät", transcriptionFinal: false });
+      useEventStore.setState({
+        transcription: "wie spät", // i18n-allow: simulated German interim transcript is the content under test
+        transcriptionFinal: false,
+      });
     });
 
     expect(screen.getByText(/sidebar\.realtime_transcribing/)).toBeTruthy();
