@@ -1850,6 +1850,55 @@ class VisionContextConfig(BaseModel):
     timeout_s: float = 0.25     # mandate: 250 ms latency cap per spawn
 
 
+class ScreenContextConfig(BaseModel):
+    """Top-level ``[screen_context]`` config — one-shot, on-request screen look.
+
+    Governs ``jarvis/screen_context/``: when the user unambiguously asks Jarvis
+    to look at the screen, exactly one capture is taken of the monitor under the
+    mouse cursor, filtered, handed to the turn, and dropped. There is no setting
+    here that enables continuous or silent monitoring, because no such code path
+    exists — see ``docs/screen-context.md``.
+
+    Every key below is read by ``ScreenContextService`` (AP-31: no config that
+    nothing honours).
+    """
+    model_config = {"extra": "allow"}
+
+    #: Master switch. When off, an explicit "look at this" is answered with an
+    #: honest "screen context is switched off" rather than silently ignored.
+    enabled: bool = True
+
+    #: App names or window-title fragments that are NEVER captured — not
+    #: captured and redacted, but not captured at all. Case-insensitive
+    #: substring match against both the app name and the window title, so a
+    #: version bump ("1Password" -> "1Password 8") cannot silently stop
+    #: protecting. Empty by default: shipping a guess about what a stranger
+    #: considers sensitive is worse than letting them state it (§3).
+    denylist: list[str] = Field(default_factory=list)
+
+    #: Extra ``"label:regex"`` rules on top of the shipped set (card numbers,
+    #: IBANs, API-key shapes, auth headers, private-key headers). The label is
+    #: what the user sees in the redaction report, so it should be a word.
+    sensitive_patterns: list[str] = Field(default_factory=list)
+
+    #: Whether the shipped default patterns apply. Off only makes sense for a
+    #: user who has written a complete replacement set.
+    include_default_patterns: bool = True
+
+    #: Character budget for on-screen text handed to the model. Text beyond it
+    #: is cut and the cut is reported, never silently dropped.
+    max_text_chars: int = 4000
+
+    #: Seconds an unconsumed capture stays in memory before it is discarded.
+    #: A capture is also discarded on first use, whichever comes first.
+    ttl_s: float = 120.0
+
+    #: OCR supplement for windows whose accessibility layer exposes no text.
+    #: Off by default and dependency-free: the base install stays torch-free
+    #: (§3), so this only does anything when a local OCR engine is present.
+    ocr_enabled: bool = False
+
+
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
@@ -3141,8 +3190,11 @@ class JarvisConfig(BaseModel):
     # Wave 2 — plugin-marketplace OAuth connect (hosted vs loopback callback).
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     board: BoardConfig = Field(default_factory=BoardConfig)
-    # Persona-Mandat Phase 5: top-level ``[vision]``-Section.
+    # Persona mandate, Phase 5: top-level ``[vision]`` section.
     vision: VisionContextConfig = Field(default_factory=VisionContextConfig)
+    # One-shot, intent-driven screen look (jarvis/screen_context/). Distinct
+    # from ``[vision]`` above, which governs the always-on observation path.
+    screen_context: ScreenContextConfig = Field(default_factory=ScreenContextConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the

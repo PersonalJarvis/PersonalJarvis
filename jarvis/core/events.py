@@ -909,8 +909,45 @@ class VisionInjected(Event):
     call. Telemetry for cost tracking, flight recorder, and debugging.
     """
     screenshot_hash: str = ""
-    bytes_size: int = 0                 # Groesse des PNG-Rohdatenblocks
+    bytes_size: int = 0                 # size of the raw PNG data block
     capture_age_ms: int = 0             # age of the observation at inject time
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenCaptureAnnounced(Event):
+    """A one-off Screen Context capture is about to happen.
+
+    Published BEFORE any pixels are grabbed, so the on-screen bar (and any
+    other subscriber) can show the capture indicator while there is still
+    something to indicate. Announcing afterwards would leave a window in which
+    a capture happened with no visible sign — which is the one thing this
+    feature must never do.
+
+    ``target_kind`` is ``"monitor"`` or ``"window"``; ``target_label`` is the
+    monitor identity or window title the user will see in the receipt.
+    """
+    target_kind: str = "monitor"
+    target_label: str = ""
+    #: Why this surface: cursor_monitor | bar_monitor | primary_monitor | ...
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenCaptureCompleted(Event):
+    """A Screen Context capture finished — the receipt.
+
+    Carries only metadata, never pixels and never captured text: this event
+    reaches the flight recorder, and a recorder that stores screen content
+    would quietly defeat the feature's retention promise.
+    """
+    target_kind: str = "monitor"
+    target_label: str = ""
+    width: int = 0
+    height: int = 0
+    bytes_size: int = 0
+    redaction_count: int = 0
+    degradation_count: int = 0
+    ui_text_source: str = "none"
 
 
 @dataclass(frozen=True, slots=True)

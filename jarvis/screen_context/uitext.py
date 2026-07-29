@@ -1,0 +1,213 @@
+"""Visible on-screen text — accessibility first, OCR only to fill a gap.
+
+The accessibility tree is the right source and OCR is the fallback, not the
+other way around, for three reasons that all point the same way: the OS already
+knows the text exactly (no transcription errors), it knows the *structure*
+(a button's label is not body text), and it costs single-digit milliseconds
+against OCR's hundreds. A capture path that OCR'd by default would be slower and
+less accurate at the same time.
+
+OCR therefore runs only when all three hold simultaneously:
+
+* the accessibility path produced (near-)nothing,
+* the user enabled it, and
+* a backend is actually installed.
+
+That last condition is why OCR is not a dependency. The base install stays
+torch-free (CLAUDE.md §3), so this module *probes* for a backend and degrades
+with a named reason when there is none — it never pulls one in.
+"""
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterable
+from typing import Any
+
+from jarvis.screen_context.models import Degradation, DegradationCode
+from jarvis.screen_context.ports import Rect
+
+log = logging.getLogger(__name__)
+
+#: Below this many characters, accessibility text counts as "nothing useful"
+#: and OCR (if enabled) may supplement it. A window legitimately can have very
+#: little text; the threshold is low enough not to trigger on those.
+_SPARSE_TEXT_THRESHOLD = 24
+
+#: Roles whose text is chrome, not content — dropped before aggregation so the
+#: budget is spent on what the user is actually looking at.
+_CHROME_ROLES: frozenset[str] = frozenset(
+    {"ScrollBar", "Separator", "Thumb", "TitleBar", "Splitter"}
+)
+
+
+def nodes_in_rect(nodes: Iterable[Any], rect: Rect) -> tuple[Any, ...]:
+    """Nodes whose bounds intersect ``rect``.
+
+    A monitor-scoped capture must not carry text from a window on a *different*
+    monitor: the accessibility tree spans the whole desktop, and handing the
+    model text it cannot see in the image is how "it described something that
+    was not on my screen" happens.
+
+    A node with no bounds is kept. Some backends report zero bounds for
+    container elements that still carry the useful label, and dropping them
+    would lose real text — the image is scoped correctly either way.
+    """
+    left, top, width, height = (int(v) for v in rect)
+    right, bottom = left + width, top + height
+    kept: list[Any] = []
+    for node in nodes:
+        bounds = getattr(node, "bounds", None)
+        if not bounds or len(bounds) != 4 or all(int(v) == 0 for v in bounds):
+            kept.append(node)
+            continue
+        nx, ny, nw, nh = (int(v) for v in bounds)
+        if nx < right and nx + nw > left and ny < bottom and ny + nh > top:
+            kept.append(node)
+    return tuple(kept)
+
+
+def aggregate_text(nodes: Iterable[Any], *, max_chars: int) -> tuple[str, bool]:
+    """Join node labels into one text block. Returns ``(text, truncated)``.
+
+    Password-marked nodes are dropped *here*, at the source, rather than
+    scrubbed later: their value should never enter the string in the first
+    place. Duplicates are collapsed because accessibility trees repeat a label
+    across a control and its wrapper, and paying tokens three times for the same
+    word crowds out text the user actually asked about.
+    """
+    seen: set[str] = set()
+    parts: list[str] = []
+    total = 0
+    truncated = False
+
+    for node in nodes:
+        if bool(getattr(node, "is_password", False)):
+            continue
+        if str(getattr(node, "role", "") or "") in _CHROME_ROLES:
+            continue
+        for raw in (getattr(node, "name", ""), getattr(node, "value", "")):
+            text = " ".join(str(raw or "").split())
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            if total + len(text) + 1 > max_chars:
+                truncated = True
+                return ("\n".join(parts), truncated)
+            parts.append(text)
+            total += len(text) + 1
+
+    return ("\n".join(parts), truncated)
+
+
+async def read_ui_text(
+    reader: Any,
+    *,
+    target_rect: Rect,
+    max_chars: int,
+    window_title_filter: str | None = None,
+) -> tuple[str, str, tuple[Any, ...], tuple[Degradation, ...]]:
+    """Read visible text for ``target_rect``.
+
+    Returns ``(text, source, nodes, degradations)``. ``nodes`` is handed back
+    because the redactor needs the same node list to black out secure fields in
+    the image — reading the tree twice would be both slower and racy (the
+    second read can see a different screen).
+
+    ``source`` is ``"accessibility"``, ``"none"``, and never a lie: a host
+    without an accessibility layer gets ``"none"`` plus a degradation, so no
+    caller can mistake "we could not read" for "there was no text" (AP-30).
+    """
+    degradations: list[Degradation] = []
+
+    observation = await reader.read(window_title_filter=window_title_filter)
+    if observation is None:
+        degradations.append(
+            Degradation(
+                code=DegradationCode.NO_UI_TEXT,
+                message=(
+                    "On-screen text could not be read on this system, so only "
+                    "the image was used. On Linux this needs an AT-SPI session; "
+                    "on macOS it needs the accessibility permission."
+                ),
+            )
+        )
+        return ("", "none", (), tuple(degradations))
+
+    nodes = nodes_in_rect(getattr(observation, "nodes", ()) or (), target_rect)
+    text, truncated = aggregate_text(nodes, max_chars=max_chars)
+    if truncated:
+        degradations.append(
+            Degradation(
+                code=DegradationCode.UI_TEXT_TRUNCATED,
+                message=(
+                    f"The screen contained more text than the {max_chars}-character "
+                    "limit, so it was shortened."
+                ),
+            )
+        )
+    if not text:
+        return ("", "none", nodes, tuple(degradations))
+    return (text, "accessibility", nodes, tuple(degradations))
+
+
+# --------------------------------------------------------------------------
+# OCR supplement
+# --------------------------------------------------------------------------
+
+
+def text_is_sparse(text: str) -> bool:
+    """Whether the accessibility result is thin enough to warrant OCR."""
+    return len(text.strip()) < _SPARSE_TEXT_THRESHOLD
+
+
+def ocr_supplement(image: Any) -> tuple[str, Degradation | None]:
+    """Best-effort OCR over the captured image.
+
+    Probes for an installed backend rather than depending on one: the base
+    install must stay torch-free and work on a slim container, so an absent
+    backend is a normal, named outcome — not an error and not a silent empty
+    string.
+
+    Returns ``(text, degradation)``; exactly one of them is meaningful.
+    """
+    try:
+        import pytesseract  # noqa: PLC0415
+    except ImportError:
+        log.info(
+            "screen_context: OCR is enabled in settings but no OCR engine is "
+            "installed — the capture used the image only. Install one to add "
+            "text recognition for windows without an accessibility layer."
+        )
+        return (
+            "",
+            Degradation(
+                code=DegradationCode.OCR_UNAVAILABLE,
+                message=(
+                    "Text recognition is switched on but no OCR engine is "
+                    "installed, so only the image was used."
+                ),
+            ),
+        )
+    try:
+        return (str(pytesseract.image_to_string(image) or "").strip(), None)
+    except Exception as exc:  # noqa: BLE001 — tesseract binary missing / unreadable
+        log.debug("OCR failed", exc_info=True)
+        return (
+            "",
+            Degradation(
+                code=DegradationCode.OCR_UNAVAILABLE,
+                message=(
+                    f"Text recognition could not run ({exc}), so only the image "
+                    "was used."
+                ),
+            ),
+        )
+
+
+__all__ = [
+    "aggregate_text",
+    "nodes_in_rect",
+    "ocr_supplement",
+    "read_ui_text",
+    "text_is_sparse",
+]

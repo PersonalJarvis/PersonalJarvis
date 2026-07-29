@@ -343,6 +343,7 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
@@ -457,6 +458,10 @@ class WebServer:
         app.include_router(federation_proxy_router)
         # Phase 8.5 — review-pipeline read-only UI (Plan §6.5).
         app.include_router(review_router)
+        # One-shot, intent-driven screen look. Answers honestly (not 503) on a
+        # machine with no display, so `jarvis api screen-context status` is a
+        # valid capability probe everywhere.
+        app.include_router(screen_context_router)
         # Voice-session transcription view (sidebar -> "Transcription").
         # Returns 503 as long as app.state.session_store isn't set.
         app.include_router(sessions_router)

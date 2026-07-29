@@ -819,6 +819,40 @@ def set_dictation_setting(
     _patch_table(path, "dictation", key, value)
 
 
+#: Keys ``[screen_context]`` accepts. An allowlist rather than a passthrough:
+#: a typo must never invent a config field that silently does nothing (AP-31),
+#: and a privacy feature is the last place to accept "whatever was posted".
+SCREEN_CONTEXT_SETTING_KEYS: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "denylist",
+        "sensitive_patterns",
+        "include_default_patterns",
+        "max_text_chars",
+        "ttl_s",
+        "ocr_enabled",
+    }
+)
+
+
+def set_screen_context_setting(
+    key: str,
+    value: str | bool | int | float | list,
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one ``[screen_context]`` key in jarvis.toml.
+
+    Same shape as :func:`set_dictation_setting`: TOML-only atomic write, keys
+    validated against an allowlist, values validated by the caller against
+    ``ScreenContextConfig``. These keys are not part of the drift-guard's
+    reference snapshot, so the BUG-010 three-layer rule does not apply.
+    """
+    if key not in SCREEN_CONTEXT_SETTING_KEYS:
+        raise ValueError(f"unknown screen_context setting: {key!r}")
+    _patch_table(path, "screen_context", key, value)
+
+
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the user-facing reply-language pin in ``[brain] reply_language``.
 
