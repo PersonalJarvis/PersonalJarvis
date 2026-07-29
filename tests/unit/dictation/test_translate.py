@@ -46,6 +46,7 @@ from jarvis.dictation.polish_guards import (
     TRANSLATE_DRIFT_REASONS,
     drift_reason,
     translate_drift_reason,
+    writes_without_word_spaces,
 )
 from jarvis.dictation.polish_prompt import RAW_OPEN_DELIMITER
 
@@ -163,38 +164,63 @@ def test_the_switch_ships_off() -> None:
     cfg = DictationConfig()
     assert cfg.translate is False
     assert translate_enabled(cfg) is False
-    assert resolve_translate_target(cfg, "de") == ""
+    assert resolve_translate_target(cfg) == ""
 
 
-def test_a_pinned_source_equal_to_the_target_is_not_translated() -> None:
-    """No round trip to turn English into English."""
-    cfg = _cfg(translate=True, translate_target="en")
-    assert resolve_translate_target(cfg, "en") == ""
-    assert resolve_translate_target(cfg, "en-US") == ""
-    # The cloud Whisper APIs answer with the language NAME, not a code. Reaching
-    # the canonical resolver rather than slicing the string is what keeps that
-    # from being read as an unknown language and paying for a translation of
-    # English into English.
-    assert resolve_translate_target(cfg, "English") == ""
+def test_a_pinned_dictation_language_equal_to_the_target_does_nothing() -> None:
+    """A pin is a statement, so "I speak English, I want English" is coherent.
 
-
-def test_a_different_source_resolves_to_the_target() -> None:
-    cfg = _cfg(translate=True, translate_target="en")
-    assert resolve_translate_target(cfg, "de") == "en"
-    assert resolve_translate_target(cfg, "German") == "en"
-
-
-def test_an_unknown_source_still_attempts_the_translation() -> None:
-    """Undecided means try, not skip.
-
-    Guessing wrong this way costs one model call. Guessing wrong the other way
-    leaves the text in the language the user was translating out of, which is
-    the failure they would actually notice.
+    The settings screen says so out loud too, rather than leaving a switch that
+    looks on and does nothing.
     """
-    cfg = _cfg(translate=True, translate_target="en")
-    assert resolve_translate_target(cfg, "auto") == "en"
-    assert resolve_translate_target(cfg, "unknown") == "en"
-    assert resolve_translate_target(cfg, "") == "en"
+    assert resolve_translate_target(_cfg(translate=True, translate_target="en",
+                                        language="en")) == ""
+    assert resolve_translate_target(_cfg(translate=True, translate_target="de",
+                                        language="de")) == ""
+    # A different pin is a real translation job.
+    assert resolve_translate_target(_cfg(translate=True, translate_target="en",
+                                         language="de")) == "en"
+
+
+def test_the_decision_never_depends_on_what_the_recognizer_reported() -> None:
+    """The regression that made the delivered language alternate.
+
+    The first version also skipped the translation when the RECOGNIZED language
+    matched the target. The recognizer's tag is documented-unreliable — that is
+    the entire reason ``resolve_dictation_language`` exists — so with an English
+    target a mislabelled German dictation silently kept its German, and the user
+    watched their text flip between two languages with nothing they touched
+    explaining it.
+
+    The function now takes the config and nothing else, so this test is
+    structural: there is no per-dictation input left to be wrong about.
+    """
+    import inspect
+
+    params = list(inspect.signature(resolve_translate_target).parameters)
+    assert params == ["cfg"], (
+        "resolve_translate_target must decide from configuration alone; a "
+        f"per-dictation argument reintroduces the flip: {params}"
+    )
+    # On by default for an unpinned dictation language, whatever is spoken.
+    assert resolve_translate_target(_cfg(translate=True, translate_target="en")) == "en"
+
+
+def test_auto_is_not_a_translation_target() -> None:
+    """There is nothing to detect on the output side (AP-31).
+
+    Two layers, because they fail differently. The config VALIDATOR refuses to
+    store it at all, so nothing the UI or the API can send leaves the setting in
+    that state; and the resolver still treats it as "no target" for a config
+    object that got one past the validator (a hand-edited file, an older
+    install), where the honest answer is to translate nothing rather than to
+    pick a language on the user's behalf.
+    """
+    from types import SimpleNamespace
+
+    assert DictationConfig(translate_target="auto").translate_target != "auto"
+    smuggled = SimpleNamespace(translate=True, translate_target="auto", language="auto")
+    assert resolve_translate_target(smuggled) == ""
 
 
 def test_a_hand_edited_target_falls_back_to_a_working_language() -> None:
@@ -503,6 +529,83 @@ def test_a_model_that_answered_instead_of_translating_is_caught() -> None:
             protected=(),
             max_shrink=0.40,
             max_growth=2.50,
+        )
+        == "meta_output"
+    )
+
+
+def test_a_language_without_spaces_between_words_is_not_rejected_on_length() -> None:
+    """The bug that made the whole feature look English-only.
+
+    Chinese, Japanese, Thai, Khmer, Lao, Burmese and Tibetan write without
+    spaces, so `count_words` sees a whole sentence as one or two tokens: a
+    German sentence translated into Chinese scored a word ratio of ~0.10 against
+    a 0.40 floor, and EVERY correct translation was thrown away as
+    ``ratio_shrink``. The user got their German back and reported, accurately,
+    that only English worked.
+
+    Both directions, because the failure is symmetric: into an unspaced script
+    the count collapses, out of one it explodes.
+    """
+    kwargs: dict[str, Any] = {
+        "protected": (),
+        "max_shrink": 0.40,
+        "max_growth": 2.50,
+    }
+    # i18n-allow: the CJK strings below are the material under test — a
+    # translation test needs text in the script whose word count is meaningless.
+    chinese = "我想我们应该在星期二把报告发出去。"  # i18n-allow
+    japanese = "火曜日にレポートを送るべきだと思います。"  # i18n-allow
+    thai = "ผมคิดว่าเราควรส่งรายงานในวันอังคาร"  # i18n-allow
+    korean = "화요일에 보고서를 보내야 한다고 생각합니다."  # i18n-allow
+
+    assert translate_drift_reason(GERMAN, chinese, target_language="zh", **kwargs) == ""
+    assert translate_drift_reason(GERMAN, japanese, target_language="ja", **kwargs) == ""
+    assert translate_drift_reason(GERMAN, thai, target_language="th", **kwargs) == ""
+    # Out of an unspaced script, too.
+    assert translate_drift_reason(chinese, GERMAN, target_language="de", **kwargs) == ""
+    # Korean DOES separate words, so it keeps the ordinary word-ratio check.
+    assert writes_without_word_spaces(korean) is False
+    assert translate_drift_reason(GERMAN, korean, target_language="ko", **kwargs) == ""
+
+
+def test_the_cross_script_path_still_catches_a_model_that_wrote_an_essay() -> None:
+    """Skipping the word ratio is not the same as skipping every length rule."""
+    chinese = "我想我们应该在星期二把报告发出去。"  # i18n-allow: material under test
+    assert (
+        translate_drift_reason(
+            GERMAN,
+            chinese * 40,
+            target_language="zh",
+            protected=(),
+            max_shrink=0.40,
+            max_growth=2.50,
+        )
+        == "ratio_growth"
+    )
+
+
+def test_the_other_guards_still_apply_across_scripts() -> None:
+    """Numbers and meta-output are script-independent and stay enforced."""
+    kwargs: dict[str, Any] = {
+        "target_language": "zh",
+        "protected": (),
+        "max_shrink": 0.40,
+        "max_growth": 2.50,
+    }
+    assert (
+        translate_drift_reason(
+            "wir treffen uns um 3 uhr am bahnhof",  # i18n-allow: material under test
+            "我们在车站见面。",  # i18n-allow: material under test
+            **kwargs,
+        )
+        == "lost_number"
+    )
+    assert (
+        translate_drift_reason(
+            GERMAN,
+            "Here is the translation: 我想我们应该发报告",  # i18n-allow: material under test
+            **kwargs,
         )
         == "meta_output"
     )

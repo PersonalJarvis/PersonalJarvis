@@ -247,3 +247,50 @@ def test_rare_tokens_is_empty_for_a_language_we_hold_no_word_list_for() -> None:
     answer for ~95 of the 100 recognition languages."""
     assert rare_tokens("Jutro wysylam raport", language="pl") == frozenset()
     assert rare_tokens("Jutro wysylam raport", language="") == frozenset()
+
+
+def test_the_rare_token_lookup_follows_the_TEXT_not_its_label() -> None:
+    """A mislabelled transcript must not make every ordinary word "rare".
+
+    The recognizer uploads a dictation in segments, and on a short segment
+    Whisper sometimes re-decides the language — so a German-tagged row can hold
+    an English transcript (and vice versa). Looking the frequency list up by the
+    LABEL then means checking English words against the German vocabulary, where
+    every one of them is unknown: the guard fires on any wording change at all,
+    the polish is thrown away, and the row says `rejected_drift` with nothing
+    explaining it. That was 12 of the last 40 rows in the live history
+    (2026-07-29).
+
+    The fix is narrow: when the detector has an opinion about the text, it
+    outranks the tag for THIS lookup. The tag still decides nothing else.
+    """
+    raw = "so i think we should probably ship the report on tuesday and tell them"
+    polished = "I think we should ship the report on Tuesday and tell them."
+
+    # Correctly labelled: passes, and always did.
+    assert (
+        drift_reason(
+            raw, polished, language="en", protected=(), max_shrink=0.55, max_growth=1.20
+        )
+        == ""
+    )
+    # MIS-labelled as German by the recognizer — same text, same edit.
+    assert (
+        drift_reason(
+            raw, polished, language="de", protected=(), max_shrink=0.55, max_growth=1.20
+        )
+        == ""
+    ), "an English transcript tagged German must not be judged by the German list"
+
+
+def test_a_genuinely_lost_word_is_still_caught_under_a_wrong_label() -> None:
+    """Following the text is not the same as disarming the guard."""
+    raw = "please send the Kubernetes report to Marlowe before the meeting starts"
+    dropped = "Please send the report to Marlowe before the meeting starts."
+
+    assert (
+        drift_reason(
+            raw, dropped, language="de", protected=(), max_shrink=0.55, max_growth=1.20
+        )
+        == "lost_term"
+    )

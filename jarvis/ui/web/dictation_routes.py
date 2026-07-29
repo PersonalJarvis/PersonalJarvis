@@ -252,7 +252,7 @@ async def _format_restored_text(
         # delivery uses, for the same reason the language is: a Restore that
         # handed back the original language while the live path translates would
         # be a quiet lie about what the button does.
-        translate_to = resolve_translate_target(cfg, language)
+        translate_to = resolve_translate_target(cfg)
         if text.strip() and (polish_enabled(cfg) or translate_to):
             pipeline = _pipeline()
             terms = ()
@@ -1168,10 +1168,11 @@ async def test_polish(request: Request) -> dict[str, Any]:
     )
 
     cfg = _dictation_cfg(request)
-    # The sample is English, so a target of "en" correctly resolves to "no
-    # translation needed" and the probe measures the plain polish path — which
-    # is exactly what a dictation in the target language would get.
-    translate_to = resolve_translate_target(cfg, "en")
+    # Whatever a real dictation would get, including the translation — the probe
+    # is the only way to SEE this feature, so it has to run the same pass. The
+    # fixed sample is English, so a target of English exercises the
+    # already-in-target path, which is the honest answer for that setup.
+    translate_to = resolve_translate_target(cfg)
     if not polish_enabled(cfg) and not translate_to:
         # Reported rather than refused: "you switched it off" is a complete
         # answer to "why is my dictation not being polished", and a 409 here

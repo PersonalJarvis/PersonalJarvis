@@ -271,7 +271,7 @@ def translate_enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "translate", False))
 
 
-def resolve_translate_target(cfg: Any, source_language: str) -> str:
+def resolve_translate_target(cfg: Any) -> str:
     """The language this dictation must be delivered in; ``""`` for no change.
 
     Module-level and public for the same reason
@@ -280,35 +280,41 @@ def resolve_translate_target(cfg: Any, source_language: str) -> str:
     this decision is how one recording ends up translated by one button and not
     by the other.
 
-    ``""`` on all four of the ways there is nothing to do: the switch is off, no
-    target is set, the target is ``auto`` (which is not a language), or the
-    dictation is ALREADY in the target language. That last one is what keeps an
-    English dictation with an English target on the plain polish path instead of
-    paying a translation to produce the same sentence.
+    **It reads the CONFIG and nothing else.** That is the whole design, and it
+    is a correction of the first version, which also skipped the translation
+    when the RECOGNIZED language already matched the target. That sounded like a
+    saved round trip and behaved like a coin flip: the recognizer's language tag
+    is documented-unreliable (``resolve_dictation_language`` exists because it
+    confidently reports German dictations as English), so with an English target
+    a mislabelled dictation silently kept its German — and the user watched
+    their text alternate between two languages with nothing they touched
+    explaining it. A switch that is on has to mean one thing.
 
-    The comparison is deliberately conservative: only a source we can place with
-    confidence counts as "already there". An ``auto``/``unknown`` source resolves
-    to a translation attempt, and the prompt handles the already-in-target case
-    by cleaning the text up rather than re-wording it. Guessing wrong in that
-    direction costs one model call; guessing wrong in the other silently leaves
-    the text in the wrong language, which is the failure the user would notice.
+    ``""`` on the three ways there is genuinely nothing to do, all of them
+    statements the USER made rather than guesses about them:
+
+    * the switch is off,
+    * no target is set, or the target is ``auto`` — which is not a language,
+    * the dictation LANGUAGE IS PINNED to the target. A pin is the one language
+      signal a person sets deliberately, so "I dictate in English and I want
+      English out" is a coherent instruction to do nothing, and the settings
+      screen says so out loud rather than leaving the switch looking inert.
+
+    Anything else translates. A dictation that turns out to be in the target
+    language anyway is handled by the prompt (it cleans the text up instead of
+    re-wording it) and costs the one model call the polish pass would have made
+    regardless.
     """
     if not translate_enabled(cfg):
         return ""
     target = str(getattr(cfg, "translate_target", "") or "").strip().lower()
     if not target or target == _AUTO:
         return ""
-    source = str(source_language or "").strip().lower()
-    if source and source not in (_AUTO, "unknown"):
-        # Compare on the language SUBTAG so a "de-DE" pin and a "de" tag are one
-        # language, then fall back to the canonical resolver for a provider that
-        # answered with a NAME ("German") rather than a code.
-        head = source.replace("_", "-").split("-", 1)[0]
-        if head == target:
-            return ""
-        from jarvis.core.turn_language import normalize_language_tag
-
-        if normalize_language_tag(source) == target:
+    # Compare on the primary subtag so a "de-DE" pin and a "de" target are one
+    # language rather than two.
+    pinned = str(getattr(cfg, "language", _AUTO) or _AUTO).strip().lower()
+    if pinned and pinned != _AUTO:
+        if pinned.replace("_", "-").split("-", 1)[0] == target:
             return ""
     return target
 

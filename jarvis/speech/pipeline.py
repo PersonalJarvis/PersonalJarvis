@@ -10033,9 +10033,12 @@ class SpeechPipeline:
                 # Resolved HERE and not inside the pass so both callers of the
                 # pass — this one and the Restore route — reach the same answer
                 # from the same function, exactly like ``effective_language``
-                # above. Empty means "no translation": the switch is off, or the
-                # dictation is already in the target language.
-                translate_to = resolve_translate_target(cfg, effective_language)
+                # above. It reads the CONFIG only, deliberately NOT
+                # ``effective_language``: deciding per dictation whether to
+                # translate, based on a recognizer tag that is documented to be
+                # wrong, is what made the delivered language alternate between
+                # two with nothing the user touched explaining it.
+                translate_to = resolve_translate_target(cfg)
                 if polish_enabled(cfg) or translate_to:
                     result = await polish_transcript(
                         cleaned,

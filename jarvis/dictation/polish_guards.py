@@ -93,6 +93,32 @@ TRANSLATE_DRIFT_REASONS: Final[tuple[str, ...]] = (
 #: short tokens are dominated by inflections, particles and recognizer debris.
 _RARE_MIN_CHARS = 4
 
+#: Scripts that do not put spaces between words. A "word count" over these is
+#: meaningless — a whole Chinese sentence counts as ONE token — so any
+#: length-ratio check that spans one of them and a space-separated script is
+#: comparing two different units and will fire on every correct answer.
+#:
+#: Chinese (incl. the CJK extension block used by Cantonese), Japanese kana,
+#: Thai, Lao, Khmer, Burmese and Tibetan. Hangul is deliberately ABSENT: Korean
+#: does separate words with spaces, so its word counts are comparable.
+_NO_WORD_BOUNDARY_RE: Final[re.Pattern[str]] = re.compile(
+    "[぀-ヿ㐀-䶿一-鿿豈-﫿"
+    "฀-๿຀-໿ក-៿က-႟ༀ-࿿]"
+)
+
+#: How much of a text has to be in such a script before its word count is
+#: treated as meaningless. A ratio rather than "any character", so one CJK
+#: brand name inside a German sentence does not disable the check.
+_NO_WORD_BOUNDARY_SHARE = 0.15
+
+#: The only length rule left when a translation crosses between a spaced and an
+#: unspaced script, measured in CHARACTERS because words are not comparable
+#: there. Deliberately crude: German into Chinese roughly quarters the character
+#: count while Chinese into German roughly quadruples it, so anything tight
+#: enough to be informative would reject one of the two directions. It exists to
+#: catch a model that wrote an essay, nothing finer.
+_CROSS_SCRIPT_MAX_CHAR_GROWTH = 6.0
+
 _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _WORDLIKE_RE = re.compile(r"[\w']+", re.UNICODE)
 _WHITESPACE_RE = re.compile(r"\s+", re.UNICODE)
@@ -422,10 +448,38 @@ def drift_reason(
         if needle in raw_haystack and needle not in haystack:
             return "lost_term"
 
-    if rare_tokens(raw, language=language) - rare_tokens(polished, language=language):
+    # The frequency list has to describe the TEXT, not its label. Where the two
+    # disagree the label loses, because trusting it fails silently and
+    # completely: an English transcript looked up against the German word list
+    # makes every ordinary English word "rare", so the guard fires on any
+    # wording change at all and the dictation is delivered unpolished with
+    # `rejected_drift` on the row and nothing saying why.
+    #
+    # The disagreement is real and has its own cause upstream — a segment-sized
+    # upload lets Whisper re-decide the language, and on a short segment it
+    # sometimes TRANSLATES rather than transcribes, so a row can carry a German
+    # tag and an English transcript. That is fixed where it happens; this is the
+    # guard declining to compound it. `raw_language` is already computed above,
+    # so the correction costs nothing.
+    lookup = raw_language if raw_language != "unknown" else language
+    if rare_tokens(raw, language=lookup) - rare_tokens(polished, language=lookup):
         return "lost_term"
 
     return ""
+
+
+def writes_without_word_spaces(text: str) -> bool:
+    """Whether *text* is mostly in a script that puts no spaces between words.
+
+    Public because the answer decides whether a word COUNT means anything at
+    all, and that question belongs to whoever is comparing two texts — not
+    hidden inside one guard.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return False
+    hits = len(_NO_WORD_BOUNDARY_RE.findall(body))
+    return hits / len(body) >= _NO_WORD_BOUNDARY_SHARE
 
 
 def translate_drift_reason(
@@ -468,14 +522,31 @@ def translate_drift_reason(
     if _is_meta_output(raw, translated):
         return "meta_output"
 
-    raw_words = count_words(raw)
-    out_words = count_words(translated)
-    if raw_words:
-        ratio = out_words / raw_words
-        if ratio < max_shrink:
-            return "ratio_shrink"
-        if ratio > max_growth:
+    # The length check only means something when both sides are counted in the
+    # SAME unit. Chinese, Japanese, Thai, Khmer, Lao, Burmese and Tibetan write
+    # without spaces, so a whole sentence counts as one or two "words": a German
+    # sentence translated into Chinese scores a word ratio of ~0.10 and every
+    # single correct translation was rejected as ``ratio_shrink``. That is the
+    # bug that made this feature look like it worked for English only.
+    #
+    # Where the scripts differ, length carries no signal at all and the check is
+    # skipped — the same "silence beats a veto" rule the language and rare-token
+    # checks already follow. What replaces it is a deliberately crude character
+    # ceiling: it cannot tell a good translation from an average one, but it
+    # still catches the failure that matters, a model that answered the
+    # transcript instead of translating it.
+    if writes_without_word_spaces(raw) != writes_without_word_spaces(translated):
+        if len(translated) > len(raw) * _CROSS_SCRIPT_MAX_CHAR_GROWTH:
             return "ratio_growth"
+    else:
+        raw_words = count_words(raw)
+        out_words = count_words(translated)
+        if raw_words:
+            ratio = out_words / raw_words
+            if ratio < max_shrink:
+                return "ratio_shrink"
+            if ratio > max_growth:
+                return "ratio_growth"
 
     # Only meaningful when we can classify the target at all. ``_language_key``
     # is not reused here on purpose: it answers "do we hold a frequency table",

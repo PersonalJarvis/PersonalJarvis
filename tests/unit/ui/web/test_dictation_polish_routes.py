@@ -507,3 +507,77 @@ def test_the_settings_route_still_takes_auto(
     assert body.status_code == 200
     assert body.json()["settings"]["polish_provider"] == "auto"
     assert ("polish_provider", "auto") in written
+
+
+# --------------------------------------------------------------------------
+# Switching translation on and off has to take effect NOW, not on restart
+# --------------------------------------------------------------------------
+
+
+def test_translation_switches_take_effect_without_a_restart(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported failure: switch it off, and dictations keep translating.
+
+    Two objects have to learn about a saved setting for it to be live — the
+    config the REST layer holds and the copy the RUNNING pipeline reads on the
+    delivery path — and a save that updates only the first produces exactly the
+    symptom the user described: the settings screen shows the new value, and
+    every dictation keeps behaving like the old one until the app is restarted.
+
+    Asserted through ``resolve_translate_target`` rather than by reading the
+    attribute, because that function is what the delivery path actually asks.
+    """
+    from jarvis.core import config_writer
+    from jarvis.dictation.polish import resolve_translate_target
+
+    monkeypatch.setattr(
+        config_writer, "set_dictation_setting", lambda key, value, **_kw: None
+    )
+    pipeline = SimpleNamespace(_dictation_cfg=app.state.config.dictation)
+    monkeypatch.setattr(
+        "jarvis.ui.web.dictation_routes._pipeline", lambda: pipeline
+    )
+    client = TestClient(app)
+
+    on = client.put(
+        "/api/dictation/settings", json={"translate": True, "translate_target": "zh"}
+    )
+    assert on.status_code == 200
+    assert on.json()["applied_live"] is True
+    assert resolve_translate_target(pipeline._dictation_cfg) == "zh"
+
+    # Re-pointing the target is live too — the reported "I chose Chinese and
+    # kept getting English".
+    client.put("/api/dictation/settings", json={"translate_target": "ja"})
+    assert resolve_translate_target(pipeline._dictation_cfg) == "ja"
+
+    off = client.put("/api/dictation/settings", json={"translate": False})
+    assert off.status_code == 200
+    assert resolve_translate_target(pipeline._dictation_cfg) == ""
+
+
+def test_a_saved_translation_setting_survives_the_restart_too(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live is only half of it: the keys must reach jarvis.toml as well.
+
+    A key missing from ``DICTATION_SETTING_KEYS`` is a switch that works
+    perfectly until the next restart and then silently reverts.
+    """
+    from jarvis.core import config_writer
+
+    written: list[tuple[str, Any]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_dictation_setting",
+        lambda key, value, **_kw: written.append((key, value)),
+    )
+
+    body = TestClient(app).put(
+        "/api/dictation/settings", json={"translate": True, "translate_target": "zh"}
+    )
+
+    assert body.status_code == 200
+    assert ("translate", True) in written
+    assert ("translate_target", "zh") in written

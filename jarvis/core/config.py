@@ -2889,8 +2889,14 @@ class DictationConfig(BaseModel):
     #: my own language and write in this one", and a rule table would trade
     #: that one clear switch for a screen of pairs nobody audits.
     #:
-    #: A dictation already in this language is not sent on a round trip at all
-    #: (``resolve_translate_target``) — it takes the plain polish path.
+    #: The decision reads THIS BLOCK only (``resolve_translate_target``), never
+    #: the language the recognizer reported. Skipping the translation whenever
+    #: the recognized language already matched the target sounded like a saved
+    #: round trip and behaved like a coin flip — that tag is documented to be
+    #: wrong — so the delivered language alternated with nothing the user
+    #: touched explaining it. The one exception is ``language`` above: a PIN is
+    #: a deliberate statement, so pinning it to this target means "I dictate in
+    #: it already" and nothing is translated.
     #:
     #: Unrelated to ``[brain].reply_language``, which governs what the
     #: assistant SAYS BACK. Dictating into an English document while being
