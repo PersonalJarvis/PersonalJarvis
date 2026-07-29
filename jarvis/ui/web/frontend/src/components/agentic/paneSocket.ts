@@ -171,6 +171,24 @@ export interface PaneSocketHandlers {
   onOpen?: () => void;
   onOutput: (text: string) => void;
   /**
+   * The screen this pane is re-joining, as the raw bytes that drew it.
+   *
+   * Separate from `onOutput` because it is a different instruction, not a
+   * bigger one: live output CONTINUES a screen, a replay REBUILDS it, and a
+   * handler that appends it draws the agent's interface a second time on top
+   * of the copy already there. That does not stack tidily — an Ink TUI skips
+   * unchanged cells with cursor moves instead of overwriting them with spaces,
+   * so the old copy shows through the new one character by character ("plus
+   * everything new" came back as "plueverythingwnew", reported 2026-07-29).
+   * Nothing repairs it either: the agent redraws its own visible rows and
+   * never the scrollback above them, so the mess survives every later repaint.
+   *
+   * The implementation therefore has exactly one obligation — reset the
+   * terminal before writing this — and it is required rather than optional so
+   * that a new pane cannot quietly forget it.
+   */
+  onReplay: (text: string) => void;
+  /**
    * The agent is attached — freshly started, resumed, or re-joined.
    *
    * `lastPrompt` is what this pane was told to do BEFORE this socket existed,
@@ -409,6 +427,8 @@ export function openPaneSocket(
       }
       if (msg.t === "o") {
         handlers.onOutput(msg.d ?? "");
+      } else if (msg.t === "replay") {
+        handlers.onReplay(msg.d ?? "");
       } else if (msg.t === "ready") {
         // A live handshake also clears the auth streak: whatever credential
         // this attempt used, it worked.

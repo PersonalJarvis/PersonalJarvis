@@ -599,6 +599,40 @@ export function AgenticTerminal({
       if (offscreen.full) term.write(offscreen.drain());
     };
 
+    /**
+     * Draw the screen this pane is re-joining — on a terminal cleared first.
+     *
+     * A replay is not a big chunk of output, it is a REBUILD: the server hands
+     * over the raw bytes that drew the screen the agent is looking at, so that
+     * a pane which was away — a reconnect, a backend restart, a workspace
+     * switch — comes back showing the interface rather than a blank rectangle.
+     *
+     * Writing it onto whatever is already here draws that interface a second
+     * time over the copy still on screen, and the two do not stack tidily. An
+     * Ink TUI (Claude Code, Codex) skips unchanged cells with cursor moves
+     * instead of overwriting them with spaces, so the first copy shows THROUGH
+     * the second, character by character: "plus everything new" came back as
+     * "plueverythingwnew" (reported 2026-07-29, three panes, unreadable). Nor does
+     * it heal — the agent repaints its own visible rows and never the
+     * scrollback above them, so every reconnect added another layer.
+     *
+     * `reset()` rather than `clear()`: the replay re-states the screen modes
+     * the agent negotiated (alternate screen, mouse tracking), and those have
+     * to start from a known state or the pane inherits half of the old one.
+     */
+    const replayToPane = (text: string) => {
+      if (!text) return;
+      // Parked output belongs to the screen this replay REPLACES, and it was
+      // captured before it. Written afterwards it would paint the older screen
+      // over the newer one; written before, it would be reset away regardless.
+      offscreen.drain();
+      term.reset();
+      // Through the ordinary path, so a replay arriving while nobody is looking
+      // is parked and un-parked by the same rules as anything else — and so it
+      // counts as the pane having painted.
+      writeToPane(text);
+    };
+
     /*
      * The size the terminal PROCESS has actually been told.
      *
@@ -674,6 +708,7 @@ export function AgenticTerminal({
           requestAnimationFrame(sendResize);
         },
         onOutput: (text) => writeToPane(text),
+        onReplay: (text) => replayToPane(text),
         /**
          * A prompt just landed in this pane — make that impossible to miss.
          *

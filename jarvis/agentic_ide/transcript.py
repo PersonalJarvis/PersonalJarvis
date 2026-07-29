@@ -279,10 +279,20 @@ class ReplayBuffer:
         return self._mode_prologue() + "\x1b[0m" + text
 
     def clear(self) -> None:
+        """Forget everything — this buffer is being handed to a fresh process.
+
+        Including the remembered modes. They describe what the PREVIOUS agent
+        negotiated, and it is gone; the new one states its own within its first
+        few hundred bytes, straight into the empty buffer below. Keeping them
+        would put a dead process's screen mode at the front of the next
+        truncated replay, and a viewer that clears before drawing a replay has
+        nothing else to derive its state from.
+        """
         self._chunks.clear()
         self._size = 0
         self.truncated = False
         self._open_escape = False
+        self._modes.clear()
 
 
 __all__ = [

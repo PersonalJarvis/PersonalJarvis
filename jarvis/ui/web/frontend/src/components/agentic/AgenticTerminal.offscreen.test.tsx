@@ -11,10 +11,19 @@ import { render } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * Recorded in `writes` rather than counted separately, because the ORDER is the
+ * contract: a reset after the replay wipes the screen it was supposed to draw.
+ *
+ * Hoisted because `vi.mock` factories run before the module body.
+ */
+const RESET = vi.hoisted(() => "<reset>");
+
 const harness = vi.hoisted(() => ({
   writes: [] as string[],
   handlers: null as null | {
     onOutput: (text: string) => void;
+    onReplay: (text: string) => void;
     onExit: (code: number) => void;
     onReady: (info: { resumed: boolean; reattached: boolean }) => void;
     onTrouble: (message: string, retrying: boolean) => void;
@@ -54,6 +63,9 @@ vi.mock("@xterm/xterm", () => ({
     }
     write(text: string) {
       harness.writes.push(text);
+    }
+    reset() {
+      harness.writes.push(RESET);
     }
     resize() {}
     dispose() {}
@@ -182,6 +194,42 @@ describe("AgenticTerminal off-screen output", () => {
     expect(replayed).toHaveLength(opening.length + 40 * flood.length);
   });
 
+  it("clears the screen before drawing a re-joined one", () => {
+    // The pane has been running; then the socket drops and comes back, and the
+    // server hands over the bytes that drew the screen the agent is looking at.
+    // Written onto what is still there, they draw that interface a SECOND time
+    // over the copy already on screen — and because an Ink TUI skips unchanged
+    // cells with cursor moves rather than overwriting them, the two copies
+    // interleave character by character instead of stacking (2026-07-29).
+    mount();
+    act(() => harness.handlers?.onOutput("the screen as it was"));
+    harness.writes = [];
+
+    act(() => harness.handlers?.onReplay("the screen as it is"));
+
+    expect(harness.writes).toEqual([RESET, "the screen as it is"]);
+  });
+
+  it("drops output parked before a replay rather than painting it after", () => {
+    // Parked output was captured from the screen the replay REPLACES. Written
+    // afterwards it paints the older screen over the newer one; the replay is
+    // the whole truth by the time it arrives.
+    mount();
+    act(() => harness.fire?.(false));
+    act(() => harness.handlers?.onOutput("older than the replay"));
+    expect(harness.writes).toEqual([]);
+
+    act(() => harness.handlers?.onReplay("the current screen"));
+    act(() => harness.fire?.(true));
+
+    const drawn = harness.writes.join("");
+    expect(drawn).not.toContain("older than the replay");
+    expect(drawn).toContain("the current screen");
+    // Still reset first, even though the write itself waited for the pane to
+    // come back — a replay parked and un-parked is still a rebuild.
+    expect(harness.writes[0]).toBe(RESET);
+  });
+
   it("keeps the exit banner BEHIND the output it follows", () => {
     // Writing the banner straight to xterm while output is parked would put
     // "[exited]" above the lines that explain why.
@@ -194,9 +242,14 @@ describe("AgenticTerminal off-screen output", () => {
     act(() => harness.fire?.(true));
 
     const replayed = harness.writes.join("");
+    // Anchored on the banner's SHAPE — "[<pane name> …" — rather than on the
+    // wording of the explanation inside it. This assertion is about ordering,
+    // and it spent a while red because it matched the word "exited" that
+    // `explainExit` has since reworded to "stopped".
     expect(replayed.indexOf("the last thing it said")).toBeLessThan(
-      replayed.indexOf("exited"),
+      replayed.indexOf("[Claude Code"),
     );
+    expect(replayed).toContain("[Claude Code");
   });
 
   it("does not park while the whole document is hidden", () => {

@@ -2640,6 +2640,26 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
                 pass
 
+    async def on_replay(text: str) -> None:
+        """The screen this pane is re-joining, as the bytes that drew it.
+
+        Its own frame type rather than a large ``o``, because the viewer has to
+        do something different with it: clear the terminal first. The same bytes
+        appended to a screen that already holds a copy of that interface do not
+        stack tidily — a TUI skips unchanged cells with cursor moves instead of
+        overwriting them, so the two copies interleave character by character.
+        See ``SessionRegistry._attach_locked``.
+
+        A viewer that does not know this frame simply ignores it and comes back
+        blank rather than scrambled, which is the better of the two failures and
+        only reachable by a client older than this server.
+        """
+        async with send_lock:
+            try:
+                await ws.send_json({"t": "replay", "d": text})
+            except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
+                pass
+
     async def on_exit(code: int) -> None:
         async with send_lock:
             try:
@@ -2715,6 +2735,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             on_exit,
             workspace_id=pane_workspace,
             appearance=appearance,
+            on_replay=on_replay,
         )
     except SessionNotReady as exc:
         # "Not yet", not "not here": this pane connected while its workspace was

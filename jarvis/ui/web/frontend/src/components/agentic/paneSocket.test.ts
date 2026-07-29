@@ -56,6 +56,7 @@ function handlers() {
   return {
     onOpen: vi.fn(),
     onOutput: vi.fn(),
+    onReplay: vi.fn(),
     onReady: vi.fn(),
     onExit: vi.fn(),
     onTrouble: vi.fn(),
@@ -121,6 +122,27 @@ describe("openPaneSocket", () => {
     // A retry is under way, so the pane is not dead — saying so would put a
     // red "error" on a terminal that is about to work.
     expect(cb.onTrouble).toHaveBeenLastCalledWith(expect.any(String), true);
+    socket.close();
+  });
+
+  it("keeps a re-joined screen off the live-output channel", () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+
+    // The same bytes on the two channels mean opposite things: live output
+    // continues the screen, a replay rebuilds it — and only the second one may
+    // clear the terminal first. Routed to `onOutput` instead, the re-joined
+    // interface is drawn on top of the copy already there and the two
+    // interleave into unreadable text (2026-07-29).
+    MockWebSocket.last!.deliver({ t: "replay", d: "\x1b[?1049h# the screen" });
+
+    expect(cb.onReplay).toHaveBeenCalledWith("\x1b[?1049h# the screen");
+    expect(cb.onOutput).not.toHaveBeenCalled();
+
+    MockWebSocket.last!.deliver({ t: "o", d: "live" });
+    expect(cb.onOutput).toHaveBeenCalledWith("live");
+    expect(cb.onReplay).toHaveBeenCalledTimes(1);
     socket.close();
   });
 

@@ -2156,6 +2156,7 @@ class Registry:
         on_exit: Any,
         workspace_id: str | None = None,
         appearance: str | None = None,
+        on_replay: Any = None,
     ) -> Terminal:
         """Point a viewer at terminal ``key`` — one attach at a time per pane.
 
@@ -2172,6 +2173,12 @@ class Registry:
         immediately, and they are exactly what a burst of reconnecting panes
         asks for. ``_attach_locked`` resolves again under the lock, because the
         workspace may have closed while this attempt waited its turn.
+
+        ``on_replay`` receives the re-joined screen (see :meth:`_attach_locked`)
+        and exists so a viewer can tell it apart from live output. Omitted, the
+        replay goes to ``on_output`` — correct for an internal caller that only
+        wants the bytes, and wrong for a viewer that draws them, which is why
+        the socket route passes one.
         """
         found = self._locate(key, workspace_id)
         if found is None:
@@ -2188,6 +2195,7 @@ class Registry:
                 on_exit,
                 workspace_id=workspace_id,
                 appearance=appearance,
+                on_replay=on_replay,
             )
 
     async def _attach_locked(
@@ -2199,6 +2207,7 @@ class Registry:
         on_exit: Any,
         workspace_id: str | None = None,
         appearance: str | None = None,
+        on_replay: Any = None,
     ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
 
@@ -2224,6 +2233,20 @@ class Registry:
         comes back as it was. Restarting instead would throw away work in
         progress every time somebody looked away, which is precisely what having
         several workspaces would otherwise cost.
+
+        **That replay goes out on ``on_replay``, not on ``on_output``, because a
+        viewer has to CLEAR its screen before drawing it.** The two are the same
+        bytes and completely different instructions: live output continues a
+        screen, a replay REBUILDS one. A viewer that appended it instead drew
+        the agent's interface a second time over the copy already there — and
+        because an Ink TUI skips unchanged cells with cursor moves rather than
+        overwriting them with spaces, the two copies did not stack tidily, they
+        interleaved character by character ("plus everything new" came back as
+        "plueverythingwnew"). Reported 2026-07-29 across three panes; every
+        reconnect made it worse and nothing ever repaired it, because the agent
+        only ever redraws its own visible rows and never the scrollback above
+        them. Omitting ``on_replay`` keeps the old single-channel behaviour, for
+        internal callers that consume bytes rather than paint them.
 
         **This is also where a conversation is continued rather than restarted.**
         A pane holding a resume handle launches its CLI with the arguments that
@@ -2272,7 +2295,11 @@ class Registry:
                 # coding agent's TUI is a painted surface, not a log: without
                 # this the pane comes back blank until the agent happens to
                 # repaint, which looks exactly like a dead terminal.
-                await on_output(replay)
+                #
+                # On the replay channel when the viewer offered one — see the
+                # docstring for what appending it to a screen that already had
+                # a copy of it looked like.
+                await (on_replay or on_output)(replay)
             if term.replay.truncated:
                 # The tail is all this pane has, and it no longer starts where
                 # the agent started drawing. Replaying it alone brings back the
