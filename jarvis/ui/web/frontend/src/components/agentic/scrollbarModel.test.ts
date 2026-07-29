@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASSUMED_SCREENS,
   backAtThumbTop,
   exactView,
   freshTravel,
@@ -34,13 +35,22 @@ describe("exactView", () => {
 });
 
 describe("travelView", () => {
-  it("claims the travelled distance plus one screen of headroom", () => {
+  it("claims the travelled distance plus the assumed headroom", () => {
     expect(travelView(60, 24)).toEqual({
       kind: "travel",
-      above: 84,
+      above: 60 + 24 * ASSUMED_SCREENS,
       back: 60,
       rows: 24,
     });
+  });
+
+  it("draws a graspable thumb, not half the track, at the live end", () => {
+    // The maintainer's report: on a pane at its newest output the thumb filled
+    // half the bar, which claims a two-screen history no agent ever has.
+    const box = thumbBox(travelView(0, 24), 300)!;
+    expect(box.heightPx).toBeLessThan(100);
+    expect(box.heightPx).toBeGreaterThanOrEqual(MIN_THUMB_PX);
+    expect(box.topPx + box.heightPx).toBe(300);
   });
 
   it("never stands behind the live end", () => {
@@ -124,6 +134,23 @@ describe("wheelTravel", () => {
     expect(wheelTravel(t, 1, 1001).travelled).toBe(0);
   });
 
+  it("counts every report of one turn, not the turn", () => {
+    // A physical wheel covers several rows, and xterm sends one report per
+    // row — taking the whole turn for a single notch under-counted every
+    // real scroll five-fold and left the thumb near a bottom it had left.
+    const t = wheelTravel(freshTravel(), -6, 1000);
+    expect(t.travelled).toBe(6 * LINES_PER_NOTCH);
+    expect(wheelTravel(t, 6, 1001).travelled).toBe(0);
+  });
+
+  it("holds a down pending, so an unanswered one can prove the live end", () => {
+    const t = wheelTravel({ ...freshTravel(), travelled: 30 }, 2, 1000);
+    expect(t.pendingDown).toBe(2 * LINES_PER_NOTCH);
+    expect(t.lastDownAt).toBe(1000);
+    // An up in the other direction retracts that claim.
+    expect(wheelTravel(t, -1, 1001).pendingDown).toBe(0);
+  });
+
   it("clamps at zero however far past the live end the wheel turns", () => {
     let t = wheelTravel(freshTravel(), -1, 0);
     for (let i = 0; i < 10; i += 1) t = wheelTravel(t, 1, i);
@@ -150,125 +177,129 @@ describe("wheelTravel", () => {
 });
 
 describe("screenTravel", () => {
-  const seen = (travelled: number): Travel => ({
+  const standing = (travelled: number): Travel => ({
     ...freshTravel(),
     travelled,
-    markerSeen: true,
     fingerprint: "same",
   });
 
-  it("learns that this application paints a scrolled-back overlay", () => {
-    const t = screenTravel(
-      freshTravel(),
-      { markerRow: 22, fingerprint: "a" },
-      0,
-    );
-    expect(t.markerSeen).toBe(true);
-  });
-
-  it("snaps to the live end the moment the overlay disappears", () => {
-    // The user's reported bug: at the newest output with the thumb mid-track.
-    const t = screenTravel(seen(300), { markerRow: -1, fingerprint: "" }, 0);
-    expect(t.travelled).toBe(0);
-    expect(t.saturated).toBe(false);
-  });
-
-  it("does not treat a missing overlay as an anchor before one was ever seen", () => {
-    const t: Travel = { ...freshTravel(), travelled: 60 };
-    expect(
-      screenTravel(t, { markerRow: -1, fingerprint: "" }, 0).travelled,
-    ).toBe(60);
-  });
-
   it("keeps the estimate when the screen cannot be read", () => {
-    const t = seen(60);
+    const t = standing(60);
     expect(screenTravel(t, null, 0)).toBe(t);
   });
 
-  it("confirms pending ups when the transcript moved", () => {
-    const t: Travel = { ...seen(60), pendingUp: 30, lastUpAt: 0 };
-    const next = screenTravel(t, { markerRow: 22, fingerprint: "moved" }, 1);
+  it("confirms pending notches when the transcript moved", () => {
+    const t: Travel = {
+      ...standing(60),
+      pendingUp: 30,
+      lastUpAt: 0,
+      pendingDown: 9,
+      lastDownAt: 0,
+    };
+    const next = screenTravel(t, { fingerprint: "moved" }, 1);
     expect(next.travelled).toBe(60);
     expect(next.pendingUp).toBe(0);
+    expect(next.pendingDown).toBe(0);
     expect(next.saturated).toBe(false);
   });
 
   it("un-counts ups the application ignored at the top, and measures it", () => {
-    // The user's other reported bug: scrolling past a top nobody can see.
-    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0, moved: true };
-    const next = screenTravel(
-      t,
-      { markerRow: 22, fingerprint: "same" },
-      SETTLE_MS,
-    );
+    // Scrolling past a top nobody can see: the notches emit no bytes at all,
+    // so only the unchanged screen can tell.
+    const t: Travel = {
+      ...standing(90),
+      pendingUp: 30,
+      lastUpAt: 0,
+      moved: true,
+    };
+    const next = screenTravel(t, { fingerprint: "same" }, SETTLE_MS);
     expect(next.travelled).toBe(60);
     expect(next.saturated).toBe(true);
     expect(next.ceiling).toBe(60);
   });
 
+  it("re-anchors at the live end when downs stop changing the screen", () => {
+    // The word-agnostic replacement for one CLI's English overlay: a down the
+    // application had nothing left to answer with means the newest output is
+    // already on screen, in whatever language it happens to be printed.
+    const t: Travel = {
+      ...standing(42),
+      pendingDown: 9,
+      lastDownAt: 0,
+      moved: true,
+    };
+    const next = screenTravel(t, { fingerprint: "same" }, SETTLE_MS);
+    expect(next.travelled).toBe(0);
+    expect(next.pendingDown).toBe(0);
+    // The episode closes: the next one has to prove movement afresh.
+    expect(next.moved).toBe(false);
+  });
+
   it("waits for the pty before judging an unmoved screen", () => {
-    const t: Travel = { ...seen(90), pendingUp: 30, lastUpAt: 0, moved: true };
-    const next = screenTravel(
-      t,
-      { markerRow: 22, fingerprint: "same" },
-      SETTLE_MS - 1,
+    const up: Travel = {
+      ...standing(90),
+      pendingUp: 30,
+      lastUpAt: 0,
+      moved: true,
+    };
+    expect(screenTravel(up, { fingerprint: "same" }, SETTLE_MS - 1)).toBe(up);
+    const down: Travel = {
+      ...standing(90),
+      pendingDown: 9,
+      lastDownAt: 0,
+      moved: true,
+    };
+    expect(screenTravel(down, { fingerprint: "same" }, SETTLE_MS - 1)).toBe(
+      down,
     );
-    expect(next.travelled).toBe(90);
-    expect(next.saturated).toBe(false);
   });
 
   it("never calls an episode that has not moved a top", () => {
     // The pinned-thumb deadlock: a busy CLI leaves the screen unchanged far
     // past the settle window without a single notch having reached the top.
     // The ups still leave the count, but no brake and no false ceiling.
-    const t: Travel = { ...seen(30), pendingUp: 30, lastUpAt: 0 };
-    const next = screenTravel(
-      t,
-      { markerRow: 22, fingerprint: "same" },
-      SETTLE_MS,
-    );
-    expect(next.travelled).toBe(3);
+    const t: Travel = { ...standing(30), pendingUp: 30, lastUpAt: 0 };
+    const next = screenTravel(t, { fingerprint: "same" }, SETTLE_MS);
+    expect(next.travelled).toBe(0);
     expect(next.saturated).toBe(false);
     expect(next.ceiling).toBeNull();
   });
 
+  it("never calls an episode that has not moved the live end either", () => {
+    // Same deadlock, mirrored: a busy CLI must not be able to claim the pane
+    // is at its newest output while the user is reading its history.
+    const t: Travel = { ...standing(60), pendingDown: 9, lastDownAt: 0 };
+    const next = screenTravel(t, { fingerprint: "same" }, SETTLE_MS);
+    expect(next.travelled).toBe(60);
+    expect(next.pendingDown).toBe(0);
+  });
+
   it("a fingerprint CHANGE proves movement; the first look only records", () => {
-    const first = screenTravel(
-      freshTravel(),
-      { markerRow: 22, fingerprint: "a" },
-      0,
-    );
+    const first = screenTravel(freshTravel(), { fingerprint: "a" }, 0);
     expect(first.moved).toBe(false);
-    const second = screenTravel(
-      first,
-      { markerRow: 22, fingerprint: "b" },
-      1,
-    );
+    const second = screenTravel(first, { fingerprint: "b" }, 1);
     expect(second.moved).toBe(true);
   });
 
-  it("closing the episode at the live end demands fresh proof next time", () => {
-    const t: Travel = { ...seen(60), moved: true };
-    const home = screenTravel(t, { markerRow: -1, fingerprint: "" }, 0);
-    expect(home.moved).toBe(false);
+  it("holds its ground while a scrolled-back pane keeps repainting", () => {
+    // The reported bug, at model level: the count used to snap to zero on
+    // every repaint that carried no known overlay string, so a pane parked at
+    // the TOP of its transcript drew its thumb at the very bottom.
+    let t: Travel = { ...standing(300), moved: true };
+    for (let i = 0; i < 20; i += 1) {
+      t = screenTravel(t, { fingerprint: `agent still talking ${i}` }, i);
+    }
+    expect(t.travelled).toBe(300);
   });
 
   it("keeps the ceiling graspable however small the measured top", () => {
-    const t: Travel = { ...seen(3), pendingUp: 3, lastUpAt: 0, moved: true };
-    const next = screenTravel(
-      t,
-      { markerRow: 22, fingerprint: "same" },
-      SETTLE_MS,
-    );
+    const t: Travel = {
+      ...standing(3),
+      pendingUp: 3,
+      lastUpAt: 0,
+      moved: true,
+    };
+    const next = screenTravel(t, { fingerprint: "same" }, SETTLE_MS);
     expect(next.ceiling).toBeGreaterThanOrEqual(LINES_PER_NOTCH);
-  });
-
-  it("floors the count while the overlay says the view is away", () => {
-    const t = screenTravel(
-      { ...seen(0), fingerprint: "a" },
-      { markerRow: 22, fingerprint: "a" },
-      0,
-    );
-    expect(t.travelled).toBe(LINES_PER_NOTCH);
   });
 });

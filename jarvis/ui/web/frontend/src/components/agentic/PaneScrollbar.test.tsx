@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
 import { PaneScrollbar } from "./PaneScrollbar";
-import { LINES_PER_NOTCH, SETTLE_MS } from "./scrollbarModel";
+import { ASSUMED_SCREENS, LINES_PER_NOTCH, SETTLE_MS } from "./scrollbarModel";
 
 const REGION = { top: 0, bottom: 300, left: 0, right: 400 };
 const TRACK_PX = 300;
@@ -20,7 +20,7 @@ interface TermState {
   viewportY: number;
   baseY: number;
   mouseTrackingMode: string;
-  /** What the screen shows, for the overlay anchor; row index → text. */
+  /** What the screen shows, for the movement fingerprint; row index → text. */
   lines: string[];
 }
 
@@ -264,9 +264,29 @@ describe("PaneScrollbar", () => {
     dragTo(thumb(), 200 - grabbed);
     fireEvent.pointerUp(thumb(), { pointerId: 1 });
 
-    // A full pull up asks for the whole assumed span — one screen, in notches.
-    expect(seen.length).toBe(Math.trunc(24 / LINES_PER_NOTCH));
+    // A full pull up asks for the whole assumed span, in notches — more than
+    // one step may relay, so the release has to carry the remainder.
+    expect(seen.length).toBe(
+      Math.trunc((24 * ASSUMED_SCREENS) / LINES_PER_NOTCH),
+    );
     expect(new Set(seen)).toEqual(new Set([-1]));
+  });
+
+  it("counts a real wheel turn by the rows it covers, not by the event", async () => {
+    // One turn of a physical wheel is ~100 px, which xterm hands the CLI as
+    // one report PER ROW. Counting the turn as a single notch under-counted
+    // every real scroll and parked the thumb near a bottom it had left.
+    render(<Harness term={appTerminal(24).term} />);
+    reachThePane();
+
+    // The staged pane is 300 px over 24 rows: 100 px is eight rows.
+    fireEvent.wheel(host(), { deltaY: -100, deltaMode: 0 });
+
+    await waitFor(() =>
+      expect(bar()!.getAttribute("aria-valuemax")).toBe(
+        String(8 * LINES_PER_NOTCH + 24 * ASSUMED_SCREENS),
+      ),
+    );
   });
 
   it("pages towards a press on the empty part of the track", () => {
@@ -326,44 +346,79 @@ describe("PaneScrollbar", () => {
   });
 
   /*
-   * The reported bug, at the level the user met it: the pane stood at its
-   * newest output while the thumb hung mid-track, because notches the CLI had
-   * silently ignored at the transcript's top stayed counted. The CLI's own
-   * scrolled-back overlay is the anchor: the moment it leaves the screen, the
-   * thumb comes home — no wheel traffic required.
+   * The reported bug, at the level the user met it (2026-07-29): the pane
+   * showed the very TOP of a long transcript while the thumb sat pinned at
+   * the very bottom of the track, and the bar could only ever scroll up.
+   *
+   * The count was being snapped to zero on every repaint that carried no
+   * `Jump to bottom` — a string this CLI replaces with `N new messages` the
+   * moment output arrives while the view is parked, and one no other CLI
+   * paints at all. Nothing the screen SAYS may move the count now.
    */
-  it("snaps home the moment the CLI's scrolled-back overlay disappears", async () => {
+  it("holds its ground while a scrolled-back CLI keeps repainting", async () => {
     const { state, term, fire } = appTerminal(24);
     state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
-    state.lines[20] = "  86   Jump to bottom (ctrl+End) ↓";
     render(<Harness term={term} />);
 
-    // A pile of wheel-ups, some of which the CLI ignored at its top.
-    for (let i = 0; i < 40; i += 1) fireEvent.wheel(host(), { deltaY: -1 });
+    for (let i = 0; i < 10; i += 1) fireEvent.wheel(host(), { deltaY: -1 });
     reachThePane();
+    // The reads are coalesced into frames, so let one pass before taking the
+    // position this test is about to hold the bar to.
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    const parked = thumbTop();
+    expect(parked + thumbHeight()).toBeLessThan(TRACK_PX);
+
+    // The agent talks on while the user reads: twenty repaints, including the
+    // overlay swap that used to be read as "you are at the newest output".
+    for (let i = 0; i < 20; i += 1) {
+      state.lines[3] = `agent still talking ${i}`;
+      state.lines[20] = i % 2 ? "  1 new message (ctrl+End) ↓" : "";
+      fire("render");
+      // eslint-disable-next-line no-await-in-loop
+      await act(
+        () =>
+          new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      );
+    }
+
+    expect(thumbTop()).toBe(parked);
+  });
+
+  /*
+   * The live-end anchor that replaced the English string: a down the CLI has
+   * nothing left to answer with means the newest output is already on screen.
+   * Works for a CLI in any language, and for CLIs that paint no overlay.
+   */
+  it("comes home when downs stop changing the screen", async () => {
+    let clock = 2_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const { state, term, fire } = appTerminal(24);
+    state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
+    render(<Harness term={term} />);
+    reachThePane();
+
+    // Ten notches back, and the screen visibly follows: the episode moved.
+    for (let i = 0; i < 10; i += 1) fireEvent.wheel(host(), { deltaY: -1 });
+    state.lines[0] = "transcript moved";
+    fire("render");
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX);
 
-    // The CLI returns to the live end and erases its overlay.
-    state.lines[20] = "";
+    // Two notches forward that change nothing: the CLI is already showing its
+    // newest output, however far the count still claims to be from it.
+    for (let i = 0; i < 2; i += 1) fireEvent.wheel(host(), { deltaY: 1 });
+    clock += SETTLE_MS + 100;
     fire("render");
 
     await waitFor(() => expect(thumbTop() + thumbHeight()).toBe(TRACK_PX));
-  });
-
-  it("keeps standing away from the live end while the overlay is up", async () => {
-    const { state, term } = appTerminal(24);
-    state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
-    state.lines[20] = "  12   Jump to bottom (ctrl+End) ↓";
-    render(<Harness term={term} />);
-
-    // Enough wheel-downs to clamp any count to zero — but the CLI's screen
-    // still says the view is away, and the overlay outranks the count.
-    for (let i = 0; i < 10; i += 1) fireEvent.wheel(host(), { deltaY: 1 });
-    reachThePane();
-
-    await waitFor(() =>
-      expect(thumbTop() + thumbHeight()).toBeLessThan(TRACK_PX),
-    );
   });
 
   /*
@@ -377,7 +432,6 @@ describe("PaneScrollbar", () => {
     vi.spyOn(Date, "now").mockImplementation(() => clock);
     const { state, term, fire } = appTerminal(24);
     state.lines = Array.from({ length: 24 }, (_, i) => `transcript row ${i}`);
-    state.lines[20] = "  12   Jump to bottom (ctrl+End) ↓";
     render(<Harness term={term} />);
     reachThePane();
 

@@ -49,7 +49,6 @@ import {
   hasScroll,
   notchesFor,
   screenTravel,
-  SCROLLED_BACK_MARKERS,
   SETTLE_MS,
   thumbBox,
   travelView,
@@ -64,6 +63,23 @@ const LINGER_MS = 200;
 
 /** How long a wheel turn keeps the bar visible as a position readout. */
 const FLASH_MS = 800;
+
+/**
+ * Rows at the bottom of a full-screen CLI's screen that repaint on their own:
+ * the input box, the spinner, a status line, a token counter. They must stay
+ * out of the fingerprint below — a spinner ticking once a frame would read as
+ * "the transcript moved" and no brake could ever engage.
+ *
+ * A count rather than a marker on purpose. The row the chrome starts at used
+ * to be found by matching one CLI's English overlay text, which is how a bar
+ * that worked for Claude Code worked for nothing else and then stopped
+ * working for Claude Code too (AP-27). Eight rows is generous for every CLI
+ * measured, and being wrong about it costs sensitivity, never correctness.
+ */
+const CHROME_ROWS = 8;
+
+/** Row height assumed when the pane cannot be measured, in px. */
+const FALLBACK_CELL_PX = 17;
 
 /** True when the running application receives wheel events itself. */
 function appOwnsScreen(term: Terminal | null): boolean {
@@ -99,14 +115,14 @@ export function readScrollView(
 }
 
 /**
- * One look at an application-held pane's screen: is the scrolled-back
- * overlay up, and what does the transcript region above it say?
+ * One look at an application-held pane's screen: what does its transcript
+ * region say right now?
  *
- * The overlay's row splits the screen — transcript above, the CLI's animated
- * chrome (spinner, input box, status bars) below — so the fingerprint stops
- * there: a spinner repainting every frame must not read as "the transcript
- * moved". Returns null when the buffer cannot be read; the caller keeps its
- * estimate rather than inventing one.
+ * Only whether this changes between two looks is ever used, so the content is
+ * never interpreted — see ./scrollbarModel on why reading a CLI's words was
+ * the bug rather than the fix. The bottom {@link CHROME_ROWS} rows are left
+ * out because they animate on their own. Returns null when the buffer cannot
+ * be read; the caller keeps its estimate rather than inventing one.
  */
 export function readScreen(term: Terminal | null): ScreenGlance | null {
   const buffer = term?.buffer?.active;
@@ -116,19 +132,52 @@ export function readScreen(term: Terminal | null): ScreenGlance | null {
   }
   try {
     const text: string[] = [];
-    for (let y = 0; y < rows; y += 1) {
+    for (let y = 0; y < Math.max(1, rows - CHROME_ROWS); y += 1) {
       text.push(buffer.getLine(y)?.translateToString(true) ?? "");
     }
-    const markerRow = text.findIndex((row) =>
-      SCROLLED_BACK_MARKERS.some((marker) => marker.test(row)),
-    );
-    return {
-      markerRow,
-      fingerprint: markerRow > 0 ? text.slice(0, markerRow).join("\n") : "",
-    };
+    return { fingerprint: text.join("\n") };
   } catch {
     return null;
   }
+}
+
+/**
+ * How many mouse reports xterm will send the application for this wheel
+ * event, signed the way `deltaY` is.
+ *
+ * The count of where a full-screen CLI's pane stands is only as good as this
+ * conversion, and taking every DOM wheel event for a single notch — as this
+ * did — under-counted a real mouse wheel roughly five-fold: one turn of a
+ * physical wheel is ~100 px, which xterm turns into one report PER ROW it
+ * covers, each of which moves the application again. The pane drifted further
+ * behind the truth with every turn, and the thumb sat near the bottom of a
+ * transcript the user had scrolled minutes into.
+ *
+ * Mirrors xterm's own `getLinesScrolled`: line and page deltas are already in
+ * the terminal's units, a pixel delta is divided by the measured row height.
+ */
+export function wheelNotches(
+  event: WheelEvent,
+  host: HTMLElement | null,
+  rows: number,
+): number {
+  const magnitude = Math.abs(event.deltaY);
+  if (!Number.isFinite(magnitude) || magnitude === 0) return 0;
+  let lines: number;
+  if (event.deltaMode === 1) {
+    lines = magnitude;
+  } else if (event.deltaMode === 2) {
+    lines = magnitude * Math.max(1, rows);
+  } else {
+    const screen = host?.querySelector<HTMLElement>(".xterm-screen");
+    const height = screen?.clientHeight ?? 0;
+    const cell = rows > 0 && height > 0 ? height / rows : FALLBACK_CELL_PX;
+    lines = magnitude / Math.max(1, cell);
+  }
+  // A turn too small for a whole row still moved the application by one: xterm
+  // carries the remainder over, and dropping it here would lose the scroll.
+  const whole = Math.max(1, Math.round(lines));
+  return event.deltaY < 0 ? -whole : whole;
 }
 
 /**
@@ -197,8 +246,8 @@ export function PaneScrollbar({
 
   // Where a full-screen CLI's pane stands, counted off the wheel traffic —
   // the user's own turns and this bar's relays alike, since both pass the
-  // same observer below — and reconciled against the screen's own anchors
-  // (see ./scrollbarModel, "the three anchors").
+  // same observer below — and reconciled against whether the screen moved
+  // (see ./scrollbarModel, "the two brakes").
   const travelRef = useRef<Travel>(freshTravel());
   // Which kind of pane the last reading saw. A CLI that enters or leaves the
   // alternate screen mid-session (a shell running `less`) starts a different
@@ -255,10 +304,11 @@ export function PaneScrollbar({
     let timer: number | undefined;
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY === 0) return;
-      if (appOwnsScreen(getTerminal())) {
+      const term = getTerminal();
+      if (appOwnsScreen(term)) {
         travelRef.current = wheelTravel(
           travelRef.current,
-          event.deltaY,
+          wheelNotches(event, host, term?.rows ?? 0),
           Date.now(),
         );
       }
@@ -298,17 +348,19 @@ export function PaneScrollbar({
       }
       lastKindRef.current = kind;
       if (appHeld) {
-        // Reconcile the count with the screen's own anchors — the overlay
-        // and the saturation brake (see ./scrollbarModel).
+        // Reconcile the count against whether the screen moved — the two
+        // brakes that replaced the old overlay anchor (see ./scrollbarModel).
         travelRef.current = screenTravel(
           travelRef.current,
           readScreen(term),
           Date.now(),
         );
-        // Unconfirmed ups need a second look once the pty has had its say,
-        // even if no event arrives to prompt one.
+        // Unconfirmed notches need a second look once the pty has had its
+        // say, even if no event arrives to prompt one. This is the ONLY thing
+        // that ever brings a pane home again, so it must cover both
+        // directions: an unanswered down is what proves the live end.
         if (settleTimer !== undefined) window.clearTimeout(settleTimer);
-        if (travelRef.current.pendingUp > 0) {
+        if (travelRef.current.pendingUp > 0 || travelRef.current.pendingDown > 0) {
           settleTimer = window.setTimeout(schedule, SETTLE_MS + 50);
         }
       }
@@ -431,16 +483,30 @@ export function PaneScrollbar({
       setDragging(true);
       setHeldTopPx(startTop);
 
+      let lastTopPx = startTop;
       const onMove = (move: PointerEvent) => {
         if (!Number.isFinite(move.clientY)) return;
         const topPx = Math.min(
           Math.max(startTop + (move.clientY - startY), 0),
           travel,
         );
-        setHeldTopPx(topPx);
+        lastTopPx = topPx;
+        // A coordinate that cannot be worked with leaves the thumb where the
+        // count says it is, rather than writing NaN into the layout.
+        setHeldTopPx(Number.isFinite(topPx) ? topPx : null);
         scrollTo(backAtThumbTop(topPx, height, grabbed));
       };
       const finish = () => {
+        // One last ask at the position the thumb was let go of. A fast pull
+        // across a long history wants more notches than a single step may
+        // relay (MAX_NOTCHES_PER_STEP), and the remainder normally rides on
+        // the next pointer move — a hand that stops at the end of the track
+        // never sends one, and the pane used to stay short of where it was
+        // dropped with no way to tell why. Not while the top brake holds:
+        // there a step means one probe notch, and this would be a second.
+        if (!travelRef.current.saturated) {
+          scrollTo(backAtThumbTop(lastTopPx, height, grabbed));
+        }
         try {
           target.releasePointerCapture(event.pointerId);
         } catch {
