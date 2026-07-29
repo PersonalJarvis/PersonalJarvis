@@ -105,6 +105,26 @@ DICTATION_REFUSAL_DWELL_S = 3.0
 # surface says the one thing that is true without the detail.
 DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
 
+# How long the bar stays up after a dictation that came back with NOTHING —
+# silence, or a provider that refused. Short, and deliberately not zero: the
+# recording look was on screen a moment ago, so vanishing without a beat is
+# indistinguishable from "the shortcut did nothing", which is the exact
+# failure shape the dictation lane exists to end.
+DICTATION_NOTHING_BACK_DWELL_S = 1.5
+
+# How long an outcome that needs ACTING on stays up (the OS blocked the paste
+# and the text is on the clipboard; a custom paste chord was sent to an app
+# that may not bind it). Long enough to read a full sentence.
+DICTATION_OUTCOME_DWELL_S = 4.0
+
+# Outcomes the bar has nothing to add to: the words reached the field the user
+# is already looking at (``inserted``), the app's own input (``chat``), or the
+# user called the dictation off themselves (``cancelled``). Nothing is in
+# flight and nothing needs saying, so the bar stands down AT ONCE — see
+# ``_on_dictation_completed``. Every other outcome carries either a sentence to
+# act on or the news that nothing came back, and gets a dwell.
+DICTATION_QUIET_OUTCOMES: tuple[str, ...] = ("inserted", "chat", "cancelled")
+
 # Long enough to cover an entire THINKING/SPEAKING phase. The transcript
 # bubble is explicitly hidden when the state leaves voice mode (→ IDLE/ERROR).
 #
@@ -1107,20 +1127,40 @@ class OrbBusBridge:
         self._show_dictation_mode("dictate_transcribing")
 
     async def _on_dictation_completed(self, event: DictationCompleted) -> None:
-        """Dictation finished — show the outcome briefly, then stand down.
+        """Dictation finished — leave the working look AT ONCE, then stand down.
 
-        ``detail`` is only non-empty when something the user must know happened
-        (the OS blocked the paste and the text is on the clipboard). Showing it
-        on the bar is the difference between "nothing happened" and "here is
-        why, and here is what to do".
+        The thinking core represents work in flight. By the time this event
+        arrives there is none: the transcription is done and the text has
+        already been pasted into the user's field. Leaving
+        ``dictate_transcribing`` up for the dwell is what made the bar keep
+        "thinking" for one and a half seconds AFTER the words had visibly
+        landed — a claim about the app's state that the screen already
+        contradicted (reported 2026-07-29). So the mode is resolved here, by
+        the outcome, and never left over from the previous phase:
+
+        * The words arrived (``inserted`` / ``chat``) or the user cancelled →
+          nothing is left to say and the text speaks for itself, so the bar
+          goes down immediately.
+        * ``detail`` is set → something needs ACTING on (the OS blocked the
+          paste; a custom chord was sent to an app that may ignore it). The
+          notice look says "here is what happened" instead of "still working",
+          and it stays up long enough to read.
+        * Nothing came back at all (``empty`` / ``failed``) → the same notice
+          look, briefly. A dictation that vanishes in silence is
+          indistinguishable from a dead shortcut.
         """
         if not getattr(self, "_dictation_active", False):
             return
         self._dictation_active = False
         self._dictation_transcribing = False
         self._cancel_dictation_failsafe()
-        message = (event.detail or "").strip() or (event.text or "").strip()
-        self._show_listening_transcript(message)
+        detail = (event.detail or "").strip()
+        outcome = (event.outcome or "").strip()
+        delivered = not detail and outcome in DICTATION_QUIET_OUTCOMES
+        # A delivered dictation gets NO echo bubble: the words are already in
+        # the field the user is looking at, and a bubble raised for one frame
+        # before the stand-down clears it is a flicker, not a receipt.
+        self._show_listening_transcript("" if delivered else (detail or (event.text or "").strip()))
         # Whatever raised the bar must be able to lower it. This guard is
         # deliberately the SAME one ``_on_dictation_started`` uses — an
         # asymmetric pair (raise on any state, lower only from IDLE) would leave
@@ -1128,10 +1168,13 @@ class OrbBusBridge:
         # possibility because dictation never touches the voice state machine.
         if self._voice_session_active:
             return
-        # Give the user a moment to read it, then return the bar to standby.
-        # A longer dwell for a message that needs acting on than for the plain
-        # "here is what you dictated" echo.
-        delay = 4.0 if (event.detail or "").strip() else 1.5
+        if delivered:
+            delay = 0.0
+        else:
+            self._show_notice_mode()
+            delay = (
+                DICTATION_OUTCOME_DWELL_S if detail else DICTATION_NOTHING_BACK_DWELL_S
+            )
         try:
             self._schedule_dictation_standdown(delay)
         except Exception as exc:  # noqa: BLE001

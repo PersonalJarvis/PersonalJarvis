@@ -267,6 +267,109 @@ async def test_a_persistent_bar_repaints_idle_instead_of_being_withdrawn() -> No
     await _quiesce(bridge)
 
 
+async def test_the_thinking_core_stops_the_moment_the_text_lands() -> None:
+    """The reported bug (2026-07-29): the bar kept "thinking" for a second and a
+    half AFTER the dictated text had visibly been pasted into the field.
+
+    ``dictate_transcribing`` represents work in flight. Once the completion
+    event is here there is none — the transcription finished and the paste
+    already happened — so the working look must not survive into the dwell.
+    """
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(text="hello there", outcome="inserted")
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert "dictate_transcribing" not in orb.modes
+    assert ("hide", None) in orb.calls, (
+        "a delivered dictation must stand the bar down at once, not after a dwell"
+    )
+    await _quiesce(bridge)
+
+
+async def test_a_delivered_dictation_raises_no_echo_bubble() -> None:
+    """The words are already in the field the user is looking at. A bubble put
+    up for one frame and cleared by the immediate stand-down is a flicker."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(text="hello there", outcome="inserted")
+    )
+
+    assert ("transcript", "hello there") not in orb.calls
+    await _quiesce(bridge)
+
+
+async def test_a_cancelled_dictation_also_leaves_the_working_look_at_once() -> None:
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(DictationCompleted(outcome="cancelled"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert ("hide", None) in orb.calls
+    await _quiesce(bridge)
+
+
+async def test_an_outcome_that_needs_acting_on_stays_up_but_stops_working() -> None:
+    """The OS blocked the paste and the text is on the clipboard. That sentence
+    must stay long enough to read — and must read as a MESSAGE, not as a
+    transcription still running."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(
+            text="hello there",
+            outcome="clipboard_only",
+            detail="The window in front is running as administrator.",
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert orb.modes == ["notice"]
+    assert ("hide", None) not in orb.calls
+    assert ("transcript", "The window in front is running as administrator.") in orb.calls
+    await _quiesce(bridge)
+
+
+async def test_nothing_coming_back_is_still_visible_for_a_beat() -> None:
+    """A dictation that produced no text must not vanish in silence — that is
+    indistinguishable from a dead shortcut."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(outcome="failed", error="AuthenticationError: 401")
+    )
+    await asyncio.sleep(0)
+
+    assert orb.modes == ["notice"]
+    assert ("hide", None) not in orb.calls
+    await _quiesce(bridge)
+
+
 async def test_a_new_dictation_cancels_the_previous_stand_down() -> None:
     """Press → release → press again inside the dwell must not be closed by the
     first turn's timer."""
