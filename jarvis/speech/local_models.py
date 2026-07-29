@@ -162,7 +162,10 @@ def sherpa_model_present(
         if not directory.is_dir():
             return False
         if required_files:
-            missing = [f for f in required_files if not (directory / f).is_file()]
+            # ``exists``, not ``is_file``: a Piper voice's ``espeak-ng-data`` is
+            # a DIRECTORY of phoneme rules, and requiring a file here reported
+            # every correctly-downloaded voice as missing.
+            missing = [f for f in required_files if not (directory / f).exists()]
             if missing:
                 log.debug(
                     "Local model %r is incomplete -- missing %s.",
@@ -206,21 +209,33 @@ def whisper_status(model: str) -> LocalModelStatus:
     )
 
 
+def bundle_present(model_id: str, *, data_dir: str | None = None) -> bool:
+    """True when the catalogued bundle *model_id* is complete on disk."""
+    bundle = SHERPA_BUNDLES.get(model_id)
+    if bundle is None:
+        return False
+    return sherpa_model_present(
+        model_id, data_dir=data_dir, required_files=bundle.required_files
+    )
+
+
 def sherpa_status(
-    model_id: str,
+    model_ids: tuple[str, ...],
     *,
     model_label: str,
     download_size: str,
-    required_files: tuple[str, ...] = (),
     data_dir: str | None = None,
 ) -> LocalModelStatus:
-    """Readiness of a sherpa-onnx backed local provider (STT or TTS)."""
+    """Readiness of a sherpa-onnx backed local provider (STT or TTS).
+
+    ALL of *model_ids* must be present. For the local voice that means one
+    voice per supported language: a provider that can only answer in German is
+    not ready for an assistant whose reply language follows the conversation.
+    """
     engine = runtime_installed("sherpa-onnx")
     present = (
-        sherpa_model_present(
-            model_id, data_dir=data_dir, required_files=required_files
-        )
-        if engine
+        all(bundle_present(mid, data_dir=data_dir) for mid in model_ids)
+        if engine and model_ids
         else False
     )
     if not engine:
@@ -255,6 +270,36 @@ def sherpa_status(
 
 
 @dataclass(frozen=True, slots=True)
+class SherpaBundle:
+    """One downloadable ONNX model bundle: where it comes from, what it is.
+
+    Two shapes, because the upstreams differ: an ASR model is a handful of loose
+    files in a model repo, while a Piper voice is a tar.bz2 whose payload
+    includes a 390-file phoneme-data directory that would be absurd to fetch one
+    file at a time. Exactly one of ``archive_url`` / ``hf_repo`` is set.
+    """
+
+    #: Directory name under ``data/models/`` — also how every other layer names
+    #: this bundle.
+    model_id: str
+    #: Human-readable name for the UI.
+    label: str
+    #: Files that must be present for the bundle to count as complete. Doubles
+    #: as the download list for ``hf_repo`` bundles, so a bundle can never be
+    #: declared ready against a shorter list than the one that was fetched.
+    required_files: tuple[str, ...]
+    #: A tar.bz2 whose single top-level directory is stripped on extraction.
+    archive_url: str | None = None
+    #: A HuggingFace repo whose ``required_files`` are fetched individually.
+    hf_repo: str | None = None
+    #: Voice bundles only: the language it speaks and the voice's gender, so the
+    #: per-turn voice pick can stay consistent across a language switch (a voice
+    #: that changes sex mid-conversation is BUG-086's shape).
+    language: str = ""
+    gender: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class LocalProvider:
     """A provider that runs on this machine, and what it needs to do so."""
 
@@ -277,14 +322,12 @@ class LocalProvider:
     #: in pyproject.toml can be checked against one another instead of drifting
     #: apart in two files that never meet.
     pip_package: str
-    #: Model repository the bundle is fetched from. ``None`` for Whisper, whose
+    #: Bundle ids this provider needs on disk, in download order. Usually one;
+    #: a local TTS needs one voice PER LANGUAGE, because a Piper voice speaks
+    #: exactly one — and a provider that can only answer in German is not a
+    #: usable voice for a multilingual assistant. Empty for Whisper, whose
     #: engine manages its own cache.
-    hf_repo: str | None = None
-    #: Files that must exist inside a sherpa bundle for it to count as complete.
-    #: This ONE tuple is both the download list and the completeness check, so a
-    #: bundle can never be declared ready against a shorter list than the one
-    #: that was fetched. Empty for Whisper.
-    required_files: tuple[str, ...] = ()
+    bundles: tuple[str, ...] = ()
 
 
 #: The Whisper checkpoint the local voice-input card offers. ONE checkpoint, not
@@ -319,6 +362,94 @@ NEMOTRON_HF_REPO = (
     "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
 )
 
+#: Where the sherpa-onnx project publishes its converted TTS voices.
+_PIPER_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
+
+
+def _piper_bundle(name: str, *, label: str, language: str, gender: str) -> SherpaBundle:
+    """One Piper voice, named the way the upstream release names it.
+
+    Each archive carries its own copy of ``espeak-ng-data`` (the phoneme rules
+    Piper needs to turn text into sounds), which is why a 30 MB voice arrives as
+    a ~67 MB download.
+    """
+    voice = name.removeprefix("vits-piper-")
+    return SherpaBundle(
+        model_id=name,
+        label=label,
+        required_files=(f"{voice}.onnx", "tokens.txt", "espeak-ng-data"),
+        archive_url=f"{_PIPER_RELEASE}{name}.tar.bz2",
+        language=language,
+        gender=gender,
+    )
+
+
+#: Every model bundle the local providers can use, keyed by id.
+#:
+#: The voices are picked for CONSISTENCY across languages rather than one at a
+#: time: the same perceived speaker in German, English and Spanish, so switching
+#: language mid-conversation does not switch who is talking (BUG-086). A second,
+#: feminine set is listed so a user can change voice without losing that
+#: property — it is downloadable, not downloaded by default.
+SHERPA_BUNDLES: dict[str, SherpaBundle] = {
+    NEMOTRON_MODEL_ID: SherpaBundle(
+        model_id=NEMOTRON_MODEL_ID,
+        label="Nemotron 3.5 (streaming)",
+        required_files=(
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "joiner.int8.onnx",
+            "tokens.txt",
+        ),
+        hf_repo=NEMOTRON_HF_REPO,
+    ),
+    "vits-piper-de_DE-thorsten-medium": _piper_bundle(
+        "vits-piper-de_DE-thorsten-medium",
+        label="Thorsten (German)",
+        language="de",
+        gender="masculine",
+    ),
+    "vits-piper-en_US-ryan-medium": _piper_bundle(
+        "vits-piper-en_US-ryan-medium",
+        label="Ryan (English)",
+        language="en",
+        gender="masculine",
+    ),
+    "vits-piper-es_ES-davefx-medium": _piper_bundle(
+        "vits-piper-es_ES-davefx-medium",
+        label="Dave (Spanish)",
+        language="es",
+        gender="masculine",
+    ),
+    "vits-piper-de_DE-ramona-low": _piper_bundle(
+        "vits-piper-de_DE-ramona-low",
+        label="Ramona (German)",
+        language="de",
+        gender="feminine",
+    ),
+    "vits-piper-en_US-amy-medium": _piper_bundle(
+        "vits-piper-en_US-amy-medium",
+        label="Amy (English)",
+        language="en",
+        gender="feminine",
+    ),
+    "vits-piper-es_ES-sharvard-medium": _piper_bundle(
+        "vits-piper-es_ES-sharvard-medium",
+        label="Sharvard (Spanish)",
+        language="es",
+        gender="feminine",
+    ),
+}
+
+#: The voices the local TTS install fetches — one per supported language, all
+#: the same gender. Anything less would leave the assistant mute in a language
+#: the rest of the app fully supports.
+PIPER_DEFAULT_VOICES: tuple[str, ...] = (
+    "vits-piper-de_DE-thorsten-medium",
+    "vits-piper-en_US-ryan-medium",
+    "vits-piper-es_ES-davefx-medium",
+)
+
 LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
     LocalProvider(
         provider_id="faster-whisper",
@@ -337,13 +468,17 @@ LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
         model_label="Nemotron 3.5 (streaming)",
         download_size="about 690 MB",
         pip_package=SHERPA_ONNX_PACKAGE,
-        hf_repo=NEMOTRON_HF_REPO,
-        required_files=(
-            "encoder.int8.onnx",
-            "decoder.int8.onnx",
-            "joiner.int8.onnx",
-            "tokens.txt",
-        ),
+        bundles=(NEMOTRON_MODEL_ID,),
+    ),
+    LocalProvider(
+        provider_id="piper-local",
+        tier="tts",
+        runtime="sherpa-onnx",
+        model_id=PIPER_DEFAULT_VOICES[0],
+        model_label="Piper voices",
+        download_size="about 200 MB",
+        pip_package=SHERPA_ONNX_PACKAGE,
+        bundles=PIPER_DEFAULT_VOICES,
     ),
 )
 
@@ -380,10 +515,9 @@ def local_status(
     if entry.runtime == "faster-whisper":
         return whisper_status(model_override or entry.model_id)
     return sherpa_status(
-        entry.model_id,
+        entry.bundles,
         model_label=entry.model_label,
         download_size=entry.download_size,
-        required_files=entry.required_files,
         data_dir=data_dir,
     )
 

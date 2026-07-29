@@ -58,6 +58,32 @@ def _download_file(url: str, target: Path, *, timeout_s: float = 60.0) -> None:
                 fh.write(chunk)
 
 
+def _extract_archive(archive: Path, staging: Path) -> None:
+    """Unpack a tar.bz2 into *staging*, stripping its single top-level directory.
+
+    The upstream archives wrap everything in a folder named after the model; the
+    rest of the app addresses bundles by their own directory, so the wrapper is
+    removed here rather than encoded into every path elsewhere.
+    """
+    import tarfile
+
+    unpacked = staging / "_unpacked"
+    unpacked.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, mode="r:bz2") as tf:
+        # 'data' rejects absolute paths, parent traversal, links pointing out of
+        # the tree and device files — a downloaded archive is untrusted input,
+        # and without the filter a crafted one could write anywhere on disk.
+        try:
+            tf.extractall(unpacked, filter="data")
+        except TypeError:  # pragma: no cover — Python without the filter arg
+            tf.extractall(unpacked)  # noqa: S202
+    entries = [p for p in unpacked.iterdir() if not p.name.startswith(".")]
+    root = entries[0] if len(entries) == 1 and entries[0].is_dir() else unpacked
+    for item in list(root.iterdir()):
+        item.replace(staging / item.name)
+    shutil.rmtree(unpacked, ignore_errors=True)
+
+
 def download_sherpa_model(
     model_id: str,
     *,
@@ -66,19 +92,21 @@ def download_sherpa_model(
 ) -> Path:
     """Fetch the bundle for *model_id* and return its directory.
 
-    Raises ``LookupError`` for an unknown model (a catalog/caller mismatch, not
+    Raises ``LookupError`` for an unknown bundle (a catalog/caller mismatch, not
     a network problem) and lets transport errors propagate — the caller turns
     them into the retryable state the user sees.
     """
-    entry = get_local_provider_for_model(model_id)
-    if entry is None or not entry.hf_repo or not entry.required_files:
+    from jarvis.speech.local_models import SHERPA_BUNDLES
+
+    bundle = SHERPA_BUNDLES.get(model_id)
+    if bundle is None:
         raise LookupError(
             f"No downloadable model bundle is registered for '{model_id}'."
         )
 
     target_dir = sherpa_model_dir(model_id, data_dir=data_dir)
     if target_dir.is_dir() and all(
-        (target_dir / name).is_file() for name in entry.required_files
+        (target_dir / name).exists() for name in bundle.required_files
     ):
         log.info("Local model %s is already complete at %s.", model_id, target_dir)
         return target_dir
@@ -89,12 +117,29 @@ def download_sherpa_model(
     # interrupted halfway.
     staging = Path(tempfile.mkdtemp(prefix=f".{model_id}-", dir=target_dir.parent))
     try:
-        for index, name in enumerate(entry.required_files, start=1):
+        if bundle.archive_url:
             if progress is not None:
-                progress(f"Downloading {name} ({index}/{len(entry.required_files)})…")
-            log.info("Fetching %s for local model %s", name, model_id)
-            _download_file(
-                _HF_FILE_URL.format(repo=entry.hf_repo, path=name), staging / name
+                progress(f"Downloading {bundle.label}…")
+            archive = staging / "bundle.tar.bz2"
+            _download_file(bundle.archive_url, archive)
+            if progress is not None:
+                progress(f"Unpacking {bundle.label}…")
+            _extract_archive(archive, staging)
+            archive.unlink(missing_ok=True)
+        else:
+            total = len(bundle.required_files)
+            for index, name in enumerate(bundle.required_files, start=1):
+                if progress is not None:
+                    progress(f"Downloading {name} ({index}/{total})…")
+                log.info("Fetching %s for local model %s", name, model_id)
+                _download_file(
+                    _HF_FILE_URL.format(repo=bundle.hf_repo, path=name),
+                    staging / name,
+                )
+        missing = [n for n in bundle.required_files if not (staging / n).exists()]
+        if missing:
+            raise RuntimeError(
+                f"The download for '{model_id}' is missing {', '.join(missing)}."
             )
         # Replace any incomplete previous attempt, then move the finished set in.
         if target_dir.exists():
@@ -106,30 +151,17 @@ def download_sherpa_model(
     return target_dir
 
 
-def get_local_provider_for_model(model_id: str):
-    """The catalog entry whose ``model_id`` is *model_id*, or None.
-
-    The download route knows a model id; the catalog is keyed by provider id.
-    This is the one place that bridges the two, so no caller has to keep a
-    second mapping of its own.
-    """
-    from jarvis.speech.local_models import LOCAL_PROVIDERS
-
-    for entry in LOCAL_PROVIDERS:
-        if entry.model_id == model_id:
-            return entry
-    return None
-
-
 def model_paths(model_id: str, *, data_dir: str | None = None) -> dict[str, Path]:
     """Absolute paths of a bundle's files, keyed by their filename.
 
     Providers ask for this instead of composing paths themselves, so the
     directory layout stays a fact of this module alone.
     """
-    entry = get_local_provider_for_model(model_id)
+    from jarvis.speech.local_models import SHERPA_BUNDLES
+
+    bundle = SHERPA_BUNDLES.get(model_id)
     directory = sherpa_model_dir(model_id, data_dir=data_dir)
-    names = entry.required_files if entry is not None else ()
+    names = bundle.required_files if bundle is not None else ()
     return {name: directory / name for name in names}
 
 

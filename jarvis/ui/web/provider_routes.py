@@ -2841,6 +2841,12 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Add its API key first."
             ),
         )
+    # Same reasoning as the STT switch: a local provider has no credential to
+    # check, so readiness must be asked of the disk. Activating a voice whose
+    # files are missing would turn every spoken reply into silence.
+    local_state = _local_runtime_payload(spec)
+    if local_state is not None and not local_state["ready"]:
+        raise HTTPException(status_code=409, detail=local_state["detail"])
 
     if body.persist:
         try:

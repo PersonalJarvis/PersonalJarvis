@@ -619,6 +619,29 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Diego/Lupita). Billed per character on your Inworld account."
         ),
     ),
+    # Local, keyless TTS. Same readiness contract as the local STT cards: the
+    # payload carries a real on-disk probe, and "ready" means one voice per
+    # SUPPORTED LANGUAGE is downloaded — a Piper voice speaks exactly one
+    # language, so a German-only install would leave the assistant mute the
+    # moment the conversation switches to English.
+    ProviderSpec(
+        id="piper-local",
+        label="Piper (on this machine)",
+        tier="tts",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "Speaks on this machine — no API key, no cloud account, nothing "
+            "sent anywhere. Piper is the established offline voice engine: "
+            "small neural voices that run faster than real time even without a "
+            "graphics card. The download is about 200 MB and brings one voice "
+            "each for German, English and Spanish. The voices sound good rather "
+            "than indistinguishable from a person; a hosted provider is still "
+            "the more natural-sounding option."
+        ),
+    ),
     # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
         id="groq-api",

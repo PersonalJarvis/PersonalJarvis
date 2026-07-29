@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -71,7 +72,9 @@ def _install_engine(entry: LocalProvider) -> tuple[bool, str]:
     return install_pip_package(entry.pip_package, only_binary=True)
 
 
-def _download_model(entry: LocalProvider) -> None:
+def _download_model(
+    entry: LocalProvider, progress: Callable[[str], None] | None = None
+) -> None:
     """Fetch the weights for *entry*. Raises with a usable message on failure."""
     if entry.runtime == "faster-whisper":
         # The same cache layout WhisperModel(name) resolves at runtime, so the
@@ -82,7 +85,10 @@ def _download_model(entry: LocalProvider) -> None:
         return
     from jarvis.speech.sherpa_models import download_sherpa_model
 
-    download_sherpa_model(entry.model_id)
+    # Every bundle, not just the first: a local voice needs one per language,
+    # and stopping after German would leave the assistant mute in English.
+    for model_id in entry.bundles:
+        download_sherpa_model(model_id, progress=progress)
 
 
 def _run_install(provider_id: str) -> None:
@@ -109,7 +115,13 @@ def _run_install(provider_id: str) -> None:
 
     if ok:
         try:
-            _download_model(entry)
+
+            def _note(text: str) -> None:
+                """Publish each download step so the UI shows real progress."""
+                with run.lock:
+                    run.message = text
+
+            _download_model(entry, _note)
             message = f"{entry.model_label} is ready — it runs on this machine now."
         except Exception as exc:  # noqa: BLE001 — surface an honest retry state
             ok = False

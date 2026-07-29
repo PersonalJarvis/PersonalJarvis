@@ -474,6 +474,10 @@ openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 gemini-api = "jarvis.plugins.stt.gemini_api:GeminiSTT"
 
 [project.entry-points."jarvis.tts"]
+# Local, keyless neural speech (Piper VITS voices via sherpa-onnx / ONNX
+# Runtime). The voices are plain ONNX files, deliberately NOT loaded through the
+# GPL-3 piper1-gpl library, so this MIT repo stays MIT.
+piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
