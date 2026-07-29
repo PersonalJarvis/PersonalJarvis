@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -22,6 +22,7 @@ import {
   startCodexLogin,
   switchBrainProvider,
   switchComputerUseProvider,
+  switchDictationPolishProvider,
   switchRealtimeProvider,
   switchSttProvider,
   switchTtsProvider,
@@ -109,6 +110,16 @@ export function makeProviderCategories(
       description: t("apikeys_view.cat_computer_use_desc"),
       icon: Terminal,
     },
+    // The one OPTIONAL tier. Its description has to carry that, because an
+    // empty section in a screen full of required keys reads as "you still have
+    // work to do" — here it only means the dictation arrives exactly as it was
+    // recognized, which is what every install did before this tier existed.
+    dictation: {
+      tab: t("apikeys_view.tab_dictation"),
+      title: t("apikeys_view.tier_dictation"),
+      description: t("apikeys_view.cat_dictation_desc"),
+      icon: Wand2,
+    },
   };
 }
 
@@ -139,6 +150,13 @@ export function useTierHealth(
       "computer-use": providers.find(
         (provider) => provider.tier === "brain" && provider.computer_use_active,
       )?.id,
+      // "dictation" is deliberately absent. Its default pin is "auto", where no
+      // single card is chosen and the family that answers is decided per call by
+      // the key-aware chain — so there is no local "active id" to re-bind
+      // against, and dropping the entry for want of one would hide a real
+      // failure. The backend rollup names the family it tested in `subject_id`,
+      // and `TierSection` only ever hands health to a card that matches it, so
+      // the card-level drill-down still cannot blame the wrong provider.
     };
     for (const [section, subjectId] of Object.entries(activeSubjects)) {
       const matching = sectionHealthForSubject(rawHealth[section], subjectId);
@@ -750,6 +768,14 @@ export function ProviderCard({
         await switchComputerUseProvider(descriptor.id);
         pushToast("success", `Computer-Use → ${descriptor.label}`);
         window.dispatchEvent(new CustomEvent("jarvis:computer-use-switched"));
+      } else if (descriptor.tier === "dictation") {
+        // Its own branch on purpose: this tier has no `/switch` route (the pin
+        // is a plain `[dictation]` setting), and without the branch it would
+        // fall through to the realtime switch below and reconfigure the user's
+        // voice engine from a dictation card.
+        await switchDictationPolishProvider(descriptor.id);
+        pushToast("success", `Dictation wording → ${descriptor.label}`);
+        window.dispatchEvent(new CustomEvent("jarvis:dictation-polish-switched"));
       } else {
         const result = await switchRealtimeProvider(descriptor.id);
         const note = result.restart_required
@@ -867,6 +893,18 @@ export function ProviderCard({
                 title={descriptor.caution}
               >
                 {t("apikeys_view.not_recommended")}
+              </span>
+            )}
+            {/* Neutral, never amber: an unset optional key is not a warning.
+                The chip is what makes the whole section read as "recommended",
+                so a user scanning for what still needs doing can skip it. */}
+            {descriptor.optional && (
+              <span
+                data-testid={`provider-optional-${descriptor.id}`}
+                className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                title={t("apikeys_view.optional_tooltip")}
+              >
+                {t("apikeys_view.optional")}
               </span>
             )}
           </div>

@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Check, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
 
 import {
+  cleanupReasonLabel,
   DICTATION_OUTCOMES,
+  polishStatusLabel,
   STT_FAILURE_REASONS,
   type DictationEntry,
 } from "@/hooks/useDictation";
@@ -89,6 +91,22 @@ function HistoryRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const cleaned = Boolean(entry.raw_text) && entry.text !== entry.raw_text;
+  // Both badges are computed here rather than inline so the render stays a
+  // list of chips. A row from before either field existed carries neither.
+  const polishBadge =
+    entry.polish_status && entry.polish_status !== "off"
+      ? entry.polish_status
+      : "";
+  const polishTitle = [
+    entry.polish_provider || "",
+    entry.polish_latency_ms ? `${Math.round(entry.polish_latency_ms)} ms` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const cleanupBadge =
+    entry.cleanup_reason && entry.cleanup_reason !== "disabled"
+      ? entry.cleanup_reason
+      : "";
   // Restore is offered whenever there is something to win back: a soft-deleted
   // entry, a failed transcription, or kept audio that can be run again.
   const canRestore =
@@ -155,6 +173,34 @@ function HistoryRow({
                 "{0}",
                 String(entry.removed_words),
               )}
+            </span>
+          )}
+          {/* What the wording pass did to this row. "off" is the one value
+              worth hiding — the feature being switched off is not an event,
+              and a badge on every single row would be noise. Everything else
+              is either "a model rewrote this" or "it did not, and here is
+              why", and both are things the person who spoke deserves to see
+              next to their own words. */}
+          {polishBadge && (
+            <span
+              className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5"
+              data-testid="dictation-polish-badge"
+              title={polishTitle || undefined}
+            >
+              {polishStatusLabel(t, polishBadge)}
+            </span>
+          )}
+          {/* The filler cleanup's own verdict, and the reason this badge
+              exists at all: outside its three rule languages the cleanup is a
+              silent no-op, so a user dictating in Japanese or Polish saw the
+              switch sitting ON while nothing ever happened. "disabled" is
+              skipped — that one the user did themselves. */}
+          {cleanupBadge && (
+            <span
+              className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5"
+              data-testid="dictation-cleanup-reason-badge"
+            >
+              {cleanupReasonLabel(t, cleanupBadge)}
             </span>
           )}
         </div>

@@ -1,4 +1,4 @@
-﻿"""REST API for Brain, TTS, STT, and Realtime providers and credentials.
+﻿"""REST API for the Brain, TTS, STT, Realtime and Dictation-polish providers.
 
 Endpoints:
     GET    /api/providers                    → list configured and active status
@@ -43,7 +43,14 @@ from jarvis.missions.worker_runtime.provider_map import (
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
-from .provider_spec import PROVIDERS, ProviderSpec, get_spec, provider_billing
+from .provider_spec import (
+    DICTATION_SPEC_ID_BY_FAMILY,
+    PROVIDERS,
+    ProviderSpec,
+    dictation_family_id,
+    get_spec,
+    provider_billing,
+)
 
 log = logging.getLogger(__name__)
 
@@ -240,6 +247,19 @@ class RealtimeOptionsSaveResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 
+def _polish_family(spec: ProviderSpec) -> Any | None:
+    """The dictation-polish family behind ``spec``, or ``None`` for any other card.
+
+    The lookup goes through the polish module's own registry so the family's
+    credential candidates are read where they are declared, never copied here.
+    """
+    if getattr(spec, "tier", None) != "dictation":
+        return None
+    from jarvis.dictation.polish_client import family_by_id
+
+    return family_by_id(dictation_family_id(spec.id))
+
+
 def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
     """Apply the credential check for the provider's authentication mode.
 
@@ -247,7 +267,22 @@ def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -
     (imported lazily) so the UI route and the brain's ``switch-provider`` tool
     use the *same* check — anti-drift, BUG-008 class. Name/signature preserved
     for the rest of this module.
+
+    ONE local addition: a dictation-polish card answers through its polish
+    FAMILY instead. Such a card renders a single key field, but the pass itself
+    accepts any slot in the family's candidate list — a Google user holding only
+    ``google_api_key`` has a perfectly working polish pass, and the single-slot
+    check would call that card "no key set" and offer a fix for a problem that
+    does not exist. The shared implementation is untouched because it never sees
+    these specs: ``apply_provider_switch`` rejects a dictation spec on its tier
+    long before the credential check.
     """
+    family = _polish_family(spec)
+    if family is not None:
+        from jarvis.dictation.polish_client import family_has_key
+
+        return family_has_key(family)
+
     from jarvis.brain.app_control import is_credential_present
 
     return is_credential_present(spec, binary_path)
@@ -311,6 +346,7 @@ def _spec_to_payload(
     active_stt: str | None,
     active_realtime: str | None = None,
     active_computer_use: str | None = None,
+    active_dictation: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -318,6 +354,8 @@ def _spec_to_payload(
         active = spec.id == active_tts
     elif spec.tier == "realtime":
         active = spec.id == active_realtime
+    elif spec.tier == "dictation":
+        active = spec.id == active_dictation
     else:
         active = spec.id == active_stt
 
@@ -335,13 +373,18 @@ def _spec_to_payload(
         and len(spec.secret_keys) == 1
         and not all(secrets_set.values())
     ):
-        from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES
+        # A dictation-polish card has its own candidate list (polish_client),
+        # which the brain's alias map knows nothing about; ask the family.
+        if _polish_family(spec) is not None:
+            family_present = _is_credential_present(spec)
+        else:
+            from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES
 
-        alias = AUTH_PROVIDER_ALIASES.get(spec.id, spec.id)
-        try:
-            family_present = bool(cfg_mod.get_provider_secret(alias))
-        except Exception:  # noqa: BLE001 -- unknown family means no fallback
-            family_present = False
+            alias = AUTH_PROVIDER_ALIASES.get(spec.id, spec.id)
+            try:
+                family_present = bool(cfg_mod.get_provider_secret(alias))
+            except Exception:  # noqa: BLE001 -- unknown family means no fallback
+                family_present = False
         if family_present:
             secrets_effective = dict.fromkeys(spec.secret_keys, True)
     from .provider_spec import secret_slot_consumers
@@ -394,6 +437,18 @@ def _spec_to_payload(
         # Inverse of recommended: a "Not recommended" caution badge + tooltip
         # (e.g. NVIDIA NIM's slow free tier). Presentation only (AP-21).
         "caution": spec.caution,
+        # This card powers a feature nothing else depends on. The UI renders an
+        # "Optional" chip, and the health rollup stays silent when it has no key
+        # instead of raising a permanent "needs setup" dot. Presentation +
+        # nag-suppression only — never a behavior gate (AP-21).
+        "optional": spec.optional,
+        # Dictation-polish cards only: the value ``[dictation].polish_provider``
+        # actually stores. The card id and the polish FAMILY id differ ("groq"
+        # is already the brain card), so a client pinning this tier must send
+        # THIS, not ``id`` — an unknown family id is ignored by
+        # ``resolve_polish_chain`` and the pin would silently do nothing.
+        # ``None`` on every other card.
+        "polish_family": dictation_family_id(spec.id) or None,
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -517,6 +572,41 @@ def _active_realtime(request: Request) -> str | None:
         return None
 
 
+def _polish_enabled(cfg: Any) -> bool:
+    """Whether ``[dictation].polish`` is switched on. Never raises."""
+    dictation = getattr(cfg, "dictation", None) if cfg is not None else None
+    return bool(getattr(dictation, "polish", False))
+
+
+def _active_polish(request: Request) -> str | None:
+    """The card currently powering the dictation polish pass, or ``None``.
+
+    ``[dictation].polish_provider`` stores a polish FAMILY id ("groq"), while
+    every card, health section and subject id in this module is a ProviderSpec
+    id ("groq-polish"); the translation happens here so no other layer has to
+    know that the two vocabularies differ.
+
+    ``None`` — the pass is off, or the user holds no key in any family — is an
+    ORDINARY state, not a fault: the polish pass is optional and its absence
+    leaves dictation behaving exactly as it did before. The health rollup
+    renders it silently (see :func:`_dictation_section_health`). Any resolver
+    error also degrades to ``None``, because the health panel must never 500.
+    """
+    try:
+        cfg = _resolve_cfg(request)
+        if not _polish_enabled(cfg):
+            return None
+        from jarvis.dictation.polish_client import resolve_polish_chain
+
+        chain = resolve_polish_chain(getattr(cfg, "dictation", None))
+        if not chain:
+            return None
+        return DICTATION_SPEC_ID_BY_FAMILY.get(chain[0].id)
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-polish resolution failed (%s); using None.", exc)
+        return None
+
+
 def _active_computer_use(request: Request) -> str | None:
     """The active dedicated Computer-Use planner provider.
 
@@ -625,6 +715,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_stt = _active_stt(request)
     active_realtime = _active_realtime(request)
     active_computer_use = _active_computer_use(request)
+    active_dictation = _active_polish(request)
 
     # Off the event loop: building the payload reads every secret slot from the
     # OS keyring and probes the Codex/Google CLI status — all synchronous. On the
@@ -640,6 +731,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 active_stt=active_stt,
                 active_realtime=active_realtime,
                 active_computer_use=active_computer_use,
+                active_dictation=active_dictation,
             )
             for spec in PROVIDERS
         ]
@@ -730,6 +822,7 @@ _SECTION_HEALTH_KEYS = (
     "tts",
     "stt",
     "realtime",
+    "dictation",
     "subagents",
     "advanced",
 )
@@ -759,7 +852,12 @@ class SectionHealthResponse(BaseModel):
 
 
 async def _tier_section_health(
-    cfg: Any, spec: ProviderSpec | None, *, model: str | None = None
+    cfg: Any,
+    spec: ProviderSpec | None,
+    *,
+    model: str | None = None,
+    optional: bool = False,
+    probe: bool = True,
 ) -> SectionHealth:
     """Health of one provider tier, derived from its ACTIVE provider only.
 
@@ -770,8 +868,31 @@ async def _tier_section_health(
     ``model`` probes that exact model for a brain-tier spec — used by sections
     whose tier carries its own model pin (Tool Model), so the dot reflects what
     that tier actually runs, not the general brain model.
+
+    ``optional`` marks a tier the install does not depend on. A missing key then
+    reports ``ok``/``not_configured_optional`` instead of amber ``needs_setup``,
+    because the feature simply does not run and everything else is unaffected —
+    a tab that asks forever to be set up for something nothing is waiting on is
+    a defect, not a reminder. The caller passes it because the flag must survive
+    ``spec is None`` (no key anywhere = no active provider = exactly the state
+    that must stay silent); a spec that carries ``optional`` itself also counts.
+    An optional tier still turns RED when a key IS present and failing — the
+    rule suppresses nagging, never a real fault.
+
+    ``probe=False`` skips the live provider call and reports on credential
+    presence alone. For a tier whose credential is a key another tier already
+    owns and tests, a second network round-trip on every page open buys no
+    signal it does not already have.
     """
+    optional = optional or bool(getattr(spec, "optional", False))
     if spec is None:
+        if optional:
+            return SectionHealth(
+                status=_section_health.OK,
+                reason="not_configured_optional",
+                detail="Optional: not set up, and nothing depends on it",
+                subject_id=None,
+            )
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
@@ -795,10 +916,24 @@ async def _tier_section_health(
     except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
         configured = False
     if not configured:
+        if optional:
+            return SectionHealth(
+                status=_section_health.OK,
+                reason="not_configured_optional",
+                detail=f"{spec.label}: optional, no key set",
+                subject_id=spec.id,
+            )
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="not_configured",
             detail=f"{spec.label}: no key set",
+            subject_id=spec.id,
+        )
+    if not probe:
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="configured",
+            detail=f"{spec.label}: key set",
             subject_id=spec.id,
         )
     try:
@@ -996,6 +1131,39 @@ async def _realtime_section_health(cfg: Any, spec: ProviderSpec | None) -> Secti
     return await _tier_section_health(cfg, spec)
 
 
+async def _dictation_section_health(
+    cfg: Any, spec: ProviderSpec | None, *, enabled: bool
+) -> SectionHealth:
+    """Dictation-polish tab: honest about readiness, never nagging.
+
+    The pass rewrites nothing the user depends on — with no key it reports
+    "unavailable" and delivers the raw transcript, which is byte-identical to
+    the behaviour before the feature existed. So this section deviates from the
+    other tiers twice, both deliberately:
+
+    * ``optional=True`` — no key anywhere stays silent instead of raising an
+      amber dot on every install forever. That dot would be the feature's most
+      visible effect on the majority of users, which is the opposite of what an
+      optional convenience should do.
+    * ``probe=False`` — no live call. The credential here is always a key some
+      other tier already owns and tests (the Groq speech-to-text key, the
+      Gemini/OpenAI/OpenRouter brain key), so probing again on page open would
+      duplicate a request without producing a signal we do not already have.
+
+    ``enabled`` is reported separately from "no key", because "you switched it
+    off" and "you have no key for it" are different answers to "why is nothing
+    happening" — and both must stay dot-free.
+    """
+    if not enabled:
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="disabled",
+            detail="Dictation polish is switched off",
+            subject_id=None,
+        )
+    return await _tier_section_health(cfg, spec, optional=True, probe=False)
+
+
 def _advanced_section_health(request: Request) -> SectionHealth:
     """Advanced tab: every integration here is OPTIONAL, so it never reports
     ``needs_setup`` — only ``error`` when something the user actually configured
@@ -1029,6 +1197,7 @@ def _section_health_subjects(request: Request, cfg: Any) -> dict[str, str | None
         "tts": _active_tts(request),
         "stt": _active_stt(request),
         "realtime": _active_realtime(request),
+        "dictation": _active_polish(request),
         "subagents": _selected_jarvis_agent_provider(cfg),
         "advanced": "telephony" if telephony is not None else None,
     }
@@ -1062,6 +1231,10 @@ def _section_health_fingerprint(
     tts_extra = getattr(tts, "model_extra", None)
     cartesia = tts_extra.get("cartesia") if isinstance(tts_extra, dict) else None
     cartesia_model = cartesia.get("model_id") if isinstance(cartesia, dict) else None
+    # The dictation section answers from config, not from a live probe, so its
+    # two inputs must enter the key themselves — otherwise flipping the polish
+    # switch shows the previous verdict for up to _SECTION_HEALTH_TTL_S.
+    dictation = getattr(cfg, "dictation", None) if cfg is not None else None
     configuration = (
         ("brain-model", _provider_value("brain", "model")),
         ("computer-use-model", _provider_value("computer-use", "tool_model")),
@@ -1073,6 +1246,8 @@ def _section_health_fingerprint(
         ("realtime-model", _provider_value("realtime", "model")),
         ("realtime-voice", _provider_value("realtime", "voice")),
         ("jarvis-agent-model", str(getattr(worker, "model", None) or "")),
+        ("dictation-polish", "1" if _polish_enabled(cfg) else "0"),
+        ("dictation-provider", str(getattr(dictation, "polish_provider", None) or "")),
         ("advanced-reachable", repr(reachable)),
     )
     return (
@@ -1232,6 +1407,12 @@ async def _compute_section_health(
         "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or "")),
         "realtime": _realtime_section_health(
             cfg, get_spec(subjects["realtime"] or "")
+        ),
+        # Optional tier: silent without a key, never amber (see the function).
+        "dictation": _dictation_section_health(
+            cfg,
+            get_spec(subjects["dictation"] or ""),
+            enabled=_polish_enabled(cfg),
         ),
         "subagents": asyncio.to_thread(_jarvis_agent_section_health, cfg),
         "advanced": asyncio.to_thread(_advanced_section_health, request),

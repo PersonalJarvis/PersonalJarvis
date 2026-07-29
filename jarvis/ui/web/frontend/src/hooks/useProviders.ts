@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
-export type ProviderTier = "brain" | "tts" | "stt" | "realtime" | "computer-use";
+// Mirror of provider_spec.Tier. "dictation" is the odd one out and deliberately
+// so: it is the OPTIONAL tier that tidies dictated text, and a missing key there
+// costs nothing — the dictation is delivered exactly as it was recognized. Every
+// other tier is load-bearing for the feature it powers.
+export type ProviderTier =
+  | "brain"
+  | "tts"
+  | "stt"
+  | "realtime"
+  | "computer-use"
+  | "dictation";
 /** How using a provider is billed — mirror of provider_spec.Billing. */
 export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
 
@@ -63,6 +73,14 @@ export interface ProviderDescriptor {
    *  badge with this text as its tooltip (e.g. NVIDIA NIM's slow free tier).
    *  Presentation hint only. null/absent = no caution. */
   caution?: string | null;
+  /**
+   * The card is nice to have, not required — renders an "Optional" chip and
+   * keeps the tier off the "needs setup" dot. Presentation only: it never gates
+   * a code path (AP-21), it just stops an optional tier from painting a
+   * permanent amber warning onto an install that is working perfectly well
+   * without it. Absent on older payloads, which read as "required".
+   */
+  optional?: boolean;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
   /** Local/self-hosted cards: whether the card exposes an editable server URL
@@ -198,12 +216,14 @@ export function useProviders() {
     const onStt = () => void refetch();
     const onRealtime = () => void refetch();
     const onComputerUse = () => void refetch();
+    const onDictationPolish = () => void refetch();
     window.addEventListener("jarvis:secret-configured", onSecret);
     window.addEventListener("jarvis:brain-switched", onBrain);
     window.addEventListener("jarvis:tts-switched", onTts);
     window.addEventListener("jarvis:stt-switched", onStt);
     window.addEventListener("jarvis:realtime-switched", onRealtime);
     window.addEventListener("jarvis:computer-use-switched", onComputerUse);
+    window.addEventListener("jarvis:dictation-polish-switched", onDictationPolish);
     return () => {
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
@@ -211,6 +231,10 @@ export function useProviders() {
       window.removeEventListener("jarvis:stt-switched", onStt);
       window.removeEventListener("jarvis:realtime-switched", onRealtime);
       window.removeEventListener("jarvis:computer-use-switched", onComputerUse);
+      window.removeEventListener(
+        "jarvis:dictation-polish-switched",
+        onDictationPolish,
+      );
     };
   }, [refetch]);
 
@@ -343,6 +367,7 @@ export function useSectionHealth() {
       "jarvis:stt-switched",
       "jarvis:realtime-switched",
       "jarvis:computer-use-switched",
+      "jarvis:dictation-polish-switched",
       "jarvis:subagent-switched",
       "jarvis:agent-switched",
       "jarvis:provider-tested",
@@ -376,6 +401,7 @@ const SECTION_HEALTH_EVENT_SECTIONS: Record<string, string> = {
   "jarvis:stt-switched": "stt",
   "jarvis:realtime-switched": "realtime",
   "jarvis:computer-use-switched": "computer-use",
+  "jarvis:dictation-polish-switched": "dictation",
   "jarvis:subagent-switched": "subagents",
   "jarvis:agent-switched": "subagents",
 };
@@ -676,6 +702,32 @@ export async function switchComputerUseProvider(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as PipelineSwitchResult;
+}
+
+/**
+ * Pins the model family that cleans up dictated text
+ * (`[dictation].polish_provider`).
+ *
+ * There is no `/api/dictation/switch`: the polish tier has no live client to
+ * rebuild, so the pin is an ordinary dictation setting and goes through the one
+ * route that owns that block. The next dictation reads it — nothing has to
+ * restart. `"auto"` (the default) is not a provider at all; it lets the
+ * key-aware chain pick whichever family the user actually holds a credential
+ * for and cross to another one when that family is depleted (AP-22), which is
+ * why activating a card here is a *narrowing* choice, not a prerequisite.
+ */
+export async function switchDictationPolishProvider(
+  providerId: string,
+): Promise<void> {
+  const res = await fetch("/api/dictation/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ polish_provider: providerId, persist: true }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
 }
 
 /**

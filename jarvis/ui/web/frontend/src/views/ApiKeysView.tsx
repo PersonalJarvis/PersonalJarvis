@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Brain, KeyRound, Mic, Phone, Radio, SlidersHorizontal, Terminal, Volume2 } from "lucide-react";
+import { Bot, Brain, KeyRound, Mic, Phone, Radio, SlidersHorizontal, Terminal, Volume2, Wand2 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
@@ -46,11 +46,16 @@ type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
 // "computer-use" is GLOBAL (not mode-specific — Computer-Use is one engine for
 // the whole app), so it appears right after the main chat-model tab in BOTH
 // tab sets.
+// "dictation" sits right behind "stt" because that is the order the text
+// travels in: speech becomes a transcript, then the optional wording pass
+// tidies it. It rides with the Pipeline tab set for the same reason "stt"
+// does — it only ever works on a transcript that tier produced.
 const PIPELINE_TABS: CategoryKey[] = [
   "brain",
   "computer-use",
   "tts",
   "stt",
+  "dictation",
   "subagents",
   "jarvis-key",
   "advanced",
@@ -155,7 +160,10 @@ export function ApiKeysView() {
             every card scannable; the key prop re-runs the rise animation on
             each tab/mode change (respects prefers-reduced-motion). */}
         <div key={`${engineMode}-${active}`} className="profile-rise mx-auto w-full max-w-4xl">
-        {(active === "brain" || active === "tts" || active === "stt") && (
+        {(active === "brain" ||
+          active === "tts" ||
+          active === "stt" ||
+          active === "dictation") && (
           <ProviderCategory
             meta={categories[active]}
             tier={active}
@@ -226,6 +234,7 @@ function CategoryTabs({
     stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
     realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
     "computer-use": { label: t("apikeys_view.tab_computer_use"), icon: Terminal },
+    dictation: { label: t("apikeys_view.tab_dictation"), icon: Wand2 },
     subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
   };
   const coreTabs = tabs.filter(

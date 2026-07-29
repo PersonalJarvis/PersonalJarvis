@@ -300,6 +300,24 @@
       "recording_interrupted": "La grabación terminó antes de que la detuvieras.",
       "no_stt": "Todavía no hay reconocimiento de voz configurado.",
       "unknown": "El reconocimiento de voz falló."
+    },
+    "polish_status": {
+      "applied": "Pulido",
+      "unchanged": "Nada que cambiar",
+      "off": "Desactivado",
+      "unavailable": "Ningún modelo disponible",
+      "skipped_short": "Demasiado corto para pulir",
+      "skipped_long": "Demasiado largo para pulir",
+      "timeout": "Tardó demasiado: se usó tu texto original",
+      "provider_error": "Modelo inaccesible: se usó tu texto original",
+      "rejected_drift": "Reescritura rechazada: se usó tu texto original"
+    },
+    "cleanup_reason": {
+      "disabled": "Eliminación de muletillas desactivada",
+      "no_rules": "Sin reglas de muletillas para este idioma",
+      "ceiling": "Eliminación de muletillas omitida: se habría quitado demasiado",
+      "empty": "Nada que limpiar",
+      "error": "La eliminación de muletillas falló"
     }
   },
   "voice": {
@@ -328,6 +346,18 @@
       "en": "Inglés",
       "es": "Español",
       "auto_hint": "La detección automática va bien para casi todo el mundo. Fijar un idioma puede empeorar el reconocimiento en un modelo que no se entrenó para él."
+    },
+    "polish": {
+      "title": "Pulir mi redacción",
+      "description": "Un modelo rápido reescribe la estructura: puntuación, mayúsculas, muletillas y separación de frases. Tus palabras exactas y su significado se conservan, y el texto original siempre queda en tu historial.",
+      "provider_label": "Modelo",
+      "provider_auto": "Automático: usa la clave que ya tengo",
+      "provider_hint": "El modo automático usa una clave que ya tienes y cambia a otro proveedor cuando uno alcanza su límite o se queda sin saldo. Fija uno solo si quieres que se cobre a una cuenta concreta.",
+      "test": "Probar",
+      "testing": "Probando…",
+      "test_hint": "Pasa una muestra fija por tu configuración. No se guarda nada.",
+      "sample_before": "Antes",
+      "sample_after": "Después"
     },
     "api_keys": {
       "title": "Entrada de voz",
@@ -1085,6 +1115,7 @@
     "tier_stt": "Entrada de voz (STT)",
     "tier_realtime": "Voz en tiempo real",
     "tier_computer_use": "Proveedor del Tool Model",
+    "tier_dictation": "Redacción del dictado",
     "tier_subagent": "{name}-Agent (tareas pesadas)",
     "tier_telephony": "Telefonía",
     "tab_brain": "IA",
@@ -1092,6 +1123,7 @@
     "tab_stt": "Entrada de voz",
     "tab_realtime": "Tiempo real",
     "tab_computer_use": "Tool Model",
+    "tab_dictation": "Redacción",
     "tab_subagents": "{name}-Agents",
     "tab_advanced": "Avanzado",
     "tab_jarvis_key": "{name} Key",
@@ -1119,6 +1151,7 @@
     "cat_stt_desc": "Cómo convierte {name} tu voz en texto.",
     "cat_realtime_desc": "Voz a voz dúplex completo mediante cualquier proveedor de tiempo real configurado, en escritorio o navegador.",
     "cat_computer_use_desc": "El Tool Model ejecuta tus acciones: enruta comandos de voz, planifica Computer-Use en tu pantalla, inicia agentes en segundo plano y controla la app — independiente de tu Brain de chat.",
+    "cat_dictation_desc": "El modelo rápido que ordena el texto dictado: puntuación, muletillas y separación de frases. Opcional: sin clave aquí tu dictado llega tal y como se reconoció.",
     "cat_subagents_title": "{name}-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
@@ -1133,6 +1166,8 @@
     "recommended": "Recomendado",
     "recommended_tooltip": "Modelo recomendado: {0}",
     "not_recommended": "No recomendado",
+    "optional": "Opcional",
+    "optional_tooltip": "Está bien tenerlo, pero no hace falta. Sin él todo lo demás sigue funcionando igual.",
     "health_needs_setup": "Falta configurar",
     "health_error": "No funciona",
     "health_ok": "Funciona",

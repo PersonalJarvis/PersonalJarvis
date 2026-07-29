@@ -1,18 +1,25 @@
-﻿"""Declarative description of all Brain/TTS/STT providers for the desktop app.
+﻿"""Declarative description of every configurable provider for the desktop app.
 
 Single source of truth for the UI: which providers exist, what auth method
 do they need, which credential-manager slot stores their key, which login
 CLI needs to be spawned? Deliberately NO model names — models change too
 often, and the default comes from jarvis.toml. The UI renders a generic
 widget per provider based on auth_mode.
+
+Tiers: brain, tts, stt, realtime — and ``dictation``, the optional transcript
+polish pass. The dictation cards are NOT hand-written here: they are derived
+from ``jarvis.dictation.polish_client.POLISH_FAMILIES``, which owns the family
+list, so a new family is one row there plus one block of card text below.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
 
+from jarvis.dictation.polish_client import POLISH_FAMILIES
+
 AuthMode = Literal["api_key", "codex", "antigravity", "claude_cli", "none"]
-Tier = Literal["brain", "tts", "stt", "realtime"]
+Tier = Literal["brain", "tts", "stt", "realtime", "dictation"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
 # account; a subscription provider runs over an existing plan login; codex can
@@ -78,6 +85,14 @@ class ProviderSpec:
     # behavior (AP-21). Set on NVIDIA NIM: the free dev tier's 10-30s+ TTFB makes
     # it sluggish as a main/voice brain. ``None`` = no caution.
     caution: str | None = None
+    # This provider powers a feature the install does NOT depend on: without a
+    # key the feature simply does not run and everything else behaves exactly as
+    # before. The health rollup reads it to stay SILENT instead of raising a
+    # permanent amber "needs setup" dot (``_tier_section_health``), and the card
+    # renders an "Optional" chip. Presentation + nag-suppression only — it never
+    # gates behavior and no code path branches on a provider name because of it
+    # (AP-21). Set on the whole ``dictation`` tier today.
+    optional: bool = False
     # Local/self-hosted providers: the card exposes an editable server URL
     # (persisted as ``[brain.providers.<id>].base_url`` via
     # ``PUT /api/providers/{id}/base-url``). ``default_base_url`` is the
@@ -127,6 +142,181 @@ _GEMINI_VERTEX = AltCredential(
     dashboard_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
     credential_path_hint="~/.config/jarvis/vertex-sa.json",
 )
+
+
+# ── Dictation polish: the cards are DERIVED, not declared ─────────────────────
+# The family list itself lives in ``jarvis.dictation.polish_client`` and is the
+# single source of truth for ids, labels, credential slots and default models.
+# Re-typing it here would be a second declaration of the same fact — the exact
+# shape that produced BUG-008 four times. This module contributes only the half
+# polish_client has no opinion about: where you get the key and what it buys you.
+#
+# The spec id is the family id plus a suffix, because a bare "groq"/"openai"
+# would collide with the brain cards and ``get_spec`` returns the first match.
+
+#: Distinguishes a dictation-polish card from the brain/STT card of the same
+#: vendor. Never parsed anywhere except the two helpers below.
+_DICTATION_SPEC_SUFFIX = "-polish"
+
+
+def dictation_spec_id(family_id: str) -> str:
+    """ProviderSpec id for a polish family id (``"groq"`` -> ``"groq-polish"``)."""
+    return f"{family_id}{_DICTATION_SPEC_SUFFIX}"
+
+
+def dictation_family_id(spec_id: str) -> str:
+    """Polish family id behind a dictation card id; ``""`` if it is not one."""
+    return DICTATION_FAMILY_BY_SPEC_ID.get(spec_id, "")
+
+
+@dataclass(frozen=True, slots=True)
+class _DictationCardText:
+    """The human-facing half of one dictation-polish card.
+
+    Deliberately carries NO id, label, credential slot or model name: every one
+    of those is read from the :data:`~jarvis.dictation.polish_client.POLISH_FAMILIES`
+    row this text is keyed by.
+    """
+
+    dashboard_url: str | None
+    credential_help: str
+    signup_url: str | None = None
+    #: May contain ``{model}``, filled from the family's own ``default_model``
+    #: so a setup command can never advertise a model the pass does not run.
+    install_hint: str | None = None
+    recommended: bool = False
+
+
+# One entry per family we can actually ACCEPT a key for. A family with no entry
+# ships no card — see the Cerebras note below for the only case today.
+_DICTATION_CARD_TEXT: dict[str, _DictationCardText] = {
+    "groq": _DictationCardText(
+        dashboard_url="https://console.groq.com/keys",
+        credential_help=(
+            "Groq API key (starts with gsk_) — the SAME key the Groq "
+            "speech-to-text provider uses, so most installs already have it and "
+            "need no new account. It lets a small, very fast model tidy up "
+            "punctuation, capitalization and filler words in what you dictated, "
+            "without changing your words. Optional: with no key here, dictation "
+            "keeps working exactly as it did before."
+        ),
+        # Recommended because the key is usually already present (Groq is the
+        # shipped speech-to-text default), so the feature turns itself on with
+        # zero setup — and it is the cheapest of the cloud options per dictation.
+        recommended=True,
+    ),
+    "gemini": _DictationCardText(
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Same Google AI Studio key as the Gemini brain (starts with AIza or "
+            "AQ.) — no second key needed. Tidies up punctuation and filler words "
+            "in your dictation without changing your words, and handles languages "
+            "outside German, English and Spanish best of the cloud options. "
+            "Optional: with no key here, dictation keeps working as before."
+        ),
+    ),
+    "openai": _DictationCardText(
+        dashboard_url="https://platform.openai.com/api-keys",
+        credential_help=(
+            "Uses your OpenAI API key (shared with the GPT brain and Whisper "
+            "speech-to-text). Tidies up punctuation and filler words in your "
+            "dictation without changing your words. Optional: with no key here, "
+            "dictation keeps working exactly as it did before."
+        ),
+    ),
+    "openrouter": _DictationCardText(
+        dashboard_url="https://openrouter.ai/keys",
+        credential_help=(
+            "Uses your OpenRouter API key (shared with the OpenRouter brain — no "
+            "second key needed). One OpenRouter key reaches every model family "
+            "this feature can use, so a single credential is enough on its own. "
+            "Optional: with no key here, dictation keeps working as before."
+        ),
+    ),
+    "ollama": _DictationCardText(
+        dashboard_url=None,
+        signup_url="https://ollama.com/download",
+        install_hint="ollama pull {model}",
+        credential_help=(
+            "Tidies up your dictation FULLY LOCAL through an Ollama server — no "
+            "API key, no cloud account, nothing leaves this machine. Install "
+            "Ollama, pull a small instruct model, then choose Ollama as the "
+            "dictation clean-up provider in the Voice settings. It is never "
+            "picked automatically: dialling a local server that happens to not "
+            "be running would spend the whole time budget on a refused "
+            "connection, so this one is only ever used when you ask for it."
+        ),
+    ),
+    # Cerebras is a POLISH_FAMILIES member with NO entry here on purpose. Its
+    # credential slot ("cerebras_api_key") is not declared in the setup wizard,
+    # and ALLOWED_SECRET_KEYS (provider_routes) is derived from that
+    # declaration — so a Cerebras card would render a key field whose Save
+    # button answers 404. A card that cannot accept a key is worse than no card.
+    # Declare the wizard slot first, then add one row here; the guard test
+    # ``test_dictation_provider_tier.py`` goes red the moment the slot exists.
+}
+
+
+def _dictation_specs() -> tuple[ProviderSpec, ...]:
+    """Build one card per polish family we can store a credential for.
+
+    ``auth_mode`` is derived from the family's own ``needs_key`` capability, not
+    from its name (AP-21): a keyless local engine becomes a ``"none"`` card and
+    therefore bills as ``"local"`` and never reports "no key set".
+    """
+    specs: list[ProviderSpec] = []
+    for family in POLISH_FAMILIES:
+        text = _DICTATION_CARD_TEXT.get(family.id)
+        if text is None:
+            continue
+        specs.append(
+            ProviderSpec(
+                id=dictation_spec_id(family.id),
+                # Qualified, never bare: the delete-a-shared-key warning lists
+                # provider LABELS, and a second plain "Groq" there would not tell
+                # the user which surface is about to lose its credential. A colon
+                # rather than a parenthesis, because a family label may already
+                # carry one ("Ollama (local)"); plain ASCII, because a label
+                # travels into log lines that may land on a cp1252 console.
+                label=f"{family.label}: dictation polish",
+                tier="dictation",
+                auth_mode="api_key" if family.needs_key else "none",
+                # The card renders ONE field: the family's primary slot. The
+                # remaining candidates are read-only fallbacks the runtime
+                # resolves on its own, so offering them as extra input boxes
+                # would ask for keys nobody needs to enter twice.
+                secret_keys=family.secret_candidates[:1],
+                dashboard_url=text.dashboard_url,
+                install_hint=(
+                    text.install_hint.format(model=family.default_model)
+                    if text.install_hint
+                    else None
+                ),
+                signup_url=text.signup_url,
+                credential_help=text.credential_help,
+                recommended=text.recommended,
+                # No recommended_model: the model for each family already lives
+                # in POLISH_FAMILIES[].default_model, and this tier has no model
+                # picker to highlight it in.
+                optional=True,
+            )
+        )
+    return tuple(specs)
+
+
+_DICTATION_PROVIDERS: tuple[ProviderSpec, ...] = _dictation_specs()
+
+#: Polish family id -> the id of the card that configures it, and back. The
+#: config key ``[dictation].polish_provider`` stores a FAMILY id while the UI
+#: and the health rollup address a SPEC id; these two are the one translation.
+DICTATION_SPEC_ID_BY_FAMILY: dict[str, str] = {
+    family.id: dictation_spec_id(family.id)
+    for family in POLISH_FAMILIES
+    if family.id in _DICTATION_CARD_TEXT
+}
+DICTATION_FAMILY_BY_SPEC_ID: dict[str, str] = {
+    spec_id: family_id for family_id, spec_id in DICTATION_SPEC_ID_BY_FAMILY.items()
+}
 
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
@@ -478,6 +668,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
     # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
     # as an invisible resilience floor for a user with no cloud STT key.
+    # ── Dictation polish ──────────────────────────────────────────────────
+    # Derived from POLISH_FAMILIES above, in that tuple's order (Groq first —
+    # it is the recommended pick because its key is usually already there).
+    # OPTIONAL by construction: this tier reads a key it never demands, and a
+    # missing one leaves dictation behaving exactly as it did before.
+    *_DICTATION_PROVIDERS,
     # ── Realtime ──────────────────────────────────────────────────────────
     # Realtime voice spans independently selectable OpenAI, Gemini, and xAI
     # plugins behind the provider-neutral RealtimeProvider contract.

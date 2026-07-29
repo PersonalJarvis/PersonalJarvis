@@ -171,6 +171,11 @@ def test_section_health_returns_all_tabs(
             "tts",
             "stt",
             "realtime",
+            # The optional dictation-polish tier. It appears in the rollup like
+            # every other tab; what makes it different is that a MISSING key
+            # reports "ok" instead of amber (tests/unit/ui/
+            # test_dictation_provider_tier.py owns that rule).
+            "dictation",
             "subagents",
             "advanced",
         }

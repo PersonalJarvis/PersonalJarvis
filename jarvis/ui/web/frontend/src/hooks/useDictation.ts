@@ -56,6 +56,80 @@ export const STT_FAILURE_REASONS = [
 
 export type SttFailureReason = (typeof STT_FAILURE_REASONS)[number];
 
+/**
+ * How the wording pass ended, mirroring
+ * `jarvis.dictation.polish.POLISH_STATUSES`.
+ *
+ * Every value except `applied` means the RAW transcript was delivered — the
+ * pass can only ever be a no-op, never a loss — so none of these is an error
+ * the user has to act on, and they are worded that way. Same parity contract as
+ * the two vocabularies above: the Python tuple and this list must stay
+ * set-equal, and every entry needs a `dictation.polish_status.{name}` key in
+ * every locale.
+ */
+export const POLISH_STATUSES = [
+  "applied",
+  "unchanged",
+  "off",
+  "unavailable",
+  "skipped_short",
+  "skipped_long",
+  "timeout",
+  "provider_error",
+  "rejected_drift",
+] as const;
+
+export type PolishStatus = (typeof POLISH_STATUSES)[number];
+
+/**
+ * Why the deterministic filler cleanup did NOT run, mirroring the `reason`
+ * vocabulary of `jarvis.dictation.cleanup.CleanupResult` (empty when it did).
+ *
+ * This one earns its place in the UI: `no_rules` means the cleanup has no
+ * filler list for the language that was recognized, which is the case for most
+ * of the ~100 languages dictation accepts. Until it was rendered, those users
+ * saw the filler-removal switch sitting ON while it had never once run.
+ */
+export const DICTATION_CLEANUP_REASONS = [
+  "disabled",
+  "no_rules",
+  "ceiling",
+  "empty",
+  "error",
+] as const;
+
+export type DictationCleanupReason = (typeof DICTATION_CLEANUP_REASONS)[number];
+
+const KNOWN_POLISH_STATUSES: ReadonlySet<string> = new Set(POLISH_STATUSES);
+const KNOWN_CLEANUP_REASONS: ReadonlySet<string> = new Set(
+  DICTATION_CLEANUP_REASONS,
+);
+
+/**
+ * Translates a polish status through its i18n key, falling back to the raw
+ * value for anything this bundle does not know — a newer backend must never
+ * crash or blank an older frontend. Takes `t` rather than calling the hook, so
+ * it stays usable from any component.
+ */
+export function polishStatusLabel(
+  t: (key: string) => string,
+  status: string,
+): string {
+  return KNOWN_POLISH_STATUSES.has(status)
+    ? t(`dictation.polish_status.${status}`)
+    : status;
+}
+
+/** The cleanup-reason twin of `polishStatusLabel`, same fallback rule. */
+export function cleanupReasonLabel(
+  t: (key: string) => string,
+  reason: string,
+): string {
+  return KNOWN_CLEANUP_REASONS.has(reason)
+    ? t(`dictation.cleanup_reason.${reason}`)
+    : reason;
+}
+
 /** Languages dictation can be pinned to; `auto` lets the provider decide. */
 export type DictationLanguage = "auto" | "de" | "en" | "es";
 
@@ -106,6 +180,17 @@ export interface DictationEntry {
   /** Audio was kept for this entry, so Restore can transcribe it again. */
   audio_available: boolean;
   error: string | null;
+  /**
+   * One of POLISH_STATUSES — how the optional wording pass ended for this
+   * dictation. Optional because a row written before the pass existed carries
+   * no polish fields at all, and an older backend serves none.
+   */
+  polish_status?: string | null;
+  /** The model family that answered, "" when none did. */
+  polish_provider?: string | null;
+  /** What the pass cost in wall-clock time, for the honest "is this slowing me
+   *  down" question. 0 when it never ran. */
+  polish_latency_ms?: number | null;
 }
 
 /**
@@ -145,6 +230,26 @@ export interface DictationSettings {
   keep_failed_audio: boolean;
   audio_retention_days: number;
   audio_max_files: number;
+  // The wording pass. `polish` is the master switch; everything below it only
+  // matters while it is on. The numeric knobs are here because they are part of
+  // the same settings block the backend serves and saves — the UI exposes only
+  // the switch and the provider, and touching the rest is a config-file or CLI
+  // affair (`jarvis api dictation put-settings`).
+  polish: boolean;
+  /** "auto" = whichever family the user holds a key for, primary first. */
+  polish_provider: string;
+  /** "" = the family's own default model. */
+  polish_model: string;
+  polish_timeout_ms: number;
+  polish_max_input_chars: number;
+  polish_min_words: number;
+  polish_max_output_tokens: number;
+  polish_temperature: number;
+  polish_drift_max_shrink: number;
+  polish_drift_max_growth: number;
+  /** neutral | messaging | email — register only, never a licence to change
+   *  meaning. */
+  polish_style: string;
 }
 
 export interface DictationChoices {
@@ -153,6 +258,15 @@ export interface DictationChoices {
   insert_method: string[];
   paste_chord: string[];
   language: string[];
+  /**
+   * The polish families the backend actually knows, `"auto"` first. Served
+   * rather than mirrored on purpose: a hand-kept copy of the family list here
+   * is the AP-4 drift trap, and the cost of getting it wrong is a dropdown
+   * offering a provider the backend rejects. Optional so an older backend that
+   * serves no polish block still parses.
+   */
+  polish_provider?: string[];
+  polish_style?: string[];
 }
 
 /**
@@ -194,6 +308,34 @@ async function unwrap<T>(res: Response): Promise<T> {
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return body as T;
+}
+
+/** Result of POST /api/dictation/polish/test — one fixed sample, dry-run. */
+export interface DictationPolishTest {
+  /** One of POLISH_STATUSES. */
+  status: PolishStatus | string;
+  /** The family that answered, "" when none did. */
+  provider: string;
+  model: string;
+  latency_ms: number;
+  /** Machine cause when a guard or the transport refused, "" when clean. */
+  reason: string;
+  sample_in: string;
+  sample_out: string;
+}
+
+/**
+ * Runs the fixed sample through the user's live polish configuration.
+ *
+ * The only way to SEE this feature: when it works it is invisible by design,
+ * and when it fails it silently delivers the raw text. Non-destructive — it
+ * writes no setting and touches no history — so the UI can offer it as a plain
+ * "Test" button next to the switch.
+ */
+export async function testDictationPolish(): Promise<DictationPolishTest> {
+  return unwrap<DictationPolishTest>(
+    await fetch("/api/dictation/polish/test", { method: "POST" }),
+  );
 }
 
 /**

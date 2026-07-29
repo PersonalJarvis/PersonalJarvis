@@ -300,6 +300,24 @@
       "recording_interrupted": "The recording ended before you stopped it.",
       "no_stt": "No speech recognition is set up yet.",
       "unknown": "Speech recognition failed."
+    },
+    "polish_status": {
+      "applied": "Cleaned up",
+      "unchanged": "Nothing to change",
+      "off": "Off",
+      "unavailable": "No model available",
+      "skipped_short": "Too short to clean up",
+      "skipped_long": "Too long to clean up",
+      "timeout": "Took too long — your raw text was used",
+      "provider_error": "Model unreachable — your raw text was used",
+      "rejected_drift": "Rewrite rejected — your raw text was used"
+    },
+    "cleanup_reason": {
+      "disabled": "Filler removal off",
+      "no_rules": "No filler rules for this language",
+      "ceiling": "Filler removal skipped — too much would have gone",
+      "empty": "Nothing to clean up",
+      "error": "Filler removal failed"
     }
   },
   "voice": {
@@ -328,6 +346,18 @@
       "en": "English",
       "es": "Spanish",
       "auto_hint": "Automatic detection is right for almost everyone. Pinning a language can make recognition worse on a model that was not trained for it."
+    },
+    "polish": {
+      "title": "Clean up my wording",
+      "description": "A fast model rewrites the structure — punctuation, capitalization, filler words and sentence breaks. Your exact words and their meaning are kept, and the raw text is always saved in your history.",
+      "provider_label": "Model",
+      "provider_auto": "Automatic — use whichever key I have",
+      "provider_hint": "Automatic takes a key you already have and moves to a different provider when one is rate-limited or out of credit. Pin one only if you want a specific account billed.",
+      "test": "Test",
+      "testing": "Testing…",
+      "test_hint": "Runs one fixed sample through your setup. Nothing is saved.",
+      "sample_before": "Before",
+      "sample_after": "After"
     },
     "api_keys": {
       "title": "Voice input",
@@ -1085,6 +1115,7 @@
     "tier_stt": "Voice Input (STT)",
     "tier_realtime": "Realtime voice",
     "tier_computer_use": "Tool Model provider",
+    "tier_dictation": "Dictation wording",
     "tier_subagent": "{name}-Agent (heavy tasks)",
     "tier_telephony": "Telephony",
     "tab_brain": "Brain",
@@ -1092,6 +1123,7 @@
     "tab_stt": "Voice Input",
     "tab_realtime": "Realtime",
     "tab_computer_use": "Tool Model",
+    "tab_dictation": "Wording",
     "tab_subagents": "{name}-Agents",
     "tab_advanced": "Advanced",
     "tab_jarvis_key": "{name} Key",
@@ -1119,6 +1151,7 @@
     "cat_stt_desc": "How {name} turns your speech into text.",
     "cat_realtime_desc": "Full-duplex speech-to-speech through any configured Realtime provider, on desktop or in the browser.",
     "cat_computer_use_desc": "The Tool Model runs your actions: it routes spoken commands, plans Computer-Use on your screen, starts background agents, and drives app controls — independent of your chat Brain.",
+    "cat_dictation_desc": "The fast model that tidies up dictated text — punctuation, filler words and sentence breaks. Optional: with no key here your dictation is delivered exactly as it was recognized.",
     "cat_subagents_title": "{name}-Agents",
     "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
     "advanced_title": "Access & Integrations",
@@ -1133,6 +1166,8 @@
     "recommended": "Recommended",
     "recommended_tooltip": "Recommended model: {0}",
     "not_recommended": "Not recommended",
+    "optional": "Optional",
+    "optional_tooltip": "Nice to have, not required. Without it everything else keeps working exactly as before.",
     "health_needs_setup": "Setup needed",
     "health_error": "Not working",
     "health_ok": "Working",

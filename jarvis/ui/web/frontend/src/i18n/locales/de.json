@@ -300,6 +300,24 @@
       "recording_interrupted": "Die Aufnahme endete, bevor du gestoppt hast.",
       "no_stt": "Es ist noch keine Spracherkennung eingerichtet.",
       "unknown": "Die Spracherkennung ist fehlgeschlagen."
+    },
+    "polish_status": {
+      "applied": "Aufgeräumt",
+      "unchanged": "Nichts zu ändern",
+      "off": "Aus",
+      "unavailable": "Kein Modell verfügbar",
+      "skipped_short": "Zu kurz zum Aufräumen",
+      "skipped_long": "Zu lang zum Aufräumen",
+      "timeout": "Hat zu lange gedauert — dein Rohtext wurde verwendet",
+      "provider_error": "Modell nicht erreichbar — dein Rohtext wurde verwendet",
+      "rejected_drift": "Umformulierung abgelehnt — dein Rohtext wurde verwendet"
+    },
+    "cleanup_reason": {
+      "disabled": "Füllwort-Entfernung aus",
+      "no_rules": "Keine Füllwort-Regeln für diese Sprache",
+      "ceiling": "Füllwort-Entfernung übersprungen — zu viel wäre verschwunden",
+      "empty": "Nichts zu bereinigen",
+      "error": "Füllwort-Entfernung fehlgeschlagen"
     }
   },
   "voice": {
@@ -328,6 +346,18 @@
       "en": "Englisch",
       "es": "Spanisch",
       "auto_hint": "Automatische Erkennung passt für fast alle. Eine feste Sprache kann die Erkennung verschlechtern, wenn das Modell nicht dafür trainiert wurde."
+    },
+    "polish": {
+      "title": "Formulierung aufräumen",
+      "description": "Ein schnelles Modell schreibt die Struktur um — Satzzeichen, Groß- und Kleinschreibung, Füllwörter und Satzgrenzen. Deine genauen Worte und ihr Sinn bleiben erhalten, und der Rohtext steht immer in deinem Verlauf.",
+      "provider_label": "Modell",
+      "provider_auto": "Automatisch — nimm den Schlüssel, den ich habe",
+      "provider_hint": "Automatisch nimmt einen Schlüssel, den du ohnehin hast, und wechselt zu einem anderen Anbieter, wenn einer am Limit oder ohne Guthaben ist. Feste Wahl nur, wenn ein bestimmtes Konto abgerechnet werden soll.",
+      "test": "Testen",
+      "testing": "Test läuft…",
+      "test_hint": "Schickt eine feste Beispielzeile durch deine Einstellung. Es wird nichts gespeichert.",
+      "sample_before": "Vorher",
+      "sample_after": "Nachher"
     },
     "api_keys": {
       "title": "Spracheingabe",
@@ -1085,6 +1115,7 @@
     "tier_stt": "Voice-Input (STT)",
     "tier_realtime": "Realtime-Sprache",
     "tier_computer_use": "Tool-Model-Provider",
+    "tier_dictation": "Diktat-Formulierung",
     "tier_subagent": "{name}-Agent (Heavy-Tasks)",
     "tier_telephony": "Telefonie",
     "tab_brain": "Brain",
@@ -1092,6 +1123,7 @@
     "tab_stt": "Spracheingabe",
     "tab_realtime": "Realtime",
     "tab_computer_use": "Tool Model",
+    "tab_dictation": "Formulierung",
     "tab_subagents": "{name}-Agents",
     "tab_advanced": "Erweitert",
     "tab_jarvis_key": "{name} Key",
@@ -1119,6 +1151,7 @@
     "cat_stt_desc": "Wie {name} deine Sprache in Text umwandelt.",
     "cat_realtime_desc": "Vollduplex-Sprache-zu-Sprache über jeden eingerichteten Realtime-Provider, auf dem Desktop oder im Browser.",
     "cat_computer_use_desc": "Das Tool Model führt deine Aktionen aus: Es routet Sprachbefehle, plant Computer-Use auf deinem Bildschirm, startet Hintergrund-Agenten und steuert die App — unabhängig von deinem Chat-Brain.",
+    "cat_dictation_desc": "Das schnelle Modell, das diktierten Text aufräumt — Satzzeichen, Füllwörter und Satzgrenzen. Optional: Ohne Schlüssel hier kommt dein Diktat genau so an, wie es erkannt wurde.",
     "cat_subagents_title": "{name}-Agents",
     "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
     "advanced_title": "Zugang & Integrationen",
@@ -1133,6 +1166,8 @@
     "recommended": "Empfohlen",
     "recommended_tooltip": "Empfohlenes Modell: {0}",
     "not_recommended": "Nicht empfohlen",
+    "optional": "Optional",
+    "optional_tooltip": "Schön zu haben, aber nicht nötig. Ohne läuft alles andere genau wie vorher.",
     "health_needs_setup": "Einrichtung nötig",
     "health_error": "Funktioniert nicht",
     "health_ok": "Funktioniert",

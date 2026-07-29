@@ -101,6 +101,21 @@ export function VoiceApiKeysTab({ hideHeader = false }: VoiceApiKeysTabProps = {
             onActivateOptimistic={setActiveOptimistic}
             health={health.stt}
           />
+
+          {/* The optional wording pass, right under the tier whose output it
+              cleans up. It belongs here and not only on the API-Keys screen:
+              this is the place someone configures dictation, and a key they
+              never find is a feature they never get. */}
+          <ProviderCategory
+            meta={categories.dictation}
+            tier="dictation"
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+            health={health.dictation}
+          />
         </div>
       </div>
     </div>
