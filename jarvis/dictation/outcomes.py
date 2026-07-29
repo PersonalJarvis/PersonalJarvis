@@ -32,6 +32,21 @@ What each value means
     clipboard backend). The transcript exists only in the history.
 ``chat``
     The dictation was routed into the chat instead of the desktop.
+``partial``
+    Text was produced and delivered, but part of the recording never
+    transcribed at all — a provider failure that outlived every retry, on audio
+    nothing ever read again. This value exists because its absence was a lie
+    the user could see: a 37.7-second dictation whose provider answered 429
+    arrived as three words, reported ``inserted``, and had its audio destroyed
+    because a success is not recoverable. Reporting the delivery outcome of the
+    surviving fragment answers "where did those three words go" and hides the
+    only question that mattered — "where are the other thirty seconds". So the
+    loss outranks the delivery: ``method`` and ``detail`` still say what
+    happened to the part that made it, and the outcome says the part that did
+    not. It is deliberately NOT keyed on "a transcription error was seen at
+    some point" — a failure on the last tick whose audio then fell under the
+    minimum segment size leaves a stale error on a COMPLETE transcript, and
+    calling that partial would mislead in the opposite direction.
 ``empty``
     Transcription succeeded but returned nothing — silence, or speech too
     quiet to resolve. Not an error, but nothing to show for it either.
@@ -60,23 +75,29 @@ DICTATION_OUTCOMES: Final[tuple[str, ...]] = (
     "clipboard_only",
     "unavailable",
     "chat",
+    "partial",
     "empty",
     "cancelled",
     "failed",
 )
 
-#: Outcomes for which there is nothing usable to show the user, so keeping the
-#: audio (when the user allows it) is what makes a later Restore possible.
-#: The success outcomes are excluded on purpose: audio is the most sensitive
-#: thing this application ever stores, so it is only ever kept when it buys
-#: back something the user actually lost.
+#: Outcomes where the user is missing words the recording could still give
+#: back, so keeping the audio (when they allow it) is what makes a later
+#: Restore possible. The plain success outcomes are excluded on purpose: audio
+#: is the most sensitive thing this application ever stores, so it is only ever
+#: kept when it buys back something the user actually lost.
+#:
+#: ``partial`` is in here even though it DID deliver text, and that is the
+#: whole point of the value: the delivered fragment is not the dictation, the
+#: rest of it exists only in the audio, and treating the fragment as a success
+#: is what deleted the recording out from under the user.
 RECOVERABLE_OUTCOMES: Final[frozenset[str]] = frozenset(
-    {"empty", "cancelled", "failed"}
+    {"partial", "empty", "cancelled", "failed"}
 )
 
 
 def is_recoverable(outcome: str | None) -> bool:
-    """``True`` when this outcome left the user with nothing to show for it.
+    """``True`` when this outcome left the user missing words the audio holds.
 
     Tolerant by design: an unknown value from an older install reads as "not
     recoverable" rather than raising, because a vocabulary mismatch must never

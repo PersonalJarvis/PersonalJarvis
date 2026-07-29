@@ -137,6 +137,57 @@ def _resolve_keyed_stt_provider(primary_name: str) -> str:
     return primary_name
 
 
+#: Class attribute a recognizer plugin sets to declare that it transcribes on
+#: THIS machine. The capability the plugin answers for ITSELF (AP-21) — and the
+#: seam a second on-device engine plugs into, because the dictation polish
+#: pass's privacy floor keys on the answer and getting it wrong in the "cloud"
+#: direction uploads text from somebody who chose a local recognizer to stop
+#: exactly that.
+_ON_DEVICE_ATTR = "runs_on_device"
+
+#: The on-device engines this repo ships, for the case where the provider class
+#: does not declare the attribute above. A NAME list is what AP-21 warns about,
+#: so it is asked only for our OWN plugins (whose behaviour we know without
+#: importing them) and never used to judge a stranger's.
+_SHIPPED_ON_DEVICE_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+
+
+@lru_cache(maxsize=32)
+def provider_runs_on_device(provider_name: str) -> bool:
+    """Whether the recognizer ``provider_name`` transcribes on THIS machine.
+
+    The privacy question — do the user's words leave this computer — asked in
+    three steps, cheapest first:
+
+    1. A provider with a CLOUD credential slot is remote by definition: a
+       remote account is what that key pays for. No import, no guessing.
+    2. Otherwise, one of the on-device engines this repo ships answers ``True``
+       straight away. A name comparison, kept for our own plugins only, so the
+       common case costs nothing.
+    3. Anything else is asked of the PLUGIN: a provider class that sets
+       ``runs_on_device = True`` is believed, whatever it is called. Declaring
+       it is all a second on-device recognizer has to do — every consumer of
+       this function, the polish privacy floor included, follows.
+
+    A stranger's plugin that declares nothing answers ``False``. That is the
+    honest answer rather than the safe one — we cannot prove somebody else's
+    recognizer is local — and it is what the code already assumed before this
+    function existed. A caller for whom the mistake is expensive fails closed
+    on its own side (:func:`jarvis.dictation.polish_client.stt_runs_on_device`).
+
+    Cached per name: the answer cannot change while the process runs, and step
+    3 imports the plugin module to read the attribute.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return False
+    if name in _STT_SECRET_CANDIDATES:
+        return False
+    if name in _SHIPPED_ON_DEVICE_PROVIDERS:
+        return True
+    return bool(getattr(_load_provider_class(name), _ON_DEVICE_ATTR, False))
+
+
 def stt_family_id(provider_name: str) -> str:
     """The CREDENTIAL family a provider id belongs to.
 
@@ -149,20 +200,24 @@ def stt_family_id(provider_name: str) -> str:
     trap ``openrouter`` (brain) vs ``openrouter-stt`` (STT) would set for a
     naive name comparison.
 
-    Unknown / third-party ids (absent from ``_STT_SECRET_CANDIDATES``) are each
-    their own family: we cannot prove they share a credential with anything, and
-    excluding them would silently drop a provider that works. The key-free local
-    engine is the ``local`` family — it has no credential to exhaust.
+    An engine that transcribes on this machine is the ``local`` family — it has
+    no credential to exhaust — and which engines those are is decided by
+    :func:`provider_runs_on_device`, not by a name written down here.
+
+    Unknown / third-party ids (absent from ``_STT_SECRET_CANDIDATES`` and
+    declaring no on-device capability) are each their own family: we cannot
+    prove they share a credential with anything, and excluding them would
+    silently drop a provider that works.
     """
     name = (provider_name or "").strip()
     if not name:
         return ""
-    if name == "faster-whisper":
-        return "local"
     candidates = _STT_SECRET_CANDIDATES.get(name)
-    if not candidates:
-        return name
-    return candidates[0][0]
+    if candidates:
+        return candidates[0][0]
+    if provider_runs_on_device(name):
+        return "local"
+    return name
 
 
 def resolve_keyed_stt_fallback(
@@ -1066,6 +1121,7 @@ __all__ = [
     "build_stt_from_config",
     "build_wake_whisper",
     "mark_wake_gpu_bad",
+    "provider_runs_on_device",
     "resolve_keyed_stt_fallback",
     "start_wake_model_prefetch",
     "stt_family_id",

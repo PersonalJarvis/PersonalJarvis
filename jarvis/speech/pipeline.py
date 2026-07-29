@@ -611,6 +611,119 @@ def _is_transient_stt_error(exc: BaseException) -> bool:
     return _stt_error_status(exc) in _STT_TRANSIENT_STATUS
 
 
+def _stt_crossover_would_leave_the_machine() -> bool:
+    """Whether an AUTOMATIC STT crossover would be this host's first upload.
+
+    Delegates to ``jarvis.dictation.polish_client.stt_runs_on_device`` — the
+    SAME predicate the dictation polish pass consults before it may send a
+    transcript to a cloud model, which in turn asks the repo's existing
+    ``stt_family_id`` rather than matching provider names (AP-21). One question
+    with two answers is how two lanes end up disagreeing, and this pair
+    disagreed in the worse direction: the polish pass refused to upload the
+    TEXT while the crossover was still free to upload the AUDIO that text was
+    derived from. A recording is strictly more sensitive than its transcript —
+    it carries the voice itself and whatever else was audible in the room — so
+    refusing the smaller of the two while permitting the larger is not a
+    position that can be defended to a user.
+
+    Fails CLOSED, exactly like the predicate it delegates to: a host whose
+    recognizer cannot be determined keeps its audio. The two mistakes are not
+    symmetric. Guessing "local" costs a crossover on a turn that had already
+    failed and that the user hears fail. Guessing "cloud" uploads the recording
+    of somebody who picked an on-device recognizer to prevent precisely that,
+    and nothing on screen would ever tell them.
+    """
+    try:
+        from jarvis.dictation.polish_client import stt_runs_on_device
+
+        return stt_runs_on_device()
+    except Exception as exc:  # noqa: BLE001 — an unanswerable question keeps the audio
+        log.warning(
+            "Could not determine whether the configured recognizer runs on this "
+            "machine (%s); declining the automatic STT crossover so the audio "
+            "stays here.",
+            exc,
+        )
+        return True
+
+
+def _resolve_stt_fallback_chain(stt_cfg: Any, configured: str) -> tuple[str, ...]:
+    """Provider ids to cross to when ``configured`` fails at CALL time.
+
+    The ONE place ``[stt].fallback`` is interpreted, and the reason it exists is
+    that the key was shipped in configs for a long time while nothing read it —
+    a switch whose value is ignored is a lie the user cannot detect (AP-31), and
+    it was documented in ``STTConfig`` as honoured. Both consumers — the
+    dictation lane's session chain and the voice lane's last-resort crossover —
+    resolve through here, because two readings of one switch are two readings
+    that will drift.
+
+    Three settings, all of them the user's call:
+
+    * ``auto`` (the default) asks the key-aware resolver for one provider per
+      OTHER credential family. Crossing inside a family buys nothing: one dead
+      key takes every id that reads it down together (AP-22). It crosses only
+      while the configured recognizer is itself a cloud one — see below.
+    * a concrete provider id pins the crossover to that provider, even when it
+      shares a family with the configured one — the user asked for it by name,
+      and refusing a direct instruction because we think it is a poor one is
+      how a setting stops being a setting. It is dropped only when it IS the
+      configured provider, which would just be the same failure twice.
+    * an empty value disables crossing entirely and keeps the honest
+      single-provider failure, for anyone who would rather see an error than
+      have their audio sent somewhere they did not expect.
+
+    On top of those, one privacy floor that only the ``auto`` branch is subject
+    to: when the configured recognizer transcribes on THIS machine, the
+    automatic crossover is declined, because every id the key-aware resolver
+    can offer is a cloud family (it excludes the local engine by contract) and
+    an automatic upload of the raw audio is the one thing an on-device
+    recognizer was chosen to prevent. A pinned provider id is untouched by
+    this: that is an explicit instruction, and honouring it is the difference
+    between a safe default and a policy — the same line the dictation polish
+    pass draws for the transcript.
+
+    Never raises: this runs on paths that are already handling a failure, so an
+    unimportable plugin package or an unreadable keyring costs the crossover,
+    never the transcription. Names only, nothing built (AP-26).
+    """
+    setting = str(getattr(stt_cfg, "fallback", "auto") or "").strip()
+    if not setting:
+        log.debug("STT crossover disabled by [stt].fallback = '' (empty).")
+        return ()
+    if setting.lower() != "auto":
+        if setting == configured:
+            log.debug(
+                "STT crossover pinned to the configured provider %r — the same "
+                "failure twice is not a fallback; ignoring the pin.",
+                setting,
+            )
+            return ()
+        return (setting,)
+    if _stt_crossover_would_leave_the_machine():
+        log.info(
+            "STT crossover declined: [stt].provider = %s transcribes on this "
+            "machine, and every provider the automatic chain can offer is a "
+            "cloud family — so the fallback would be the first thing to send "
+            "this audio off the host. The transcription degrades to the "
+            "configured recognizer alone; set [stt].fallback to a provider id "
+            "to allow the crossing deliberately.",
+            configured or "the configured recognizer",
+        )
+        return ()
+    try:
+        from jarvis.plugins.stt import resolve_keyed_stt_fallback
+
+        return tuple(resolve_keyed_stt_fallback(configured))
+    except Exception as exc:  # noqa: BLE001 — no chain is worse than no transcript
+        log.warning(
+            "STT crossover chain could not be resolved (%s); this transcription "
+            "degrades to the configured provider alone.",
+            exc,
+        )
+        return ()
+
+
 def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
     """Backoff before the next final-STT attempt.
 
@@ -1656,6 +1769,18 @@ class SpeechPipeline:
         # dictation. ``None`` means "not built yet", which is also how a live
         # provider/language switch invalidates it.
         self._dictation_stt_instance: Any = None
+        # The VOICE lane's cross-family fallback (AP-22), and the reason both
+        # halves are ``None``/empty here rather than resolved at boot: this is
+        # last-resort machinery for a turn that has ALREADY failed, and a
+        # working provider must never pay for it. Nothing is resolved until a
+        # final transcription has exhausted its retry ladder, nothing is built
+        # until the resolved chain is actually walked, and both are then kept so
+        # a provider that stays down does not re-read the keyring every turn.
+        # ``None`` means "not resolved yet"; an empty tuple means "resolved, and
+        # this host has one keyed family" — the two must stay distinguishable or
+        # a single-key install re-resolves on every failed turn.
+        self._voice_stt_fallback_chain: tuple[str, ...] | None = None
+        self._voice_stt_fallback_instances: dict[str, Any] = {}
         # True while a hold-mode dictation key is physically down. Mirrors
         # ``_ptt_mode`` for the dictation lane so a repeated press edge (the
         # Windows backend polls and re-fires on_press while held) is idempotent.
@@ -1708,7 +1833,23 @@ class SpeechPipeline:
         # user's words while three other keyed providers sat unused. The chain
         # is names-only until something actually fails, so this costs the boot
         # path nothing (AP-26).
-        if config is not None and getattr(config, "stt", None) is not None:
+        #
+        # Skipped entirely for an on-device recognizer, and this is the SAME
+        # privacy floor ``_resolve_stt_fallback_chain`` applies: every alternate
+        # ``alternate_provider_names`` can offer a locally-configured user is a
+        # cloud one (it appends the local engine only when it is NOT the
+        # configured provider), so this wrapper is the earliest and widest of
+        # the automatic doors out of the machine — it sits on the utterance
+        # provider every voice turn uses. Someone who chose an on-device
+        # recognizer chose it so their recordings would stay here; an automatic
+        # upload on the first 429 is not a fallback they agreed to. Pinning
+        # ``[stt].fallback`` to a provider id still crosses, through the
+        # resolver above.
+        if (
+            config is not None
+            and getattr(config, "stt", None) is not None
+            and not _stt_crossover_would_leave_the_machine()
+        ):
             try:
                 from jarvis.speech.stt_fallback import wrap_stt_with_fallback
 
@@ -8577,11 +8718,13 @@ class SpeechPipeline:
 
         **The fallback chain (AP-22).** The lane binds one provider for the
         whole session, so a depleted key ended the dictation even with three
-        other keyed families sitting unused. ``resolve_keyed_stt_fallback``
+        other keyed families sitting unused. ``_resolve_stt_fallback_chain``
         answers with one provider per CREDENTIAL family — never two ids reading
         the same keyring slot, because a 429 on a key is not survived by a
         sibling that draws on the same key — and ``FallbackSTT`` builds each of
-        them lazily, on the first call that actually needs it (AP-26).
+        them lazily, on the first call that actually needs it (AP-26). It is
+        the same resolver the voice lane's crossover uses, so ``[stt].fallback``
+        means one thing in both lanes.
 
         Degrades to the voice instance on any failure: a dictation with the
         wrong prompt is enormously better than a dictation with no provider.
@@ -8622,13 +8765,10 @@ class SpeechPipeline:
         # wrapper silently handed the voice provider — bias prompt included —
         # back to the dictation lane.
         try:
-            from jarvis.plugins.stt import (
-                build_named_stt_provider,
-                resolve_keyed_stt_fallback,
-            )
+            from jarvis.plugins.stt import build_named_stt_provider
 
             configured = str(getattr(stt_cfg, "provider", "") or "").strip()
-            alternates = list(resolve_keyed_stt_fallback(configured))
+            alternates = list(_resolve_stt_fallback_chain(stt_cfg, configured))
             if alternates:
                 from jarvis.speech.stt_fallback import FallbackSTT
 
@@ -8661,14 +8801,24 @@ class SpeechPipeline:
         return instance
 
     def _reset_dictation_stt(self) -> None:
-        """Drop the cached dictation provider so the next press rebuilds it.
+        """Drop every cached STT fallback so the next use resolves them again.
 
         Called from every place that swaps the voice provider or the recognition
         language. Without it a live settings change would apply to conversations
         and silently not to dictation — the exact class of divergence that makes
         "it works here, not there" unanswerable.
+
+        The VOICE lane's crossover cache is cleared from the same hook, and for
+        the same reason: it holds provider instances built from the OLD
+        recognition language and a chain resolved against the OLD configured
+        provider, so keeping it would answer a live language switch with
+        yesterday's language the moment the primary failed. The method keeps its
+        name because every caller already reaches for it at exactly the right
+        moment; what it clears is "the caches a provider swap invalidates".
         """
         self._dictation_stt_instance = None
+        self._voice_stt_fallback_chain = None
+        self._voice_stt_fallback_instances = {}
 
     def _dictation_protected_terms(self) -> tuple[str, ...]:
         """Spellings the polish pass may not "correct" into something familiar.
@@ -8813,6 +8963,21 @@ class SpeechPipeline:
         # is exactly what a debugger needs and exactly what a user must not be
         # handed.
         stt_error_detail: str = ""
+        # EVERY failure this session saw, in order, and never cleared. The
+        # single ``stt_error`` slot above is overwritten by the next call and
+        # blanked by the next SUCCESS, which is correct for "what went wrong
+        # last" and useless for "did anything go wrong at all": a segment that
+        # failed permanently in the middle, followed by one good segment, left
+        # no trace anywhere. The report below reads this list, the slot above
+        # keeps feeding the retry ladder's log lines.
+        stt_failures: list[str] = []
+        # Audio a failure consumed that nothing ever read again — the ONLY
+        # honest measure of "words the user said and will never see". A failure
+        # during the session is not this: a segment kept open after a failed
+        # call is retried on the next tick and again in the final pass, and a
+        # stale error left on the last tick is not a loss either. Only the final
+        # pass can lose audio, because after it the buffer is gone.
+        lost_audio_bytes = 0
         # ``[dictation].language`` as chosen by the user. ``auto`` is passed
         # THROUGH to the provider rather than dropped: omitting the argument
         # means "no opinion", which lands on whatever ``[stt].language`` is
@@ -8831,7 +8996,10 @@ class SpeechPipeline:
 
             Records the failure in ``stt_error`` instead of swallowing it. A
             later successful call clears it again — a single flaky segment in an
-            otherwise working dictation is not a failed dictation.
+            otherwise working dictation is not a failed dictation. The same
+            failure is ALSO appended to ``stt_failures``, which is never
+            cleared: the clearing is what makes the slot honest about "the last
+            thing that happened" and blind to "something went wrong earlier".
 
             ``ok`` is the part the caller cannot do without: an empty ``text``
             has TWO causes that need opposite handling — silence (the segment is
@@ -8857,6 +9025,8 @@ class SpeechPipeline:
             difference between a dictation that ends with an honest error and
             one that never ends at all.
             """
+            # ``stt_failures`` is appended to, never rebound, so it needs no
+            # ``nonlocal`` — the list object itself is the shared state.
             nonlocal stt_error, stt_error_detail
             ceiling = max(
                 float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
@@ -8883,11 +9053,13 @@ class SpeechPipeline:
                     f"for {len(pcm) / bytes_per_second:.1f}s of audio"
                 )
                 stt_error = classify_stt_failure(exc)
+                stt_failures.append(stt_error)
                 log.warning("dictation transcribe timed out: %s", stt_error_detail)
                 return "", "", False, exc
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
                 stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
                 stt_error = classify_stt_failure(exc)
+                stt_failures.append(stt_error)
                 log.debug("dictation transcribe failed: %s", stt_error_detail)
                 return "", "", False, exc
             finally:
@@ -9084,8 +9256,13 @@ class SpeechPipeline:
             by piece, one bad piece costs one piece. Each is retried, because
             unlike a probe tick there is no "next time" — the buffer is gone when
             this returns.
+
+            "The buffer is gone when this returns" is also why this is the ONE
+            place that counts ``lost_audio_bytes``. Everywhere else a failure
+            only postpones a read; here it ends it, and the seconds behind those
+            bytes are words the user said that nothing will ever transcribe.
             """
-            nonlocal language, session_peak
+            nonlocal language, session_peak, lost_audio_bytes
             from jarvis.dictation.segment import (
                 is_silent_segment,
                 quietest_cut,
@@ -9097,6 +9274,11 @@ class SpeechPipeline:
             dead_streak = 0
             while len(remaining) >= min_bytes:
                 if dead_streak >= _DICTATION_FINAL_DEAD_PIECES:
+                    # "Kept for a later retry" means kept in the AUDIO SIDECAR,
+                    # which only happens because these bytes are counted here:
+                    # the count is what degrades the outcome, and the degraded
+                    # outcome is what makes the recording worth keeping.
+                    lost_audio_bytes += len(remaining)
                     log.warning(
                         "final dictation transcription abandoned after %d "
                         "consecutive failed pieces (%s) — %.1fs of audio kept "
@@ -9117,6 +9299,7 @@ class SpeechPipeline:
                 session_peak = max(session_peak, peak)
                 if is_silent_segment(piece, session_peak=session_peak):
                     continue
+                piece_read = False
                 for attempt in range(_DICTATION_FINAL_ATTEMPTS):
                     text, lang, ok, exc = await _transcribe(piece)
                     language = lang or language
@@ -9124,6 +9307,7 @@ class SpeechPipeline:
                         if text:
                             parts.append(text)
                         dead_streak = 0
+                        piece_read = True
                         break
                     # A failure the provider will give us again is not worth
                     # asking for again. A 401 answered three times over 1.8 s is
@@ -9165,6 +9349,13 @@ class SpeechPipeline:
                             delay,
                         )
                         await asyncio.sleep(delay)
+                if not piece_read:
+                    # Both exits from the attempt loop that are not ``ok`` land
+                    # here — the refusal nobody retries and the retry ladder run
+                    # to its end. Either way this piece has had its last chance,
+                    # and the transcript the user is about to be handed is
+                    # missing exactly this much of what they said.
+                    lost_audio_bytes += len(piece)
             return " ".join(parts).strip()
 
         final_text = ""
@@ -9298,6 +9489,14 @@ class SpeechPipeline:
             # "spoke for 4 s, waited 11 s" is precisely the useful sentence.
             wall_clock_s = max(0.0, time.monotonic() - started_at)
             duration_s = len(buffer) / bytes_per_second
+            lost_audio_s = lost_audio_bytes / bytes_per_second
+            # The reason to REPORT when audio was permanently lost. Read from
+            # the never-cleared list rather than the live slot, because the slot
+            # is blanked by the next success: a piece that failed for good,
+            # followed by one that worked, ended the session with lost seconds
+            # and ``stt_error is None`` — a dictation with a hole in it and
+            # nothing anywhere saying why.
+            lost_reason = stt_failures[-1] if (lost_audio_bytes and stt_failures) else None
             finished = True
             result = await self._finish_dictation(
                 raw_text=raw_text,
@@ -9307,14 +9506,17 @@ class SpeechPipeline:
                 hung_up=hung_up,
                 # A recording that ended early outranks a transcription error:
                 # it explains a short transcript that every later layer would
-                # otherwise present as complete.
-                stt_error=capture_error or stt_error,
+                # otherwise present as complete. A permanent LOSS outranks the
+                # live slot for the same reason in the other direction — it is
+                # the failure that actually cost the user something.
+                stt_error=capture_error or lost_reason or stt_error,
+                lost_audio_s=lost_audio_s,
                 audio=bytes(buffer),
             )
             final_text = result
             log.info(
                 "🎙️ dictation ended (%d chars, %.1fs spoken / %.1fs elapsed, "
-                "target=%s, %.1fs silence skipped%s%s%s).",
+                "target=%s, %.1fs silence skipped%s%s%s%s).",
                 len(final_text),
                 duration_s,
                 wall_clock_s,
@@ -9327,6 +9529,21 @@ class SpeechPipeline:
                     else ""
                 ),
                 f", capture: {capture_error}" if capture_error else "",
+                # The two numbers that separate "one flaky call, fully
+                # recovered" from "the user is missing half a minute". Both are
+                # printed even when the outcome reads as a success, because the
+                # session that started this whole fix looked like a success in
+                # every log line it produced.
+                (
+                    f", LOST {lost_audio_s:.1f}s after "
+                    f"{len(stt_failures)} failed call(s)"
+                    if lost_audio_bytes
+                    else (
+                        f", {len(stt_failures)} failed call(s) recovered"
+                        if stt_failures
+                        else ""
+                    )
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — dictation must never break voice
             log.warning("dictation session crashed (non-fatal)", exc_info=True)
@@ -9395,6 +9612,7 @@ class SpeechPipeline:
         target: str,
         hung_up: bool,
         stt_error: str | None = None,
+        lost_audio_s: float = 0.0,
         audio: bytes | None = None,
     ) -> str:
         """Clean, deliver and record one finished dictation. Returns the text.
@@ -9415,8 +9633,17 @@ class SpeechPipeline:
         dictated words. A backstop at the store beats a rule every future caller
         has to remember.
 
+        ``lost_audio_s`` is how many seconds of the recording were attempted
+        and never read — see the ``partial`` entry in
+        ``jarvis.dictation.outcomes``. It is a SEPARATE argument from
+        ``stt_error`` on purpose, and the distinction is the whole of the fix:
+        an error says something went wrong, this says something was lost, and
+        only the second one is a reason to stop calling the dictation a success
+        and to keep its audio. Defaults to zero so every existing caller (and
+        the crash path below) keeps today's behaviour exactly.
+
         ``audio`` is the session's raw PCM; it is written to a local sidecar
-        only when the dictation produced nothing usable AND the user allows it
+        only when the dictation left the user missing words AND they allow it
         (``[dictation].keep_failed_audio``), which is what a later Restore
         transcribes again.
         """
@@ -9636,6 +9863,49 @@ class SpeechPipeline:
             detail = insert_result.detail
             method = insert_result.method
 
+        # A dictation that delivered SOME words and permanently lost others is
+        # not a success, whichever way the surviving fragment was delivered.
+        # This is the maintainer's original complaint: 37.7 s of speech, a 429
+        # from the provider, three words in the field, outcome ``inserted`` —
+        # and because a success is not recoverable, the audio was deleted and
+        # the history offered no Restore. Unrecoverable by construction.
+        #
+        # It is keyed on the LOSS, never on ``stt_error``: a failure on the last
+        # probe tick whose tail then fell under the minimum segment size leaves
+        # a stale error on a complete transcript, and degrading that would be
+        # the same lie told backwards. ``hung_up`` still wins — the user
+        # cancelled, and every unread second after that is their decision, not a
+        # fault. An empty result stays ``failed``/``empty``: there is no
+        # "partial" of nothing.
+        if lost_audio_s > 0 and not hung_up and cleaned.strip():
+            outcome_name = "partial"
+            # Only promise Restore when the recording is actually being kept.
+            # ``[dictation].keep_failed_audio`` is the user's switch, and a
+            # message pointing at a button that will not be there is a worse
+            # answer than the plain statement of what was lost.
+            lost_note = (
+                f"About {lost_audio_s:.1f}s of the recording could not be "
+                "transcribed, so words are missing."
+            )
+            if bool(getattr(cfg, "keep_failed_audio", True)):
+                lost_note += (
+                    " The audio was kept — use Restore in the dictation "
+                    "history to try again."
+                )
+            why = stt_failure_message(stt_error) if stt_error else ""
+            # ``detail`` is the sentence locale-less surfaces (the Jarvis Bar,
+            # the CLI) show verbatim, so the delivery detail is kept rather than
+            # replaced: "words are missing" and "it went to the clipboard" are
+            # both true and the user needs both. The localized half stays the
+            # reason CODE on ``error``, which the UI translates.
+            detail = " ".join(part for part in (lost_note, why, detail) if part)
+            log.warning(
+                "dictation degraded to partial: %.1fs of audio never "
+                "transcribed (%s); the recording is kept for Restore.",
+                lost_audio_s,
+                stt_error or "unknown",
+            )
+
         # Mark the turn closed BEFORE the publish attempt: this flag answers
         # "does the teardown still owe a terminal event", and a publish that
         # raised is not a reason to fire a second, contradictory completion.
@@ -9711,8 +9981,8 @@ class SpeechPipeline:
 
         cfg = getattr(self, "_dictation_cfg", None)
         # A dictation that produced nothing is recorded too when its outcome
-        # says the user LOST something (failed / cancelled / empty): that row is
-        # the only place a later Restore can start from.
+        # says the user LOST something (partial / failed / cancelled / empty):
+        # that row is the only place a later Restore can start from.
         if not (raw_text or is_recoverable(outcome_name)):
             return
         if not getattr(cfg, "history_enabled", True):
@@ -9762,7 +10032,9 @@ class SpeechPipeline:
 
         # Audio is the most sensitive thing this application ever stores, so it
         # is written on exactly one path: the user allowed it AND the dictation
-        # left them with nothing to show for it. Never on a success.
+        # left them missing words (``RECOVERABLE_OUTCOMES``). Never on a plain
+        # success — but ``partial`` is in that set precisely because the words
+        # it did deliver are not the ones it lost.
         if (
             entry is None
             or history is None
@@ -9977,6 +10249,16 @@ class SpeechPipeline:
         error (401 bad key, 400 bad audio) fails fast. Returns ``None`` only
         when every attempt failed — the caller then speaks an apology instead of
         going mute.
+
+        Both of those dead ends now go through ``_transcribe_final_crossing``
+        first (AP-22, F3). The retry ladder only ever asked the SAME provider
+        again, so a depleted key or a rate limit that outlived it ended the turn
+        even with two other keyed families sitting in the keyring — the exact
+        single-provider brick the dictation lane was fixed for and the voice
+        lane was not. The happy path is untouched by design: a successful call
+        returns from inside the loop, and nothing about the crossover — not the
+        keyring read, not the chain resolution, not a provider construction —
+        happens until a turn has already failed.
         """
         last_exc: BaseException | None = None
         for attempt in range(_STT_FINAL_RETRIES + 1):
@@ -10000,7 +10282,12 @@ class SpeechPipeline:
                 last_exc = exc
                 if not _is_transient_stt_error(exc):
                     log.exception("STT finalization failed (non-retryable): %s", exc)
-                    return None
+                    # Not retryable HERE is not the same as hopeless: a 401 or a
+                    # 402 is final for THIS key and says nothing about the other
+                    # families the user holds. The crossover makes that call; a
+                    # 400 (the provider understood the audio and refused it) is
+                    # classified as not crossable and returns None as before.
+                    return await self._transcribe_final_crossing(pcm, exc)
                 log.warning(
                     "STT transient error %s (attempt %d/%d)",
                     _stt_error_status(exc),
@@ -10013,6 +10300,132 @@ class SpeechPipeline:
             "STT final exhausted %d attempts (last error: %s)",
             _STT_FINAL_RETRIES + 1,
             last_exc,
+        )
+        return await self._transcribe_final_crossing(pcm, last_exc)
+
+    async def _transcribe_final_crossing(
+        self, pcm: bytes, exc: BaseException | None
+    ) -> Transcript | None:
+        """Last resort for a final transcription: try another CREDENTIAL family.
+
+        Reached only from the two dead ends of ``_transcribe_final``, so every
+        cost in here is paid by a turn that was already lost. That is what makes
+        it acceptable to read the keyring and construct a client at all — both
+        run in a worker thread, because a keyring lookup on a host with a locked
+        Secret Service blocks for seconds and this sits on the loop the
+        microphone is drained on.
+
+        Crossing is by FAMILY, never by model: a second id that reads the same
+        key is the same 429 twice (AP-22). ``_resolve_stt_fallback_chain``
+        guarantees one provider per family and honours ``[stt].fallback``, so
+        the user can pin a crossover target or refuse crossing outright.
+
+        Returns ``None`` when there is nothing to cross to, when the failure is
+        one no other provider survives, or when every alternate failed too — the
+        caller then speaks its apology exactly as it does today.
+        """
+        if exc is None:
+            return None
+        from jarvis.speech.stt_failure import is_crossable_failure
+
+        reason = classify_stt_failure(exc)
+        if not is_crossable_failure(reason):
+            # A 400-class refusal: this provider understood the request and said
+            # no. Another one would say no to the same bytes and charge the user
+            # a second call for the privilege.
+            log.debug("STT crossover skipped: %s is not a crossable failure.", reason)
+            return None
+
+        stt_cfg = getattr(getattr(self, "_config", None), "stt", None)
+        if stt_cfg is None:
+            log.debug("STT crossover skipped: no [stt] configuration to resolve from.")
+            return None
+        configured = str(getattr(stt_cfg, "provider", "") or "").strip()
+
+        chain: tuple[str, ...] | None = getattr(self, "_voice_stt_fallback_chain", None)
+        if chain is None:
+            # Resolved once and then remembered — the EMPTY answer included, so
+            # a single-key install does not re-read its keyring on every failed
+            # turn. ``_reset_dictation_stt`` drops it when the provider or the
+            # recognition language changes.
+            chain = await asyncio.to_thread(
+                _resolve_stt_fallback_chain, stt_cfg, configured
+            )
+            self._voice_stt_fallback_chain = chain
+            log.info(
+                "STT voice crossover armed: %s -> %s",
+                configured or "the configured provider",
+                ", ".join(chain) or "<none: this host has one keyed STT family>",
+            )
+        if not chain:
+            return None
+
+        instances: dict[str, Any] | None = getattr(
+            self, "_voice_stt_fallback_instances", None
+        )
+        if instances is None:
+            instances = {}
+            self._voice_stt_fallback_instances = instances
+
+        for name in chain:
+            provider: Any = instances.get(name)
+            if provider is None:
+                try:
+                    from jarvis.plugins.stt import build_named_stt_provider
+
+                    provider = await asyncio.to_thread(
+                        build_named_stt_provider, name, stt_cfg
+                    )
+                except Exception as build_exc:  # noqa: BLE001 — try the next family
+                    log.warning(
+                        "STT crossover: %s could not be built (%s); trying the "
+                        "next family.",
+                        name,
+                        build_exc,
+                    )
+                    continue
+                # The user's spoken-vocabulary corrections are post-STT string
+                # work, and the voice provider carries them. Without this the
+                # one turn that crossed families would be the one turn that
+                # spelled their colleague's name wrong — a divergence nobody
+                # could explain afterwards, since nothing on screen says which
+                # provider answered.
+                try:
+                    from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+                    provider = wrap_stt_with_dictionary(provider)
+                except Exception as wrap_exc:  # noqa: BLE001 — not load-bearing
+                    log.warning(
+                        "STT dictionary wrapper unavailable for the %s "
+                        "crossover (%s); transcribing without the corrections.",
+                        name,
+                        wrap_exc,
+                    )
+                instances[name] = provider
+            try:
+                transcript = await asyncio.wait_for(
+                    provider.transcribe_pcm(pcm), timeout=self._stt_final_timeout_s
+                )
+            except Exception as cross_exc:  # noqa: BLE001 — try the next family
+                log.warning(
+                    "STT crossover to %s failed as well (%s); trying the next "
+                    "family.",
+                    name,
+                    cross_exc,
+                )
+                continue
+            log.info(
+                "STT crossover succeeded: %s answered after %s failed (%s).",
+                name,
+                configured or "the configured provider",
+                reason,
+            )
+            return transcript
+        log.error(
+            "STT crossover exhausted every keyed family after %s failed (%s); "
+            "this turn has no transcript.",
+            configured or "the configured provider",
+            reason,
         )
         return None
 

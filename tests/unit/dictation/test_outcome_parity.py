@@ -111,6 +111,45 @@ def test_the_renderer_derives_its_known_set_from_the_shared_array() -> None:
     assert not re.search(r"\[\s*\"inserted\"", source), _HISTORY_GROUP_TSX.name
 
 
+def test_partial_reached_every_layer() -> None:
+    """The newest value, named explicitly so a gap says which file to edit.
+
+    The generic tests above already iterate the whole vocabulary, but they fail
+    with "dictation.outcome.partial" and leave the reader to work out what
+    ``partial`` is and why it appeared. This one states it: a dictation that
+    delivered some words and permanently lost others reports ``partial``, and
+    that value has to exist in FIVE places — the Python tuple, the TypeScript
+    mirror, and each of the three locales — before the UI can render anything
+    but a raw identifier at the user.
+    """
+    assert "partial" in DICTATION_OUTCOMES, "jarvis/dictation/outcomes.py"
+    assert "partial" in _ts_outcomes(), (
+        "jarvis/ui/web/frontend/src/hooks/useDictation.ts: add \"partial\" to "
+        "DICTATION_OUTCOMES"
+    )
+    for name in SUPPORTED_LOCALES:
+        table = _locale(name).get("dictation", {}).get("outcome", {})
+        assert str(table.get("partial", "")).strip(), (
+            f"jarvis/ui/web/frontend/src/i18n/locales/{name}.json: add "
+            "dictation.outcome.partial"
+        )
+
+
+def test_partial_keeps_its_audio_so_restore_has_something_to_offer() -> None:
+    """The half of ``partial`` that is not about labels.
+
+    ``RECOVERABLE_OUTCOMES`` is what decides whether the audio sidecar is
+    written, and the sidecar is what the history's Restore button runs again.
+    A ``partial`` that is not in this set is the shipped bug wearing a new
+    name: an honest label on a dictation nobody can recover.
+    """
+    assert "partial" in RECOVERABLE_OUTCOMES
+    assert is_recoverable("partial") is True
+    # A delivery that lost nothing keeps today's rule: no audio is kept.
+    for outcome in ("inserted", "paste_sent", "clipboard_only", "chat"):
+        assert is_recoverable(outcome) is False, outcome
+
+
 def test_recoverable_outcomes_are_a_real_subset_and_discarded_is_not_one() -> None:
     """``discarded`` is a boolean field, never an outcome (AD-6).
 

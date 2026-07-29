@@ -578,8 +578,8 @@ def _polish_enabled(cfg: Any) -> bool:
     return bool(getattr(dictation, "polish", False))
 
 
-def _active_polish(request: Request) -> str | None:
-    """The card currently powering the dictation polish pass, or ``None``.
+def _resolve_polish_subject(cfg: Any) -> str | None:
+    """Resolve the polish card id from *cfg*. BLOCKING — never call on the loop.
 
     ``[dictation].polish_provider`` stores a polish FAMILY id ("groq"), while
     every card, health section and subject id in this module is a ProviderSpec
@@ -593,7 +593,6 @@ def _active_polish(request: Request) -> str | None:
     error also degrades to ``None``, because the health panel must never 500.
     """
     try:
-        cfg = _resolve_cfg(request)
         if not _polish_enabled(cfg):
             return None
         from jarvis.dictation.polish_client import resolve_polish_chain
@@ -605,6 +604,86 @@ def _active_polish(request: Request) -> str | None:
     except Exception as exc:  # noqa: BLE001 — the health panel must never 500
         log.debug("active-polish resolution failed (%s); using None.", exc)
         return None
+
+
+def _polish_subject_key(cfg: Any) -> tuple[Any, ...] | None:
+    """A cheap value that changes exactly when the polish subject could.
+
+    ``None`` means "not answerable right now", and its only effect is that the
+    memo below is neither read nor written — one extra resolve, never a stale
+    answer.
+
+    The expensive half is delegated to
+    :func:`jarvis.dictation.polish_client.polish_chain_fingerprint`, which is
+    the polish tier's OWN cache key (the credential revisions plus the identity
+    of the config file); reusing it means the health panel cannot disagree with
+    the dictation path about when the answer went stale. The ``polish`` switch
+    is added on top because this function answers ``None`` when the pass is
+    off, which the chain fingerprint does not model.
+    """
+    try:
+        from jarvis.dictation.polish_client import polish_chain_fingerprint
+
+        return (
+            _polish_enabled(cfg),
+            *polish_chain_fingerprint(getattr(cfg, "dictation", None)),
+        )
+    except Exception as exc:  # noqa: BLE001 — an unfingerprintable host re-resolves
+        log.debug("polish subject key unavailable (%s); resolving afresh.", exc)
+        return None
+
+
+async def _warm_active_polish(request: Request) -> None:
+    """Resolve the polish subject in a worker thread, so the read below is free.
+
+    :func:`_active_polish` is called from ``_section_health_subjects``, which is
+    synchronous and feeds the rollup's cache fingerprint — and the API-Keys
+    screen POLLS that rollup. The resolve behind it walks up to seven
+    credential slots (OS keyring, then ENV, then ``.env``) and reads the config
+    file; on a Linux desktop with a locked keyring or a slow D-Bus Secret
+    Service that blocks for SECONDS. This repo already has that exact bug in
+    its register — a ``load_config`` on the event loop stalling everything the
+    loop owns, the Jarvis Bar included — so the resolve happens here, off the
+    loop, before anything synchronous needs the answer.
+
+    Cheap on the common path: the memo is keyed on
+    :func:`_polish_subject_key`, so a poll that changed nothing does not even
+    reach the thread. Stored on ``app.state`` rather than in a module global so
+    two apps in one process (tests, an embedded second server) cannot answer
+    each other's questions.
+    """
+    cfg = _resolve_cfg(request)
+    key = _polish_subject_key(cfg)
+    if key is None:
+        return
+    cached = getattr(request.app.state, "_polish_subject_cache", None)
+    if isinstance(cached, tuple) and cached[0] == key:
+        return
+    request.app.state._polish_subject_cache = (
+        key,
+        await asyncio.to_thread(_resolve_polish_subject, cfg),
+    )
+
+
+def _active_polish(request: Request) -> str | None:
+    """The card currently powering the dictation polish pass, or ``None``.
+
+    A memo read whenever :func:`_warm_active_polish` already ran for the same
+    key — which is the case for both routes that ask, so the polling path pays
+    a handful of dict lookups and one ``stat``. It still resolves inline when
+    nothing warmed it, because an unwarmed caller deserves a correct answer
+    more than it deserves a fast one; that path is the one the direct unit
+    tests take.
+    """
+    cfg = _resolve_cfg(request)
+    key = _polish_subject_key(cfg)
+    cached = getattr(request.app.state, "_polish_subject_cache", None)
+    if key is not None and isinstance(cached, tuple) and cached[0] == key:
+        return cached[1]
+    subject = _resolve_polish_subject(cfg)
+    if key is not None:
+        request.app.state._polish_subject_cache = (key, subject)
+    return subject
 
 
 def _active_computer_use(request: Request) -> str | None:
@@ -715,6 +794,9 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_stt = _active_stt(request)
     active_realtime = _active_realtime(request)
     active_computer_use = _active_computer_use(request)
+    # Resolved in a worker thread first (keyring + config file); the read that
+    # follows is then a memo hit. See ``_warm_active_polish``.
+    await _warm_active_polish(request)
     active_dictation = _active_polish(request)
 
     # Off the event loop: building the payload reads every secret slot from the
@@ -1280,6 +1362,11 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     """
     while True:
         cfg = _resolve_cfg(request)
+        # The dictation subject is the one subject whose resolution blocks (see
+        # ``_warm_active_polish``); every other one is an attribute read. Warm
+        # it off the loop BEFORE the snapshot is taken, because the snapshot
+        # feeds the cache fingerprint and this route is polled.
+        await _warm_active_polish(request)
         subjects = _section_health_subjects(request, cfg)
         fingerprint = _section_health_fingerprint(request, cfg, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
@@ -1335,6 +1422,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             raise
 
         current_cfg = _resolve_cfg(request)
+        await _warm_active_polish(request)
         current_subjects = _section_health_subjects(request, current_cfg)
         current_fingerprint = _section_health_fingerprint(
             request, current_cfg, current_subjects

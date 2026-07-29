@@ -15,25 +15,43 @@ The contract, in one sentence
 **This pass can only ever be a no-op; it can never be a loss.**
 :attr:`PolishOutcome.text` starts life as the raw transcript and is replaced
 only after every deterministic guard in :mod:`jarvis.dictation.polish_guards`
-has passed. :func:`polish_transcript` never raises — it catches
-``BaseException`` (re-raising only ``CancelledError``, which belongs to whoever
-cancelled us) — and every failure path returns the user's own words with a
-status that says what happened.
+has passed. :func:`polish_transcript` never raises on a failure of its own — it
+catches ``Exception`` — and every failure path returns the user's own words with
+a status that says what happened. It deliberately does NOT catch
+``BaseException``: ``SystemExit``, ``KeyboardInterrupt`` and ``CancelledError``
+are the process being told to stop, not a formatting failure, and turning one of
+them into a ``provider_error`` would leave a task that refuses to die.
 
-Three things bound it
----------------------
-1. **A hard latency ceiling.** One ``asyncio.wait_for`` around the WHOLE
-   provider chain, default 1200 ms. On expiry the in-flight call is cancelled
-   and the raw text is delivered. A formatter that makes the user wait has
-   already failed at its job.
+Four things bound it
+--------------------
+1. **A hard latency ceiling.** One ``asyncio.wait_for`` around the WHOLE pass —
+   the credential sweep included, since that is exactly where a locked keyring
+   blocks — default 1200 ms. On expiry the in-flight work is cancelled and the
+   raw text is delivered. A formatter that makes the user wait has already
+   failed at its job.
 2. **A key-aware, family-crossing chain** (:func:`resolve_polish_chain`,
    AP-22). No key in any family means an empty chain, status ``unavailable``,
    and behaviour byte-identical to before this feature existed — the AP-23
    gate: the maintainer's credentials must never be what makes the default
    safe.
-3. **A circuit breaker.** Three consecutive provider errors or timeouts open it
+3. **A privacy floor.** When the configured recognizer transcribes on this
+   machine, the chain never crosses to a cloud family on its own; if no local
+   model answers, the status is ``local_only`` and the raw text is delivered.
+   The user can still opt in by pinning a cloud ``polish_provider``.
+4. **A circuit breaker.** Three consecutive provider errors or timeouts open it
    for 120 s, after which the pass short-circuits to ``unavailable`` without
    dialling out. A dead provider must not add 1.2 s to every dictation.
+
+Nothing blocks the event loop
+-----------------------------
+The chain resolution walks up to seven credential slots and reads the config
+file. On a Linux desktop with a locked keyring or a slow D-Bus Secret Service
+that blocks for seconds, and on the event loop it would take the microphone
+drain task, the WebSocket and the Jarvis Bar down with it — the same shape as
+the ``load_config`` freeze in the bug register. So it runs in a worker thread,
+inside the ceiling, and its answer is cached against
+:func:`polish_chain_fingerprint`: one sweep per settings change, not one per
+dictation.
 
 AP-26: nothing here is imported at module scope by the speech pipeline. The
 pipeline imports this module INSIDE ``_finish_dictation``, exactly the way it
@@ -60,6 +78,11 @@ from jarvis.dictation.polish_client import (
     PolishFamily,
     aclose_shared_client,
     build_polish_client,
+    family_recently_unreachable,
+    note_family_failure,
+    polish_chain_fingerprint,
+    reset_credential_cache,
+    reset_reachability_cache,
     resolve_model,
     resolve_polish_chain,
 )
@@ -82,6 +105,7 @@ POLISH_STATUSES: Final[tuple[str, ...]] = (
     "unchanged",      # the model returned text equal to raw after normalization
     "off",            # [dictation].polish = false
     "unavailable",    # no key in any family / client build failed / breaker open
+    "local_only",     # on-device recognizer, and no on-device model answered
     "skipped_short",  # below polish_min_words
     "skipped_long",   # above polish_max_input_chars
     "timeout",        # exceeded polish_timeout_ms
@@ -119,8 +143,8 @@ class PolishOutcome:
     ``text`` is ALWAYS safe to deliver: it is the raw transcript on every status
     except ``applied``. ``reason`` is machine-readable (a guard code from
     :data:`jarvis.dictation.polish_guards.DRIFT_REASONS`, or a short cause like
-    ``no_credential`` / ``circuit_open`` / ``deadline``) and empty when nothing
-    went wrong.
+    ``no_credential`` / ``circuit_open`` / ``deadline`` / ``local_unreachable``)
+    and empty when nothing went wrong.
     """
 
     text: str
@@ -138,9 +162,21 @@ class _Attempt:
     provider: str = ""
     model: str = ""
     error: str = ""
+    #: Every family the resolved chain offered keeps the text on this machine.
+    #: Carried out of the chain so a failure is reported as ``local_only`` —
+    #: "the recognizer runs here and no local model answered" — instead of a
+    #: generic ``provider_error`` that would read like a cloud outage and send
+    #: the user hunting for an API key they deliberately did not want to use.
+    on_device_only: bool = False
 
 
 _BREAKER: CircuitBreaker | None = None
+
+#: The last resolved chain and the fingerprint it was resolved for. Process-wide
+#: because the sweep behind it is process-wide state (credentials and the config
+#: file), and ``None`` until the first dictation — nothing is resolved at import
+#: or at boot (AP-26).
+_CHAIN_CACHE: tuple[tuple[Any, ...], tuple[PolishFamily, ...]] | None = None
 
 
 def _breaker() -> CircuitBreaker:
@@ -155,13 +191,28 @@ def _breaker() -> CircuitBreaker:
 
 
 def reset_polish_state(*, now: Callable[[], float] | None = None) -> None:
-    """Rebuild the breaker, optionally on an injected clock.
+    """Forget everything the pass learned about this host.
 
-    Two real callers: a settings change (a user who just fixed their key should
-    not wait out a cooldown earned by the broken one), and tests, which need a
-    deterministic clock instead of sleeping for two minutes.
+    That is the breaker, the resolved provider chain, every memoised credential
+    and every local endpoint that was found unreachable — one call, because all
+    of them answer the same question ("what can this machine reach right now")
+    and leaving any behind produces the confusing half-state where a repaired
+    key is visible to one and not the others.
+
+    Two real callers: ``PUT /api/dictation/settings``
+    (:mod:`jarvis.ui.web.dictation_routes`), so a user who just switched
+    provider, repaired a key or started a local model gets the new answer on
+    their next dictation rather than waiting out a cooldown earned by the old
+    one; and tests, which need a deterministic clock instead of sleeping for
+    two minutes.
+
+    Cheap and synchronous — it only drops state, so it is safe to call from the
+    event loop inside a request handler.
     """
-    global _BREAKER
+    global _BREAKER, _CHAIN_CACHE
+    _CHAIN_CACHE = None
+    reset_credential_cache()
+    reset_reachability_cache()
     _BREAKER = CircuitBreaker(
         threshold=POLISH_BREAKER_THRESHOLD,
         cooldown_s=POLISH_BREAKER_COOLDOWN_S,
@@ -243,22 +294,8 @@ async def polish_transcript(
         if await breaker.is_open():
             return _result("unavailable", reason="circuit_open")
 
-        chain = resolve_polish_chain(cfg)
-        if not chain:
-            # The AP-23 path: no text-model credential anywhere on this host.
-            # Honest, logged once per dictation at debug, and byte-identical to
-            # the behaviour before the polish pass existed.
-            log.debug(
-                "dictation polish has no credential in any provider family; "
-                "delivering the unpolished transcript."
-            )
-            return _result("unavailable", reason="no_credential")
-
         budget_s = _timeout_budget(cfg, timeout_s)
-        attempt = _Attempt(
-            provider=chain[0].id,
-            model=resolve_model(chain[0], cfg, primary_id=chain[0].id),
-        )
+        attempt = _Attempt()
         system = build_polish_prompt(
             language=language, style=style, protected_terms=protected_terms
         )
@@ -266,8 +303,7 @@ async def polish_transcript(
 
         try:
             polished = await asyncio.wait_for(
-                _run_chain(
-                    chain,
+                _resolve_and_run(
                     cfg,
                     system=system,
                     user=user,
@@ -303,7 +339,39 @@ async def polish_transcript(
             )
 
         if polished is None:
+            if attempt.error == "no_credential":
+                # The AP-23 path: nothing on this host was worth dialling. No
+                # breaker failure — there was no provider to blame. Honest,
+                # logged once per dictation at debug, and byte-identical to the
+                # behaviour before the polish pass existed.
+                log.debug(
+                    "dictation polish found no usable provider family; "
+                    "delivering the unpolished transcript."
+                )
+                return _result("unavailable", reason="no_credential")
+
             await breaker.record_failure()
+
+            if attempt.on_device_only:
+                # The privacy floor did its job: the recognizer transcribes on
+                # this machine, so the chain was never allowed to cross to a
+                # cloud family, and nothing local answered. Said out loud,
+                # because "no polish happened" for THIS reason is a setup fact
+                # the user can act on (start a local model, or pin a cloud one
+                # deliberately) — not an outage.
+                log.info(
+                    "dictation polish stayed on this machine because the "
+                    "recognizer does (%s); no local model answered, so the "
+                    "unpolished transcript was delivered.",
+                    attempt.error or "unreachable",
+                )
+                return _result(
+                    "local_only",
+                    provider=attempt.provider,
+                    model=attempt.model,
+                    reason=attempt.error or "local_unreachable",
+                )
+
             return _result(
                 "provider_error",
                 provider=attempt.provider,
@@ -352,17 +420,103 @@ async def polish_transcript(
             model=attempt.model,
             text=polished,
         )
-    except asyncio.CancelledError:
-        # Cancellation belongs to whoever cancelled us — swallowing it here
-        # would leave a task that refuses to stop.
-        raise
-    except BaseException:  # noqa: BLE001 — the text must survive ANY failure
+    except Exception:
+        # Deliberately ``Exception`` and not ``BaseException``. Everything that
+        # is genuinely OUR bug — a guard that raised, a malformed response, a
+        # transport that surprised us — arrives here and costs the user nothing
+        # but a formatting pass. The non-``Exception`` cases are a different
+        # kind of event entirely: ``CancelledError``, ``KeyboardInterrupt`` and
+        # ``SystemExit`` mean the process is being told to stop, they belong to
+        # whoever raised them, and converting one of them into a
+        # "provider_error" would leave a task that refuses to die.
         log.warning(
             "dictation polish failed unexpectedly; delivering the unpolished "
             "transcript.",
             exc_info=True,
         )
         return _result("provider_error", reason="unexpected")
+
+
+async def _resolve_chain(cfg: Any) -> tuple[PolishFamily, ...]:
+    """The provider chain, swept OFF the event loop and cached until it changes.
+
+    Two separate defects meet here. The sweep walks up to seven credential
+    slots, each of which can reach the OS keyring, plus the config file; on a
+    Linux desktop with a locked keyring or a slow D-Bus Secret Service that
+    blocks for SECONDS, and on the event loop it takes the microphone drain
+    task, the WebSocket and the Jarvis Bar with it. And doing it per dictation
+    is pure waste: nothing it reads can change between two dictations unless
+    the user changed a setting, which is precisely what
+    :func:`polish_chain_fingerprint` notices.
+
+    A cancelled ``to_thread`` leaves its worker running to completion — a
+    thread cannot be cancelled — but it writes nothing, so a pass that hit its
+    ceiling mid-sweep simply sweeps again next time.
+    """
+    global _CHAIN_CACHE
+
+    try:
+        fingerprint: tuple[Any, ...] | None = polish_chain_fingerprint(cfg)
+    except Exception as exc:  # noqa: BLE001 — an unfingerprintable host re-sweeps
+        # Never fatal, and never a stale answer either: with no fingerprint we
+        # decline to read OR write the cache and pay for a fresh sweep.
+        log.debug("polish chain fingerprint failed (%s); resolving afresh.", exc)
+        fingerprint = None
+
+    cached = _CHAIN_CACHE
+    if fingerprint is not None and cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    chain = await asyncio.to_thread(resolve_polish_chain, cfg)
+    if fingerprint is not None:
+        _CHAIN_CACHE = (fingerprint, chain)
+    return chain
+
+
+async def _resolve_and_run(
+    cfg: Any,
+    *,
+    system: str,
+    user: str,
+    attempt: _Attempt,
+    deadline: float,
+    max_output_tokens: int,
+    temperature: float,
+) -> str | None:
+    """Resolve the chain and then walk it — both inside the caller's ceiling.
+
+    The resolution lives in here rather than in front of the ``wait_for``
+    because it is not free, and time spent outside the ceiling is time the user
+    waits that nothing bounds. Inside it, the worst case is the same ceiling
+    they were already promised, and a sweep that overruns it costs a formatting
+    pass rather than a stalled desktop.
+
+    ``None`` means "nothing to deliver", with the cause left on *attempt*: an
+    empty chain sets ``no_credential`` (nothing was dialled and no provider is
+    to blame), anything else carries the per-family error the walk recorded.
+    """
+    chain = await _resolve_chain(cfg)
+    if not chain:
+        attempt.error = "no_credential"
+        return None
+
+    # Derived from the chain rather than re-asked, so the answer the privacy
+    # rule gave and the answer reported to the user cannot disagree.
+    attempt.on_device_only = all(family.runs_on_device for family in chain)
+    primary = chain[0]
+    attempt.provider = primary.id
+    attempt.model = resolve_model(primary, cfg, primary_id=primary.id)
+
+    return await _run_chain(
+        chain,
+        cfg,
+        system=system,
+        user=user,
+        attempt=attempt,
+        deadline=deadline,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+    )
 
 
 async def _run_chain(
@@ -383,12 +537,21 @@ async def _run_chain(
     ceiling. The caller's ``wait_for`` is still the hard stop — this is the
     transport-level courtesy that stops a dead socket being held open after we
     have stopped caring about it.
+
+    A local endpoint that was found missing a moment ago is stepped over
+    without dialling it: nothing on this machine started listening in the last
+    few seconds, and the walk that pins the local family in front of a cloud
+    one would otherwise pay that refusal on every delivery.
     """
     primary_id = chain[0].id
     for family in chain:
         model = resolve_model(family, cfg, primary_id=primary_id)
         attempt.provider = family.id
         attempt.model = model
+
+        if family_recently_unreachable(family):
+            attempt.error = "local_unreachable"
+            continue
 
         client = build_polish_client(family, model=model)
         if client is None:
@@ -408,6 +571,10 @@ async def _run_chain(
             raise
         except Exception as exc:  # noqa: BLE001 — cross to the next FAMILY (AP-22)
             attempt.error = "provider_error"
+            # Only an on-device endpoint that answered NOTHING is remembered;
+            # the function decides that, so this site stays a plain report of
+            # what happened.
+            note_family_failure(family, exc)
             log.warning(
                 "dictation polish provider %r failed (%s); crossing to the next "
                 "family.",

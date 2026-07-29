@@ -58,8 +58,12 @@ class _Cfg:
     polish_style: str = "neutral"
 
 
-class _Boom(BaseException):
-    """A NON-``Exception`` failure — the pass must survive this too."""
+class _Boom(Exception):
+    """An ordinary failure of ours — the pass must survive it and keep the text."""
+
+
+class _Shutdown(BaseException):
+    """A NON-``Exception`` failure: the process being told to stop."""
 
 
 @dataclass
@@ -327,12 +331,13 @@ async def test_a_provider_that_answers_with_nothing_is_a_provider_error(
     assert outcome.text == RAW
 
 
-async def test_even_a_non_exception_failure_cannot_cost_the_user_their_words(
+async def test_any_ordinary_failure_of_ours_costs_the_user_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``polish_transcript`` catches ``BaseException``, not ``Exception``. A
-    dictation is the one thing in this application that is genuinely
-    unrecoverable if it is dropped."""
+    """A dictation is the one thing in this application that is genuinely
+    unrecoverable if it is dropped, so every ``Exception`` on this path — a
+    guard that raised, a malformed response, a transport that surprised us —
+    ends as the user's own words with a status that says so."""
     _wire(monkeypatch, chain=(GROQ,), clients=[_FakeClient(raises=_Boom("nope"))])
 
     outcome = await polish_transcript(RAW, language="en", cfg=_Cfg())
@@ -341,10 +346,40 @@ async def test_even_a_non_exception_failure_cannot_cost_the_user_their_words(
     assert outcome.text == RAW
 
 
+@pytest.mark.parametrize(
+    "signal", [SystemExit, KeyboardInterrupt, _Shutdown]
+)
+async def test_a_shutdown_signal_is_never_turned_into_a_provider_error(
+    monkeypatch: pytest.MonkeyPatch, signal: type[BaseException]
+) -> None:
+    """``polish_transcript`` catches ``Exception``, deliberately NOT
+    ``BaseException``. Every non-``Exception`` here means the process is being
+    told to stop — it is not a formatting failure, it belongs to whoever raised
+    it, and swallowing it would leave a task that refuses to die while the app
+    is trying to exit.
+
+    Raised from the prompt builder rather than from the provider, because that
+    is a plain call in the function's own frame: a ``SystemExit`` raised inside
+    the ``wait_for`` task is re-raised into the event loop itself, which would
+    make this test about asyncio's shutdown semantics instead of about which
+    exceptions this function is willing to swallow.
+    """
+
+    def _stopping(**_kwargs: Any) -> str:
+        raise signal("stopping")
+
+    _wire(monkeypatch, chain=(GROQ,), clients=[_FakeClient(reply=POLISHED)])
+    monkeypatch.setattr(polish, "build_polish_prompt", _stopping)
+
+    with pytest.raises(signal):
+        await polish_transcript(RAW, language="en", cfg=_Cfg())
+
+
 async def test_cancellation_is_never_swallowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cancellation belongs to whoever cancelled us; converting it into a
+    """The same rule for the signal that actually fires in production:
+    cancellation belongs to whoever cancelled us, and converting it into a
     status would leave a task that refuses to stop."""
     _wire(
         monkeypatch,

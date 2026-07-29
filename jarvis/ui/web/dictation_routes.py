@@ -937,6 +937,10 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
     sets an ``asyncio.Event`` and so belongs on the loop thread, while writing
     ``jarvis.toml`` (lock + tempfile + replace, once per changed key) does not
     — that part is pushed to a worker thread.
+
+    Saving also drops what the polish pass has learned about this host, so a
+    changed provider, a repaired key or a local model that was just started
+    takes effect on the very next dictation.
     """
     from jarvis.core.config import DictationConfig
 
@@ -993,6 +997,22 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
             persisted = True
         except Exception as exc:  # noqa: BLE001
             log.warning("dictation settings persist failed: %s", exc)
+
+    # The polish pass caches what it learned about this host: the resolved
+    # provider chain, every credential it read, the local endpoints that did not
+    # answer, and a breaker a dead provider opened. All of it survives until
+    # something says otherwise, and a save is that something — a user who just
+    # switched provider, repaired a key or started their local model must not
+    # wait out a 120 s cooldown earned by the old setup. Unconditional on
+    # purpose: the pass reads more of this block than the polish_* keys alone
+    # (the language, the recognizer behind it), and re-sweeping once costs a
+    # few milliseconds on a path the user is already waiting on.
+    try:
+        from jarvis.dictation.polish import reset_polish_state
+
+        reset_polish_state()
+    except Exception as exc:  # noqa: BLE001 — never fail a save on a cache drop
+        log.warning("polish state reset after a dictation save failed: %s", exc)
 
     # Live-apply what the running pipeline caches at construction time.
     applied_live = False
