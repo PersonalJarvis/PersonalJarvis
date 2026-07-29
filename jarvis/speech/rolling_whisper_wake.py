@@ -766,7 +766,7 @@ class RollingWhisperWake:
                 if revision == last_polled_revision:
                     continue
                 # Not enough audio in the buffer yet
-                if buf_len[0] < self._sample_rate:  # mind. 1 Sek
+                if buf_len[0] < self._sample_rate:  # At least 1 s.
                     continue
 
                 # Snapshot the freshest window. ``list(buffer)`` + concat run
