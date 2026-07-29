@@ -687,6 +687,34 @@ _DICTATION_HANDOVER_POLL_S = 0.02
 _DICTATION_FINAL_ATTEMPTS = 3
 _DICTATION_FINAL_RETRY_DELAY_S = 0.6
 
+# Ceiling on ONE final retry wait. The final pass runs while the user is already
+# waiting for their text, so it may not inherit the probe's patient backoff.
+_DICTATION_FINAL_RETRY_MAX_S = 2.0
+
+# After this many consecutive pieces have exhausted every attempt, the provider
+# is not flaky, it is down — and continuing to retry each remaining piece would
+# make a 300 s dictation spend minutes proving it. Stop and say so: the audio is
+# kept as a sidecar, so "Restore" can transcribe it again once the provider is
+# back, which is a far better answer than a silent minute of waiting.
+_DICTATION_FINAL_DEAD_PIECES = 2
+
+# How far the live probe backs off after a failed transcription, and the ceiling
+# it backs off to. A provider refusing calls — the everyday case is a rate limit,
+# HTTP 429 — used to be answered by asking again at the same interval a second
+# later, which is what turns a brief limit into a session-long one. Worse, every
+# refused call leaves its segment open, so the open tail keeps growing and each
+# retry uploads MORE audio than the last: the loop digs its own hole. Backing off
+# lets the limit expire while the recording itself continues untouched.
+_DICTATION_ERROR_BACKOFF_MIN_S = 1.5
+_DICTATION_ERROR_BACKOFF_MAX_S = 12.0
+
+# Queue depth for a dictation that opens its own microphone. The capture queue
+# drops the OLDEST chunk when it overflows — correct for wake/VAD, where stale
+# audio is worse than missing audio, and exactly wrong here: for a dictation
+# every frame is the user's words. ~10 s of slack absorbs a provider stall
+# without deleting speech (the default 20 chunks is 2 s).
+_DICTATION_CAPTURE_QUEUE_CHUNKS = 100
+
 
 class _SessionInputBuffer:
     """Replayable bounded handoff for one continuously captured mic stream.
@@ -5697,7 +5725,14 @@ class SpeechPipeline:
             return
 
         async with MicrophoneCapture(
-            device=self._input_device, device_priority=self._input_priority
+            device=self._input_device,
+            device_priority=self._input_priority,
+            # A dictation is a BULK consumer: every frame is the user's words,
+            # so the queue's drop-oldest policy deletes speech rather than
+            # staleness. It cannot be turned off (the audio thread must never
+            # block), so the defence is depth — enough slack that a slow
+            # provider call cannot cost words.
+            max_queue_chunks=_DICTATION_CAPTURE_QUEUE_CHUNKS,
         ) as mic:
             yield mic
 
@@ -8371,16 +8406,32 @@ class SpeechPipeline:
         stop_event = asyncio.Event()
         inference_active = asyncio.Event()
         language = ""
+        # Loudest sample seen in any stretch judged so far. The silence test uses
+        # it as the session's reference for "what speech sounds like here", so a
+        # quiet microphone is measured against itself rather than an absolute
+        # that was never calibrated for it.
+        session_peak = 0.0
+        # Audio closed without a request because it held no speech. Reported at
+        # the end: it is the difference between "the provider was slow" and
+        # "you paused for ninety seconds", and only one of those is a bug.
+        skipped_silence_bytes = 0
+        # Added to the probe interval after a failed call; see the constants.
+        error_backoff_s = 0.0
         # The last transcription error, or None. Resolved ONCE per session at
         # the end: it is what separates "the provider rejected us" from "you
         # said nothing", and without it a 401 arrives in the history looking
         # exactly like silence — with no hint that a key needs fixing.
         stt_error: str | None = None
-        # ``[dictation].language`` pinned by the user; None means "auto", i.e.
-        # let the provider detect it. Resolved here rather than inside the
-        # closure so the config is read once per session, not once per segment.
-        pinned_language = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
-        forced_language = pinned_language if pinned_language not in ("", "auto") else None
+        # ``[dictation].language`` as chosen by the user. ``auto`` is passed
+        # THROUGH to the provider rather than dropped: omitting the argument
+        # means "no opinion", which lands on whatever ``[stt].language`` is
+        # pinned to — so a user dictating German with the recognition language on
+        # English got English words back and no setting in the dictation view
+        # could fix it (live bug 2026-07-28). Resolved here rather than inside
+        # the closure so the config is read once per session, not per segment.
+        dictation_language = (
+            str(getattr(cfg, "language", "auto") or "auto").strip().lower() or "auto"
+        )
 
         async def _transcribe(pcm: bytes) -> tuple[str, str, bool]:
             """One transcription. ``(text, language, ok)``; never raises.
@@ -8401,18 +8452,15 @@ class SpeechPipeline:
             nonlocal stt_error
             inference_active.set()
             try:
-                if forced_language is None:
+                try:
+                    transcript = await stt.transcribe_pcm(
+                        pcm, language=dictation_language
+                    )
+                except TypeError:
+                    # Provider predates the keyword (contract allows a bare
+                    # ``transcribe_pcm(pcm)``). Fall back rather than call the
+                    # choice a failure — precedent: rolling_whisper_wake.
                     transcript = await stt.transcribe_pcm(pcm)
-                else:
-                    try:
-                        transcript = await stt.transcribe_pcm(
-                            pcm, language=forced_language
-                        )
-                    except TypeError:
-                        # Provider predates the keyword (contract allows a bare
-                        # ``transcribe_pcm(pcm)``). Fall back rather than call
-                        # the pin a failure — precedent: rolling_whisper_wake.
-                        transcript = await stt.transcribe_pcm(pcm)
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
                 log.debug("dictation transcribe failed: %s", exc)
                 stt_error = f"{type(exc).__name__}: {exc}".strip()
@@ -8424,68 +8472,138 @@ class SpeechPipeline:
             lang = str(getattr(transcript, "language", "") or "")
             return text, lang, True
 
+        async def _close_finished_segments() -> bool:
+            """Close every segment the buffer already holds. ``False`` on a
+            failed call, which leaves that segment — and everything after it —
+            open for a later attempt.
+
+            Draining in a LOOP rather than one segment per tick is what keeps
+            the open tail bounded. One-per-tick can only keep up while every
+            call is fast; the moment the provider slows down or refuses, the
+            tail grows, and since the live preview re-uploads that whole tail on
+            every tick, each round then costs more than the last. That spiral is
+            what turned a rate limit into a dictation with most of its words
+            missing: the loop stopped producing text, the upload work stalled the
+            event loop, and the microphone queue dropped real speech to keep up.
+            """
+            nonlocal closed_bytes, language, session_peak, skipped_silence_bytes
+            if not segment_bytes:
+                return True
+            from jarvis.dictation.segment import (
+                is_silent_segment,
+                quietest_cut,
+                segment_energy,
+            )
+
+            while len(buffer) - closed_bytes >= segment_bytes:
+                if stop_event.is_set():
+                    return True
+                tail = bytes(buffer[closed_bytes:])
+                # Cut at the quietest point in the last stretch, which keeps the
+                # cut off the middle of a word in the overwhelming majority of
+                # cases.
+                cut = quietest_cut(tail, segment_bytes, bytes_per_second)
+                if cut < min_bytes:
+                    return True
+                piece = tail[:cut]
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    # A pause. Sending it would spend a request to be told
+                    # nothing — or, far worse, to be told "Thank you for
+                    # watching", which is what a transcription model does with
+                    # silence and what put invented sentences in the middle of
+                    # real dictations. Close it unread.
+                    closed_bytes += cut
+                    skipped_silence_bytes += cut
+                    continue
+                text, lang, ok = await _transcribe(piece)
+                if stop_event.is_set():
+                    return True
+                if not ok:
+                    # The CALL failed — the audio is unread, not silent. Closing
+                    # the segment here would delete those seconds from the result
+                    # permanently (a closed segment is never re-sent) and the
+                    # next successful call would clear ``stt_error``, so the user
+                    # would be handed a transcript with a hole in it and no hint
+                    # that anything went wrong. Leave it open: a later tick
+                    # retries it, and the final pass sees it regardless.
+                    log.info(
+                        "dictation segment kept open after a failed "
+                        "transcription (%s) — backing off rather than dropping "
+                        "%.1fs of audio.",
+                        stt_error or "unknown error",
+                        cut / bytes_per_second,
+                    )
+                    return False
+                if text:
+                    closed_parts.append(text)
+                    language = lang or language
+                # Advance on SUCCESS only: a segment that transcribed to nothing
+                # really was silence, and re-sending it forever would rebuild the
+                # very O(n²) loop this replaces.
+                closed_bytes += cut
+            return True
+
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
-            nonlocal closed_bytes, last_published, language
+            nonlocal last_published, language, error_backoff_s
+            from jarvis.dictation.segment import is_silent_segment
+
             try:
                 while not stop_event.is_set():
                     try:
-                        await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                        await asyncio.wait_for(
+                            stop_event.wait(), timeout=interval + error_backoff_s
+                        )
                     except TimeoutError:
                         pass
                     if stop_event.is_set():
                         return
-                    tail = bytes(buffer[closed_bytes:])
-                    if len(tail) < min_bytes:
+
+                    # Closing segments has priority over the preview: it is the
+                    # half that produces the final text, and the half that keeps
+                    # the tail — and therefore every upload — small.
+                    if not await _close_finished_segments():
+                        error_backoff_s = min(
+                            _DICTATION_ERROR_BACKOFF_MAX_S,
+                            max(_DICTATION_ERROR_BACKOFF_MIN_S, error_backoff_s * 2),
+                        )
                         continue
+                    if stop_event.is_set():
+                        return
 
-                    # Close a segment once the tail is long enough. Cutting at
-                    # the quietest point in the last stretch keeps the cut off
-                    # the middle of a word in the overwhelming majority of cases.
-                    if segment_bytes and len(tail) >= segment_bytes:
-                        from jarvis.dictation.segment import quietest_cut
-
-                        cut = quietest_cut(tail, segment_bytes, bytes_per_second)
-                        if cut >= min_bytes:
-                            text, lang, ok = await _transcribe(tail[:cut])
-                            if stop_event.is_set():
-                                return
-                            if not ok:
-                                # The CALL failed — the audio is unread, not
-                                # silent. Closing the segment here would delete
-                                # those seconds from the result permanently
-                                # (a closed segment is never re-sent) and the
-                                # next successful call would clear ``stt_error``,
-                                # so the user would be handed a transcript with
-                                # a hole in it and no hint that anything went
-                                # wrong. Leave the segment open instead: the
-                                # next tick retries it, and if every retry fails
-                                # the final pass still transcribes the whole
-                                # tail. Slower on a flaky link, never lossy.
-                                log.info(
-                                    "dictation segment kept open after a failed "
-                                    "transcription (%s) — retrying with the next "
-                                    "tick rather than dropping %.1fs of audio.",
-                                    stt_error or "unknown error",
-                                    cut / bytes_per_second,
-                                )
-                                continue
-                            if text:
-                                closed_parts.append(text)
-                                language = lang or language
-                            # Advance on SUCCESS only: a segment that transcribed
-                            # to nothing really was silence, and re-sending it
-                            # forever would rebuild the very O(n²) loop this
-                            # replaces.
-                            closed_bytes += cut
-                            tail = bytes(buffer[closed_bytes:])
-
+                    tail = bytes(buffer[closed_bytes:])
+                    # Hard cap on the preview upload. After the drain above the
+                    # tail is normally shorter than one segment anyway; this is
+                    # the backstop for the case where it is not (a cut that
+                    # landed too early, or the legacy unsegmented mode), so a
+                    # preview can never grow into a multi-megabyte request that
+                    # blocks the loop the microphone is being drained on.
+                    if segment_bytes and len(tail) > segment_bytes:
+                        tail = tail[-segment_bytes:]
                     tail_text = ""
-                    if len(tail) >= min_bytes:
-                        tail_text, lang, _ok = await _transcribe(tail)
-                        language = lang or language
+                    if len(tail) >= min_bytes and not is_silent_segment(
+                        tail, session_peak=session_peak
+                    ):
+                        tail_text, lang, ok = await _transcribe(tail)
                         if stop_event.is_set():
                             return
+                        if not ok:
+                            error_backoff_s = min(
+                                _DICTATION_ERROR_BACKOFF_MAX_S,
+                                max(
+                                    _DICTATION_ERROR_BACKOFF_MIN_S,
+                                    error_backoff_s * 2,
+                                ),
+                            )
+                            continue
+                        language = lang or language
+                    error_backoff_s = 0.0
+                    # Published even when the tail was skipped as silence: a
+                    # segment may just have closed, and freezing the preview
+                    # through every pause is exactly what "it stopped
+                    # transcribing" looked like from the user's side.
                     live = " ".join([*closed_parts, tail_text]).strip()
                     if not live or live == last_published:
                         continue
@@ -8503,9 +8621,84 @@ class SpeechPipeline:
             except asyncio.CancelledError:
                 pass
 
+        async def _finalize_tail(tail: bytes) -> str:
+            """Transcribe everything still open, in segment-sized pieces.
+
+            One upload for the whole remainder is the wrong shape for the last
+            call the audio ever gets: after a stretch of failures the remainder
+            can be minutes long, and then a single timeout loses ALL of it. Piece
+            by piece, one bad piece costs one piece. Each is retried, because
+            unlike a probe tick there is no "next time" — the buffer is gone when
+            this returns.
+            """
+            nonlocal language, session_peak
+            from jarvis.dictation.segment import (
+                is_silent_segment,
+                quietest_cut,
+                segment_energy,
+            )
+
+            parts: list[str] = []
+            remaining = tail
+            dead_streak = 0
+            while len(remaining) >= min_bytes:
+                if dead_streak >= _DICTATION_FINAL_DEAD_PIECES:
+                    log.warning(
+                        "final dictation transcription abandoned after %d "
+                        "consecutive failed pieces (%s) — %.1fs of audio kept "
+                        "for a later retry rather than making you wait.",
+                        dead_streak,
+                        stt_error or "unknown error",
+                        len(remaining) / bytes_per_second,
+                    )
+                    break
+                if segment_bytes and len(remaining) > segment_bytes:
+                    cut = quietest_cut(remaining, segment_bytes, bytes_per_second)
+                    if cut < min_bytes:
+                        cut = min(len(remaining), segment_bytes)
+                else:
+                    cut = len(remaining)
+                piece, remaining = remaining[:cut], remaining[cut:]
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    continue
+                for attempt in range(_DICTATION_FINAL_ATTEMPTS):
+                    text, lang, ok = await _transcribe(piece)
+                    language = lang or language
+                    if ok:
+                        if text:
+                            parts.append(text)
+                        dead_streak = 0
+                        break
+                    if attempt + 1 >= _DICTATION_FINAL_ATTEMPTS:
+                        dead_streak += 1
+                    else:
+                        # Widening, not fixed: three attempts inside one second
+                        # all land in the same rate-limit window, which is the
+                        # case this retry exists for. Still bounded — the user
+                        # has stopped speaking and is waiting for their text.
+                        delay = min(
+                            _DICTATION_FINAL_RETRY_MAX_S,
+                            _DICTATION_FINAL_RETRY_DELAY_S * (2**attempt),
+                        )
+                        log.info(
+                            "final dictation transcription failed (%s) — "
+                            "retry %d/%d in %.1fs.",
+                            stt_error or "unknown error",
+                            attempt + 1,
+                            _DICTATION_FINAL_ATTEMPTS - 1,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+            return " ".join(parts).strip()
+
         final_text = ""
         raw_text = ""
         hung_up = False
+        # Set when the RECORDING ended before the user did — a different failure
+        # from a transcription that went wrong, and one that used to be invisible.
+        capture_error: str | None = None
         # True once the delivery half has been entered, so the crash handler
         # below can tell "we never got to deliver" from "delivery itself blew
         # up" and never runs the delivery twice.
@@ -8546,6 +8739,34 @@ class SpeechPipeline:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     hung_up = hangup_task in done or self._hangup_event.is_set()
+                    if drain_task in done and not drain_task.cancelled():
+                        # The RECORDING stopped on its own. Every way that
+                        # happens (a handoff buffer whose replay window the
+                        # drain fell behind, a microphone that went away) ends
+                        # the dictation early with whatever was captured so far
+                        # — which reads, from the user's side, exactly like "it
+                        # stopped transcribing halfway through". It was swallowed
+                        # here with the cancellations; name it instead, so the
+                        # history row and the completion message say what
+                        # happened rather than presenting a truncated transcript
+                        # as the whole thing.
+                        drain_exc = drain_task.exception()
+                        if drain_exc is not None:
+                            capture_error = (
+                                f"{type(drain_exc).__name__}: {drain_exc}".strip()
+                            )
+                            log.warning(
+                                "dictation recording ended early — %s", capture_error
+                            )
+                        else:
+                            # A source that simply RAN OUT is not a fault — it is
+                            # how a finite stream ends. Noted, never promoted to
+                            # an error: doing so would mask a real transcription
+                            # failure behind a message about the microphone.
+                            log.info(
+                                "dictation input stream ended; finalizing what "
+                                "was captured."
+                            )
                 finally:
                     # Freeze the probe BEFORE tearing anything else down so a
                     # stop edge cannot race one more transcription into flight.
@@ -8582,30 +8803,7 @@ class SpeechPipeline:
 
             if not hung_up:
                 # Finalize ONLY the open tail — every closed segment is done.
-                tail = bytes(buffer[closed_bytes:])
-                tail_text = ""
-                if len(tail) >= min_bytes:
-                    # RETRIED, unlike every call before it. A probe-tick failure
-                    # costs a retry a second later; this one is the last chance
-                    # the audio ever gets — the buffer is dropped the moment
-                    # this function returns. One transient 429 / socket reset
-                    # here used to silently truncate the dictation at the last
-                    # closed segment, which is the worst possible moment to give
-                    # up: the user has finished speaking and is waiting.
-                    for attempt in range(_DICTATION_FINAL_ATTEMPTS):
-                        tail_text, lang, ok = await _transcribe(tail)
-                        language = lang or language
-                        if ok:
-                            break
-                        if attempt + 1 < _DICTATION_FINAL_ATTEMPTS:
-                            log.info(
-                                "final dictation transcription failed (%s) — "
-                                "retry %d/%d.",
-                                stt_error or "unknown error",
-                                attempt + 1,
-                                _DICTATION_FINAL_ATTEMPTS - 1,
-                            )
-                            await asyncio.sleep(_DICTATION_FINAL_RETRY_DELAY_S)
+                tail_text = await _finalize_tail(bytes(buffer[closed_bytes:]))
                 raw_text = " ".join([*closed_parts, tail_text]).strip()
                 final_text = raw_text
 
@@ -8617,17 +8815,23 @@ class SpeechPipeline:
                 duration_s=duration_s,
                 target=target,
                 hung_up=hung_up,
-                stt_error=stt_error,
+                # A recording that ended early outranks a transcription error:
+                # it explains a short transcript that every later layer would
+                # otherwise present as complete.
+                stt_error=capture_error or stt_error,
                 audio=bytes(buffer),
             )
             final_text = result
             log.info(
-                "🎙️ dictation ended (%d chars, %.1fs, target=%s%s%s).",
+                "🎙️ dictation ended (%d chars, %.1fs, target=%s, %.1fs silence "
+                "skipped%s%s%s).",
                 len(final_text),
                 duration_s,
                 target,
+                skipped_silence_bytes / bytes_per_second,
                 ", hung up" if hung_up else "",
                 f", stt error: {stt_error}" if stt_error else "",
+                f", capture: {capture_error}" if capture_error else "",
             )
         except Exception as exc:  # noqa: BLE001 — dictation must never break voice
             log.warning("dictation session crashed (non-fatal)", exc_info=True)

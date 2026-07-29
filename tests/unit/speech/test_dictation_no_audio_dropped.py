@@ -36,23 +36,37 @@ from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 BYTES_PER_SECOND = 16_000 * 2
 
 
-def _speech_then_pause(loud_bytes: int, quiet_bytes: int) -> bytes:
+def _speech_then_pause(loud_bytes: int, quiet_bytes: int, amplitude: int) -> bytes:
     """PCM that is loud, then silent — so ``quietest_cut`` cuts at the pause.
 
     Constant-amplitude audio would put the cut at the very first probe window
     (every window scores the same), which is below the minimum segment size and
     would close no segment at all — the test would then pass for the wrong
     reason.
+
+    ``amplitude`` differs per chunk so a test can tell WHICH audio reached the
+    provider. "Some audio was transcribed" is a claim the broken version could
+    make too; "this second was transcribed" is not.
     """
-    loud = (np.ones(loud_bytes // 2, dtype=np.int16) * 5_000).tobytes()
+    loud = (np.ones(loud_bytes // 2, dtype=np.int16) * amplitude).tobytes()
     quiet = np.zeros(quiet_bytes // 2, dtype=np.int16).tobytes()
     return loud + quiet
 
 
 #: Three chunks of "speech, then a pause", each long enough to close a segment
 #: at ``segment_seconds = 0.5``.
-_CHUNKS = [_speech_then_pause(12_800, 6_400) for _ in range(3)]
+_AMPLITUDES = (5_000, 6_000, 7_000)
+_CHUNKS = [_speech_then_pause(12_800, 6_400, amp) for amp in _AMPLITUDES]
 _TOTAL_BYTES = sum(len(c) for c in _CHUNKS)
+
+
+def _amplitudes_seen(calls: list[bytes]) -> set[int]:
+    """Which of the marker amplitudes reached the provider at all."""
+    seen: set[int] = set()
+    for call in calls:
+        samples = np.frombuffer(call, dtype=np.int16)
+        seen |= {int(v) for v in np.unique(np.abs(samples))} & set(_AMPLITUDES)
+    return seen
 
 
 class _ScriptedSTT:
@@ -140,20 +154,29 @@ async def _run_dictation(
 
 @pytest.mark.asyncio
 async def test_a_failed_segment_does_not_delete_its_audio(monkeypatch) -> None:
-    """Every byte reaches the final pass when the provider keeps failing.
+    """Every byte still reaches the provider once it recovers.
 
     Before the fix each probe tick closed its segment anyway, so by the time
     the user let go the final call only saw whatever was left after the holes —
     and the holes were the words the transcript was missing.
+
+    The failures here are transient, which is the case this guarantee is about:
+    a provider that never recovers is a different promise (see
+    ``test_the_retry_gives_up_instead_of_hanging``), because at some point
+    continuing to retry costs the user more than it can possibly return.
     """
-    stt = _ScriptedSTT(fail_first=99)  # nothing ever succeeds
+    stt = _ScriptedSTT(fail_first=2)
     cfg = DictationConfig(partial_interval_s=0.02, segment_seconds=0.5)
 
     await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=3)
 
     assert stt.calls, "the probe must have attempted at least one transcription"
-    assert max(len(c) for c in stt.calls) == _TOTAL_BYTES, (
-        "no call ever saw the whole recording — audio was closed off unread"
+    # Coverage, not a single call over everything: the final pass deliberately
+    # goes out in segment-sized pieces (one timeout must not cost every second
+    # still open). What must hold is that no stretch was closed off unread.
+    assert _amplitudes_seen(stt.calls) == set(_AMPLITUDES), (
+        "a stretch of the recording was never sent to the provider at all — "
+        "audio was closed off unread"
     )
 
 
@@ -186,19 +209,31 @@ async def test_the_final_transcription_is_retried(monkeypatch) -> None:
     captured = await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=0)
 
     assert len(stt.calls) >= 2, "the failed final transcription was not retried"
-    assert captured.get("raw_text") == "the words"
+    # The remainder leaves in segment-sized pieces, so the scripted provider is
+    # asked once per piece — what matters is that the retry recovered the text
+    # rather than losing it.
+    assert "the words" in str(captured.get("raw_text") or "")
     assert captured.get("stt_error") is None
 
 
 @pytest.mark.asyncio
 async def test_the_retry_gives_up_instead_of_hanging(monkeypatch) -> None:
-    """A genuinely dead provider must not turn into an endless retry loop."""
+    """A genuinely dead provider must not turn into an endless retry loop.
+
+    With the remainder finalized piece by piece, "give up" needs a second
+    bound: retrying every piece three times would make a five-minute dictation
+    spend minutes proving the provider is still down, with the user watching.
+    Consecutive total failures end the pass instead — the audio is kept, so
+    Restore can try again once the provider is back.
+    """
     stt = _ScriptedSTT(fail_first=99)
     cfg = DictationConfig(partial_interval_s=0.0, segment_seconds=0.5)
 
     captured = await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=0)
 
-    assert len(stt.calls) == pipeline_mod._DICTATION_FINAL_ATTEMPTS
+    assert len(stt.calls) == (
+        pipeline_mod._DICTATION_FINAL_ATTEMPTS * pipeline_mod._DICTATION_FINAL_DEAD_PIECES
+    )
     assert captured.get("raw_text") == ""
     # The failure survives to the delivery half, which is what separates
     # "the provider rejected us" from "you said nothing".
