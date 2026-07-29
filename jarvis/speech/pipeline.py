@@ -2109,6 +2109,11 @@ class SpeechPipeline:
         self._probe_last_text: str = ""
         self._probe_live_text: str = ""
         self._probe_stable_count: int = 0
+        # Strong reference to the one live preview request. At an endpoint the
+        # request is cancelled and drained before final STT starts, preventing a
+        # stale preview and the final upload from competing for one connection,
+        # one native inference lock, or one provider rate-limit slot.
+        self._probe_task: asyncio.Task[None] | None = None
         # A loud stable tail must PERSIST across probes before forcing — the same
         # 2-probe persistence the empty/boilerplate tail already requires
         # (2026-06-14). A single stable reading is not proof the user stopped:
@@ -3065,6 +3070,7 @@ class SpeechPipeline:
         # same field is also exposed as a C-signal to a future completeness
         # classifier ("max_utterance" = hard-chopped utterance).
         self._last_endpoint_reason = reason
+        self._cancel_stale_probe()
         self._reset_probe_state()
         if reason != "false_start":
             self._schedule_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
@@ -3098,6 +3104,39 @@ class SpeechPipeline:
         self._probe_generation = getattr(self, "_probe_generation", 0) + 1
         self._probe_in_flight = False
 
+    def _cancel_stale_probe(self) -> None:
+        """Cancel an in-flight preview when the utterance has ended."""
+        task = getattr(self, "_probe_task", None)
+        if task is None or task.done():
+            return
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not current:
+            task.cancel()
+
+    async def _drain_stale_probe(self) -> None:
+        """Finish preview cancellation before dispatching the final STT call."""
+        task = getattr(self, "_probe_task", None)
+        if task is None:
+            return
+        current = asyncio.current_task()
+        if task is current:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 - preview failure is non-fatal
+            log.debug("Stale STT preview cleanup failed: %s", exc)
+        finally:
+            if getattr(self, "_probe_task", None) is task:
+                self._probe_task = None
+            self._probe_in_flight = False
+
     def _on_vad_probe(self, pcm: bytes, tail_loud: bool = True) -> None:
         """Sync callback from SileroEndpointer; spawns the async STT probe task.
 
@@ -3128,10 +3167,11 @@ class SpeechPipeline:
             return
         self._probe_in_flight = True
         generation = getattr(self, "_probe_generation", 0)
-        loop.create_task(
+        task = loop.create_task(
             self._stt_probe_async(pcm, generation, tail_loud),
             name="stt-stability-probe",
         )
+        self._probe_task = task
 
     async def _stt_probe_async(
         self, pcm: bytes, generation: int | None = None, tail_loud: bool = True
@@ -10270,6 +10310,11 @@ class SpeechPipeline:
         keyring read, not the chain resolution, not a provider construction —
         happens until a turn has already failed.
         """
+        # A VAD preview may still own the provider connection/inference lock on
+        # the endpoint edge. Cancel and drain it before the authoritative upload
+        # so the final request never queues behind obsolete audio or triggers a
+        # same-provider rate-limit retry.
+        await self._drain_stale_probe()
         last_exc: BaseException | None = None
         for attempt in range(_STT_FINAL_RETRIES + 1):
             stt_task = asyncio.create_task(
