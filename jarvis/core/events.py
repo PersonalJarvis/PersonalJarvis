@@ -157,6 +157,28 @@ class DictationCompleted(Event):
     #: makes ``outcome="failed"`` distinguishable from ``outcome="empty"``:
     #: before it existed, a provider 401 and plain silence looked identical.
     error: str | None = None
+    #: What the generative polish pass did to ``text``. One of
+    #: ``jarvis.dictation.polish.POLISH_STATUSES`` — that tuple is the single
+    #: vocabulary for this value, imported rather than restated here for the
+    #: same reason ``outcome`` is (AP-4 / BUG-008). ``""`` on a completion the
+    #: pass never ran for at all (a hangup, a crash before delivery), which is
+    #: deliberately distinct from ``"off"`` (the user switched it off) and from
+    #: ``"unavailable"`` (nobody on this host holds a key for it).
+    #:
+    #: This is carried on the EVENT and not only in the history because the
+    #: user-visible claim "these are the words you said" changes when the pass
+    #: applies: a surface that shows the polished text without being able to say
+    #: it was polished cannot offer the raw text back.
+    polish_status: str = ""
+    #: The credential family that answered (``groq``/``gemini``/...), empty when
+    #: none was asked. A family id, never a model id — the model is a detail of
+    #: the family and changes without the user doing anything.
+    polish_provider: str = ""
+    #: Wall-clock cost of the pass, including a fallback hop and a rejected
+    #: answer. It is the number that decides whether the feature is worth its
+    #: place in the delivery path, so it is reported on every status, not only
+    #: on ``applied``.
+    polish_latency_ms: int = 0
 
 
 #: Every reason a dictation start can be refused. Declared ONCE here, next to

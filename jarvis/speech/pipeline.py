@@ -581,13 +581,29 @@ def _playback_progress_stalled(last_write_ns: int, stall_s: float) -> bool:
 
 
 def _stt_error_status(exc: BaseException) -> int | None:
-    """HTTP status of an STT error, duck-typed so the plugin stays un-imported.
+    """HTTP status of an STT error, or ``None`` when it was not an HTTP error.
 
-    ``httpx.HTTPStatusError`` (raised by the cloud STT plugins) carries the
-    response on ``.response.status_code``; any provider that mirrors that shape
-    is understood. Returns ``None`` for non-HTTP errors.
+    Delegates to ``jarvis.plugins.stt.errors.status_from_exception``, which is
+    the ONE place the shapes are enumerated: our own ``STTHTTPError.status``
+    first, then the google-genai SDK's ``.code``, then the
+    ``httpx.HTTPStatusError`` family's ``.response.status_code``. Keeping a
+    second table here is precisely the drift AP-4 is about — and the reason the
+    retry ladder used to work for exactly one provider was that this function
+    knew only the last of those three shapes.
+
+    The import is lazy and the legacy duck-type survives as the fallback, so
+    this stays correct on a host where the plugin package cannot be imported at
+    all (a stripped install, an import error mid-reload). Errors are rare, so
+    the cached import costs nothing worth measuring.
     """
-    return getattr(getattr(exc, "response", None), "status_code", None)
+    try:
+        from jarvis.plugins.stt.errors import status_from_exception
+    except Exception:  # noqa: BLE001 — an unimportable plugin package is not fatal
+        status = getattr(exc, "status", None)
+        if isinstance(status, int) and not isinstance(status, bool):
+            return status
+        return getattr(getattr(exc, "response", None), "status_code", None)
+    return status_from_exception(exc)
 
 
 def _is_transient_stt_error(exc: BaseException) -> bool:
@@ -598,9 +614,20 @@ def _is_transient_stt_error(exc: BaseException) -> bool:
 def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
     """Backoff before the next final-STT attempt.
 
-    Honours a server ``Retry-After`` header when present (seconds form),
-    otherwise capped exponential backoff. Always within ``[0, cap]``.
+    Honours the delay the SERVER asked for when there is one, otherwise capped
+    exponential backoff. Always within ``[0, cap]``.
+
+    ``STTHTTPError`` already parsed the header into ``retry_after`` seconds, and
+    it understands BOTH forms RFC 9110 allows — the delta-seconds one every
+    provider sends directly and the HTTP-date one a CDN or gateway in front of
+    one sends. Reading that attribute first is therefore not a shortcut: parsing
+    the raw header here only ever understood the delta form, so a date-form
+    header silently fell through to blind backoff. The header read stays as the
+    fallback for the providers that raise a plain ``httpx.HTTPStatusError``.
     """
+    requested = getattr(exc, "retry_after", None)
+    if isinstance(requested, (int, float)) and not isinstance(requested, bool):
+        return min(_STT_RETRY_CAP_S, max(0.0, float(requested)))
     resp = getattr(exc, "response", None)
     headers = getattr(resp, "headers", None)
     if headers is not None and hasattr(headers, "get"):
@@ -695,6 +722,128 @@ _DICTATION_FINAL_RETRY_DELAY_S = 0.6
 # Ceiling on ONE final retry wait. The final pass runs while the user is already
 # waiting for their text, so it may not inherit the probe's patient backoff.
 _DICTATION_FINAL_RETRY_MAX_S = 2.0
+
+# Per-call ceiling on ONE dictation transcription, derived from the audio being
+# sent. Nothing bounded these calls before, which is only survivable while every
+# provider misbehaves in the same polite way: google-genai forces ``timeout=None``
+# onto its own HTTP client AND runs the request in an uncancellable thread, so a
+# Gemini user whose call never came back had the dictation lane wedged after the
+# microphone had already closed — no text, no error, no end.
+#
+# The bound SCALES with the piece rather than being a constant, because the same
+# helper transcribes an 8 s segment and, in the unsegmented legacy mode, a
+# recording that may be minutes long: one fixed number is either uselessly large
+# for the first or a guaranteed truncation for the second. The multiplier allows
+# comfortably worse than real time (a CPU-only local Whisper is the slow case;
+# every cloud provider returns in a fraction of it), so the ceiling can only ever
+# be reached by something that is genuinely stuck.
+_DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S = 2.0
+
+
+def _dictation_retry_worthwhile(exc: BaseException | None) -> bool:
+    """Whether re-sending the SAME audio to this provider could work.
+
+    The dictation lane used to retry every failure three times, 0.6 s apart —
+    a dead key exactly as eagerly as a rate limit. That is wrong in both
+    directions: it hammers a provider that has already said "no, and not later"
+    (401 bad key, 402 out of credit, 400 unusable audio) while making the user
+    wait ~1.8 s to be told something the first answer already said, and it
+    re-fires into a rate-limit window far too early to be inside it.
+
+    A transient HTTP status (429 / 5xx) is worth another attempt. So is a
+    failure with NO status at all — a dropped socket, a TLS reset, a
+    provider-side read timeout — because those are exactly the blips a second
+    attempt survives. Everything else is a definitive refusal and stops the
+    ladder.
+
+    OUR OWN ceiling is the deliberate exception. Reaching it means this piece
+    already got more than twice its own length in wall-clock time and the
+    provider produced nothing, which is a wedge, not a blip — and asking again
+    would double a wait the user is already sitting through with the microphone
+    closed. The audio is kept as a sidecar either way, so "Restore" is a far
+    better answer than three ceilings in a row. Note this catches only the
+    ``TimeoutError`` raised by our ``wait_for``: a provider's own timeout
+    exception is a transport error with no status and is still retried.
+    """
+    if exc is None:
+        return False
+    if isinstance(exc, TimeoutError):
+        return False
+    status = _stt_error_status(exc)
+    if status is None:
+        return True
+    return status in _STT_TRANSIENT_STATUS
+
+
+def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
+    """Which language a finished dictation is treated as. Never raises.
+
+    Module-level and public because TWO paths finish a dictation — the live
+    delivery in ``_finish_dictation`` and the Restore route's re-transcription —
+    and a second copy of this decision is how the same recording would end up
+    cleaned under two different rule sets depending on which button produced it.
+
+    Three signals, and the ORDER between them is the whole fix:
+
+    1. **The user's pin wins, always.** It is the one signal a person can set,
+       so overruling it would leave them no way to be right.
+    2. **Otherwise the TEXT outranks a provider tag that CONTRADICTS it.** The
+       cloud Whisper APIs report a language on every request and report it
+       confidently when it is wrong: the live 2026-07-28 history has German
+       dictations tagged "English". The old gate only consulted the text when
+       the tag was UNPARSEABLE, and ``normalize_language_tag`` turns "English"
+       into "en", never "unknown" — so a confidently wrong tag always won. What
+       that costs is not cosmetic: the English filler list used to contain "er",
+       a top-frequency German pronoun, so a German sentence tagged English came
+       back with its pronouns deleted and the cleanup reported a clean success.
+    3. **A tag we cannot place stays exactly as it is.** ``detect_text_language``
+       only knows de/en/es, so letting it overrule a "French" or "ja" tag would
+       relabel that dictation as whichever of the three it scored highest on and
+       then run THAT language's filler rules over it. Keeping the tag makes the
+       cleanup a documented no-op (``reason="no_rules"``), which is the honest
+       answer for ~95 of the 100 recognition languages this feature supports.
+
+    A provider that reports nothing at all is the one case where the text is the
+    only signal there is: ``[dictation].language = auto`` (the shipped default)
+    plus a silent provider used to leave the cleanup with "no rules for this
+    language", so every hesitation sound the user made shipped straight into the
+    text while the setting said the cleanup was on.
+
+    Everything resolves through the canonical resolver's helpers — no layer
+    invents its own detection (CLAUDE.md §1).
+    """
+    pin = str(pinned or "").strip().lower()
+    if pin not in ("", "auto"):
+        return pin
+    tag = str(reported or "")
+    if not text:
+        return tag
+    try:
+        from jarvis.core.turn_language import (
+            detect_text_language,
+            normalize_language_tag,
+        )
+
+        lowered = tag.strip().lower()
+        tag_code = normalize_language_tag(lowered)
+        detected = detect_text_language(text)
+        if detected != "unknown" and (
+            # Nothing to contradict: no tag at all, or one that says "I could
+            # not tell".
+            lowered in ("", "auto", "unknown", "und")
+            # A tag we CAN place, which the text disagrees with.
+            or (tag_code != "unknown" and tag_code != detected)
+        ):
+            log.debug(
+                "dictation language resolved from the transcript: %s "
+                "(the provider reported %r)",
+                detected,
+                tag,
+            )
+            return detected
+    except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
+        log.debug("dictation language detection failed", exc_info=True)
+    return tag
 
 # After this many consecutive pieces have exhausted every attempt, the provider
 # is not flaky, it is down — and continuing to retry each remaining piece would
@@ -1501,6 +1650,12 @@ class SpeechPipeline:
         # button), "insert" additionally pastes it into the focused field of
         # whatever app is in front. Set per start_dictation call, never global.
         self._dictation_target = "chat"
+        # The dictation lane's OWN transcription provider — built on the first
+        # press, never at boot (AP-26), and deliberately not the voice one: see
+        # ``_dictation_stt`` for why the voice bias prompt must not reach a
+        # dictation. ``None`` means "not built yet", which is also how a live
+        # provider/language switch invalidates it.
+        self._dictation_stt_instance: Any = None
         # True while a hold-mode dictation key is physically down. Mirrors
         # ``_ptt_mode`` for the dictation lane so a repeated press edge (the
         # Windows backend polls and re-fires on_press while held) is idempotent.
@@ -2251,6 +2406,11 @@ class SpeechPipeline:
         # language (AP-27: the wake never rides on the utterance setting).
         if previous is not None and self._probe_stt is previous:
             self._probe_stt = rebuilt
+        # The dictation lane holds its OWN instance (no voice bias prompt), so a
+        # switch that only rebuilt the voice one would leave dictation
+        # transcribing in the previous recognition language for the rest of the
+        # process — a setting that appears to apply and silently does not.
+        self._reset_dictation_stt()
         log.info(
             "STT-Live-Switch: recognition language is now %r (%s)",
             language,
@@ -8392,6 +8552,163 @@ class SpeechPipeline:
         self._dictation_stop_event.set()
         return True
 
+    def _dictation_stt(self) -> Any:
+        """The provider this lane transcribes with — NOT the voice one (F14).
+
+        Two things are wrong with reusing ``self._utterance_stt`` here, and both
+        of them are silent.
+
+        **The bias prompt.** ``[stt].bias_prompt`` is decoder priming for the
+        VOICE path: a paragraph of vocabulary that steers Whisper towards the
+        words a conversation with this assistant tends to contain. The repo
+        already documents it as a silence-hallucination amplifier and
+        deliberately withholds it from the local engine for exactly that reason
+        — and then handed it to the dictation lane anyway, which is the one lane
+        whose input is long, whose pauses are frequent, and whose output goes
+        straight into somebody's document. It also biases decoding towards the
+        prompt's own language, which is the second half of the wrong-language
+        problem the delivery gates deal with. Dictation therefore builds its own
+        instance with the voice prompt REMOVED, honouring
+        ``[dictation].bias_prompt`` instead — absent by default, which is the
+        point: a dictation is not a conversation and has no vocabulary to guess.
+        The user's STT dictionary is NOT dropped: ``build_stt_from_config``
+        merges those words separately, and they are the one bias a person asked
+        for by name.
+
+        **The fallback chain (AP-22).** The lane binds one provider for the
+        whole session, so a depleted key ended the dictation even with three
+        other keyed families sitting unused. ``resolve_keyed_stt_fallback``
+        answers with one provider per CREDENTIAL family — never two ids reading
+        the same keyring slot, because a 429 on a key is not survived by a
+        sibling that draws on the same key — and ``FallbackSTT`` builds each of
+        them lazily, on the first call that actually needs it (AP-26).
+
+        Degrades to the voice instance on any failure: a dictation with the
+        wrong prompt is enormously better than a dictation with no provider.
+        Built once and cached, because the alternative is re-resolving keys and
+        re-constructing a client on every press.
+        """
+        cached = getattr(self, "_dictation_stt_instance", None)
+        if cached is not None:
+            return cached
+
+        fallback = getattr(self, "_utterance_stt", None)
+        config = getattr(self, "_config", None)
+        stt_cfg = getattr(config, "stt", None) if config is not None else None
+        if stt_cfg is None:
+            return fallback
+
+        try:
+            from jarvis.plugins.stt import build_stt_from_config
+
+            dictation_cfg = getattr(self, "_dictation_cfg", None)
+            # ``[dictation].bias_prompt`` is read through getattr so this is
+            # correct both before and after the key exists as a field: absent
+            # reads as empty, which is the shipped behaviour we want anyway.
+            own_prompt = str(getattr(dictation_cfg, "bias_prompt", "") or "").strip()
+            patched = stt_cfg.model_copy(update={"bias_prompt": own_prompt})
+            instance = build_stt_from_config(patched)
+        except Exception as exc:  # noqa: BLE001 — never lose dictation over this
+            log.warning(
+                "Dictation-specific STT could not be built (%s); reusing the "
+                "voice provider, bias prompt included.",
+                exc,
+            )
+            return fallback
+
+        # The chain and the dictionary are each wrapped in their OWN guard:
+        # neither is worth losing the prompt-free instance we already have, and
+        # collapsing all three into one try meant an import error in either
+        # wrapper silently handed the voice provider — bias prompt included —
+        # back to the dictation lane.
+        try:
+            from jarvis.plugins.stt import (
+                build_named_stt_provider,
+                resolve_keyed_stt_fallback,
+            )
+
+            configured = str(getattr(stt_cfg, "provider", "") or "").strip()
+            alternates = list(resolve_keyed_stt_fallback(configured))
+            if alternates:
+                from jarvis.speech.stt_fallback import FallbackSTT
+
+                def _build(name: str) -> Any:
+                    return build_named_stt_provider(name, patched)
+
+                instance = FallbackSTT(
+                    instance, alternates, _build, primary_name=configured
+                )
+                log.info(
+                    "Dictation STT chain armed: %s -> %s (no voice bias prompt).",
+                    configured or type(instance).__name__,
+                    ", ".join(alternates),
+                )
+        except Exception as exc:  # noqa: BLE001 — one provider is still a provider
+            log.warning("Dictation STT fallback chain unavailable: %s", exc)
+
+        # The user's spoken-vocabulary corrections apply to dictation the same
+        # way they apply to a voice turn — they are post-STT string work, so
+        # they ride on TOP of the fallback chain rather than under it and
+        # survive a cross to another family.
+        try:
+            from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+            instance = wrap_stt_with_dictionary(instance)
+        except Exception as exc:  # noqa: BLE001 — corrections are not load-bearing
+            log.warning("STT dictionary wrapper unavailable for dictation: %s", exc)
+
+        self._dictation_stt_instance = instance
+        return instance
+
+    def _reset_dictation_stt(self) -> None:
+        """Drop the cached dictation provider so the next press rebuilds it.
+
+        Called from every place that swaps the voice provider or the recognition
+        language. Without it a live settings change would apply to conversations
+        and silently not to dictation — the exact class of divergence that makes
+        "it works here, not there" unanswerable.
+        """
+        self._dictation_stt_instance = None
+
+    def _dictation_protected_terms(self) -> tuple[str, ...]:
+        """Spellings the polish pass may not "correct" into something familiar.
+
+        The reference dictation tool's own documentation warns about this
+        failure direction explicitly: a rewrite model turns an unfamiliar
+        technical term into the common word it resembles, and the user cannot
+        tell it happened because the sentence still reads fine. So the words a
+        user has already told us they care about travel with the request and are
+        checked afterwards by the drift guard.
+
+        Three sources, all of them things the user chose: the STT dictionary
+        (words they added by hand for exactly this reason), the configured wake
+        word (a name, and names are what get "corrected"), and the assistant
+        name derived from it. Nothing here is a secret and nothing is free text
+        from a voice turn — AP-2 territory stays out of the prompt.
+
+        Never raises and never blocks: an unreadable dictionary costs the guard
+        its input, not the user their dictation.
+        """
+        terms: list[str] = []
+        try:
+            from jarvis.speech.stt_dictionary import dictionary_bias_words
+
+            terms.extend(dictionary_bias_words())
+        except Exception as exc:  # noqa: BLE001 — an unreadable store is not fatal
+            log.debug("dictation protected terms: dictionary unavailable (%s)", exc)
+        phrase = getattr(self, "_wake_phrase_label", "") or ""
+        for word in str(phrase).split():
+            if len(word) >= 2:
+                terms.append(word)
+        seen: set[str] = set()
+        unique: list[str] = []
+        for term in terms:
+            key = term.strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(term.strip())
+        return tuple(unique)
+
     async def _dictation_session(self) -> None:
         """Capture mic audio, transcribe it in segments, deliver the result.
 
@@ -8420,7 +8737,10 @@ class SpeechPipeline:
         cancelling an ``asyncio.to_thread`` would only cancel the wrapper, not
         the native call, and the next transcribe would then raise TranscribeBusy.
         """
-        stt = self._utterance_stt
+        # NOT ``self._utterance_stt``: the dictation lane transcribes through its
+        # own provider, without the voice bias prompt and with its own
+        # cross-family fallback chain (see ``_dictation_stt``).
+        stt = self._dictation_stt()
         if stt is None:
             # ``start_dictation`` already refused this case; only a provider
             # swapped out between the two calls can land here. Close the turn
@@ -8504,8 +8824,10 @@ class SpeechPipeline:
             str(getattr(cfg, "language", "auto") or "auto").strip().lower() or "auto"
         )
 
-        async def _transcribe(pcm: bytes) -> tuple[str, str, bool]:
-            """One transcription. ``(text, language, ok)``; never raises.
+        async def _transcribe(
+            pcm: bytes,
+        ) -> tuple[str, str, bool, BaseException | None]:
+            """One transcription. ``(text, language, ok, error)``; never raises.
 
             Records the failure in ``stt_error`` instead of swallowing it. A
             later successful call clears it again — a single flaky segment in an
@@ -8519,31 +8841,62 @@ class SpeechPipeline:
             deleted eight seconds of speech from the middle of the result with
             nothing anywhere saying so. That is the reported "I said more than
             this" bug in its entirety.
+
+            ``error`` is the EXCEPTION OBJECT, and it is the reason this returns
+            four values instead of three. The reason code stored in
+            ``stt_error`` is a user-facing word; the retry ladder needs the HTTP
+            status behind it to tell a rate limit (wait and try again) from a
+            dead key (stop). Collapsing every failure into ``("", "", False)``
+            destroyed exactly that, which is why the ladder used to retry a 401
+            three times and re-fire into a 429 window 0.6 s after being told to
+            wait.
+
+            Every call is bounded. ``wait_for`` cancels our await, not a native
+            thread — so this is a ceiling on how long the LANE waits, never a
+            guarantee that the provider stopped working. That is still the whole
+            difference between a dictation that ends with an honest error and
+            one that never ends at all.
             """
             nonlocal stt_error, stt_error_detail
+            ceiling = max(
+                float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
+                (len(pcm) / bytes_per_second)
+                * _DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S,
+            )
             inference_active.set()
             try:
                 try:
-                    transcript = await stt.transcribe_pcm(
-                        pcm, language=dictation_language
+                    transcript = await asyncio.wait_for(
+                        stt.transcribe_pcm(pcm, language=dictation_language),
+                        timeout=ceiling,
                     )
                 except TypeError:
                     # Provider predates the keyword (contract allows a bare
                     # ``transcribe_pcm(pcm)``). Fall back rather than call the
                     # choice a failure — precedent: rolling_whisper_wake.
-                    transcript = await stt.transcribe_pcm(pcm)
+                    transcript = await asyncio.wait_for(
+                        stt.transcribe_pcm(pcm), timeout=ceiling
+                    )
+            except TimeoutError as exc:
+                stt_error_detail = (
+                    f"the provider did not answer within {ceiling:.0f}s "
+                    f"for {len(pcm) / bytes_per_second:.1f}s of audio"
+                )
+                stt_error = classify_stt_failure(exc)
+                log.warning("dictation transcribe timed out: %s", stt_error_detail)
+                return "", "", False, exc
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
                 stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
                 stt_error = classify_stt_failure(exc)
                 log.debug("dictation transcribe failed: %s", stt_error_detail)
-                return "", "", False
+                return "", "", False, exc
             finally:
                 inference_active.clear()
             stt_error = None
             stt_error_detail = ""
             text = (getattr(transcript, "text", "") or "").strip()
             lang = str(getattr(transcript, "language", "") or "")
-            return text, lang, True
+            return text, lang, True, None
 
         async def _close_finished_segments() -> bool:
             """Close every segment the buffer already holds. ``False`` on a
@@ -8590,7 +8943,7 @@ class SpeechPipeline:
                     closed_bytes += cut
                     skipped_silence_bytes += cut
                     continue
-                text, lang, ok = await _transcribe(piece)
+                text, lang, ok, _exc = await _transcribe(piece)
                 if stop_event.is_set():
                     return True
                 if not ok:
@@ -8671,7 +9024,7 @@ class SpeechPipeline:
                         # screen; skipping a segment costs the user their words.
                         and preview_budget().try_spend()
                     ):
-                        tail_text, lang, ok = await _transcribe(tail)
+                        tail_text, lang, ok, _exc = await _transcribe(tail)
                         if stop_event.is_set():
                             return
                         if not ok:
@@ -8749,23 +9102,43 @@ class SpeechPipeline:
                 if is_silent_segment(piece, session_peak=session_peak):
                     continue
                 for attempt in range(_DICTATION_FINAL_ATTEMPTS):
-                    text, lang, ok = await _transcribe(piece)
+                    text, lang, ok, exc = await _transcribe(piece)
                     language = lang or language
                     if ok:
                         if text:
                             parts.append(text)
                         dead_streak = 0
                         break
+                    # A failure the provider will give us again is not worth
+                    # asking for again. A 401 answered three times over 1.8 s is
+                    # 1.8 s of the user staring at a spinner to learn what the
+                    # first answer already said, and every one of those calls
+                    # hits a provider that has already refused.
+                    if not _dictation_retry_worthwhile(exc):
+                        log.info(
+                            "final dictation transcription refused (%s) — not "
+                            "retrying: this is not a failure a second attempt "
+                            "survives.",
+                            stt_error_detail or stt_error or "unknown error",
+                        )
+                        dead_streak += 1
+                        break
                     if attempt + 1 >= _DICTATION_FINAL_ATTEMPTS:
                         dead_streak += 1
                     else:
-                        # Widening, not fixed: three attempts inside one second
-                        # all land in the same rate-limit window, which is the
-                        # case this retry exists for. Still bounded — the user
+                        # The server's own ``Retry-After`` wins when it sent
+                        # one — re-firing 0.6 s into a window it just told us
+                        # lasts 30 s only extends the window. Without a header,
+                        # widening backoff: three attempts inside one second all
+                        # land in the same rate-limit window, which is the case
+                        # this retry exists for. Bounded either way — the user
                         # has stopped speaking and is waiting for their text.
                         delay = min(
                             _DICTATION_FINAL_RETRY_MAX_S,
-                            _DICTATION_FINAL_RETRY_DELAY_S * (2**attempt),
+                            max(
+                                _stt_retry_delay(exc, attempt),
+                                _DICTATION_FINAL_RETRY_DELAY_S * (2**attempt),
+                            ),
                         )
                         log.info(
                             "final dictation transcription failed (%s) — "
@@ -9042,64 +9415,16 @@ class SpeechPipeline:
         # and a provider that answers "unknown" leaves every dictation with
         # reason="no_rules", i.e. no cleanup at all despite an explicit pin.
         pinned = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
-        effective_language = pinned if pinned not in ("", "auto") else language
-        # Which language the cleanup rules run in. Three signals can answer that
-        # and the ORDER between them is the whole fix:
-        #
-        # 1. The user's pin wins, always. It is the one signal a person can set,
-        #    so overruling it would leave them no way to be right — which is why
-        #    this block does not run at all once ``pinned`` names a language.
-        # 2. Otherwise the TEXT outranks a provider tag that CONTRADICTS it. The
-        #    cloud Whisper APIs report a language on every request and report it
-        #    confidently when it is wrong: the live 2026-07-28 history has German
-        #    dictations tagged "English". The old gate only consulted the text
-        #    when the tag was UNPARSEABLE, and ``normalize_language_tag`` turns
-        #    "English" into "en", never "unknown" — so a confidently wrong tag
-        #    always won. What that costs is not cosmetic. The English filler list
-        #    used to contain "er", a top-frequency German pronoun, so a German
-        #    sentence tagged English came back with its pronouns deleted and the
-        #    cleanup reported a clean success.
-        # 3. A tag we cannot place stays exactly as it is. ``detect_text_language``
-        #    only knows de/en/es, so letting it overrule a "French" or "ja" tag
-        #    would relabel that dictation as whichever of the three it scored
-        #    highest on and then run THAT language's filler rules over it.
-        #    Keeping the tag makes the cleanup a documented no-op
-        #    (``reason="no_rules"``), which is the honest answer for ~95 of the
-        #    100 recognition languages this feature supports.
-        #
-        # A provider that reports nothing at all is the one case where the text
-        # is the only signal there is: ``[dictation].language = auto`` (the
-        # shipped default) plus a silent provider used to leave the cleanup with
-        # "no rules for this language", so every "äh" the user hesitated with
-        # shipped straight into the text while the setting said it was on.
-        # Everything resolves through the canonical resolver's helpers — no layer
-        # invents its own detection (CLAUDE.md §1).
-        if raw_text and not hung_up and pinned in ("", "auto"):
-            try:
-                from jarvis.core.turn_language import (
-                    detect_text_language,
-                    normalize_language_tag,
-                )
-
-                reported = str(effective_language or "").strip().lower()
-                tag_code = normalize_language_tag(reported)
-                detected = detect_text_language(raw_text)
-                if detected != "unknown" and (
-                    # Nothing to contradict: no tag at all, or one that says
-                    # "I could not tell".
-                    reported in ("", "auto", "unknown", "und")
-                    # A tag we CAN place, which the text disagrees with.
-                    or (tag_code != "unknown" and tag_code != detected)
-                ):
-                    log.debug(
-                        "dictation language resolved from the transcript: %s "
-                        "(the provider reported %r)",
-                        detected,
-                        language,
-                    )
-                    effective_language = detected
-            except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
-                log.debug("dictation language detection failed", exc_info=True)
+        # Which language the cleanup rules — and the polish pass — run in. The
+        # decision itself lives in ``resolve_dictation_language`` at module
+        # level, because the Restore route re-transcribes the same audio and has
+        # to reach the same answer. A hangup transcribed nothing, so there is no
+        # text to resolve from and the reported tag stands.
+        effective_language = resolve_dictation_language(
+            pinned=pinned,
+            reported=language,
+            text="" if hung_up else raw_text,
+        )
 
         if raw_text and not hung_up:
             try:
@@ -9120,6 +9445,23 @@ class SpeechPipeline:
                 log.warning("dictation cleanup failed; using the raw transcript",
                             exc_info=True)
                 cleaned = raw_text
+
+            # Punctuation repair runs UNCONDITIONALLY, next to the cleanup and
+            # deliberately outside its result. The two are not variants of one
+            # step: filler removal is a user preference that only applies to
+            # three languages, while the damage this repairs — "gesprochen....
+            # ist", a sentence restarting in lower case — is manufactured by our
+            # own segmented transcription and therefore exists in every
+            # dictation, in every language, whether or not a filler was found.
+            # Gating it on the cleanup's outcome (which is where it used to sit)
+            # is why the live history is full of stretches nothing ever touched.
+            try:
+                from jarvis.dictation.cleanup import tidy_transcript
+
+                cleaned = tidy_transcript(cleaned)
+            except Exception:  # noqa: BLE001 — a tidy bug never costs the words
+                log.debug("dictation tidy failed; using the untidied transcript",
+                          exc_info=True)
 
         # Two kinds of text must never reach a document, and both used to.
         #
@@ -9168,6 +9510,61 @@ class SpeechPipeline:
             except Exception:  # noqa: BLE001 — a broken guard never eats the text
                 log.debug("dictation delivery gate failed", exc_info=True)
                 rejected_detail = ""
+
+        # The generative polish pass — the second read-over that turns a
+        # transcript into written prose (punctuation, sentence structure, the
+        # capitalisation our own ~8 s segment boundaries destroy). No regex can
+        # do this, which is why the deterministic cleanup above closes only half
+        # the gap.
+        #
+        # It sits HERE, after the delivery gates and before the publish, for two
+        # reasons. After the gates, so we never spend a model call polishing
+        # boilerplate we are about to throw away. Before the publish, so the
+        # chat composer, the Jarvis Bar and the insertion all see the SAME
+        # string — a polished paste next to an unpolished composer is the kind
+        # of divergence nobody can explain afterwards. ``raw_text`` is untouched
+        # and still reaches the history, so the user can always recover the
+        # words they actually said.
+        #
+        # Fail-open twice over: ``polish_transcript`` itself never raises and
+        # returns the raw text on every non-``applied`` status, and this block
+        # additionally catches anything the import or the call surfaces. The
+        # import is INSIDE the function (AP-26) exactly like ``clean_transcript``
+        # above — nothing about the polish pass may reach the boot path.
+        polish_status = ""
+        polish_provider = ""
+        polish_latency_ms = 0
+        if cleaned.strip() and not hung_up:
+            try:
+                from jarvis.dictation.polish import polish_enabled, polish_transcript
+
+                if polish_enabled(cfg):
+                    result = await polish_transcript(
+                        cleaned,
+                        language=effective_language,
+                        cfg=cfg,
+                        protected_terms=self._dictation_protected_terms(),
+                        style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                    )
+                    cleaned = result.text
+                    polish_status = result.status
+                    polish_provider = result.provider
+                    polish_latency_ms = result.latency_ms
+                    log.info(
+                        "dictation polish: %s (%s, %d ms%s).",
+                        polish_status,
+                        polish_provider or "no provider",
+                        polish_latency_ms,
+                        f", {result.reason}" if result.reason else "",
+                    )
+                else:
+                    polish_status = "off"
+            except Exception:  # noqa: BLE001 — never lose the text to the polish pass
+                log.warning(
+                    "dictation polish failed; using the unpolished transcript",
+                    exc_info=True,
+                )
+                polish_status = "provider_error"
 
         # Publish the final transcript first: the chat composer and the bar
         # both listen for it, and they should update even if insertion fails.
@@ -9240,6 +9637,9 @@ class SpeechPipeline:
                     duration_s=duration_s,
                     removed_words=removed_words,
                     error=stt_error,
+                    polish_status=polish_status,
+                    polish_provider=polish_provider,
+                    polish_latency_ms=polish_latency_ms,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -9256,6 +9656,9 @@ class SpeechPipeline:
             cleanup_reason=cleanup_reason,
             stt_error=stt_error,
             audio=audio,
+            polish_status=polish_status,
+            polish_provider=polish_provider,
+            polish_latency_ms=polish_latency_ms,
         )
         return cleaned
 
@@ -9272,6 +9675,9 @@ class SpeechPipeline:
         cleanup_reason: str,
         stt_error: str | None,
         audio: bytes | None,
+        polish_status: str = "",
+        polish_provider: str = "",
+        polish_latency_ms: int = 0,
     ) -> None:
         """Write the history row and, when warranted, the audio sidecar.
 
@@ -9280,6 +9686,10 @@ class SpeechPipeline:
         needs, so nothing in here is allowed to change what the user sees. All
         of it is best-effort — a failed history write costs the history entry
         and nothing else.
+
+        The ``polish_*`` values are offered to the store and dropped when it
+        does not want them yet — see the ``TypeError`` branch below. A history
+        row is worth more than the three fields describing how it was formatted.
         """
         from jarvis.dictation.outcomes import is_recoverable
 
@@ -9298,8 +9708,7 @@ class SpeechPipeline:
             from jarvis.dictation.history import DictationHistory
 
             history = DictationHistory()
-            entry = await asyncio.to_thread(
-                history.add,
+            fields: dict[str, Any] = dict(
                 raw_text=raw_text,
                 text=cleaned,
                 language=language,
@@ -9312,6 +9721,25 @@ class SpeechPipeline:
                 max_entries=int(getattr(cfg, "history_max_entries", 200)),
                 retention_days=int(getattr(cfg, "history_retention_days", 30)),
             )
+            extra = {
+                "polish_status": polish_status,
+                "polish_provider": polish_provider,
+                "polish_latency_ms": polish_latency_ms,
+            }
+            try:
+                entry = await asyncio.to_thread(history.add, **fields, **extra)
+            except TypeError:
+                # The store predates these fields. Writing the row WITHOUT them
+                # is the right degradation: the user's words are the payload,
+                # and "how it was formatted" is metadata about the payload. The
+                # alternative — letting the TypeError fall into the handler
+                # below — silently drops the whole dictation from the history,
+                # which is a far worse answer to a version skew.
+                log.debug(
+                    "dictation history does not carry the polish fields yet; "
+                    "storing the row without them."
+                )
+                entry = await asyncio.to_thread(history.add, **fields)
         except Exception:  # noqa: BLE001 — history is never worth a failure
             log.debug("dictation history write failed", exc_info=True)
             return

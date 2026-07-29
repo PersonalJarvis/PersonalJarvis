@@ -14,6 +14,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     POST   /api/dictation/history/{id}/restore → un-discard, re-transcribe.
     GET    /api/dictation/settings  → the [dictation] block.
     PUT    /api/dictation/settings  → change one or more keys.
+    POST   /api/dictation/polish/test → dry-run the polish pass on a sample.
 
 Delete has two shapes on purpose. ``DELETE /history/{id}`` keeps hard-delete
 semantics because that is the contract anyone scripting ``jarvis api dictation``
@@ -117,17 +118,168 @@ def _as_int(value: Any, fallback: int) -> int:
         return fallback
 
 
-def _pinned_language(request: Request) -> str | None:
-    """``[dictation].language`` as an STT argument — ``None`` means "detect"."""
-    pinned = str(getattr(_dictation_cfg(request), "language", "auto") or "").strip()
-    lowered = pinned.lower()
-    return lowered if lowered and lowered != "auto" else None
+def _chosen_language(request: Request) -> str:
+    """``[dictation].language`` as an STT argument.
+
+    ``"auto"`` is returned as-is rather than as ``None``: the provider contract
+    treats an ABSENT argument as "no opinion", which falls back to whatever
+    ``[stt].language`` is pinned to, while an explicit ``"auto"`` forces
+    detection for that call. Dropping it here is what made a restore re-transcribe
+    in the recognition language instead of the spoken one (live bug 2026-07-28).
+    """
+    chosen = str(getattr(_dictation_cfg(request), "language", "auto") or "").strip()
+    return chosen.lower() or "auto"
+
+
+def _normalized_language(tag: str) -> str:
+    """One code per history row, resolved through the canonical helper.
+
+    ``de`` / ``en`` / ``es`` collapse to their code; ``auto`` / ``unknown`` /
+    ``und`` and the empty string all mean "not established" and store as ``""``.
+    Anything else — a language the shared resolver does not model — is KEPT,
+    lower-cased and reduced to its primary subtag. Coercing it would be worse
+    than the drift being fixed: relabelling a Japanese dictation as English is a
+    lie, and dropping the tag erases the only record of what was heard.
+    """
+    raw = str(tag or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered in ("auto", "unknown", "und"):
+        return ""
+    try:
+        from jarvis.core.turn_language import normalize_language_tag
+
+        code = normalize_language_tag(lowered)
+    except Exception:  # noqa: BLE001 — an unavailable resolver keeps the tag
+        return lowered.split("-")[0]
+    if code and code != "unknown":
+        return code
+    return lowered.split("-")[0]
+
+
+def _restore_stt(pipeline: Any) -> Any:
+    """The provider a Restore transcribes with — the DICTATION one, not voice.
+
+    The dictation lane holds its own instance: no ``[stt].bias_prompt`` (which
+    the config documents as a silence-hallucination amplifier) and its own
+    cross-family fallback chain. A restore that reached past it to the voice
+    provider would transcribe the same audio under different decoder priming
+    than the dictation that produced it, which is the one thing a "give me that
+    back" button must not do.
+
+    Falls back to the voice provider on an older pipeline object (and on the
+    duck-typed doubles the route tests build), so this can only ever add
+    correctness, never remove a working path.
+    """
+    if pipeline is None:
+        return None
+    builder = getattr(pipeline, "_dictation_stt", None)
+    if callable(builder):
+        try:
+            instance = builder()
+        except Exception as exc:  # noqa: BLE001 — fall through to the voice one
+            log.debug("dictation-specific STT unavailable for restore: %s", exc)
+        else:
+            if instance is not None:
+                return instance
+    return getattr(pipeline, "_utterance_stt", None)
+
+
+async def _format_restored_text(
+    raw: str, *, reported: str, request: Request
+) -> tuple[str, str]:
+    """Run a re-transcription through the delivery chain. ``(text, language)``.
+
+    A Restore that produced different text than the original delivery would be
+    a quiet lie about what the button does, so this applies the SAME three
+    steps, in the same order and with the same decisions: resolve the language,
+    remove fillers, repair the punctuation our own segment boundaries broke,
+    and — when it is switched on and reachable — polish. Each step owns its own
+    decision in its own module; nothing is re-derived here.
+
+    Fail-open at every step, like the delivery path: the user asked for their
+    words back, and a formatting bug must never be the reason they do not get
+    them.
+    """
+    from jarvis.dictation.cleanup import clean_transcript, tidy_transcript
+
+    cfg = _dictation_cfg(request)
+    pinned = str(getattr(cfg, "language", "auto") or "auto")
+    language = pinned if pinned.strip().lower() not in ("", "auto") else reported
+    try:
+        # The decision itself lives with the live delivery path, so the two
+        # cannot drift into cleaning the same recording under different rules.
+        # The pipeline module is already imported by the time we get here — a
+        # provider answered, which means a pipeline is running — so this costs
+        # nothing; the guard is for the case where it somehow is not, and a
+        # failed import must never turn a restore into a 500.
+        from jarvis.speech.pipeline import resolve_dictation_language
+
+        language = resolve_dictation_language(
+            pinned=pinned, reported=reported, text=raw
+        )
+    except Exception:  # noqa: BLE001 — fall back to pin-then-tag
+        log.debug("restore language resolution unavailable", exc_info=True)
+
+    text = raw
+    try:
+        outcome = clean_transcript(
+            raw,
+            language=language,
+            remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
+            max_removed_fraction=float(
+                getattr(cfg, "filler_max_removed_fraction", 0.25)
+            ),
+        )
+        text = outcome.text
+    except Exception:  # noqa: BLE001 — never lose the text to a cleanup bug
+        log.warning("restore cleanup failed; keeping the raw transcript", exc_info=True)
+    try:
+        text = tidy_transcript(text)
+    except Exception:  # noqa: BLE001 — a tidy bug never costs the words
+        log.debug("restore tidy failed; keeping the untidied text", exc_info=True)
+
+    try:
+        from jarvis.dictation.polish import polish_enabled, polish_transcript
+
+        if text.strip() and polish_enabled(cfg):
+            pipeline = _pipeline()
+            terms = ()
+            getter = getattr(pipeline, "_dictation_protected_terms", None)
+            if callable(getter):
+                try:
+                    terms = tuple(getter())
+                except Exception as exc:  # noqa: BLE001 — a guard input, not a gate
+                    log.debug("restore protected terms unavailable: %s", exc)
+            result = await polish_transcript(
+                text,
+                language=language,
+                cfg=cfg,
+                protected_terms=terms,
+                style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+            )
+            text = result.text
+            log.info(
+                "restore polish: %s (%s, %d ms).",
+                result.status,
+                result.provider or "no provider",
+                result.latency_ms,
+            )
+    except Exception:  # noqa: BLE001 — never lose the text to the polish pass
+        log.warning("restore polish failed; keeping the unpolished text", exc_info=True)
+
+    return text, language
 
 
 async def _retranscribe_from_audio(
-    entry: Any, *, language: str | None
-) -> tuple[str, str, str | None]:
-    """Transcribe a kept audio sidecar again. ``(text, language, detail)``.
+    entry: Any, *, language: str, request: Request
+) -> tuple[str, str, str, str | None]:
+    """Transcribe a kept audio sidecar again. ``(raw, text, language, detail)``.
+
+    ``raw`` is what the provider returned and ``text`` is what the delivery
+    chain makes of it — the same split the live path keeps, so the history row
+    still holds the words as heard while the user gets the formatted version.
 
     ``detail`` is a plain-English explanation of why nothing came back, or
     ``None`` when it did. Every failure path returns one instead of raising:
@@ -136,40 +288,39 @@ async def _retranscribe_from_audio(
     """
     from jarvis.dictation.audio import load_dictation_audio
 
-    pipeline = _pipeline()
-    # The pipeline's final-transcription provider is the right one to reuse:
-    # it is already wrapped with the user's spoken-vocabulary corrections, so a
-    # restore spells names the same way the original dictation would have.
-    stt = getattr(pipeline, "_utterance_stt", None) if pipeline is not None else None
+    stt = _restore_stt(_pipeline())
     if stt is None:
-        return "", "", _NO_STT_DETAIL
+        return "", "", "", _NO_STT_DETAIL
 
     # Reading and decoding a WAV is blocking work; it must not sit on the event
     # loop that a live voice turn shares.
     pcm = await asyncio.to_thread(load_dictation_audio, entry.audio_path)
     if not pcm:
-        return "", "", "The saved audio for this dictation could not be read."
+        return "", "", "", "The saved audio for this dictation could not be read."
 
     try:
-        if language is None:
+        try:
+            transcript = await stt.transcribe_pcm(pcm, language=language)
+        except TypeError:
+            # A provider that predates the keyword — the contract allows a bare
+            # ``transcribe_pcm(pcm)``. Falling back beats calling the user's
+            # language choice a failure (precedent: rolling_whisper_wake).
             transcript = await stt.transcribe_pcm(pcm)
-        else:
-            try:
-                transcript = await stt.transcribe_pcm(pcm, language=language)
-            except TypeError:
-                # A provider that predates the keyword — the contract allows a
-                # bare ``transcribe_pcm(pcm)``. Falling back beats calling the
-                # user's language pin a failure (precedent: rolling_whisper_wake).
-                transcript = await stt.transcribe_pcm(pcm)
     except Exception as exc:  # noqa: BLE001 — a failed restore is never a 500
         log.warning("dictation restore transcription failed: %s", exc, exc_info=True)
-        return "", "", f"Transcribing the saved audio failed: {exc}"
+        return "", "", "", f"Transcribing the saved audio failed: {exc}"
 
-    text = str(getattr(transcript, "text", "") or "").strip()
-    detected = str(getattr(transcript, "language", "") or "")
-    if not text:
-        return "", detected, "The saved audio produced no text — it may be silence."
-    return text, detected, None
+    raw = str(getattr(transcript, "text", "") or "").strip()
+    reported = str(getattr(transcript, "language", "") or "")
+    if not raw:
+        return (
+            "", "", reported,
+            "The saved audio produced no text — it may be silence.",
+        )
+    text, resolved = await _format_restored_text(
+        raw, reported=reported, request=request
+    )
+    return raw, text, resolved, None
 
 
 def _read_for_restore(entry_id: str) -> tuple[Any, bool]:
@@ -265,6 +416,48 @@ class SettingsBody(BaseModel):
     )
     audio_retention_days: int | None = None
     audio_max_files: int | None = None
+    # The polish pass. Every key here is also in ``DICTATION_SETTING_KEYS``, so
+    # it persists through this one route with no writer change — but FastAPI
+    # DROPS body keys a model does not declare, so a key missing from here is a
+    # setting the UI appears to save and silently loses on the next restart.
+    polish: bool | None = Field(
+        default=None,
+        description=(
+            "Let a fast model re-read the transcript and write it the way you "
+            "would have typed it: punctuation, sentence breaks, filler and "
+            "false starts removed. The words and the meaning are preserved, "
+            "and the raw transcript is always kept in the history. Falls back "
+            "to the plain transcript when no model is reachable."
+        ),
+    )
+    polish_provider: str | None = Field(
+        default=None,
+        description=(
+            "Which model family writes the polished text: auto (use whichever "
+            "key you already have) or a specific family"
+        ),
+    )
+    polish_model: str | None = Field(
+        default=None,
+        description="Model id for the chosen family; empty = that family's default",
+    )
+    polish_timeout_ms: int | None = Field(
+        default=None,
+        description=(
+            "How long the polish pass may take before the plain transcript is "
+            "delivered instead (200-5000 ms)"
+        ),
+    )
+    polish_max_input_chars: int | None = None
+    polish_min_words: int | None = None
+    polish_max_output_tokens: int | None = None
+    polish_temperature: float | None = None
+    polish_drift_max_shrink: float | None = None
+    polish_drift_max_growth: float | None = None
+    polish_style: str | None = Field(
+        default=None,
+        description="Register the polished text is written in",
+    )
     persist: bool = Field(
         default=True, description="Also write the change to jarvis.toml"
     )
@@ -587,16 +780,26 @@ async def restore_history_entry(entry_id: str, request: Request) -> dict[str, An
     detail: str | None = None
     retranscribed = False
     if not has_text:
-        text, detected, detail = await _retranscribe_from_audio(
-            entry, language=_pinned_language(request)
+        raw, text, detected, detail = await _retranscribe_from_audio(
+            entry, language=_chosen_language(request), request=request
         )
         if text:
             retranscribed = True
             changes.update(
-                raw_text=text,
+                # The provider's words and the formatted words are stored
+                # separately, exactly as a live dictation stores them: the raw
+                # column is what makes "give me the text I actually said"
+                # answerable after a polish pass has run.
+                raw_text=raw,
                 text=text,
                 word_count=count_words(text),
-                language=detected or entry.language,
+                # Normalized rather than stored verbatim: the same recording
+                # transcribed twice can come back tagged "German" once and "de"
+                # the next time, and a consumer doing ``{"de": ...}.get(lang)``
+                # misses on the first. The store normalizes on write as well —
+                # this is the belt to that brace, and it also keeps the value
+                # the RESPONSE carries consistent with what was resolved.
+                language=_normalized_language(detected or entry.language),
                 # The recorded failure is over — but the OUTCOME stays what it
                 # was. The dictation really did fail to reach the window the
                 # user was typing in; rewriting it to "inserted" would invent
@@ -673,13 +876,14 @@ async def get_settings(request: Request) -> dict[str, Any]:
     the cost of getting it wrong here is a recorder that happily captures a key
     the actuator cannot send, which then fails silently at paste time.
     """
-    from jarvis.core.config import DICTATION_LANGUAGES
+    from jarvis.core.config import DICTATION_LANGUAGES, POLISH_STYLES
     from jarvis.core.config_writer import DICTATION_SETTING_KEYS
     from jarvis.dictation.insert import (
         CUSTOM_CHORD_KEYS,
         CUSTOM_CHORD_MODIFIERS,
         PASTE_CHORDS,
     )
+    from jarvis.dictation.polish_client import POLISH_FAMILIES
 
     dictation = _dictation_cfg(request)
     values = {key: getattr(dictation, key, None) for key in DICTATION_SETTING_KEYS}
@@ -691,6 +895,12 @@ async def get_settings(request: Request) -> dict[str, Any]:
             "insert_method": ["clipboard", "type"],
             "paste_chord": ["auto", *PASTE_CHORDS],
             "language": list(DICTATION_LANGUAGES),
+            # Both derived from their single source of truth rather than typed
+            # out here: a hand-mirrored list is the AP-4 drift trap, and the
+            # cost of getting it wrong is a dropdown offering a value the
+            # backend rejects (or hiding one it accepts).
+            "polish_style": list(POLISH_STYLES),
+            "polish_provider": ["auto", *(family.id for family in POLISH_FAMILIES)],
         },
         "custom": {
             "paste_chord": {
@@ -791,6 +1001,14 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         try:
             pipeline._dictation_cfg = dictation
             pipeline._dictation_max_s = float(validated.max_seconds)
+            # The dictation lane caches its own STT instance, built from this
+            # config (its bias prompt, its fallback chain). Dropping it here is
+            # what makes a change take effect on the next press instead of on
+            # the next restart — the difference between a setting and a setting
+            # that appears to work.
+            reset = getattr(pipeline, "_reset_dictation_stt", None)
+            if callable(reset):
+                reset()
             if "mode" in updates:
                 pipeline._dictate_mode = validated.mode
                 # The mode decides whether the binding wants both key edges,
@@ -809,4 +1027,80 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         },
         "persisted": persisted,
         "applied_live": applied_live,
+    }
+
+
+#: The transcript the polish dry-run sends. Deliberately shaped like the real
+#: defect and not like a demo sentence: two segments joined mid-thought, the
+#: recognizer's own trailing ellipsis, a lower-case restart, a filler, a false
+#: start the speaker corrected, and a spoken number. English, because it is a
+#: fixed artifact in the repo rather than user content — the pass itself works
+#: in whatever language it is handed.
+_POLISH_SAMPLE = (
+    "so um i think we should ship the report on tuesday ... actually "
+    "wednesday and send it to three people on the team then we can talk "
+    "about the rest tomorrow"
+)
+
+
+@router.post("/polish/test")
+async def test_polish(request: Request) -> dict[str, Any]:
+    """Run one fixed sample through the resolved polish chain and report it.
+
+    The honest answer to "is this switched on, who answers, and how long does it
+    cost me" — which nothing else can give, because the pass is invisible by
+    design when it works and silently falls back to the raw text when it does
+    not. It uses the live ``[dictation]`` config, so what it measures is what a
+    real dictation would get, and it deliberately does NOT persist anything or
+    touch the history: it is a probe, not an action, so it carries no
+    destructive-route marker.
+
+    Never 500s. A host with no key in any family gets ``status: unavailable``
+    and the sample back unchanged — the same answer a dictation would get, and
+    the honest one on an install that never configured a text model.
+    """
+    from jarvis.dictation.polish import polish_enabled, polish_transcript
+
+    cfg = _dictation_cfg(request)
+    if not polish_enabled(cfg):
+        # Reported rather than refused: "you switched it off" is a complete
+        # answer to "why is my dictation not being polished", and a 409 here
+        # would make the settings screen render an error for a working config.
+        return {
+            "status": "off",
+            "provider": "",
+            "model": "",
+            "latency_ms": 0,
+            "reason": "",
+            "sample_in": _POLISH_SAMPLE,
+            "sample_out": _POLISH_SAMPLE,
+        }
+
+    pipeline = _pipeline()
+    terms: tuple[str, ...] = ()
+    getter = getattr(pipeline, "_dictation_protected_terms", None)
+    if callable(getter):
+        try:
+            terms = tuple(getter())
+        except Exception as exc:  # noqa: BLE001 — a guard input, never a gate
+            log.debug("polish test protected terms unavailable: %s", exc)
+
+    result = await polish_transcript(
+        _POLISH_SAMPLE,
+        language="en",
+        cfg=cfg,
+        protected_terms=terms,
+        style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+    )
+    return {
+        "status": result.status,
+        "provider": result.provider,
+        "model": result.model,
+        "latency_ms": result.latency_ms,
+        # Machine-readable cause when a guard or the transport refused. Shown
+        # next to the status because "rejected_drift" without "lost_term" tells
+        # a user nothing they can act on.
+        "reason": result.reason,
+        "sample_in": _POLISH_SAMPLE,
+        "sample_out": result.text,
     }

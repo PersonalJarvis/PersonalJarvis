@@ -389,6 +389,27 @@ def describe_target() -> TargetReport:
     return TargetReport(can_insert=True, reason="", detail="")
 
 
+def _word_count(text: str) -> int:
+    """How many words *text* holds, answered by the ONE shared counter.
+
+    ``jarvis.dictation.cleanup.count_words`` is what the history rows, the
+    statistics sidecar and the cleanup's destruction ceiling all count with; a
+    second word regex living here would stop agreeing with them the first time
+    either is touched. Imported lazily and degrading to "there is something" on
+    any failure, so a problem in the counter can never turn a working paste into
+    a refusal — this guard exists to stop a stray full stop, not to become a new
+    way of losing text.
+    """
+    try:
+        from jarvis.dictation.cleanup import count_words
+
+        return count_words(text)
+    except Exception:  # noqa: BLE001 — a missing counter is not a reason to refuse
+        log.debug("word count unavailable; treating the text as insertable",
+                  exc_info=True)
+        return 1
+
+
 def insert_text(
     text: str,
     *,
@@ -408,7 +429,13 @@ def insert_text(
     Either way the text is written to the clipboard FIRST, so every failure
     path below degrades to "it is one Ctrl+V away" rather than to silence.
     """
-    if not text or not text.strip():
+    # "Empty" has to mean "holds no WORDS", not "holds no characters". A live
+    # dictation once delivered a bare "." into a document and then restored the
+    # clipboard over it, which cost the user both the stray character and
+    # whatever they had copied before. The pipeline gates on the same rule
+    # before it ever gets here; this is the floor under every other caller,
+    # including the ones that do not exist yet.
+    if not text or not text.strip() or _word_count(text) == 0:
         return InsertResult(
             status="unavailable",
             detail="Nothing was dictated.",
