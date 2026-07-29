@@ -18,7 +18,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ProviderCard } from "@/components/providers/ProviderTierSection";
-import type { ProviderDescriptor } from "@/hooks/useProviders";
+import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
+import { useEventStore } from "@/store/events";
 
 interface Call {
   url: string;
@@ -26,7 +27,16 @@ interface Call {
   body: string | null;
 }
 
-function installFetchMock(status = 200): Call[] {
+/** The verdict the verification probe returns; `ok` unless a test overrides it. */
+const OK_TEST: ProviderTestResult = {
+  provider: "openai-polish",
+  status: "ok",
+  detail: "Answered in 300 ms.",
+  latency_ms: 300,
+  integration_ok: true,
+};
+
+function installFetchMock(testResult: ProviderTestResult = OK_TEST, status = 200): Call[] {
   const calls: Call[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -35,17 +45,26 @@ function installFetchMock(status = 200): Call[] {
       method: (init?.method ?? "GET").toUpperCase(),
       body: (init?.body as string | undefined) ?? null,
     });
+    const body = url.includes("/test") ? testResult : {};
     return {
       ok: status >= 200 && status < 300,
       status,
       statusText: status >= 200 && status < 300 ? "OK" : "ERR",
-      json: async () => ({}),
-      text: async () => "{}",
+      json: async () => body,
+      text: async () => JSON.stringify(body),
     } as Response;
   });
   (globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch;
   return calls;
+}
+
+/** Toast messages of one kind currently in the store. */
+function toastsOf(kind: string): string[] {
+  return useEventStore
+    .getState()
+    .toasts.filter((toast) => toast.kind === kind)
+    .map((toast) => toast.message);
 }
 
 function dictationCard(over: Partial<ProviderDescriptor> = {}): ProviderDescriptor {
@@ -150,5 +169,104 @@ describe("ProviderCard — dictation polish activation", () => {
     // The realtime/STT/TTS switch routes rebuild the live voice pipeline. A
     // wording preference must never reach them.
     expect(calls.some((c) => c.url.includes("/switch"))).toBe(false);
+  });
+});
+
+describe("ProviderCard — a switched-to polish provider proves it works", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEventStore.setState({ toasts: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("verifies the provider after switching to it", async () => {
+    const calls = installFetchMock();
+
+    renderCard(dictationCard());
+    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+
+    // A stored key is not a working provider, and this pass is INVISIBLE when
+    // it fails — it just delivers the raw transcript. Without this probe an
+    // out-of-credits account is indistinguishable from a healthy one.
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) => c.method === "POST" && c.url.includes("/api/providers/openai-polish/test"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("says what went wrong when the provider cannot answer", async () => {
+    installFetchMock({
+      provider: "openai-polish",
+      status: "no_credits",
+      detail: "OpenAI polish request returned HTTP 429: you exceeded your quota",
+      latency_ms: 235,
+      integration_ok: true,
+    });
+
+    renderCard(dictationCard());
+    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+
+    await waitFor(() => {
+      const warnings = toastsOf("warning");
+      expect(warnings.length).toBe(1);
+      // The backend sentence is passed through verbatim — it already names the
+      // cause and the fix, which a generic "does not work" would throw away.
+      expect(warnings[0]).toContain("exceeded your quota");
+    });
+  });
+
+  it("stays quiet when the provider answers", async () => {
+    installFetchMock();
+
+    renderCard(dictationCard());
+    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+
+    await waitFor(() => expect(toastsOf("success").length).toBe(1));
+    expect(toastsOf("warning")).toEqual([]);
+  });
+
+  it("does not let a broken verification undo the switch", async () => {
+    // The probe is a check, never a gate: the user is entitled to pin a
+    // provider even when the verification itself cannot run. A probe that
+    // fails for its OWN reasons must stay quieter than the switch it checks.
+    const calls: Call[] = [];
+    const failingProbe = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({
+        url,
+        method: (init?.method ?? "GET").toUpperCase(),
+        body: (init?.body as string | undefined) ?? null,
+      });
+      if (url.includes("/test")) throw new Error("network down");
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({}),
+        text: async () => "{}",
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      failingProbe as unknown as typeof fetch;
+
+    renderCard(dictationCard());
+    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) => c.method === "PUT" && c.url.startsWith("/api/dictation/settings"),
+        ),
+      ).toBe(true);
+    });
+    // The switch stands and reports success; the dead probe raises no alarm.
+    expect(toastsOf("success").length).toBe(1);
+    expect(toastsOf("warning")).toEqual([]);
   });
 });

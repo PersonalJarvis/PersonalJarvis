@@ -80,15 +80,36 @@ def test_vocabulary_is_exactly_four() -> None:
 async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
     spec, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The generic guard covers every Brain, TTS, STT, and Realtime card."""
+    """The generic guard covers every Brain, TTS, STT, Realtime and wording card.
+
+    What is under test is the BINDING (a tier's health names the exact provider
+    it came from), so every way a card can be judged is stubbed healthy here:
+    the shared probe, the on-device readiness check that answers for keyless
+    cards, and the wording probe that owns the dictation tier. A card that
+    reached a real provider instead would make this a connectivity test of the
+    machine it runs on.
+    """
+    from jarvis.dictation import polish_probe
     from jarvis.ui.web import provider_routes
 
     monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
+    # On-device cards ask the disk whether engine + weights are really there.
+    # On a machine that never installed them that is an honest "needs setup" —
+    # true, and not what this test is about.
+    monkeypatch.setattr(
+        provider_routes,
+        "_local_runtime_payload",
+        lambda _spec: {"ready": True, "detail": "installed"},
+    )
 
     async def _probe(selected, cfg, **kwargs):
         return SimpleNamespace(status="ok", detail="")
 
+    async def _polish_probe(family, cfg, **kwargs):
+        return SimpleNamespace(status="ok", detail="")
+
     monkeypatch.setattr(provider_test, "run_provider_test", _probe)
+    monkeypatch.setattr(polish_probe, "probe_polish_family", _polish_probe)
 
     result = await provider_routes._tier_section_health(SimpleNamespace(), spec)
 
