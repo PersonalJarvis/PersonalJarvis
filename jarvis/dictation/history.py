@@ -283,6 +283,7 @@ class DictationHistory:
         error: str | None = None,
         max_entries: int = 200,
         retention_days: int = 30,
+        **metadata: Any,
     ) -> DictationEntry | None:
         """Record one dictation and prune. ``None`` when nothing was stored.
 
@@ -290,6 +291,18 @@ class DictationHistory:
         the user lost something (``failed`` / ``cancelled`` / ``empty``) — that
         row is the only place a later Restore can start from. Without it, the
         worst failure this feature has is also its most invisible one.
+
+        Any surplus keyword lands in :attr:`DictationEntry.metadata` instead of
+        raising ``TypeError``. That is not laxity, it is the fix for a real
+        defect: the polish pass passed ``polish_status`` / ``polish_provider`` /
+        ``polish_latency_ms`` here, the strict signature rejected them, and the
+        caller's ``except TypeError`` fell back to writing the row WITHOUT them.
+        The result was a generative pass that could rewrite a user's words while
+        leaving no record anywhere of whether it had run, which provider
+        answered, or which guard fired — the one question a bug report about
+        wrong words has to be able to answer. ``metadata`` is deliberately kept
+        out of :meth:`DictationEntry.to_dict`: it is diagnostic detail for the
+        sidecar, not part of the API shape.
         """
         from jarvis.dictation.outcomes import is_recoverable
 
@@ -314,6 +327,7 @@ class DictationHistory:
                 else count_words(text or raw_text)
             ),
             error=(str(error) if error else None),
+            metadata={k: v for k, v in metadata.items() if v not in ("", None)},
         )
         try:
             with self._lock:

@@ -929,6 +929,22 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
        cleanup a documented no-op (``reason="no_rules"``), which is the honest
        answer for ~95 of the 100 recognition languages this feature supports.
 
+    **The answer is a CODE whenever one exists.** A tag we can place comes back
+    as ``de`` / ``en`` / ``es``, never as the provider's own spelling of it.
+    This is not cosmetic. The cloud Whisper APIs answer with the language NAME
+    ("German"), every consumer downstream keys off this string, and the polish
+    pass's rare-token guard — the one that stops a formatter from replacing
+    words the user actually said — looks its vocabulary up by two-letter code
+    and silently disables itself on anything else. Returning the raw tag
+    therefore armed that guard only when the provider had been WRONG (the
+    detector then supplied a real code) and disarmed it on every dictation the
+    provider got RIGHT, which is the overwhelming majority. Live evidence:
+    "kannst du es bitte mein download video abspeichern" was delivered as
+    "Kannst du es bitte herunterladen?" — three content words replaced, no
+    guard fired.  # i18n-allow: verbatim German transcript under test
+    A tag with no code stays verbatim, so the honest no-op in point 3 is
+    unchanged.
+
     A provider that reports nothing at all is the one case where the text is the
     only signal there is: ``[dictation].language = auto`` (the shipped default)
     plus a silent provider used to leave the cleanup with "no rules for this
@@ -942,8 +958,6 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
     if pin not in ("", "auto"):
         return pin
     tag = str(reported or "")
-    if not text:
-        return tag
     try:
         from jarvis.core.turn_language import (
             detect_text_language,
@@ -952,6 +966,10 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
 
         lowered = tag.strip().lower()
         tag_code = normalize_language_tag(lowered)
+        # No text to reason from (a hangup transcribed nothing): the tag is the
+        # only signal there is, but it still leaves as a code when it has one.
+        if not text:
+            return tag_code if tag_code != "unknown" else tag
         detected = detect_text_language(text)
         if detected != "unknown" and (
             # Nothing to contradict: no tag at all, or one that says "I could
@@ -967,6 +985,12 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
                 tag,
             )
             return detected
+        # The tag stands — as a CODE when it has one. Reaching this line is the
+        # NORMAL case (the provider agreed with the text), which is exactly why
+        # handing the provider's own spelling on from here disarmed the guards
+        # on nearly every dictation.
+        if tag_code != "unknown":
+            return tag_code
     except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
         log.debug("dictation language detection failed", exc_info=True)
     return tag

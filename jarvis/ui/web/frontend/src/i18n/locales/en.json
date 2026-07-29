@@ -2028,6 +2028,12 @@
       "autostart_label": "Start Jarvis automatically at login"
     }
   },
+  "language_select": {
+    "search": "Search languages",
+    "empty": "No language matches your search.",
+    "group_common": "Common languages",
+    "group_all": "All languages"
+  },
   "languages_view": {
     "title": "Languages",
     "subtitle": "Choose the UI language and the language {name} replies in.",

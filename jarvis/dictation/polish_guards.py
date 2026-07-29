@@ -40,7 +40,7 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Final
 
-from jarvis.core.turn_language import detect_text_language
+from jarvis.core.turn_language import detect_text_language, normalize_language_tag
 from jarvis.dictation.cleanup import count_words
 from jarvis.dictation.polish_prompt import RAW_CLOSE_DELIMITER, RAW_OPEN_DELIMITER
 
@@ -257,9 +257,30 @@ def _token_haystack(text: str) -> str:
 
 
 def _language_key(language: object) -> str:
-    """The two-letter key into :data:`_COMMON_WORDS`, or ``""`` when unusable."""
-    value = str(language or "").strip().lower().replace("_", "-").split("-", 1)[0]
-    return value if value in _COMMON_WORDS else ""
+    """The two-letter key into :data:`_COMMON_WORDS`, or ``""`` when unusable.
+
+    Resolved through the canonical :func:`normalize_language_tag` rather than by
+    slicing the string, because the ways this argument arrives spelled are not
+    ours to control: the cloud Whisper APIs answer with the language NAME
+    ("German", "English"), and a key derived by slicing turns that into
+    ``"german"``, misses the table, and returns ``""`` — which does not raise,
+    does not log, and silently disables the rare-token half of
+    :func:`drift_reason` on the exact dictations where the recognizer was RIGHT.
+    A guard whose failure mode is looking like it passed has to be robust to its
+    caller, so the normalisation lives here as well as at the caller.
+
+    Anything the resolver cannot place still yields ``""``: a language we hold no
+    frequency table for genuinely cannot be reasoned about, and that no-op is
+    documented in this module's header.
+    """
+    raw = str(language or "").strip()
+    if not raw:
+        return ""
+    direct = raw.lower().replace("_", "-").split("-", 1)[0]
+    if direct in _COMMON_WORDS:
+        return direct
+    code = normalize_language_tag(raw.lower())
+    return code if code in _COMMON_WORDS else ""
 
 
 def rare_tokens(text: str, *, language: str) -> frozenset[str]:
