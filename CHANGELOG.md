@@ -9,6 +9,14 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] — 2026-07-29
+
+This is the first public release since 1.1.5 and it is a large one: a
+voice-driven workspace for coding agents, a personal knowledge base, voice
+that can run entirely offline, and a dictation pass that tidies your wording.
+
 ### Added
 
 - **Voice input and voice output can now run entirely on your own machine — no
@@ -66,23 +74,6 @@ versioning per [SemVer](https://semver.org/).
   through your own setup so you can see the before and after before trusting it
   with your words.
 
-### Fixed
-
-- A dictation that lost part of its audio no longer reports itself as a
-  success. It is marked as partly transcribed, the recording is kept, and the
-  history offers to transcribe it again.
-
----
-
-## [1.6.0] — 2026-07-27
-
-> **On the version number.** This release jumps from 1.1.5 to 1.6.0. The
-> numbers in between were used by an internal development line that was never
-> published, and reusing them would have made two different builds share a
-> name. Nothing is missing — 1.6.0 follows directly on 1.1.5.
-
-### Added
-
 - **Agentic IDE — a voice-driven workspace for coding agents.** Open several
   named terminal panes, each running a different coding CLI (Codex, Claude,
   Gemini and others), then split, drag and resize them freely. Address a pane
@@ -127,6 +118,17 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- A dictation that lost part of its audio no longer reports itself as a
+  success. It is marked as partly transcribed, the recording is kept, and the
+  history offers to transcribe it again.
+- **Dictated text lands where you were actually typing.** The transcript now
+  carries the target the pipeline resolved, so a dictation meant for another
+  program is no longer written into whatever Jarvis field last had focus —
+  invisibly, in a section you were not even looking at.
+- **A finished terminal pane now rings the bell.** The notification was
+  anchored on an interrupt hint that never appears in a real pane, so a pane
+  that had been waiting for you announced nothing. It now runs off a live
+  clock, and a pane that ends says why it ended.
 - **A skill imported from a link no longer activates itself.** Imported
   skills are stored as drafts and stay inactive until explicitly enabled, and
   a downloaded file can no longer declare itself active.
