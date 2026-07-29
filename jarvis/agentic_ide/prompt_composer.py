@@ -551,6 +551,7 @@ async def _compose_once(
     context,  # noqa: ANN001 - Awaitable[tuple[dict[str, str], str]]
     notify: Callable[[str, str], None],
     attachments: list,
+    conversation: Sequence[tuple[str, str]],
 ) -> str:
     """Wait for the file material, then make the one writing call.
 
@@ -586,6 +587,7 @@ async def _compose_once(
             skeletons=outlines,
             house_rules=house_rules,
             attachments=attachments,
+            conversation=conversation,
         ),
         on_first_delta=lambda: notify(
             STAGE_DRAFTING,
@@ -639,6 +641,7 @@ async def compose(
     brain=None,  # noqa: ANN001 - Brain, avoid an import cycle
     on_progress: ProgressSink | None = None,
     attachments: Sequence | None = None,
+    conversation: Sequence[tuple[str, str]] | None = None,
 ) -> ComposedPrompt:
     """Build the prompt for ``terminal_name`` out of what the user said.
 
@@ -653,6 +656,15 @@ async def compose(
     brief, and the deterministic prompt lists them, because the model that
     described the picture and the model that writes prose are separate
     providers and having one without the other is ordinary.
+
+    ``conversation`` is the last few turns as ``(role, text)`` pairs. A spoken
+    instruction points back into them constantly ("above all points two and
+    three"), and the agent receives the brief alone — so without them the
+    writer has nothing to resolve the reference against and forwards it
+    verbatim into a prompt nobody can act on (live 2026-07-29). Only the model
+    layer uses
+    them: the deterministic prompt states what the user said and never claims
+    to have understood more than the sentence.
 
     ``on_progress`` receives a ``ComposeNotice`` at each beat of the
     composition; left None they are printed (see ``print_notice``). The typed
@@ -670,6 +682,7 @@ async def compose(
     said = (utterance or "").strip()
     base_instruction = _clean_speech(instruction or said) or (instruction or said).strip()
     attached = list(attachments or [])
+    spoken_before = tuple(conversation or ())
     if not said:
         return ComposedPrompt(text="", composed_by="raw", note="empty instruction")
 
@@ -746,6 +759,7 @@ async def compose(
                 context=context_task,
                 notify=notify,
                 attachments=attached,
+                conversation=spoken_before,
             ),
             timeout=COMPOSE_TIMEOUT_S,
         )

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -128,9 +129,31 @@ _SYSTEM_PROMPT = (
 
 
 def _user_block(
-    *, instruction: str, count: int, folder: str, areas: list[str], profile: list[str]
+    *,
+    instruction: str,
+    count: int,
+    folder: str,
+    areas: list[str],
+    profile: list[str],
+    conversation: Sequence[tuple[str, str]] = (),
 ) -> str:
-    lines = [
+    """What the planner is handed. The conversation goes FIRST, and it matters.
+
+    The goal arrives as one spoken sentence, and a spoken sentence points back
+    at what was said before it — "split points two and three between them". A
+    planner that only sees the sentence divides a goal it cannot read, so the
+    turns it came out of are given ahead of it.
+    """
+    from . import conversation as conversation_module
+
+    lines: list[str] = []
+    spoken = conversation_module.render(conversation)
+    if spoken:
+        lines.append(
+            "The conversation this order came out of (oldest first; the goal "
+            "below refers back into it):\n" + spoken + "\n"
+        )
+    lines += [
         f"Overall goal: {instruction}",
         f"Number of agents: {count}",
         f"Repository: {Path(folder).name}",
@@ -295,12 +318,17 @@ async def split(
     session: Any,
     count: int,
     brain: Any = None,
+    conversation: Sequence[tuple[str, str]] | None = None,
     timeout_s: float = SPLIT_TIMEOUT_S,
 ) -> WorkSplit:
     """Divide ``instruction`` across ``count`` agents.
 
     ``brain`` pins the planning model explicitly; left None a quality-tier model
     is resolved and the deterministic split takes over when none is reachable.
+
+    ``conversation`` is the recent turns, for the same reason the composer takes
+    them: "split points two and three between you" names the work by pointing
+    at an answer that is not in the sentence.
 
     Never raises. Every failure path lands on the directory split, because
     "the fleet got a coarser plan" is a far better outcome than "your five
@@ -362,6 +390,7 @@ async def split(
                     folder=folder,
                     areas=areas,
                     profile=profile_lines,
+                    conversation=tuple(conversation or ()),
                 ),
             ),
             timeout=timeout_s,

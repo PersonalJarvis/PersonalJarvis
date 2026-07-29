@@ -14,6 +14,24 @@ made the receiving agent behave *worse*:
   Enumerated steps measurably REDUCE output quality on Fable 5, and leaner
   system prompts score higher on agentic coding evaluations while costing a
   fraction of the tokens.
+* **The handover is not the work.** The instruction arrives as speech aimed at
+  Jarvis, so it names the handover as well as the task: "prompt T2 and T3 to
+  …", "write Alex the prompt for …", "tell Nova it should …". THIS BRIEF IS
+  THAT PROMPT. Measured live 2026-07-29, on an order that translates as "write
+  the prompt for T2 and T3, and make sure that …": the brief's ``## Task`` read
+  "Create or update the system prompts for terminals T2 and T3" — two coding
+  agents were sent off to write prompts for themselves, and the analysis the
+  user actually asked for reached nobody. The work is what follows the
+  handover; writing a prompt is the task only when the user is talking about
+  prompt TEXT that lives in the repository.
+* **Resolve what the agent cannot see.** A spoken instruction refers back into
+  the conversation it came out of — "points two and three", "the second one",
+  "do that for the wake path too" — and the agent receives the brief alone.
+  The same live composition wrote "Ensure that points 2 and 3 from the current
+  context are specifically incorporated": a pointer to something the recipient
+  can never open, which is worth exactly as much as writing nothing. The
+  recent turns travel with the instruction (``conversation``) so the reference
+  can be replaced by what it stands for.
 * **Full specification up front.** Complete does not mean prescriptive: the
   agent should not have to come back with questions, which is a statement
   about the CONTEXT it was handed, not about how many steps were dictated.
@@ -51,7 +69,9 @@ resolved output language.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
+from . import conversation as conversation_module
 from .task_kind import (
     KIND_IMPLEMENT,
     KIND_INVESTIGATE,
@@ -121,6 +141,24 @@ implementation. Which approach, which mechanism, which order are its decisions, 
 made against code it can see and you cannot; a solution you guess at gets built \
 even when it is wrong or already there. Say what must be true when it is done, \
 and leave the route open.
+
+The user is SPEAKING to Jarvis about this agent, so their words name the \
+handover as well as the work: "prompt T2 and T3 to ...", "write Alex the prompt \
+for ...", "tell Nova it should ...". THE BRIEF YOU ARE WRITING IS THAT PROMPT. \
+Never make prompt-writing the agent's task - a `## Task` reading "create the \
+prompt for T2" sends the agent off to do your job and loses the one thing the \
+user asked for. The work is whatever the sentence asks for AROUND the handover. \
+(The exception is narrow and unmistakable: the user is talking about prompt \
+text that lives in the repository as a file.)
+
+The brief is ALL the agent gets. It sees no conversation, no earlier answer, no \
+"context" of any kind, so anything the user said by pointing back - "points two \
+and three", "the second option", "what you just suggested", "that one" - must \
+be REPLACED by what it stands for, spelled out from the conversation you were \
+given. A brief that forwards the pointer instead ("incorporate points 2 and 3 \
+from the current context") gives the agent nothing it can act on. If a \
+reference cannot be resolved from what you were given, write what IS known and \
+leave the unresolvable part out rather than pointing at it.
 
 Markdown, exactly this skeleton:
 
@@ -299,12 +337,20 @@ def user_block(
     skeletons: dict[str, str],
     house_rules: str,
     attachments: list | None = None,
+    conversation: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Everything the composer knows, laid out for one model call.
 
     Longform data first, the request last: the documentation measures up to a
     30 % quality gain from putting the query at the end for multi-document
     inputs, and the file outlines are exactly that.
+
+    ``conversation`` is the handful of turns the instruction came out of, and it
+    sits directly in front of the instruction rather than with the longform
+    data: it is not reference material, it is what the sentence's pronouns and
+    ordinals point AT. Without it "above all points two and three" is
+    unresolvable and travels into the brief as a pointer the agent cannot
+    follow (live 2026-07-29).
     """
     parts: list[str] = []
 
@@ -339,6 +385,14 @@ def user_block(
         "CANDIDATE FILES (repo-relative; use only these in @ references)\n"
         + candidate_block
     )
+
+    spoken = conversation_module.render(conversation or ())
+    if spoken:
+        parts.append(
+            "THE CONVERSATION THIS CAME OUT OF (oldest first; the agent will "
+            "never see any of it, so resolve every back-reference against it)\n"
+            + spoken
+        )
 
     parts.append(
         f"The user is talking to the coding agent {agent_display} running in a "

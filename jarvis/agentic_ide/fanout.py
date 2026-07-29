@@ -149,6 +149,7 @@ async def deliver(
     utterance: str,
     instruction: str | None = None,
     assignments: Mapping[str, str] | None = None,
+    conversation: Sequence[tuple[str, str]] | None = None,
     compose: Callable[..., Awaitable[Any]] | None = None,
     send: Callable[[str, str], Awaitable[Any]] | None = None,
     limit: int = DEFAULT_CONCURRENCY,
@@ -160,6 +161,11 @@ async def deliver(
     of all of them racing on the same one. Without it every pane gets
     ``instruction`` (or the raw utterance), which is the right behaviour for
     "Iris and Bruno, both of you analyse the codebase".
+
+    ``conversation`` is the recent turns the order came out of, passed to every
+    pane's composition so a back-reference ("above all points two and three")
+    can be resolved into what it names. It is the same for all of them: they
+    were all addressed by the same sentence.
 
     ``compose`` and ``send`` are injectable so this can be tested without a live
     PTY or a provider; production leaves them at their defaults.
@@ -242,6 +248,7 @@ async def deliver(
                     terminal_name=term.name,
                     agent_display=AGENT_DISPLAY.get(term.agent, term.agent),
                     instruction=own_instruction,
+                    conversation=tuple(conversation or ()),
                 )
             except Exception as exc:  # noqa: BLE001 - one pane must not sink the fleet
                 log.warning(

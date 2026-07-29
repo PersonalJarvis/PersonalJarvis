@@ -6042,6 +6042,7 @@ class BrainManager:
                     found.instruction or user_text,
                     session=session,
                     count=len(names),
+                    conversation=self._agentic_ide_conversation(user_text),
                 )
                 assignments = {
                     name: item.task
@@ -6078,6 +6079,32 @@ class BrainManager:
             )
             return f"{verdict} {question}" if verdict else question
         return verdict
+
+    def _agentic_ide_conversation(self, utterance: str) -> tuple[tuple[str, str], ...]:
+        """The turns an addressed-pane instruction came out of, for the composer.
+
+        A spoken order to a pane points back into the conversation constantly —
+        "above all points two and three", "do that for the wake path too" — and
+        the coding agent receives the composed brief and nothing else. Live
+        2026-07-29 that gap produced a brief instructing two agents to
+        "incorporate points 2 and 3 from the current context": a pointer to
+        something they can never open, so the substance of the order reached
+        neither of them.
+
+        Read through ``_active_turn_history`` rather than ``self._history``
+        directly, because a realtime call keeps its own bounded context and
+        hands it to the delegated turn — on that path the shared buffer is
+        empty and this is the ONLY place the previous turns exist.
+        """
+        from jarvis.agentic_ide import conversation as ide_conversation
+
+        try:
+            return ide_conversation.from_messages(
+                self._active_turn_history(), exclude=utterance
+            )
+        except Exception:  # noqa: BLE001 - context is a bonus, never the turn
+            log.debug("Agentic IDE: conversation context unavailable", exc_info=True)
+            return ()
 
     async def _deliver_agentic_ide_prompt(
         self,
@@ -6121,6 +6148,7 @@ class BrainManager:
                 utterance=utterance,
                 instruction=instruction,
                 assignments=assignments,
+                conversation=self._agentic_ide_conversation(utterance),
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)
@@ -6291,6 +6319,9 @@ class BrainManager:
         from jarvis.agentic_ide.fleet_actions import wait_for_prompt_ready
 
         instruction = ide_intent.spawn_instruction(user_text)
+        # Read once, up front: this runs as a background task that outlives the
+        # turn, and the history it reads keeps moving underneath it.
+        spoken_before = self._agentic_ide_conversation(user_text)
         assignments: dict[str, str] | None = None
         if len(names) > 1 and ide_intent.wants_split(user_text):
             try:
@@ -6300,6 +6331,7 @@ class BrainManager:
                     instruction,
                     session=session,
                     count=len(names),
+                    conversation=spoken_before,
                 )
                 assignments = {
                     name: item.task
@@ -6324,6 +6356,7 @@ class BrainManager:
             utterance=user_text,
             instruction=instruction,
             assignments=assignments,
+            conversation=spoken_before,
         )
         log.info(
             "Agentic IDE spawned-fleet briefing: %d of %d prompts delivered",
