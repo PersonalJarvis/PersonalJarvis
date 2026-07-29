@@ -8975,6 +8975,7 @@ class SpeechPipeline:
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
             nonlocal last_published, language, error_backoff_s
+            from jarvis.dictation.local_preview import local_preview
             from jarvis.dictation.preview_budget import preview_budget
             from jarvis.dictation.segment import is_silent_segment
 
@@ -9011,19 +9012,34 @@ class SpeechPipeline:
                     if segment_bytes and len(tail) > segment_bytes:
                         tail = tail[-segment_bytes:]
                     tail_text = ""
-                    if (
-                        len(tail) >= min_bytes
-                        and not is_silent_segment(tail, session_peak=session_peak)
-                        # The preview is the only budgeted caller. It re-sends
-                        # the open tail on every tick and throws the answer away
-                        # on the next one, so at ~40 requests per minute of
-                        # speech it was spending the provider's per-minute limit
-                        # on a cosmetic feature — and the segment closes that
-                        # actually produce the transcript were the ones refused.
-                        # Skipping a preview costs a slightly staler line on
-                        # screen; skipping a segment costs the user their words.
-                        and preview_budget().try_spend()
-                    ):
+                    want_preview = len(tail) >= min_bytes and not is_silent_segment(
+                        tail, session_peak=session_peak
+                    )
+                    # LOCAL FIRST. The preview re-sends the open tail on every
+                    # tick and throws the answer away on the next one, so on the
+                    # provider it was spending the per-minute limit on a
+                    # cosmetic feature — and the segment closes that actually
+                    # produce the transcript were the ones refused. Locally it
+                    # costs no quota at all and is an order of magnitude faster
+                    # (measured on the maintainer's GPU: 63 ms for a 4 s tail,
+                    # against 400-1500 ms for a round-trip). The transcript
+                    # itself is never produced here.
+                    engine = local_preview() if want_preview else None
+                    if engine is not None:
+                        local_text = await engine.transcribe(
+                            tail,
+                            language=None if dictation_language == "auto"
+                            else dictation_language,
+                        )
+                        if stop_event.is_set():
+                            return
+                        if local_text is not None:
+                            tail_text = local_text
+                            want_preview = False  # served without touching the quota
+                    # Cloud preview only where no local engine can run (a base or
+                    # headless install), and then strictly within its budget so
+                    # it can never again outbid the transcript for requests.
+                    if want_preview and preview_budget().try_spend():
                         tail_text, lang, ok, _exc = await _transcribe(tail)
                         if stop_event.is_set():
                             return
