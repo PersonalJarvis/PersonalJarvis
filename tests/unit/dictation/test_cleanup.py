@@ -35,7 +35,9 @@ from jarvis.dictation.cleanup import (
             "Das ist wirklich gut geworden.",  # i18n-allow: German fixture under test (§1 list #4)
         ),
         (
-            "Eh, creo que em deberíamos enviarlo.",
+            # "ehh", not "eh" — see test_a_filler_must_be_meaningless_in_every
+            # _supported_language for why the short spelling is gone.
+            "Ehh, creo que em deberíamos enviarlo.",
             "es",
             "Creo que deberíamos enviarlo.",
         ),
@@ -87,20 +89,73 @@ def test_filler_inside_a_word_is_not_touched() -> None:
 
 
 # --------------------------------------------------------------------------
+# A wrong language tag must not be able to delete content words
+# --------------------------------------------------------------------------
+#
+# The tag that picks the filler table comes from the STT provider, and cloud
+# Whisper endpoints report "English" for German speech often enough that the
+# repo treats it as a documented defect. So the tables have to survive being
+# applied to the wrong language: a token that means something in one supported
+# language may not sit in another one's list.
+
+
+def test_german_text_tagged_english_keeps_its_pronouns() -> None:
+    """The exact damage that got "er" removed from the English table.
+
+    Measured on the live module before the fix: this shape of sentence came
+    back with every "er" deleted at ``applied=True removed_words=4``, which was
+    8.9 % of the words — under the destruction ceiling, so nothing flagged it
+    and the user was handed a mutilated sentence reported as a clean success.
+    """
+    text = "Er hat gesagt, er kommt und er bringt es mit."  # i18n-allow: fixture (§1 #4)
+    result = clean_transcript(text, language="English")
+    assert result.removed_words == 0
+    assert result.text == text
+
+
+def test_german_eh_survives_a_spanish_tag() -> None:
+    """The mirror hole: Spanish "eh" against German "eh" ("anyway")."""
+    text = "Das mache ich eh morgen, das ist eh klar."  # i18n-allow: fixture (§1 #4)
+    result = clean_transcript(text, language="es")
+    assert result.removed_words == 0
+    assert result.text == text
+
+
+@pytest.mark.parametrize(
+    ("token", "language", "why"),
+    [
+        # i18n-allow: the tokens below are the vocabulary under test (§1 list #4)
+        ("er", "en", "a top-frequency German pronoun"),
+        ("eh", "en", "ordinary German for 'anyway'"),
+        ("eh", "es", "ordinary German for 'anyway'"),
+        ("ah", "en", "a spoken interjection that carries meaning of its own"),
+    ],
+)
+def test_a_filler_must_be_meaningless_in_every_supported_language(
+    token: str, language: str, why: str
+) -> None:
+    """Structural guard: re-adding one of these re-opens the hole above."""
+    assert token not in FILLER_WORDS[language], (
+        f"{token!r} is {why} and must not sit in the {language!r} filler list — "
+        f"one wrong provider language tag deletes it silently"
+    )
+
+
+# --------------------------------------------------------------------------
 # The destruction ceiling
 # --------------------------------------------------------------------------
 
 
 def test_all_filler_input_is_refused_rather_than_emptied() -> None:
-    result = clean_transcript("um uh er", language="en")
+    result = clean_transcript("um uh umm", language="en")
     assert result.applied is False
     assert result.reason == "ceiling"
-    assert result.text == "um uh er"
+    assert result.text == "um uh umm"
 
 
 def test_absolute_cap_refuses_a_short_sentence_losing_too_many_words() -> None:
     # 8 words, 4 of them filler -> past the absolute cap for short texts.
-    text = "um uh er ah the plan is ready"
+    text = "um uh umm uhh the plan is ready"
     result = clean_transcript(text, language="en")
     assert result.applied is False
     assert result.reason == "ceiling"

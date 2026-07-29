@@ -1,4 +1,4 @@
-"""Deterministic filler-sound removal for dictated text.
+"""Deterministic filler-sound removal and punctuation repair for dictated text.
 
 Why deterministic and not a model pass
 --------------------------------------
@@ -25,6 +25,20 @@ Words that carry meaning in ordinary speech are excluded on purpose even when
 every style guide calls them filler — English "like", "actually", "basically";
 German "also", "halt", "eben"; Spanish "este", "pues". Removing those changes
 what was said.
+
+A filler must also be meaningless in EVERY language this module has rules for,
+not only in its own. The language tag arrives from the STT provider and is
+regularly wrong, so an English list containing "er" is one bad tag away from
+deleting every pronoun in a German sentence — and reporting ``applied=True``
+while doing it. See the comment on :data:`FILLER_WORDS`.
+
+The second job of this module is punctuation repair (:func:`tidy_transcript`),
+and unlike filler removal it runs on EVERY dictation. The damage it repairs is
+manufactured by the SEGMENTING transcriber — each ~8 s segment is punctuated
+and capitalised on its own and the pieces are then joined with a bare space —
+so it is present in transcripts this module never otherwise touches. It is
+regex only for the same reason as everything else here: no LLM call ever
+happens in this module.
 """
 
 from __future__ import annotations
@@ -38,10 +52,24 @@ from dataclasses import dataclass
 
 #: Hesitation sounds per language. Keys are lowercase two-letter codes.
 #: Multi-word entries are matched as a phrase.
+#:
+#: DE-MINED on 2026-07-29: "er", "ah" and "eh" were removed from the English
+#: table and "eh" from the Spanish one. Every style guide calls them hesitation
+#: sounds, and in English they are — but "er" is a top-frequency GERMAN pronoun
+#: ("he") and "eh" is ordinary German for "anyway". The tag that selects the
+#: table is whatever the provider reported, and cloud Whisper endpoints answer
+#: "English" for German speech often enough that it is a documented defect, so
+#: those three tokens turned a wrong tag into silent deletion of content words:
+#: a 45-word German dictation lost all four occurrences of "er" at
+#: ``applied=True removed_words=4``, which is 8.9 % — comfortably under the
+#: destruction ceiling, so no guard fired and nothing was reported. A token that
+#: is a content word in ANY language this module serves does not belong in a
+#: list applied on a provider's word. The longer spellings ("erm", "ahh",
+#: "ehh") stay: no language spells a word that way.
 FILLER_WORDS: dict[str, tuple[str, ...]] = {
     "en": (
         "uh", "uhh", "uhhh", "um", "umm", "ummm",
-        "er", "erm", "ah", "ahh", "eh",
+        "erm", "ahh",
         "hm", "hmm", "hmmm", "mhm", "mm", "mmm",
     ),
     "de": (  # i18n-allow: speech-recognition input vocabulary (§1 list #3)
@@ -50,7 +78,7 @@ FILLER_WORDS: dict[str, tuple[str, ...]] = {
         "hm", "hmm", "hmmm", "mhm", "mmh", "mm",
     ),
     "es": (
-        "eh", "ehh", "ehhh", "em", "emm",
+        "ehh", "ehhh", "em", "emm",
         "mm", "mmm", "ajá", "aja",
     ),
 }
@@ -186,8 +214,14 @@ def _tidy(text: str, *, raw: str) -> str:
     filler keeps its capital instead of turning into a lowercase sentence).
     """
     out = text
-    # A removal can leave " , " or " ." — pull the mark back onto the previous word.
-    out = re.sub(r"\s+([,.;:!?])", r"\1", out)
+    # A removal can leave " , " or " ." — pull the mark back onto the previous
+    # word. The ``\.(?!\.)`` is not decoration: the naive ``[,.;:!?]`` version of
+    # this rule pulled the space out of "gesprochen. ... ist" and produced
+    # "gesprochen.... ist" — a defect this module MANUFACTURED on text it had no
+    # business touching, seen verbatim in a live dictation on 2026-07-28. A dot
+    # that another dot follows is part of an ellipsis, never a mark to reattach;
+    # ``tidy_transcript`` decides what to do with it.
+    out = re.sub(r"\s+([,;:!?]|\.(?!\.))", r"\1", out)
     # Two marks that ended up adjacent ("..,") collapse to the first.
     out = re.sub(r"([,;:])\s*([,.;:!?])", r"\2", out)
     out = re.sub(r"[ \t]{2,}", " ", out)
@@ -276,6 +310,132 @@ def clean_transcript(
     )
 
 
+# ---------------------------------------------------------------------------
+# Punctuation repair at the segment joins
+# ---------------------------------------------------------------------------
+
+#: What a recognizer emits at a pause: a run of two or more dots, or the single
+#: "…" glyph. Both spellings occur, sometimes in the same transcript.
+_ELLIPSIS = r"(?:\.{2,}|…)"
+
+#: A sentence terminator with a recognizer ellipsis glued to it, either directly
+#: ("gesprochen...") or across the space a segment join left ("gesprochen. ...").
+#: The ``(?<=\w)`` lookbehind is load-bearing: it demands a WORD before the
+#: terminator, so the first dot of a free-standing " ... " can never be mistaken
+#: for the terminator and the speaker's own ellipsis survives the rule.
+_JOINED_ELLIPSIS_RE = re.compile(r"(?<=\w)([.!?])[ \t]*" + _ELLIPSIS)
+
+#: The same artifact spelled with the "…" glyph, which carries no terminator to
+#: keep: "gesprochen… ist". Only repaired when text follows — a trailing "…"
+#: ends nothing and may well be what the speaker meant.
+_ATTACHED_GLYPH_RE = re.compile(r"(?<=\w)…(?=[ \t]+\S)")
+
+#: A free-standing ellipsis between two segments. Whether it is an artifact or
+#: the speaker's own pause is undecidable from the text alone, so the decision
+#: is made in :func:`_repair_standalone_ellipsis` on the ONE signal that exists:
+#: the recognizer capitalises the start of every segment.
+_STANDALONE_ELLIPSIS_RE = re.compile(
+    r"(?<=\w)[ \t]+" + _ELLIPSIS + r"[ \t]+(?=(?P<next>\w))"
+)
+
+#: EXACTLY two dots, not part of a longer run. ".." is always a join artifact;
+#: "..." is an ellipsis and must not be reduced to it one dot at a time.
+_DOUBLE_DOT_RE = re.compile(r"(?<!\.)\.[ \t]*\.(?!\.)")
+
+#: ".," / "., " / ".;" — a sentence terminator that a weak mark follows. The
+#: terminator wins: it is the stronger claim about where the sentence ended.
+_TERMINATOR_THEN_WEAK_RE = re.compile(r"([.!?])[ \t]*[,;:]+")
+
+#: ",." / ",," — a weak mark that any mark follows; the second one wins. The
+#: ``(?!\.)`` keeps the rule off an ellipsis that merely stands after a comma.
+_WEAK_THEN_MARK_RE = re.compile(r"[,;:][ \t]*([,;:.!?])(?!\.)")
+
+#: A space in front of a full stop. Deliberately period-only: French sets a
+#: space before "?", "!", ":" and ";" on purpose, and this function runs on
+#: every language.
+_SPACE_BEFORE_PERIOD_RE = re.compile(r"[ \t]+(\.(?!\.))")
+
+_DOUBLE_SPACE_RE = re.compile(r"[ \t]{2,}")
+
+#: A sentence start a segment join left lower-case. ``(?<=\w\w)`` requires two
+#: word characters in front of the terminator, which keeps the rule off single
+#: letter abbreviations ("z. B. das") and off the tail dot of an ellipsis.
+_SENTENCE_START_RE = re.compile(r"(?<=\w\w)([.!?])([ \t]+)([^\W\d_])")
+
+
+def _repair_standalone_ellipsis(match: re.Match[str]) -> str:
+    """A free-standing ellipsis is only a join artifact when a segment follows.
+
+    The recognizer capitalises the first word of every segment it produces, so
+    an upper-case continuation after " ... " means a new segment began there and
+    the ellipsis is ours to remove. A lower-case continuation is the speaker
+    trailing off mid-sentence, and that stays exactly as dictated.
+    """
+    if not match.group("next").isupper():
+        return match.group(0)
+    return ". "
+
+
+def _upper_sentence_start(match: re.Match[str]) -> str:
+    return match.group(1) + match.group(2) + match.group(3).upper()
+
+
+def tidy_transcript(text: str) -> str:
+    """Repair the punctuation a SEGMENTED transcription leaves behind. Never raises.
+
+    This runs on every dictation, not only on one a filler was removed from.
+    The damage is not made here: the lane transcribes in ~8 s segments, the
+    recognizer punctuates and capitalises each one as if it were the whole
+    utterance, emits its own trailing "..." wherever a segment cut a sentence in
+    half, and the pieces are then joined with a bare space. So a transcript no
+    rule in this module ever touched still arrives with a stray "..." parked
+    between two sentences and the next one starting lower-case — which is why
+    gating the repair on "a filler was removed" left the common case broken.
+
+    Four repairs, in this order:
+
+    1. an ellipsis glued to a sentence terminator collapses into that terminator;
+    2. a free-standing ellipsis before a capitalised word becomes a full stop;
+    3. adjacent terminal marks ("..", ".,", "., ") de-duplicate, stronger wins;
+    4. a lower-case word after a sentence terminator gets its capital back.
+
+    THE TRADE-OFF, stated plainly
+    -----------------------------
+    Nothing in the text says whether an ellipsis came from the recognizer or
+    from the speaker, so the split is drawn where it is cheapest to be wrong:
+
+    * an **attached** ellipsis ("gesprochen... ist") is treated as an artifact
+      and collapsed — a speaker who dictated a trailing pause there loses it;
+    * a **free-standing** ellipsis ("das war ... schwierig") is kept, unless the
+      next word is capitalised, which only a segment boundary produces.
+
+    Rule 4 has a matching cost: it capitalises after an abbreviation that ends
+    in a period and is at least two letters long ("etc. and" -> "etc. And").
+    Both errors are cosmetic and visible; the errors they prevent — a doubled
+    "...." in the middle of a sentence, a paragraph of lower-case sentence
+    starts — are the ones users actually report.
+
+    Returns the text unchanged on anything unexpected: a repair that eats a
+    dictation is worse than a transcript that reads slightly wrong.
+    """
+    original = text or ""
+    if not original.strip():
+        return original
+    try:
+        out = _JOINED_ELLIPSIS_RE.sub(r"\1", original)
+        out = _ATTACHED_GLYPH_RE.sub(".", out)
+        out = _STANDALONE_ELLIPSIS_RE.sub(_repair_standalone_ellipsis, out)
+        out = _DOUBLE_DOT_RE.sub(".", out)
+        out = _TERMINATOR_THEN_WEAK_RE.sub(r"\1", out)
+        out = _WEAK_THEN_MARK_RE.sub(r"\1", out)
+        out = _SPACE_BEFORE_PERIOD_RE.sub(r"\1", out)
+        out = _DOUBLE_SPACE_RE.sub(" ", out)
+        out = _SENTENCE_START_RE.sub(_upper_sentence_start, out)
+        return out.strip()
+    except Exception:  # noqa: BLE001 — a broken rule must never eat the dictation
+        return original
+
+
 __all__ = [
     "FILLER_WORDS",
     "SUPPORTED_LANGUAGES",
@@ -283,4 +443,5 @@ __all__ = [
     "clean_transcript",
     "count_words",
     "normalize_language",
+    "tidy_transcript",
 ]
