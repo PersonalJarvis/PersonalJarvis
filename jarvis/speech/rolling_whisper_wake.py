@@ -522,6 +522,11 @@ class RollingWhisperWake:
         # list so the consumer closure mutates it in place without ``nonlocal``.
         buffer: deque[np.ndarray] = deque()
         buf_len = [0]
+        # Monotonic audio revision shared with the poll task. A stalled source
+        # leaves the rolling window unchanged; re-transcribing that identical
+        # PCM every poll only burns inference/API capacity and can delay the
+        # authoritative utterance request that follows a real wake.
+        buffer_revision = [0]
         stopped = asyncio.Event()
 
         async def _consume() -> None:
@@ -531,6 +536,7 @@ class RollingWhisperWake:
                     samples = pcm_bytes_to_np(chunk.pcm)
                     buffer.append(samples)
                     buf_len[0] += len(samples)
+                    buffer_revision[0] += 1
 
                     # Update heartbeat statistics (live RMS per chunk)
                     self._chunks_seen += 1
@@ -604,6 +610,7 @@ class RollingWhisperWake:
         warm_wait_t0 = time.time()
         warm_wait_logged = False
         fallback_warmed = False
+        last_polled_revision = -1
         # Set when recover() dropped the model MID-SESSION: the warm gate then
         # re-warms immediately (this loop owns it — the boot deferred loader
         # only runs once) instead of lazily rebuilding INSIDE the next poll's
@@ -752,6 +759,12 @@ class RollingWhisperWake:
                 if now - last_trigger_t < self._cooldown_s:
                     self._stat_suppressed_cooldown += 1
                     continue
+                # No audio arrived since the previous evaluation. Reusing the
+                # exact same window cannot reveal a wake that was not there on
+                # the last pass, so avoid a redundant STT request.
+                revision = buffer_revision[0]
+                if revision == last_polled_revision:
+                    continue
                 # Not enough audio in the buffer yet
                 if buf_len[0] < self._sample_rate:  # mind. 1 Sek
                     continue
@@ -764,6 +777,7 @@ class RollingWhisperWake:
                 audio_np = np.concatenate(list(buffer))
                 if len(audio_np) < self._sample_rate:
                     continue
+                last_polled_revision = revision
                 # A full window reached the audio gates — this is one wake
                 # evaluation attempt (the denominator for the gate counters).
                 self._stat_windows_polled += 1
