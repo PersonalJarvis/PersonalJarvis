@@ -274,6 +274,18 @@ jobs:
         # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
         run: python scripts/ci/check_danger_metadata.py
 
+      - name: Dead config switch gate (every switch is read by some code)
+        # Static + stdlib-only: a config field nothing reads makes jarvis.toml
+        # and the settings screen promise behaviour that does not exist (AP-31).
+        # Known backlog is baselined; only a NEW one fails. Mirrors pre-push.
+        run: python scripts/ci/check_config_switches_wired.py
+
+      - name: Silent exception gate (no new invisible failure)
+        # Static + stdlib-only: an except that neither logs, re-raises, nor
+        # explains itself makes a failure invisible (AP-30). Per-file ratchet —
+        # fails only when a file GAINS one. Mirrors pre-push.
+        run: python scripts/ci/check_silent_exception_handlers.py
+
       - name: CLI reference drift gate (docs in sync with command tree)
         # Fails if a curated command was added/changed without regenerating
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
