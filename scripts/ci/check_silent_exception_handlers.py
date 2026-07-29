@@ -74,6 +74,9 @@ _REPORTING = (
     "record",
     "publish",
     "trace",
+    # Writing to stderr IS telling someone — it is how the earliest boot paths
+    # report, before any logger exists.
+    "stderr",
 )
 
 
