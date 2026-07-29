@@ -28,16 +28,23 @@ export type UiLanguage = "en" | "de" | "es";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
 // Mirrors jarvis/brain/manager.py::SUPPORTED_REPLY_LANGUAGES (single source of truth).
 export type ReplyLanguage = "auto" | "en" | "de" | "es";
-// "auto" lets Whisper detect the spoken language per utterance (bilingual
-// default); a concrete code forces what the recogniser transcribes into.
-// Mirrors jarvis/ui/web/settings_routes.py::_STT_LANGUAGES.
-export type SttLanguage = "auto" | "en" | "de" | "es";
+// "auto" lets the recogniser detect the spoken language per utterance (the
+// default); a concrete code forces what it transcribes into. Deliberately a
+// plain string, not a union: the accepted set is every language the recogniser
+// understands (jarvis/core/config.py::RECOGNITION_LANGUAGE_CHOICES) and the
+// backend ships it with the GET response, so a hand-mirrored union here would be
+// the classic drift trap (AP-4) — and a short one would silently reject a
+// perfectly valid language the backend accepts.
+export type SttLanguage = string;
+
+// The choices shown until the backend's list arrives. Kept tiny on purpose: it
+// is a placeholder for one render, not a second source of truth.
+const STT_FALLBACK_OPTIONS: readonly string[] = ["auto"];
 
 const REPLY_LANGUAGE_ENDPOINT = "/api/settings/reply-language";
 const UI_LANGUAGE_ENDPOINT = "/api/settings/ui-language";
 const STT_LANGUAGE_ENDPOINT = "/api/settings/stt-language";
 const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es"];
-const STT_VALUES: readonly SttLanguage[] = ["auto", "en", "de", "es"];
 
 function isUiLanguage(v: unknown): v is UiLanguage {
   return v === "en" || v === "de" || v === "es";
@@ -47,8 +54,12 @@ function isReplyLanguage(v: unknown): v is ReplyLanguage {
   return typeof v === "string" && (REPLY_VALUES as readonly string[]).includes(v);
 }
 
+// A shape check, not a membership check: the authoritative set lives on the
+// backend and is fetched, so anything that looks like a language code is kept.
+const STT_CODE_RE = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i;
+
 function isSttLanguage(v: unknown): v is SttLanguage {
-  return typeof v === "string" && (STT_VALUES as readonly string[]).includes(v);
+  return typeof v === "string" && (v === "auto" || STT_CODE_RE.test(v));
 }
 
 const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
@@ -149,15 +160,24 @@ function pushStt(lang: SttLanguage): void {
 }
 
 /**
- * Pull the persisted STT recognition language from the backend and reflect it so
- * the UI shows the real boot default. Call once on the Languages view mount. On
- * failure the localStorage value (already in the store) stands.
+ * Pull the persisted STT recognition language AND the list of languages the
+ * recogniser accepts from the backend, and reflect both so the UI shows the real
+ * boot default. Call once on the Languages view mount. On failure the
+ * localStorage value (already in the store) stands.
+ *
+ * The option list is fetched rather than hardcoded: it is every language the
+ * recogniser understands, and a copy kept here would drift from the backend's
+ * (AP-4) the first time one is added.
  */
 export async function hydrateSttLanguage(): Promise<void> {
   try {
     const res = await fetch(STT_LANGUAGE_ENDPOINT);
     if (!res.ok) return;
-    const body = (await res.json()) as { language?: unknown };
+    const body = (await res.json()) as { language?: unknown; options?: unknown };
+    if (Array.isArray(body.options)) {
+      const options = body.options.filter(isSttLanguage);
+      if (options.length) useI18nStore.getState().setSttOptions(options);
+    }
     if (isSttLanguage(body.language)) {
       useI18nStore.getState().setStt(body.language, { push: false });
     }
@@ -207,15 +227,20 @@ interface I18nState {
   ui: UiLanguage;
   reply: ReplyLanguage;
   stt: SttLanguage;
+  /** Languages the recogniser accepts, as reported by the backend. */
+  sttOptions: readonly string[];
   setUi: (lang: UiLanguage, opts?: { push?: boolean }) => void;
   setReply: (lang: ReplyLanguage, opts?: { push?: boolean }) => void;
   setStt: (lang: SttLanguage, opts?: { push?: boolean }) => void;
+  setSttOptions: (options: readonly string[]) => void;
 }
 
 export const useI18nStore = create<I18nState>((set) => ({
   ui: readUi(),
   reply: readReply(),
   stt: readStt(),
+  sttOptions: STT_FALLBACK_OPTIONS,
+  setSttOptions: (options) => set({ sttOptions: options }),
   setUi: (lang, opts) => {
     try {
       localStorage.setItem(UI_KEY, lang);
@@ -327,6 +352,11 @@ export function useReplyLanguage(): ReplyLanguage {
 
 export function useSttLanguage(): SttLanguage {
   return useI18nStore((s) => s.stt);
+}
+
+/** Languages the recogniser accepts (from the backend; "auto" until it loads). */
+export function useSttLanguageOptions(): readonly string[] {
+  return useI18nStore((s) => s.sttOptions);
 }
 
 export function setUiLanguage(lang: UiLanguage): void {

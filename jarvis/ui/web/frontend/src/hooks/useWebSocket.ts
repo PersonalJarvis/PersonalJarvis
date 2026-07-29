@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { WSClient } from "@/lib/ws";
+import { deliverDictationText, isForThisWindow } from "@/lib/dictationTarget";
 import {
   SECTION_LABELS,
   isSectionId,
@@ -215,16 +216,44 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "DictationTranscript") {
-          // Chat mic-dictation — transcribe-only. Interim partials overwrite the
-          // live tail; the final one is committed (appended to the chat input).
-          // Separate from TranscriptionUpdate so live-voice transcripts never
-          // leak into the text box. Uses getState() to stay out of the deps array.
-          const p = env.payload as { text?: string; is_final?: boolean };
+          // In-app dictation. Interim partials overwrite the live tail; the
+          // final one is delivered. Separate from TranscriptionUpdate so
+          // live-voice transcripts never leak into a text box. Uses getState()
+          // to stay out of the deps array.
+          const p = env.payload as {
+            text?: string;
+            is_final?: boolean;
+            target?: string;
+          };
           const text = typeof p.text === "string" ? p.text : "";
-          if (p.is_final) {
-            useEventStore.getState().commitDictation(text);
-          } else {
+          if (!p.is_final) {
             useEventStore.getState().setDictationInterim(text);
+          } else {
+            const store = useEventStore.getState();
+            const forThisWindow = isForThisWindow(p, store.dictating);
+            const delivered = forThisWindow
+              ? deliverDictationText(text)
+              : "none";
+            if (delivered !== "none") {
+              // Straight into the field or terminal, so no sequence bump for
+              // the composer — just drop the live tail.
+              store.setDictationInterim("");
+            } else {
+              // The composer is the historical sink and still the right
+              // fallback. It only exists on the Chats section, though, and
+              // handing a transcript to a component that is not there is
+              // exactly how a dictation used to vanish without a word (see
+              // lib/dictationTarget.ts). So when the words were meant for this
+              // window and nothing at all could take them, say so rather than
+              // reporting a delivery that did not happen.
+              store.commitDictation(text);
+              if (
+                forThisWindow &&
+                !document.querySelector("[data-jarvis-chat-input]")
+              ) {
+                pushToast("info", translate("use_web_socket.dictation_nowhere"));
+              }
+            }
           }
         }
 

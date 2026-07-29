@@ -286,7 +286,7 @@
       "paste_sent": "Pegado enviado",
       "clipboard_only": "Copiado al portapapeles",
       "unavailable": "No se pudo insertar",
-      "chat": "Enviado al chat",
+      "chat": "Enviado a la app",
       "partial": "Transcrito parcialmente",
       "empty": "No se oyó nada",
       "cancelled": "Cancelado",
@@ -2628,7 +2628,8 @@
   "use_web_socket": {
     "jarvis_opened": "{name} abrió",
     "prompt_sent": "Prompt enviado a",
-    "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió"
+    "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió",
+    "dictation_nowhere": "Ningún campo de texto tenía el foco, así que el dictado no se insertó. Está en el historial de dictados."
   },
   "chat_thread": {
     "message_to": "Mensaje a",

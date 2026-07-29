@@ -286,7 +286,7 @@
       "paste_sent": "Paste sent",
       "clipboard_only": "Copied to clipboard",
       "unavailable": "Could not insert",
-      "chat": "Sent to chat",
+      "chat": "Sent to the app",
       "partial": "Partly transcribed",
       "empty": "Nothing heard",
       "cancelled": "Cancelled",
@@ -2629,7 +2629,8 @@
   "use_web_socket": {
     "jarvis_opened": "{name} opened",
     "prompt_sent": "Prompt sent to",
-    "prompt_not_submitted": "the prompt is in its input box, not sent"
+    "prompt_not_submitted": "the prompt is in its input box, not sent",
+    "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history."
   },
   "chat_thread": {
     "message_to": "Message to",

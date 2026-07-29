@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -20,6 +22,7 @@ import { EditContextMenu } from "@/components/EditContextMenu";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
+import { installDictationFocusTracker } from "@/lib/dictationTarget";
 
 export default function App() {
   useWebSocket();
@@ -27,6 +30,18 @@ export default function App() {
   useVoiceStatus();
   useAssistantNameSeed();
   useCodingMode();
+
+  /*
+   * Remember which field the user is typing in, app-wide.
+   *
+   * A dictation into Jarvis's own window is delivered inside the page rather
+   * than by synthetic keystrokes, and the target is decided when the transcript
+   * arrives — by which time a dictation started from a button has already moved
+   * focus onto that button. Tracking focus here is what lets the text still
+   * land where the caret was. Mounted at the shell so it spans every section,
+   * including the terminals of the Agentic IDE.
+   */
+  useEffect(() => installDictationFocusTracker(), []);
 
   /*
    * The sidebar is draggable, app-wide.
