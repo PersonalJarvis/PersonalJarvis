@@ -579,6 +579,35 @@ class RouterBrain:
             return "en"
         return "de"
 
+    def _output_locale(self, utterance: str) -> str:
+        """The turn's output language, via the ONE resolver (CLAUDE.md §1.3).
+
+        Deliberately NOT ``_detect_utterance_language`` above: that helper is a
+        de/en-only ack heuristic with a German default, so a Spanish user would
+        be asked a clarifying question in German. Anything Jarvis actually says
+        to the user resolves through ``resolve_output_language``, which honours
+        the ``brain.reply_language`` pin, conversation stickiness, and every
+        supported locale equally.
+        """
+        try:
+            from jarvis.core.config import load_config  # noqa: PLC0415
+            from jarvis.core.turn_language import (  # noqa: PLC0415
+                DEFAULT_LOCALE,
+                resolve_output_language,
+            )
+
+            cfg = load_config()
+            pin = str(getattr(cfg.brain, "reply_language", "") or "")
+            stt_language = str(getattr(cfg.stt, "language", "") or "")
+            return resolve_output_language(
+                pin, stt_language, utterance, default=DEFAULT_LOCALE
+            )
+        except Exception:  # noqa: BLE001 — never fail a turn over a language probe
+            log.debug("router: output-locale resolution failed", exc_info=True)
+            from jarvis.core.turn_language import DEFAULT_LOCALE  # noqa: PLC0415
+
+            return DEFAULT_LOCALE
+
     def _build_ack_emitter(self, utterance: str):
         """Construct the async callback that publishes ``AnnouncementRequested``.
 
@@ -647,10 +676,64 @@ class RouterBrain:
         )
         dispatcher = self._manager._build_dispatcher(brain)
 
+        images: tuple[ImageBlock, ...] = ()
+        screen_note = ""
+
+        # --- Screen Context: the user explicitly asked Jarvis to LOOK --------
+        #
+        # Runs BEFORE the permanent-vision path and takes precedence over it,
+        # because it answers a stricter question with a better answer: it
+        # captures the monitor the CURSOR is on (permanent vision follows the
+        # foreground window, which is a different screen whenever the user
+        # reads one display while typing on another), it redacts secure fields
+        # before the pixels leave the process, and it never persists them.
+        #
+        # It is additive, not a replacement: `should_attach_screenshot` below
+        # also fires on on-screen ACTION turns ("click the button"), which are
+        # not look-requests but still need an image, so that path stays.
+        #
+        # An AMBIGUOUS turn ends here with a question instead of a capture —
+        # falling through would attach an image while asking whether to look
+        # at one. A PRIVACY refusal likewise ends the turn and shuts the path
+        # below, because falling through there would photograph the exact
+        # window the user's rule protects. A merely TECHNICAL failure (no
+        # display, no permission) does NOT end the turn: it returns
+        # "unavailable" and the existing path runs, so a headless or
+        # unpermitted host behaves exactly as it did before this feature.
+        # Any unexpected failure inside returns "none" for the same reason —
+        # this block cannot break a voice turn.
+        from jarvis.screen_context.turn import screen_context_for_turn
+
+        screen = await screen_context_for_turn(
+            utterance, locale=self._output_locale(utterance), bus=self._bus
+        )
+        if screen.ends_the_turn:
+            spoken = screen.question or screen.message or ""
+            if spoken:
+                log.info(
+                    "screen_context: turn ended without capture (status=%s)",
+                    screen.status,
+                )
+                yield BrainDelta(content=spoken)
+                yield BrainDelta(finish_reason="stop")
+                return
+        elif screen.has_image:
+            import base64 as _base64  # noqa: PLC0415
+
+            images = (
+                ImageBlock(
+                    mime=screen.mime,
+                    data_b64=_base64.b64encode(screen.image or b"").decode("ascii"),
+                    source_hash=screen.source_hash,
+                ),
+            )
+            screen_note = screen.note
+            log.info("screen_context: %s", screen.receipt)
+
         # Permanent vision: inject a fresh screen observation as an ImageBlock
         # when the provider is available and not paused. Errors are not fatal
-        # — the text-only fallback keeps the conversation running.
-        images: tuple[ImageBlock, ...] = ()
+        # — the text-only fallback keeps the conversation running. Skipped
+        # entirely when Screen Context already supplied an image above.
         vision_none = self._vision is None
         paused = (
             bool(getattr(self._vision, "is_paused", False))
@@ -672,7 +755,9 @@ class RouterBrain:
         from jarvis.brain.vision_gate import should_attach_screenshot
 
         if (
-            self._vision is not None
+            not images
+            and not screen.blocks_other_screen_paths
+            and self._vision is not None
             and not self._vision.is_paused
             and should_attach_screenshot(utterance)
         ):
@@ -724,7 +809,13 @@ class RouterBrain:
                 )
 
         messages: list[BrainMessage] = list(history or [])
-        messages.append(BrainMessage(role="user", content=utterance, images=images))
+        messages.append(
+            BrainMessage(
+                role="user",
+                content=f"{screen_note}\n\n{utterance}" if screen_note else utterance,
+                images=images,
+            )
+        )
 
         tools_payload = dispatcher.tools_payload()
         system_prompt = self._manager._build_system_prompt()
@@ -735,12 +826,18 @@ class RouterBrain:
             # gives the caller a uniform AsyncIterator regardless of whether
             # a tool call or plain text was produced.
             ack_emitter = self._build_ack_emitter(utterance)
+            # ``turn_context`` rather than prefixing the utterance: the raw
+            # utterance is what every downstream gate matches on (cu_gate,
+            # spawn_gate, voice-control), and prefixing it with a description
+            # full of words like "window" and "screen" would quietly widen
+            # those gates. This channel reaches the model without touching them.
             agg = await dispatcher.dispatch(
                 utterance,
                 images=images,
                 history=history,
                 trace_id=trace_id,
                 ack_emitter=ack_emitter,
+                turn_context=screen_note,
             )
             # Perceived-latency completion marker. The user opted for an
             # unconditional "Erledigt." at the end of any turn that

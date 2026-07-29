@@ -110,6 +110,16 @@ class CaptureOutcome:
     * ``clarify`` — ambiguous. Ask ``question`` and capture nothing.
     * ``refused`` — capture was not possible or not allowed. Say ``message``.
     * ``captured`` — ``handle_id`` and ``context`` are set.
+
+    A refusal additionally carries ``reason_kind``, and the difference matters
+    more than it looks:
+
+    * ``policy`` — the user's own rules said no (denylist, feature off). A
+      caller must NOT quietly fall back to some other way of seeing the screen;
+      that would photograph the very window the rule protects.
+    * ``technical`` — this machine could not (no display, no permission). A
+      caller MAY fall back to whatever it did before this feature existed,
+      because nothing was forbidden — it was merely impossible here.
     """
 
     status: CaptureStatus
@@ -118,6 +128,7 @@ class CaptureOutcome:
     handle_id: str | None = None
     question: str | None = None
     message: str | None = None
+    reason_kind: Literal["", "policy", "technical"] = ""
 
 
 @dataclass
@@ -237,6 +248,7 @@ class ScreenContextService:
             return CaptureOutcome(
                 status="refused",
                 verdict=verdict,
+                reason_kind="policy",
                 message=(
                     "Screen context is switched off. You can turn it back on in "
                     "Settings."
@@ -268,7 +280,10 @@ class ScreenContextService:
         if permission_error:
             log.info("screen_context: capture refused — %s", permission_error)
             return CaptureOutcome(
-                status="refused", verdict=verdict, message=permission_error
+                status="refused",
+                verdict=verdict,
+                reason_kind="technical",
+                message=permission_error,
             )
 
         # The cursor is sampled ONCE, here, and threaded through. See
@@ -301,6 +316,7 @@ class ScreenContextService:
                 return CaptureOutcome(
                     status="refused",
                     verdict=verdict,
+                    reason_kind="policy",
                     message=(
                         f"I did not capture the screen: the active window matches "
                         f"your privacy rule '{blocked_by}', so screen context is "
@@ -327,7 +343,12 @@ class ScreenContextService:
             )
         except CaptureUnavailable as exc:
             log.info("screen_context: no capture target — %s", exc)
-            return CaptureOutcome(status="refused", verdict=verdict, message=str(exc))
+            return CaptureOutcome(
+                status="refused",
+                verdict=verdict,
+                reason_kind="technical",
+                message=str(exc),
+            )
         degradations.extend(target_degradations)
 
         # Announce BEFORE the shutter so the indicator is up while there is
@@ -350,12 +371,18 @@ class ScreenContextService:
             )
         except CaptureUnavailable as exc:
             log.info("screen_context: capture failed — %s", exc)
-            return CaptureOutcome(status="refused", verdict=verdict, message=str(exc))
+            return CaptureOutcome(
+                status="refused",
+                verdict=verdict,
+                reason_kind="technical",
+                message=str(exc),
+            )
         except Exception as exc:  # noqa: BLE001 — a port bug must not kill the turn
             log.error("screen_context: unexpected capture failure", exc_info=True)
             return CaptureOutcome(
                 status="refused",
                 verdict=verdict,
+                reason_kind="technical",
                 message=f"The screen could not be captured ({exc}).",
             )
 

@@ -76,6 +76,33 @@ class _FakeBrain:
         yield BrainDelta(finish_reason="stop")
 
 
+@pytest.fixture(autouse=True)
+def _no_screen_context(monkeypatch: pytest.MonkeyPatch):
+    """Keep Screen Context out of this file, deterministically.
+
+    ``RouterBrain.handle`` consults ``jarvis.screen_context`` before the
+    permanent-vision path and takes precedence when the user explicitly asked
+    Jarvis to LOOK — which several of the utterances in this file do. Without
+    this fixture the outcome would depend on whether the machine running the
+    tests has a screen: captured on a dev box, unavailable in headless CI.
+    A test that passes or fails based on the host's hardware is worse than no
+    test.
+
+    These cases exist to pin the permanent-vision path itself, so Screen
+    Context is neutralised here. Its own precedence is covered by
+    ``test_router_screen_context.py``.
+    """
+    from jarvis.screen_context.turn import TurnScreenContext
+
+    async def _none(*_args: Any, **_kwargs: Any) -> TurnScreenContext:
+        return TurnScreenContext(status="none")
+
+    monkeypatch.setattr(
+        "jarvis.screen_context.turn.screen_context_for_turn", _none
+    )
+    return None
+
+
 class _NoopToolExecutor:
     async def execute(self, tool: Any, args: dict[str, Any], **_: Any) -> ToolResult:
         return await tool.execute(args, ctx=None)  # type: ignore[arg-type]
