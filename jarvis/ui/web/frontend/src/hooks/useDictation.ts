@@ -29,6 +29,33 @@ export const DICTATION_OUTCOMES = [
 
 export type DictationOutcome = (typeof DICTATION_OUTCOMES)[number];
 
+/**
+ * Why a transcription failed, mirroring
+ * `jarvis.speech.stt_failure.STT_FAILURE_REASONS`.
+ *
+ * The backend stores a reason CODE rather than the provider's own error text,
+ * because that text was a Python exception class plus a vendor URL plus a link
+ * to an HTTP specification — rendered verbatim under the user's own words, and
+ * untranslatable by any locale. Same rule as the outcomes above: never render a
+ * raw reason, always translate through `dictation.failure.{name}`.
+ *
+ * The TypeScript half of a cross-layer parity test; the Python tuple and this
+ * list must stay set-equal.
+ */
+export const STT_FAILURE_REASONS = [
+  "rate_limited",
+  "no_credit",
+  "bad_key",
+  "unavailable",
+  "rejected",
+  "engine_busy",
+  "recording_interrupted",
+  "no_stt",
+  "unknown",
+] as const;
+
+export type SttFailureReason = (typeof STT_FAILURE_REASONS)[number];
+
 /** Languages dictation can be pinned to; `auto` lets the provider decide. */
 export type DictationLanguage = "auto" | "de" | "en" | "es";
 

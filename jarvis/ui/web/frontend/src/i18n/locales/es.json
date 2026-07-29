@@ -289,6 +289,17 @@
       "empty": "No se oyó nada",
       "cancelled": "Cancelado",
       "failed": "Fallido"
+    },
+    "failure": {
+      "rate_limited": "El reconocimiento de voz alcanzó su límite de peticiones: pueden faltar palabras.",
+      "no_credit": "La cuenta de reconocimiento de voz se quedó sin saldo.",
+      "bad_key": "La clave de reconocimiento de voz fue rechazada: revísala en Claves de API.",
+      "unavailable": "No se pudo contactar con el servicio de reconocimiento de voz.",
+      "rejected": "El reconocimiento de voz no pudo procesar esta grabación.",
+      "engine_busy": "El reconocimiento de voz seguía ocupado: inténtalo de nuevo en un momento.",
+      "recording_interrupted": "La grabación terminó antes de que la detuvieras.",
+      "no_stt": "Todavía no hay reconocimiento de voz configurado.",
+      "unknown": "El reconocimiento de voz falló."
     }
   },
   "voice": {

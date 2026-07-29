@@ -46,64 +46,27 @@ RATE_LIMIT_COOLDOWN_S = 60.0
 #: as soon as it can.
 TRANSIENT_COOLDOWN_S = 15.0
 
-#: Substrings identifying a failure ANOTHER provider could survive. Matched
-#: against ``"<ExceptionType>: <message>"`` rather than against a status-code
-#: attribute, because the providers raise whatever their own HTTP client raises
-#: (httpx, aiohttp, google-genai, a bare OSError) and there is no shared type to
-#: switch on. Capability, not provider identity (AP-21).
-_QUOTA_MARKERS = (
-    "429",
-    "too many requests",
-    "rate limit",
-    "ratelimit",
-    "quota",
-    "insufficient_quota",
-    "402",
-    "payment required",
-    "billing",
-    "credit balance",
-)
-
-_AVAILABILITY_MARKERS = (
-    "500", "502", "503", "504",
-    "internal server error",
-    "bad gateway",
-    "service unavailable",
-    "gateway timeout",
-    "overloaded",
-    "timeout",
-    "timed out",
-    "connection",
-    "connecterror",
-    "readerror",
-    "remoteprotocolerror",
-    "temporarily",
-)
-
-#: An expired / missing / rejected credential. Crossing over is the honest move:
-#: the user has another key that works, and telling them "dictation is broken"
-#: while a working provider sits unused is the single-provider brick AP-22 names.
-_CREDENTIAL_MARKERS = (
-    "401",
-    "403",
-    "unauthorized",
-    "invalid api key",
-    "invalid_api_key",
-    "authentication",
-    "permission denied",
-)
+#: Reasons whose cooldown is the LONG one. A quota window and a rejected key
+#: both need real time to change; a 5xx or a dropped connection does not.
+_LONG_COOLDOWN_REASONS = frozenset({"rate_limited", "no_credit", "bad_key"})
 
 
 def _classify(exc: BaseException) -> str:
-    """``"quota"`` / ``"transient"`` / ``"credential"`` / ``""`` (do not cross)."""
-    blob = f"{type(exc).__name__}: {exc}".lower()
-    if any(m in blob for m in _QUOTA_MARKERS):
-        return "quota"
-    if any(m in blob for m in _CREDENTIAL_MARKERS):
-        return "credential"
-    if any(m in blob for m in _AVAILABILITY_MARKERS):
-        return "transient"
-    return ""
+    """The failure reason when another provider deserves a shot, else ``""``.
+
+    Delegates to :func:`jarvis.speech.stt_failure.classify_stt_failure` rather
+    than keeping a second marker table. The same judgement is what the dictation
+    history stores and what the UI translates, and two tables that must agree
+    are two tables that will not (AP-4).
+
+    A ``rejected`` (400-class) answer deliberately returns ``""``: the provider
+    understood the request and refused it, so another one would refuse the same
+    bytes and only burn a second quota to say so.
+    """
+    from jarvis.speech.stt_failure import classify_stt_failure, is_crossable_failure
+
+    reason = classify_stt_failure(exc)
+    return reason if is_crossable_failure(reason) else ""
 
 
 def _is_crossable(exc: BaseException) -> bool:
@@ -171,7 +134,11 @@ class FallbackSTT:
         return time.monotonic() >= until
 
     def _penalize(self, name: str, kind: str) -> None:
-        seconds = RATE_LIMIT_COOLDOWN_S if kind in ("quota", "credential") else TRANSIENT_COOLDOWN_S
+        seconds = (
+            RATE_LIMIT_COOLDOWN_S
+            if kind in _LONG_COOLDOWN_REASONS
+            else TRANSIENT_COOLDOWN_S
+        )
         self._cooldown[name] = time.monotonic() + seconds
 
     def _instance(self, name: str) -> Any:

@@ -3,6 +3,7 @@ import { Check, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
 
 import {
   DICTATION_OUTCOMES,
+  STT_FAILURE_REASONS,
   type DictationEntry,
 } from "@/hooks/useDictation";
 import { useT } from "@/i18n";
@@ -113,8 +114,11 @@ function HistoryRow({
           </p>
         )}
         {entry.error && (
-          <p className="mt-0.5 break-words text-[11px] text-destructive">
-            {entry.error}
+          <p
+            className="mt-0.5 break-words text-[11px] text-destructive"
+            data-testid="dictation-failure-reason"
+          >
+            {failureLabel(t, entry.error)}
           </p>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
@@ -224,6 +228,8 @@ function HistoryRow({
 
 const KNOWN_OUTCOMES: ReadonlySet<string> = new Set(DICTATION_OUTCOMES);
 
+const KNOWN_FAILURES: ReadonlySet<string> = new Set(STT_FAILURE_REASONS);
+
 /**
  * Translates an outcome through its i18n key. A value this bundle does not
  * know (newer backend, older frontend) falls back to the raw string rather
@@ -231,4 +237,21 @@ const KNOWN_OUTCOMES: ReadonlySet<string> = new Set(DICTATION_OUTCOMES);
  */
 function outcomeLabel(t: (key: string) => string, outcome: string): string {
   return KNOWN_OUTCOMES.has(outcome) ? t(`dictation.outcome.${outcome}`) : outcome;
+}
+
+/**
+ * Translates a transcription failure through its i18n key.
+ *
+ * Unlike `outcomeLabel`, an unknown value does NOT fall through to the raw
+ * string. This line exists to tell a person why their words did not arrive, and
+ * the raw value here is either a stack-trace fragment stored by an older
+ * version — the exact thing this replaced — or a reason code from a newer
+ * backend, which is an identifier and explains nothing either. Both are better
+ * served by the honest generic sentence; the technical detail is in the log,
+ * where whoever needs it is already looking.
+ */
+function failureLabel(t: (key: string) => string, reason: string): string {
+  return KNOWN_FAILURES.has(reason)
+    ? t(`dictation.failure.${reason}`)
+    : t("dictation.failure.unknown");
 }

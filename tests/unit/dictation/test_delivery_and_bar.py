@@ -183,7 +183,13 @@ async def test_a_transcription_failure_is_reported_as_failed_not_empty() -> None
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "failed"
-    assert "401" in (completed.error or "")
+    # Normalised at the store: a caller handing over the provider's raw text
+    # must not be able to put a stack-trace fragment in front of the user.
+    assert completed.error == "bad_key"
+    assert "401" not in (completed.error or ""), "raw provider text is back"
+    # ``detail`` is what surfaces without a locale of their own (the bar, the
+    # CLI) show verbatim, so a failed dictation must not leave it empty.
+    assert completed.detail.strip()
 
 
 @pytest.mark.asyncio
@@ -367,7 +373,9 @@ async def test_a_wordless_failure_is_still_recorded(audio_spy) -> None:
     )
     added = _FakeHistory.instances[-1].added
     assert added and added[0]["outcome"] == "failed"
-    assert added[0]["error"] == "RuntimeError: engine wedged"
+    # Stored as a reason code. This particular text matches no known shape, so
+    # the honest answer is the catch-all rather than the raw exception string.
+    assert added[0]["error"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -489,11 +497,19 @@ async def test_the_pinned_language_reaches_the_provider(
 
 
 @pytest.mark.asyncio
-async def test_auto_sends_no_language_at_all(
+async def test_auto_asks_the_provider_to_detect_instead_of_staying_silent(
     monkeypatch: pytest.MonkeyPatch, audio_spy
 ) -> None:
-    """``auto`` means "provider, you decide" — pinning it to a detected value
-    would defeat per-utterance detection."""
+    """``auto`` is REQUESTED, never left unsaid.
+
+    This test used to assert the opposite — that auto sends no language at all —
+    and that is exactly how the bug worked: an absent argument means "no opinion"
+    to every provider, so the transcription fell back to whatever
+    ``[stt].language`` was pinned to. With the recognition language on English, a
+    user dictating German got English words back, and no setting in the dictation
+    view could fix it because the dictation view was not the setting in charge
+    (live bug 2026-07-28).
+    """
     import jarvis.speech.pipeline as pipeline_mod
 
     seen: list[dict] = []
@@ -510,7 +526,7 @@ async def test_auto_sends_no_language_at_all(
         _STT(), DictationConfig(language="auto", partial_interval_s=0.0)
     )
     await pipe._dictation_session()
-    assert seen == [{}]
+    assert seen == [{"language": "auto"}]
 
 
 @pytest.mark.asyncio
@@ -562,7 +578,7 @@ async def test_a_provider_error_ends_the_session_as_failed(
     await pipe._dictation_session()
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "failed"
-    assert "401" in (completed.error or "")
+    assert completed.error == "bad_key"
 
 
 @pytest.mark.asyncio
@@ -590,7 +606,10 @@ async def test_a_crashed_session_is_recorded_instead_of_vanishing(
     await pipe._dictation_session()
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "failed"
-    assert "no input device" in (completed.error or "")
+    # A microphone that never opened is not a classifiable STT failure, so the
+    # honest answer is the catch-all — never the raw OSError text.
+    assert completed.error == "unknown"
+    assert "no input device" not in (completed.error or "")
     added = _FakeHistory.instances[-1].added
     assert added and added[0]["outcome"] == "failed"
 

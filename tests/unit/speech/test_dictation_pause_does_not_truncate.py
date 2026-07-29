@@ -333,6 +333,9 @@ async def test_a_recording_that_ends_early_is_reported(monkeypatch) -> None:
     assert pipe.start_dictation(target="chat") is True
     await asyncio.wait_for(pipe._dictation_task, timeout=10.0)
 
-    assert "replay window" in str(captured.get("stt_error") or ""), (
+    # The reason CODE, not the exception text: this value ends up under the
+    # user's own words in the history, where a stack-trace fragment explains
+    # nothing. The exception itself goes to the log.
+    assert str(captured.get("stt_error") or "") == "recording_interrupted", (
         "the recording died and the dictation reported nothing about it"
     )

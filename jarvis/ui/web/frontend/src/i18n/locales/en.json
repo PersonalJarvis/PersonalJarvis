@@ -289,6 +289,17 @@
       "empty": "Nothing heard",
       "cancelled": "Cancelled",
       "failed": "Failed"
+    },
+    "failure": {
+      "rate_limited": "Speech recognition hit its request limit — words may be missing.",
+      "no_credit": "The speech recognition account is out of credit.",
+      "bad_key": "The speech recognition key was rejected — check it under API Keys.",
+      "unavailable": "The speech recognition service could not be reached.",
+      "rejected": "Speech recognition could not process this recording.",
+      "engine_busy": "Speech recognition was still busy — try again in a moment.",
+      "recording_interrupted": "The recording ended before you stopped it.",
+      "no_stt": "No speech recognition is set up yet.",
+      "unknown": "Speech recognition failed."
     }
   },
   "voice": {

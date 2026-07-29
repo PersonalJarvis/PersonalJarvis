@@ -128,6 +128,11 @@ from jarvis.speech.hangup import (
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
+from jarvis.speech.stt_failure import (
+    classify_stt_failure,
+    normalize_stt_failure,
+    stt_failure_message,
+)
 from jarvis.speech.wake_verifier import (
     CUSTOM_WAKE_MIN_RMS,
     pcm_tail_rms,
@@ -938,8 +943,61 @@ from jarvis.speech.wake_constants import (  # noqa: E402
     STT_HALLUCINATION_RE as _STT_HALLUCINATION_RE,
 )
 
-# Paraphrase-Prefixes die Gemini/Claude bei Unsicherheit voranstellen.
-# Werden als Post-Processing vor dem TTS abgeschnitten.
+# Longest recording the silence-hallucination filter is allowed to judge. Above
+# it the filter stands down entirely: a person who spoke for three seconds said
+# something, and "thank you very much for the update" is a real sentence that
+# happens to open with the same words as the boilerplate. Below it there is
+# barely room for a real utterance, which is exactly the window in which a
+# near-silent microphone makes a Whisper-family model produce its subtitle
+# credits.
+_DICTATION_HALLUCINATION_MAX_S = 2.5
+
+# Words that occur in the hallucination markers themselves, DERIVED from the one
+# shared pattern rather than written out a second time — a second list would
+# stop agreeing with the first the day either is touched (BUG-008). Regex
+# metacharacters contribute the odd single letter, so anything shorter than two
+# characters is dropped; digits never enter, which is what lets a boilerplate
+# year ("copyright 2020") count as covered.
+_HALLUCINATION_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+_HALLUCINATION_VOCABULARY: frozenset[str] = frozenset(
+    _HALLUCINATION_WORD_RE.findall(_STT_HALLUCINATION_RE.pattern.lower())
+)
+
+
+def _is_silence_hallucination(text: str, duration_s: float) -> bool:
+    """Is *text* boilerplate a silent microphone produced, not speech?
+
+    Two independent conditions, and BOTH are needed — either one alone gets a
+    real dictation deleted:
+
+    * **The recording is short.** Whisper hallucinates on near-silence, so the
+      filter only judges recordings too short to hold much else. The audio
+      length is the honest measure here (see the caller), not the wall clock.
+    * **The boilerplate is the WHOLE utterance.** ``_STT_HALLUCINATION_RE``
+      matches a substring, which is the right shape for the voice lane — there
+      the question is "may this reach the brain". On a transcript the question
+      is different: "thank you very much for the update" contains a marker and
+      is a sentence the user dictated. So a match is necessary but not
+      sufficient; every word of the transcript must also come from the markers'
+      own vocabulary. "Thank you for watching!" passes that test (the shared
+      pattern spells the outro "thanks for watching", and the vocabulary covers
+      the other spelling for free); "vielen Dank für das Update" does not,
+      because "update" is nobody's boilerplate.
+
+    Digits are ignored on purpose: the markers carry years, and a year is not
+    what distinguishes a hallucination from a sentence.
+    """
+    if duration_s >= _DICTATION_HALLUCINATION_MAX_S:
+        return False
+    body = (text or "").strip()
+    if not body or _STT_HALLUCINATION_RE.search(body) is None:
+        return False
+    words = _HALLUCINATION_WORD_RE.findall(body.lower())
+    return bool(words) and all(word in _HALLUCINATION_VOCABULARY for word in words)
+
+
+# Paraphrase prefixes Gemini/Claude put in front of an answer when unsure.
+# Cut off as post-processing before the TTS call.
 _PARAPHRASE_PREFIXES: tuple[str, ...] = (
     "ich verstehe, du moechtest", "ich verstehe du moechtest",
     "ich verstehe, du möchtest", "ich verstehe du möchtest",
@@ -8373,7 +8431,7 @@ class SpeechPipeline:
                 DictationCompleted(
                     source_layer="speech.dictation",
                     outcome="failed",
-                    detail="No speech-to-text provider is available.",
+                    detail=stt_failure_message("no_stt"),
                     error="no_stt",
                 )
             )
@@ -8421,7 +8479,20 @@ class SpeechPipeline:
         # the end: it is what separates "the provider rejected us" from "you
         # said nothing", and without it a 401 arrives in the history looking
         # exactly like silence — with no hint that a key needs fixing.
+        #
+        # A REASON CODE from ``jarvis.speech.stt_failure``, never the provider's
+        # own error text. This value is stored in the history and rendered under
+        # the user's words, and what it used to render was a Python exception
+        # class plus a vendor URL plus a link to an HTTP specification — three
+        # things that answer no question a person dictating a sentence has, and
+        # a string no locale can translate. The technical text is not lost; it
+        # rides along in ``stt_error_detail`` and goes to the log in full.
         stt_error: str | None = None
+        # The provider's own words for the same failure. Log-only, deliberately:
+        # it is the half that names the endpoint and the client library, which
+        # is exactly what a debugger needs and exactly what a user must not be
+        # handed.
+        stt_error_detail: str = ""
         # ``[dictation].language`` as chosen by the user. ``auto`` is passed
         # THROUGH to the provider rather than dropped: omitting the argument
         # means "no opinion", which lands on whatever ``[stt].language`` is
@@ -8449,7 +8520,7 @@ class SpeechPipeline:
             nothing anywhere saying so. That is the reported "I said more than
             this" bug in its entirety.
             """
-            nonlocal stt_error
+            nonlocal stt_error, stt_error_detail
             inference_active.set()
             try:
                 try:
@@ -8462,12 +8533,14 @@ class SpeechPipeline:
                     # choice a failure — precedent: rolling_whisper_wake.
                     transcript = await stt.transcribe_pcm(pcm)
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
-                log.debug("dictation transcribe failed: %s", exc)
-                stt_error = f"{type(exc).__name__}: {exc}".strip()
+                stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
+                stt_error = classify_stt_failure(exc)
+                log.debug("dictation transcribe failed: %s", stt_error_detail)
                 return "", "", False
             finally:
                 inference_active.clear()
             stt_error = None
+            stt_error_detail = ""
             text = (getattr(transcript, "text", "") or "").strip()
             lang = str(getattr(transcript, "language", "") or "")
             return text, lang, True
@@ -8530,9 +8603,10 @@ class SpeechPipeline:
                     # retries it, and the final pass sees it regardless.
                     log.info(
                         "dictation segment kept open after a failed "
-                        "transcription (%s) — backing off rather than dropping "
-                        "%.1fs of audio.",
-                        stt_error or "unknown error",
+                        "transcription (%s: %s) — backing off rather than "
+                        "dropping %.1fs of audio.",
+                        stt_error or "unknown",
+                        stt_error_detail or "no detail",
                         cut / bytes_per_second,
                     )
                     return False
@@ -8659,7 +8733,7 @@ class SpeechPipeline:
                         "consecutive failed pieces (%s) — %.1fs of audio kept "
                         "for a later retry rather than making you wait.",
                         dead_streak,
-                        stt_error or "unknown error",
+                        stt_error_detail or stt_error or "unknown error",
                         len(remaining) / bytes_per_second,
                     )
                     break
@@ -8696,7 +8770,7 @@ class SpeechPipeline:
                         log.info(
                             "final dictation transcription failed (%s) — "
                             "retry %d/%d in %.1fs.",
-                            stt_error or "unknown error",
+                            stt_error_detail or stt_error or "unknown error",
                             attempt + 1,
                             _DICTATION_FINAL_ATTEMPTS - 1,
                             delay,
@@ -8763,11 +8837,15 @@ class SpeechPipeline:
                         # as the whole thing.
                         drain_exc = drain_task.exception()
                         if drain_exc is not None:
-                            capture_error = (
-                                f"{type(drain_exc).__name__}: {drain_exc}".strip()
-                            )
+                            # The stored value is the reason CODE, for the same
+                            # reason ``stt_error`` is one: this ends up under the
+                            # user's own words in the history. The exception text
+                            # goes to the log, where it is useful.
+                            capture_error = "recording_interrupted"
                             log.warning(
-                                "dictation recording ended early — %s", capture_error
+                                "dictation recording ended early — %s: %s",
+                                capture_error,
+                                f"{type(drain_exc).__name__}: {drain_exc}".strip(),
                             )
                         else:
                             # A source that simply RAN OUT is not a fault — it is
@@ -8818,7 +8896,19 @@ class SpeechPipeline:
                 raw_text = " ".join([*closed_parts, tail_text]).strip()
                 final_text = raw_text
 
-            duration_s = max(0.0, time.monotonic() - started_at)
+            # How long the user SPOKE — measured from the audio, not the clock.
+            # The clock starts before the microphone opens and stops after the
+            # last provider call, retry sleeps included, so a slow or
+            # rate-limited provider inflated the stored duration by seconds. That
+            # number is not decoration: the statistics sidecar divides the word
+            # count by it, so an inflated duration under-reports the user's words
+            # per minute and stretches every streak built on it. The captured PCM
+            # cannot drift — the capture contract is 16 kHz mono int16
+            # (``jarvis.audio.capture.SAMPLE_RATE``), so the byte count IS the
+            # recording length. The wall clock stays for the log line, where
+            # "spoke for 4 s, waited 11 s" is precisely the useful sentence.
+            wall_clock_s = max(0.0, time.monotonic() - started_at)
+            duration_s = len(buffer) / bytes_per_second
             finished = True
             result = await self._finish_dictation(
                 raw_text=raw_text,
@@ -8834,14 +8924,19 @@ class SpeechPipeline:
             )
             final_text = result
             log.info(
-                "🎙️ dictation ended (%d chars, %.1fs, target=%s, %.1fs silence "
-                "skipped%s%s%s).",
+                "🎙️ dictation ended (%d chars, %.1fs spoken / %.1fs elapsed, "
+                "target=%s, %.1fs silence skipped%s%s%s).",
                 len(final_text),
                 duration_s,
+                wall_clock_s,
                 target,
                 skipped_silence_bytes / bytes_per_second,
                 ", hung up" if hung_up else "",
-                f", stt error: {stt_error}" if stt_error else "",
+                (
+                    f", stt error: {stt_error} ({stt_error_detail or 'no detail'})"
+                    if stt_error
+                    else ""
+                ),
                 f", capture: {capture_error}" if capture_error else "",
             )
         except Exception as exc:  # noqa: BLE001 — dictation must never break voice
@@ -8860,10 +8955,12 @@ class SpeechPipeline:
                 await self._finish_dictation(
                     raw_text="",
                     language=language,
-                    duration_s=max(0.0, time.monotonic() - started_at),
+                    # Audio-derived here too: a crash mid-dictation must not
+                    # write a row whose duration is mostly the crash.
+                    duration_s=len(buffer) / bytes_per_second,
                     target=target,
                     hung_up=False,
-                    stt_error=f"{type(exc).__name__}: {exc}".strip(),
+                    stt_error=classify_stt_failure(exc),
                     audio=bytes(buffer),
                 )
             except Exception:  # noqa: BLE001 — the fallback must not raise either
@@ -8894,7 +8991,9 @@ class SpeechPipeline:
                         source_layer="speech.dictation",
                         outcome="cancelled",
                         detail="The dictation ended before it produced text.",
-                        duration_s=max(0.0, time.monotonic() - started_at),
+                        # Same measure as every other exit: what was recorded,
+                        # not how long the machinery took to give up.
+                        duration_s=len(buffer) / bytes_per_second,
                     )
                 )
 
@@ -8920,11 +9019,19 @@ class SpeechPipeline:
         ``stt_error`` is the transcription failure, if there was one. It is what
         makes ``failed`` distinguishable from ``empty``, so it is carried into
         the completion event and the history row rather than logged and dropped.
+        It is normalised to a reason code HERE rather than trusted from the
+        caller: this method is the one place the value is persisted and
+        published, and a raw provider string reaching it is exactly how a Python
+        exception class and a vendor URL ended up rendered under a user's own
+        dictated words. A backstop at the store beats a rule every future caller
+        has to remember.
+
         ``audio`` is the session's raw PCM; it is written to a local sidecar
         only when the dictation produced nothing usable AND the user allows it
         (``[dictation].keep_failed_audio``), which is what a later Restore
         transcribes again.
         """
+        stt_error = normalize_stt_failure(stt_error)
         cleaned = raw_text
         removed_words = 0
         cleanup_reason = ""
@@ -8936,34 +9043,61 @@ class SpeechPipeline:
         # reason="no_rules", i.e. no cleanup at all despite an explicit pin.
         pinned = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
         effective_language = pinned if pinned not in ("", "auto") else language
-        # Last resort: read the language off the TEXT. Not every provider
-        # reports one — ``transcribe_pcm`` is only contracted to return text —
-        # and on ``[dictation].language = auto`` (the shipped default) a silent
-        # provider left ``effective_language`` empty, which the cleanup can only
-        # answer with "no rules for this language". The observable consequence
-        # is the whole filler removal never running: every "äh" and "ähm" the
-        # user hesitated with shipped straight into the text while the setting
-        # said it was on. Resolved through the ONE canonical language resolver
-        # (CLAUDE.md §1: no layer invents its own detection), and only when
-        # nothing better is known — a provider that DID report a language keeps
-        # the last word.
-        if raw_text and not hung_up:
+        # Which language the cleanup rules run in. Three signals can answer that
+        # and the ORDER between them is the whole fix:
+        #
+        # 1. The user's pin wins, always. It is the one signal a person can set,
+        #    so overruling it would leave them no way to be right — which is why
+        #    this block does not run at all once ``pinned`` names a language.
+        # 2. Otherwise the TEXT outranks a provider tag that CONTRADICTS it. The
+        #    cloud Whisper APIs report a language on every request and report it
+        #    confidently when it is wrong: the live 2026-07-28 history has German
+        #    dictations tagged "English". The old gate only consulted the text
+        #    when the tag was UNPARSEABLE, and ``normalize_language_tag`` turns
+        #    "English" into "en", never "unknown" — so a confidently wrong tag
+        #    always won. What that costs is not cosmetic. The English filler list
+        #    used to contain "er", a top-frequency German pronoun, so a German
+        #    sentence tagged English came back with its pronouns deleted and the
+        #    cleanup reported a clean success.
+        # 3. A tag we cannot place stays exactly as it is. ``detect_text_language``
+        #    only knows de/en/es, so letting it overrule a "French" or "ja" tag
+        #    would relabel that dictation as whichever of the three it scored
+        #    highest on and then run THAT language's filler rules over it.
+        #    Keeping the tag makes the cleanup a documented no-op
+        #    (``reason="no_rules"``), which is the honest answer for ~95 of the
+        #    100 recognition languages this feature supports.
+        #
+        # A provider that reports nothing at all is the one case where the text
+        # is the only signal there is: ``[dictation].language = auto`` (the
+        # shipped default) plus a silent provider used to leave the cleanup with
+        # "no rules for this language", so every "äh" the user hesitated with
+        # shipped straight into the text while the setting said it was on.
+        # Everything resolves through the canonical resolver's helpers — no layer
+        # invents its own detection (CLAUDE.md §1).
+        if raw_text and not hung_up and pinned in ("", "auto"):
             try:
                 from jarvis.core.turn_language import (
                     detect_text_language,
                     normalize_language_tag,
                 )
 
-                if normalize_language_tag(effective_language) == "unknown":
-                    detected = detect_text_language(raw_text)
-                    if detected != "unknown":
-                        log.debug(
-                            "dictation language resolved from the transcript: %s "
-                            "(the provider reported %r)",
-                            detected,
-                            language,
-                        )
-                        effective_language = detected
+                reported = str(effective_language or "").strip().lower()
+                tag_code = normalize_language_tag(reported)
+                detected = detect_text_language(raw_text)
+                if detected != "unknown" and (
+                    # Nothing to contradict: no tag at all, or one that says
+                    # "I could not tell".
+                    reported in ("", "auto", "unknown", "und")
+                    # A tag we CAN place, which the text disagrees with.
+                    or (tag_code != "unknown" and tag_code != detected)
+                ):
+                    log.debug(
+                        "dictation language resolved from the transcript: %s "
+                        "(the provider reported %r)",
+                        detected,
+                        language,
+                    )
+                    effective_language = detected
             except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
                 log.debug("dictation language detection failed", exc_info=True)
 
@@ -8986,6 +9120,54 @@ class SpeechPipeline:
                 log.warning("dictation cleanup failed; using the raw transcript",
                             exc_info=True)
                 cleaned = raw_text
+
+        # Two kinds of text must never reach a document, and both used to.
+        #
+        # (a) Whisper's silence boilerplate. Every Whisper-family model answers a
+        #     near-silent microphone with the same handful of subtitle credits
+        #     and video outros — 12 of the first 26 rows of the live history are
+        #     "Thank you." or "Thank you for watching!", none of them spoken. The
+        #     repo has owned the marker list for months and the voice lane
+        #     filters on it in four places; the dictation lane never did.
+        # (b) A transcript with no WORDS in it. A bare "." was pasted into a live
+        #     document (history row 2026-07-28T18:10:30) and the clipboard was
+        #     then restored over it, so the user was left holding a stray full
+        #     stop and no way back to what they had copied.
+        #
+        # Blanking the text HERE, rather than only skipping the insertion, is
+        # deliberate: the final transcript published below also feeds the chat
+        # composer and the bar, and a dictation that reports "empty" while its
+        # text already sits in the composer is the same defect in a different
+        # window. ``raw_text`` is untouched, so the history row still shows what
+        # the provider returned and a later Restore can transcribe the audio
+        # again. Fail-open like every other step here: a broken gate costs the
+        # gate, never the user's words.
+        rejected_detail = ""
+        if cleaned.strip() and not hung_up:
+            try:
+                from jarvis.dictation.cleanup import count_words
+
+                if count_words(cleaned) == 0:
+                    rejected_detail = (
+                        "The dictation produced punctuation but no words, so "
+                        "nothing was inserted."
+                    )
+                elif _is_silence_hallucination(cleaned, duration_s):
+                    rejected_detail = (
+                        "The audio was too quiet to resolve, so nothing was "
+                        "inserted."
+                    )
+                if rejected_detail:
+                    log.info(
+                        "dictation delivery refused (%.1fs of audio, %r): %s",
+                        duration_s,
+                        cleaned[:80],
+                        rejected_detail,
+                    )
+                    cleaned = ""
+            except Exception:  # noqa: BLE001 — a broken guard never eats the text
+                log.debug("dictation delivery gate failed", exc_info=True)
+                rejected_detail = ""
 
         # Publish the final transcript first: the chat composer and the bar
         # both listen for it, and they should update even if insertion fails.
@@ -9023,6 +9205,18 @@ class SpeechPipeline:
             # this branch: a provider error is a "failed" the user can act on
             # (fix the key, switch provider), silence is just an "empty".
             outcome_name = "failed" if stt_error else "empty"
+            if stt_error:
+                # ``detail`` is the sentence surfaces without a locale of their
+                # own show verbatim (the Jarvis Bar, the CLI) — and until now a
+                # failed dictation left it empty, so the bar said nothing at all
+                # about why the words never arrived. The localized half is the
+                # reason CODE on ``error``, which the UI translates.
+                detail = stt_failure_message(stt_error)
+            elif rejected_detail:
+                # Nothing arrived because what arrived was not speech. Saying so
+                # is the difference between "your microphone heard nothing" and
+                # an unexplained empty result after the user clearly spoke.
+                detail = rejected_detail
         elif resolved_target == "insert":
             insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
             outcome_name = insert_result.status

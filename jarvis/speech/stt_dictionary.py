@@ -479,8 +479,16 @@ class DictionaryCorrectingSTT:
 
     @property
     def provider_label(self) -> str:
-        """Human-readable inner provider name for log lines."""
-        return type(self._inner).__name__
+        """Human-readable inner provider name for log lines.
+
+        Delegates when the inner object carries a label of its own. Since the
+        runtime fallback chain started wrapping the real provider, the class
+        name here resolved to ``FallbackSTT`` and the transcription log stopped
+        naming which provider actually ran — the one fact you need when a
+        provider is the thing failing, which is exactly when someone reads it.
+        """
+        inner = getattr(self._inner, "provider_label", "")
+        return str(inner) if inner else type(self._inner).__name__
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

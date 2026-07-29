@@ -289,6 +289,17 @@
       "empty": "Nichts gehört",
       "cancelled": "Abgebrochen",
       "failed": "Fehlgeschlagen"
+    },
+    "failure": {
+      "rate_limited": "Die Spracherkennung hat ihr Anfragelimit erreicht — es können Wörter fehlen.",
+      "no_credit": "Das Guthaben für die Spracherkennung ist aufgebraucht.",
+      "bad_key": "Der Schlüssel für die Spracherkennung wurde abgelehnt — prüfe ihn unter API-Keys.",
+      "unavailable": "Die Spracherkennung war nicht erreichbar.",
+      "rejected": "Die Spracherkennung konnte diese Aufnahme nicht verarbeiten.",
+      "engine_busy": "Die Spracherkennung war noch beschäftigt — versuch es gleich noch einmal.",
+      "recording_interrupted": "Die Aufnahme endete, bevor du gestoppt hast.",
+      "no_stt": "Es ist noch keine Spracherkennung eingerichtet.",
+      "unknown": "Die Spracherkennung ist fehlgeschlagen."
     }
   },
   "voice": {
