@@ -5817,6 +5817,27 @@ class BrainManager:
                 "in the utterance wins (mission, not a sidebar switch)."
             )
             return None
+        # An addressed terminal outranks a sidebar switch, for the same reason
+        # the desktop gate stands down for one a few lines below in ``generate``:
+        # whichever gate holds the MORE SPECIFIC evidence wins. Naming a running
+        # pane and telling it to do something is unambiguous; a section word that
+        # happens to appear in the same breath is not.
+        #
+        # Live bug 2026-07-29 17:04 (BUG-121): "Kannst du mal bitte Terminal T7
+        # prompten, … wieso das Resuming Feature nur bei claude Code Sessions
+        # funktioniert … oder bei Open Codes oder bei anderen Sessions" opened
+        # the Sessions section and returned. T7 was never briefed, and the live
+        # model narrated the briefing anyway. ``match_navigation_intent`` now
+        # binds its ingredients so that sentence no longer matches at all; this
+        # is the second layer, because a matcher fix alone leaves the class open
+        # for the next section word that lands next to a genuine cue.
+        # <!-- i18n-allow: quoted spoken transcript of the failing utterance -->
+        if self._agentic_ide_owns_turn(user_text):
+            log.info(
+                "navigation fast-path stands down — this turn addresses a "
+                "running Agentic-IDE terminal (more specific evidence)."
+            )
+            return None
         tool = self._tools.get("navigate")
         if tool is None or self._tool_executor is None:
             return None
