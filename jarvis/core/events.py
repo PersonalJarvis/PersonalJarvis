@@ -108,20 +108,31 @@ class TranscriptionUpdate(Event):
 
 @dataclass(frozen=True, slots=True)
 class DictationTranscript(Event):
-    """Live transcript from the chat composer's mic-dictation button.
+    """Live transcript of a dictation, as it is recognized.
 
     Deliberately a SEPARATE event from ``TranscriptionUpdate`` (which rides the
-    live voice critical path). Dictation only fills the chat text input — it
-    never reaches the brain — so keeping it on its own event name means the
-    frontend can route it straight to the textarea without ever confusing it
-    with a real voice turn, and the voice hot-path event stays untouched.
+    live voice critical path). Dictation never reaches the brain, so keeping it
+    on its own event name means the frontend can route it straight to a text
+    field without ever confusing it with a real voice turn, and the voice
+    hot-path event stays untouched.
 
     ``is_final=False`` interim hypotheses overwrite the live tail; the single
-    ``is_final=True`` is appended to the input box and ends the dictation.
+    ``is_final=True`` ends the dictation.
     """
 
     text: str = ""
     is_final: bool = False
+    #: Where the pipeline has decided this transcript belongs, already resolved
+    #: (never ``auto``): ``insert`` = typed into the foreign application in
+    #: front, ``chat`` = handed to Jarvis's own window.
+    #:
+    #: The UI needs this, and needs it on the event rather than by asking: the
+    #: event fires on BOTH routes, so a UI that inserted on every final
+    #: transcript would write a dictation meant for another program into
+    #: whatever Jarvis field last had focus — invisibly, in a section the user
+    #: is not even looking at. Empty on an older backend, which reads as "do not
+    #: insert in-app" and leaves that install exactly as it behaved before.
+    target: str = ""
 
 
 @dataclass(frozen=True, slots=True)

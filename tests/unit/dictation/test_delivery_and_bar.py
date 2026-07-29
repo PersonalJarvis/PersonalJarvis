@@ -166,6 +166,45 @@ async def test_auto_target_is_resolved_at_DELIVERY_time(
     assert events[-1].outcome == "chat"
 
 
+@pytest.mark.asyncio
+async def test_final_transcript_says_which_route_it_took(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The UI cannot work this out for itself, and gets it wrong if it guesses.
+
+    The same event fires on BOTH routes. A UI that inserted on every final
+    transcript would take a dictation the backend is already pasting into
+    another program and write it into whatever Jarvis field last had focus —
+    invisibly, in a section nobody is looking at. So the resolved target rides
+    along, and "auto" must never be what arrives: the UI cannot read a
+    foreground window.
+    """
+    import jarvis.dictation.insert as insert_mod
+
+    def _final(events: list[object]) -> DictationTranscript:
+        return [
+            e
+            for e in events
+            if isinstance(e, DictationTranscript) and e.is_final
+        ][-1]
+
+    monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: False)
+    pipe, events = _pipeline()
+    await pipe._finish_dictation(
+        raw_text="into the other app", language="en", duration_s=1.0,
+        target="auto", hung_up=False,
+    )
+    assert _final(events).target == "insert"
+
+    monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: True)
+    pipe, events = _pipeline()
+    await pipe._finish_dictation(
+        raw_text="into our own window", language="en", duration_s=1.0,
+        target="auto", hung_up=False,
+    )
+    assert _final(events).target == "chat"
+
+
 # --------------------------------------------------------------------------
 # The failure signal — "the provider refused us" vs "you said nothing"
 # --------------------------------------------------------------------------
