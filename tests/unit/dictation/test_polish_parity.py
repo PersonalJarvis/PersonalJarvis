@@ -208,6 +208,98 @@ def test_local_only_reached_every_layer() -> None:
         )
 
 
+def test_translated_reached_every_layer() -> None:
+    """The status the translate pass added, pinned by name like ``local_only``.
+
+    ``translated`` is the second status in the vocabulary where the delivered
+    text differs from what was recognized — and unlike ``applied`` it changes
+    the LANGUAGE, so a history row that cannot name it leaves the user looking
+    at English under a heading that says these are the words they said.
+    """
+    assert "translated" in POLISH_STATUSES, "jarvis/dictation/polish.py"
+    assert "translated" in _ts_const_array(_DICTATION_TS, "POLISH_STATUSES"), (
+        'jarvis/ui/web/frontend/src/hooks/useDictation.ts: add "translated" to '
+        "POLISH_STATUSES"
+    )
+    for name in SUPPORTED_LOCALES:
+        table = _locale(name).get("dictation", {}).get("polish_status", {})
+        assert str(table.get("translated", "")).strip(), (
+            f"jarvis/ui/web/frontend/src/i18n/locales/{name}.json: add "
+            "dictation.polish_status.translated"
+        )
+
+
+def test_every_translation_target_has_an_english_name_for_the_prompt() -> None:
+    """The prompt's language table and the accepted targets are one set.
+
+    A target with no entry in ``LANGUAGE_ENGLISH_NAMES`` still produces a usable
+    prompt — the code is passed through — but it hands the model a bare ``sd``
+    to decode instead of ``Sindhi``, on exactly the languages least likely to
+    survive that. The fallback exists so a dictation never fails on a lookup;
+    this test is what stops it becoming the normal path.
+    """
+    from jarvis.core.config import TRANSLATION_TARGETS
+    from jarvis.dictation.translate_prompt import LANGUAGE_ENGLISH_NAMES
+
+    assert TRANSLATION_TARGETS, "TRANSLATION_TARGETS is empty"
+    assert LANGUAGE_ENGLISH_NAMES, "LANGUAGE_ENGLISH_NAMES is empty"
+    missing = set(TRANSLATION_TARGETS) - set(LANGUAGE_ENGLISH_NAMES)
+    assert not missing, (
+        "jarvis/dictation/translate_prompt.py: add an English name for "
+        f"{sorted(missing)}"
+    )
+    # And the other direction, so the table cannot accumulate dead rows for
+    # languages the recognizer no longer offers.
+    stale = set(LANGUAGE_ENGLISH_NAMES) - set(TRANSLATION_TARGETS)
+    assert not stale, f"translate_prompt.py: names nothing can select: {sorted(stale)}"
+
+
+def test_no_translation_target_is_the_auto_placeholder() -> None:
+    """``auto`` is a coherent INPUT answer and no answer at all as an output.
+
+    Offering it would put an entry in the dropdown that resolves to "translate
+    nothing" — a switch whose value is ignored (AP-31).
+    """
+    from jarvis.core.config import TRANSLATION_TARGETS
+
+    assert "auto" not in TRANSLATION_TARGETS
+
+
+def test_the_translate_card_says_what_happens_when_no_model_answers() -> None:
+    """The copy half, in all three languages.
+
+    A polish pass that falls back is invisible; a TRANSLATION that falls back
+    delivers the wrong language into a live document. That difference is the one
+    thing the description cannot leave out, and no code change can supply it.
+    """
+    for name in SUPPORTED_LOCALES:
+        translate = _locale(name).get("voice", {}).get("translate", {})
+        assert isinstance(translate, dict) and translate, (
+            f"jarvis/ui/web/frontend/src/i18n/locales/{name}.json: add "
+            "voice.translate"
+        )
+        for key in (
+            "title",
+            "description",
+            "sends_text",
+            "target_label",
+            "target_hint",
+            "same_language_notice",
+        ):
+            value = translate.get(key)
+            assert isinstance(value, str) and value.strip(), (
+                f"{name}.json: voice.translate.{key}"
+            )
+        # Long enough to be the real sentence rather than a placeholder.
+        assert 80 < len(str(translate["sends_text"])) < 420, (
+            f"{name}.json: voice.translate.sends_text length"
+        )
+
+    tab = _read(_FRONTEND / "views" / "voice" / "LanguageTab.tsx")
+    for key in ("voice.translate.title", "voice.translate.sends_text"):
+        assert key in tab, f"LanguageTab.tsx does not render {key}"
+
+
 def test_the_language_tab_says_the_transcript_leaves_the_machine() -> None:
     """The copy half of the privacy fix, pinned in all three languages.
 

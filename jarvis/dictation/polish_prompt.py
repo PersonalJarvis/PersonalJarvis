@@ -132,6 +132,26 @@ def normalize_style(style: object) -> str:
     return value if value in POLISH_STYLES else "neutral"
 
 
+def style_line(style: object) -> str:
+    """The one appended register line for *style*; ``""`` for ``neutral``.
+
+    Public because the translate prompt (:mod:`jarvis.dictation.translate_prompt`)
+    offers the same three registers and must append the same sentence. Two
+    copies of a register hint is how the email style ends up meaning something
+    subtly different depending on whether a translation was involved.
+    """
+    return _STYLE_LINES[normalize_style(style)]
+
+
+def build_protected_block(protected_terms: Sequence[str]) -> str:
+    """The ``<protected terms>`` block, ready to append to a system prompt.
+
+    Shared with the translate prompt for the reason above: what "do not touch
+    this spelling" looks like to a model is one decision, not one per pass.
+    """
+    return _PROTECTED_BLOCK.format(terms=_format_protected_terms(protected_terms))
+
+
 def build_polish_prompt(
     *,
     language: str,
@@ -154,12 +174,11 @@ def build_polish_prompt(
     if hint_language and hint_language.lower() not in ("auto", "unknown"):
         parts.append(_LANGUAGE_HINT.format(language=hint_language))
 
-    style_line = _STYLE_LINES[normalize_style(style)]
-    if style_line:
-        parts.append(style_line)
+    register = style_line(style)
+    if register:
+        parts.append(register)
 
-    terms = _format_protected_terms(protected_terms)
-    parts.append(_PROTECTED_BLOCK.format(terms=terms))
+    parts.append(build_protected_block(protected_terms))
 
     return "\n\n".join(parts)
 
@@ -211,5 +230,7 @@ __all__ = [
     "RAW_OPEN_DELIMITER",
     "build_polish_prompt",
     "build_polish_user_message",
+    "build_protected_block",
     "normalize_style",
+    "style_line",
 ]

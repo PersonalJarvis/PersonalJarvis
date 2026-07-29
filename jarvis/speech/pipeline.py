@@ -9915,27 +9915,42 @@ class SpeechPipeline:
         # additionally catches anything the import or the call surfaces. The
         # import is INSIDE the function (AP-26) exactly like ``clean_transcript``
         # above — nothing about the polish pass may reach the boot path.
+        # The same pass also delivers the dictation in a fixed language when
+        # ``[dictation].translate`` is on — one model call does both, so a
+        # translation costs the same single round trip a polish does.
         polish_status = ""
         polish_provider = ""
         polish_latency_ms = 0
         if cleaned.strip() and not hung_up:
             try:
-                from jarvis.dictation.polish import polish_enabled, polish_transcript
+                from jarvis.dictation.polish import (
+                    polish_enabled,
+                    polish_transcript,
+                    resolve_translate_target,
+                )
 
-                if polish_enabled(cfg):
+                # Resolved HERE and not inside the pass so both callers of the
+                # pass — this one and the Restore route — reach the same answer
+                # from the same function, exactly like ``effective_language``
+                # above. Empty means "no translation": the switch is off, or the
+                # dictation is already in the target language.
+                translate_to = resolve_translate_target(cfg, effective_language)
+                if polish_enabled(cfg) or translate_to:
                     result = await polish_transcript(
                         cleaned,
                         language=effective_language,
                         cfg=cfg,
                         protected_terms=self._dictation_protected_terms(),
                         style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                        translate_to=translate_to,
                     )
                     cleaned = result.text
                     polish_status = result.status
                     polish_provider = result.provider
                     polish_latency_ms = result.latency_ms
                     log.info(
-                        "dictation polish: %s (%s, %d ms%s).",
+                        "dictation %s: %s (%s, %d ms%s).",
+                        f"translation to {translate_to}" if translate_to else "polish",
                         polish_status,
                         polish_provider or "no provider",
                         polish_latency_ms,

@@ -797,6 +797,12 @@ DICTATION_SETTING_KEYS = (
     "polish_drift_max_shrink",
     "polish_drift_max_growth",
     "polish_style",
+    # The translate pass. Same rule as the polish keys above: a key missing here
+    # is a switch the UI appears to save and loses on the next restart.
+    "translate",
+    "translate_target",
+    "translate_drift_max_shrink",
+    "translate_drift_max_growth",
 )
 
 

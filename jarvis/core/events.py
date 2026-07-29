@@ -169,6 +169,12 @@ class DictationCompleted(Event):
     #: user-visible claim "these are the words you said" changes when the pass
     #: applies: a surface that shows the polished text without being able to say
     #: it was polished cannot offer the raw text back.
+    #:
+    #: ``"translated"`` is the one status that also changes what ``language``
+    #: above describes: it stays the language that was SPOKEN (the one
+    #: ``raw_text`` is in), while ``text`` arrives in
+    #: ``[dictation].translate_target``. The two fields belong to the two texts,
+    #: which is why neither is rewritten to match the other.
     polish_status: str = ""
     #: The credential family that answered (``groq``/``gemini``/...), empty when
     #: none was asked. A family id, never a model id — the model is a detail of

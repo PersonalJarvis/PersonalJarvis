@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Info, Languages, Loader2, PlugZap, Wand2 } from "lucide-react";
+import {
+  ArrowRightLeft,
+  Info,
+  Languages,
+  Loader2,
+  PlugZap,
+  Wand2,
+} from "lucide-react";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
@@ -59,10 +66,12 @@ export interface LanguageTabProps {
  * reply language are separate settings on purpose — dictating in English while
  * being answered in German is a normal thing to want.
  *
- * The tab also owns the wording pass (`[dictation].polish`), because that is
- * the other half of the same question: the language decides what is recognized,
- * the wording pass decides how what was recognized is written down. Both are
- * text quality, and neither belongs on a screen about keys or shortcuts.
+ * The tab also owns the wording pass (`[dictation].polish`) and the translation
+ * (`[dictation].translate`), because those are the other two thirds of the same
+ * question: the language decides what is recognized, the wording pass decides
+ * how what was recognized is written down, and the translation decides which
+ * language it is written down in. All three are text quality, and none belongs
+ * on a screen about keys or shortcuts.
  */
 export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const t = useT();
@@ -102,6 +111,26 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     }
   }
 
+  async function onToggleTranslate(next: boolean) {
+    setTestResult(null);
+    try {
+      await saveSettings({ translate: next });
+      pushToast("success", t("dictation.saved"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  }
+
+  async function onPickTranslateTarget(translate_target: string) {
+    setTestResult(null);
+    try {
+      await saveSettings({ translate_target });
+      pushToast("success", t("dictation.saved"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  }
+
   async function runPolishTest() {
     setTesting(true);
     setTestResult(null);
@@ -129,6 +158,19 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const polishProviders = served.includes(polishProvider)
     ? served
     : [...served, polishProvider];
+
+  // Ships OFF, unlike the wording pass: this changes WHICH WORDS come out, not
+  // just how they are written, so it is never on until someone asks for it.
+  const translateOn = settings?.translate ?? false;
+  const translateTarget = settings?.translate_target ?? "en";
+  // No "auto" in this list, and none is added here — there is nothing to detect
+  // on the output side, so an auto entry would be a choice that does nothing.
+  const translateTargets = choices?.translate_target ?? [];
+  // Pinning the dictation language to the same language the output is pinned to
+  // means nothing will ever be translated. Neither setting is wrong on its own,
+  // so this is said rather than prevented: silently ignoring one of two switches
+  // the user set is the failure mode worth avoiding.
+  const targetEqualsSource = value !== "auto" && value === translateTarget;
 
   return (
     <div className="flex h-full flex-col">
@@ -202,6 +244,19 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                   data-testid="dictation-polish-description"
                 >
                   {t("voice.polish.description")}
+                </p>
+                {/* Where the text GOES, which the sentence above never said.
+                    The pass is a normal cloud feature and is worded as one —
+                    no banner, no warning colour — but "a model rewrites your
+                    words" and "your words are uploaded to do it" are two
+                    different facts, and only one of them was on screen. Shown
+                    whether the switch is on or off, because someone deciding
+                    to turn it ON is exactly who needs it. */}
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  data-testid="dictation-polish-sends-text"
+                >
+                  {t("voice.polish.sends_text")}
                 </p>
               </div>
               <Switch
@@ -305,6 +360,86 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                         {testResult.sample_out}
                       </p>
                     </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Translation sits below the wording pass because it IS the wording
+              pass, pointed at a different language: one model call does both,
+              and the provider chosen above is the one that answers. Putting it
+              on its own screen would hide that the two share a budget, a
+              provider and a failure mode. */}
+          <div
+            className="rounded-lg border border-border bg-card/60 p-4"
+            data-testid="dictation-translate-card"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 font-display text-sm font-semibold">
+                  <ArrowRightLeft
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 text-primary"
+                  />
+                  {t("voice.translate.title")}
+                </h4>
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="dictation-translate-description"
+                >
+                  {t("voice.translate.description")}
+                </p>
+                {/* The same honesty the wording pass owes: where the text goes,
+                    and what happens when nothing answers. A translation that
+                    quietly falls back is VISIBLE — the words arrive in the
+                    wrong language — so saying it up front is the difference
+                    between a known limit and a bug report. */}
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  data-testid="dictation-translate-sends-text"
+                >
+                  {t("voice.translate.sends_text")}
+                </p>
+              </div>
+              <Switch
+                checked={translateOn}
+                disabled={loading}
+                onCheckedChange={(next) => void onToggleTranslate(next)}
+                aria-label={t("voice.translate.title")}
+                data-testid="dictation-translate-toggle"
+              />
+            </div>
+
+            {translateOn && (
+              <>
+                <div className="mt-3 flex max-w-xs flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {t("voice.translate.target_label")}
+                  </span>
+                  <LanguageSelect
+                    value={translateTarget}
+                    codes={translateTargets}
+                    onChange={(code) => void onPickTranslateTarget(code)}
+                    autoLabel={t("voice.language.auto")}
+                    ariaLabel={t("voice.translate.target_label")}
+                    disabled={loading}
+                    testId="dictation-translate-target"
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {t("voice.translate.target_hint")}
+                </p>
+
+                {targetEqualsSource && (
+                  <div
+                    className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3"
+                    data-testid="dictation-translate-same-language"
+                  >
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("voice.translate.same_language_notice")}
+                    </p>
                   </div>
                 )}
               </>

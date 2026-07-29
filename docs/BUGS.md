@@ -8360,3 +8360,64 @@ worse exactly as voice input gets more natural. Bind every ingredient to a
 window around the anchor word. And when two deterministic gates can both claim
 a turn, the one holding the MORE SPECIFIC evidence must win: a named running
 agent beats a keyword match, however plausible the keyword looked.
+
+---
+
+## BUG-121: only Claude Code panes come back with their conversation — every other coding CLI resumes empty (HIGH, FIXED 2026-07-29)
+
+**Symptom (maintainer field report).** Resuming a workspace restores the Claude
+Code panes with their history intact, while the Codex, OpenCode and Kimi Code
+panes come back as fresh agents that know nothing. The panes themselves are
+there — right call-sign, right grid position — so the loss is invisible until
+somebody asks the agent a follow-up question and gets a blank stare. Nothing in
+the log said a word about it.
+
+**Root cause — the handle was never captured, not lost.** A pane resumes through
+a *resume handle*, and the two ways of getting one are not equally reliable:
+
+* Claude Code is TOLD its id at launch (`--session-id <uuid>`), so the handle
+  exists before the CLI has done anything at all.
+* Codex, OpenCode and Kimi Code choose their own, so the id can only be
+  DISCOVERED from what they write to disk — and they write nothing until the
+  conversation has its first message.
+
+`Registry._schedule_lookup` searched 4 s and 16 s after the pane's process
+started, was called from exactly one place (the spawn branch of
+`_attach_locked`), and gave up permanently after the second attempt. A pane
+opened and prompted a minute later — the normal way a grid is used — therefore
+missed both attempts and kept `resume = None` for the rest of its life.
+`Terminal.to_snapshot` then stored a pane with no conversation, and on restore
+`resume_argv` returned `None`, which is the same code path as "this pane never
+had a conversation": a silent fresh start.
+
+**Evidence.** A Codex pane launched 15:17:44 and briefed 15:19:32 wrote its
+rollout file at 15:19:32 — 106 s after launch, 90 s after the last lookup — while
+both the filename and the record inside it carry the SESSION START time
+(15:17:46), which is why the file looks like it was there in time. Across 338
+real Codex TUI sessions on the maintainer's machine, 40 % of the files appeared
+after the 16 s window (p90: 402 s); `codex exec` runs, which carry their prompt
+at launch, landed inside it 98 % of the time. The stored snapshot showed it
+plainly: one Codex pane with `prompts_sent: 1` and `resume: null` beside nine
+Claude panes that all had handles, including ones never prompted.
+
+**Fix.** The search is now triggered by the event that MAKES a session findable
+rather than by the pane's age: `Registry._lookup_after_conversation` runs a
+short second schedule (`CONVERSATION_DELAYS_S`) when a prompt is delivered
+(`send_prompt`) and when the user submits a line in the pane themselves
+(`write`) — so a pane driven only by hand is covered too. `started_at` stays the
+pane's LAUNCH time, because a session's recorded timestamp is when it opened.
+One round per pane at a time plus a cooldown (`LOOKUP_COOLDOWN_S`) keeps a
+leaning-on-Enter user from re-crawling the CLI's history. A restored pane that
+was worked in and still has no id now says so in the log instead of starting
+over in silence.
+
+**Guards.** `tests/unit/agentic_ide/test_resume_session.py` — a CLI that files
+its session only once the conversation has a message is still captured after a
+prompt and after a hand-typed submit; the cooldown holds back repeated Enters;
+a pane that already has a handle never looks again.
+
+**Class rule.** When a capability depends on an external tool writing something,
+time the wait from the EVENT that makes the tool write, never from the moment we
+happened to start it — and never let the last attempt be silent. Two of the four
+CLIs here were pinned by tests that pre-created the session file and set the
+delay to zero, which proved the mechanism and hid the timing entirely.

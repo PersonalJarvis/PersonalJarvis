@@ -94,6 +94,10 @@ const SETTINGS = {
   polish_drift_max_shrink: 0.55,
   polish_drift_max_growth: 1.2,
   polish_style: "neutral",
+  translate: false,
+  translate_target: "en",
+  translate_drift_max_shrink: 0.4,
+  translate_drift_max_growth: 2.5,
 };
 
 const CHOICES = {
@@ -104,6 +108,8 @@ const CHOICES = {
   language: ["auto", "de", "en", "es"],
   polish_provider: ["auto", "groq", "gemini", "openrouter"],
   polish_style: ["neutral", "messaging", "email"],
+  // No "auto": there is nothing to detect on the output side.
+  translate_target: ["de", "en", "es"],
 };
 
 // What POST /api/dictation/polish/test answers on a host that has a key: the
@@ -369,6 +375,34 @@ describe("LanguageTab — the wording pass", () => {
     expect(text).toContain("history");
   });
 
+  it("says the finished transcript is sent to the selected model, and stays visible while the pass is off", async () => {
+    // The description above it explains what the pass CHANGES. This line is
+    // the other half — that the words leave the machine to be changed, and
+    // that the raw text is kept regardless. It is asserted on the switched-OFF
+    // state on purpose: the person deciding whether to turn it on is exactly
+    // the one who has to read it first.
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, polish: false }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const note = await waitFor(() =>
+      screen.getByTestId("dictation-polish-sends-text"),
+    );
+    const text = (note.textContent ?? "").toLowerCase();
+    expect(text).toContain("sent to the model");
+    expect(text).toContain("raw text");
+    expect(text).toContain("history");
+    // No scare language and no banner styling: this is a normal cloud feature
+    // the user chose, described plainly.
+    expect(text).not.toContain("warning");
+    expect(note.className).not.toContain("destructive");
+  });
+
   it("persists the switch through the dictation settings endpoint", async () => {
     const calls = installFetchMock(
       routes({
@@ -474,5 +508,103 @@ describe("LanguageTab — the wording pass", () => {
     );
     expect(screen.queryByTestId("dictation-polish-provider")).toBeNull();
     expect(screen.queryByTestId("dictation-polish-test")).toBeNull();
+  });
+
+  // ------------------------------------------------------------------
+  // Translation — same tab, and the switch that changes which words come out
+  // ------------------------------------------------------------------
+
+  it("keeps translation off until it is asked for, and hides its target", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const toggle = await waitFor(() =>
+      screen.getByTestId("dictation-translate-toggle"),
+    );
+    // The one switch on this screen that ships off. It changes WHICH WORDS are
+    // delivered, so an install that never asked for it must not acquire it.
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByTestId("dictation-translate-target")).toBeNull();
+  });
+
+  it("saves the switch and then offers the target language", async () => {
+    const calls = installFetchMock(
+      routes({ "PUT /api/dictation/settings": () => ({ body: { ok: true } }) }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    fireEvent.click(
+      await waitFor(() => screen.getByTestId("dictation-translate-toggle")),
+    );
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PUT" &&
+            c.url.includes("/api/dictation/settings") &&
+            JSON.parse(c.body ?? "{}").translate === true,
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("offers target languages by name and never an automatic entry", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, translate: true }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const { options } = await openPicker("dictation-translate-target");
+    const labels = options.map((o) => o.textContent ?? "");
+    // Named, not coded — the same reasoning as the recognition picker above.
+    expect(labels.some((l) => l.includes("English"))).toBe(true);
+    expect(labels.some((l) => l.includes("German"))).toBe(true);
+    // "Detect automatically" is a coherent answer to what am I speaking and no
+    // answer at all to what should come out. Offering it would be a dropdown
+    // entry that resolves to translating nothing.
+    expect(labels.some((l) => l.includes("Automatic"))).toBe(false);
+    expect(labels.some((l) => l.includes("Detect"))).toBe(false);
+  });
+
+  it("says so when the pinned dictation language equals the target", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            // Speaking English and writing English: both settings are legal, and
+            // together they mean nothing is ever translated. Said out loud
+            // rather than silently ignored.
+            settings: { ...SETTINGS, translate: true, language: "en" },
+            choices: CHOICES,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-translate-same-language")).toBeTruthy(),
+    );
+  });
+
+  it("stays quiet about the language clash while detection is automatic", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, translate: true }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-translate-target")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("dictation-translate-same-language")).toBeNull();
   });
 });

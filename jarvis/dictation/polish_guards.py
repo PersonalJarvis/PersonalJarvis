@@ -1,4 +1,13 @@
-"""Deterministic drift guards for the dictation polish pass.
+"""Deterministic drift guards for the dictation polish and translate passes.
+
+Two guard sets, one discipline
+------------------------------
+:func:`drift_reason` guards the polish pass and :func:`translate_drift_reason`
+guards the translate pass. They share every mechanism in this module and
+disagree on exactly one thing — whether a change of language is the defect or
+the job — which is why they are two functions rather than one with a flag. A
+caller that picks the wrong one does not get a slightly worse guard; it gets a
+pass that rejects 100 % of its own correct answers.
 
 What this module is for
 -----------------------
@@ -53,6 +62,29 @@ DRIFT_REASONS: Final[tuple[str, ...]] = (
     "ratio_shrink",
     "ratio_growth",
     "language_flip",
+    "lost_number",
+    "lost_term",
+)
+
+#: Every reason :func:`translate_drift_reason` can return, plus ``""``.
+#:
+#: Deliberately a SEPARATE vocabulary rather than an extension of the tuple
+#: above, because the two guard sets disagree about the thing that matters most:
+#: for the polish pass a change of language is the defect (``language_flip``),
+#: for the translate pass it is the entire job, and the defect is its ABSENCE
+#: (``not_translated``). Running a translation through :func:`drift_reason`
+#: would reject every single one — first on ``ratio_growth``, then on
+#: ``language_flip`` — which is why the caller must pick the right one.
+#:
+#: The overlapping members mean the same thing in both sets, so a history row or
+#: a test can read ``reason`` without first knowing which pass produced it.
+TRANSLATE_DRIFT_REASONS: Final[tuple[str, ...]] = (
+    "empty",
+    "meta_output",
+    "ratio_shrink",
+    "ratio_growth",
+    "not_translated",
+    "wrong_language",
     "lost_number",
     "lost_term",
 )
@@ -396,9 +428,95 @@ def drift_reason(
     return ""
 
 
+def translate_drift_reason(
+    raw: str,
+    translated: str,
+    *,
+    target_language: str,
+    protected: Sequence[str],
+    max_shrink: float,
+    max_growth: float,
+) -> str:
+    """``""`` when *translated* is safe to deliver; otherwise a short reason code.
+
+    The translate twin of :func:`drift_reason`, and the differences between them
+    are the whole point:
+
+    * **The language check is inverted.** There the output must MATCH the input;
+      here it must not — it must match *target_language*. When it comes back in
+      the input's language the answer is ``not_translated`` (the model declined
+      the job, the single most likely failure), and when it comes back in some
+      third language it is ``wrong_language``. Both are only decidable for the
+      three languages ``detect_text_language`` knows, so for the other ~96
+      targets this check is a documented no-op rather than a veto — the same
+      asymmetry, and the same reasoning, as the rare-token filter.
+    * **The word-count band is much wider.** A faithful translation legitimately
+      shrinks or grows: German compounds collapse into one English word, English
+      phrasal verbs expand into German subclauses. The narrow polish band exists
+      to catch a formatter that started writing; here it can only catch a model
+      that stopped.
+    * **Rare-token preservation is gone entirely.** Every content word is
+      *supposed* to change. What survives is the check that still means
+      something after a language change: numbers may not be lost, and protected
+      terms — names, the wake word, the STT dictionary — must cross untranslated.
+
+    Same discipline as its twin: pure regex and set arithmetic, no model call,
+    no I/O, and the FIRST reason that fires is the one returned.
+    """
+    if not str(translated or "").strip():
+        return "empty"
+    if _is_meta_output(raw, translated):
+        return "meta_output"
+
+    raw_words = count_words(raw)
+    out_words = count_words(translated)
+    if raw_words:
+        ratio = out_words / raw_words
+        if ratio < max_shrink:
+            return "ratio_shrink"
+        if ratio > max_growth:
+            return "ratio_growth"
+
+    # Only meaningful when we can classify the target at all. ``_language_key``
+    # is not reused here on purpose: it answers "do we hold a frequency table",
+    # which is a different question from "can the detector name this language",
+    # and the two tables are only coincidentally the same three languages today.
+    target = _language_key(target_language)
+    if target:
+        out_language = detect_text_language(translated)
+        if out_language != "unknown" and out_language != target:
+            # Naming WHICH failure happened is worth the extra branch: "the
+            # model ignored you" and "the model translated into the wrong
+            # language" call for different fixes, and a single code would send
+            # every user down the same wrong path.
+            if out_language == detect_text_language(raw):
+                return "not_translated"
+            return "wrong_language"
+
+    # Unchanged from the polish guard, and for an unchanged reason: a number the
+    # speaker said and the answer does not carry is lost information in any
+    # language. Asymmetric the same way, so "seven" -> "7" stays legal.
+    if _digit_runs(raw) - _digit_runs(translated):
+        return "lost_number"
+
+    haystack = _token_haystack(translated)
+    raw_haystack = _token_haystack(raw)
+    for term in protected or ():
+        tokens = _compare_tokens(term)
+        if not tokens:
+            continue
+        needle = " " + " ".join(tokens) + " "
+        if needle in raw_haystack and needle not in haystack:
+            return "lost_term"
+
+    return ""
+
+
 __all__ = [
     "DRIFT_REASONS",
+    "TRANSLATE_DRIFT_REASONS",
     "drift_reason",
     "normalize_for_compare",
     "rare_tokens",
+    "translate_drift_reason",
 ]

@@ -192,11 +192,12 @@ async def _format_restored_text(
     """Run a re-transcription through the delivery chain. ``(text, language)``.
 
     A Restore that produced different text than the original delivery would be
-    a quiet lie about what the button does, so this applies the SAME three
-    steps, in the same order and with the same decisions: resolve the language,
-    remove fillers, repair the punctuation our own segment boundaries broke,
-    and — when it is switched on and reachable — polish. Each step owns its own
-    decision in its own module; nothing is re-derived here.
+    a quiet lie about what the button does, so this applies the SAME steps, in
+    the same order and with the same decisions: resolve the language, remove
+    fillers, repair the punctuation our own segment boundaries broke, and —
+    when it is switched on and reachable — polish and, if a translation target
+    is configured, translate. Each step owns its own decision in its own module;
+    nothing is re-derived here.
 
     Fail-open at every step, like the delivery path: the user asked for their
     words back, and a formatting bug must never be the reason they do not get
@@ -241,9 +242,18 @@ async def _format_restored_text(
         log.debug("restore tidy failed; keeping the untidied text", exc_info=True)
 
     try:
-        from jarvis.dictation.polish import polish_enabled, polish_transcript
+        from jarvis.dictation.polish import (
+            polish_enabled,
+            polish_transcript,
+            resolve_translate_target,
+        )
 
-        if text.strip() and polish_enabled(cfg):
+        # The translation target is resolved through the SAME function the live
+        # delivery uses, for the same reason the language is: a Restore that
+        # handed back the original language while the live path translates would
+        # be a quiet lie about what the button does.
+        translate_to = resolve_translate_target(cfg, language)
+        if text.strip() and (polish_enabled(cfg) or translate_to):
             pipeline = _pipeline()
             terms = ()
             getter = getattr(pipeline, "_dictation_protected_terms", None)
@@ -258,10 +268,12 @@ async def _format_restored_text(
                 cfg=cfg,
                 protected_terms=terms,
                 style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                translate_to=translate_to,
             )
             text = result.text
             log.info(
-                "restore polish: %s (%s, %d ms).",
+                "restore %s: %s (%s, %d ms).",
+                f"translation to {translate_to}" if translate_to else "polish",
                 result.status,
                 result.provider or "no provider",
                 result.latency_ms,
@@ -466,6 +478,27 @@ class SettingsBody(BaseModel):
         default=None,
         description="Register the polished text is written in",
     )
+    # The translate pass. Same FastAPI trap as the polish keys above: an
+    # undeclared body key is dropped before the handler ever sees it.
+    translate: bool | None = Field(
+        default=None,
+        description=(
+            "Deliver every dictation in one fixed language, whatever language "
+            "you speak. Speak German, get English. Runs in the same pass as the "
+            "wording clean-up, so it costs no extra wait; if no model answers "
+            "in time the transcript arrives in the language you spoke."
+        ),
+    )
+    translate_target: str | None = Field(
+        default=None,
+        description=(
+            "The language dictations are delivered in while translate is on. A "
+            "language code such as en or de; no auto, because there is nothing "
+            "to detect on the output side"
+        ),
+    )
+    translate_drift_max_shrink: float | None = None
+    translate_drift_max_growth: float | None = None
     persist: bool = Field(
         default=True, description="Also write the change to jarvis.toml"
     )
@@ -884,7 +917,11 @@ async def get_settings(request: Request) -> dict[str, Any]:
     the cost of getting it wrong here is a recorder that happily captures a key
     the actuator cannot send, which then fails silently at paste time.
     """
-    from jarvis.core.config import DICTATION_LANGUAGES, POLISH_STYLES
+    from jarvis.core.config import (
+        DICTATION_LANGUAGES,
+        POLISH_STYLES,
+        TRANSLATION_TARGETS,
+    )
     from jarvis.core.config_writer import DICTATION_SETTING_KEYS
     from jarvis.dictation.insert import (
         CUSTOM_CHORD_KEYS,
@@ -909,6 +946,10 @@ async def get_settings(request: Request) -> dict[str, Any]:
             # backend rejects (or hiding one it accepts).
             "polish_style": list(POLISH_STYLES),
             "polish_provider": ["auto", *(family.id for family in POLISH_FAMILIES)],
+            # No "auto" here, unlike ``language``: the output side has nothing
+            # to detect, so an auto entry would be a dropdown option that
+            # silently does nothing (AP-31).
+            "translate_target": list(TRANSLATION_TARGETS),
         },
         "custom": {
             "paste_chord": {
@@ -1120,10 +1161,18 @@ async def test_polish(request: Request) -> dict[str, Any]:
     and the sample back unchanged — the same answer a dictation would get, and
     the honest one on an install that never configured a text model.
     """
-    from jarvis.dictation.polish import polish_enabled, polish_transcript
+    from jarvis.dictation.polish import (
+        polish_enabled,
+        polish_transcript,
+        resolve_translate_target,
+    )
 
     cfg = _dictation_cfg(request)
-    if not polish_enabled(cfg):
+    # The sample is English, so a target of "en" correctly resolves to "no
+    # translation needed" and the probe measures the plain polish path — which
+    # is exactly what a dictation in the target language would get.
+    translate_to = resolve_translate_target(cfg, "en")
+    if not polish_enabled(cfg) and not translate_to:
         # Reported rather than refused: "you switched it off" is a complete
         # answer to "why is my dictation not being polished", and a 409 here
         # would make the settings screen render an error for a working config.
@@ -1152,6 +1201,7 @@ async def test_polish(request: Request) -> dict[str, Any]:
         cfg=cfg,
         protected_terms=terms,
         style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+        translate_to=translate_to,
     )
     return {
         "status": result.status,

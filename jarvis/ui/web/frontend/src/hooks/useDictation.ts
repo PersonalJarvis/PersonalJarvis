@@ -22,6 +22,13 @@ export const DICTATION_OUTCOMES = [
   "clipboard_only",
   "unavailable",
   "chat",
+  // Some of the words arrived and some are gone for good: one or more segments
+  // failed every retry, so what was delivered is a fragment. Reported instead
+  // of a plain success because a session that lost half a minute of speech and
+  // still called itself inserted is the bug this value exists to end. The audio
+  // is kept, so the row can be run again from the history.
+  // (No quoted words in this block: the parity test scans it with a regex.)
+  "partial",
   "empty",
   "cancelled",
   "failed",
@@ -60,18 +67,35 @@ export type SttFailureReason = (typeof STT_FAILURE_REASONS)[number];
  * How the wording pass ended, mirroring
  * `jarvis.dictation.polish.POLISH_STATUSES`.
  *
- * Every value except `applied` means the RAW transcript was delivered — the
- * pass can only ever be a no-op, never a loss — so none of these is an error
- * the user has to act on, and they are worded that way. Same parity contract as
- * the two vocabularies above: the Python tuple and this list must stay
- * set-equal, and every entry needs a `dictation.polish_status.{name}` key in
- * every locale.
+ * Every value except `applied` and `translated` means the RAW transcript was
+ * delivered — the pass can only ever be a no-op, never a loss — so none of
+ * these is an error the user has to act on, and they are worded that way.
+ *
+ * One caveat the wording carries: when translation is switched on, a no-op is
+ * VISIBLE. The words arrive in the language they were spoken in rather than the
+ * chosen one, which is why a fallback status is worth reading on a translated
+ * dictation even though it is invisible on a polished one.
+ *
+ * Same parity contract as the two vocabularies above: the Python tuple and this
+ * list must stay set-equal, and every entry needs a
+ * `dictation.polish_status.{name}` key in every locale.
  */
 export const POLISH_STATUSES = [
   "applied",
+  // The dictation was delivered in the configured target language rather than
+  // the one it was spoken in. The only status besides applied where the text
+  // differs from what was recognized — and the only one where that difference
+  // is visible at a glance.
+  "translated",
   "unchanged",
   "off",
   "unavailable",
+  // Speech recognition runs on this machine, so the wording pass refused to be
+  // the step that ships the words off it. Not an error and not a missing key:
+  // the raw transcript was delivered, and a cloud family picked deliberately in
+  // the dropdown still overrides this.
+  // (No quoted words in this block: the parity test scans it with a regex.)
+  "local_only",
   "skipped_short",
   "skipped_long",
   "timeout",
@@ -250,6 +274,16 @@ export interface DictationSettings {
   /** neutral | messaging | email — register only, never a licence to change
    *  meaning. */
   polish_style: string;
+  /**
+   * Deliver every dictation in `translate_target`, whatever language was
+   * spoken. Ships OFF: it changes which words come out, not just how they are
+   * written, so it is never acquired by an install that did not ask for it.
+   */
+  translate: boolean;
+  /** The language dictations come out in while `translate` is on. No "auto". */
+  translate_target: string;
+  translate_drift_max_shrink: number;
+  translate_drift_max_growth: number;
 }
 
 export interface DictationChoices {
@@ -267,6 +301,12 @@ export interface DictationChoices {
    */
   polish_provider?: string[];
   polish_style?: string[];
+  /**
+   * Languages a dictation can be delivered in. The recognition list without
+   * `auto` — there is nothing to detect on the output side. Optional so an
+   * older backend that serves no translate block still parses.
+   */
+  translate_target?: string[];
 }
 
 /**

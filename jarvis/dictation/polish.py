@@ -10,6 +10,16 @@ actually 3" into "at 3", and cannot turn a spoken enumeration into a list. No
 amount of regex closes that gap — a second generative pass does, and the market
 reference tool's own published architecture confirms that is how they close it.
 
+Two jobs, one pass
+------------------
+The same machinery also runs the TRANSLATE pass (``[dictation].translate``),
+which delivers the dictation in a fixed language whatever the speaker used. It
+is the same chain, the same breaker, the same ceiling and the same fail-open
+contract — only the prompt (:mod:`jarvis.dictation.translate_prompt`) and the
+guard set (``translate_drift_reason``) differ, and formatting happens inside the
+SAME call so a translation costs one round trip, not two. ``translate_to``
+selects the mode; :func:`resolve_translate_target` decides it.
+
 The contract, in one sentence
 -----------------------------
 **This pass can only ever be a no-op; it can never be a loss.**
@@ -86,11 +96,16 @@ from jarvis.dictation.polish_client import (
     resolve_model,
     resolve_polish_chain,
 )
-from jarvis.dictation.polish_guards import drift_reason, normalize_for_compare
+from jarvis.dictation.polish_guards import (
+    drift_reason,
+    normalize_for_compare,
+    translate_drift_reason,
+)
 from jarvis.dictation.polish_prompt import (
     build_polish_prompt,
     build_polish_user_message,
 )
+from jarvis.dictation.translate_prompt import build_translate_prompt
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +117,7 @@ log = logging.getLogger(__name__)
 #: other value means the user got their own words back, and says why.
 POLISH_STATUSES: Final[tuple[str, ...]] = (
     "applied",        # the polished text was delivered
+    "translated",     # the text was delivered in [dictation].translate_target
     "unchanged",      # the model returned text equal to raw after normalization
     "off",            # [dictation].polish = false
     "unavailable",    # no key in any family / client build failed / breaker open
@@ -130,6 +146,20 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 1200
 _DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_SHRINK = 0.55
 _DEFAULT_MAX_GROWTH = 1.20
+
+# The translate pass's own word-count band. Far wider than the polish one on
+# purpose: a faithful translation legitimately changes length in both directions
+# (German compounds collapse into one English word; English phrasal verbs expand
+# into German subclauses), so the polish band would reject correct answers by
+# construction. What is left is still a real backstop against a model that
+# answered the transcript instead of translating it.
+_DEFAULT_TRANSLATE_MAX_SHRINK = 0.40
+_DEFAULT_TRANSLATE_MAX_GROWTH = 2.50
+
+#: The value ``[dictation].translate_target`` uses to mean "no fixed target".
+#: Shared spelling with ``[dictation].language`` so one word means one thing
+#: across the block.
+_AUTO = "auto"
 
 #: The smallest per-call timeout we will hand a transport. A request given 0 s
 #: fails in a way that looks like a provider outage instead of like our deadline.
@@ -230,6 +260,59 @@ def polish_enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "polish", False))
 
 
+def translate_enabled(cfg: Any) -> bool:
+    """Whether dictation is set to come out in a fixed language. No I/O.
+
+    Ships OFF, and an absent key reads as OFF. Unlike the polish pass — which
+    changes how words are written and can safely default on — this changes WHICH
+    WORDS COME OUT, and a config that predates the feature must never acquire
+    that silently.
+    """
+    return bool(getattr(cfg, "translate", False))
+
+
+def resolve_translate_target(cfg: Any, source_language: str) -> str:
+    """The language this dictation must be delivered in; ``""`` for no change.
+
+    Module-level and public for the same reason
+    ``jarvis.speech.pipeline.resolve_dictation_language`` is: TWO paths finish a
+    dictation — the live delivery and the Restore route — and a second copy of
+    this decision is how one recording ends up translated by one button and not
+    by the other.
+
+    ``""`` on all four of the ways there is nothing to do: the switch is off, no
+    target is set, the target is ``auto`` (which is not a language), or the
+    dictation is ALREADY in the target language. That last one is what keeps an
+    English dictation with an English target on the plain polish path instead of
+    paying a translation to produce the same sentence.
+
+    The comparison is deliberately conservative: only a source we can place with
+    confidence counts as "already there". An ``auto``/``unknown`` source resolves
+    to a translation attempt, and the prompt handles the already-in-target case
+    by cleaning the text up rather than re-wording it. Guessing wrong in that
+    direction costs one model call; guessing wrong in the other silently leaves
+    the text in the wrong language, which is the failure the user would notice.
+    """
+    if not translate_enabled(cfg):
+        return ""
+    target = str(getattr(cfg, "translate_target", "") or "").strip().lower()
+    if not target or target == _AUTO:
+        return ""
+    source = str(source_language or "").strip().lower()
+    if source and source not in (_AUTO, "unknown"):
+        # Compare on the language SUBTAG so a "de-DE" pin and a "de" tag are one
+        # language, then fall back to the canonical resolver for a provider that
+        # answered with a NAME ("German") rather than a code.
+        head = source.replace("_", "-").split("-", 1)[0]
+        if head == target:
+            return ""
+        from jarvis.core.turn_language import normalize_language_tag
+
+        if normalize_language_tag(source) == target:
+            return ""
+    return target
+
+
 async def aclose() -> None:
     """Release the pooled HTTP client. Safe to call repeatedly, and on a host
     that never ran a polish call at all."""
@@ -244,6 +327,7 @@ async def polish_transcript(
     protected_terms: Sequence[str] = (),
     style: str = "neutral",
     timeout_s: float | None = None,
+    translate_to: str = "",
 ) -> PolishOutcome:
     """Format *raw* without changing what it says. Never raises, never loses text.
 
@@ -253,9 +337,30 @@ async def polish_transcript(
     spellings the model may not "correct" — the STT dictionary, the wake word,
     the user's name. ``timeout_s`` overrides the configured ceiling; it exists
     for tests and for the settings-screen dry run.
+
+    ``translate_to`` switches the pass into TRANSLATE mode: the text comes back
+    in that language, cleaned up, and the status is ``translated`` rather than
+    ``applied``. It is an already-resolved target code — the caller decides
+    whether a translation is wanted at all
+    (:func:`resolve_translate_target`), so ``""`` means "format only" and any
+    non-empty value means "yes, into this".
+
+    Translating and formatting are ONE model call, never two. Chaining them would
+    double the latency of a pass that sits between the key release and the words
+    appearing, and the polish half would be discarded by the translation anyway.
+    So the translate prompt carries the cleanup rules too.
+
+    The contract is unchanged in both modes, with one honest caveat. This pass
+    can still only ever be a no-op: on a timeout, a dead provider, a missing key
+    or a failed guard the user gets their own words back. But in translate mode
+    a no-op is *visible* — the text arrives in the language it was spoken in —
+    where a skipped polish is merely unpunctuated. That is why the status is
+    reported on the history row and why the failure statuses are worth reading.
     """
     started = time.perf_counter()
     source = str(raw or "")
+    target = str(translate_to or "").strip().lower()
+    translating = bool(target)
 
     def _result(
         status: str,
@@ -275,14 +380,26 @@ async def polish_transcript(
         )
 
     try:
-        if not polish_enabled(cfg):
+        # A translation runs even with the polish switch off: the user asked for
+        # their words in another language, and "the formatter is off" is not an
+        # answer to that. The reverse also holds — with translation off this is
+        # the plain polish gate it always was.
+        if not polish_enabled(cfg) and not translating:
             return _result("off")
         if not source.strip():
             return _result("skipped_short", reason="empty_input")
 
-        min_words = _cfg_int(cfg, "polish_min_words", _DEFAULT_MIN_WORDS, lo=0, hi=1000)
-        if count_words(source) < min_words:
-            return _result("skipped_short", reason="below_min_words")
+        # ``polish_min_words`` deliberately does NOT apply to a translation.
+        # Skipping the formatter on "call me back" is invisible; skipping the
+        # translation on it delivers a German sentence into an English document,
+        # and a feature that works on long dictations but not short ones reads as
+        # broken rather than as tuned. The empty check above is the only floor.
+        if not translating:
+            min_words = _cfg_int(
+                cfg, "polish_min_words", _DEFAULT_MIN_WORDS, lo=0, hi=1000
+            )
+            if count_words(source) < min_words:
+                return _result("skipped_short", reason="below_min_words")
 
         max_chars = _cfg_int(
             cfg, "polish_max_input_chars", _DEFAULT_MAX_INPUT_CHARS, lo=0, hi=200_000
@@ -296,9 +413,18 @@ async def polish_transcript(
 
         budget_s = _timeout_budget(cfg, timeout_s)
         attempt = _Attempt()
-        system = build_polish_prompt(
-            language=language, style=style, protected_terms=protected_terms
-        )
+        if translating:
+            system = build_translate_prompt(
+                target_language=target, style=style, protected_terms=protected_terms
+            )
+        else:
+            system = build_polish_prompt(
+                language=language, style=style, protected_terms=protected_terms
+            )
+        # The SAME fenced user message either way — the delimiter and the
+        # ``meta_output`` guard that watches for it are one mechanism, and a
+        # dictation shaped like an instruction has to stay material in both
+        # passes.
         user = build_polish_user_message(source)
 
         try:
@@ -382,28 +508,78 @@ async def polish_transcript(
         await breaker.record_success()
 
         if normalize_for_compare(polished) == normalize_for_compare(source):
+            if translating and not _already_in_target(source, target):
+                # The same string back is a SUCCESS for a formatter and a
+                # FAILURE for a translator: the model declined the job and the
+                # user is about to paste the language they were translating out
+                # of. Reported as the rejection it is, so the history row does
+                # not claim "nothing needed doing" about a translation that
+                # never happened.
+                #
+                # Unless the text was already in the target language, which is
+                # the one case where no change IS the right answer.
+                # ``resolve_translate_target`` normally keeps those off this
+                # path, but it can only do so when the recognizer named a
+                # language; on an undecided tag a clean English sentence bound
+                # for English arrives here, and calling that a rejection would
+                # invent a failure out of a correct no-op.
+                log.info(
+                    "dictation translation to %r came back unchanged on %r; "
+                    "delivering the original transcript.",
+                    target,
+                    attempt.provider,
+                )
+                return _result(
+                    "rejected_drift",
+                    provider=attempt.provider,
+                    model=attempt.model,
+                    reason="not_translated",
+                )
             # The model agreed there was nothing to do. Deliver the RAW string,
             # not its normalized twin — "unchanged" has to mean unchanged.
             return _result(
                 "unchanged", provider=attempt.provider, model=attempt.model
             )
 
-        reason = drift_reason(
-            source,
-            polished,
-            language=language,
-            protected=protected_terms,
-            max_shrink=_cfg_float(
-                cfg, "polish_drift_max_shrink", _DEFAULT_MAX_SHRINK, lo=0.0, hi=1.0
-            ),
-            max_growth=_cfg_float(
-                cfg, "polish_drift_max_growth", _DEFAULT_MAX_GROWTH, lo=1.0, hi=5.0
-            ),
-        )
+        if translating:
+            reason = translate_drift_reason(
+                source,
+                polished,
+                target_language=target,
+                protected=protected_terms,
+                max_shrink=_cfg_float(
+                    cfg,
+                    "translate_drift_max_shrink",
+                    _DEFAULT_TRANSLATE_MAX_SHRINK,
+                    lo=0.0,
+                    hi=1.0,
+                ),
+                max_growth=_cfg_float(
+                    cfg,
+                    "translate_drift_max_growth",
+                    _DEFAULT_TRANSLATE_MAX_GROWTH,
+                    lo=1.0,
+                    hi=10.0,
+                ),
+            )
+        else:
+            reason = drift_reason(
+                source,
+                polished,
+                language=language,
+                protected=protected_terms,
+                max_shrink=_cfg_float(
+                    cfg, "polish_drift_max_shrink", _DEFAULT_MAX_SHRINK, lo=0.0, hi=1.0
+                ),
+                max_growth=_cfg_float(
+                    cfg, "polish_drift_max_growth", _DEFAULT_MAX_GROWTH, lo=1.0, hi=5.0
+                ),
+            )
         if reason:
             log.info(
-                "dictation polish rejected by the %s guard on %r; delivering the "
-                "unpolished transcript.",
+                "dictation %s rejected by the %s guard on %r; delivering the "
+                "original transcript.",
+                "translation" if translating else "polish",
                 reason,
                 attempt.provider,
             )
@@ -415,7 +591,7 @@ async def polish_transcript(
             )
 
         return _result(
-            "applied",
+            "translated" if translating else "applied",
             provider=attempt.provider,
             model=attempt.model,
             text=polished,
@@ -435,6 +611,21 @@ async def polish_transcript(
             exc_info=True,
         )
         return _result("provider_error", reason="unexpected")
+
+
+def _already_in_target(text: str, target: str) -> bool:
+    """Whether *text* is confidently already in *target*. Never guesses.
+
+    Only ``de``/``en``/``es`` are decidable — that is what the shared detector
+    knows — and an undecided answer is ``False`` on purpose: this exists to
+    excuse an unchanged answer, and excusing one on a hunch would let a model
+    that simply refused to translate look like a success.
+    """
+    if not target:
+        return False
+    from jarvis.core.turn_language import detect_text_language
+
+    return detect_text_language(text) == target
 
 
 async def _resolve_chain(cfg: Any) -> tuple[PolishFamily, ...]:
@@ -634,4 +825,6 @@ __all__ = [
     "polish_enabled",
     "polish_transcript",
     "reset_polish_state",
+    "resolve_translate_target",
+    "translate_enabled",
 ]

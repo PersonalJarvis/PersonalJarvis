@@ -2589,6 +2589,13 @@ RECOGNITION_LANGUAGE_CHOICES: tuple[str, ...] = (AUTO_LANGUAGE, *RECOGNITION_LAN
 #: one microphone, one list of languages it understands.
 DICTATION_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
 
+#: The values ``[dictation].translate_target`` accepts — the language a dictation
+#: is DELIVERED in. The recognition list without ``auto``: "detect it" is a
+#: coherent answer to "what am I speaking" and no answer at all to "what should
+#: come out", so offering it would be a dropdown entry that silently does
+#: nothing (AP-31). One derivation, not a second hand-typed list (AP-4).
+TRANSLATION_TARGETS: tuple[str, ...] = RECOGNITION_LANGUAGES
+
 #: The registers the dictation polish pass may be asked to write in — the cheap
 #: analogue of the per-application tone commercial dictation tools switch on.
 #: Mirrors the ``polish_style`` ``Literal`` below (which is what Pydantic and the
@@ -2859,6 +2866,48 @@ class DictationConfig(BaseModel):
     #: ever licenses a change of meaning.
     polish_style: Literal["neutral", "messaging", "email"] = "neutral"
 
+    # ------------------------------------------------------------------
+    # The translate pass — speak one language, deliver another
+    # ------------------------------------------------------------------
+    # Dictate in whatever language you think in and have the text arrive in the
+    # one you write in. It runs inside the SAME model call as the polish pass
+    # (one round trip, not two) and under the same fail-open contract: on a
+    # timeout, a dead provider or a failed guard the transcript is delivered as
+    # spoken, and the history row says why.
+
+    #: Master switch, and it ships OFF — the one switch in this block that
+    #: does. The polish pass can default on because it only changes how the
+    #: user's words are WRITTEN; this changes which words come out at all, and
+    #: a person who never read a release note must not discover that their
+    #: German dictation now arrives in English. Turning it on is a deliberate
+    #: act, and it is the only thing standing between the two behaviours.
+    translate: bool = False
+
+    #: The language every dictation is delivered in while ``translate`` is on,
+    #: whatever language was actually spoken. One fixed target rather than a
+    #: per-source-language table: the overwhelmingly common want is "I think in
+    #: my own language and write in this one", and a rule table would trade
+    #: that one clear switch for a screen of pairs nobody audits.
+    #:
+    #: A dictation already in this language is not sent on a round trip at all
+    #: (``resolve_translate_target``) — it takes the plain polish path.
+    #:
+    #: Unrelated to ``[brain].reply_language``, which governs what the
+    #: assistant SAYS BACK. Dictating into an English document while being
+    #: answered in German is a normal thing to want.
+    translate_target: str = "en"
+
+    #: The band the translated word count must land in, as a fraction of the
+    #: spoken word count. Far wider than the polish band above, and that is the
+    #: point rather than a weaker guard: a faithful translation legitimately
+    #: changes length in both directions (German compounds collapse into one
+    #: English word; English phrasal verbs expand into German subclauses), so
+    #: the polish band would reject correct translations by construction. What
+    #: survives still catches the failure that matters — a model that answered
+    #: the transcript instead of translating it.
+    translate_drift_max_shrink: float = Field(default=0.40, ge=0.0, le=1.0)
+    translate_drift_max_growth: float = Field(default=2.50, ge=1.0, le=10.0)
+
     @field_validator("paste_chord", mode="before")
     @classmethod
     def _coerce_paste_chord(cls, value: object) -> str:
@@ -2884,6 +2933,20 @@ class DictationConfig(BaseModel):
         """
         text = str(value or "").strip().lower()
         return text if text in DICTATION_LANGUAGES else "auto"
+
+    @field_validator("translate_target", mode="before")
+    @classmethod
+    def _coerce_translate_target(cls, value: object) -> str:
+        """Normalize only — an unusable target falls back to ``en``.
+
+        Same AP-16 contract as ``_coerce_dictation_language``: a stale or
+        hand-edited config must never fail validation. The fallback is a real
+        language rather than ``auto`` because this field has no "detect it"
+        answer — while ``translate`` is off nothing reads it, and while it is on
+        it has to name somewhere for the words to go.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in TRANSLATION_TARGETS else "en"
 
     @field_validator("polish_provider", mode="before")
     @classmethod
@@ -2965,6 +3028,16 @@ class DictationConfig(BaseModel):
     @classmethod
     def _clamp_polish_drift_max_growth(cls, value: object) -> float:
         return _clamped_polish_float(value, default=1.20, low=1.0, high=3.0)
+
+    @field_validator("translate_drift_max_shrink", mode="before")
+    @classmethod
+    def _clamp_translate_drift_max_shrink(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.40, low=0.0, high=1.0)
+
+    @field_validator("translate_drift_max_growth", mode="before")
+    @classmethod
+    def _clamp_translate_drift_max_growth(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=2.50, low=1.0, high=10.0)
 
 
 class MarketplaceConfig(BaseModel):
