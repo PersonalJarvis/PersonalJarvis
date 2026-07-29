@@ -3109,10 +3109,7 @@ class SpeechPipeline:
         task = getattr(self, "_probe_task", None)
         if task is None or task.done():
             return
-        try:
-            current = asyncio.current_task()
-        except RuntimeError:
-            current = None
+        current = asyncio.current_task(loop=task.get_loop())
         if task is not current:
             task.cancel()
 
@@ -3127,11 +3124,13 @@ class SpeechPipeline:
         if not task.done():
             task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # noqa: BLE001 - preview failure is non-fatal
-            log.debug("Stale STT preview cleanup failed: %s", exc)
+            outcome = (await asyncio.gather(task, return_exceptions=True))[0]
+            if isinstance(outcome, Exception):
+                log.debug("Stale STT preview cleanup failed: %s", outcome)
+            elif isinstance(outcome, BaseException) and not isinstance(
+                outcome, asyncio.CancelledError
+            ):
+                raise outcome
         finally:
             if getattr(self, "_probe_task", None) is task:
                 self._probe_task = None
