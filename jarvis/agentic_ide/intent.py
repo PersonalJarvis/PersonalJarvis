@@ -1819,6 +1819,72 @@ def references_recent_fleet(user_text: str) -> bool:
     return bool(_RECENT_FLEET_RE.search(user_text or ""))
 
 
+# The user telling us a delivery did not happen, or asking for it again. These
+# sentences name no pane and carry no instruction — they are only meaningful
+# against the turn before them, which is exactly why every detector in this
+# module used to return nothing for them.
+#
+# Live failure 2026-07-29 17:04 (BUG-121): after a briefing was stolen by
+# another gate, "Du hast es gar nicht gepromptet" produced no routing signal at
+# all, the realtime model answered alone, and it apologised and promised to do
+# it "now" without anything happening. The next turn was identical and only
+# worked because the model happened to call the action tool by itself. Two
+# wasted turns and an apology are not a recovery path.
+#
+# Deliberately narrow: a complaint must be NEGATED or an explicit retry. "Hast
+# du T7 gepromptet?" is a question and must keep reaching the report path.
+# Matching *input vocabulary* across the supported locales, not prose.
+_UNDELIVERED_COMPLAINT_RE = re.compile(
+    r"(?:"
+    # "du hast es (gar) nicht gepromptet" / "das war noch nicht gepromptet"
+    r"\b(?:hast|hat|habt|war|wars|ist|wurde|wurden)\b[^.!?]{0,40}?"  # i18n-allow: input vocab
+    r"\bnicht\b[^.!?]{0,30}?"  # i18n-allow: input vocab
+    r"\b(?:geprompt\w*|gemacht|gesendet|geschickt|angekommen|"  # i18n-allow: input vocab
+    r"beauftragt|informiert|gebrieft)\b"  # i18n-allow: input vocab
+    r"|"
+    # "da ist nichts passiert" / "es kam nichts an"
+    r"\bnichts\b[^.!?]{0,30}?\b(?:passiert|angekommen|gekommen|"  # i18n-allow: input vocab
+    r"gesendet|da)\b"  # i18n-allow: input vocab
+    r"|"
+    # "das hat nicht geklappt" / "hat nicht funktioniert"
+    r"\bhat\b[^.!?]{0,20}?\bnicht\b[^.!?]{0,20}?"  # i18n-allow: input vocab
+    r"\b(?:geklappt|funktioniert|geklappt)\b"  # i18n-allow: input vocab
+    r"|"
+    # Explicit retry: "mach das nochmal", "versuch es nochmal", "nochmal"
+    r"\b(?:nochmal|noch\s+mal|erneut|wiederhol\w*)\b"  # i18n-allow: input vocab
+    r"|"
+    r"\byou\b[^.!?]{0,30}?\b(?:did\s*n[o']?t|have\s*n[o']?t|never)\b"
+    r"[^.!?]{0,30}?\b(?:prompt\w*|send|sent|tell|told|brief\w*)\b"
+    r"|"
+    r"\b(?:that|it|this)\b[^.!?]{0,20}?\b(?:was|were|is)?\s*n[o']?t\b"
+    r"[^.!?]{0,20}?\b(?:prompt\w*|sent|delivered|done)\b"
+    r"|"
+    r"\bnothing\b[^.!?]{0,25}?\b(?:happened|arrived|came\s+through|sent)\b"
+    r"|"
+    r"\b(?:try\s+again|do\s+it\s+again|once\s+more|again\s+please)\b"
+    r"|"
+    r"\bno\s+(?:lo\s+)?(?:has|ha)\b[^.!?]{0,30}?"  # i18n-allow: input vocab
+    r"\b(?:enviado|hecho|mandado|prompteado)\b"  # i18n-allow: input vocab
+    r"|"
+    r"\bno\s+(?:pas[oó]|lleg[oó])\s+nada\b"  # i18n-allow: input vocab
+    r"|"
+    r"\b(?:int[eé]ntalo\s+de\s+nuevo|otra\s+vez|de\s+nuevo)\b"  # i18n-allow: input vocab
+    r")",
+    re.IGNORECASE,
+)
+
+
+def reports_undelivered(user_text: str) -> bool:
+    """Whether the user is saying a pane briefing did not happen, or to retry.
+
+    Answers only the shape of the sentence. Whether there IS a briefing to
+    repeat, and whether it actually failed, is the caller's question — the
+    workspace holds that evidence (``Terminal.last_prompt_at``), and answering
+    it here would mean this module reaching into the registry.
+    """
+    return bool(_UNDELIVERED_COMPLAINT_RE.search(user_text or ""))
+
+
 _CLOSE_VERB_RE = re.compile(
     # ``c(?:e|ie)rr`` carries the Spanish stem change: the imperative people
     # actually say is "CIERRA todos los terminales", and a ``cerr``-only stem
@@ -2278,6 +2344,7 @@ __all__ = [
     "expects_several",
     "owns_turn",
     "references_recent_fleet",
+    "reports_undelivered",
     "spawn_includes_task",
     "spawn_instruction",
     "spawn_vehicle_outranks_workspace",

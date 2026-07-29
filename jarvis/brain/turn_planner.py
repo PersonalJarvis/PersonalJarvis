@@ -424,6 +424,44 @@ def _is_workspace_turn(text: str, workspace_names: Sequence[str]) -> bool:
         return False
 
 
+def _is_workspace_retry(
+    text: str, context: Sequence[str], workspace_names: Sequence[str]
+) -> bool:
+    """Whether this turn says a pane briefing did not happen, or asks to retry.
+
+    A correction of the form "you never prompted it" names no pane, carries no
+    instruction and matches no vocabulary here — so the planner routed it
+    natively, the live model answered alone, and it apologised for a failure it
+    could not see and promised a delivery it could not make (BUG-121, voice
+    session 2026-07-29 17:04). The user said it twice; the second time only
+    worked by luck, because the model happened to call the action tool by
+    itself.
+
+    The sentence is only meaningful against the turn before it, so that is where
+    the evidence comes from: the complaint shape from the workspace's own
+    detector, the subject from a prior turn that WAS about a pane. Both halves
+    are required — a bare "try again" after a weather question is not workspace
+    work. Pure regex over in-memory text, no IO and no LLM. The failing live
+    sentences are pinned verbatim in
+    ``tests/unit/brain/test_agentic_ide_undelivered_retry.py``.
+    """
+    if not workspace_names or not str(text or "").strip():
+        return False
+    try:
+        from jarvis.agentic_ide.intent import reports_undelivered
+
+        if not reports_undelivered(text):
+            return False
+    except Exception:  # noqa: BLE001 - optional surface, never breaks planning
+        return False
+    context_text = " ".join(str(item or "") for item in context).strip()
+    if not context_text:
+        return False
+    if len(context_text) > _CONTEXT_MAX_CHARS:
+        context_text = context_text[-_CONTEXT_MAX_CHARS:]
+    return _is_workspace_turn(context_text, workspace_names)
+
+
 def is_contextual_follow_up(text: str, context: Sequence[str]) -> bool:
     """Return whether ``text`` explicitly refers to the bounded prior context."""
     normalized = _normalize(text).strip()
@@ -485,7 +523,9 @@ def plan_turn(
     # smalltalk, and a modal asking whether a pane should do something reads as
     # first-person deliberation. Both would be talked back down into a native
     # answer the model cannot give.
-    workspace_turn = _is_workspace_turn(text, workspace_names)
+    workspace_turn = _is_workspace_turn(text, workspace_names) or _is_workspace_retry(
+        text, context, workspace_names
+    )
     if workspace_turn:
         reasons.add(TurnReason.WORKSPACE)
     definition = bool(_DEFINITION_RE.search(normalized))

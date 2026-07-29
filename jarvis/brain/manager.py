@@ -6011,6 +6011,21 @@ class BrainManager:
             # question. ``detect_clarification`` decides when there is one to
             # ask; it stands down for anything that is not addressing the
             # workspace.
+            # "Du hast es gar nicht gepromptet." names no pane and carries no
+            # instruction, so everything above returns nothing — which is how
+            # the user ended up saying it twice while Jarvis apologised and
+            # promised a delivery it never made (BUG-121). The sentence is only
+            # meaningful against the turn before it, so that is where the work
+            # comes from.
+            # <!-- i18n-allow: quotes the spoken sentence that failed -->
+            retry = await self._retry_undelivered_agentic_ide_prompt(
+                user_text,
+                session=session,
+                candidates=candidates,
+                language=out_lang,
+            )
+            if retry is not None:
+                return retry
             return self._ask_which_agentic_ide_terminal(
                 user_text, candidates=candidates, language=out_lang
             )
@@ -6186,6 +6201,103 @@ class BrainManager:
                 "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
             )
         return _fanout_reply_line(result, language)
+
+    #: How long a "you never prompted it" complaint may reach back. Bounded to
+    #: the running conversation: past this, "do it again" is a fresh request and
+    #: replaying a stale sentence into a coding agent would be its own bug.
+    _IDE_RETRY_WINDOW_S = 300.0
+
+    async def _retry_undelivered_agentic_ide_prompt(
+        self,
+        user_text: str,
+        *,
+        session: Any,
+        candidates: list[str],
+        language: str,
+    ) -> str | None:
+        """Deliver the PREVIOUS turn's briefing when the user says it never went.
+
+        Live failure 2026-07-29 17:04 (BUG-121). A briefing for T7 was consumed
+        by the navigation gate; Jarvis said it had briefed T7 anyway. The user
+        corrected it twice — "Du hast es gar nicht gepromptet", then "Das war
+        noch nicht geprompted" — and both corrections produced nothing at all,
+        because they name no pane and carry no instruction, so every detector
+        returned None and the live model was left to answer alone. It apologised
+        and promised a delivery it had no way to make. The third attempt only
+        worked because the model happened to call the action tool by itself.
+        <!-- i18n-allow: quotes the spoken sentences that failed -->
+
+        A complaint is not proof, so the pane's OWN receipt decides. If
+        ``last_prompt_at`` says the briefing did arrive, this answers with the
+        clock time instead of typing the sentence a second time — an agent
+        briefed twice is two agents' worth of work on one task, and the honest
+        answer is what tells the user "it did not happen" from "I did not see it
+        happen". Only a pane with no receipt in the window is briefed.
+        """
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+        if not ide_intent.reports_undelivered(user_text):
+            return None
+        previous = self._previous_user_turn_text(use_history=True)
+        if not previous:
+            return None
+        try:
+            addressed = ide_intent.detect_all(previous, names=candidates)
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+        wanted = [
+            item.terminal
+            for item in addressed
+            if item.kind == ide_intent.KIND_PROMPT
+        ]
+        if not wanted:
+            return None
+
+        now = time.time()
+        delivered: list[tuple[str, float]] = []
+        missing: list[str] = []
+        for name in wanted:
+            term = session.find(name)
+            if term is None:
+                continue
+            at = getattr(term, "last_prompt_at", None)
+            if at is not None and now - float(at) <= self._IDE_RETRY_WINDOW_S:
+                delivered.append((name, float(at)))
+            else:
+                missing.append(name)
+
+        if not missing:
+            if not delivered:
+                return None
+            name, at = delivered[0]
+            log.info(
+                "Agentic IDE: %s reported undelivered, but %s has a receipt "
+                "from %s — answering with the time instead of re-sending",
+                user_text[:60],
+                name,
+                time.strftime("%H:%M:%S", time.localtime(at)),
+            )
+            return action_phrase(
+                "ide_prompt_already_delivered",
+                language,
+                name=name,
+                time=time.strftime("%H:%M", time.localtime(at)),
+            )
+
+        log.info(
+            "Agentic IDE: retrying an undelivered briefing for %s from the "
+            "previous turn",
+            ", ".join(missing),
+        )
+        return await self._deliver_agentic_ide_prompt(
+            session=session,
+            names=missing,
+            utterance=previous,
+            instruction="",
+            language=language,
+        )
 
     def _ask_which_agentic_ide_terminal(
         self,

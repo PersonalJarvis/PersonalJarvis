@@ -449,6 +449,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I heard {spoken}. Did you mean {names}?",
         "es": "Entendí {spoken}: ¿te refieres a {names}?",
     },
+    # The user says a briefing never arrived, but the pane's own receipt says it
+    # did. Answering with the CLOCK TIME is the point: it is the one thing that
+    # lets them tell "it did not happen" from "I did not see it happen", and
+    # re-sending on their word would double-brief an agent that is already
+    # working (BUG-121).
+    "ide_prompt_already_delivered": {
+        "de": (
+            "{name} hat den Auftrag um {time} bekommen — "  # i18n-allow
+            "ich schicke ihn nicht doppelt."  # i18n-allow
+        ),
+        "en": "{name} got the task at {time} — I am not sending it twice.",
+        "es": "{name} recibió la tarea a las {time}: no la envío dos veces.",
+    },
     # The separator for the final pair of an alternative list ("Maggie or Max").
     # A phrase entry rather than a literal, so the choice is offered in the
     # turn's language like every other spoken word.
