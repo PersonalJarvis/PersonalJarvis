@@ -338,6 +338,37 @@ def _stored_base_url(spec: ProviderSpec) -> str | None:
     return value or None
 
 
+def _local_runtime_payload(
+    spec: ProviderSpec, *, model_override: str | None = None
+) -> dict[str, Any] | None:
+    """On-disk truth for a provider that runs locally; ``None`` for cloud cards.
+
+    The card cannot infer readiness from the absence of a key field: a local
+    provider has no credential to check, so without this probe every local card
+    would render as "ready" the moment it exists — the exact defect that forced
+    the local Whisper card off the list in 2026-07-03. Presence of a catalog
+    entry is what makes a provider local here; no code branches on its name
+    (AP-21).
+    """
+    try:
+        from jarvis.speech.local_models import local_status
+
+        status = local_status(spec.id, model_override=model_override)
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local-runtime probe for %s failed (%s); reporting none.", spec.id, exc)
+        return None
+    if status is None:
+        return None
+    return {
+        "runtime": status.runtime,
+        "engine_installed": status.engine_installed,
+        "model_present": status.model_present,
+        "model_label": status.model_label,
+        "ready": status.ready,
+        "detail": status.detail,
+    }
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -347,6 +378,7 @@ def _spec_to_payload(
     active_realtime: str | None = None,
     active_computer_use: str | None = None,
     active_dictation: str | None = None,
+    local_model_override: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -449,6 +481,12 @@ def _spec_to_payload(
         # ``resolve_polish_chain`` and the pin would silently do nothing.
         # ``None`` on every other card.
         "polish_family": dictation_family_id(spec.id) or None,
+        # On-device cards only: whether the engine and its weights are REALLY
+        # here, so the UI can offer the install instead of a false "ready".
+        # ``None`` on every cloud card.
+        "local_runtime": _local_runtime_payload(
+            spec, model_override=local_model_override
+        ),
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -798,6 +836,17 @@ async def list_providers(request: Request) -> dict[str, Any]:
     # follows is then a memo hit. See ``_warm_active_polish``.
     await _warm_active_polish(request)
     active_dictation = _active_polish(request)
+    # When a local STT provider is ALREADY the active one, its card must report
+    # on the checkpoint the config names — not the catalog default. Otherwise a
+    # user who pinned a different Whisper size in jarvis.toml would read a
+    # reassuring "ready" about a model their install never loads.
+    local_model_override: str | None = None
+    try:
+        stt_cfg = getattr(_resolve_cfg(request), "stt", None)
+        if (getattr(stt_cfg, "provider", "") or "").strip() == "faster-whisper":
+            local_model_override = (getattr(stt_cfg, "model", "") or "").strip() or None
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local STT model override lookup failed (%s); using the default.", exc)
 
     # Off the event loop: building the payload reads every secret slot from the
     # OS keyring and probes the Codex/Google CLI status — all synchronous. On the
@@ -814,6 +863,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 active_realtime=active_realtime,
                 active_computer_use=active_computer_use,
                 active_dictation=active_dictation,
+                local_model_override=local_model_override,
             )
             for spec in PROVIDERS
         ]
@@ -1966,6 +2016,52 @@ async def set_provider_base_url(provider_id: str, body: BaseUrlBody) -> BaseUrlR
     )
 
 
+@router.post("/providers/{provider_id}/local-install")
+async def start_local_install(provider_id: str) -> dict[str, Any]:
+    """Install an on-device provider's engine and download its model.
+
+    This is the §3 "recoverable in-app" contract for the local providers: the
+    engine is an optional pip package and the weights are a multi-gigabyte
+    download, and neither may require a terminal. Returns immediately with a
+    ``state`` the UI polls — a synchronous route would hold the request open
+    for minutes — and a second call while a run is in flight joins it instead
+    of starting a duplicate download.
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.speech.local_install import start_install
+
+    result = await asyncio.to_thread(start_install, provider_id)
+    if result.get("state") == "error" and "not a local provider" in result.get(
+        "message", ""
+    ):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@router.get("/providers/{provider_id}/local-install/status")
+async def get_local_install_status(provider_id: str) -> dict[str, Any]:
+    """Report install progress AND the independent on-disk readiness probe.
+
+    The probe is the authority: a provider installed by some other route (a
+    previous app run, the ``[full]`` extra, a manual pip) reads as ready even
+    though this process never installed anything, and a finished install whose
+    model turns out unreadable reads as an error rather than a false success.
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.speech.local_install import install_status
+
+    result = await asyncio.to_thread(install_status, provider_id)
+    if result.get("state") == "error" and "not a local provider" in result.get(
+        "message", ""
+    ):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
 @router.get("/providers/{provider_id}/cu-model")
 async def get_cu_model(provider_id: str, request: Request) -> CuModelResponse:
     """Return the per-provider Computer-Use model selection (Phase 3).
@@ -3086,12 +3182,31 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Add its API key first."
             ),
         )
+    # A local provider passes the credential check trivially (it has no key), so
+    # readiness has to be asked separately — activating an engine that is not
+    # installed would leave voice input dead with no explanation. This is the
+    # gate the 2026-07-03 card lacked.
+    local_status = _local_runtime_payload(spec)
+    if local_status is not None and not local_status["ready"]:
+        raise HTTPException(status_code=409, detail=local_status["detail"])
 
     if body.persist:
         try:
             from jarvis.core.config_writer import set_stt_provider
 
             set_stt_provider(body.provider)
+            # Pin the checkpoint the card promised and the download fetched.
+            # Without this, activating the local card would inherit whatever
+            # [stt].model happened to hold (its default is a DIFFERENT Whisper
+            # size), so the user would run a model they never chose — and one
+            # that may not be downloaded at all.
+            from jarvis.speech.local_models import get_local_provider
+
+            local_entry = get_local_provider(body.provider)
+            if local_entry is not None and local_entry.runtime == "faster-whisper":
+                from jarvis.core.config_writer import set_stt_model
+
+                set_stt_model(local_entry.model_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
@@ -3103,6 +3218,13 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if cfg is not None and getattr(cfg, "stt", None) is not None:
         try:
             cfg.stt.provider = body.provider  # type: ignore[attr-defined]
+            # Same pin in memory, so a live restart of the speech pipeline picks
+            # up the checkpoint without waiting for a config re-read.
+            from jarvis.speech.local_models import get_local_provider
+
+            entry = get_local_provider(body.provider)
+            if entry is not None and entry.runtime == "faster-whisper":
+                cfg.stt.model = entry.model_id  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
             log.debug("In-memory STT provider update skipped: %s", exc)
 

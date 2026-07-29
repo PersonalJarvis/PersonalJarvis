@@ -454,6 +454,12 @@ openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 # discovery; no provider ships until the streaming work lands.
 
 [project.entry-points."jarvis.stt"]
+# Local, keyless on-device transcription (faster-whisper / CTranslate2, torch-free).
+# Registered so the provider list, the activation gate and the runtime resolve it
+# the same way they resolve a cloud provider; whether it can actually RUN is a
+# separate question answered by jarvis.speech.local_models (engine installed +
+# checkpoint downloaded), never assumed from the entry-point's presence.
+faster-whisper = "jarvis.plugins.stt.fwhisper:FasterWhisperProvider"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 # OpenRouter cloud transcription — reuses the shared openrouter_api_key.
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"

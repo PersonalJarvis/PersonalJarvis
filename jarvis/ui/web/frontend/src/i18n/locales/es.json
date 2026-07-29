@@ -251,6 +251,7 @@
     "saved": "Ajuste guardado",
     "cannot_insert_title": "Ahora mismo no se puede escribir en otras apps",
     "cannot_insert_generic": "Tu sistema impide que un programa escriba en otro. El dictado sigue funcionando — el texto queda en el portapapeles para que lo pegues.",
+    "polish_first_run": "Novedad: un modelo rápido pule ahora tu redacción antes de que el texto llegue; tu texto original permanece en esta lista y puedes desactivarlo en la pestaña «Idioma».",
     "history_title": "Dictados recientes",
     "history_empty": "Todavía no has dictado nada.",
     "clear_history": "Borrar todo",
@@ -286,6 +287,7 @@
       "clipboard_only": "Copiado al portapapeles",
       "unavailable": "No se pudo insertar",
       "chat": "Enviado al chat",
+      "partial": "Transcrito parcialmente",
       "empty": "No se oyó nada",
       "cancelled": "Cancelado",
       "failed": "Fallido"
@@ -306,6 +308,7 @@
       "unchanged": "Nada que cambiar",
       "off": "Desactivado",
       "unavailable": "Ningún modelo disponible",
+      "local_only": "Se queda en este ordenador: se usó tu texto original",
       "skipped_short": "Demasiado corto para pulir",
       "skipped_long": "Demasiado largo para pulir",
       "timeout": "Tardó demasiado: se usó tu texto original",
@@ -350,6 +353,7 @@
     "polish": {
       "title": "Pulir mi redacción",
       "description": "Un modelo rápido reescribe la estructura: puntuación, mayúsculas, muletillas y separación de frases. Tus palabras exactas y su significado se conservan, y el texto original siempre queda en tu historial.",
+      "sends_text": "Mientras esto esté activado, tu texto final se envía al modelo que elijas abajo; si tu reconocimiento de voz ya funciona en este ordenador, el repaso también se queda aquí, salvo que elijas tú mismo un modelo en la nube. Tu texto original siempre queda en tu historial, tal y como se reconoció.",
       "provider_label": "Modelo",
       "provider_auto": "Automático: usa la clave que ya tengo",
       "provider_hint": "El modo automático usa una clave que ya tienes y cambia a otro proveedor cuando uno alcanza su límite o se queda sin saldo. Fija uno solo si quieres que se cobre a una cuenta concreta.",
@@ -1103,6 +1107,10 @@
     "subtitle": "Conecta proveedores y elige qué impulsa cada parte de Jarvis.",
     "shared_key_covered": "Ya está cubierto por tu clave compartida de esta familia de proveedores — una clave dedicada es opcional.",
     "add_dedicated_key": "Añadir clave dedicada",
+    "local_install_cta": "Instalar en este equipo",
+    "local_installing": "Instalando…",
+    "local_install_retry": "Reintentar",
+    "local_install_hint": "Esto descarga varios gigabytes y puede tardar varios minutos. Mientras tanto puedes seguir usando la aplicación.",
     "shared_delete_prefix": "Esta clave también la usan:",
     "shared_delete_suffix": "Al eliminarla, esos proveedores también se desactivan.",
     "delete_anyway": "Eliminar de todos modos",
@@ -2026,6 +2034,12 @@
       "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal.",
       "autostart_label": "Iniciar Jarvis automáticamente al iniciar sesión"
     }
+  },
+  "language_select": {
+    "search": "Buscar idioma",
+    "empty": "Ningún idioma coincide con tu búsqueda.",
+    "group_common": "Idiomas frecuentes",
+    "group_all": "Todos los idiomas"
   },
   "languages_view": {
     "title": "Idiomas",

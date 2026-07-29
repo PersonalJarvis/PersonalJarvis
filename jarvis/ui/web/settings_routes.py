@@ -35,7 +35,9 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
+from jarvis.core.config import RECOGNITION_LANGUAGE_CHOICES
 from jarvis.memory.wiki.integration import get_running_curator
+from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -417,14 +419,19 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
 # STT recognition language — the language Whisper TRANSCRIBES the user's voice
 # into. Distinct from BOTH the UI language (what the user sees) and the reply
 # language (what Jarvis answers in). ``auto`` lets Whisper detect the spoken
-# language per utterance (the bilingual default); a concrete code forces it.
+# language per utterance (the default); a concrete code forces it.
 # This had NO UI/REST control before — the recognition language was stranded in
 # jarvis.toml, so a user whose voice was mis-recognized had no way to fix it
 # (forensic 2026-06-28: German spoken, English-only model, "Can't you me" garbage).
 # Applies on the next voice bootstrap (a restart); the STT provider is built once.
+#
+# The accepted set is EVERY language the recogniser understands, shared with
+# dictation through one constant (AP-4): what Jarvis can hear is a wider question
+# than the three locales it speaks back in, and capping it at those three locked
+# out every other speaker on earth (CLAUDE.md §3).
 # ----------------------------------------------------------------------
 
-_STT_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+_STT_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
 
 
 class SttLanguageBody(BaseModel):
@@ -477,16 +484,43 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.stt.language update skipped: %s", exc)
 
-    applied_live = _live_apply_wake_plan(request, log_tag="stt-language")
+    # TWO different things have to change, and only one of them used to.
+    # ``_live_apply_wake_plan`` re-arms the WAKE detector; the recogniser that
+    # transcribes what you actually SAY is a separate object built once at
+    # startup. Reporting the wake result as "applied" meant the route answered
+    # "done" while every following utterance was still transcribed in the old
+    # language until the app was restarted.
+    applied_wake = _live_apply_wake_plan(request, log_tag="stt-language")
+    applied_recognizer = _live_apply_stt_language(request, lang)
 
     return {
         "ok": True,
         "language": lang,
         "persisted": persisted,
-        "applied_live": applied_live,
-        # Only ask for a restart when we could NOT live-apply (no running pipeline).
-        "restart_required": not applied_live,
+        "applied_live": applied_recognizer,
+        # Only ask for a restart when the RECOGNISER could not be swapped — that
+        # is the part the user is actually waiting on.
+        "restart_required": not applied_recognizer,
+        "wake_reloaded": applied_wake,
     }
+
+
+def _live_apply_stt_language(request: Request, language: str) -> bool:
+    """Swap the running recogniser to ``language``. False when there is none.
+
+    False is the honest answer on a headless host or before the voice pipeline
+    has started — the value is persisted either way and applies on the next
+    start, which is what ``restart_required`` tells the caller.
+    """
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    setter = getattr(pipeline, "set_stt_language", None)
+    if not callable(setter):
+        return False
+    try:
+        return bool(setter(language))
+    except Exception as exc:  # noqa: BLE001 — a settings click must never 500
+        log.warning("stt-language live switch failed: %s", exc)
+        return False
 
 
 def _live_apply_wake_plan(request: Request, *, log_tag: str) -> bool:
@@ -732,7 +766,10 @@ def _local_speech_ready() -> bool:
 # everywhere without dropping to a shell — the §3 "recoverable in-app"
 # contract. The spec is pinned to the [local-voice] extra in pyproject.toml so
 # the two never drift.
-_LOCAL_SPEECH_PACKAGE = "faster-whisper>=1.0"
+# Aliased, not re-typed: the local-provider catalog owns this string next to the
+# models it powers, so the wake-word install and the voice-input install can
+# never end up asking pip for two different engines.
+_LOCAL_SPEECH_PACKAGE = FASTER_WHISPER_PACKAGE
 
 _local_speech_install_lock = threading.Lock()
 # state ∈ {"idle", "running", "done", "error"}; message is the last pip detail.

@@ -965,6 +965,39 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=problem)
         updates["paste_chord"] = canonical
 
+    if "polish_provider" in updates:
+        # Same reasoning as the block above, for the same reason it is needed.
+        # ``DictationConfig`` accepts any string here on purpose (checking it
+        # would put the provider registry on the config-load path, AP-26), and
+        # ``resolve_polish_chain`` then ignores an unrecognised id in favour of
+        # the auto order — the right answer for a hand-edited file (AP-16), the
+        # wrong one for someone who just clicked a provider card: the save
+        # returned 200, the UI said "saved", and the pin did nothing (AP-31).
+        #
+        # Two vocabularies reach this key: the polish FAMILY id the config
+        # stores ("openai") and the provider-card id the UI is built from
+        # ("openai-polish"), which differ because a bare "openai" is already the
+        # brain card. A card id is a well-meant pin, so it is translated rather
+        # than refused — that also keeps an older frontend working against this
+        # backend. Anything neither vocabulary knows is refused OUT LOUD.
+        from jarvis.dictation.polish_client import POLISH_FAMILIES, family_by_id
+        from jarvis.ui.web.provider_spec import dictation_family_id
+
+        raw = str(updates["polish_provider"] or "").strip().lower()
+        canonical = raw or "auto"
+        if canonical != "auto" and family_by_id(canonical) is None:
+            canonical = dictation_family_id(canonical) or canonical
+        if canonical != "auto" and family_by_id(canonical) is None:
+            known = ", ".join(family.id for family in POLISH_FAMILIES)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown dictation polish provider {raw!r}. Use 'auto' "
+                    f"(pick whichever key you have) or one of: {known}."
+                ),
+            )
+        updates["polish_provider"] = canonical
+
     dictation = _dictation_cfg(request)
     current = {
         key: getattr(dictation, key)

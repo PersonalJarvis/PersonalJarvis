@@ -10,9 +10,10 @@ import {
   useDictation,
   type DictationPolishTest,
 } from "@/hooks/useDictation";
+import { Combobox } from "@/components/ui/combobox";
+import { LanguageSelect } from "@/components/ui/language-select";
 import { useEventStore } from "@/store/events";
-import { useT, useUiLanguage } from "@/i18n";
-import { sortedLanguageOptions } from "@/lib/languageNames";
+import { useT } from "@/i18n";
 
 /**
  * Display names for the polish families.
@@ -65,7 +66,6 @@ export interface LanguageTabProps {
  */
 export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const t = useT();
-  const uiLanguage = useUiLanguage();
   const { settings, choices, loading, error, saveSettings } = useDictation();
   const pushToast = useEventStore((s) => s.pushToast);
   const [testing, setTesting] = useState(false);
@@ -114,13 +114,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     }
   }
 
-  // Localized names, "Automatic" first and the rest alphabetically in the user's
-  // own language — a ~100-entry list ordered by ISO code would be unusable.
-  const options = sortedLanguageOptions(
-    choices?.language ?? [],
-    uiLanguage,
-    t("voice.language.auto"),
-  );
+  const languageCodes = choices?.language ?? [];
   const value = settings?.language ?? "auto";
 
   // Default ON, which is safe on an install with no text-model key at all: the
@@ -166,22 +160,16 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                 {t("dictation.loading")}
               </div>
             ) : (
-              <label className="mt-3 flex max-w-xs flex-col gap-1">
-                <span className="sr-only">{t("voice.language.title")}</span>
-                <select
+              <div className="mt-3 max-w-xs">
+                <LanguageSelect
                   value={value}
-                  data-testid="dictation-language"
-                  aria-label={t("voice.language.title")}
-                  onChange={(e) => void onPick(e.target.value)}
-                  className="rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  {options.map((option) => (
-                    <option key={option.code} value={option.code}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  codes={languageCodes}
+                  onChange={(code) => void onPick(code)}
+                  autoLabel={t("voice.language.auto")}
+                  ariaLabel={t("voice.language.title")}
+                  testId="dictation-language"
+                />
+              </div>
             )}
 
             <div className="mt-4 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3">
@@ -227,26 +215,33 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
 
             {polishOn && (
               <>
-                <label className="mt-3 flex max-w-xs flex-col gap-1">
+                {/* The same themed control as the language picker above it —
+                    a native <select> sitting right beside one would put the
+                    operating system's own grey list back on the card. No
+                    search field: this list is six entries, not a hundred. */}
+                <div className="mt-3 flex max-w-xs flex-col gap-1">
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                     {t("voice.polish.provider_label")}
                   </span>
-                  <select
+                  <Combobox
                     value={polishProvider}
-                    data-testid="dictation-polish-provider"
-                    aria-label={t("voice.polish.provider_label")}
-                    onChange={(e) => void onPickPolishProvider(e.target.value)}
-                    className="rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    {polishProviders.map((id) => (
-                      <option key={id} value={id}>
-                        {id === "auto"
-                          ? t("voice.polish.provider_auto")
-                          : POLISH_PROVIDER_LABELS[id] ?? id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    ariaLabel={t("voice.polish.provider_label")}
+                    onChange={(id) => void onPickPolishProvider(id)}
+                    testId="dictation-polish-provider"
+                    groups={[
+                      {
+                        id: "providers",
+                        options: polishProviders.map((id) => ({
+                          value: id,
+                          label:
+                            id === "auto"
+                              ? t("voice.polish.provider_auto")
+                              : POLISH_PROVIDER_LABELS[id] ?? id,
+                        })),
+                      },
+                    ]}
+                  />
+                </div>
                 <p className="mt-1.5 text-[11px] text-muted-foreground">
                   {t("voice.polish.provider_hint")}
                 </p>

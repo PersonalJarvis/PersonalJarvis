@@ -28,6 +28,22 @@ export interface AltCredential {
   credential_path_hint: string | null;
 }
 
+/**
+ * On-disk truth about a provider that runs locally — mirror of
+ * `jarvis.speech.local_models.LocalModelStatus`. The engine (the pip package
+ * doing inference) and the model (its weights) are tracked separately because
+ * they fail separately and need different fixes: install versus download.
+ */
+export interface LocalRuntimeStatus {
+  runtime: string;
+  engine_installed: boolean;
+  model_present: boolean;
+  model_label: string;
+  ready: boolean;
+  /** One honest sentence for the card — render it verbatim. */
+  detail: string;
+}
+
 export interface ProviderDescriptor {
   id: string;
   label: string;
@@ -81,8 +97,28 @@ export interface ProviderDescriptor {
    * without it. Absent on older payloads, which read as "required".
    */
   optional?: boolean;
+  /**
+   * Dictation-polish cards only: the value `[dictation].polish_provider`
+   * actually stores ("groq"), which is NOT this card's `id` ("groq-polish") —
+   * a bare "groq" would collide with the brain card, so the tier carries a
+   * suffix the config vocabulary knows nothing about. Pinning this tier must
+   * send THIS field: `resolve_polish_chain` ignores a family id it does not
+   * recognise and falls back to the auto order, so a client that sent `id`
+   * stored a value that looked saved and silently did nothing.
+   * null/absent on every other card.
+   */
+  polish_family?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
+  /**
+   * On-device cards only: whether the inference engine and its weights are
+   * REALLY on this machine. A local provider has no key to check, so without
+   * this a local card would render as ready the moment it exists — the defect
+   * that got the previous local Whisper card removed. `ready` is the only field
+   * a caller should gate on; the two booleans behind it explain WHICH half is
+   * missing so the card can offer the right next step. null on cloud cards.
+   */
+  local_runtime?: LocalRuntimeStatus | null;
   /** Local/self-hosted cards: whether the card exposes an editable server URL
    *  (persisted via PUT /api/providers/{id}/base-url). */
   supports_base_url?: boolean;
@@ -645,6 +681,50 @@ export async function switchTtsProvider(
  * bootstrap (model load is expensive), so the switch only takes effect
  * on the next voice restart.
  */
+/** Progress of an on-device provider's engine install + model download. */
+export interface LocalInstallProgress {
+  state: "idle" | "running" | "done" | "error";
+  ready: boolean;
+  message: string;
+  engine_installed?: boolean;
+  model_present?: boolean;
+  model_label?: string;
+  download_size?: string;
+}
+
+/**
+ * Kick off the install of a local provider's engine and model. Returns as soon
+ * as the work is handed to a background thread — the download runs for minutes,
+ * so the caller polls `localInstallStatus` instead of awaiting it.
+ */
+export async function startLocalInstall(
+  providerId: string,
+): Promise<LocalInstallProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/local-install`,
+    { method: "POST" },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
+/** Poll install progress; `ready` reflects the on-disk probe, not the run. */
+export async function localInstallStatus(
+  providerId: string,
+): Promise<LocalInstallProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/local-install/status`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
 export async function switchSttProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
@@ -715,14 +795,18 @@ export async function switchComputerUseProvider(
  * key-aware chain pick whichever family the user actually holds a credential
  * for and cross to another one when that family is depleted (AP-22), which is
  * why activating a card here is a *narrowing* choice, not a prerequisite.
+ *
+ * Takes a polish FAMILY id ("openai"), never a card id ("openai-polish") — the
+ * two vocabularies differ, and only the family half means anything to the
+ * chain. Callers holding a card read `descriptor.polish_family`.
  */
 export async function switchDictationPolishProvider(
-  providerId: string,
+  familyId: string,
 ): Promise<void> {
   const res = await fetch("/api/dictation/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ polish_provider: providerId, persist: true }),
+    body: JSON.stringify({ polish_provider: familyId, persist: true }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

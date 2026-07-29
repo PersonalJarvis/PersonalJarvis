@@ -151,32 +151,153 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Open the themed picker and return its rendered options in list order. */
+async function openPicker(testId: string) {
+  const trigger = await waitFor(() => screen.getByTestId(testId));
+  fireEvent.click(trigger);
+  const panel = await waitFor(() => screen.getByTestId(`${testId}-panel`));
+  return {
+    trigger,
+    panel,
+    options: [...panel.querySelectorAll('[role="option"]')] as HTMLElement[],
+  };
+}
+
 describe("LanguageTab", () => {
   it("offers automatic detection plus the three supported languages, by name", async () => {
     installFetchMock(routes());
     render(<LanguageTab hideHeader />);
 
-    await waitFor(() =>
-      expect(screen.queryByTestId("dictation-language")).toBeTruthy(),
-    );
-    const select = screen.getByTestId("dictation-language") as HTMLSelectElement;
+    const { trigger, options } = await openPicker("dictation-language");
     // "Automatic" first, then alphabetically by the name shown in the user's
     // own UI language — not the order the backend happens to list the codes in.
     // With an English UI that puts English ahead of German; the recognizer
     // accepts ~100 languages, and an ISO-code ordering would be unreadable.
-    expect([...select.options].map((o) => o.value)).toEqual([
+    expect(options.map((o) => o.getAttribute("data-value"))).toEqual([
       "auto",
       "en",
       "de",
       "es",
     ]);
-    expect([...select.options].map((o) => o.textContent)).toEqual([
+    // The row's first span is the name in the user's UI language …
+    expect(options.map((o) => o.querySelector("span")?.textContent)).toEqual([
       "Detect automatically",
       "English",
       "German",
       "Spanish",
     ]);
-    expect(select.value).toBe("auto");
+    // … and the second is what the language calls itself, which is how someone
+    // who does not read the interface language finds their own row at all. It
+    // is dropped where it would only repeat the name (English in an English UI).
+    expect(options.map((o) => o.textContent)).toEqual([
+      "Detect automatically",
+      "English",
+      "GermanDeutsch",
+      "Spanishespañol",
+    ]);
+    expect(trigger.getAttribute("data-value")).toBe("auto");
+    // The closed control still names the pick — a chevron alone would not.
+    expect(trigger.textContent).toContain("Detect automatically");
+  });
+
+  it("puts the caret in the search field the moment the list opens", async () => {
+    // The panel is not mounted on the render that opens it — it waits for its
+    // first measurement — so focusing it from an effect keyed on "open" runs
+    // against a ref that is still null, and everything the user types goes to
+    // whatever had focus before. That shipped once; this pins it.
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    await openPicker("dictation-language");
+    expect(document.activeElement).toBe(
+      screen.getByTestId("dictation-language-search"),
+    );
+  });
+
+  it("walks the list and picks with the keyboard", async () => {
+    const calls = installFetchMock(
+      routes({
+        "PUT /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, language: "en" }, persisted: true },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const { panel } = await openPicker("dictation-language");
+    const search = screen.getByTestId("dictation-language-search");
+    // Opens highlighting the stored value ("auto"); one step down is English.
+    fireEvent.keyDown(panel, { key: "ArrowDown" });
+    fireEvent.keyDown(panel, { key: "Enter" });
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url === "/api/dictation/settings",
+      );
+      expect(JSON.parse(put?.body ?? "{}")).toMatchObject({ language: "en" });
+    });
+    expect(search.isConnected).toBe(false);
+  });
+
+  it("closes on Escape without changing the setting", async () => {
+    const calls = installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const { panel, trigger } = await openPicker("dictation-language");
+    fireEvent.keyDown(panel, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-language-panel")).toBeNull(),
+    );
+    // Focus comes back to the control that was operated, not to the page body.
+    expect(document.activeElement).toBe(trigger);
+    expect(
+      calls.some((c) => c.method === "PUT" && c.url === "/api/dictation/settings"),
+    ).toBe(false);
+  });
+
+  it("filters the list by name, own name, or code", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const { panel } = await openPicker("dictation-language");
+    const search = screen.getByTestId("dictation-language-search");
+
+    // The English name, which is what an English UI shows.
+    fireEvent.change(search, { target: { value: "germ" } });
+    await waitFor(() =>
+      expect(
+        [...panel.querySelectorAll('[role="option"]')].map((o) =>
+          o.getAttribute("data-value"),
+        ),
+      ).toEqual(["de"]),
+    );
+
+    // The language's OWN name — the entry point for someone who cannot read
+    // the interface language they were handed.
+    fireEvent.change(search, { target: { value: "Deutsch" } });
+    await waitFor(() =>
+      expect(
+        [...panel.querySelectorAll('[role="option"]')].map((o) =>
+          o.getAttribute("data-value"),
+        ),
+      ).toEqual(["de"]),
+    );
+
+    // And the bare code, for anyone who already knows it.
+    fireEvent.change(search, { target: { value: "es" } });
+    await waitFor(() =>
+      expect(
+        [...panel.querySelectorAll('[role="option"]')].map((o) =>
+          o.getAttribute("data-value"),
+        ),
+      ).toContain("es"),
+    );
+
+    fireEvent.change(search, { target: { value: "zzzz" } });
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-language-empty")).toBeTruthy(),
+    );
   });
 
   it("says why automatic is the right choice for almost everyone", async () => {
@@ -201,12 +322,8 @@ describe("LanguageTab", () => {
     );
     render(<LanguageTab hideHeader />);
 
-    await waitFor(() =>
-      expect(screen.queryByTestId("dictation-language")).toBeTruthy(),
-    );
-    fireEvent.change(screen.getByTestId("dictation-language"), {
-      target: { value: "es" },
-    });
+    const { options } = await openPicker("dictation-language");
+    fireEvent.click(options.find((o) => o.getAttribute("data-value") === "es")!);
 
     await waitFor(() => {
       const put = calls.find(
@@ -218,9 +335,13 @@ describe("LanguageTab", () => {
         persist: true,
       });
     });
-    expect(
-      (screen.getByTestId("dictation-language") as HTMLSelectElement).value,
-    ).toBe("es");
+    // Picking closes the panel and the trigger carries the new value.
+    expect(screen.queryByTestId("dictation-language-panel")).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("dictation-language").getAttribute("data-value"),
+      ).toBe("es"),
+    );
   });
 
   it("renders its own header when used standalone", async () => {
@@ -289,18 +410,18 @@ describe("LanguageTab — the wording pass", () => {
     );
     render(<LanguageTab hideHeader />);
 
-    const select = (await waitFor(() =>
-      screen.getByTestId("dictation-polish-provider"),
-    )) as HTMLSelectElement;
+    const { options } = await openPicker("dictation-polish-provider");
     // The list comes over the wire — a hand-mirrored copy here would be the
     // AP-4 drift trap this hook deliberately avoids.
-    expect([...select.options].map((o) => o.value)).toEqual([
+    expect(options.map((o) => o.getAttribute("data-value"))).toEqual([
       "auto",
       "groq",
       "gemini",
       "openrouter",
     ]);
-    fireEvent.change(select, { target: { value: "gemini" } });
+    fireEvent.click(
+      options.find((o) => o.getAttribute("data-value") === "gemini")!,
+    );
 
     await waitFor(() => {
       const put = calls.find(

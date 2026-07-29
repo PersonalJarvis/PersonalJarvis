@@ -315,6 +315,26 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     no entry-point or raises on construction.
     """
     provider_name = (getattr(stt_cfg, "provider", "") or "").strip()
+    # The mirror image of the cross-family rule below: a user who deliberately
+    # SELECTED the on-device engine can still arrive on a host where it is not
+    # installed — a fresh machine, a rebuilt venv, a base install that carried
+    # the config over. Building it anyway yields a provider that raises on the
+    # first utterance, which reads to the user as "voice input is broken" with
+    # no cause. Cross to a cloud family this host holds a key for instead
+    # (AP-22); with no key anywhere the local path stands and
+    # ``_maybe_hint_no_working_stt`` states the dead-end honestly.
+    if provider_name == "faster-whisper" and not _faster_whisper_installed():
+        alternatives = [
+            name for name in available_stt_provider_names() if name != "faster-whisper"
+        ]
+        if alternatives:
+            logger.warning(
+                "Local STT is selected but the faster-whisper engine is not "
+                "installed on this host; using {!r} instead. Install the local "
+                "engine from the API-Keys view to switch back.",
+                alternatives[0],
+            )
+            provider_name = alternatives[0]
     # Open-source AP-22: when the configured cloud STT has no usable key, cross to
     # a cloud STT family the user DOES have a key for BEFORE dropping to local
     # faster-whisper (which is not installed on a base/headless host). The

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, Download, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -11,7 +11,10 @@ import { Button } from "@/components/ui/button";
 import {
   codexLogout,
   loginAntigravity,
+  localInstallStatus,
   logoutAntigravity,
+  startLocalInstall,
+  type LocalInstallProgress,
   type ProviderDescriptor,
   type ProviderTestResult,
   type ProviderTestStatus,
@@ -773,7 +776,15 @@ export function ProviderCard({
         // is a plain `[dictation]` setting), and without the branch it would
         // fall through to the realtime switch below and reconfigure the user's
         // voice engine from a dictation card.
-        await switchDictationPolishProvider(descriptor.id);
+        //
+        // `polish_family`, NOT `id`: the config stores "openai" while this card
+        // is "openai-polish" (a bare "openai" is already the brain card). The
+        // chain ignores a family id it does not know and quietly falls back to
+        // the auto order, so sending `id` wrote a pin that returned HTTP 200,
+        // showed a success toast, and left the previous provider active — the
+        // exact "it says it did it but nothing changed" failure. Falling back to
+        // `id` keeps an older payload without the field working.
+        await switchDictationPolishProvider(descriptor.polish_family || descriptor.id);
         pushToast("success", `Dictation wording → ${descriptor.label}`);
         window.dispatchEvent(new CustomEvent("jarvis:dictation-polish-switched"));
       } else {
@@ -1323,6 +1334,114 @@ export function BaseUrlField({
   );
 }
 
+/**
+ * The on-device half of a local provider's card: is the engine here, are the
+ * weights here, and — when they are not — the one button that fixes it.
+ *
+ * This panel is the reason the local Whisper card could come back. Its
+ * predecessor rendered as ready on installs where nothing was installed, so the
+ * rule here is that NOTHING is inferred client-side: `ready` and `detail` come
+ * from the server's on-disk probe and are rendered verbatim. While an install
+ * runs we poll, because a 3 GB download finishes minutes after the click and a
+ * card frozen on "Installing…" would be its own kind of lie.
+ */
+function LocalRuntimePanel({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const status = descriptor.local_runtime;
+  const [progress, setProgress] = useState<LocalInstallProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const running = progress?.state === "running";
+
+  // Poll only while an install is actually in flight, and stop on the terminal
+  // state. A finished run refreshes the provider list so the card's own
+  // readiness (and the "Set active" control that depends on it) update too.
+  useEffect(() => {
+    if (!running) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await localInstallStatus(descriptor.id);
+        if (cancelled) return;
+        setProgress(next);
+        if (next.state === "done" || next.state === "error") {
+          window.clearInterval(timer);
+          onChanged();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        window.clearInterval(timer);
+        setError(err instanceof Error ? err.message : String(err));
+        setProgress(null);
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [running, descriptor.id, onChanged]);
+
+  if (!status) return null;
+
+  const start = async () => {
+    setError(null);
+    try {
+      setProgress(await startLocalInstall(descriptor.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const failed = progress?.state === "error";
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
+      <div className="flex items-start gap-2 text-xs">
+        {status.ready ? (
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+        ) : (
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        )}
+        <span className="text-muted-foreground">
+          {progress?.message ?? status.detail}
+        </span>
+      </div>
+      {!status.ready && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={start}
+          disabled={running}
+          className="gap-2"
+        >
+          {running ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {running
+            ? t("apikeys_view.local_installing")
+            : failed
+              ? t("apikeys_view.local_install_retry")
+              : t("apikeys_view.local_install_cta")}
+        </Button>
+      )}
+      {running && (
+        <p className="text-[11px] text-muted-foreground">
+          {t("apikeys_view.local_install_hint")}
+        </p>
+      )}
+      {error && (
+        <p className="text-[11px] text-destructive">{error}</p>
+      )}
+    </div>
+  );
+}
+
 export function AuthWidget({
   descriptor,
   onChanged,
@@ -1335,6 +1454,7 @@ export function AuthWidget({
   return (
     <div className="space-y-2">
       <ProviderBillingBadge billing={descriptor.billing} />
+      <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       {descriptor.supports_base_url && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
       )}

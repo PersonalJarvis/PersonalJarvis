@@ -657,17 +657,32 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "lists only transcription-capable models."
         ),
     ),
-    # Local "Faster-Whisper (lokal)" STT was REMOVED as a user-selectable
-    # provider (2026-07-03, v1.0.1). Two defects made the card actively
-    # misleading: the provider list never checked whether the local-voice extra
-    # was actually installed, so it always showed as "ready" on a base install;
-    # and the model dropdown listed all seven Whisper checkpoints regardless of
-    # what was downloaded. Cloud STT (groq-api / openai-api / openrouter-stt) is
-    # the supported dictation path. NOTE: this only removes the *dictation*
-    # provider from the UI — the wake word still uses its own local Whisper
-    # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
-    # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
-    # as an invisible resilience floor for a user with no cloud STT key.
+    # Local, keyless STT. This card was REMOVED once (2026-07-03, v1.0.1) and is
+    # back under the condition that made the removal necessary: it may never
+    # claim a readiness nobody verified. Both original defects are fixed at the
+    # source rather than in the card — the payload carries a real
+    # ``local_runtime`` probe (engine importable AND checkpoint downloaded, see
+    # jarvis.speech.local_models), and there is no seven-checkpoint picker at
+    # all: exactly ONE model is offered, the one the install actually fetches.
+    # NOTE: the wake word is a separate path with its own small checkpoint
+    # ([stt].wake_*, build_wake_whisper) and is unaffected by this card;
+    # _build_local_fallback likewise stays the invisible key-free floor (AP-22).
+    ProviderSpec(
+        id="faster-whisper",
+        label="Whisper (on this machine)",
+        tier="stt",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "Transcribes your speech on this machine — no API key, no cloud "
+            "account, no audio leaving the device. Runs Whisper large-v3, the "
+            "full multilingual model. It needs a one-time download of about "
+            "3 GB and is slower than a hosted provider on a machine without a "
+            "graphics card, which is the trade for keeping everything local."
+        ),
+    ),
     # ── Dictation polish ──────────────────────────────────────────────────
     # Derived from POLISH_FAMILIES above, in that tuple's order (Groq first —
     # it is the recommended pick because its key is usually already there).

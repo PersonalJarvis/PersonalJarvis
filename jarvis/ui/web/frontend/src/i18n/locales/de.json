@@ -251,6 +251,7 @@
     "saved": "Einstellung gespeichert",
     "cannot_insert_title": "Text kann gerade nicht in andere Apps geschrieben werden",
     "cannot_insert_generic": "Dein System blockiert, dass ein Programm in ein anderes tippt. Diktat funktioniert trotzdem — der Text landet in der Zwischenablage, du kannst ihn einfügen.",
+    "polish_first_run": "Neu: Ein schnelles Modell räumt jetzt deine Formulierung auf, bevor der Text ankommt — dein Rohtext bleibt in dieser Liste, und auf dem Tab „Sprache“ kannst du es abschalten.",
     "history_title": "Letzte Diktate",
     "history_empty": "Noch nichts diktiert.",
     "clear_history": "Alle löschen",
@@ -286,6 +287,7 @@
       "clipboard_only": "In die Zwischenablage kopiert",
       "unavailable": "Einfügen nicht möglich",
       "chat": "An den Chat geschickt",
+      "partial": "Teilweise übertragen",
       "empty": "Nichts gehört",
       "cancelled": "Abgebrochen",
       "failed": "Fehlgeschlagen"
@@ -306,6 +308,7 @@
       "unchanged": "Nichts zu ändern",
       "off": "Aus",
       "unavailable": "Kein Modell verfügbar",
+      "local_only": "Bleibt auf diesem Rechner — dein Rohtext wurde verwendet",
       "skipped_short": "Zu kurz zum Aufräumen",
       "skipped_long": "Zu lang zum Aufräumen",
       "timeout": "Hat zu lange gedauert — dein Rohtext wurde verwendet",
@@ -350,6 +353,7 @@
     "polish": {
       "title": "Formulierung aufräumen",
       "description": "Ein schnelles Modell schreibt die Struktur um — Satzzeichen, Groß- und Kleinschreibung, Füllwörter und Satzgrenzen. Deine genauen Worte und ihr Sinn bleiben erhalten, und der Rohtext steht immer in deinem Verlauf.",
+      "sends_text": "Solange das an ist, geht dein fertiger Text an das Modell, das du unten auswählst; wenn deine Spracherkennung ohnehin auf diesem Rechner läuft, bleibt auch das Aufräumen hier, außer du wählst selbst ein Cloud-Modell. Dein Rohtext bleibt immer in deinem Verlauf, genau so, wie er erkannt wurde.",
       "provider_label": "Modell",
       "provider_auto": "Automatisch — nimm den Schlüssel, den ich habe",
       "provider_hint": "Automatisch nimmt einen Schlüssel, den du ohnehin hast, und wechselt zu einem anderen Anbieter, wenn einer am Limit oder ohne Guthaben ist. Feste Wahl nur, wenn ein bestimmtes Konto abgerechnet werden soll.",
@@ -1103,6 +1107,10 @@
     "subtitle": "Verbinde Provider und lege fest, was die einzelnen Teile von Jarvis antreibt.",
     "shared_key_covered": "Bereits über deinen geteilten Schlüssel dieser Provider-Familie abgedeckt — ein eigener Schlüssel ist optional.",
     "add_dedicated_key": "Eigenen Schlüssel hinterlegen",
+    "local_install_cta": "Auf diesem Gerät installieren",
+    "local_installing": "Wird installiert …",
+    "local_install_retry": "Erneut versuchen",
+    "local_install_hint": "Dabei werden einige Gigabyte geladen, das kann mehrere Minuten dauern. Du kannst die App währenddessen weiter benutzen.",
     "shared_delete_prefix": "Dieser Schlüssel wird auch verwendet von:",
     "shared_delete_suffix": "Beim Löschen werden auch diese Provider deaktiviert.",
     "delete_anyway": "Trotzdem löschen",
@@ -2026,6 +2034,12 @@
       "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal.",
       "autostart_label": "Jarvis beim Anmelden automatisch starten"
     }
+  },
+  "language_select": {
+    "search": "Sprache suchen",
+    "empty": "Keine Sprache passt zu deiner Suche.",
+    "group_common": "Häufige Sprachen",
+    "group_all": "Alle Sprachen"
   },
   "languages_view": {
     "title": "Sprachen",
