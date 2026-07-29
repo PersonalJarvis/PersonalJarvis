@@ -36,11 +36,19 @@ import threading
 import time
 
 #: Preview calls allowed per rolling minute, across every dictation in this
-#: process. Chosen against the tightest limit a free cloud STT tier commonly
-#: grants (~20 requests/minute) MINUS the segment traffic that must always fit
-#: (~7.5/min at the default 8 s segments), with room to spare — the cost of
-#: guessing high is the very failure this exists to prevent, and the cost of
-#: guessing low is only that the preview lags a little.
+#: process.
+#:
+#: The budget is sized against a MEASURED limit, not a guess. Groq publishes 20
+#: RPM / 2000 RPD for both whisper-large-v3 and whisper-large-v3-turbo, and —
+#: this is the part worth knowing — the paid Developer plan carries the SAME 20
+#: RPM as the free plan, so no amount of money buys a way out of this. The 2000
+#: RPD matches the ``x-ratelimit-limit-requests`` header the maintainer's own
+#: account returns, which is what confirms the figures apply here.
+#:
+#: 20 RPM minus the segment traffic that must always fit (~7.5/min at the
+#: default 8 s segments) leaves ~12. Ten keeps a margin for the final pass and
+#: its retries. Guessing high rebuilds the very failure this prevents; guessing
+#: low only makes the preview lag a little, so the asymmetry decides.
 PREVIEW_CALLS_PER_MINUTE = 10
 
 _WINDOW_S = 60.0

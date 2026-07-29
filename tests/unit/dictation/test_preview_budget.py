@@ -60,8 +60,11 @@ def test_the_budget_is_shared_across_dictations():
 def test_the_default_leaves_room_for_the_segment_traffic():
     """Segments close ~7.5x/min at the 8 s default and are NEVER budgeted.
 
-    The preview default plus that traffic has to stay under the tightest common
-    free-tier limit (~20 requests/minute), or the budget would be decorative.
+    20 RPM is Groq's published limit for both whisper models AND the limit its
+    paid Developer plan carries — upgrading buys no relief, so the budget has to
+    fit inside it. Preview plus segment traffic must stay under that or the
+    budget would be decorative.
     """
+    provider_rpm_limit = 20  # Groq whisper-large-v3, free AND developer plan
     segments_per_minute = 60 / 8.0
-    assert PREVIEW_CALLS_PER_MINUTE + segments_per_minute < 20
+    assert PREVIEW_CALLS_PER_MINUTE + segments_per_minute < provider_rpm_limit
