@@ -8,8 +8,12 @@ plugin_id: todoist
 intent_verbs: [zeig, lies, erstell, ergänz, erledig, plan, show, list, add, create, complete, remind, muestra, añade, crea, completa]  # i18n-allow: spoken-input vocabulary, de/en/es
 intent_objects: [todoist, todoist-aufgabe, todoist-liste, todoist task, todoist list, todoist projekt, todoist project, einkaufsliste, shopping list, lista de la compra]  # i18n-allow: spoken-input vocabulary, de/en/es
 triggers:
+  # The bare "to-?do" alternative also matched Spanish "todo" / "todos"
+  # ("everything" / "all"), so ordinary Spanish speech pulled in a task skill —
+  # the cross-language face of the substring defect behind BUG-121. A separator
+  # or an explicit list noun is now required, which Spanish "todo" never has.
   - type: voice
-    pattern: "(todoist|aufgabenliste|einkaufsliste|to-?do|shopping list|lista de tareas)"  # i18n-allow: spoken-input vocabulary
+    pattern: "\\b(todoist|aufgabenliste|einkaufsliste|to[-\\s]dos?|todo[-\\s]?list\\w*|shopping list|lista de tareas)\\b"  # i18n-allow: spoken-input vocabulary
 requires_tools: [todoist]
 risk_policy:
   default_tier: monitor

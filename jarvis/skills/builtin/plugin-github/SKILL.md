@@ -8,8 +8,11 @@ plugin_id: github
 intent_verbs: [zeig, lies, erstell, öffne, schließ, merge, review, kommentier]  # i18n-allow
 intent_objects: [github, github-issue, repo, repository, pull, pullrequest, pr, branch, commit, workflow]  # i18n-allow
 triggers:
+  # Word boundaries are load-bearing: without them "repo" fired inside "REPOrt"
+  # and "REPOrter". Same defect class as the calendar skill's "termin" in
+  # "Terminals" (BUG-121).
   - type: voice
-    pattern: "(github|pull request|pull-request|\\bpr\\b|repo|repository)"  # i18n-allow
+    pattern: "\\b(github|pull[-\\s]?request(?:s)?|pr|repo(?:s|sitor(?:y|ies))?)\\b"  # i18n-allow
 requires_tools: [github]
 risk_policy:
   default_tier: ask

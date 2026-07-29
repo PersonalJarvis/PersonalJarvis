@@ -8,8 +8,12 @@ plugin_id: stripe
 intent_verbs: [zeig, lies, erstatt, prüf, such]  # i18n-allow
 intent_objects: [stripe, zahlung, zahlungen, payment, payments, kunde, kunden, customer, customers, rechnung, rechnungen, invoice, invoices, abo, abonnement, subscription, guthaben, balance, charge, refund]  # i18n-allow
 triggers:
+  # Word boundaries are load-bearing: without them "kunde" fired inside
+  # "SeKUNDE", so every spoken "warte eine Sekunde" pulled a PAYMENT skill into
+  # the turn. Same defect class as the calendar skill's "termin" in "Terminals"
+  # (BUG-121), and the more dangerous one, because these tools move money.
   - type: voice
-    pattern: "(stripe|zahlung|payment|rechnung|invoice|guthaben|kunde)"  # i18n-allow
+    pattern: "\\b(stripe|zahlung(?:en)?|payment(?:s)?|rechnung(?:en)?|invoice(?:s)?|guthaben|kunde(?:n)?)\\b"  # i18n-allow
 requires_tools: [stripe]
 risk_policy:
   default_tier: ask
