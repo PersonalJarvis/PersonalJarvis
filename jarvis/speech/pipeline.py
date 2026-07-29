@@ -1460,6 +1460,22 @@ class SpeechPipeline:
                     "Utterance-STT factory failed (%s); reusing local Whisper for utterances.",
                     exc,
                 )
+        # Runtime fallback (AP-22). ``build_stt_from_config`` only crosses to
+        # another provider when the configured one has no KEY — a build-time
+        # decision. A provider that fails at CALL time (a 429 mid-dictation, an
+        # expired key, a 503) had no way out, so one rate limit deleted the
+        # user's words while three other keyed providers sat unused. The chain
+        # is names-only until something actually fails, so this costs the boot
+        # path nothing (AP-26).
+        if config is not None and getattr(config, "stt", None) is not None:
+            try:
+                from jarvis.speech.stt_fallback import wrap_stt_with_fallback
+
+                self._utterance_stt = wrap_stt_with_fallback(
+                    self._utterance_stt, config.stt
+                )
+            except Exception as exc:  # noqa: BLE001 — never block voice boot
+                log.warning("STT fallback chain unavailable: %s", exc)
         # Live transcript preview uses the cheap local probe when available.
         # In lightweight mode there is no local Whisper, but the post-wake
         # utterance STT may still exist (cloud provider). Keep that path alive

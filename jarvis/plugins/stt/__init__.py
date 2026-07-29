@@ -259,6 +259,53 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     return _build_local_fallback(stt_cfg, language)
 
 
+def available_stt_provider_names() -> list[str]:
+    """Every provider this host could actually transcribe with, right now.
+
+    "Could" is a CREDENTIAL + INSTALL question, never a config one: the answer
+    is the menu the runtime fallback chain picks from when the configured
+    provider starts failing (``jarvis.speech.stt_fallback``), so a name in here
+    has to be one that would really work. Cloud families come in the
+    cross-family order, the key-free local engine last and only when it is
+    installed.
+    """
+    names: list[str] = []
+    for name in _STT_CROSS_FAMILY_ORDER:
+        if _stt_family_has_key(name) and _load_provider_class(name) is not None:
+            names.append(name)
+    if _faster_whisper_installed():
+        names.append("faster-whisper")
+    return names
+
+
+def build_named_stt_provider(name: str, stt_cfg: Any) -> Any:
+    """Build the provider called ``name`` using ``stt_cfg`` for everything else.
+
+    Language, bias prompt, dictionary vocabulary and the team-proxy handling all
+    have to match what the configured provider got — a fallback that quietly
+    drops the user's vocabulary would transcribe their words differently the
+    moment it took over. So this reuses :func:`build_stt_from_config` on a copy
+    of the config rather than re-deriving any of it.
+    """
+    try:
+        patched = stt_cfg.model_copy(update={"provider": name})
+    except AttributeError:
+        # Not a pydantic model (test doubles); a tiny view is enough.
+        patched = _StttConfigView(stt_cfg, name)
+    return build_stt_from_config(patched)
+
+
+class _StttConfigView:
+    """Read-only ``stt_cfg`` with ``provider`` swapped — for non-pydantic doubles."""
+
+    def __init__(self, inner: Any, provider: str) -> None:
+        self._inner = inner
+        self.provider = provider
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+
 # One-time gate so the "no working STT" hint is logged at most once per process
 # (the STT provider is rebuilt whenever a key changes; the hint must not repeat).
 _NO_STT_HINT_EMITTED = False
@@ -888,6 +935,8 @@ def start_wake_model_prefetch(
 
 
 __all__ = [
+    "available_stt_provider_names",
+    "build_named_stt_provider",
     "build_stt_from_config",
     "build_wake_whisper",
     "mark_wake_gpu_bad",
