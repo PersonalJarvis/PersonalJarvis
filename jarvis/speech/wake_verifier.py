@@ -170,7 +170,14 @@ async def verify_wake_with_stt(
         # None (not "") = STT OUTAGE: lets the caller degrade open on a dead
         # provider (AP-22) while a genuine empty transcription stays "".
         return False, None
-    text = (getattr(transcript, "text", "") or "").strip()
+    # ``raw_text`` first, like the rolling-whisper verifier: wake has to judge
+    # what the recognizer EMITTED. A provider-cleaned string would be a
+    # different sentence than the one the audio checks were measured against,
+    # and the prefix match would then be answering about text nobody spoke
+    # (AP-27).
+    text = (
+        getattr(transcript, "raw_text", "") or getattr(transcript, "text", "") or ""
+    ).strip()
     matched = transcript_has_hey_prefix(text, matcher)
     log.info(
         "wake-verify transcript=%r matched=%s",

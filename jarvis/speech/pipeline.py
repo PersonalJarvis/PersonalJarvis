@@ -3243,7 +3243,17 @@ class SpeechPipeline:
                 self, "_probe_generation", generation
             ):
                 return
-            raw_text = (getattr(transcript, "text", "") or "").strip()
+            # The RAW decode, deliberately. This probe asks "did anything get
+            # said in the tail?" and answers with text LENGTH plus the
+            # hallucination markers. A provider-cleaned string breaks both:
+            # a tail of pure hesitation ("Ã¤hm ...") cleans down to nothing and  # i18n-allow: quoted input
+            # would read as silence, so Jarvis would cut off the one person
+            # who is visibly still thinking.
+            raw_text = (
+                getattr(transcript, "raw_text", "")
+                or getattr(transcript, "text", "")
+                or ""
+            ).strip()
             text = raw_text.lower()
             confidence = float(getattr(transcript, "confidence", 0.0) or 0.0)
 

@@ -104,12 +104,22 @@ class _FakeTranscript:
     text: str
     language: str = "de"
     confidence: float = 1.0
+    #: What the provider decoded before its own cleanup filter ran. Empty means
+    #: the provider does not filter, and the verifier falls back to ``text``.
+    raw_text: str = ""
 
 
 class _FakeSTT:
-    def __init__(self, transcript_text: str, *, raises: Exception | None = None) -> None:
+    def __init__(
+        self,
+        transcript_text: str,
+        *,
+        raises: Exception | None = None,
+        raw_text: str = "",
+    ) -> None:
         self._text = transcript_text
         self._raises = raises
+        self._raw_text = raw_text
         self.calls: list[tuple[int, int, str | None]] = []
 
     async def transcribe_pcm(
@@ -121,7 +131,7 @@ class _FakeSTT:
         self.calls.append((len(pcm_bytes), sample_rate, language))
         if self._raises is not None:
             raise self._raises
-        return _FakeTranscript(text=self._text)
+        return _FakeTranscript(text=self._text, raw_text=self._raw_text)
 
 
 PCM_2S_16K = b"\x00\x00" * 16_000 * 2  # 2 s int16 silence
@@ -142,6 +152,24 @@ async def test_verify_returns_true_when_transcript_has_hey_prefix() -> None:
     # locale (CLAUDE.md runtime-output-language rule, and the same §3
     # universality contract that forbids tuning to one user).
     assert stt.calls == [(len(PCM_2S_16K), 16_000, None)]
+
+
+async def test_verify_judges_the_recognizers_own_output_not_a_cleaned_one() -> None:
+    """Providers now filter their transcript; wake must not read that.
+
+    Verification decides whether the phrase was SPOKEN, and it is paired with
+    audio measurements taken on the raw decode — energy at the match site, the
+    shape of the candidate span (AP-27). Judging an edited sentence would break
+    that pairing and answer about text nobody said. So ``raw_text`` wins
+    whenever a provider offers it, and the string handed back is that one too:
+    the caller logs it as the evidence for the decision.
+    """
+    stt = _FakeSTT("Jarvis", raw_text="Hey Jarvis, was läuft")  # i18n-allow
+
+    matched, transcript = await verify_wake_with_stt(stt, PCM_2S_16K, matcher=_JARVIS)
+
+    assert matched is True
+    assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
 
 
 async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:

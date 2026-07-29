@@ -255,9 +255,17 @@ class NemotronLocalSTT:
         while recognizer.is_ready(stream):
             recognizer.decode_stream(stream)
         result = recognizer.get_result(stream)
-        text = (result or "").strip()
+        raw = (result or "").strip()
+        # Same cleanup pass every other provider runs, so the transcript a user
+        # gets does not depend on which engine they picked. ``raw_text`` keeps
+        # the decode for the callers that must not read an edited string (the
+        # dictation lane, wake verification).
+        from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
+        text = clean_stt_text(raw, language=language)
         return Transcript(
             text=text,
+            raw_text=raw,
             language=language or "auto",
             # The transducer exposes no calibrated per-utterance probability;
             # inventing one would put a fabricated number in front of every

@@ -17,27 +17,67 @@ The German fixtures are the speech under test (CLAUDE.md §1, category 4).
 from __future__ import annotations
 
 import dataclasses
+import importlib
+import pkgutil
 from types import SimpleNamespace
 
 import pytest
 
-from jarvis.plugins.stt import (
-    gemini_api,
-    groq_api,
-    openai_api,
-    openrouter_stt,
-)
+import jarvis.plugins.stt as stt_package
+from jarvis.plugins.stt import gemini_api, groq_api, openai_api, openrouter_stt
 
 #: One payload carrying three artifact classes at once: an outer quote pair the
 #: model added, a hesitation sound, and a decoder repetition loop.
 DIRTY_TEXT = '"Um, turn on the light. Thank you. Thank you. Thank you."'
 CLEAN_TEXT = "Turn on the light. Thank you."
 
-#: Every provider module that turns a vendor payload into a Transcript.
+#: Modules in the package that are not providers.
+_NON_PROVIDER_MODULES = frozenset({"errors", "transcript_filter"})
+
+
+def _discover_provider_modules() -> tuple[object, ...]:
+    """Every provider module in the package, found rather than listed.
+
+    Listing them by hand is what let the Nemotron engine ship past the first
+    rollout of this filter: it was added in a parallel session, the list did not
+    know about it, and the parity test went green while one provider quietly
+    behaved differently from the other five. Discovery makes the NEXT provider
+    fail loudly instead.
+
+    A module counts as a provider when it defines a ``Transcript`` — that is the
+    thing this file has an opinion about. A module that cannot be imported (an
+    optional SDK missing on this host) is skipped, not failed: the point of the
+    plugin layout is that a provider you have no dependencies for stays absent.
+    """
+    found: list[object] = []
+    for info in pkgutil.iter_modules(stt_package.__path__):
+        if info.name.startswith("_") or info.name in _NON_PROVIDER_MODULES:
+            continue
+        try:
+            module = importlib.import_module(f"{stt_package.__name__}.{info.name}")
+        except Exception:  # noqa: BLE001, S112 — see below
+            # Deliberately silent: on a base install the absent SDKs are the
+            # EXPECTED case, and logging one line per skipped provider would
+            # bury the run in noise about modules that are working as designed.
+            continue
+        if hasattr(module, "Transcript"):
+            found.append(module)
+    return tuple(found)
+
+
+#: Providers that turn a vendor JSON payload into a Transcript.
 PAYLOAD_PROVIDERS = (openrouter_stt, groq_api, openai_api)
 
-#: Every provider module at all, including the local engine.
-ALL_PROVIDER_MODULES = (openrouter_stt, groq_api, openai_api, gemini_api)
+#: Every provider module in the package, discovered at collection time.
+ALL_PROVIDER_MODULES = _discover_provider_modules()
+
+
+def test_discovery_actually_found_the_known_providers() -> None:
+    """A guard on the guard: a broken discovery would make everything below
+    vacuously pass by finding nothing at all."""
+    names = {m.__name__.rsplit(".", 1)[-1] for m in ALL_PROVIDER_MODULES}
+    assert {"openrouter_stt", "groq_api", "openai_api", "gemini_api"} <= names
+    assert len(ALL_PROVIDER_MODULES) >= 4
 
 
 @pytest.mark.parametrize(
@@ -108,6 +148,30 @@ def test_every_provider_transcript_carries_an_optional_raw_text(module) -> None:
     fields = {f.name: f for f in dataclasses.fields(module.Transcript)}
     assert "raw_text" in fields, f"{module.__name__} lost the raw transcript"
     assert fields["raw_text"].default == ""
+
+
+@pytest.mark.parametrize(
+    "module", ALL_PROVIDER_MODULES, ids=lambda m: m.__name__.rsplit(".", 1)[-1]
+)
+def test_every_provider_module_runs_the_filter(module) -> None:
+    """Source-level, on purpose.
+
+    A behavioural test is better and this file has one wherever it is possible
+    — but it is not possible for every provider: some need a vendor SDK that a
+    base install does not carry, and one needs an on-device model measured in
+    gigabytes. Those providers are exactly the ones nobody notices drifting, so
+    the check that covers ALL of them is the one that reads the source. It
+    proves the call is wired, not that it works; the behavioural tests above
+    prove the rest for the providers that can be driven here.
+    """
+    import inspect
+
+    source = inspect.getsource(module)
+    assert "clean_stt_text" in source, (
+        f"{module.__name__} builds a Transcript without running the cleanup "
+        "filter — its users would get hesitation sounds and decoder loops that "
+        "every other provider removes."
+    )
 
 
 def test_the_shared_protocol_transcript_carries_it_too() -> None:

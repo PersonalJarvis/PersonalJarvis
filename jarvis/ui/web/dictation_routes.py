@@ -310,7 +310,15 @@ async def _retranscribe_from_audio(
         log.warning("dictation restore transcription failed: %s", exc, exc_info=True)
         return "", "", "", f"Transcribing the saved audio failed: {exc}"
 
-    raw = str(getattr(transcript, "text", "") or "").strip()
+    # ``raw_text`` first: Restore re-runs the SAME delivery chain as the live
+    # lane (filler removal under the user's switch, punctuation repair, polish),
+    # so it has to start from the same string the lane starts from. Starting
+    # from a provider-cleaned one would quietly restore different words than the
+    # dictation produced - and ``raw`` is also what the history shows as the
+    # original.
+    raw = str(
+        getattr(transcript, "raw_text", "") or getattr(transcript, "text", "") or ""
+    ).strip()
     reported = str(getattr(transcript, "language", "") or "")
     if not raw:
         return (

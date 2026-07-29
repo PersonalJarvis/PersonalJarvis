@@ -57,17 +57,25 @@ def client(app: FastAPI) -> TestClient:
 class _Transcript:
     text: str
     language: str = "en"
+    #: What the provider decoded before its own cleanup filter ran. Empty for a
+    #: provider that does not filter, which is what the fallback below covers.
+    raw_text: str = ""
 
 
 class _FakeSTT:
-    def __init__(self, text: str, language: str = "en") -> None:
+    def __init__(
+        self, text: str, language: str = "en", *, raw_text: str = ""
+    ) -> None:
         self._text = text
         self._language = language
+        self._raw_text = raw_text
         self.calls: list[str | None] = []
 
     async def transcribe_pcm(self, pcm: bytes, language: str | None = None) -> Any:
         self.calls.append(language)
-        return _Transcript(text=self._text, language=self._language)
+        return _Transcript(
+            text=self._text, language=self._language, raw_text=self._raw_text
+        )
 
 
 def _install_pipeline(monkeypatch: pytest.MonkeyPatch, **attrs: Any) -> Any:
@@ -124,6 +132,51 @@ def test_restore_repairs_the_punctuation_the_segmenting_broke(
     # The raw column keeps what the provider returned, damage included — that
     # is what makes the repair auditable.
     assert "..." in body["entry"]["raw_text"]
+
+
+def test_restore_starts_from_the_providers_raw_decode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider that cleans its own transcript must not shortcut the chain.
+
+    Every provider now filters its text before returning it, and dictation is
+    the one caller that must not read that: Restore re-runs the SAME chain the
+    live lane runs — filler removal under the user's switch, punctuation
+    repair, polish — so starting from an already-cleaned string would apply the
+    cleanup twice and give the user back different words than the dictation
+    produced. The raw column would stop being raw with it, which is what makes
+    the repair auditable in the first place.
+    """
+    stt = _FakeSTT(
+        "We talked about it.",  # what the provider's own filter produced
+        raw_text="Um, we talked about it. ... and then the report went out.",
+    )
+    _install_pipeline(monkeypatch, _utterance_stt=stt)
+    entry = _failed_with_audio()
+
+    body = client.post(f"/api/dictation/history/{entry.id}/restore").json()
+
+    assert body["retranscribed"] is True
+    # The raw column is the provider's decode, not its cleaned answer.
+    assert body["entry"]["raw_text"].startswith("Um, we talked about it.")
+    # And the chain ran over that decode: the second sentence only exists in
+    # the raw string, so its presence proves Restore did not read ``text``.
+    assert "report went out" in body["entry"]["text"]
+    assert not body["entry"]["text"].startswith("Um,")
+
+
+def test_restore_falls_back_to_text_for_a_provider_without_a_raw_decode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Providers that set no ``raw_text`` behave exactly as they did before."""
+    stt = _FakeSTT("Um, we talked about it.")
+    _install_pipeline(monkeypatch, _utterance_stt=stt)
+    entry = _failed_with_audio()
+
+    body = client.post(f"/api/dictation/history/{entry.id}/restore").json()
+
+    assert body["entry"]["raw_text"] == "Um, we talked about it."
+    assert body["entry"]["text"] == "We talked about it."
 
 
 def test_restore_polishes_when_the_pass_is_on(
