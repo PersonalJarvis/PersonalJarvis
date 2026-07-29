@@ -9,16 +9,22 @@ an embed lane dead for 19 hours. In every case the code caught the error and
 said nothing.
 
 The rule is NOT "never swallow". Plenty of handlers are legitimately quiet — an
-optional import, a best-effort cleanup on teardown. The rule is that the count
-may never GROW. This gate stores a per-file baseline and fails when any file
-gains a silent handler, so the existing backlog is grandfathered while new ones
-are blocked at the door.
+optional import, a capability probe, a best-effort cleanup on teardown. What
+separates those from the bug class is that somebody DECIDED it and said so. So
+a handler is counted only when it is quiet AND unexplained:
 
-A handler counts as silent when its body contains no ``raise`` and no call that
-looks like reporting (``log``/``logger``/``print``/``warn``/``emit``/...). When
-you must stay quiet, say why in a comment on the ``except`` line and lower the
-baseline elsewhere — or better, add the one log line that would have made the
-last bug a five-minute fix.
+* no ``raise`` and no reporting-shaped call (``log``/``print``/``warn``/...),
+* and no comment giving a reason, on the ``except`` line or the first line of
+  its body. Lint codes are stripped first — a bare ``# noqa: BLE001`` is an
+  escape, not a decision.
+
+So there are two ways to satisfy this gate, and both are improvements: log the
+failure, or write down why silence is right. 589 handlers already carry a
+reason; this measures the 1699 that do not.
+
+On top of that the count may never GROW. The gate stores a per-file baseline
+and fails when a file gains one, so the backlog is grandfathered while new ones
+are blocked at the door.
 
 Usage::
 
@@ -38,6 +44,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -108,16 +115,54 @@ def _reports(handler: ast.ExceptHandler) -> bool:
     return False
 
 
+#: Minimum length of the prose in a justifying comment, once lint codes are
+#: stripped. Long enough that "# noqa: BLE001" alone does not pass, short enough
+#: that a real half-sentence does.
+_MIN_REASON_CHARS = 12
+
+_COMMENT = re.compile(r"#\s*(.*)$")
+_LINT_CODE = re.compile(r"(noqa|type|pragma):?\s*[A-Za-z]+[0-9]*")
+
+
+def _justified(lines: list[str], handler: ast.ExceptHandler) -> bool:
+    """True when a comment explains WHY this handler stays quiet.
+
+    Plenty of quiet handlers are correct — an optional import, a capability
+    probe, a best-effort cleanup on teardown. What separates those from the bug
+    class is that somebody decided it, and said so. A bare ``# noqa: BLE001``
+    is a lint escape, not a decision, so lint codes are stripped before the
+    prose is measured. The reason may sit on the ``except`` line or on the
+    first line of its body.
+    """
+    candidates = [handler.lineno]
+    if handler.body:
+        candidates.append(handler.body[0].lineno)
+    for lineno in candidates:
+        if not 0 < lineno <= len(lines):
+            continue
+        match = _COMMENT.search(lines[lineno - 1])
+        if not match:
+            continue
+        prose = _LINT_CODE.sub("", match.group(1)).strip(" -:—")
+        if len(prose) >= _MIN_REASON_CHARS:
+            return True
+    return False
+
+
 def silent_handlers(path: Path) -> list[int]:
-    """Line numbers of the silent ``except`` handlers in ``path``."""
+    """Line numbers of ``except`` handlers that are quiet AND unexplained."""
+    source = _read(path)
     try:
-        tree = ast.parse(_read(path))
+        tree = ast.parse(source)
     except SyntaxError as exc:
         raise UnparseableSource(f"{path.relative_to(_REPO)} cannot be parsed ({exc}).") from exc
+    lines = source.splitlines()
     return [
         node.lineno
         for node in ast.walk(tree)
-        if isinstance(node, ast.ExceptHandler) and not _reports(node)
+        if isinstance(node, ast.ExceptHandler)
+        and not _reports(node)
+        and not _justified(lines, node)
     ]
 
 
@@ -217,9 +262,13 @@ def main() -> int:
     if len(bad) > 20:
         print(f"  ... and {len(bad) - 20} more")
     print(
-        "\nLog the error (feature name + what was skipped) or re-raise it. If the "
-        "silence is genuinely correct, say why on the except line and re-baseline "
-        "with --update --allow-increase.",
+        "\nPick one:\n"
+        "  * log it   - feature name + what was skipped, so the next report is "
+        "a five-minute fix rather than an archaeology session;\n"
+        "  * re-raise - if the caller can actually do something about it;\n"
+        "  * explain  - a comment on the except line saying why silence is "
+        "right here (a bare '# noqa' does not count), then re-baseline with "
+        "--update.",
     )
     return 1
 
