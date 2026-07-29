@@ -149,7 +149,9 @@ _ON_DEVICE_ATTR = "runs_on_device"
 #: does not declare the attribute above. A NAME list is what AP-21 warns about,
 #: so it is asked only for our OWN plugins (whose behaviour we know without
 #: importing them) and never used to judge a stranger's.
-_SHIPPED_ON_DEVICE_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+_SHIPPED_ON_DEVICE_PROVIDERS: frozenset[str] = frozenset(
+    {"faster-whisper", "nemotron-local"}
+)
 
 
 @lru_cache(maxsize=32)
@@ -399,6 +401,17 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
                 kwargs["endpoint"] = ep.base_url.rstrip("/") + "/audio/transcriptions"
                 if ep.credential:
                     kwargs["api_key"] = ep.credential
+        # An on-device recognizer gets only the options that mean something to
+        # it. ``prompt`` (decoder bias) and ``timeout_s`` (per-REQUEST ceiling)
+        # are shaped for a cloud call; passing them to a local engine hits the
+        # TypeError retry below, which works but logs a misleading "this plugin
+        # is out of date" warning about a plugin that is perfectly current.
+        # Capability-gated via the plugin's own declaration, not its name
+        # (AP-21). The user's STT dictionary still applies to these providers
+        # through its post-transcription corrections.
+        if provider_runs_on_device(provider_name):
+            for cloud_only in ("prompt", "timeout_s"):
+                kwargs.pop(cloud_only, None)
         if not _stt_has_credential(provider_name, kwargs):
             logger.warning(
                 "STT provider {!r} has no usable credential; falling back to the "

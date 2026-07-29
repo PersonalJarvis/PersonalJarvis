@@ -460,6 +460,9 @@ openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 # separate question answered by jarvis.speech.local_models (engine installed +
 # checkpoint downloaded), never assumed from the entry-point's presence.
 faster-whisper = "jarvis.plugins.stt.fwhisper:FasterWhisperProvider"
+# Local streaming transcription (NVIDIA Nemotron 3.5 via sherpa-onnx / ONNX
+# Runtime). Multilingual and CPU-only; same readiness rule as above.
+nemotron-local = "jarvis.plugins.stt.nemotron_local:NemotronLocalSTT"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 # OpenRouter cloud transcription — reuses the shared openrouter_api_key.
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"

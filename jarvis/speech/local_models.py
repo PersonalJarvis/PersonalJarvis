@@ -277,8 +277,13 @@ class LocalProvider:
     #: in pyproject.toml can be checked against one another instead of drifting
     #: apart in two files that never meet.
     pip_package: str
+    #: Model repository the bundle is fetched from. ``None`` for Whisper, whose
+    #: engine manages its own cache.
+    hf_repo: str | None = None
     #: Files that must exist inside a sherpa bundle for it to count as complete.
-    #: Empty for Whisper, whose weights live in the HuggingFace cache.
+    #: This ONE tuple is both the download list and the completeness check, so a
+    #: bundle can never be declared ready against a shorter list than the one
+    #: that was fetched. Empty for Whisper.
     required_files: tuple[str, ...] = ()
 
 
@@ -295,6 +300,25 @@ WHISPER_VOICE_MODEL = "large-v3"
 #: (CLAUDE.md section 3), which is why it can be installed from inside the app.
 FASTER_WHISPER_PACKAGE = "faster-whisper>=1.0"
 
+#: pip requirement for the ONNX-Runtime speech stack (Apache-2.0, torch-free,
+#: wheels for Windows/macOS/Linux). The FLOOR IS LOAD-BEARING: multilingual
+#: Nemotron needs the ``prompt_index`` encoder input that landed in 1.13.3
+#: (PR #3671, released 2026-06-15). An older wheel loads the same files and
+#: then transcribes every language as English — a silent wrong answer, which is
+#: worse than a refusal, so the version is pinned rather than hoped for.
+SHERPA_ONNX_PACKAGE = "sherpa-onnx>=1.13.3"
+
+#: The multilingual Nemotron 3.5 streaming bundle, int8-quantised at a 560 ms
+#: chunk. Choices worth stating: MULTILINGUAL (the ``-en-`` sibling would
+#: mangle German into English words, the same trap the English-only Whisper
+#: checkpoints carry), int8 (about a third of the size, and this must run on a
+#: machine with no GPU), and 560 ms (the middle of the offered 80–1120 ms
+#: chunk sizes: low enough to feel live, long enough that accuracy holds).
+NEMOTRON_MODEL_ID = "nemotron-3.5-asr-streaming-0.6b-560ms-int8"
+NEMOTRON_HF_REPO = (
+    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
+)
+
 LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
     LocalProvider(
         provider_id="faster-whisper",
@@ -304,6 +328,22 @@ LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
         model_label=f"Whisper {WHISPER_VOICE_MODEL}",
         download_size="about 3 GB",
         pip_package=FASTER_WHISPER_PACKAGE,
+    ),
+    LocalProvider(
+        provider_id="nemotron-local",
+        tier="stt",
+        runtime="sherpa-onnx",
+        model_id=NEMOTRON_MODEL_ID,
+        model_label="Nemotron 3.5 (streaming)",
+        download_size="about 690 MB",
+        pip_package=SHERPA_ONNX_PACKAGE,
+        hf_repo=NEMOTRON_HF_REPO,
+        required_files=(
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "joiner.int8.onnx",
+            "tokens.txt",
+        ),
     ),
 )
 

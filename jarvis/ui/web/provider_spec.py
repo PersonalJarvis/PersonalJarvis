@@ -683,6 +683,23 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "graphics card, which is the trade for keeping everything local."
         ),
     ),
+    ProviderSpec(
+        id="nemotron-local",
+        label="Nemotron (on this machine)",
+        tier="stt",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "The faster on-device option: NVIDIA's Nemotron 3.5 streaming "
+            "model, also fully local and keyless. It covers 40 languages "
+            "including German, needs a ~690 MB download instead of 3 GB, and "
+            "transcribes several times faster than real time on a plain CPU — "
+            "no graphics card required. Pick Whisper instead if you want the "
+            "highest accuracy and have the hardware for it."
+        ),
+    ),
     # ── Dictation polish ──────────────────────────────────────────────────
     # Derived from POLISH_FAMILIES above, in that tuple's order (Groq first —
     # it is the recommended pick because its key is usually already there).
