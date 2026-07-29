@@ -108,3 +108,114 @@ class TestTheBugItself:
 
         session = accept_recognition_reading(language="en", probability=0.97)
         assert resolve_recognition_language(pinned="auto", session_language=session) == "en"
+
+
+# ---------------------------------------------------------------------------
+# The anchor that carries a reading ACROSS dictations
+# ---------------------------------------------------------------------------
+
+
+def _pipeline():
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    return SpeechPipeline.__new__(SpeechPipeline)
+
+
+def test_a_fresh_pipeline_anchors_nothing() -> None:
+    """No readings means auto-detect, exactly as before this existed."""
+    assert _pipeline()._recent_dictation_language() == ""
+
+
+def test_recent_dictations_supply_the_language_a_short_one_cannot() -> None:
+    """The gap the in-session anchor leaves open, and why it matters.
+
+    The session anchor is read from an on-device preview, which needs a local
+    engine AND enough time to run. On a host without one — and on a two-second
+    "carry on" anywhere — it is never set, so the upload goes out as ``auto``.
+    That is the exact case the provider gets wrong: on the live history,
+    dictations under 4 s came back tagged English 59-64 % of the time for a
+    speaker who was overwhelmingly speaking German, and a mis-detected clip is
+    not merely mislabelled, it is TRANSLATED.
+
+    Carrying the recent reading across is what gives that short recording the
+    context its own audio cannot supply.
+    """
+    pipe = _pipeline()
+    for _ in range(3):
+        pipe._remember_dictation_language("de", on_device=False)
+
+    assert pipe._recent_dictation_language() == "de"
+    # And that is what the next session starts from, so a short clip is
+    # transcribed as German rather than detected from four seconds of audio.
+    assert (
+        resolve_recognition_language(
+            pinned="auto", session_language=pipe._recent_dictation_language()
+        )
+        == "de"
+    )
+
+
+def test_one_mis_detected_dictation_cannot_redirect_the_next() -> None:
+    """A majority, not the last reading — the anchor has to be steadier than
+    the signal it is correcting."""
+    pipe = _pipeline()
+    for lang in ("de", "de", "de", "en"):
+        pipe._remember_dictation_language(lang, on_device=False)
+
+    assert pipe._recent_dictation_language() == "de"
+
+
+def test_a_speaker_who_switches_language_is_followed() -> None:
+    """Steady is not the same as stuck: a real switch wins within the window.
+
+    The bilingual mandate — a static pin was the 2026-06-14 bug and must not
+    come back through the anchor.
+    """
+    pipe = _pipeline()
+    for lang in ("de", "de", "en", "en", "en"):
+        pipe._remember_dictation_language(lang, on_device=False)
+
+    assert pipe._recent_dictation_language() == "en"
+
+
+def test_an_on_device_reading_outvotes_a_run_of_cloud_guesses() -> None:
+    """A local decoder cannot have translated the audio, so its answer is about
+    the SOUND — the one reading a translation cannot fake."""
+    pipe = _pipeline()
+    for _ in range(3):
+        pipe._remember_dictation_language("en", on_device=False)
+    pipe._remember_dictation_language("de", on_device=True)
+
+    assert pipe._recent_dictation_language() == "de"
+
+
+def test_a_tie_restores_plain_auto_detect() -> None:
+    """With no majority the anchor says nothing rather than picking a side."""
+    pipe = _pipeline()
+    pipe._remember_dictation_language("de", on_device=False)
+    pipe._remember_dictation_language("en", on_device=False)
+
+    assert pipe._recent_dictation_language() == ""
+
+
+def test_unusable_readings_are_never_recorded() -> None:
+    """``auto``/``unknown`` are the absence of a reading, not a language."""
+    pipe = _pipeline()
+    for junk in ("", "auto", "unknown", "und", None):
+        pipe._remember_dictation_language(junk, on_device=False)
+
+    assert pipe._recent_dictation_language() == ""
+
+
+def test_a_user_pin_still_outranks_the_anchor() -> None:
+    """The one signal a person sets deliberately keeps winning."""
+    pipe = _pipeline()
+    for _ in range(3):
+        pipe._remember_dictation_language("en", on_device=False)
+
+    assert (
+        resolve_recognition_language(
+            pinned="de", session_language=pipe._recent_dictation_language()
+        )
+        == "de"
+    )
