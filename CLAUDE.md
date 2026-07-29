@@ -324,6 +324,8 @@ downgrades to `safe` (anti-confirmation-fatigue contract). Direct
 | AP-21 | Pin a feature to a provider name/model id instead of a capability | Breaks for every other provider; fix the capability flag instead |
 | AP-22 | Give a tier a primary AND fallback in the SAME provider family, or hardcode provider names in a chain | Single-provider brick; resolve every tier through one key-aware, family-crossing chain that degrades honestly |
 | AP-23 | Build or test only against the maintainer's config/keys/OS and claim done | Whole surface bricked for every other downloader; verify §3's paths |
+| AP-30 | Catch an exception and neither log, re-raise, nor say why silence is right | The feature just does nothing and nobody can tell it failed — the single largest source of "it only half works" (gate: `check_silent_exception_handlers.py`) |
+| AP-31 | Add a config field nothing reads, or leave a switch whose value is ignored | `jarvis.toml` and the settings screen promise behaviour that does not exist (gate: `check_config_switches_wired.py`) |
 
 ### AP-24 — Never share a native inference engine between concurrent callers
 
