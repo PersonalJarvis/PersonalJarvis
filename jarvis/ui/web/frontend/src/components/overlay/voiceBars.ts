@@ -21,13 +21,13 @@ export const PILL_H = 18;
 export const PILL_R = PILL_H / 2;
 export const PILL_CY = PILL_Y + PILL_H / 2;
 
-/** Bar row: centred in the pill, inset so no stroke ever touches the rim.
- *
- * 62 of the pill's 88 units — a touch wider than the desktop renderer's 0.62
- * fraction, because the desktop keeps that extra margin free for the hover
- * controls (close-X, mic toggle) it flanks the row with. The web pill carries
- * no controls, so the row may use the space. */
-export const BAR_SPAN = 62;
+/** Bar row width. The two surfaces share the pill and the maths but not this
+ *  number, because seven chunky strokes and eighteen slim ones do not want the
+ *  same room: the thumbnail keeps the tight middle cluster it always had (it
+ *  portrays the RESTING desktop bar), while the live row spreads out to give a
+ *  scrolling waveform something to scroll across. */
+export const PREVIEW_BAR_SPAN = 48;
+export const LIVE_BAR_SPAN = 62;
 export const BAR_MIN_H = 2.4;
 export const BAR_MAX_H = 15;
 
@@ -48,10 +48,10 @@ export const PREVIEW_BAR_HEIGHTS = [6, 11, 15, 8, 14, 9, 7];
 export const COLUMN_MS = 33;
 
 /** Bar stroke width for a given count, sized so the gaps stay even. */
-export function barWidth(count: number): number {
+export function barWidth(count: number, span: number = LIVE_BAR_SPAN): number {
   if (count <= 1) return 3;
   // Half the pitch, capped so a short row does not turn into fat blocks.
-  return Math.min(3, (BAR_SPAN / (count - 1)) * 0.5);
+  return Math.min(3, (span / (count - 1)) * 0.5);
 }
 
 /** X-positions of ``n`` items centred on ``cx`` across ``span``.

@@ -3,7 +3,7 @@ import { memo, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { cn } from "@/lib/utils";
 import {
   BAR_MIN_H,
-  BAR_SPAN,
+  LIVE_BAR_SPAN,
   COLUMN_MS,
   LIVE_BAR_COUNT,
   PILL_CY,
@@ -232,12 +232,12 @@ function VoiceWaveformImpl({
   }, [count, levelRef, phase, reduced]);
 
   const tone = PHASE_TONE[phase];
-  const w = barWidth(count);
+  const w = barWidth(count, LIVE_BAR_SPAN);
 
   return (
     <svg
       viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-      className={cn("h-11 w-full", className)}
+      className={cn("h-14 w-full", className)}
       data-testid="voice-waveform"
       data-phase={phase}
       aria-hidden="true"
@@ -263,7 +263,7 @@ function VoiceWaveformImpl({
           transition: "opacity 300ms ease, fill 300ms ease",
         }}
       >
-        {evenlySpaced(VIEW_W / 2, BAR_SPAN, count).map((x) => (
+        {evenlySpaced(VIEW_W / 2, LIVE_BAR_SPAN, count).map((x) => (
           <rect
             key={x}
             x={x - w / 2}

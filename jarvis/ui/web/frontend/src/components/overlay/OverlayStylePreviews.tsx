@@ -1,7 +1,7 @@
 import { MascotGigi } from "@/components/MascotGigi";
 import type { OverlayStyle } from "@/hooks/useOverlayStyle";
 import {
-  BAR_SPAN,
+  PREVIEW_BAR_SPAN,
   PILL_CY,
   PILL_H,
   PILL_R,
@@ -48,7 +48,7 @@ export function StylePreview({ style }: { style: OverlayStyle }) {
 }
 
 export function BarPreview() {
-  const w = barWidth(PREVIEW_BAR_HEIGHTS.length);
+  const w = barWidth(PREVIEW_BAR_HEIGHTS.length, PREVIEW_BAR_SPAN);
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} className="w-20" aria-hidden="true">
       <rect
@@ -61,7 +61,7 @@ export function BarPreview() {
         stroke={PREVIEW_RIM}
         strokeWidth="1.6"
       />
-      {evenlySpaced(VIEW_W / 2, BAR_SPAN, PREVIEW_BAR_HEIGHTS.length).map((x, i) => {
+      {evenlySpaced(VIEW_W / 2, PREVIEW_BAR_SPAN, PREVIEW_BAR_HEIGHTS.length).map((x, i) => {
         const h = PREVIEW_BAR_HEIGHTS[i];
         return (
           <rect

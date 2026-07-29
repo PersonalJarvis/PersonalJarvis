@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   BAR_MAX_H,
   BAR_MIN_H,
+  LIVE_BAR_COUNT,
+  LIVE_BAR_SPAN,
   PILL_W,
   PILL_X,
+  PREVIEW_BAR_HEIGHTS,
+  PREVIEW_BAR_SPAN,
   VIEW_W,
   barHeight,
   barWidth,
@@ -17,21 +21,33 @@ import {
 
 describe("evenlySpaced", () => {
   it("centres the row on the pill instead of drifting off to one side", () => {
-    const xs = evenlySpaced(VIEW_W / 2, 62, 7);
+    const xs = evenlySpaced(VIEW_W / 2, PREVIEW_BAR_SPAN, PREVIEW_BAR_HEIGHTS.length);
     expect((xs[0] + xs[xs.length - 1]) / 2).toBeCloseTo(VIEW_W / 2, 6);
   });
 
-  it("keeps every stroke inside the pill", () => {
-    const count = 18;
-    const half = barWidth(count) / 2;
-    for (const x of evenlySpaced(VIEW_W / 2, 62, count)) {
-      expect(x - half).toBeGreaterThan(PILL_X);
-      expect(x + half).toBeLessThan(PILL_X + PILL_W);
+  it("keeps every stroke of BOTH rows inside the pill", () => {
+    for (const [count, span] of [
+      [LIVE_BAR_COUNT, LIVE_BAR_SPAN],
+      [PREVIEW_BAR_HEIGHTS.length, PREVIEW_BAR_SPAN],
+    ] as const) {
+      const half = barWidth(count, span) / 2;
+      for (const x of evenlySpaced(VIEW_W / 2, span, count)) {
+        expect(x - half).toBeGreaterThan(PILL_X);
+        expect(x + half).toBeLessThan(PILL_X + PILL_W);
+      }
     }
   });
 
+  it("leaves a gap at least as wide as the strokes themselves", () => {
+    // Bars touching each other would read as one solid block, not a waveform.
+    const xs = evenlySpaced(VIEW_W / 2, LIVE_BAR_SPAN, LIVE_BAR_COUNT);
+    expect(xs[1] - xs[0]).toBeGreaterThanOrEqual(
+      barWidth(LIVE_BAR_COUNT, LIVE_BAR_SPAN) * 2,
+    );
+  });
+
   it("puts a single item exactly on the centre", () => {
-    expect(evenlySpaced(50, 62, 1)).toEqual([50]);
+    expect(evenlySpaced(50, LIVE_BAR_SPAN, 1)).toEqual([50]);
   });
 });
 
