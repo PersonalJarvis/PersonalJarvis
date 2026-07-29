@@ -73,22 +73,6 @@ vi.mock("@/hooks/useProviders", () => ({
   useSectionHealth: () => ({ health: {} }),
 }));
 
-vi.mock("@/hooks/useVoiceMode", () => ({
-  useVoiceMode: () => ({
-    mode: "pipeline",
-    realtimeAvailable: false,
-    statusKnown: true,
-    sessionActive: false,
-    activeSessionMode: null,
-    activeSessionProvider: "",
-    activeSessionModel: "",
-    transitioning: false,
-    setMode: vi.fn(),
-    isLoading: false,
-    isSaving: false,
-  }),
-}));
-
 import { VoiceApiKeysTab } from "@/views/voice/VoiceApiKeysTab";
 
 afterEach(() => {
@@ -133,10 +117,14 @@ describe("VoiceApiKeysTab", () => {
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 
-  it("keeps the engine switch, so the tier's relevance stays visible", () => {
+  // The Realtime|Pipeline switch belongs to the API-Keys view, where the copy
+  // that explains it lives too. Repeating it here put an engine-wide decision
+  // in a section that only asks about speech-to-text providers.
+  it("leaves the voice-engine switch to the API-Keys view", () => {
     render(<VoiceApiKeysTab />);
 
-    expect(screen.getByTestId("voice-engine-header-control")).toBeTruthy();
+    expect(screen.queryByTestId("voice-engine-header-control")).toBeNull();
+    expect(screen.queryByTestId("voice-engine-pick-one-hint")).toBeNull();
   });
 
   it("stands its own header down when the merged section owns it", () => {
