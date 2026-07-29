@@ -7,6 +7,73 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Voice input and voice output can now run entirely on your own machine — no
+  API key, no cloud account, nothing leaving the device.** Three new providers
+  appear in the API-Keys view, each marked *Local · no key needed*:
+
+  - **Whisper (on this machine)** — OpenAI's Whisper `large-v3`, the full
+    multilingual model, for the highest accuracy. One-time download of about
+    3 GB; noticeably slower than a hosted provider on a machine without a
+    graphics card, which is the price of keeping everything local.
+  - **Nemotron (on this machine)** — NVIDIA's Nemotron 3.5 streaming model.
+    Covers 40 languages including German, downloads about 690 MB instead of
+    3 GB, and transcribes several times faster than real time on a plain CPU.
+    No NVIDIA hardware required despite the name.
+  - **Piper (on this machine)** — the established offline voice engine, about
+    200 MB, with one voice each for German, English and Spanish. It speaks
+    faster than real time on a CPU. It sounds good rather than
+    indistinguishable from a person; a hosted voice is still the more natural
+    option.
+
+  **Everything is installed from inside the app.** Each card says honestly
+  whether its engine and model are actually on this machine, and offers a
+  single button that fetches what is missing. A provider whose files are not
+  there cannot be activated at all — instead of being switched on and then
+  failing silently on the first sentence.
+
+  **It degrades honestly.** If you select a local provider and later start
+  Jarvis on a machine where it is not installed, voice input crosses to
+  whichever cloud provider you do have a key for rather than going dead. Local
+  speech recognition also tells the rest of the app that your words never left
+  the device, so the optional dictation clean-up stays local too.
+
+- **Dictation now tidies up your wording, and this is ON by default.** After a
+  dictation is transcribed, a fast model rewrites the *structure* of the text —
+  punctuation, capitalization, filler words and sentence breaks — before it
+  lands in whatever you were typing in. Your exact words and their meaning are
+  kept; the pass is not allowed to rephrase you, and a rewrite that drifts too
+  far from what you said is discarded and your own text delivered instead.
+
+  **Where your text goes.** While the pass is on, the finished transcript is
+  sent to the model you selected. If your speech recognition already runs on
+  your own machine, the pass stays there too and never crosses to a cloud
+  provider on its own — picking a cloud model in the dropdown is the deliberate
+  exception. On an install with no text-model key at all, nothing happens and
+  the raw transcript is delivered exactly as before.
+
+  **Your raw text is always kept.** Every dictation stores what was actually
+  recognized alongside what was delivered, and the history shows both, so a
+  rewrite you dislike is never a loss. Each row also says what the pass did to
+  it, including when it did nothing and why.
+
+  **Where the switch is:** the Voice section → *Language* tab → *Clean up my
+  wording*. Turning it off is immediate and needs no restart. The same tab
+  chooses which model family answers, and a *Test* button runs one fixed sample
+  through your own setup so you can see the before and after before trusting it
+  with your words.
+
+### Fixed
+
+- A dictation that lost part of its audio no longer reports itself as a
+  success. It is marked as partly transcribed, the recording is kept, and the
+  history offers to transcribe it again.
+
+---
+
 ## [1.6.0] — 2026-07-27
 
 > **On the version number.** This release jumps from 1.1.5 to 1.6.0. The

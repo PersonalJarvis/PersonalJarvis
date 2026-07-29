@@ -118,6 +118,32 @@ def test_catalog_entry_is_resolvable_and_cloud_ids_are_not() -> None:
     assert local_models.local_status("groq-api") is None
 
 
+def test_pip_requirements_match_the_local_voice_extra() -> None:
+    """The in-app installer and the packaged extra must ask for the SAME thing.
+
+    They are declared in two files that never meet — the catalog (what the
+    install button runs) and pyproject's ``[local-voice]`` extra (what a normal
+    pip install brings). Drift here is invisible until someone installs one way
+    and gets a different engine version than the other way, which for
+    sherpa-onnx means a silently English-only recogniser.
+    """
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    extra = data["project"]["optional-dependencies"]["local-voice"]
+
+    for entry in local_models.LOCAL_PROVIDERS:
+        package, _, floor = entry.pip_package.partition(">=")
+        matching = [dep for dep in extra if dep.split(";")[0].strip().startswith(package)]
+        assert matching, f"{package} is missing from the [local-voice] extra"
+        assert any(floor in dep for dep in matching), (
+            f"{package} floor {floor} in the catalog does not match "
+            f"the [local-voice] extra: {matching}"
+        )
+
+
 def test_status_reports_the_model_the_config_actually_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

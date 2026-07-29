@@ -422,6 +422,14 @@ local-voice = [
     # PyAV 16+ raised its Apple-Silicon deployment floor to macOS 14. Version
     # 15.1 retains wheels for the supported macOS 13 floor and Python 3.11-3.13.
     "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
+    # ONNX-Runtime speech stack (Apache-2.0, torch-free) powering the on-device
+    # Nemotron recogniser and the Piper voices. The >=1.13.3 floor is
+    # LOAD-BEARING, not hygiene: multilingual Nemotron needs the prompt_index
+    # encoder input added in that release, and an older wheel loads the same
+    # files and then transcribes every language as English. Kept in step with
+    # jarvis/speech/local_models.py::SHERPA_ONNX_PACKAGE, which the in-app
+    # installer asks pip for.
+    "sherpa-onnx>=1.13.3",
 ]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
