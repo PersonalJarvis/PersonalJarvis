@@ -369,6 +369,41 @@ def _local_runtime_payload(
     }
 
 
+def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
+    """Drop catalog entries whose files are not on this machine.
+
+    A no-op for cloud providers and for any local entry the model catalog does
+    not describe as a downloadable bundle, so it can be applied unconditionally
+    (AP-21: locality is a catalog fact, not a provider name).
+    """
+    try:
+        from jarvis.speech.local_models import (
+            SHERPA_BUNDLES,
+            bundle_present,
+            get_local_provider,
+        )
+
+        if get_local_provider(provider_id) is None:
+            return models
+        kept = [
+            m
+            for m in models
+            if getattr(m, "id", "") not in SHERPA_BUNDLES
+            or bundle_present(getattr(m, "id", ""))
+        ]
+    except Exception as exc:  # noqa: BLE001 — the picker must never 500
+        log.debug("Local model filter for %s failed (%s); listing all.", provider_id, exc)
+        return models
+    if len(kept) != len(models):
+        log.debug(
+            "Local provider %s: %d of %d catalogued models are downloaded.",
+            provider_id,
+            len(kept),
+            len(models),
+        )
+    return kept
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -1806,16 +1841,23 @@ async def list_brain_models(
     catalog = _get_model_catalog(request)
     result = await catalog.list_models(provider_id, force_refresh=refresh)
     cfg = _resolve_cfg(request)
+    # On-device providers may only offer what is DOWNLOADED. The catalog lists
+    # every voice/model the provider can use, but a picker entry whose files are
+    # absent is an option that produces silence (TTS) or an error (STT) when
+    # chosen — the same "offered but not there" defect as a card claiming ready
+    # before it is installed. Filtered here rather than in the catalog so the
+    # catalog stays the complete list a download route can work from.
+    models = _installed_local_models(provider_id, result.models)
     current = _current_selection(cfg, provider_id, cat)
     # Safety net: for a curated TTS/STT list, never echo a value that isn't in the
     # list (e.g. a stale global value belonging to a different provider) — show the
     # placeholder instead. Brain keeps its value (custom model ids are allowed).
-    if cat.tier != "brain" and current and current not in {m.id for m in result.models}:
+    if cat.tier != "brain" and current and current not in {m.id for m in models}:
         current = ""
     return BrainModelsResponse(
         provider=provider_id,
         current_model=current,
-        models=[_brain_model_info(m) for m in result.models],
+        models=[_brain_model_info(m) for m in models],
         source=result.source,
         fetched_at=result.fetched_at,
         selects=result.selects,

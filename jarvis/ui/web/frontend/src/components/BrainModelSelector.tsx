@@ -113,6 +113,7 @@ export function BrainModelSelector({
   controlled,
   visionOnly,
   loadModels,
+  fixedCatalog = false,
 }: {
   providerId: string;
   currentModel?: string;
@@ -171,6 +172,16 @@ export function BrainModelSelector({
    * brain catalog, so every existing call site is unchanged.
    */
   loadModels?: (refresh: boolean) => Promise<BrainModelsResult>;
+  /**
+   * This provider's list is CLOSED: it is what is installed on the machine, and
+   * there is no custom id to type. On-device providers set it.
+   *
+   * With a single option it also drops the picker entirely and states what will
+   * run. A dropdown holding one entry — plus a search box inviting a "custom
+   * id" that would resolve to a model nobody downloaded — asks the user to make
+   * a choice that does not exist, and offers a way to break it.
+   */
+  fixedCatalog?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -363,6 +374,28 @@ export function BrainModelSelector({
     }
   }
 
+  // A closed catalog with one entry is not a choice. Say what runs and stop.
+  // (While the list is still loading, `models` is empty and we fall through to
+  // the normal control rather than flashing a wrong single-model line.)
+  if (fixedCatalog && models.length === 1) {
+    const only = models[0];
+    return (
+      <div
+        className="space-y-1.5"
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {headingLabel ??
+            (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
+        </span>
+        <p className="text-xs text-foreground" data-testid="fixed-model">
+          {only.label || only.id}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={rootRef}
@@ -547,7 +580,11 @@ export function BrainModelSelector({
               );
             })}
 
-            {trimmed && !exactMatch && (
+            {/* No custom-id escape hatch on a closed catalog: the options ARE
+                the files on this machine, so a typed id could only name
+                something that is not downloaded — an instant, self-inflicted
+                failure the moment the user speaks. */}
+            {trimmed && !exactMatch && !fixedCatalog && (
               <li>
                 <button
                   type="button"

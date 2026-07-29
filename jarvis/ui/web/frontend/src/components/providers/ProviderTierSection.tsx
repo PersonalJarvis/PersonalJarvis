@@ -716,6 +716,40 @@ export function ProviderCard({
   const isBrainSwitchable =
     descriptor.tier !== "brain" || descriptor.brain_switchable !== false;
 
+  /**
+   * Prove the polish provider the user just picked can actually answer, and
+   * say so when it cannot.
+   *
+   * Runs AFTER the switch, never as a gate: a probe that fails for its own
+   * reasons must not be able to block a preference the user is entitled to
+   * set. Never throws — a verification that breaks has to stay quieter than
+   * the switch it is checking.
+   */
+  async function verifyPolishProvider() {
+    let result: ProviderTestResult;
+    try {
+      result = await testProvider(descriptor.id);
+    } catch (e) {
+      // Not the user's problem and not evidence about the provider: say
+      // nothing rather than raise a false alarm about a working switch.
+      console.debug("polish provider verification failed to run", e);
+      return;
+    }
+    if (result.status === "ok") return;
+    // The backend's sentence already names the cause AND the fix ("no credits",
+    // "model not pulled", "slower than the 1200 ms limit — raise it or pick a
+    // faster provider"), so it is shown verbatim instead of being flattened
+    // into a generic "does not work".
+    pushToast(
+      "warning",
+      `${descriptor.label} is selected, but it did not answer: ${
+        result.detail || result.status
+      }`,
+    );
+    // Let the card repaint with the health this test just produced.
+    onChanged();
+  }
+
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
     if (!isBrainSwitchable) {
@@ -787,6 +821,15 @@ export function ProviderCard({
         await switchDictationPolishProvider(descriptor.polish_family || descriptor.id);
         pushToast("success", `Dictation wording → ${descriptor.label}`);
         window.dispatchEvent(new CustomEvent("jarvis:dictation-polish-switched"));
+        // A stored key is not a working provider, and this tier is where the
+        // gap bites hardest: the pass is INVISIBLE when it fails (it delivers
+        // the raw transcript), so an out-of-credits account, a model the host
+        // never pulled, or a family too slow for the latency budget all look
+        // exactly like "active and fine" on the card. Measured on a real
+        // install, four of five cards that read "ready" could not polish a
+        // sentence. So the switch verifies itself and says what it found —
+        // cheap here (a handful of tokens) and the only honest signal.
+        void verifyPolishProvider();
       } else {
         const result = await switchRealtimeProvider(descriptor.id);
         const note = result.restart_required
@@ -1006,6 +1049,9 @@ export function ProviderCard({
             recommendedModel={descriptor.recommended_model}
             healthSection={descriptor.tier}
             healthActive={descriptor.active}
+            // An on-device provider's list is what is installed here, so there
+            // is nothing to type — and with a single entry, nothing to pick.
+            fixedCatalog={Boolean(descriptor.local_runtime)}
           />
         ))}
 
