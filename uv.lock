@@ -2567,7 +2567,7 @@ wheels = [
 
 [[package]]
 name = "personal-jarvis"
-version = "1.6.0"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -2758,7 +2758,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.5" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "markdown", specifier = ">=3.5" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.28.1,<2" },
     { name = "mss", marker = "extra == 'desktop'", specifier = ">=10.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "num2words", specifier = ">=0.5.13" },
