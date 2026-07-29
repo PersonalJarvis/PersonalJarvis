@@ -3526,6 +3526,23 @@
       "cancel": "Offen lassen",
       "confirm": "Ausgewählte schließen",
       "close_failed": "Diese Terminals konnten nicht geschlossen werden: {0}"
+    },
+    "notifications": {
+      "title": "Benachrichtigungen",
+      "hint": "Terminals, die fertig sind, etwas fragen oder gestoppt haben.",
+      "hint_unread": "{0} Terminal-Meldung(en), die du noch nicht gesehen hast.",
+      "empty": "Nichts zu melden — jedes Terminal arbeitet noch oder ist seit deinem letzten Blick unverändert.",
+      "disabled": "Das Sammeln neuer Benachrichtigungen ist in deinen Einstellungen ausgeschaltet ([agentic_ide].pane_notifications).",
+      "jump": "Zum Terminal springen",
+      "discard": "Diese Benachrichtigung verwerfen",
+      "clear_all": "Alle Benachrichtigungen verwerfen",
+      "close": "Schließen",
+      "last_task": "Zuletzt beauftragt mit: {0}",
+      "kind_completed": "FERTIG",
+      "kind_needs_input": "BRAUCHT EINGABE",
+      "kind_exited": "GESTOPPT",
+      "kind_failed": "FEHLGESCHLAGEN",
+      "gone": "{0} gibt es in diesem Workspace nicht mehr — das Terminal wurde geschlossen, seit die Benachrichtigung kam."
     }
   },
   "prompt_writer": {

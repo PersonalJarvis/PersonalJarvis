@@ -239,6 +239,12 @@ class WorkspaceAgent:
     #: TUI furniture to strip before a transcript is summarised — banners,
     #: status bars, key hints. Additive to the shared set.
     chrome_fragments: tuple[str, ...] = ()
+    #: The hint this CLI draws while — and only while — it is busy, so a pane
+    #: that stopped working can be told apart from one that never started.
+    #: Additive to the shared set in :mod:`jarvis.agentic_ide.activity`, which
+    #: already covers the near-universal "esc to interrupt" wording; an entry
+    #: names only its own peculiarity.
+    busy_fragments: tuple[str, ...] = ()
     #: The per-project instructions file this CLI reads (CLAUDE.md, AGENTS.md).
     instruction_filename: str = ""
 

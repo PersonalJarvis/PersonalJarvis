@@ -64,6 +64,7 @@ from jarvis.agentic_ide import (
     drops,
     interrupted,
     native_picker,
+    notifications,
     recap_engine,
     recents,
     resume_store,
@@ -689,6 +690,64 @@ class InterruptedPane(BaseModel):
     started_at: float | None = Field(
         default=None, description="When the resumed agent process started."
     )
+
+
+class PaneNotification(BaseModel):
+    """One thing that happened in one pane, as the bell lists it."""
+
+    id: str
+    kind: str = Field(
+        description=(
+            "What happened: 'completed' (it was working and stopped), "
+            "'needs_input' (a question is on its screen), 'exited' (its process "
+            "is gone) or 'failed' (its agent could not be started)."
+        )
+    )
+    workspace_id: str
+    workspace: str = Field(default="", description="What that workspace tab is called.")
+    pane_key: str
+    pane: str = Field(default="", description="The pane's call-sign — 'T3'.")
+    agent: str = Field(default="", description="The coding CLI's id.")
+    display_name: str = Field(default="", description="What the user reads — 'Claude Code'.")
+    title: str = Field(
+        default="",
+        description=(
+            "One clause saying what happened. 'Finished' means the pane went "
+            "quiet, never that the work is correct — nothing here reads the "
+            "agent's output to judge its result."
+        ),
+    )
+    detail: str = Field(default="", description="What the pane was last asked to do.")
+    created_at: float
+    read: bool = False
+
+
+class PaneNotificationsResponse(BaseModel):
+    """The bell's whole state in one answer."""
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Is the background sweep collecting new entries? False when "
+            "[agentic_ide].pane_notifications is off — the list then only holds "
+            "what was collected before."
+        ),
+    )
+    unread: int = 0
+    notifications: list[PaneNotification] = Field(default_factory=list)
+
+
+class ReadNotificationsRequest(BaseModel):
+    ids: list[str] = Field(
+        default_factory=list,
+        description="Entries to mark read. Empty marks every one of them.",
+    )
+
+
+class NotificationsChangedResponse(BaseModel):
+    ok: bool = True
+    changed: int = Field(default=0, description="How many entries this call actually altered.")
+    unread: int = 0
 
 
 class InterruptedResponse(BaseModel):
@@ -1427,6 +1486,81 @@ async def continue_interrupted(req: ContinueInterruptedRequest) -> ContinueInter
         # while this call was in flight has left the list too.
         remaining=len(interrupted.scan(registry)),
     )
+
+
+@router.get(
+    "/notifications",
+    response_model=PaneNotificationsResponse,
+    summary="Terminals that finished, asked something, or stopped",
+)
+async def get_notifications() -> PaneNotificationsResponse:
+    """What the bell in the Agentic-IDE header is showing.
+
+    Newest first, across EVERY open workspace — a pane in a background tab is
+    exactly the one whose finishing nobody would otherwise notice. Each entry
+    names its workspace and its call-sign, which is what the client's "jump to
+    pane" needs to switch tabs before it scrolls.
+
+    A ``completed`` entry means the pane stopped drawing the interrupt hint its
+    CLI draws while it is busy. That is a claim about the terminal, not about
+    the work: nothing here reads the agent's output to decide whether the job
+    went well.
+
+    Entries live in memory and go with the workspace they belong to. A restart
+    empties the list on purpose — the panes it pointed at are gone.
+    """
+    return PaneNotificationsResponse(**notifications.state())
+
+
+@router.post(
+    "/notifications/read",
+    response_model=NotificationsChangedResponse,
+    summary="Mark terminal notifications as read",
+)
+async def read_notifications(req: ReadNotificationsRequest) -> NotificationsChangedResponse:
+    """Clear the unread count, for the given entries or for all of them.
+
+    The entries stay in the list — this only stops the bell from counting them.
+    ``changed`` is how many were actually unread, so "there was nothing to do"
+    is distinguishable from "four were cleared".
+    """
+    center = notifications.center()
+    changed = center.mark_read(req.ids or None)
+    return NotificationsChangedResponse(changed=changed, unread=center.unread)
+
+
+@router.delete(
+    "/notifications",
+    response_model=NotificationsChangedResponse,
+    summary="Discard every terminal notification",
+)
+async def clear_notifications() -> NotificationsChangedResponse:
+    """Throw the whole list away.
+
+    Nothing about a pane changes: an entry is a note that something happened,
+    and discarding it stops the note being shown. Every agent it came from
+    keeps running exactly as it was.
+    """
+    center = notifications.center()
+    dropped = center.clear()
+    return NotificationsChangedResponse(changed=dropped, unread=center.unread)
+
+
+@router.delete(
+    "/notifications/{notification_id}",
+    response_model=NotificationsChangedResponse,
+    summary="Discard one terminal notification",
+)
+async def clear_notification(notification_id: str) -> NotificationsChangedResponse:
+    """Throw one entry away. An id that is not in the list is a quiet no-op.
+
+    Not a 404: the entry may have gone with its workspace between the client
+    reading the list and pressing the button, and the outcome the caller wanted
+    — that entry is not there — is the one they got.
+    """
+    center = notifications.center()
+    dropped = center.clear([notification_id])
+    return NotificationsChangedResponse(changed=dropped, unread=center.unread)
 
 
 @router.post(

@@ -58,6 +58,16 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     panes: [],
   })),
   continueInterrupted: vi.fn(),
+  // Polled by the header bell, which the grid also always renders. Answers
+  // "nothing has stopped" so these tests see a plain toolbar rather than a
+  // badge none of them are about.
+  fetchPaneNotifications: vi.fn(async () => ({
+    enabled: true,
+    unread: 0,
+    notifications: [],
+  })),
+  markPaneNotificationsRead: vi.fn(async () => 0),
+  clearPaneNotifications: vi.fn(async () => undefined),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -537,6 +547,51 @@ describe("grid layout", () => {
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     expect(box("T7")).toMatchObject({ left: 0, top: 50 });
+  });
+});
+
+describe("jump to pane", () => {
+  /*
+   * What a notification is FOR. An entry says "T3 finished" and the only useful
+   * next move is to read T3 — which in a grid of twelve means making it big
+   * enough to read. A jump that merely scrolled would land the user back in
+   * front of the postcard they could not read in the first place.
+   */
+  it("maximizes the pane it was asked for", () => {
+    const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
+    const { rerender } = renderGrid(sessionWith(panes));
+
+    rerender({ jumpTo: { pane: "T7", nonce: 1 } });
+
+    expect(screen.getByTestId("pane-T7").getAttribute("data-maximized")).toBe("yes");
+    // ...and the eleven it covers are hidden rather than unmounted — the same
+    // rule as an ordinary maximize, because unmounting kills the agent.
+    expect(screen.getByTestId("pane-T2").parentElement?.className).toContain("hidden");
+  });
+
+  it("can be sent to the same pane twice", () => {
+    // The nonce is the whole reason the prop is an object: an effect cannot
+    // re-fire on a value that has not changed, so a second jump to the pane the
+    // user has since restored would silently do nothing.
+    const { rerender } = renderGrid();
+    rerender({ jumpTo: { pane: "Nova", nonce: 1 } });
+    fireEvent.click(screen.getByTestId("pane-maximize-Nova"));
+    expect(screen.getByTestId("pane-Nova").getAttribute("data-maximized")).toBe("no");
+
+    rerender({ jumpTo: { pane: "Nova", nonce: 2 } });
+
+    expect(screen.getByTestId("pane-Nova").getAttribute("data-maximized")).toBe("yes");
+  });
+
+  it("says so rather than maximizing a stranger when the pane is gone", () => {
+    // An entry outlives the terminal it came from by up to one poll, and pane
+    // names are reused: "whatever is called T4 now" is the wrong terminal.
+    const { rerender } = renderGrid();
+
+    rerender({ jumpTo: { pane: "Ghost", nonce: 1 } });
+
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("no");
+    expect(pushToast).toHaveBeenCalledWith("warning", expect.stringContaining("Ghost"));
   });
 });
 

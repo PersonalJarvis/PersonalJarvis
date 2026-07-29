@@ -68,6 +68,7 @@ import {
 } from "./paneLayout";
 import { usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
+import { PaneNotifications } from "./PaneNotifications";
 import { PromptPreview } from "./PromptPreview";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
@@ -95,6 +96,7 @@ import {
   type DropAttachment,
   type IdeAccountState,
   type IdeState,
+  type PaneNotification,
   type SessionState,
   type TerminalRecap,
 } from "@/lib/agenticIdeApi";
@@ -152,6 +154,29 @@ interface AgenticGridProps {
    * a frontend change reaches the user through that Restart button.
    */
   appActions?: React.ReactNode;
+  /**
+   * Take the user to a pane in ANOTHER workspace, on behalf of the header bell.
+   *
+   * A notification list spans every open tab — a pane in a background workspace
+   * is precisely the one whose finishing nobody would otherwise notice — so
+   * "jump to pane" sometimes means switching tab first. This grid cannot do
+   * that: it is keyed by workspace and is replaced when one is switched to. The
+   * view above owns both halves and hands the pane back through `jumpTo`.
+   *
+   * Left out, an entry from another workspace still lists; pressing its jump
+   * does nothing rather than lying about where it went.
+   */
+  onJumpToWorkspace?: (workspaceId: string, pane: string) => void;
+  /**
+   * "Maximize this pane and scroll to it" — set by the view after a cross-
+   * workspace jump has landed.
+   *
+   * Carries a `nonce` because the same pane may be jumped to twice in a row,
+   * and a value that has not changed cannot re-fire an effect. It is not a
+   * state the grid holds: acting on it is a one-shot, and what stays afterwards
+   * is an ordinary maximized pane the user can restore themselves.
+   */
+  jumpTo?: { pane: string; nonce: number } | null;
 }
 
 const FONT_MIN = 10;
@@ -402,6 +427,8 @@ export function AgenticGrid({
   onStateChanged,
   workspaceBar,
   appActions,
+  onJumpToWorkspace,
+  jumpTo = null,
   onScreen = true,
 }: AgenticGridProps) {
   const t = useT();
@@ -964,6 +991,64 @@ export function AgenticGrid({
   }, [session.terminals]);
 
   /*
+   * "Jump to pane" — from the header bell, or from the view after a tab switch.
+   *
+   * Three things, in this order: the pane is maximized, it is scrolled to, and
+   * it wears the same arrival ring a freshly opened pane does. Maximizing is
+   * what the user asked for — a notification about a pane is a request to READ
+   * that pane, and reading a postcard-sized terminal in a grid of twelve is the
+   * problem, not the answer. The ring covers the case where the pane was
+   * already the maximized one and nothing visibly moved.
+   *
+   * Silently ignored for a pane that is no longer here: an entry outlives the
+   * terminal it came from by up to one poll, and a stray maximize of "whatever
+   * is called T4 now" would be worse than nothing happening.
+   */
+  const [jump, setJump] = useState<{ pane: string; nonce: number } | null>(null);
+  // One request from two sources: the bell in this header (same workspace) and
+  // the view above it (after a tab switch). Both land in one place so the
+  // acting effect below has a single trigger to watch.
+  useEffect(() => {
+    if (jumpTo) setJump(jumpTo);
+  }, [jumpTo]);
+
+  useEffect(() => {
+    const wanted = jump?.pane;
+    if (!wanted) return;
+    if (!session.terminals.some((term) => term.name === wanted)) {
+      // The entry outlives the terminal it came from by up to one poll. Say so
+      // rather than maximizing whatever is called T4 now.
+      pushToast("warning", t("agentic_grid.notifications.gone").replace("{0}", wanted));
+      return;
+    }
+    setMaximized(wanted);
+    setJustOpened(new Set([wanted]));
+    const node = paneNodes.current.get(wanted);
+    // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
+    // some embedded WebViews, and a maximized pane fills the grid anyway.
+    if (typeof node?.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
+    return () => window.clearTimeout(timer);
+    // `session.terminals` deliberately absent: this fires on a JUMP, not every
+    // time a pane opens or closes underneath one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump]);
+
+  /** Where the bell's "jump to pane" goes — here, or via the view for a tab. */
+  const jumpToNotification = useCallback(
+    (entry: PaneNotification) => {
+      if (entry.workspace_id && entry.workspace_id !== session.id) {
+        onJumpToWorkspace?.(entry.workspace_id, entry.pane);
+        return;
+      }
+      setJump({ pane: entry.pane, nonce: Date.now() });
+    },
+    [onJumpToWorkspace, session.id],
+  );
+
+  /*
    * When a pane may be picked up at all.
    *
    * Not while a pane is maximized (the others are hidden with CSS, so there is
@@ -1269,6 +1354,13 @@ export function AgenticGrid({
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/* Which terminals stopped while you were looking at another one.
+            Before "Continue" rather than after it, because the two answer the
+            same question at different scales — this one is "what happened",
+            that one is "what should start again" — and reading them in that
+            order is how somebody decides they need the second at all. */}
+        <PaneNotifications onJump={jumpToNotification} onScreen={onScreen} />
 
         {/* Work a restart stopped: which panes came back holding a conversation
             and were never told to carry on, and the one click that tells them.

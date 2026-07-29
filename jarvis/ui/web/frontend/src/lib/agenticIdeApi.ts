@@ -884,6 +884,84 @@ export async function continueInterrupted(
   };
 }
 
+/**
+ * What happened in one pane, as the header bell lists it.
+ *
+ * `kind` is what the backend established from the pane's own screen, never from
+ * reading the agent's prose: `completed` means it stopped drawing the interrupt
+ * hint its CLI shows while busy — the terminal went quiet, which is a different
+ * claim from "the work is right".
+ */
+export type PaneNotificationKind =
+  | "completed"
+  | "needs_input"
+  | "exited"
+  | "failed";
+
+export interface PaneNotification {
+  id: string;
+  kind: PaneNotificationKind;
+  /** Which workspace it happened in — the list spans every open one. */
+  workspace_id: string;
+  workspace: string;
+  pane_key: string;
+  /** The pane's call-sign — "T3". */
+  pane: string;
+  agent: string;
+  /** What the user reads — "Claude Code". */
+  display_name: string;
+  title: string;
+  /** What that pane was last asked to do. May be empty. */
+  detail: string;
+  created_at: number;
+  read: boolean;
+}
+
+export interface PaneNotificationsState {
+  /** False when the background sweep is switched off in jarvis.toml. */
+  enabled: boolean;
+  unread: number;
+  notifications: PaneNotification[];
+}
+
+/** Everything the bell shows, newest first, across every open workspace. */
+export async function fetchPaneNotifications(): Promise<PaneNotificationsState> {
+  const body = await getJson<Partial<PaneNotificationsState>>(
+    "/api/agentic-ide/notifications",
+  );
+  return {
+    enabled: body.enabled ?? true,
+    unread: body.unread ?? 0,
+    notifications: body.notifications ?? [],
+  };
+}
+
+/** Stop the bell counting these entries. No ids means every one of them. */
+export async function markPaneNotificationsRead(ids?: string[]): Promise<number> {
+  const res = await fetch("/api/agentic-ide/notifications/read", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ids ?? [] }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { unread?: number };
+  return body.unread ?? 0;
+}
+
+/**
+ * Throw entries away — one by id, or the whole list without one.
+ *
+ * Nothing about the pane changes: the agent behind a discarded entry keeps
+ * running exactly as it was.
+ */
+export async function clearPaneNotifications(id?: string): Promise<void> {
+  const url = id
+    ? `/api/agentic-ide/notifications/${encodeURIComponent(id)}`
+    : "/api/agentic-ide/notifications";
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) throw new Error(await detail(res));
+}
+
 /** The active subscription per coding CLI, without the whole workspace state. */
 export async function fetchIdeAccounts(): Promise<IdeAccountState[]> {
   const body = await getJson<{ accounts: IdeAccountState[] }>(

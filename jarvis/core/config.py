@@ -3167,6 +3167,16 @@ class AgenticIdeConfig(BaseModel):
         ),
     )
 
+    pane_notifications: bool = Field(
+        default=True,
+        description=(
+            "Collect a notification whenever a terminal stops working, asks a "
+            "question, or its agent exits — the bell in the Agentic IDE header. "
+            "Off stops the background sweep entirely; the bell then only shows "
+            "what was already collected."
+        ),
+    )
+
     @field_validator("prompt_writer", mode="before")
     @classmethod
     def _usable_writer(cls, value: object) -> str:

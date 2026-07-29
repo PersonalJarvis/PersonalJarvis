@@ -517,6 +517,24 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   };
 
   /*
+   * "Jump to a pane in another workspace", from the header bell.
+   *
+   * The grid cannot do this half itself: it is keyed by workspace, so switching
+   * tab REPLACES it — a maximize applied before the switch would land on the
+   * grid that is about to be thrown away, and one applied after it has no
+   * component left to call. So the wish is parked here, survives the swap, and
+   * is handed to the grid that comes up as `jumpTo`.
+   *
+   * The nonce is what lets the same pane be jumped to twice in a row: an effect
+   * cannot re-fire on a value that has not changed.
+   */
+  const [jumpTo, setJumpTo] = useState<{ pane: string; nonce: number } | null>(null);
+  const jumpToPane = async (workspaceId: string, pane: string) => {
+    if (workspaceId !== session?.id) await switchTo(workspaceId);
+    setJumpTo({ pane, nonce: Date.now() });
+  };
+
+  /*
    * A file dropped on a workspace TAB.
    *
    * It goes to that workspace's first pane, and the pane types the reference
@@ -728,6 +746,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             session={session}
             workspaceBar={renderBar(true)}
             appActions={<TopBarActions />}
+            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+            jumpTo={jumpTo}
             focusMode={focusMode}
             onToggleFocus={(v) => void toggleFocus(v)}
             onClose={() => void close()}

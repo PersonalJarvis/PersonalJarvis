@@ -1569,6 +1569,16 @@ class Registry:
             file_index.prime_index(str(root))
         except Exception as exc:  # noqa: BLE001 - the index is a convenience
             logger.warning("Agentic IDE: file index not primed: {}", exc)
+        # Start watching the panes for the moment they stop working. Here rather
+        # than at boot (AP-26): an install whose user never opens the IDE never
+        # runs the sweep at all, and the sweep finishes by itself once the last
+        # workspace closes.
+        try:
+            from . import notifications
+
+            notifications.start(self)
+        except Exception as exc:  # noqa: BLE001 - the bell is additive
+            logger.warning("Agentic IDE: pane notifications not started: {}", exc)
         await self._persist()
         return session
 
@@ -1969,6 +1979,17 @@ class Registry:
                         manager.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
+        # Its pane notifications go with it. Each one is a "jump to this pane"
+        # button, and the panes have just been killed — an entry that quietly
+        # does nothing when pressed is worse than one that is gone.
+        try:
+            from . import notifications
+
+            notifications.center().forget_workspace(workspace_id)
+            notifications.watcher().forget_workspace(workspace_id)
+        except Exception as exc:  # noqa: BLE001 - teardown must not fail on this
+            logger.warning("Agentic IDE: could not clear notifications for a closed tab: {}", exc)
+
         # Drop THIS folder's codebase index. A blanket reset would take the
         # other open workspaces' indexes with it and silently cost them their
         # `@file` suggestions.

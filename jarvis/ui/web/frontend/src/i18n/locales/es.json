@@ -3526,6 +3526,23 @@
       "cancel": "Mantenerlos abiertos",
       "confirm": "Cerrar seleccionados",
       "close_failed": "No se pudieron cerrar estos terminales: {0}"
+    },
+    "notifications": {
+      "title": "Notificaciones",
+      "hint": "Terminales que han terminado, preguntan algo o se han detenido.",
+      "hint_unread": "{0} aviso(s) de terminal que aún no has visto.",
+      "empty": "Nada que informar: cada terminal sigue trabajando o está igual que la última vez que miraste.",
+      "disabled": "La recogida de notificaciones nuevas está desactivada en tus ajustes ([agentic_ide].pane_notifications).",
+      "jump": "Ir al panel",
+      "discard": "Descartar esta notificación",
+      "clear_all": "Descartar todas las notificaciones",
+      "close": "Cerrar",
+      "last_task": "Última tarea encargada: {0}",
+      "kind_completed": "COMPLETADO",
+      "kind_needs_input": "NECESITA RESPUESTA",
+      "kind_exited": "DETENIDO",
+      "kind_failed": "FALLIDO",
+      "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación."
     }
   },
   "prompt_writer": {

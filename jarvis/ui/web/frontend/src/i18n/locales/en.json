@@ -3527,6 +3527,23 @@
       "cancel": "Keep them open",
       "confirm": "Close selected",
       "close_failed": "These terminals could not be closed: {0}"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "hint": "Terminals that finished, asked something, or stopped.",
+      "hint_unread": "{0} terminal update(s) you have not seen yet.",
+      "empty": "Nothing to report — every terminal is either working or has been like this since you last looked.",
+      "disabled": "Collecting new notifications is switched off in your settings ([agentic_ide].pane_notifications).",
+      "jump": "Jump to pane",
+      "discard": "Discard this notification",
+      "clear_all": "Discard all notifications",
+      "close": "Close",
+      "last_task": "Last asked to: {0}",
+      "kind_completed": "COMPLETED",
+      "kind_needs_input": "NEEDS INPUT",
+      "kind_exited": "STOPPED",
+      "kind_failed": "FAILED",
+      "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
     }
   },
   "prompt_writer": {
