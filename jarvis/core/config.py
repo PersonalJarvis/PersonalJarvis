@@ -427,6 +427,18 @@ class TriggerConfig(BaseModel):
 
 class STTConfig(BaseModel):
     provider: str = "groq-api"
+    # Where transcription goes when ``provider`` keeps failing at RUNTIME — a
+    # depleted or revoked key (401/402), or a rate limit that survives the
+    # retry ladder. ``auto`` (the default) asks the key-aware resolver for a
+    # provider in a DIFFERENT family that the user actually holds a credential
+    # for; crossing to a second provider in the same family buys nothing,
+    # because one dead key takes both down (AP-22). A concrete id pins the
+    # fallback to that provider, and an empty value disables crossing entirely
+    # and keeps the honest single-provider failure. Honoured by the runtime
+    # cross-family fallback in ``jarvis.plugins.stt`` — this key was carried in
+    # shipped configs for a long time while nothing read it, which is why it is
+    # spelled out here: dead config is a lie.
+    fallback: str = "auto"
     # ``model`` is the local FasterWhisperProvider's post-wake utterance model
     # (used whenever ``provider = "faster-whisper"``; the Groq cloud plugin
     # hardcodes its own multilingual model and ignores this). Must be a
@@ -2490,12 +2502,81 @@ class SpeechConfig(BaseModel):
     vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
 
 
-#: The values ``[dictation].language`` accepts. ``auto`` (detect per utterance)
-#: plus every supported product locale — they are equal, never a German- or
-#: English-first list (CLAUDE.md §1, runtime output language). The REST layer's
-#: ``choices.language`` and the frontend's ``DictationLanguage`` union mirror
-#: this tuple; adding a locale means adding it here first.
-DICTATION_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+#: Every language the speech recogniser can transcribe, as ISO-639-1 codes (a
+#: few three-letter Whisper codes have no two-letter form). ONE source for both
+#: ``[stt].language`` and ``[dictation].language`` — the REST routes
+#: (``/api/settings/stt-language``, ``/api/dictation/settings``) and the frontend
+#: pickers all read it from here, so the list cannot drift between layers (AP-4).
+#:
+#: Deliberately NOT limited to the three product locales (de/en/es). Those govern
+#: what Jarvis SAYS BACK; what it can HEAR is a different question, and capping it
+#: at three meant a Mandarin or Japanese speaker could not dictate at all —
+#: exactly the maintainer's-config-is-not-the-baseline trap (CLAUDE.md §3). The
+#: order is the recogniser's own; the UI sorts by localized name at render time
+#: so no language is listed "first" by nationality.
+RECOGNITION_LANGUAGES: tuple[str, ...] = (
+    "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs",
+    "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi",
+    "fo", "fr", "gl", "gu", "ha", "haw", "he", "hi", "hr", "ht", "hu", "hy",
+    "id", "is", "it", "ja", "jw", "ka", "kk", "km", "kn", "ko", "la", "lb",
+    "ln", "lo", "lt", "lv", "mg", "mi", "mk", "ml", "mn", "mr", "ms", "mt",
+    "my", "ne", "nl", "nn", "no", "oc", "pa", "pl", "ps", "pt", "ro", "ru",
+    "sa", "sd", "si", "sk", "sl", "sn", "so", "sq", "sr", "su", "sv", "sw",
+    "ta", "te", "tg", "th", "tk", "tl", "tr", "tt", "uk", "ur", "uz", "vi",
+    "yi", "yo", "yue", "zh",
+)
+
+#: The value that asks for per-utterance DETECTION instead of a fixed language.
+#: Passed through to the provider verbatim — an absent argument means "no
+#: opinion" there and inherits the configured pin, which is the whole reason
+#: dictation's auto mode used to transcribe German speech as English.
+AUTO_LANGUAGE = "auto"
+
+#: The values a recognition-language setting accepts: detect, or any one of the
+#: languages above.
+RECOGNITION_LANGUAGE_CHOICES: tuple[str, ...] = (AUTO_LANGUAGE, *RECOGNITION_LANGUAGES)
+
+#: The values ``[dictation].language`` accepts. Same set as the voice recogniser:
+#: one microphone, one list of languages it understands.
+DICTATION_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
+
+#: The registers the dictation polish pass may be asked to write in — the cheap
+#: analogue of the per-application tone commercial dictation tools switch on.
+#: Mirrors the ``polish_style`` ``Literal`` below (which is what Pydantic and the
+#: OpenAPI schema read) so the validator and the UI have a list to iterate; the
+#: two are pinned together by a parity test, because a vocabulary spelled twice
+#: is the AP-4 drift shape.
+POLISH_STYLES: tuple[str, ...] = ("neutral", "messaging", "email")
+
+
+def _clamped_polish_int(value: object, *, default: int, low: int, high: int) -> int:
+    """Pull a hand-edited integer back into range instead of rejecting it.
+
+    The bounds are declared on the ``Field`` as well, so the schema still
+    states the real range — but a value outside it arrives here first and is
+    clamped, because a stale or hand-edited ``jarvis.toml`` must never fail
+    validation and cost a boot (AP-16). Anything that is not a number at all
+    (a typo, ``None``, NaN, ``inf``) falls back to the shipped default, which
+    is by definition a working value.
+    """
+    try:
+        number = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(low, min(high, number))
+
+
+def _clamped_polish_float(
+    value: object, *, default: float, low: float, high: float
+) -> float:
+    """The float twin of :func:`_clamped_polish_int` — same AP-16 contract."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if number != number or number in (float("inf"), float("-inf")):  # NaN / ±inf
+        return default
+    return max(low, min(high, number))
 
 
 class DictationConfig(BaseModel):
@@ -2615,6 +2696,88 @@ class DictationConfig(BaseModel):
     #: age cap still applies); it does not mean "delete everything".
     audio_max_files: int = Field(default=20, ge=0, le=1000)
 
+    # ------------------------------------------------------------------
+    # The polish pass — a second, generative read-over of the transcript
+    # ------------------------------------------------------------------
+    # Deterministic filler removal cannot punctuate a sentence, repair the
+    # capitalisation a segment boundary broke, or resolve a spoken
+    # self-correction ("at 2, actually 3"). So a small, fast text model reads
+    # the FINISHED transcript once — not once per segment — and writes down
+    # what the speaker would have written. Every knob below exists to keep
+    # that pass a no-op rather than a loss: on a timeout, an error, a missing
+    # key or a failed drift guard the raw transcript is what gets delivered,
+    # and the raw text stays on the history row either way.
+
+    #: Master switch, and it ships ON. That is safe on a fresh clone with no
+    #: credentials at all, which is the whole point: ``polish_provider =
+    #: "auto"`` resolves through the key-aware, family-crossing chain, and
+    #: that chain comes back EMPTY when the user holds no text-model key in
+    #: any family. Such an install reports ``unavailable`` and delivers
+    #: byte-identical text to a build without the feature — so the
+    #: maintainer's keys are not what makes the default safe (AP-23).
+    #: Defaulting it off would instead ship the punctuation defect to
+    #: everyone who never reads a release note.
+    polish: bool = True
+
+    #: Which model family writes the polished text. ``auto`` (the default)
+    #: takes whatever the user actually has, best-latency family first, and
+    #: crosses to a DIFFERENT family when one is depleted, rate-limited or
+    #: unreachable (AP-22). A concrete id pins the chain to that family. It is
+    #: a user preference, never a code branch — the transport is chosen by
+    #: wire format, not by provider name (AP-21).
+    polish_provider: str = "auto"
+
+    #: Model id inside the chosen family. Empty means the family default,
+    #: which is right for almost everyone: the defaults are picked to fit the
+    #: latency budget below, and a slower "better" model spends the whole
+    #: budget and then delivers the raw text anyway.
+    polish_model: str = ""
+
+    #: Hard wall-clock ceiling for the whole pass, in milliseconds. It runs
+    #: AFTER the final transcription, so every millisecond here is felt as a
+    #: delay before the text appears; on expiry the call is cancelled and the
+    #: raw transcript is delivered. 1200 ms is the honest p95 target for a
+    #: consumer client talking to a cloud model over the open internet.
+    polish_timeout_ms: int = Field(default=1200, ge=200, le=5000)
+
+    #: Skip the pass above this many characters. Long dictations are where
+    #: both the latency and the risk of the model rewriting instead of
+    #: formatting explode, and they are also where a wrong rewrite costs the
+    #: most. ``0`` disables the cap.
+    polish_max_input_chars: int = Field(default=4000, ge=0, le=100_000)
+
+    #: Skip the pass below this many words. There is nothing to format in
+    #: "yes" or "call me back", and skipping saves a whole round-trip on the
+    #: most common short dictation. ``0`` polishes everything.
+    polish_min_words: int = Field(default=4, ge=0, le=100)
+
+    #: Output ceiling handed to the model. Bounds the cost and stops a model
+    #: that decided to ANSWER the transcript from running away; a truncated
+    #: answer then fails the drift guards, so the user still gets the raw
+    #: text rather than half a reply.
+    polish_max_output_tokens: int = Field(default=1200, ge=64, le=8192)
+
+    #: Sampling temperature. ``0.0`` on purpose: this is a formatter, not a
+    #: writer. The same transcript should come back the same way twice, and
+    #: every bit of creativity here is a word the speaker did not say.
+    polish_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+
+    #: The band the polished word count must land in, as a fraction of the
+    #: raw word count; outside it the raw transcript wins and the history row
+    #: says the polish was rejected. Deliberately asymmetric — a formatter
+    #: shrinks (fillers, false starts, repetitions) or stays flat, so the
+    #: floor is generous while the ceiling is tight: growth is what an
+    #: answer, a translation or an explanation looks like, and over-rewriting
+    #: is the documented failure direction of every tool that does this.
+    polish_drift_max_shrink: float = Field(default=0.55, ge=0.0, le=1.0)
+    polish_drift_max_growth: float = Field(default=1.20, ge=1.0, le=3.0)
+
+    #: The register the formatter writes in. ``neutral`` adds nothing to the
+    #: prompt, ``messaging`` asks for a casual line without salutations,
+    #: ``email`` for a written-correspondence register. Tone only — no style
+    #: ever licenses a change of meaning.
+    polish_style: Literal["neutral", "messaging", "email"] = "neutral"
+
     @field_validator("paste_chord", mode="before")
     @classmethod
     def _coerce_paste_chord(cls, value: object) -> str:
@@ -2640,6 +2803,87 @@ class DictationConfig(BaseModel):
         """
         text = str(value or "").strip().lower()
         return text if text in DICTATION_LANGUAGES else "auto"
+
+    @field_validator("polish_provider", mode="before")
+    @classmethod
+    def _coerce_polish_provider(cls, value: object) -> str:
+        """Normalize only — an empty or unusable pin falls back to ``auto``.
+
+        Deliberately NOT checked against the list of families. That list is
+        the single source of truth in the polish client, and importing it
+        here would put a provider module on the config-load path (AP-26) and
+        mirror a vocabulary into a second place (AP-4). A pin nothing answers
+        to resolves exactly like ``auto`` in the chain, which is the working
+        value AP-16 asks for.
+        """
+        text = str(value or "").strip().lower()
+        return text or "auto"
+
+    @field_validator("polish_model", mode="before")
+    @classmethod
+    def _coerce_polish_model(cls, value: object) -> str:
+        """Normalize only — anything unusable becomes the family default.
+
+        Case is preserved on purpose: model ids are case-sensitive on several
+        families (``Qwen/Qwen3-32B``), so only surrounding whitespace goes.
+        """
+        return str(value or "").strip()
+
+    @field_validator("polish_style", mode="before")
+    @classmethod
+    def _coerce_polish_style(cls, value: object) -> str:
+        """Normalize only — an unknown style falls back to ``neutral``.
+
+        Mirrors ``_coerce_dictation_language`` above, for the same reason: a
+        stale or hand-edited config must never fail validation (AP-16), and
+        ``neutral`` — append nothing to the prompt — always works.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in POLISH_STYLES else "neutral"
+
+    # The numeric knobs below are CLAMPED rather than rejected. Their bounds
+    # are declared on the ``Field`` too, so the schema keeps stating the real
+    # range, but an out-of-range value is pulled back in instead of raising:
+    # nobody should lose a boot to a typo in a latency budget (AP-16). The
+    # visible consequence is that a bad value sent through
+    # ``PUT /api/dictation/settings`` comes back corrected on the next GET
+    # rather than as a 400 — for knobs that only trade latency against text
+    # quality, that is the friendlier failure.
+
+    @field_validator("polish_timeout_ms", mode="before")
+    @classmethod
+    def _clamp_polish_timeout_ms(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=1200, low=200, high=5000)
+
+    @field_validator("polish_max_input_chars", mode="before")
+    @classmethod
+    def _clamp_polish_max_input_chars(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=4000, low=0, high=100_000)
+
+    @field_validator("polish_min_words", mode="before")
+    @classmethod
+    def _clamp_polish_min_words(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=4, low=0, high=100)
+
+    @field_validator("polish_max_output_tokens", mode="before")
+    @classmethod
+    def _clamp_polish_max_output_tokens(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=1200, low=64, high=8192)
+
+    @field_validator("polish_temperature", mode="before")
+    @classmethod
+    def _clamp_polish_temperature(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.0, low=0.0, high=2.0)
+
+    @field_validator("polish_drift_max_shrink", mode="before")
+    @classmethod
+    def _clamp_polish_drift_max_shrink(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.55, low=0.0, high=1.0)
+
+    @field_validator("polish_drift_max_growth", mode="before")
+    @classmethod
+    def _clamp_polish_drift_max_growth(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=1.20, low=1.0, high=3.0)
 
 
 class MarketplaceConfig(BaseModel):

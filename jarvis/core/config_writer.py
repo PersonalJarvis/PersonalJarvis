@@ -510,9 +510,9 @@ def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
 def set_stt_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the STT recognition language (``[stt] language``).
 
-    One of ``auto`` | ``de`` | ``en`` | ``es`` (validated by the caller). ``auto``
-    lets Whisper detect the spoken language per utterance (the bilingual default);
-    a concrete code forces that language. Takes effect on the next SpeechPipeline
+    ``auto`` or any code in ``RECOGNITION_LANGUAGES`` (validated by the caller).
+    ``auto`` lets the recogniser detect the spoken language per utterance (the
+    default); a concrete code forces that language. Takes effect on the next SpeechPipeline
     bootstrap (a voice restart): the STT provider is instantiated once at pipeline
     start. Persisted across all THREE layers (TOML + config-soll + ENV): the stt  # i18n-allow
     block is drift-guard pinned, and the single-word ``JARVIS__STT__LANGUAGE`` ENV
@@ -783,6 +783,20 @@ DICTATION_SETTING_KEYS = (
     "keep_failed_audio",
     "audio_retention_days",
     "audio_max_files",
+    # The polish pass. Persisted through the same PUT as everything else — the
+    # feature adds no route of its own, so a key missing from this tuple is a
+    # setting the user can switch in the UI and lose on the next restart.
+    "polish",
+    "polish_provider",
+    "polish_model",
+    "polish_timeout_ms",
+    "polish_max_input_chars",
+    "polish_min_words",
+    "polish_max_output_tokens",
+    "polish_temperature",
+    "polish_drift_max_shrink",
+    "polish_drift_max_growth",
+    "polish_style",
 )
 
 
