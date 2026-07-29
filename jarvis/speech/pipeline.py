@@ -833,6 +833,18 @@ _DICTATION_HANDOVER_POLL_S = 0.02
 _DICTATION_FINAL_ATTEMPTS = 3
 _DICTATION_FINAL_RETRY_DELAY_S = 0.6
 
+# Fallback recording ceiling for a MISSING or unparseable ``[dictation]
+# max_seconds``. A configured 0.0 is not missing — it is the user asking for no
+# ceiling at all — and is preserved rather than replaced by this.
+_DICTATION_DEFAULT_MAX_S = 1800.0
+
+# How long the wake word stays blocked when the recording itself is unbounded.
+# The block exists so a wedged dictation task cannot leave the wake word deaf
+# until the app is restarted (BUG-037), so it may never be unbounded even when
+# the recording is. An hour is far past any real dictation while still being a
+# deadline that arrives.
+_DICTATION_UNBOUNDED_WAKE_BLOCK_S = 3600.0
+
 # Ceiling on ONE final retry wait. The final pass runs while the user is already
 # waiting for their text, so it may not inherit the probe's patient backoff.
 _DICTATION_FINAL_RETRY_MAX_S = 2.0
@@ -1747,9 +1759,28 @@ class SpeechPipeline:
         # and the moment ``_dictation_task`` exists (or the handover is refused),
         # and never both at once. See ``_begin_dictation_handover``.
         self._dictation_handover_task: asyncio.Task[None] | None = None
-        self._dictation_max_s = float(
-            getattr(self._dictation_cfg, "max_seconds", 300.0) or 300.0
+        # 0.0 is a real value here — "no ceiling" — so it must NOT be coerced
+        # to a default the way an absent or malformed setting is. The old
+        # ``or 300.0`` did exactly that and made the off switch unreachable
+        # (AP-31: a switch whose value is ignored). Only a missing or
+        # unparseable setting falls back.
+        raw_max_s = getattr(
+            self._dictation_cfg, "max_seconds", _DICTATION_DEFAULT_MAX_S
         )
+        try:
+            configured_max_s = float(raw_max_s)
+        except (TypeError, ValueError):
+            # A hand-edited jarvis.toml must never fail to boot (AP-16), but it
+            # must also not fail QUIETLY: the user typed something here and is
+            # about to get a ceiling they did not ask for.
+            log.warning(
+                "[dictation].max_seconds is not a number (%r); using %.0fs. "
+                "Set 0 for no recording ceiling.",
+                raw_max_s,
+                _DICTATION_DEFAULT_MAX_S,
+            )
+            configured_max_s = _DICTATION_DEFAULT_MAX_S
+        self._dictation_max_s = max(0.0, configured_max_s)
         # Strong references to fire-and-forget bus publishes (see
         # ``_publish_event_soon``); entries remove themselves when they finish.
         self._detached_publishes: set[asyncio.Task[None]] = set()
@@ -8662,9 +8693,18 @@ class SpeechPipeline:
         # case is bounded instead of needing an app restart (BUG-037). The
         # allowance on top of the recording cap covers the closing
         # transcription, which runs after the microphone is already released.
-        self._dictation_wake_block_until = (
-            time.time() + float(getattr(self, "_dictation_max_s", 300.0) or 300.0) + 60.0
-        )
+        # A 0 recording ceiling means "speak as long as you like", and this
+        # deadline must NOT inherit that. Unbounded here would re-open BUG-037:
+        # a dictation task that somehow never terminates would leave the wake
+        # word deaf until the app is restarted. So an unlimited recording still
+        # gets a bounded — generously bounded — wake block. The two are allowed
+        # to disagree: the worst case of this one expiring early is a wake word
+        # that answers during a very long dictation, which is recoverable in a
+        # second; the worst case of it never expiring needs a restart.
+        block_s = getattr(self, "_dictation_max_s", _DICTATION_DEFAULT_MAX_S)
+        if not block_s:
+            block_s = _DICTATION_UNBOUNDED_WAKE_BLOCK_S
+        self._dictation_wake_block_until = time.time() + float(block_s) + 60.0
         # Reset BEFORE the task exists: the teardown guarantee below reads this
         # to decide whether a terminal event still has to be published.
         self._dictation_completion_published = False
@@ -9463,7 +9503,11 @@ class SpeechPipeline:
                 try:
                     done, _pending = await asyncio.wait(
                         wait_set,
-                        timeout=self._dictation_max_s,
+                        # ``None`` is asyncio's "wait as long as it takes", which
+                        # is precisely what a 0 ceiling means. Releasing the key,
+                        # the stop event and a hangup all still end the recording;
+                        # only the clock stops being one of the ways.
+                        timeout=self._dictation_max_s or None,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     hung_up = hangup_task in done or self._hangup_event.is_set()

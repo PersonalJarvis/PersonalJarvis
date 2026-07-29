@@ -124,7 +124,7 @@ POLISH_BREAKER_COOLDOWN_S: Final[int] = 120
 # fallbacks so this module is correct both before and after the config fields
 # land, and on an older jarvis.toml that has never heard of them.
 _DEFAULT_TIMEOUT_MS = 1200
-_DEFAULT_MAX_INPUT_CHARS = 4000
+_DEFAULT_MAX_INPUT_CHARS = 0  # no cap; the clock and the drift guards bound it
 _DEFAULT_MIN_WORDS = 4
 _DEFAULT_MAX_OUTPUT_TOKENS = 1200
 _DEFAULT_TEMPERATURE = 0.0

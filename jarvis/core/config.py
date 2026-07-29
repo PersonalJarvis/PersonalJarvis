@@ -2698,8 +2698,25 @@ class DictationConfig(BaseModel):
     #: eats a quarter of a sentence is a bug, not a cleanup.
     filler_max_removed_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
 
-    #: Hard cap on one dictation, in seconds. Nothing records forever.
-    max_seconds: float = Field(default=300.0, gt=0.0, le=3600.0)
+    #: Ceiling on ONE dictation, in seconds. ``0`` removes it entirely.
+    #:
+    #: This is not a provider limit and never was. No speech-to-text request
+    #: carries the whole recording: the final pass cuts the audio at its
+    #: quietest points into segment-sized pieces, so a provider's file-size
+    #: ceiling is reached by a SEGMENT, never by a long dictation. The only
+    #: real cost of speaking longer is the buffer held in memory — 16 kHz
+    #: 16-bit mono is ~1.9 MB per minute, so half an hour is ~58 MB.
+    #:
+    #: The default used to be five minutes, which is shorter than plenty of
+    #: genuine dictations and cut them off mid-sentence. It is now half an
+    #: hour: long enough that nobody speaking normally will ever meet it, short
+    #: enough that a toggle-mode recording somebody forgot about does not eat
+    #: the machine. Set ``0`` if you would rather have no ceiling at all —
+    #: then only releasing the key, the stop event or a hangup ends a
+    #: recording. The wake word is protected separately either way (see
+    #: ``_dictation_wake_block_until``), so an unbounded dictation can never
+    #: leave it deaf.
+    max_seconds: float = Field(default=1800.0, ge=0.0, le=86_400.0)
 
     #: Live-transcript refresh interval while speaking. ``0`` disables the live
     #: preview entirely (the final transcription still happens).
@@ -2789,11 +2806,26 @@ class DictationConfig(BaseModel):
     #: consumer client talking to a cloud model over the open internet.
     polish_timeout_ms: int = Field(default=1200, ge=200, le=5000)
 
-    #: Skip the pass above this many characters. Long dictations are where
-    #: both the latency and the risk of the model rewriting instead of
-    #: formatting explode, and they are also where a wrong rewrite costs the
-    #: most. ``0`` disables the cap.
-    polish_max_input_chars: int = Field(default=4000, ge=0, le=100_000)
+    #: Skip the pass above this many characters. ``0`` — the default — means
+    #: no cap.
+    #:
+    #: This started at 4000 on the theory that long dictations are where a
+    #: rewrite goes wrong most expensively. That reasoning does not survive
+    #: contact with the guards it duplicates: latency is already bounded by
+    #: ``polish_timeout_ms`` (a slow answer delivers the raw text), drift is
+    #: already caught per-transcript by the word-ratio band and the number and
+    #: protected-term checks, and the cost of a long input is measured in
+    #: hundredths of a cent. What the cap actually did was silently skip the
+    #: pass on exactly the dictations that need it most — four minutes of
+    #: speech is roughly where a transcript stops being one sentence and starts
+    #: being something the recognizer has broken into paragraphs at arbitrary
+    #: points. A ceiling that switches a feature off without saying so is worse
+    #: than the risk it was guarding against, and the guards that DO speak are
+    #: still in front of it.
+    #:
+    #: Raise it above 0 if you would rather bound the pass by input size than
+    #: by the clock; the value is honoured either way.
+    polish_max_input_chars: int = Field(default=0, ge=0, le=1_000_000)
 
     #: Skip the pass below this many words. There is nothing to format in
     #: "yes" or "call me back", and skipping saves a whole round-trip on the
@@ -2907,7 +2939,7 @@ class DictationConfig(BaseModel):
     @field_validator("polish_max_input_chars", mode="before")
     @classmethod
     def _clamp_polish_max_input_chars(cls, value: object) -> int:
-        return _clamped_polish_int(value, default=4000, low=0, high=100_000)
+        return _clamped_polish_int(value, default=0, low=0, high=1_000_000)
 
     @field_validator("polish_min_words", mode="before")
     @classmethod
