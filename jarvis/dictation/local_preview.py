@@ -179,6 +179,10 @@ class LocalPreviewTranscriber:
         try:
             probability = float(getattr(info, "language_probability", 0.0) or 0.0)
         except (TypeError, ValueError):
+            # Deliberately quiet: zero is the honest reading of "this engine
+            # build reports no confidence", and it makes the caller's gate
+            # reject the detection — the same outcome a log line would only
+            # narrate, once per preview tick.
             probability = 0.0
         return text, detected, probability
 

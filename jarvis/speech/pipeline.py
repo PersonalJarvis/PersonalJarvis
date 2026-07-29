@@ -1058,6 +1058,10 @@ def accept_recognition_reading(*, language: str, probability: float) -> str:
         if float(probability) < _RECOGNITION_PIN_MIN_PROBABILITY:
             return ""
     except (TypeError, ValueError):
+        # Deliberately quiet: a provider that reports no usable confidence is
+        # answering "I am not sure", which is exactly the case this gate exists
+        # to reject. Refusing the reading IS the handling, and logging it would
+        # fire once per segment on every provider that omits the field.
         return ""
     return code
 
@@ -9184,7 +9188,19 @@ class SpeechPipeline:
         # 4-second clip to detect it — the whole of the German-in, English-out
         # repair (see ``resolve_recognition_language``). It is re-read as the
         # session runs, so a user who switches language is followed, not pinned.
-        session_language = ""
+        #
+        # It STARTS from what recent dictations established rather than from
+        # nothing, and that is what makes the repair work on a short one. The
+        # in-session anchor is read from an on-device preview, which needs both
+        # a local engine and enough time to run — so on a host without one, or
+        # on a two-second "carry on", it is never set at all and every upload
+        # goes out as "auto". That is precisely the case Whisper gets wrong:
+        # measured on the live history, dictations under 4 s came back tagged
+        # English 59-64 % of the time for a speaker who was overwhelmingly
+        # speaking German, and a mis-detected clip is not merely mislabelled —
+        # it is TRANSLATED. Carrying the recent reading across gives the short
+        # ones the context their own audio cannot supply.
+        session_language = self._recent_dictation_language()
 
         async def _transcribe(
             pcm: bytes,
@@ -9436,6 +9452,14 @@ class SpeechPipeline:
                             )
                             if accepted:
                                 session_language = accepted
+                                # An on-device reading cannot have been produced
+                                # by a translation, so it is the best anchor
+                                # there is — worth keeping for the NEXT
+                                # dictation, which may be too short to earn one
+                                # of its own.
+                                self._remember_dictation_language(
+                                    accepted, on_device=True
+                                )
                                 log.info(
                                     "dictation recognition language established "
                                     "from the audio: %s — later segments are "
@@ -9845,6 +9869,59 @@ class SpeechPipeline:
                     )
                 )
 
+    #: How much audio a CLOUD reading needs before it is allowed to steer later
+    #: dictations. Under this, the provider is guessing from too little context
+    #: — which is the defect this anchor exists to route around, so accepting a
+    #: short reading here would let the guess teach itself.
+    _LANGUAGE_ANCHOR_MIN_S = 6.0
+
+    #: How many readings the anchor remembers. Small enough to follow a speaker
+    #: who switches language within a few dictations, large enough that one
+    #: mis-detected clip cannot flip it on its own.
+    _LANGUAGE_ANCHOR_HISTORY = 5
+
+    def _remember_dictation_language(self, language: str, *, on_device: bool) -> None:
+        """Record one reading of what this user dictates in. Never raises.
+
+        The anchor behind ``_recent_dictation_language``. An ``on_device``
+        reading is trusted outright — a local decoder cannot have translated the
+        audio, so its answer is about the SOUND. A cloud reading is a claim
+        about a transcript that may itself be a translation, so the caller only
+        offers one when there was enough audio to make the claim worth
+        something, and it still only ever gets a vote rather than the decision.
+        """
+        code = str(language or "").strip().lower()
+        if not code or code in ("auto", "unknown", "und"):
+            return
+        readings = getattr(self, "_dictation_language_readings", None)
+        if readings is None:
+            from collections import deque
+
+            readings = deque(maxlen=self._LANGUAGE_ANCHOR_HISTORY)
+            self._dictation_language_readings = readings
+        # An on-device reading is worth the whole window, because it is the one
+        # signal a translation cannot fake: one of them outvotes a run of cloud
+        # guesses instead of waiting its turn behind them.
+        readings.extend([code] * (readings.maxlen if on_device else 1))
+
+    def _recent_dictation_language(self) -> str:
+        """The language recent dictations agree on, or ``""`` when unclear.
+
+        Read at the START of a dictation, where it becomes the session language
+        a short recording could never establish for itself. A MAJORITY rather
+        than the last reading, so a single mis-detected clip cannot redirect the
+        next one; ties resolve to ``""``, which simply restores auto-detect.
+        """
+        readings = getattr(self, "_dictation_language_readings", None)
+        if not readings:
+            return ""
+        from collections import Counter
+
+        counts = Counter(readings).most_common()
+        if len(counts) > 1 and counts[0][1] == counts[1][1]:
+            return ""
+        return counts[0][0]
+
     async def _finish_dictation(
         self,
         *,
@@ -9910,6 +9987,20 @@ class SpeechPipeline:
             reported=language,
             text="" if hung_up else raw_text,
         )
+
+        # Teach the anchor what this user dictates in, so the NEXT recording —
+        # which may be two seconds of "carry on" — is not left asking a clip too
+        # short to answer. Only a long recording votes: a short one is exactly
+        # the case the provider gets wrong, and letting it vote would let the
+        # guess confirm itself. The reading is the resolved language, so a user
+        # pin outranks everything here as it does everywhere else.
+        if not hung_up and duration_s >= self._LANGUAGE_ANCHOR_MIN_S:
+            try:
+                self._remember_dictation_language(
+                    effective_language, on_device=False
+                )
+            except Exception:  # noqa: BLE001 — an anchor is a hint, never a gate
+                log.debug("dictation language anchor update failed", exc_info=True)
 
         if raw_text and not hung_up:
             try:

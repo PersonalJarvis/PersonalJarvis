@@ -143,6 +143,9 @@ async def probe_polish_family(
             timeout=ceiling_s,
         )
     except TimeoutError:
+        # Not silent: the timeout becomes the card's visible verdict, which is
+        # the whole point of the probe. A log line would duplicate what the user
+        # is about to read on screen.
         elapsed = (perf_counter() - started) * 1000.0
         return ProviderTestResult(
             provider, UNREACHABLE, f"No answer within {ceiling_s:.0f}s.", elapsed
