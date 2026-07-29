@@ -1,1 +1,0 @@
-import{u as e,j as s,an as a}from"./index-DB8pF7Pu.js";function x({className:t=""}){const n=e();return s.jsxs("div",{className:`flex items-start gap-2 px-4 py-2 text-[11px] leading-snug text-muted-foreground ${t}`,children:[s.jsx(a,{className:"mt-0.5 h-3.5 w-3.5 shrink-0"}),s.jsx("span",{children:n("subagents_view.explicit_spawn_hint")})]})}export{x as E};
