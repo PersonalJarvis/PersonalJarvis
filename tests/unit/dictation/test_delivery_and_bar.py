@@ -530,6 +530,75 @@ async def test_auto_asks_the_provider_to_detect_instead_of_staying_silent(
 
 
 @pytest.mark.asyncio
+async def test_a_provider_that_cleans_its_own_text_cannot_override_the_filler_switch(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """A cleaned ``text`` is right for a voice command and wrong for dictation.
+
+    Cloud providers may now filter their own transcript — hesitation sounds,
+    decoder loops, stutters — before handing it over. This lane must keep
+    transcribing from ``raw_text``: it owns the user's filler switch, runs its
+    own cleanup in the language the USER pinned, and writes the untouched
+    string to the history. Reading the pre-cleaned one would turn "keep my
+    filler words" into a setting with no effect and nothing to observe.
+    """
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _CleaningSTT:
+        async def transcribe_pcm(self, pcm: bytes, **_kw):
+            return SimpleNamespace(
+                text="Das ist gut.",  # i18n-allow: German fixture under test (§1 list #4)
+                raw_text="Ähm, das ist gut.",  # i18n-allow: German fixture (§1 list #4)
+                language="de",
+            )
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, events = _session_pipeline(
+        _CleaningSTT(),
+        DictationConfig(
+            language="de", partial_interval_s=0.0, remove_fillers=False
+        ),
+    )
+    await pipe._dictation_session()
+
+    final = [
+        e for e in events if isinstance(e, DictationTranscript) and e.is_final
+    ][-1]
+    assert final.text == "Ähm, das ist gut."  # i18n-allow: German fixture (§1 list #4)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_without_a_raw_text_field_is_unaffected(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    """Every other provider keeps its single ``text`` field and behaves as before."""
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _PlainSTT:
+        async def transcribe_pcm(self, pcm: bytes, **_kw):
+            return SimpleNamespace(
+                text="Ähm, das ist gut.",  # i18n-allow: German fixture (§1 list #4)
+                language="de",
+            )
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, events = _session_pipeline(
+        _PlainSTT(),
+        DictationConfig(language="de", partial_interval_s=0.0, remove_fillers=True),
+    )
+    await pipe._dictation_session()
+
+    final = [
+        e for e in events if isinstance(e, DictationTranscript) and e.is_final
+    ][-1]
+    assert final.text == "Das ist gut."  # i18n-allow: German fixture (§1 list #4)
+
+
+@pytest.mark.asyncio
 async def test_a_provider_without_the_language_keyword_still_transcribes(
     monkeypatch: pytest.MonkeyPatch, audio_spy
 ) -> None:

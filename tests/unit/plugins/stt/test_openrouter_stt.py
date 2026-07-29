@@ -180,6 +180,57 @@ async def test_response_text_is_parsed_into_transcript() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gateway_artifacts_are_cleaned_and_the_raw_text_is_kept() -> None:
+    """The payload text is filtered on the way into the Transcript.
+
+    One response carries all three artifact classes the filter exists for: an
+    outer quote pair the model added, a hesitation sound, and a decoder loop.
+    ``raw_text`` keeps the gateway's own string so the dictation lane — which
+    owns a user switch for filler removal — still transcribes from it.
+    """
+    payload = {
+        "text": '"Um, turn on the light. Thank you. Thank you. Thank you."',
+        "language": "English",
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        result = await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert result.text == "Turn on the light. Thank you."
+    assert result.raw_text == payload["text"]
+    assert result.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_never_reports_silence_for_audio_that_had_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confidence follows the RAW text: a filter bug must not read as silence."""
+    monkeypatch.setattr(
+        "jarvis.plugins.stt.transcript_filter.clean_stt_text",
+        lambda *_a, **_k: "",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_JSON_OK)
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        result = await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert result.confidence == 1.0
+    assert result.raw_text == "hello world"
+
+
+@pytest.mark.asyncio
 async def test_empty_pcm_returns_empty_transcript_without_calling_api() -> None:
     called = {"n": 0}
 

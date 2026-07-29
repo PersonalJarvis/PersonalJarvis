@@ -9115,7 +9115,21 @@ class SpeechPipeline:
                 inference_active.clear()
             stt_error = None
             stt_error_detail = ""
-            text = (getattr(transcript, "text", "") or "").strip()
+            # ``raw_text`` when the provider offers it, ``text`` otherwise. A
+            # provider may now clean its own transcript (filler sounds, decoder
+            # loops, stutters) before handing it over, which is right for a
+            # voice command and wrong here: this lane owns a user switch for
+            # filler removal, runs its own cleanup right after with the
+            # language the USER pinned, and stores the untouched string in the
+            # dictation history so a person can see what was changed. Reading
+            # the cleaned string would make that switch a no-op nobody could
+            # observe (AP-31) and would put an already-edited sentence in the
+            # column labelled "raw". Providers without the field are unchanged.
+            text = (
+                getattr(transcript, "raw_text", "")
+                or getattr(transcript, "text", "")
+                or ""
+            ).strip()
             lang = str(getattr(transcript, "language", "") or "")
             return text, lang, True, None
 

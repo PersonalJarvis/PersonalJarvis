@@ -102,6 +102,13 @@ class Transcript:
     Plugin code must not import from ``jarvis.*``; structural compatibility is
     sufficient because ``STTProvider`` is a ``runtime_checkable`` Protocol and
     consumers access the fields by name.
+
+    ``raw_text`` is additive and optional: it carries what the gateway returned
+    BEFORE the cleanup filter ran. Consumers that want the cleaned sentence keep
+    reading ``text`` and never notice it; the one caller that must not get a
+    cleaned string — the dictation lane, whose whole promise is "these are my
+    words" and which owns a user switch for filler removal — reads it through a
+    ``getattr`` default, so every other provider stays unchanged.
     """
 
     text: str
@@ -109,6 +116,7 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    raw_text: str = ""
 
 
 class OpenRouterSTT:
@@ -434,15 +442,33 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
     no per-segment timings or confidence, so confidence is a plain presence
     signal (1.0 when non-empty text, else 0.0) and segments stay empty — the
     same convention the Groq plugin uses when segments are absent.
+
+    The text is run through :func:`jarvis.plugins.stt.transcript_filter.clean_stt_text`
+    on the way in, which is the last point where the gateway's own artifacts —
+    a decoder repetition loop, a hesitation sound, a stutter, an outer quote
+    pair, NFD umlauts — can be removed before every consumer downstream starts
+    reading the string. The untouched payload text stays on ``raw_text``.
+
+    Confidence is computed from the RAW text, not the cleaned one. The two only
+    diverge when cleanup emptied the string, and that is a cleanup defect, not
+    a silent utterance — reporting 0.0 there would hand the pipeline a "nothing
+    was said" verdict about audio that contained speech.
     """
-    text = str(payload.get("text", "")).strip()
+    raw = str(payload.get("text", "")).strip()
     language = str(payload.get("language", "") or "unknown") or "unknown"
+    # Local import: the module top must stay ``jarvis.*``-free (entry-point
+    # purity), the same lazy seam the credential lookup and the error mapper
+    # already use.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
+    text = clean_stt_text(raw, language=language)
     return Transcript(
         text=text,
         language=language,
-        confidence=1.0 if text else 0.0,
+        confidence=1.0 if raw else 0.0,
         is_partial=False,
         segments=(),
+        raw_text=raw,
     )
 
 
