@@ -256,10 +256,39 @@ _INPUT_MARKERS = ("❯", ">", "›")
 # first version used 8 s and watched twelve real panes die just past it.
 RESUME_FAILED_WINDOW_S = 45.0
 
-# When to look for the session id of a CLI that cannot be told one (Codex). It
-# writes its rollout file a beat after launching, so asking immediately finds
-# nothing; two attempts cover a slow machine without turning into polling.
+# When to look for the session id of a CLI that cannot be told one (Codex,
+# OpenCode, Kimi). It writes its session record a beat after launching, so
+# asking immediately finds nothing; two attempts cover a slow machine without
+# turning into polling.
 DISCOVERY_DELAYS_S = (4.0, 12.0)
+
+# When to look AGAIN, counted from the moment the pane's conversation actually
+# received its first message.
+#
+# **The bug this exists for.** Launching one of those CLIs does not create a
+# session on disk — the record appears when the conversation first has something
+# to record. Measured on this machine: a Codex pane launched at 15:17:44 wrote
+# its rollout file at 15:19:32, the instant its first brief was submitted, 106
+# seconds after the schedule above had given up for good. Across 338 real Codex
+# TUI sessions, 40 % of the files appeared after that window (p90: 402 s), while
+# `codex exec` runs — which carry their prompt at launch — landed inside it 98 %
+# of the time. So the window was never the problem; measuring it from the wrong
+# EVENT was. A pane that lost this race kept `resume = None` for the rest of its
+# life, the snapshot stored a pane with no conversation, and the restore brought
+# back an empty agent without a word about it. Claude Code never showed it: its
+# id is minted at launch (`--session-id`), so it is in the snapshot before the
+# CLI has done anything at all.
+#
+# Hence a second schedule hung off the event that MAKES the session findable —
+# a prompt from Jarvis, or a line the user submitted in the pane themselves.
+# Short, because by then the CLI is writing; three attempts, because "is writing"
+# is not "has flushed".
+CONVERSATION_DELAYS_S = (1.5, 5.0, 15.0)
+
+# How long one pane must wait between lookup ROUNDS. Every submit into a pane
+# with no handle is a reason to look, and somebody pressing Enter ten times is
+# not ten reasons — each round opens up to _MAX_CANDIDATES session files.
+LOOKUP_COOLDOWN_S = 15.0
 
 # ---------------------------------------------------------------------------
 # How many agent CLIs may be COLD-STARTING at the same moment.
@@ -802,6 +831,15 @@ class Terminal:
     # The pane is the window; this is what the window looks at, and it is the
     # only reason a closed browser is survivable (see .agent_sessions).
     resume: ResumeHandle | None = None
+    # Is a conversation-id lookup in flight for this pane, and when did the last
+    # ROUND begin (monotonic — a wall clock can jump)? Both exist because the
+    # lookup now has more than one trigger: the pane starting, and the pane's
+    # conversation actually beginning. Without them a busy pane would stack a
+    # round on top of every keystroke that submits, and two rounds racing each
+    # other could hand one conversation to two panes. Never persisted: they
+    # describe a running pane, not the workspace on disk.
+    lookup_running: bool = False
+    lookup_at: float = 0.0
     # Did the CURRENT agent process continue that conversation, or start empty?
     # Reported honestly rather than assumed: a resume can fail, and a user who
     # is told "resumed" and gets an amnesiac agent has been lied to.
@@ -2252,6 +2290,20 @@ class Registry:
             argv = (*argv, *continuing)
             term.resumed = True
         else:
+            if term.resume is None and term.prompts_sent and can_resume(term.agent):
+                # A pane that was WORKED IN and still has no conversation id is
+                # the one failure this path used to swallow whole: the pane came
+                # back looking right, empty, with nothing anywhere saying its
+                # history had been lost. It means every lookup missed — see
+                # `CONVERSATION_DELAYS_S` — so say so where the next person
+                # debugging this will look.
+                logger.info(
+                    "Agentic IDE: {} was worked in but no conversation id was ever "
+                    "recorded for it — starting fresh (the old thread is still in "
+                    "{}'s own history, just not reachable from here)",
+                    term.name,
+                    term.display_name,
+                )
             extra, minted = launch_extra(term.agent)
             argv = (*argv, *extra)
             term.resumed = False
@@ -2474,7 +2526,12 @@ class Registry:
             logger.warning("Agentic IDE: pre-trust for {} failed: {}", term.name, exc)
 
     def _schedule_lookup(
-        self, owner: Session, term: Terminal, folder: str, started_at: float
+        self,
+        owner: Session,
+        term: Terminal,
+        folder: str,
+        started_at: float,
+        delays: tuple[float, ...] | None = None,
     ) -> None:
         """Find a pane's session id a moment after its CLI created it.
 
@@ -2486,11 +2543,32 @@ class Registry:
         one": with several open, the front workspace can change twice while this
         is sleeping, and a lookup that then read the front one would write a
         Codex conversation id onto a pane in a different folder.
+
+        ``delays`` is the schedule to try on, because the same search answers two
+        different questions: "has the CLI finished starting?" right after a spawn
+        (``DISCOVERY_DELAYS_S``) and "has the CLI written the conversation that
+        just began?" once the pane has been given something to do
+        (``CONVERSATION_DELAYS_S``). ``started_at`` stays the pane's LAUNCH time
+        in both cases — a session's recorded timestamp is when it opened, not
+        when it was first spoken to, so anything later would rule out the very
+        conversation being looked for.
+
+        One round per pane at a time. Two rounds racing would ask the same
+        question with the same ``taken`` set and could hand one conversation to
+        two panes.
         """
+        # Resolved here rather than as a default argument: a default is bound
+        # when this module is imported, which silently pins the schedule to the
+        # value it had then — including for anything that adjusts it later.
+        schedule = DISCOVERY_DELAYS_S if delays is None else delays
+        if term.lookup_running:
+            return
+        term.lookup_running = True
+        term.lookup_at = time.monotonic()
 
         async def _look() -> None:
             try:
-                for delay in DISCOVERY_DELAYS_S:
+                for delay in schedule:
                     await asyncio.sleep(delay)
                     if term not in owner.terminals or owner.id not in self._sessions:
                         return  # the pane (or the workspace) is gone
@@ -2518,27 +2596,68 @@ class Registry:
                 raise
             except Exception as exc:  # noqa: BLE001 - a convenience, never fatal
                 logger.debug("Agentic IDE: session lookup for {} failed: {}", term.name, exc)
+            finally:
+                # Even a cancelled round has to let the next trigger through, or
+                # a workspace that was closed and reopened would never look
+                # again.
+                term.lookup_running = False
 
-        task = asyncio.ensure_future(_look())
+        try:
+            task = asyncio.ensure_future(_look())
+        except RuntimeError:
+            # No running loop — nothing to schedule onto. Only reachable from the
+            # keystroke path, which a non-async caller could in principle drive.
+            term.lookup_running = False
+            logger.debug("Agentic IDE: no event loop to look up {}'s conversation on", term.name)
+            return
         owner.lookups.add(task)
         task.add_done_callback(owner.lookups.discard)
+
+    def _lookup_after_conversation(self, owner: Session, term: Terminal) -> None:
+        """Look for this pane's conversation id now that it HAS a conversation.
+
+        The trigger, not the timer, is the point — see ``CONVERSATION_DELAYS_S``.
+        A CLI that cannot be told its id writes nothing until its conversation
+        gets a first message, so the moment a prompt lands (from Jarvis or from
+        the user's own keyboard) is the moment the id becomes findable, whether
+        that is four seconds after the pane opened or four hours.
+
+        Cheap to call on every submitted line: a pane that already has a handle,
+        an agent that mints its own, and a round that just ran all return here
+        without touching the disk.
+        """
+        if term.resume is not None or not term.started_at:
+            return
+        if not can_resume(term.agent):
+            return
+        if term.lookup_running:
+            return
+        if term.lookup_at and time.monotonic() - term.lookup_at < LOOKUP_COOLDOWN_S:
+            return
+        self._schedule_lookup(owner, term, owner.folder, term.started_at, CONVERSATION_DELAYS_S)
 
     def write(self, key: str, data: str, workspace_id: str | None = None) -> bool:
         """Raw keystrokes from the pane's own xterm (not the injection path)."""
         found = self._locate(key, workspace_id)
         if found is None:
             return False
-        term = found[1]
+        owner, term = found
         if not term.pty_id:
             return False
-        if term.continuation_pending and ("\r" in data or "\n" in data):
+        # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
+        # and a half-typed line are not an instruction.
+        if "\r" in data or "\n" in data:
             # The user submitted something in the pane themselves, so this one
             # is being driven again and is no longer waiting to be nudged.
-            # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow
-            # keys and a half-typed line are not an instruction, and dropping
-            # the pane off the list for those would hide a stalled agent behind
-            # an accidental keypress.
+            # Dropping the pane off that list for a mere keypress would hide a
+            # stalled agent behind an accidental one.
             term.continuation_pending = False
+            # And the pane's conversation may have just begun, which for most
+            # coding CLIs is the first moment its id exists on disk at all. A
+            # pane driven only by hand never goes through `send_prompt`, so
+            # without this hook it would keep the gap that cost every non-Claude
+            # pane its resume handle.
+            self._lookup_after_conversation(owner, term)
         return self._manager().write(term.pty_id, data)
 
     async def _nudge_repaint(self, term: Terminal, cols: int, rows: int) -> None:
@@ -3055,7 +3174,7 @@ class Registry:
         found = self.find_terminal(wanted)
         if found is None:
             raise self._unknown_terminal(wanted)
-        _session, term = found
+        owner, term = found
         if not accepts_prompts(term.agent):
             # A plain terminal is a live SHELL prompt, so an injected line would
             # not be read by an agent — it would run as a command. This is the
@@ -3108,6 +3227,14 @@ class Registry:
         # in its input box in full, so offering to type "continue" behind it
         # would append a second line to a prompt the user still has to send.
         term.continuation_pending = False
+        if submitted is not False:
+            # The conversation has (or may have) just begun, so for a CLI that
+            # cannot be told its id this is the moment that id starts existing —
+            # see `_lookup_after_conversation`. Skipped only for a hard False,
+            # which means the text is provably still sitting in the input box:
+            # nothing was recorded, and a round spent on that would burn the
+            # cooldown the real submit needs.
+            self._lookup_after_conversation(owner, term)
         logger.info(
             "Agentic IDE prompt -> {} ({}, {}): {}",
             term.name,

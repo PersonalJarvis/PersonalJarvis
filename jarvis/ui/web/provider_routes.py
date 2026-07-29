@@ -877,6 +877,30 @@ async def list_providers(request: Request) -> dict[str, Any]:
 _PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
 
 
+async def _run_tier_test(
+    spec: ProviderSpec, cfg: Any, *, model: str | None = None
+) -> Any:
+    """Dispatch a card to the probe that can actually judge it.
+
+    Every tier but one is judged by ``run_provider_test``. A dictation card is
+    NOT a speech-to-text provider, and it used to fall through to the STT branch
+    there — so "Test" on a wording card built the user's RECOGNIZER and reported
+    its verdict under the card's name (a broken local model turned four working
+    cloud cards red), while the keyless local card answered "ok" in 0.0 ms
+    having asked its server nothing at all.
+
+    The wording probe therefore lives in the dictation layer, which is the only
+    place allowed to call that pass (AP-11), and this function is the one seam
+    that knows which card goes where.
+    """
+    family = _polish_family(spec)
+    if family is not None:
+        from jarvis.dictation.polish_probe import probe_polish_family
+
+        return await probe_polish_family(family, cfg, model=model or "")
+    return await _provider_test.run_provider_test(spec, cfg, model=model)
+
+
 @router.post("/providers/{provider_id}/test")
 async def test_provider_connection(
     provider_id: str, request: Request
@@ -906,7 +930,7 @@ async def test_provider_connection(
     # as an honest "unreachable" instead of a hung HTTP request.
     try:
         result = await asyncio.wait_for(
-            _provider_test.run_provider_test(spec, cfg),
+            _run_tier_test(spec, cfg),
             timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
         )
     except TimeoutError:
@@ -1031,10 +1055,21 @@ async def _tier_section_health(
             detail="No active provider selected",
             subject_id=None,
         )
-    # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
-    # the active provider it is usable. Skip the real test — it could force a heavy
-    # model load on page open for no signal we don't already have.
+    # Local providers have no key to be invalid — but "no key needed" is NOT the
+    # same as "usable", and reading it that way is how an on-device card comes to
+    # claim it works on a machine where its engine and weights were never
+    # installed. So ask the disk (a cheap file check, no model load) before
+    # calling the tier healthy. The real inference test still stays off the
+    # page-open path: it would force a multi-gigabyte load for no extra signal.
     if getattr(spec, "auth_mode", None) == "none":
+        local_state = _local_runtime_payload(spec)
+        if local_state is not None and not local_state["ready"]:
+            return SectionHealth(
+                status=_section_health.NEEDS_SETUP,
+                reason="not_installed",
+                detail=f"{spec.label}: {local_state['detail']}",
+                subject_id=spec.id,
+            )
         return SectionHealth(
             status=_section_health.OK,
             reason="local",
@@ -1069,7 +1104,7 @@ async def _tier_section_health(
             subject_id=spec.id,
         )
     try:
-        result = await _provider_test.run_provider_test(spec, cfg, model=model)
+        result = await _run_tier_test(spec, cfg, model=model)
     except Exception as exc:  # noqa: BLE001
         log.warning("section-health test for %s failed: %s", spec.id, exc)
         return SectionHealth(
@@ -2699,6 +2734,9 @@ _SWITCH_ERROR_STATUS: dict[str, int] = {
     "wrong_tier": 400,
     "subagent_only": 409,
     "missing_credential": 409,
+    # Same shape as a missing credential, for the on-device providers: the
+    # engine or its model is not on this machine yet.
+    "not_installed": 409,
     "subagent_unavailable": 409,
     "airgapped_locked": 403,
     "persist_failed": 500,
@@ -2844,9 +2882,11 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # Same reasoning as the STT switch: a local provider has no credential to
     # check, so readiness must be asked of the disk. Activating a voice whose
     # files are missing would turn every spoken reply into silence.
-    local_state = _local_runtime_payload(spec)
-    if local_state is not None and not local_state["ready"]:
-        raise HTTPException(status_code=409, detail=local_state["detail"])
+    from jarvis.brain.app_control import local_readiness_error
+
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        raise HTTPException(status_code=409, detail=not_installed)
 
     if body.persist:
         try:
@@ -3191,10 +3231,13 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # A local provider passes the credential check trivially (it has no key), so
     # readiness has to be asked separately — activating an engine that is not
     # installed would leave voice input dead with no explanation. This is the
-    # gate the 2026-07-03 card lacked.
-    local_status = _local_runtime_payload(spec)
-    if local_status is not None and not local_status["ready"]:
-        raise HTTPException(status_code=409, detail=local_status["detail"])
+    # gate the 2026-07-03 card lacked. Shared with the voice/CLI/tool switch
+    # path via ``local_readiness_error`` so the two can never disagree.
+    from jarvis.brain.app_control import local_readiness_error
+
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        raise HTTPException(status_code=409, detail=not_installed)
 
     if body.persist:
         try:

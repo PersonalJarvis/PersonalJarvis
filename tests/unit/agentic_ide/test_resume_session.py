@@ -864,3 +864,146 @@ async def test_a_discovered_conversation_id_is_not_overwritten_by_an_older_save(
     assert saved is not None
     stored = saved.workspaces[0].terminals[0].resume
     assert stored == found, "the discovered id must survive every other save"
+
+
+# ------------------------------------------ looking again once there is one
+class _LateConversation:
+    """A CLI that files its session only once the conversation has a message.
+
+    Which is what Codex, OpenCode and Kimi all do — and the whole reason a
+    lookup timed from the pane's LAUNCH kept coming back empty. Measured on a
+    real Codex pane: launched 15:17:44, rollout file written 15:19:32, the
+    instant its first brief was submitted.
+    """
+
+    def __init__(self) -> None:
+        self.handle = ResumeHandle(kind="codex_rollout", id="written-late", captured_at=9.0)
+        self.spoken_to = False
+        self.calls = 0
+
+    def __call__(self, *_args: object, **_kwargs: object) -> ResumeHandle | None:
+        self.calls += 1
+        return self.handle if self.spoken_to else None
+
+
+@pytest.fixture
+def late_cli(monkeypatch: pytest.MonkeyPatch) -> _LateConversation:
+    cli = _LateConversation()
+    monkeypatch.setattr(ide, "discover", cli)
+    monkeypatch.setattr(ide, "DISCOVERY_DELAYS_S", (0.0,))
+    monkeypatch.setattr(ide, "CONVERSATION_DELAYS_S", (0.0,))
+    # Both rounds are instant here, so the real cooldown — which exists to keep
+    # a leaning-on-Enter user from re-crawling the history — would swallow the
+    # very trigger under test. The one test that IS about the cooldown puts a
+    # real value back.
+    monkeypatch.setattr(ide, "LOOKUP_COOLDOWN_S", 0.0)
+    # The prompt path watches the pane's screen; keep those waits short enough
+    # that a test is not paced by them.
+    monkeypatch.setattr(ide, "_ARRIVAL_POLL_S", 0.01)
+    monkeypatch.setattr(ide, "_ARRIVAL_WINDOW_S", 0.04)
+    monkeypatch.setattr(ide, "_SUBMIT_POLL_S", 0.01)
+    monkeypatch.setattr(ide, "_SUBMIT_WINDOW_S", 0.04)
+    monkeypatch.setattr(ide, "_SUBMIT_RETRY_AFTER_S", 0.02)
+    return cli
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+
+
+async def test_a_conversation_that_starts_late_is_still_found(
+    registry: ide.Registry, fake_pty: FakePtyManager, tmp_path: Path, late_cli: _LateConversation
+) -> None:
+    """The bug: a pane prompted after the start window kept no handle at all.
+
+    Nothing is wrong with the search — it is asked at the wrong moment. Launching
+    one of these CLIs writes no session, so both attempts after the spawn find
+    nothing and the old code then gave up for good. The pane went on to work for
+    hours, was snapshotted with ``resume: null``, and came back empty.
+
+    So the search is asked again when the pane's conversation actually BEGINS.
+    """
+    fake_pty.tui_echo = True
+    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    await _settle()
+    assert registry.session.find("Cody").resume is None, "nothing exists to find yet"
+    assert late_cli.calls, "the pane still looks right after starting"
+
+    # The pane is given its first instruction, which is what makes the CLI write
+    # its session file.
+    late_cli.spoken_to = True
+    await registry.send_prompt("Cody", "review the pipeline")
+    await _settle()
+
+    term = registry.session.find("Cody")
+    assert term.resume == late_cli.handle, "the id must be captured once it exists"
+    saved = resume_store.load()
+    assert saved is not None
+    assert saved.workspaces[0].terminals[0].resume == late_cli.handle
+
+
+async def test_a_line_the_user_typed_themselves_also_starts_the_search(
+    registry: ide.Registry, tmp_path: Path, late_cli: _LateConversation
+) -> None:
+    """A pane driven by hand never goes through ``send_prompt``.
+
+    Most panes are typed into directly at least once, and that keystroke starts
+    the conversation exactly like an injected brief does — so it has to be worth
+    the same look, or resuming would work only for panes Jarvis drove.
+    """
+    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    await _settle()
+    assert registry.session.find("Cody").resume is None
+
+    late_cli.spoken_to = True
+    registry.write("Cody", "run the tests")  # typing alone is not a conversation
+    await _settle()
+    assert registry.session.find("Cody").resume is None, "a half-typed line is not a message"
+
+    registry.write("Cody", "\r")
+    await _settle()
+    assert registry.session.find("Cody").resume == late_cli.handle
+
+
+async def test_a_pane_does_not_start_a_new_search_for_every_keystroke(
+    registry: ide.Registry,
+    tmp_path: Path,
+    late_cli: _LateConversation,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each round opens up to 400 session files; Enter is pressed far more often.
+
+    A pane whose CLI genuinely has nothing to find (offline, uninstalled, a
+    conversation the user abandoned) would otherwise crawl its history again for
+    every line submitted into it.
+    """
+    monkeypatch.setattr(ide, "LOOKUP_COOLDOWN_S", 30.0)
+    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    await _settle()
+    after_start = late_cli.calls
+
+    for _ in range(5):
+        registry.write("Cody", "\r")
+        await _settle()
+
+    assert late_cli.calls - after_start <= 1, "the cooldown has to hold the rest back"
+
+
+async def test_a_pane_that_already_knows_its_conversation_never_looks_again(
+    registry: ide.Registry, tmp_path: Path, late_cli: _LateConversation
+) -> None:
+    """The handle is the answer; asking again could only replace it with another."""
+    late_cli.spoken_to = True
+    await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
+    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    await _settle()
+    assert registry.session.find("Cody").resume == late_cli.handle
+    settled = late_cli.calls
+
+    registry.write("Cody", "\r")
+    await _settle()
+    assert late_cli.calls == settled

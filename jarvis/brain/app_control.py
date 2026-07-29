@@ -187,6 +187,32 @@ def masked_secret_preview(provider_id: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
+def local_readiness_error(spec: ProviderSpec) -> str | None:
+    """Why an on-device provider cannot run yet — or ``None`` when it can.
+
+    Returns ``None`` for every cloud provider too, so a caller can apply it
+    unconditionally: locality is decided by the local-model catalog, never by a
+    provider name (AP-21).
+
+    This exists because "needs no credential" and "is usable" are different
+    facts that an ``auth_mode == "none"`` check silently conflates. An on-device
+    provider needs its engine installed and its weights downloaded, and neither
+    is implied by the absence of an API key — the exact conflation that let a
+    local recogniser present itself as ready on a machine where nothing had been
+    installed.
+    """
+    try:
+        from jarvis.speech.local_models import local_status
+
+        state = local_status(getattr(spec, "id", "") or "")
+    except Exception as exc:  # noqa: BLE001 — an unavailable probe blocks nothing
+        log.debug("Local readiness probe failed (%s); treating as not local.", exc)
+        return None
+    if state is None or state.ready:
+        return None
+    return state.detail
+
+
 def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
     """True iff ``spec``'s provider has a usable stored credential.
 
@@ -468,6 +494,19 @@ async def apply_provider_switch(
                 f"{spec.label} is not configured — its API key is missing. "
                 "Add it in the Settings tab first, then switch."
             ),
+        }
+    # The on-device equivalent of the check above, and it has to be its own
+    # step: ``is_credential_present`` answers True for every keyless provider by
+    # definition, so without this an engine that was never installed would sail
+    # through here and only fail later, silently, on the first utterance.
+    # Enforced at this one lock so the voice gate, the CLI and the brain tool
+    # are covered, not just the REST route.
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        return {
+            "ok": False,
+            "error_kind": "not_installed",
+            "error": not_installed,
         }
 
     if tier == "brain":

@@ -279,6 +279,24 @@ def _ids(ids: list[str]) -> list[ModelInfo]:
 # single block (voice_de/voice_en/model), so the picker only renders on the
 # ACTIVE TTS card and sets the global value.
 TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
+    # Piper (on-device). A Piper voice speaks ONE language, so this picker is a
+    # speaker choice, not a language choice: the provider still resolves the
+    # file from the turn's output language. Both sets are listed; the masculine
+    # trio is what the install downloads, and the feminine one is fetched on
+    # demand. Kept in sync with SHERPA_BUNDLES in jarvis/speech/local_models.py.
+    "piper-local": (
+        "voice",
+        _curated(
+            [
+                ("vits-piper-de_DE-thorsten-medium", "Thorsten — German, masculine"),
+                ("vits-piper-en_US-ryan-medium", "Ryan — English, masculine"),
+                ("vits-piper-es_ES-davefx-medium", "Dave — Spanish, masculine"),
+                ("vits-piper-de_DE-ramona-low", "Ramona — German, feminine"),
+                ("vits-piper-en_US-amy-medium", "Amy — English, feminine"),
+                ("vits-piper-es_ES-sharvard-medium", "Sharvard — Spanish, feminine"),
+            ]
+        ),
+    ),
     # ElevenLabs picks a VOICE ID (opaque hashes), so the curated list carries
     # human names as labels while the value stays the id. The picker's
     # "use custom" row lets a user paste their OWN voice id (e.g. a cloned
@@ -567,10 +585,15 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
 # STT model catalogs (the ``[stt] model`` is a single global value).
 STT_CATALOG: dict[str, list[ModelInfo]] = {
     "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo"]),
-    # "faster-whisper" (local) was removed as a user-selectable STT provider in
-    # v1.0.1 — see the note in provider_spec.py. The wake-word local Whisper and
-    # the key-free STT fallback do NOT use this catalog (they read [stt].wake_*
-    # / construct FasterWhisperProvider directly), so no wake/fallback breakage.
+    # The on-device recognizers offer exactly ONE model each, deliberately.
+    # Their predecessor card was removed in v1.0.1 partly because its picker
+    # listed all seven Whisper checkpoints regardless of which had been
+    # downloaded — a menu of mostly-absent options. What the installer fetches
+    # and what the picker offers are therefore the same single entry.
+    # (The wake word is a separate path with its own checkpoint via
+    # [stt].wake_*, and is not affected by anything in this catalog.)
+    "faster-whisper": _ids(["large-v3"]),
+    "nemotron-local": _ids(["nemotron-3.5-asr-streaming-0.6b-560ms-int8"]),
     "openai-api": _ids(
         [
             "gpt-4o-transcribe",
