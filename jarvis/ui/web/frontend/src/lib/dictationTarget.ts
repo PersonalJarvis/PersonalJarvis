@@ -96,6 +96,41 @@ export function resetDictationTarget(): void {
   lastEditable = null;
 }
 
+/** The final-transcript half of a `DictationTranscript` event. */
+export interface FinalTranscript {
+  text?: string;
+  /** The route the pipeline resolved: `insert` (foreign app) or `chat` (here). */
+  target?: string;
+}
+
+/**
+ * May this transcript be written into a field of this window?
+ *
+ * A predicate rather than an inline condition because getting it wrong is
+ * invisible in both directions, and each clause guards a different way of
+ * being wrong:
+ *
+ *  - **`target === "chat"`.** The event fires on BOTH routes. A dictation the
+ *    backend is already pasting into another program would otherwise ALSO be
+ *    written into whatever Jarvis field last had focus — a duplicate in a
+ *    section the user is not even looking at. A backend too old to send a
+ *    target says nothing, which reads as "not for us" and leaves that install
+ *    behaving exactly as it did before.
+ *  - **Words.** An aborted dictation publishes an empty final transcript purely
+ *    to end the live tail; there is nothing to insert and nothing to report.
+ *  - **The composer is not recording.** Its microphone button mirrors every
+ *    partial into itself and owns the commit, so inserting here as well would
+ *    deliver the same sentence twice.
+ */
+export function isForThisWindow(
+  payload: FinalTranscript,
+  composerIsRecording: boolean,
+): boolean {
+  if (payload.target !== "chat") return false;
+  if (!(payload.text ?? "").trim()) return false;
+  return !composerIsRecording;
+}
+
 /**
  * Write `text` wherever the user was typing. Never throws.
  *

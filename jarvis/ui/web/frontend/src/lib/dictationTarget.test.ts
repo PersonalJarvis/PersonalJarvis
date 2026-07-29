@@ -4,6 +4,7 @@ import { attachTerminalBridge } from "./editActions";
 import {
   deliverDictationText,
   installDictationFocusTracker,
+  isForThisWindow,
   resetDictationTarget,
 } from "./dictationTarget";
 
@@ -123,6 +124,36 @@ describe("deliverDictationText", () => {
     expect(deliverDictationText("second")).toBe("field");
     expect(first.value).toBe("");
     expect(second.value).toBe("second");
+  });
+});
+
+describe("isForThisWindow", () => {
+  /* The dangerous direction: the same event fires for a dictation the backend
+   * is pasting into ANOTHER program. Treating that one as ours would duplicate
+   * it into a Jarvis field nobody is looking at. */
+  it("refuses a transcript the backend is pasting elsewhere", () => {
+    expect(isForThisWindow({ text: "for notepad", target: "insert" }, false)).toBe(
+      false,
+    );
+  });
+
+  it("refuses a transcript from a backend too old to say", () => {
+    expect(isForThisWindow({ text: "unknown route" }, false)).toBe(false);
+  });
+
+  it("accepts a transcript meant for this window", () => {
+    expect(isForThisWindow({ text: "for us", target: "chat" }, false)).toBe(true);
+  });
+
+  it("refuses the empty final an aborted dictation publishes", () => {
+    expect(isForThisWindow({ text: "", target: "chat" }, false)).toBe(false);
+    expect(isForThisWindow({ text: "  ", target: "chat" }, false)).toBe(false);
+  });
+
+  it("leaves the composer's own microphone button to the composer", () => {
+    expect(isForThisWindow({ text: "typed live", target: "chat" }, true)).toBe(
+      false,
+    );
   });
 });
 
