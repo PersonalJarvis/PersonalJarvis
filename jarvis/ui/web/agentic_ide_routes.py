@@ -733,6 +733,21 @@ class PaneNotificationsResponse(BaseModel):
             "what was collected before."
         ),
     )
+    watching: bool = Field(
+        default=False,
+        description=(
+            "Is the sweep task actually running? An empty list has two very "
+            "different causes — nothing has happened, or nobody is looking — "
+            "and this is what tells them apart."
+        ),
+    )
+    panes_watched: int = Field(
+        default=0,
+        description=(
+            "How many panes the sweep holds state for. Zero while 'watching' is "
+            "true means it has not completed a pass yet."
+        ),
+    )
     unread: int = 0
     notifications: list[PaneNotification] = Field(default_factory=list)
 

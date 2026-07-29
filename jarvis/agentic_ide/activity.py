@@ -22,19 +22,31 @@ what a person looking at the pane would see, and that is the question.
 
 ## What it looks at, and what it deliberately does not
 
-**Working** is read from the CLI's own interrupt hint. Every coding TUI
-observed so far draws one while — and only while — it is busy: Claude Code
-("esc to interrupt"), Codex ("Esc to interrupt"). It is the closest thing to a
-protocol these products have, it means the same thing in all of them, and it is
-drawn on the pane's own initiative rather than inferred by us.
+**Working** is read from the CLI's own RUNNING CLOCK — the elapsed time in
+brackets that these products tick once a second while they work, and drop the
+instant they stop:
 
-**Idle time is not used**, and that is load-bearing. An agent thinking hard
-about a large refactor prints nothing for minutes at a time, while a stalled
-one may redraw its status bar every second — the same reasoning
-:mod:`.interrupted` sets out. A silence timer would report both wrongly.
+    ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← working
+    ▌ Working (28m 55s · Esc to interrupt)     ← working
+    ✻ Worked for 13m 27s                       ← finished, no brackets
 
-**A finished pane is not read from its text.** The rule is only ever "it was
-drawing the interrupt hint and now it is not", so what the agent WROTE never
+The first version of this module used the interrupt hint ("esc to interrupt")
+instead, on the reasoning that it is near-universal. It is not: the installed
+Claude Code shows one only in some states, so no pane was ever seen working, so
+nothing was ever reported finished — the bell stayed empty while terminals
+finished all around it. The clock is the better signal precisely because it is
+STRUCTURAL: a spinner word is random ("Meandering", "Scurrying"), the hint next
+to it differs per product and version, and both are English. The hint is kept
+as a second way in, for a CLI that shows one without a clock.
+
+**Idle time alone is not used**, and that is load-bearing. An agent thinking
+hard about a large refactor prints nothing readable for minutes at a time,
+while a stalled one may redraw its status bar every second — the same reasoning
+:mod:`.interrupted` sets out. Freshness is used only to confirm that a clock
+already on screen is TICKING, never on its own.
+
+**A finished pane is not read from its prose.** The rule is only ever "it was
+drawing a running clock and now it is not", so what the agent WROTE never
 decides whether it is done. That keeps the detector working for a CLI nobody
 has taught it about, in a language nobody anticipated.
 
@@ -46,13 +58,19 @@ costs the user a more specific word and nothing else.
 
 ## Honest limits
 
-A CLI that draws no interrupt hint at all reads as ``waiting`` for its whole
-life, so it produces no "finished" notification rather than a wrong one. A
-plain shell pane is not an agent and is left out entirely by the caller.
+A CLI that draws neither a clock nor a hint reads as ``waiting`` for its whole
+life, so it produces no "finished" notification rather than a wrong one. An
+agent whose process WEDGES stops ticking, so it reads as finished a few seconds
+later — the wording ("finished and waiting at its prompt") is then optimistic,
+which is the one case where this is wrong in the user's favour rather than
+silent. A plain shell pane is not an agent and is left out entirely by the
+caller.
 """
 
 from __future__ import annotations
 
+import re
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -74,12 +92,46 @@ Activity = Literal["starting", "working", "waiting", "asking", "failed", "exited
 #: which may quote any phrase here without meaning it now.
 TAIL_ROWS = 8
 
-#: The interrupt hint a coding CLI draws while it is working, lower-cased.
+#: The RUNNING CLOCK a coding CLI draws while it is working: an elapsed time in
+#: brackets, ticking once a second.
 #:
-#: Shared rather than per-product on purpose: the wording is near-universal, and
-#: splitting it per entry would mean a CLI registered tomorrow starting with an
-#: empty set and never reporting that it finished anything. An entry adds its
-#: own peculiarities through ``WorkspaceAgent.busy_fragments``.
+#: This is the primary signal, and it is structural rather than verbal — which
+#: is the whole reason it was chosen over the wording. Measured against the CLIs
+#: actually installed here:
+#:
+#:     ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← working
+#:     ▌ Working (28m 55s · Esc to interrupt)     ← working
+#:     ✻ Worked for 13m 27s                       ← finished, no brackets
+#:
+#: A spinner word is random ("Meandering", "Scurrying", "Crystallizing"), the
+#: hint next to it differs per product and per version, and both are English. A
+#: bracketed live clock is none of those things: every one of these products
+#: draws one while it works and drops it the moment it stops.
+#:
+#: **Anchored on SECONDS**, and that is not cosmetic. "any number followed by a
+#: time letter in brackets" also matches the model banner these panes carry on
+#: every frame — ``Opus 5 (1M context)``, which case-folds to ``(1m context)``
+#: — so every idle terminal in the workspace read as busy and nothing was ever
+#: reported. A clock that ticks always shows the ticking unit.
+_LIVE_CLOCK_RE = re.compile(r"\(\s*(?:\d+\s*[hm]\s+)*\d+\s*s\b")
+
+#: How recently the pane must have printed for a visible clock to count as a
+#: RUNNING one.
+#:
+#: The pairing is what makes the signal safe. A clock ticks, so a pane drawing
+#: one is producing output every second; a bracketed duration on a screen that
+#: has been still for longer than this is text about a clock, not a clock —
+#: an agent quoting "(3s)" in its own answer, or a frame frozen where it stopped.
+CLOCK_FRESH_S = 8.0
+
+#: Interrupt hints some CLIs draw while busy, lower-cased. The SECOND way in,
+#: kept because a CLI may show one without a clock; a product that shows neither
+#: simply never reports finishing, which is the safe way to be wrong.
+#:
+#: Shared rather than per-product: the wording is near-universal among those
+#: that show it at all, and splitting it per entry would mean a CLI registered
+#: tomorrow starting with an empty set. An entry adds its own peculiarities
+#: through ``WorkspaceAgent.busy_fragments``.
 BUSY_FRAGMENTS: tuple[str, ...] = (
     "to interrupt",
     "esc to stop",
@@ -91,6 +143,12 @@ BUSY_FRAGMENTS: tuple[str, ...] = (
 #: A visible question or choice: the pane is not busy, and it is not simply
 #: waiting either — somebody has to answer it before anything else happens.
 #:
+#: Deliberately SHORT, and every entry is a phrase a TUI only writes when it is
+#: actually asking. Two classes were tried and removed: a startup BANNER ("1 MCP
+#: server needs authentication") sits on screen for the pane's whole life and
+#: would make every idle terminal a standing question, and bare verbs
+#: ("confirm", "approve") match an agent's ordinary prose about its own work.
+#:
 #: Only ever consulted for a pane already established as not-working (see the
 #: module docstring), so a miss costs a word, never a wrong state.
 ASK_FRAGMENTS: tuple[str, ...] = (
@@ -98,18 +156,13 @@ ASK_FRAGMENTS: tuple[str, ...] = (
     "would you like",
     "(y/n)",
     "[y/n]",
-    "yes/no",
+    "yes/no?",
     "press enter to continue",
-    "continue? ",
     "1. yes",
     "❯ 1.",
-    "> 1.",
-    "needs authentication",
-    "waiting for your",
+    "▶ 1.",
     "select an option",
     "choose an option",
-    "confirm",
-    "approve",
 )
 
 
@@ -151,7 +204,23 @@ def _contains(rows: Sequence[str], fragments: Sequence[str]) -> bool:
     return any(fragment in row for row in rows for fragment in fragments)
 
 
-def read_activity(term: Any) -> Activity:
+def _clock_running(rows: Sequence[str], term: Any, *, now: float | None = None) -> bool:
+    """Is a live elapsed-time clock being drawn right now?
+
+    Both halves are required, and the second is what keeps the first honest —
+    see :data:`CLOCK_FRESH_S`. ``now`` is injectable so a test can place a pane
+    on a timeline instead of racing the wall clock.
+    """
+    if not any(_LIVE_CLOCK_RE.search(row) for row in rows):
+        return False
+    last = getattr(term, "last_output_at", None)
+    if not last:
+        return False
+    moment = time.time() if now is None else now
+    return moment - float(last) <= CLOCK_FRESH_S
+
+
+def read_activity(term: Any, *, now: float | None = None) -> Activity:
     """What ``term`` is doing at this instant.
 
     Duck-typed on purpose — :class:`~.session.Terminal` imports this module's
@@ -169,6 +238,10 @@ def read_activity(term: Any) -> Activity:
         return "starting"
 
     rows = _visible_rows(term)
+    # The clock first: it is the signal every one of these products draws, while
+    # the hint below is the one some of them happen to.
+    if _clock_running(rows, term, now=now):
+        return "working"
     if _contains(rows, (*BUSY_FRAGMENTS, *_extra_busy_fragments(getattr(term, "agent", "")))):
         return "working"
     if _contains(rows, ASK_FRAGMENTS):
@@ -190,6 +263,7 @@ def is_settled(activity: str) -> bool:
 __all__ = [
     "ASK_FRAGMENTS",
     "BUSY_FRAGMENTS",
+    "CLOCK_FRESH_S",
     "SETTLED",
     "TAIL_ROWS",
     "Activity",
