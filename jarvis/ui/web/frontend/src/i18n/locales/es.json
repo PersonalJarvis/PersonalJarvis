@@ -1552,6 +1552,7 @@
       "recording_hint": "Mantén las teclas que quieras (y suéltalas) — o haz clic en ellas en el teclado de abajo. Se guarda solo. Esc cancela.",
       "record_prompt": "Pulsa tu combinación…",
       "record_prompt_hint": "Vale cualquier combinación — Ctrl, Alt, Mayús, la tecla Windows o Command, y el botón central o lateral del ratón. Mantén las teclas que quieras y suéltalas: se guarda solo. Esc cancela.",
+      "record_prompt_holding": "Sigue manteniéndolas — tienes todo el tiempo para añadir más teclas. No se guarda nada hasta que sueltes todas.",
       "caution_modifier_only": "Solo teclas modificadoras: también se dispara cuando pulsas otra cosa a la vez, así que Ctrl+Windows se activa también con Ctrl+Windows+Izquierda.",
       "caution_os_shortcut": "No se intercepta nada: lo que esta combinación ya hace — un atajo del sistema o un clic sobre lo que estés señalando — sigue ocurriendo, así que pasan las dos cosas a la vez.",
       "unbound": "Sin tecla asignada",

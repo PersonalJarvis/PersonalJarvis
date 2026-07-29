@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   chordToCombo,
   codeToKeyToken,
+  codeToModifierToken,
   composeCombo,
   comboTokens,
   validateCombo,
@@ -35,6 +36,22 @@ const _KB_PLATFORM = detectKeyboardPlatform();
  * keys is already an unambiguous "I am done".
  */
 const _CLICK_SETTLE_MS = 1200;
+
+/**
+ * How long the recorder waits after the last key event before assuming a keyup
+ * was swallowed and committing the chord anyway.
+ *
+ * This is a RESCUE path, never the normal one. It fires only while everything
+ * still marked as held is an ordinary key — one that auto-repeats, and so
+ * re-arms this timer many times a second for as long as it is genuinely down.
+ * A held MODIFIER suppresses it outright and the recorder then waits
+ * indefinitely: holding Ctrl+Alt while deciding on the third key is how a human
+ * actually builds a chord, and committing "ctrl+alt" out from under them (the
+ * reported "it saves before I can think") is precisely what this guard exists
+ * to prevent. The gesture ends when the user lets go of everything — or when
+ * the window loses focus, which ends it whether the keys came up or not.
+ */
+const _LOST_KEYUP_MS = 900;
 
 /** Pretty-print a combo string ("ctrl+right_alt+j" → "Ctrl + AltGr + J"). */
 export function formatCombo(combo: string): string {
@@ -398,7 +415,7 @@ export function KeybindRow({
     const held = new Set<string>(); // non-modifier key tokens seen this gesture
     const pressed = new Set<string>(); // physical event.codes currently down
     let pending: string | null = null; // fullest chord captured so far
-    let idle: ReturnType<typeof setTimeout> | undefined; // fallback-commit timer
+    let idle: ReturnType<typeof setTimeout> | undefined; // rescue-commit timer
 
     function commit() {
       if (pending) {
@@ -412,14 +429,55 @@ export function KeybindRow({
       }
     }
 
+    /**
+     * Whether everything we still believe is down could plausibly be a
+     * SWALLOWED keyup rather than a key the user is deliberately holding.
+     *
+     * Modifiers are excluded because they are the one thing a person holds
+     * while thinking, and because they do not auto-repeat everywhere — a timer
+     * cannot tell "still holding Ctrl" from "Ctrl's keyup went missing", so it
+     * must not guess. Mouse buttons are excluded because their release is
+     * delivered reliably; there is nothing to rescue.
+     */
+    function staleKeysOnly() {
+      if (pressed.size === 0) return false;
+      for (const code of pressed) {
+        if (codeToModifierToken(code) !== null) return false;
+        if (code.startsWith("MouseButton")) return false;
+      }
+      return true;
+    }
+
+    // Rescue timer for keys that never deliver a keyup — function keys
+    // especially, and anything released while the window is losing focus.
+    // Without it the "commit on full release" path below would hang forever
+    // ("F5+F6 never records"). It re-arms on every key event INCLUDING
+    // auto-repeat, so a genuinely held key keeps pushing it out of reach.
+    function armRescue() {
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(() => {
+        if (!staleKeysOnly()) return; // really still held → keep waiting
+        commit();
+      }, _LOST_KEYUP_MS);
+    }
+
     function onKeyDown(e: KeyboardEvent) {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") {
-        if (idle) clearTimeout(idle); // cancel a pending fallback commit
+        if (idle) clearTimeout(idle); // cancel a pending rescue commit
         // Undo the live preview: back to the saved value (server truth).
         setCombo(currentRef.current || comboBeforeCapture.current);
         setCapturing(false);
+        return;
+      }
+      // Auto-repeat carries no new information — it is the browser saying the
+      // key is STILL physically down. That makes it exactly the proof the
+      // rescue timer needs, and nothing else: re-render the whole row dozens of
+      // times a second for an unchanged chord and the app crawls while the
+      // recorder is open.
+      if (e.repeat) {
+        armRescue();
         return;
       }
       pressed.add(e.code);
@@ -432,14 +490,7 @@ export function KeybindRow({
         setCombo(next); // live preview as the chord grows
         setSaved(false);
       }
-      // Fallback: some keys — function keys especially, and any key whose
-      // release lands while the window is losing focus — do NOT reliably
-      // deliver a keyup. Without this the "commit on full release" path below
-      // would hang forever ("F5+F6 never records"). Re-arm an idle timer on
-      // every keydown; once the user stops pressing for ~900 ms, commit the
-      // chord we have even if a keyup never came.
-      if (idle) clearTimeout(idle);
-      idle = setTimeout(commit, 900);
+      armRescue();
     }
 
     function onKeyUp(e: KeyboardEvent) {
@@ -450,6 +501,53 @@ export function KeybindRow({
       // Fast path: commit the instant EVERY key is released. `pending` holds
       // the fullest chord seen during the gesture, so the release order never
       // matters and early-lifted keys are not lost.
+      if (pressed.size === 0 && pending) {
+        if (idle) clearTimeout(idle);
+        commit();
+        return;
+      }
+      armRescue();
+    }
+
+    /**
+     * The window losing focus ends the gesture whether the keys came up or not:
+     * the keyups are delivered to whatever took focus, so waiting for them
+     * would leave the recorder armed forever. This is the honest end of the
+     * one case a timer must not resolve — a held modifier whose release we will
+     * never see (pressing the Windows key opens Start and takes focus with it).
+     */
+    function onWindowBlur() {
+      if (idle) clearTimeout(idle);
+      commit();
+    }
+
+    /**
+     * Drop modifiers from the held set that a mouse event proves are already up.
+     *
+     * Every mouse event carries the TRUE modifier state, so this is a free,
+     * continuous repair for a swallowed modifier keyup — and a held modifier is
+     * exactly what suppresses the rescue timer, so without it the recorder
+     * could sit armed with a phantom Ctrl and no way out but Esc.
+     */
+    function syncModifiers(e: MouseEvent) {
+      let changed = false;
+      for (const code of [...pressed]) {
+        const stillDown = code.startsWith("Control")
+          ? e.ctrlKey
+          : code.startsWith("Alt")
+            ? e.altKey
+            : code.startsWith("Shift")
+              ? e.shiftKey
+              : code.startsWith("Meta")
+                ? e.metaKey
+                : true; // not a modifier — a mouse event says nothing about it
+        if (!stillDown) {
+          pressed.delete(code);
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      setPressedCodes(new Set(pressed));
       if (pressed.size === 0 && pending) {
         if (idle) clearTimeout(idle);
         commit();
@@ -491,8 +589,7 @@ export function KeybindRow({
         setCombo(next);
         setSaved(false);
       }
-      if (idle) clearTimeout(idle);
-      idle = setTimeout(commit, 900);
+      armRescue();
     }
 
     function onMouseUp(e: MouseEvent) {
@@ -505,7 +602,9 @@ export function KeybindRow({
       if (pressed.size === 0 && pending) {
         if (idle) clearTimeout(idle);
         commit();
+        return;
       }
+      armRescue();
     }
 
     // The side buttons are Back/Forward and the middle button starts autoscroll;
@@ -522,6 +621,8 @@ export function KeybindRow({
     window.addEventListener("mousedown", onMouseDown, true);
     window.addEventListener("mouseup", onMouseUp, true);
     window.addEventListener("auxclick", onAuxClick, true);
+    window.addEventListener("mousemove", syncModifiers, true);
+    window.addEventListener("blur", onWindowBlur);
     return () => {
       if (idle) clearTimeout(idle);
       window.removeEventListener("keydown", onKeyDown, true);
@@ -529,6 +630,8 @@ export function KeybindRow({
       window.removeEventListener("mousedown", onMouseDown, true);
       window.removeEventListener("mouseup", onMouseUp, true);
       window.removeEventListener("auxclick", onAuxClick, true);
+      window.removeEventListener("mousemove", syncModifiers, true);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, [capturing]);
 
@@ -616,18 +719,35 @@ export function KeybindRow({
   // ONE stable status line: the blocking message when there is one, otherwise
   // the cautions, otherwise the recording hint. Two separately appearing lines
   // made the keyboard below jump vertically on every combo click.
-  const statusLine = (capturing || validationMsg) && (
+  //
+  // While keys are physically DOWN the chord is still being built, so the line
+  // says so and nothing else. A caution about the half-built state ("a
+  // modifier-only shortcut fires on any superset") judges something the user
+  // has not decided yet — it belongs to the combo they let go of, not to the
+  // one they are still assembling. A blocking collision keeps speaking, since
+  // that is the one thing that will stop the save.
+  const holding = capturing && pressedCodes.size > 0;
+  const isError = !!validationMsg && validation.status === "error";
+  const showValidation = !!validationMsg && (isError || !holding);
+  const statusText = showValidation
+    ? validationMsg
+    : holding
+      ? t("settings_view.keybinds.record_prompt_holding")
+      : capturing
+        ? t("settings_view.keybinds.record_prompt_hint")
+        : null;
+  const statusLine = statusText && (
     <p
-      data-testid={validationMsg ? `keybind-validation-${action}` : undefined}
+      data-testid={showValidation ? `keybind-validation-${action}` : undefined}
       className={`mt-2 text-[11px] ${
-        validationMsg
-          ? validation.status === "error"
+        showValidation
+          ? isError
             ? "text-destructive"
             : "text-amber-400"
           : "text-muted-foreground"
       }`}
     >
-      {validationMsg ?? t("settings_view.keybinds.record_prompt_hint")}
+      {statusText}
     </p>
   );
 

@@ -156,6 +156,158 @@ describe("KeybindsPanel", () => {
     expect(comboText("call")).toBe("F5+F6");
   });
 
+  it("gives the user unlimited time to think while modifiers are held", async () => {
+    // The reported bug: "I press Ctrl+Alt, and before I can decide what the
+    // third key is, it has already saved Ctrl+Alt." Holding modifiers is how a
+    // human builds a chord, so the recorder must wait — not for longer, but for
+    // as long as the keys are down.
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(window, {
+        code: "ControlLeft",
+        key: "Control",
+        ctrlKey: true,
+      });
+      fireEvent.keyDown(window, {
+        code: "AltLeft",
+        key: "Alt",
+        ctrlKey: true,
+        altKey: true,
+      });
+      // Half a minute of deciding. Nothing may leave for the backend.
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      // The third key still lands in the SAME gesture.
+      fireEvent.keyDown(window, {
+        code: "KeyX",
+        key: "x",
+        ctrlKey: true,
+        altKey: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    fireEvent.keyUp(window, { code: "KeyX", key: "x", ctrlKey: true, altKey: true });
+    fireEvent.keyUp(window, { code: "AltLeft", key: "Alt", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "ControlLeft", key: "Control" });
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PUT" &&
+            (c.body as { hotkey: string }).hotkey === "ctrl+alt+x",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("treats a key's auto-repeat as proof it is still held", async () => {
+    // A held ordinary key reports itself as repeated keydowns. Each one has to
+    // push the swallowed-keyup rescue out of reach, or holding one key while
+    // reaching for the next commits the half-built chord.
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(window, { code: "KeyX", key: "x" });
+      for (let i = 0; i < 10; i++) {
+        act(() => {
+          vi.advanceTimersByTime(500);
+        });
+        fireEvent.keyDown(window, { code: "KeyX", key: "x", repeat: true });
+      }
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    fireEvent.keyUp(window, { code: "KeyX", key: "x" });
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) => c.method === "PUT" && (c.body as { hotkey: string }).hotkey === "x",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("ends the gesture when the window loses focus with keys still down", async () => {
+    // Pressing the Windows key opens Start and takes focus with it, so its
+    // keyup is delivered somewhere else and never arrives. Waiting for a
+    // release that cannot come would leave the recorder armed forever.
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    fireEvent.keyDown(window, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
+    });
+    fireEvent.keyDown(window, {
+      code: "MetaLeft",
+      key: "Meta",
+      ctrlKey: true,
+      metaKey: true,
+    });
+    fireEvent.blur(window);
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PUT" &&
+            (c.body as { hotkey: string }).hotkey === "ctrl+win",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("recovers from a swallowed modifier keyup on the next mouse move", async () => {
+    // A mouse event carries the TRUE modifier state, so it is a free, continuous
+    // repair for a phantom held modifier — the one state no timer may resolve.
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    fireEvent.keyDown(window, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
+    });
+    fireEvent.keyDown(window, { code: "KeyJ", key: "j", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "KeyJ", key: "j", ctrlKey: true });
+    // Ctrl's keyup never arrives — but the mouse says it is up.
+    fireEvent.mouseMove(window, { ctrlKey: false });
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PUT" && (c.body as { hotkey: string }).hotkey === "ctrl+j",
+        ),
+      ).toBe(true),
+    );
+  });
+
   it("lights up the on-screen keyboard live as keys are pressed", async () => {
     stubFetch();
     render(<KeybindsPanel />);

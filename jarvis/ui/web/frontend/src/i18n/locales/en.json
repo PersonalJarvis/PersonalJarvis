@@ -1553,6 +1553,7 @@
       "recording_hint": "Hold the keys you want (then let go), or click them on the keyboard below. It saves itself. Esc cancels.",
       "record_prompt": "Press your combination…",
       "record_prompt_hint": "Any combination works — Ctrl, Alt, Shift, the Windows or Command key, and the middle or side buttons of your mouse. Hold the keys you want, then let go — it saves itself. Esc cancels.",
+      "record_prompt_holding": "Keep holding — take all the time you need to add more keys. Nothing is saved until you let go of every one of them.",
       "caution_modifier_only": "Modifier keys only: this also fires whenever you press something else together with them, so Ctrl+Win triggers on Ctrl+Win+Left too.",
       "caution_os_shortcut": "Nothing is swallowed: whatever this combination already does — a system shortcut, or a click on whatever you are pointing at — still happens, so you get both at once.",
       "unbound": "No key assigned",

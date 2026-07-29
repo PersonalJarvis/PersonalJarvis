@@ -1552,6 +1552,7 @@
       "recording_hint": "Halte die gewünschten Tasten (dann loslassen) — oder klick sie unten auf der Tastatur an. Wird automatisch gespeichert. Esc bricht ab.",
       "record_prompt": "Drücke deine Kombination…",
       "record_prompt_hint": "Jede Kombination geht — Strg, Alt, Umschalt, die Windows- oder Command-Taste und die mittlere oder seitliche Maustaste. Halte die gewünschten Tasten, dann loslassen — wird automatisch gespeichert. Esc bricht ab.",
+      "record_prompt_holding": "Weiter halten — du hast alle Zeit, um weitere Tasten dazuzunehmen. Gespeichert wird erst, wenn du jede davon losgelassen hast.",
       "caution_modifier_only": "Nur Modifikatortasten: Das löst auch aus, wenn du gleichzeitig etwas anderes drückst — Strg+Windows greift also auch bei Strg+Windows+Links.",
       "caution_os_shortcut": "Nichts wird abgefangen: Was diese Kombination ohnehin schon tut — ein System-Kürzel oder ein Klick auf das, worauf du zeigst — passiert weiterhin, du bekommst also beides gleichzeitig.",
       "unbound": "Keine Taste zugewiesen",
