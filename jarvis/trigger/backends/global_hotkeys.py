@@ -148,6 +148,53 @@ def _normalize_combo(combo: str) -> str:
     return " + ".join(_KEY_MAP.get(p, p) for p in parts)
 
 
+def _registration_combos(normalized: str) -> list[str]:
+    """Every chord that has to be armed so ``normalized`` can actually fire.
+
+    Windows reports MORE modifier keys as held than the user physically chose,
+    and the library's matcher refuses a chord while any modifier it does not
+    itself name is down (``non_allowed_modifiers`` in ``HotkeyChecker.run``).
+    Two keys are affected, and both produced a shortcut that saved, displayed
+    in the UI, and then never fired once — the "I picked my keys and nothing
+    happens" report:
+
+    * **AltGr.** On a German, French, Nordic, Polish, Brazilian (…) layout the
+      keyboard driver raises ``VK_CONTROL`` alongside ``VK_MENU`` whenever
+      AltGr goes down. A combo the user recorded as ``right_alt+j`` folds to
+      ``alt + j``, which does not name Ctrl — so the phantom Ctrl the driver
+      injected disqualified the chord on every single press. The shipped
+      defaults all happened to spell an explicit ``ctrl``, which is why this
+      never showed up in the shortcuts we ourselves ship.
+    * **The right Ctrl key.** It raises the generic ``VK_CONTROL`` as well as
+      ``VK_RCONTROL``, and ``right_control`` alone names only the specific one.
+
+    They need different repairs, because only one of them is ambiguous:
+
+    * ``right_control`` is a CORRECTION — the generic Ctrl is always up when
+      the right Ctrl is down, so ``control + right_control + …`` is simply the
+      truthful chord. It still fires exclusively on the right-hand key, since
+      the left one never raises ``VK_RCONTROL``.
+    * ``alt`` is a VARIANT. By the time a combo reaches this module, every Alt
+      spelling has folded onto the one token the library knows, so we can no
+      longer tell "the user chose AltGr" from "the user chose the left Alt" —
+      and the two produce different physical key states. So both chords are
+      armed. They are mutually exclusive by construction: the plain one is
+      refused while Ctrl is down, the Ctrl-carrying one requires it, so a press
+      matches exactly one of them and a handler never runs twice.
+
+    Returns the primary chord first; anything after it is a compatibility
+    variant the caller registers in a second pass, so a chord some other action
+    chose EXPLICITLY always wins the registration.
+    """
+    tokens = [p.strip() for p in normalized.split("+") if p.strip()]
+    if "right_control" in tokens and "control" not in tokens:
+        tokens = ["control", *tokens]
+    combos = [" + ".join(tokens)]
+    if "alt" in tokens and "control" not in tokens:
+        combos.append(" + ".join(["control", *tokens]))
+    return combos
+
+
 class GlobalHotkeysBackend:
     """Windows ``global-hotkeys`` backend (relocated logic, AD-7).
 
@@ -186,8 +233,20 @@ class GlobalHotkeysBackend:
         # the translated strings for registration AND removal — the two must be
         # byte-identical or ``remove_hotkeys`` leaves a stale registration that
         # bricks the next re-entry.
-        bindings = [[_to_library_combo(row[0]), *row[1:]] for row in bindings]
-        combo_strings = [row[0] for row in bindings]
+        #
+        # ``_registration_combos`` may hand back a SECOND chord for the same
+        # binding (the AltGr repair — see its docstring). Those go in their own
+        # list and are registered afterwards, so a chord another action chose
+        # explicitly always claims the registration ahead of a compatibility
+        # variant.
+        primary: list[list] = []
+        compat: list[list] = []
+        for row in bindings:
+            variants = _registration_combos(row[0])
+            primary.append([_to_library_combo(variants[0]), *row[1:]])
+            compat.extend([_to_library_combo(v), *row[1:]] for v in variants[1:])
+        bindings = primary
+        combo_strings = [row[0] for row in primary + compat]
 
         # Idempotent (re-)registration. A previous lifecycle in this process
         # may have left these combos in the shared singleton (historically the
@@ -222,6 +281,31 @@ class GlobalHotkeysBackend:
                     exc_info=True,
                 )
                 continue
+            registered_rows.append(row)
+            registered_strings.append(row[0])
+
+        # Second pass: the compatibility chords. Skipping one is normal, not a
+        # fault — it means the same chord is already armed, either because
+        # another action named it outright or because two bindings produced the
+        # same variant. The library keys its registry off the token ORDER, so a
+        # hand-written jarvis.toml could spell an existing chord differently and
+        # slip past its duplicate check; comparing the token SETS ourselves is
+        # what keeps that from arming one physical press twice.
+        taken = {frozenset(c.replace(" ", "").split("+")) for c in registered_strings}
+        for row in compat:
+            keys = frozenset(row[0].replace(" ", "").split("+"))
+            if keys in taken:
+                continue
+            try:
+                gh.register_hotkeys([row])
+            except Exception:  # noqa: BLE001 — the primary chord is what matters
+                log.debug(
+                    "Compatibility chord %r not armed (already registered).",
+                    row[0],
+                    exc_info=True,
+                )
+                continue
+            taken.add(keys)
             registered_rows.append(row)
             registered_strings.append(row[0])
 

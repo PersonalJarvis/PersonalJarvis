@@ -278,6 +278,107 @@ def test_global_backend_all_combos_bad_degrades(fake_gh):
     assert fake_gh.start_calls == 0
 
 
+# ----------------------------------------------------------------------
+# Windows reports more modifiers than the user pressed (_registration_combos).
+#
+# The matcher refuses a chord while any modifier it does not name is down, and
+# two keys always raise one the user never chose: AltGr injects VK_CONTROL on a
+# German/French/Nordic/... layout, and the right Ctrl raises the generic
+# VK_CONTROL next to VK_RCONTROL. Both used to save, display in the UI and then
+# never fire — the "I picked my own keys and nothing happens" report.
+# ----------------------------------------------------------------------
+
+
+def test_altgr_combo_is_also_armed_with_the_ctrl_the_driver_injects(fake_gh):
+    """REGRESSION: an AltGr shortcut has to fire on a layout that HAS AltGr.
+
+    ``right_alt+j`` folds to ``alt + j``, which the matcher rejects the moment
+    AltGr's phantom Ctrl is down — i.e. on every real press of that very key.
+    Arming the Ctrl-carrying chord as well is what makes the user's choice work.
+    """
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    fired: list[str] = []
+    backend = GlobalHotkeysBackend()
+    backend.register([["alt + j", None, lambda: fired.append("dictate")]])
+    backend.start()
+
+    assert "alt+j" in fake_gh.registered  # a plain left-Alt press still matches
+    assert "control+alt+j" in fake_gh.registered  # and so does AltGr
+
+    fake_gh.fire("control + alt + j")
+    assert fired == ["dictate"]
+    backend.stop()
+
+
+def test_right_ctrl_combo_names_the_generic_ctrl_it_raises(fake_gh):
+    """REGRESSION: the right Ctrl key raises VK_CONTROL too, so name it.
+
+    Unlike AltGr this is not ambiguous — the generic Ctrl is ALWAYS down when
+    the right one is — so the chord is corrected rather than duplicated. It
+    still fires only on the right-hand key: the left one never raises
+    ``right_control``.
+    """
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    fired: list[str] = []
+    backend = GlobalHotkeysBackend()
+    backend.register([["right_control + j", None, lambda: fired.append("call")]])
+    backend.start()
+
+    assert "control+right_control+j" in fake_gh.registered
+    assert "right_control+j" not in fake_gh.registered  # the dead spelling is gone
+
+    fake_gh.fire("control + right_control + j")
+    assert fired == ["call"]
+    backend.stop()
+
+
+def test_compatibility_chord_never_steals_one_another_action_chose(fake_gh):
+    """An explicitly chosen chord outranks another binding's AltGr variant.
+
+    ``alt+j``'s variant is ``control + alt + j``, which is also exactly what a
+    second action spelled out. Registering it twice is impossible, so the
+    explicit owner keeps it and only its handler runs.
+    """
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    fired: list[str] = []
+    backend = GlobalHotkeysBackend()
+    backend.register(
+        [
+            ["alt + j", None, lambda: fired.append("dictate")],
+            ["control + alt + j", None, lambda: fired.append("call")],
+        ]
+    )
+    backend.start()
+    fake_gh.fire("control + alt + j")
+    assert fired == ["call"]
+    backend.stop()
+
+
+def test_compatibility_chord_is_removed_on_teardown(fake_gh):
+    """Both chords must come off, or re-entry dies on "already registered"."""
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    backend = GlobalHotkeysBackend()
+    backend.register([["alt + j", None, lambda: None]])
+    backend.start()
+    backend.stop()
+    backend.unregister()
+    assert fake_gh.registered == {}
+
+
+def test_registration_combos_leaves_ordinary_chords_alone():
+    """No variant for a chord Windows reports exactly as pressed."""
+    from jarvis.trigger.backends.global_hotkeys import _registration_combos
+
+    assert _registration_combos("f1 + f2") == ["f1 + f2"]
+    assert _registration_combos("control + alt + j") == ["control + alt + j"]
+    assert _registration_combos("shift + f7") == ["shift + f7"]
+    assert _registration_combos("window + j") == ["window + j"]
+
+
 def test_global_backend_missing_package_degrades():
     """No global_hotkeys package → register degrades to a no-op, no raise."""
     from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
