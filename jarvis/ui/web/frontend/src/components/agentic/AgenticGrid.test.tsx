@@ -293,7 +293,7 @@ afterEach(() => {
 function renderGrid(session = BASE, extra: Record<string, unknown> = {}) {
   const onSessionChanged = vi.fn();
   const onClose = vi.fn();
-  render(
+  const props = (override: Record<string, unknown>) => (
     <AgenticGrid
       session={session}
       focusMode={false}
@@ -301,9 +301,16 @@ function renderGrid(session = BASE, extra: Record<string, unknown> = {}) {
       onClose={onClose}
       onSessionChanged={onSessionChanged}
       {...extra}
-    />,
+      {...override}
+    />
   );
-  return { onSessionChanged, onClose };
+  const view = render(props({}));
+  // Re-render the SAME grid with a prop changed — for the tests that assert on
+  // what a live grid does when something about it changes, as opposed to how a
+  // fresh one starts up.
+  const rerender = (override: Record<string, unknown>) =>
+    view.rerender(props(override));
+  return { onSessionChanged, onClose, rerender };
 }
 
 describe("pane actions", () => {
@@ -1528,6 +1535,37 @@ describe("session recaps", () => {
   it("asks the backend what its own workspace's panes are doing", async () => {
     renderGrid();
 
+    await waitFor(() =>
+      expect(api.fetchTerminalRecaps).toHaveBeenCalledWith("ide_test"),
+    );
+  });
+
+  /**
+   * The grid outlives the section being on screen (see MainView): it is hidden
+   * rather than unmounted so its terminals survive a trip to another view. That
+   * makes "is anyone looking?" a real question — `/recaps` walks every pane's
+   * replay buffer through the summarizer, every five seconds, on the same event
+   * loop that carries the wake microphone.
+   */
+  it("asks nothing at all while its section is off screen", async () => {
+    renderGrid(BASE, { onScreen: false });
+    // The read on mount is the poller's first act, and the interval is created
+    // beside it — so no read here means no interval either, and a hidden
+    // workspace costs the backend nothing.
+    await act(async () => {});
+
+    expect(api.fetchTerminalRecaps).not.toHaveBeenCalled();
+  });
+
+  it("catches its headers up the moment it comes back", async () => {
+    const { rerender } = renderGrid(BASE, { onScreen: false });
+    await act(async () => {});
+    expect(api.fetchTerminalRecaps).not.toHaveBeenCalled();
+
+    // Not merely "resumes polling" — reads AT ONCE. A grid that spent five
+    // minutes hidden has headers five minutes old, and waiting out another
+    // interval before correcting them is why this is asserted separately.
+    rerender({ onScreen: true });
     await waitFor(() =>
       expect(api.fetchTerminalRecaps).toHaveBeenCalledWith("ide_test"),
     );

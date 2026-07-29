@@ -36,6 +36,7 @@ import { AlertCircle, FolderGit2, Loader2, PlayCircle, Terminal, X } from "lucid
 
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import {
   continueInterrupted,
   fetchInterrupted,
@@ -64,6 +65,12 @@ const EMPTY: InterruptedOffer = {
 interface ContinueInterruptedProps {
   /** Disable the control while the workspace is busy with something else. */
   busy?: boolean;
+  /**
+   * Is the section holding this control the one on screen? The workspace stays
+   * mounted behind other sections (see MainView), and this poll runs for as
+   * long as it is open. Defaults to true — the behaviour before it could hide.
+   */
+  onScreen?: boolean;
 }
 
 /** One line of plain language for what the button will actually do. */
@@ -206,7 +213,10 @@ function PaneRow({
   );
 }
 
-export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) {
+export function ContinueInterrupted({
+  busy = false,
+  onScreen = true,
+}: ContinueInterruptedProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const [offer, setOffer] = useState<InterruptedOffer>(EMPTY);
@@ -229,27 +239,27 @@ export function ContinueInterrupted({ busy = false }: ContinueInterruptedProps) 
     }
   }, []);
 
+  /*
+   * Poll only while there is somebody to show a count to.
+   *
+   * Two ways for that to be false and one answer for both: the window is
+   * minimized or behind another (`documentVisible`), or the user is in another
+   * section while this workspace stays mounted behind it (`onScreen`).
+   *
+   * Binding the effect to that answer rather than checking it inside the tick
+   * is also the catch-up: coming back rebuilds the effect, and the first thing
+   * a rebuilt effect does is read. That matters here more than most — the
+   * restart that interrupts the panes is exactly the event that happens while
+   * nobody is looking.
+   */
+  const documentVisible = useDocumentVisible();
+  const polling = onScreen && documentVisible;
   useEffect(() => {
-    const pull = () => {
-      // A hidden window has nobody to show a count to, and this poll runs for
-      // as long as the workspace is open.
-      if (typeof document !== "undefined" && document.hidden) return;
-      void refresh();
-    };
-    pull();
-    const timer = window.setInterval(pull, POLL_MS);
-    // Coming back to the foreground skips every tick spent hidden — and the
-    // restart that interrupts the panes is exactly the event that happens while
-    // nobody is looking.
-    const onVisible = () => {
-      if (!document.hidden) void refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [refresh]);
+    if (!polling) return;
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh, polling]);
 
   const run = async (names?: string[]) => {
     // Which panes this press owns, marked BEFORE the request goes out.

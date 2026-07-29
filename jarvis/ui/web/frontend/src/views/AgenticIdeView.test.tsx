@@ -298,6 +298,58 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("Agentic IDE — before the first read lands", () => {
+  /**
+   * A workspace the view has not heard about yet is NOT "no workspace".
+   *
+   * This view used to fall straight through to the wizard while it waited, so
+   * a user returning to a running workspace was met by step 1 of the onboarding
+   * flow asking which folder the agents should work in — in front of eleven
+   * agents that had never stopped (maintainer report 2026-07-29). Being told to
+   * wait a moment is a far better answer than being told to start over.
+   */
+  it("shows a neutral placeholder rather than the onboarding wizard", async () => {
+    // Both reads hang: this is the state the view is in on every cold start,
+    // held open so it can be asserted on.
+    vi.mocked(api.fetchIdeState).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.fetchIdeAgents).mockReturnValue(new Promise(() => {}));
+
+    render(<AgenticIdeView />);
+
+    expect(await screen.findByTestId("agentic-ide-loading")).toBeTruthy();
+    // The two things that would read as "there is nothing open here".
+    expect(screen.queryByText(/which folder should the agents work in/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
+  });
+
+  it("draws a running workspace without waiting for the CLI sweep", async () => {
+    // `/agents` starts one subprocess per registered CLI and takes over a
+    // second on a cold cache. The grid never asks what is installed, so it must
+    // not wait for the answer — this is the other half of the 3 s on the way
+    // back into the section.
+    vi.mocked(api.fetchIdeAgents).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
+
+    render(<AgenticIdeView />);
+
+    expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+  });
+
+  it("holds the placeholder until the wizard has agents to offer", async () => {
+    // The reverse: with no workspace open, the wizard's agent step is the whole
+    // point of the sweep, so showing the wizard before it lands would offer an
+    // empty list.
+    vi.mocked(api.fetchIdeAgents).mockReturnValue(new Promise(() => {}));
+
+    render(<AgenticIdeView />);
+
+    expect(await screen.findByTestId("agentic-ide-loading")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
+  });
+});
+
 describe("Agentic IDE wizard", () => {
   it("starts on the folder step and blocks Next until a folder is picked", async () => {
     render(<AgenticIdeView />);

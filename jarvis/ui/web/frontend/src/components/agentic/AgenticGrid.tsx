@@ -41,6 +41,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
+import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore } from "@/store/events";
@@ -117,6 +118,16 @@ interface AgenticGridProps {
   accounts?: IdeAccountState[];
   /** The settings panel changed the workspace state — the owner applies it. */
   onStateChanged?: (state: IdeState) => void;
+  /**
+   * Is the section holding this grid the one on screen?
+   *
+   * The Agentic IDE is hidden rather than unmounted when the user goes to
+   * another section, so this grid stays alive behind whatever they are looking
+   * at — and its polling would otherwise go on asking the backend what a dozen
+   * panes are doing for nobody. Defaults to true, which is what a grid rendered
+   * on its own has always been.
+   */
+  onScreen?: boolean;
   /**
    * The row of open workspaces, rendered INSIDE this workspace's toolbar.
    *
@@ -391,6 +402,7 @@ export function AgenticGrid({
   onStateChanged,
   workspaceBar,
   appActions,
+  onScreen = true,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -482,11 +494,24 @@ export function AgenticGrid({
    * it. A failed read keeps whatever the headers already say: the backend
    * warming up, or a workspace closed in another window, is not a reason to
    * blank eight labels — and the recap is a convenience, never the pane.
+   *
+   * Also bound to whether anyone can SEE the headers, which is two independent
+   * questions with one answer: the window may be minimized or behind another
+   * (`visible`), and the user may be in another section of the app while this
+   * grid stays mounted behind it (`onScreen` — see MainView). A poll that runs
+   * regardless is not free: `/recaps` walks every pane's replay buffer through
+   * the summarizer, on the same event loop that carries the wake microphone.
+   *
+   * Re-mounting the effect on the way back is what catches the headers up: a
+   * grid that spent five minutes hidden skipped every tick, and its first act
+   * on return is a fresh read rather than a five-second-old sentence.
    */
+  const documentVisible = useDocumentVisible();
+  const pollRecaps = onScreen && documentVisible;
   useEffect(() => {
+    if (!pollRecaps) return;
     let cancelled = false;
     const pull = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const answer = await fetchTerminalRecaps(session.id);
         if (cancelled) return;
@@ -499,19 +524,11 @@ export function AgenticGrid({
     };
     void pull();
     const timer = window.setInterval(() => void pull(), RECAP_POLL_MS);
-    // A window coming back to the foreground has skipped every tick it spent
-    // hidden, so its headers are as old as the time away. Catch up at once
-    // rather than showing minute-old work for another five seconds.
-    const onVisible = () => {
-      if (!document.hidden) void pull();
-    };
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [session.id]);
+  }, [session.id, pollRecaps]);
 
   /*
    * The three things a user may do about a pane's recap.
@@ -1257,7 +1274,7 @@ export function AgenticGrid({
             and were never told to carry on, and the one click that tells them.
             The pane headers catch up on their own — a continued agent starts
             printing, and the recap poll above is already watching for that. */}
-        <ContinueInterrupted busy={busy || working} />
+        <ContinueInterrupted busy={busy || working} onScreen={onScreen} />
 
         {/* Which subscription the next terminal spends, and the way to change
             it without leaving the workspace. */}

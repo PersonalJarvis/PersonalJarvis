@@ -112,7 +112,23 @@ function buildPlan(
   });
 }
 
-export function AgenticIdeView() {
+export interface AgenticIdeViewProps {
+  /**
+   * Is this view the section currently on screen?
+   *
+   * Unlike every other section, this one is HIDDEN rather than unmounted when
+   * the user goes elsewhere (see MainView) — its panes are live terminals, and
+   * tearing them down to rebuild them seconds later is what put an onboarding
+   * wizard in front of a running workspace. Being hidden with CSS means the
+   * view cannot measure whether anyone can see it, so the shell says so.
+   *
+   * Defaults to true: rendered on its own (tests, any future embedding), a view
+   * that is there IS on screen, which is how this behaved before it could hide.
+   */
+  onScreen?: boolean;
+}
+
+export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -157,12 +173,27 @@ export function AgenticIdeView() {
   const [offer, setOffer] = useState<ResumeOffer | null>(null);
 
   const refresh = useCallback(async () => {
+    /*
+     * Both reads start together, but the workspace is applied WITHOUT waiting
+     * for the agent sweep.
+     *
+     * `/agents` starts one subprocess per registered CLI — 1.1-1.4 s on a cold
+     * cache, and on Windows every one of those is an npm shim (see
+     * `_DETECTION_TTL_S` in jarvis/workspace/agents.py). Awaiting the two
+     * together meant a running workspace could not be drawn until a question
+     * about which CLIs are installed had been answered, which is a question the
+     * grid never asks. The wizard needs the answer; the grid does not, and the
+     * grid is what the user is coming back to.
+     */
+    const sweep = fetchIdeAgents().then(setMeta, () => {
+      // Swallowed on purpose, and it costs exactly what it did when this was
+      // one `Promise.all`: `meta` stays as it was, so the wizard opens without
+      // its install callouts and the agent step offers whatever it had before.
+      // A failed sweep must not take the workspace state down with it — that
+      // state is the half of this read that the user is here for.
+    });
     try {
-      const [state, agents] = await Promise.all([
-        fetchIdeState(),
-        fetchIdeAgents(),
-      ]);
-      setMeta(agents);
+      const state = await fetchIdeState();
       setSession(state.session);
       setWorkspaces(state.workspaces ?? []);
       setMaxWorkspaces(state.max_workspaces ?? 6);
@@ -189,6 +220,12 @@ export function AgenticIdeView() {
     } catch {
       /* backend still warming or headless — keep whatever we had */
     } finally {
+      // What `loading` gates is the WIZARD (see the render below), and a wizard
+      // shown before the sweep lands is one whose agent step has nothing to
+      // offer — so the placeholder holds until it is in. A workspace that is
+      // already open never waits for this: the running branch is chosen before
+      // `loading` is read at all.
+      await sweep;
       setLoading(false);
     }
   }, []);
@@ -308,7 +345,11 @@ export function AgenticIdeView() {
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [session]);
+    // Both states decide WHICH element (if any) carries `shellRef`, so both have
+    // to re-run the measurement. `loading` is easy to forget and silent when it
+    // is: the first read finds no node, gives up, and the preview then promises
+    // an arrangement computed from a width of zero for the rest of the session.
+  }, [session, loading]);
 
   useEffect(() => {
     if (!session || session.focus_mode || optedOutRef.current) return;
@@ -696,6 +737,7 @@ export function AgenticIdeView() {
             onSessionChanged={setSession}
             accounts={ideAccounts}
             onStateChanged={applyStateFromSettings}
+            onScreen={onScreen}
           />
         </div>
         {modeIntroFor === session.id && (
@@ -708,6 +750,38 @@ export function AgenticIdeView() {
             }}
           />
         )}
+      </div>
+    );
+  }
+
+  /*
+   * ------------------------------------------------------------- still asking
+   *
+   * Before the first read lands, this view does not know whether a workspace is
+   * open — and "I do not know yet" must not be drawn as "there is none".
+   *
+   * It used to fall straight through to the wizard and merely add a line of
+   * "Checking this machine…" to it, which put the four-step ONBOARDING flow
+   * ("Which folder should the agents work in?") in front of a user whose eleven
+   * agents were running the whole time (maintainer report 2026-07-29). Being
+   * asked to start over is a far worse answer than being told to wait a moment,
+   * and the two states are indistinguishable to whoever is reading the screen.
+   *
+   * `loading` is a first-read flag: it is set once, cleared in `refresh`, and
+   * never raised again — so this never covers a workspace that is already up,
+   * and later refreshes redraw in place.
+   */
+  if (loading) {
+    return (
+      <div
+        className="flex h-full w-full items-center justify-center"
+        data-testid="agentic-ide-loading"
+        aria-busy="true"
+      >
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Checking this machine…
+        </div>
       </div>
     );
   }
@@ -752,13 +826,6 @@ export function AgenticIdeView() {
           )}
 
           <StepRail step={step} />
-
-          {loading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Checking this machine…
-            </div>
-          )}
 
           {meta && !meta.terminal_available && (
             <Callout tone="error">
