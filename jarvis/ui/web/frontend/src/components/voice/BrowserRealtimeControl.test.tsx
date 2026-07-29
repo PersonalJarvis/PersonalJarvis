@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
 
-import { BrowserRealtimeControl } from "./BrowserRealtimeControl";
+import { BrowserRealtimeControl, waveformPhase } from "./BrowserRealtimeControl";
 
 const fakes = vi.hoisted(() => ({
   native: false,
@@ -60,7 +60,11 @@ describe("BrowserRealtimeControl", () => {
     fakes.disconnect.mockClear();
     fakes.supportIssue = null;
     fakes.callbacks = null;
-    useEventStore.setState({ voiceState: "idle" });
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+    });
   });
 
   it("is hidden in the desktop shell to prevent a second microphone", () => {
@@ -108,6 +112,58 @@ describe("BrowserRealtimeControl", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button);
     expect(fakes.connect).not.toHaveBeenCalled();
+  });
+
+  it("shows the live visualizer only once the microphone is actually open", async () => {
+    render(<BrowserRealtimeControl />);
+    expect(screen.queryByTestId("voice-waveform")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByTestId("voice-waveform").getAttribute("data-phase")).toBe(
+      "listening",
+    );
+  });
+
+  it("swaps the measured waveform for the activity sweep once the turn is committed", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onStatus?.("thinking", {}));
+
+    expect(screen.getByTestId("voice-waveform").getAttribute("data-phase")).toBe(
+      "working",
+    );
+    expect(screen.getByText(/sidebar\.realtime_working/)).toBeTruthy();
+  });
+
+  it("names the transcription while interim words are still arriving", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useEventStore.setState({ transcription: "wie spät", transcriptionFinal: false });
+    });
+
+    expect(screen.getByText(/sidebar\.realtime_transcribing/)).toBeTruthy();
+    // The microphone is still open, so the pill keeps drawing real samples.
+    expect(screen.getByTestId("voice-waveform").getAttribute("data-phase")).toBe(
+      "listening",
+    );
+  });
+
+  it("maps every connection/voice combination onto exactly one look", () => {
+    expect(waveformPhase("idle", "idle")).toBe("idle");
+    expect(waveformPhase("connecting", "idle")).toBe("connecting");
+    expect(waveformPhase("error", "listening")).toBe("error");
+    // A voice-side error must reach the pill even when the socket is fine.
+    expect(waveformPhase("connected", "error")).toBe("error");
+    expect(waveformPhase("connected", "listening")).toBe("listening");
+    expect(waveformPhase("connected", "thinking")).toBe("working");
+    expect(waveformPhase("connected", "speaking")).toBe("speaking");
   });
 
   it("disables browser voice with HTTPS guidance on an insecure origin", () => {

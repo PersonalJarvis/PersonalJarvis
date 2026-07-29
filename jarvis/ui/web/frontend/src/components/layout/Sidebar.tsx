@@ -373,8 +373,21 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
           <>
             <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
               {transcription ? (
-                <span className={cn("font-mono", !transcriptionFinal && "italic")}>
-                  {truncate(transcription, 48)}
+                <span
+                  className={cn(
+                    "font-mono",
+                    !transcriptionFinal && "italic text-foreground/70",
+                  )}
+                >
+                  {tailTruncate(transcription, 48)}
+                  {!transcriptionFinal && (
+                    <span
+                      className="ml-px animate-pulse motion-reduce:animate-none"
+                      aria-hidden="true"
+                    >
+                      ▍
+                    </span>
+                  )}
                 </span>
               ) : (
                 <span className="text-muted-foreground/50">
@@ -571,9 +584,15 @@ function NavRow({
   );
 }
 
-function truncate(s: string, n: number): string {
+/** Keep the NEWEST words of a growing transcript visible.
+ *
+ * Head truncation froze the line on the first 48 characters the moment a
+ * sentence outgrew the box: the user kept talking and the display stopped
+ * moving, which reads as "it stopped hearing me". Dropping the oldest end
+ * instead makes the line scroll along with the speech. */
+function tailTruncate(s: string, n: number): string {
   if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
+  return "…" + s.slice(s.length - (n - 1));
 }
 
 function prettyProviderName(id: string): string {
