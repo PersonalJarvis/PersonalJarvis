@@ -26,6 +26,16 @@ import { useT } from "@/i18n";
 // The keyboard family (Mac vs PC modifier labels) is fixed for the session.
 const _KB_PLATFORM = detectKeyboardPlatform();
 
+/**
+ * How long click-to-assign waits after the last click before saving.
+ *
+ * Long enough to click "Ctrl", "Shift", "F5" at a human pace without saving
+ * the first two on their own; short enough that the save still feels part of
+ * the same gesture. A physical chord does not use this — letting go of the
+ * keys is already an unambiguous "I am done".
+ */
+const _CLICK_SETTLE_MS = 1200;
+
 /** Pretty-print a combo string ("ctrl+right_alt+j" → "Ctrl + AltGr + J"). */
 export function formatCombo(combo: string): string {
   const labels: Record<string, string> = {
@@ -262,12 +272,14 @@ export function KeybindRow({
 
   // Live validation — every backend rule surfaces HERE, while the user builds
   // the combo, instead of as a cryptic post-Save error toast (the reported
-  // "I picked Arrow Up and got a weird error message" experience).
+  // "I picked Arrow Up and got a weird error message" experience). With the
+  // Save button gone this line IS the feedback: a collision is what stops the
+  // auto-save, so it has to explain itself on screen and not merely disable
+  // something.
   const validation = useMemo(
     () => validateCombo(combo, otherCombos),
     [combo, otherCombos],
   );
-  const invalid = validation.status === "error";
   const validationMsg = validationText(validation, t);
 
   // Click-to-assign: toggle a key in/out of the combo without a physical press.
@@ -281,6 +293,10 @@ export function KeybindRow({
       return composeCombo(tokens);
     });
     setSaved(false);
+    // Clicks arrive one at a time while a combo is being built, so this one is
+    // probably not the last — wait for the clicking to stop before saving.
+    editVia.current = "click";
+    setEdits((n) => n + 1);
   }
 
   // While capturing, listen on `window` (capture phase) instead of on a single
@@ -312,6 +328,69 @@ export function KeybindRow({
   currentRef.current = current;
   const comboBeforeCapture = useRef(combo);
 
+  // ------------------------------------------------------------------
+  // Auto-save
+  // ------------------------------------------------------------------
+  // The combo IS the setting. A separate Save button could only add a step the
+  // user has to remember — and forgetting it looks exactly like the shortcut
+  // being broken, which is the one failure this surface must never produce.
+  //
+  // ``edits`` counts USER edits (a bumped counter, not the combo string, so
+  // toggling a key off and back on still re-arms the timer). ``editVia`` says
+  // how the edit arrived, which decides the delay: a physical chord and a
+  // suggestion chip are complete gestures and save at once, while a click on
+  // the on-screen keyboard is probably one of several and waits for the
+  // clicking to settle — otherwise the half-built combo would be saved, and
+  // the user's second click would be a second save.
+  //
+  // Nothing here needs to know about Esc, the initial config load, or a
+  // refetch: ``persist`` refuses anything equal to what the server already
+  // has, which covers all three by construction.
+  const [edits, setEdits] = useState(0);
+  const editVia = useRef<"chord" | "click">("chord");
+  const savingRef = useRef(false);
+
+  // Held in a ref so the timer effect below depends on the EDIT, not on the
+  // identity of this function (which changes on every render).
+  const persistRef = useRef<(next: string) => Promise<void>>(async () => {});
+  persistRef.current = async (next: string) => {
+    const trimmed = next.trim().toLowerCase();
+    // Empty is not an auto-save: clearing a shortcut is what the X button is
+    // for, and a combo being rebuilt from nothing passes through empty.
+    if (!trimmed || trimmed === current) return;
+    // A collision is the one thing the backend refuses (400). The inline
+    // message already says so; firing a doomed request would only add a toast.
+    if (validateCombo(trimmed, otherCombos).status === "error") return;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const res = await onSave(action, trimmed);
+      setSaved(res.restart_required);
+      // The gesture is over — leaving the recorder open would keep a stale
+      // pre-recording snapshot that a later Esc would "restore".
+      setCapturing(false);
+      pushToast("success", t("settings_view.keybinds.saved"));
+      await onSaved?.(trimmed);
+    } catch (e) {
+      // Rejected (collision the live check could not see, an unusable mouse
+      // button on this host, …). Show the backend's own reason.
+      pushToast("error", (e as Error).message);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (edits === 0) return;
+    const delay = editVia.current === "click" ? _CLICK_SETTLE_MS : 0;
+    const timer = setTimeout(() => {
+      void persistRef.current(combo);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [edits, combo]);
+
   useEffect(() => {
     if (!capturing) return;
     comboBeforeCapture.current = combo; // fallback when nothing is saved yet
@@ -326,6 +405,10 @@ export function KeybindRow({
         setCombo(pending);
         setSaved(false);
         setCapturing(false);
+        // Letting go of the keys ends the gesture, so this saves immediately —
+        // no settle delay, nothing left to press.
+        editVia.current = "chord";
+        setEdits((n) => n + 1);
       }
     }
 
@@ -455,31 +538,17 @@ export function KeybindRow({
     if (!capturing) setPressedCodes(new Set());
   }, [capturing]);
 
-  async function onSaveClick() {
-    const trimmed = combo.trim().toLowerCase();
-    if (!trimmed) return;
-    setSaving(true);
+  /** Set the combo from a one-shot control (chip / reset) and save it now. */
+  function assign(next: string) {
+    setCombo(next);
     setSaved(false);
-    try {
-      const res = await onSave(action, trimmed);
-      setSaved(res.restart_required);
-      // The save concludes the recording session. Leaving the recorder open
-      // kept a stale pre-recording snapshot around that a later Esc would
-      // "restore" — silently diverging the field from the saved value.
-      setCapturing(false);
-      pushToast("success", t("settings_view.keybinds.saved"));
-      await onSaved?.(trimmed);
-    } catch (e) {
-      // Backend rejected the combo (unsafe / collision) — show its reason.
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSaving(false);
-    }
+    editVia.current = "chord"; // a single deliberate click — nothing follows it
+    setEdits((n) => n + 1);
   }
 
-  // Immediate, one-click unbind — no staging step, mirroring the "Reset to
-  // default" link's immediacy. Bypasses onSaveClick's trimmed-empty guard,
-  // which exists to stop an in-progress recording from saving nothing.
+  // Immediate, one-click unbind. Its own path rather than an auto-save,
+  // because auto-save deliberately refuses an EMPTY combo: one being rebuilt
+  // from scratch passes through empty, and that must never unbind the row.
   async function onClearClick() {
     setSaving(true);
     try {
@@ -495,7 +564,6 @@ export function KeybindRow({
     }
   }
 
-  const dirty = !!config && combo.trim().toLowerCase() !== current;
   const showReset = !!def && combo.trim().toLowerCase() !== def;
 
   // Curated combos that are still free — a chip proposing a combo another
@@ -651,10 +719,7 @@ export function KeybindRow({
                 key={s}
                 type="button"
                 data-testid={`suggestion-${action}-${s}`}
-                onClick={() => {
-                  setCombo(s);
-                  setSaved(false);
-                }}
+                onClick={() => assign(s)}
                 className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground"
               >
                 {formatCombo(s)}
@@ -665,33 +730,19 @@ export function KeybindRow({
 
         {statusLine}
 
-        {/* The commit controls only appear once there is something to commit —
-            a resting row is just the shortcut, not a form. */}
-        {(dirty || showReset) && (
+        {/* No Save button: the combo IS the setting and saves itself. What is
+            left is the one control that changes it to something else. */}
+        {showReset && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              onClick={onSaveClick}
-              disabled={saving || loading || !dirty || invalid}
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground underline hover:text-foreground"
+              onClick={() => {
+                if (def) assign(def);
+              }}
             >
-              {saving
-                ? t("settings_view.saving")
-                : t("settings_view.keybinds.save")}
-            </Button>
-            {showReset && (
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground underline hover:text-foreground"
-                onClick={() => {
-                  if (def) {
-                    setCombo(def);
-                    setSaved(false);
-                  }
-                }}
-              >
-                {t("settings_view.keybinds.reset")}
-              </button>
-            )}
+              {t("settings_view.keybinds.reset")}
+            </button>
           </div>
         )}
 
@@ -710,10 +761,7 @@ export function KeybindRow({
             type="button"
             className="text-[11px] text-muted-foreground underline hover:text-foreground"
             onClick={() => {
-              if (def) {
-                setCombo(def);
-                setSaved(false);
-              }
+              if (def) assign(def);
             }}
           >
             {t("settings_view.keybinds.reset")}
@@ -731,13 +779,6 @@ export function KeybindRow({
           {capturing
             ? t("settings_view.keybinds.stop")
             : t("settings_view.keybinds.record")}
-        </Button>
-        <Button
-          size="sm"
-          onClick={onSaveClick}
-          disabled={saving || loading || !dirty || invalid}
-        >
-          {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
         </Button>
         <Button
           type="button"

@@ -1,4 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ViewHeader lives in ChatsView, which drags in the whole chat surface. The tab
@@ -167,15 +174,14 @@ describe("ShortcutsTab", () => {
     expect(screen.queryByTestId("view-header")).toBeNull();
   });
 
-  it("saving push-to-talk also pins the dictation mode to hold", async () => {
+  it("picking push-to-talk saves it and pins the dictation mode to hold", async () => {
     const calls = stubFetch();
     render(<ShortcutsTab />);
     await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
 
-    // A suggested combo is one click away; Save appears once the row is dirty.
+    // One click on a suggested combo IS the change — there is no Save step.
     fireEvent.click(screen.getByTestId("suggestion-dictate-ctrl+shift+space"));
     await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+Shift+Space"));
-    fireEvent.click(screen.getAllByRole("button", { name: /^save$/i })[0]);
 
     await waitFor(() =>
       expect(
@@ -210,7 +216,6 @@ describe("ShortcutsTab", () => {
       screen.getByTestId("suggestion-dictate_toggle-ctrl+shift+d"),
     );
     await waitFor(() => expect(comboText("dictate_toggle")).toBe("Ctrl+Shift+D"));
-    fireEvent.click(screen.getAllByRole("button", { name: /^save$/i })[0]);
 
     await waitFor(() =>
       expect(calls.some((c) => c.method === "PUT")).toBe(true),
@@ -236,28 +241,37 @@ describe("ShortcutsTab", () => {
     );
   });
 
-  it("blocks an overlapping combo before it can be saved", async () => {
-    stubFetch();
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
+  it("never auto-saves an overlapping combo, and says why", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = stubFetch();
+      render(<ShortcutsTab />);
+      await vi.waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
 
-    // Build hangup's exact combo on the push-to-talk row: F1+F2.
-    fireEvent.click(screen.getByTestId("record-keybind-dictate"));
-    fireEvent.click(screen.getByTestId("key-ControlLeft"));
-    fireEvent.click(screen.getByTestId("key-AltRight"));
-    fireEvent.click(screen.getByTestId("key-KeyJ"));
-    fireEvent.click(screen.getByTestId("key-F1"));
-    fireEvent.click(screen.getByTestId("key-F2"));
+      // Build hangup's exact combo on the push-to-talk row: F1+F2.
+      fireEvent.click(screen.getByTestId("record-keybind-dictate"));
+      fireEvent.click(screen.getByTestId("key-ControlLeft"));
+      fireEvent.click(screen.getByTestId("key-AltRight"));
+      fireEvent.click(screen.getByTestId("key-KeyJ"));
+      fireEvent.click(screen.getByTestId("key-F1"));
+      fireEvent.click(screen.getByTestId("key-F2"));
 
-    const line = await waitFor(() =>
-      screen.getByTestId("keybind-validation-dictate"),
-    );
-    // The collision names the other action the way the UI labels it, not by
-    // its raw id.
-    expect(line.textContent).toMatch(/hangup/i);
-    const save = screen.getAllByRole("button", {
-      name: /^save$/i,
-    })[0] as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
+      const line = await vi.waitFor(() =>
+        screen.getByTestId("keybind-validation-dictate"),
+      );
+      // The collision names the other action the way the UI labels it, not by
+      // its raw id.
+      expect(line.textContent).toMatch(/hangup/i);
+
+      // With no Save button to disable, THIS is what "blocked" means now: the
+      // settle timer fires and the request is never sent. The inline sentence
+      // above is the only feedback there is, which is why it has to be there.
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

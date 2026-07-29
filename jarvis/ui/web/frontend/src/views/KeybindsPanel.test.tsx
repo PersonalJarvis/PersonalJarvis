@@ -29,11 +29,28 @@ const FULL = {
 
 afterEach(() => vi.restoreAllMocks());
 
-function stubFetch() {
+/** One recorded request, so a test can assert what actually went out. */
+interface RecordedCall {
+  url: string;
+  method: string;
+  body?: unknown;
+}
+
+/** Stub the API and return the list the calls land in (empty until they do). */
+function stubFetch(): RecordedCall[] {
+  const calls: RecordedCall[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => FULL }),
+    vi.fn(async (url: unknown, init?: { method?: string; body?: unknown }) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return { ok: true, json: async () => FULL };
+    }),
   );
+  return calls;
 }
 
 /** The combo field's visible text with whitespace collapsed ("F3+F4") —
@@ -202,8 +219,48 @@ describe("KeybindsPanel", () => {
     await waitFor(() => expect(comboText("call")).toBe("I+Y"));
   });
 
-  it("keeps Save enabled on a live overlap and explains it instead", async () => {
-    stubFetch();
+  it("saves a recorded chord the moment the keys are released", async () => {
+    // The reported annoyance: "I have to press a Save button first." A combo
+    // is not a form field — letting go of the keys IS the decision, so there
+    // is nothing left for a button to confirm.
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    fireEvent.keyDown(window, { code: "F7", key: "F7" });
+    fireEvent.keyDown(window, { code: "F8", key: "F8" });
+    fireEvent.keyUp(window, { code: "F8", key: "F8" });
+    fireEvent.keyUp(window, { code: "F7", key: "F7" });
+
+    await waitFor(() => {
+      const put = calls.find((c) => c.method === "PUT");
+      expect(put?.url).toBe("/api/settings/keybinds");
+      expect(put?.body).toMatchObject({ action: "call", hotkey: "f7+f8" });
+    });
+    // No settle delay on a physical chord — nothing follows a full release.
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+  });
+
+  it("does not save anything when Esc cancels the recording", async () => {
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+    fireEvent.keyDown(window, { code: "F7", key: "F7" });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    // Auto-save refuses anything the server already has, which is what makes
+    // Esc, the initial load and a refetch safe without any of them knowing.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("still saves on a live overlap and explains it instead", async () => {
+    const calls = stubFetch();
     render(<KeybindsPanel />);
 
     const recordButtons = await waitFor(() =>
@@ -223,12 +280,19 @@ describe("KeybindsPanel", () => {
       screen.getByTestId("keybind-validation-call"),
     );
     expect(line.textContent).toBeTruthy();
-    const saveButtons = screen.getAllByRole("button", { name: /save/i });
-    expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(
+      () =>
+        expect(
+          calls.some(
+            (c) => c.method === "PUT" && (c.body as { hotkey: string }).hotkey === "f1",
+          ),
+        ).toBe(true),
+      { timeout: 4000 },
+    );
   });
 
   it("saves a modifier-only combo (Ctrl+Win) and cautions instead of blocking", async () => {
-    stubFetch();
+    const calls = stubFetch();
     render(<KeybindsPanel />);
 
     const recordButtons = await waitFor(() =>
@@ -254,8 +318,17 @@ describe("KeybindsPanel", () => {
     // prefix behaviour is a sentence, not a wall.
     expect(comboText("call")).toBe("Ctrl+Win");
     expect(screen.getByTestId("keybind-validation-call")).toBeTruthy();
-    const saveButtons = screen.getAllByRole("button", { name: /save/i });
-    expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(
+      () =>
+        expect(
+          calls.some(
+            (c) =>
+              c.method === "PUT" &&
+              (c.body as { hotkey: string }).hotkey === "ctrl+win",
+          ),
+        ).toBe(true),
+      { timeout: 4000 },
+    );
   });
 
   it("records Ctrl+Win from a physical chord (the gesture used to vanish)", async () => {
@@ -386,21 +459,27 @@ describe("KeybindsPanel", () => {
       .toBeTruthy();
   });
 
-  it("closes the recorder after a successful save (no stale-snapshot Esc)", async () => {
-    stubFetch();
+  it("click-to-assign saves once the clicking settles, then closes", async () => {
+    const calls = stubFetch();
     render(<KeybindsPanel />);
 
     await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
     fireEvent.click(screen.getByTestId("combo-field-call"));
     expect(screen.getByTestId("key-F5")).toBeTruthy(); // keyboard open
 
-    // Build the combo by CLICKING (no physical keys → no auto-commit timer):
-    // F3 off, F4 off, F5 on. The recorder stays open during click-to-assign.
+    // Build the combo by CLICKING: F3 off, F4 off, F5 on. Each click is
+    // probably not the last, so nothing is sent while they are still coming —
+    // otherwise the half-built combo ("F4" alone here) would be saved first.
     fireEvent.click(screen.getByTestId("key-F3"));
     fireEvent.click(screen.getByTestId("key-F4"));
     fireEvent.click(screen.getByTestId("key-F5"));
-    const saveButtons = screen.getAllByRole("button", { name: /save/i });
-    fireEvent.click(saveButtons[0]);
+
+    await waitFor(
+      () => expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1),
+      { timeout: 4000 },
+    );
+    expect((calls.find((c) => c.method === "PUT")!.body as { hotkey: string }).hotkey)
+      .toBe("f5");
 
     // The save finishes the recording session — leaving it open kept a stale
     // pre-recording snapshot that a later Esc would "restore", silently
@@ -424,8 +503,8 @@ describe("KeybindsPanel", () => {
     await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
   });
 
-  it("allows a solo navigation key with a warning, Save stays enabled", async () => {
-    stubFetch();
+  it("allows a solo navigation key with a warning and saves it anyway", async () => {
+    const calls = stubFetch();
     render(<KeybindsPanel />);
 
     const recordButtons = await waitFor(() =>
@@ -440,7 +519,14 @@ describe("KeybindsPanel", () => {
     // A warning line appears (fires during text navigation) but the combo is
     // legal — the user asked for Arrow Up, the user gets Arrow Up.
     expect(screen.getByTestId("keybind-validation-call")).toBeTruthy();
-    const saveButtons = screen.getAllByRole("button", { name: /save/i });
-    expect((saveButtons[0] as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(
+      () =>
+        expect(
+          calls.some(
+            (c) => c.method === "PUT" && (c.body as { hotkey: string }).hotkey === "up",
+          ),
+        ).toBe(true),
+      { timeout: 4000 },
+    );
   });
 });
