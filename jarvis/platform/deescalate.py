@@ -364,10 +364,69 @@ def current_process_is_elevated() -> bool | None:
     return windows_process_is_elevated()
 
 
+#: Set on the child so a relaunch that comes back elevated anyway stops here
+#: instead of spawning forever. It can come back elevated legitimately — an
+#: account whose shell itself runs elevated hands out an elevated token — and a
+#: boot loop is far worse than the isolation this repairs.
+DEESCALATION_ATTEMPTED_ENV = "JARVIS_DEESCALATION_ATTEMPTED"
+
+#: Opt-out for someone who deliberately runs elevated and accepts the trade.
+KEEP_ELEVATION_ENV = "JARVIS_KEEP_ELEVATION"
+
+
+def maybe_relaunch_unelevated(
+    argv: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    creationflags: int = 0,
+    _elevated=current_process_is_elevated,
+    _spawn=spawn_unelevated,
+) -> DeescalationResult | None:
+    """Hand this boot over to an unelevated copy of ourselves, before it costs.
+
+    ``None`` means "carry on booting in this process" and is the answer for
+    every ordinary launch: not Windows, not elevated, already tried, or opted
+    out. A :class:`DeescalationResult` means a decision was reached — ``ok``
+    for "the replacement is starting, exit now", and a failure otherwise, which
+    the caller reports and then keeps booting elevated.
+
+    **Why this belongs at the very start of a launch.** The app already knows
+    how to escape elevation (:meth:`DesktopApp.request_unelevated_restart`), but
+    that path only opens once there is a window to restart — so an elevated
+    launch first pays for a COMPLETE boot and throws it away. Measured
+    2026-07-29 on the maintainer's box: 102 s of boot discarded, then 18 s to
+    come back, for a start the user experienced as several minutes of nothing.
+    Deciding here costs one token probe.
+
+    The in-app path stays exactly as it was: it is the recovery for an app
+    already running elevated (a failed relaunch here, or an install that starts
+    elevated by other means), and the banner it drives is what makes the
+    condition visible at all.
+    """
+    if sys.platform != "win32":
+        return None
+    if os.environ.get(KEEP_ELEVATION_ENV) == "1":
+        return None
+    if os.environ.get(DEESCALATION_ATTEMPTED_ENV) == "1":
+        return None
+    # Only a positive measurement acts. An unreadable token is "unknown", and
+    # relaunching on a guess would strand a user whose app is perfectly fine.
+    if _elevated() is not True:
+        return None
+
+    child_env = dict(os.environ if env is None else env)
+    child_env[DEESCALATION_ATTEMPTED_ENV] = "1"
+    return _spawn(argv, cwd=cwd, env=child_env, creationflags=creationflags)
+
+
 __all__ = [
+    "DEESCALATION_ATTEMPTED_ENV",
+    "KEEP_ELEVATION_ENV",
     "DeescalationResult",
     "current_process_is_elevated",
     "environment_block",
+    "maybe_relaunch_unelevated",
     "spawn_unelevated",
     "token_creationflags",
 ]

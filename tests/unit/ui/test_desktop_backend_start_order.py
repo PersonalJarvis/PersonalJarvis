@@ -117,6 +117,11 @@ class _FakeLoop:
     def set_exception_handler(self, _handler: Any) -> None:
         pass
 
+    def set_default_executor(self, executor: Any) -> None:
+        # The backend hands the loop a prewarmed pool before anything awaits
+        # (``jarvis/core/loop_executor.py``); a fake loop has to accept it.
+        self.default_executor = executor
+
     def run_until_complete(self, coro: Any) -> Any:
         return asyncio.run(coro)
 

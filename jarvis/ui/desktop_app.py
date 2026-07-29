@@ -938,6 +938,26 @@ class DesktopApp:
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
 
+        # Before anything can await: hand the loop a default executor that is
+        # already at full size, so ``asyncio.to_thread`` never has to grow one
+        # under it. Growing costs a synchronous ``Thread.start()`` ON the loop,
+        # and three of the worst stalls measured 2026-07-29 (75.7 s, 16.6 s,
+        # 15.3 s) were exactly that. Filling it happens on a background thread,
+        # so this call itself is a pool allocation (AP-26).
+        try:
+            from jarvis.core.loop_executor import install_prewarmed_default_executor
+
+            self._io_executor = install_prewarmed_default_executor(loop)
+        except Exception:  # noqa: BLE001 — a loop that can still stall is the
+            # behaviour we shipped yesterday; a boot that fails is not.
+            from loguru import logger as _ex_log
+
+            _ex_log.opt(exception=True).warning(
+                "Could not install the prewarmed default executor — "
+                "asyncio.to_thread may stall the loop while the pool grows."
+            )
+            self._io_executor = None
+
         # Cold-boot profiling (gated behind JARVIS_BOOT_PROFILE=1; production
         # stdout unchanged). The desktop window only appears once
         # ``_wait_for_backend`` sees ``/api/health`` 200, which the backend can
@@ -1999,6 +2019,17 @@ class DesktopApp:
                 loop.close()
             except Exception:  # noqa: BLE001
                 pass
+            # Never waited on: a worker still inside a blocking native call
+            # would hold the quit open, and this process is on its way out
+            # anyway (the restart path depends on the port and the
+            # single-instance mutex being released promptly).
+            executor = getattr(self, "_io_executor", None)
+            if executor is not None:
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:  # noqa: BLE001,S110 - last statement of a
+                    # process that is exiting; the OS reclaims the threads.
+                    pass
 
     # ---- Event-loop watchdog -------------------------------------------------
 

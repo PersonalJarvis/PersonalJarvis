@@ -309,6 +309,19 @@ async def _run_headless(args) -> int:
             print(f"[BOOT_PROFILE] lx_{_name}={(_now - _bp_last) * 1000.0:.1f}", flush=True)
         _bp_last = _now
 
+    # Same contract as the desktop loop: a default executor that is already at
+    # full size, so ``asyncio.to_thread`` never grows one under the loop (a
+    # synchronous ``Thread.start()`` ON the loop — see
+    # ``jarvis/core/loop_executor.py``). A headless host runs the same 420
+    # ``to_thread`` call sites and has no window to hide the stall behind.
+    try:
+        from jarvis.core.loop_executor import install_prewarmed_default_executor
+
+        install_prewarmed_default_executor(asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001,S110 - a loop that can still stall is the
+        # behaviour we had yesterday; a boot that fails is not.
+        pass
+
     # The single-instance lock (and its heavy ``desktop_app`` import — pywebview +
     # win32, ~420 ms) is acquired in the deferred section below, OFF the
     # time-to-serving path. It only needs to set JARVIS_PRIMARY_INSTANCE before
@@ -1033,6 +1046,56 @@ def main(argv: list[str] | None = None) -> int:
 
     _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
+
+    # Drop administrator rights BEFORE booting, not after.
+    #
+    # An elevated window is unreachable for dictation apps, text expanders and
+    # password-manager auto-type (Windows UIPI — see
+    # ``jarvis/platform/input_isolation.py``), and elevation survives every
+    # in-app restart. The app can already escape it, but only once there is a
+    # window to restart — so an elevated launch used to pay for a COMPLETE boot
+    # and throw it away. Measured 2026-07-29: 102 s discarded, then 18 s to come
+    # back. Here it costs one token probe.
+    #
+    # Desktop only (UIPI is about a window; a headless host has none), and fully
+    # best-effort: anything other than "the replacement is starting" boots on in
+    # this process, where the input-isolation banner remains the fallback.
+    if not args.headless:
+        try:
+            from pathlib import Path as _Path
+
+            import jarvis as _jarvis
+            from jarvis.platform.deescalate import maybe_relaunch_unelevated
+            from jarvis.ui.relauncher import detached_creationflags, fresh_user_env
+
+            _drop = maybe_relaunch_unelevated(
+                [sys.executable, "-m", "jarvis.ui.web.launcher", *_raw_argv],
+                cwd=str(_Path(_jarvis.__file__).resolve().parent.parent),
+                env=fresh_user_env(),
+                creationflags=detached_creationflags(),
+            )
+            if _drop is not None:
+                import logging as _dlog
+
+                if _drop.ok:
+                    _dlog.getLogger(__name__).info(
+                        "Started with administrator rights — handing this boot to an "
+                        "unelevated copy so dictation and text expanders can reach the "
+                        "window (%s). Set %s=1 to keep the elevation instead.",
+                        _drop.detail,
+                        "JARVIS_KEEP_ELEVATION",
+                    )
+                    return 0
+                _dlog.getLogger(__name__).warning(
+                    "Running with administrator rights and could not drop them (%s) — "
+                    "booting elevated. Dictation apps and text expanders will not be "
+                    "able to type into this window.",
+                    _drop.detail,
+                )
+        except Exception:  # noqa: BLE001,S110 - an app that boots elevated is
+            # degraded; one that fails to boot is not an app. The banner still
+            # reports the condition, and the in-app restart still repairs it.
+            pass
 
     # Windows taskbar branding: the taskbar button icon is the LAUNCHING EXE's
     # embedded icon, which no window-icon / class-icon / AUMID / Start-Menu /

@@ -8,9 +8,14 @@ that reported success — is the worst possible outcome.
 
 from __future__ import annotations
 
+import pytest
+
 from jarvis.platform.deescalate import (
+    DEESCALATION_ATTEMPTED_ENV,
+    KEEP_ELEVATION_ENV,
     DeescalationResult,
     environment_block,
+    maybe_relaunch_unelevated,
     spawn_unelevated,
     token_creationflags,
 )
@@ -109,3 +114,127 @@ class TestFailureContainment:
         assert spawn_unelevated(
             ["py"], cwd=".", env={}, _platform="win32", _spawn=refuse
         ).pid is None
+
+
+def _spawner(record: list, *, ok: bool = True):
+    def spawn(argv, *, cwd, env, creationflags):
+        record.append({"argv": argv, "cwd": cwd, "env": env})
+        return DeescalationResult(ok, 99 if ok else None, "shell token")
+
+    return spawn
+
+
+@pytest.fixture(autouse=True)
+def _clean_deescalation_env(monkeypatch):
+    """Neither guard variable may leak in from the host running the tests."""
+    monkeypatch.delenv(DEESCALATION_ATTEMPTED_ENV, raising=False)
+    monkeypatch.delenv(KEEP_ELEVATION_ENV, raising=False)
+
+
+class TestBootTimeDeescalation:
+    """The pre-boot decision. ``None`` means "carry on in this process", and
+    getting that wrong either wastes a whole boot or loops forever."""
+
+    def test_an_elevated_launch_hands_over_before_booting(self, monkeypatch):
+        monkeypatch.setattr("sys.platform", "win32")
+        calls: list = []
+
+        result = maybe_relaunch_unelevated(
+            ["py", "-m", "jarvis.ui.web.launcher"],
+            cwd="C:\\repo",
+            env={"A": "1"},
+            _elevated=lambda: True,
+            _spawn=_spawner(calls),
+        )
+
+        assert result is not None and result.ok is True
+        assert calls[0]["argv"] == ["py", "-m", "jarvis.ui.web.launcher"]
+
+    def test_the_child_is_marked_so_a_still_elevated_relaunch_stops(self, monkeypatch):
+        """Without this the app boot-loops on an account whose shell token is
+        itself elevated — strictly worse than the isolation being repaired."""
+        monkeypatch.setattr("sys.platform", "win32")
+        calls: list = []
+
+        maybe_relaunch_unelevated(
+            ["py"], cwd=".", env={"A": "1"}, _elevated=lambda: True, _spawn=_spawner(calls)
+        )
+
+        assert calls[0]["env"][DEESCALATION_ATTEMPTED_ENV] == "1"
+
+    def test_a_marked_process_never_tries_again(self, monkeypatch):
+        monkeypatch.setattr("sys.platform", "win32")
+        monkeypatch.setenv(DEESCALATION_ATTEMPTED_ENV, "1")
+        calls: list = []
+
+        assert (
+            maybe_relaunch_unelevated(
+                ["py"], cwd=".", _elevated=lambda: True, _spawn=_spawner(calls)
+            )
+            is None
+        )
+        assert calls == []
+
+    def test_an_ordinary_unelevated_launch_is_untouched(self, monkeypatch):
+        monkeypatch.setattr("sys.platform", "win32")
+        calls: list = []
+
+        assert (
+            maybe_relaunch_unelevated(
+                ["py"], cwd=".", _elevated=lambda: False, _spawn=_spawner(calls)
+            )
+            is None
+        )
+        assert calls == []
+
+    def test_an_unreadable_token_boots_on_rather_than_guessing(self, monkeypatch):
+        """``None`` is "could not measure". Relaunching on a guess would strand
+        a user whose app was never elevated in the first place."""
+        monkeypatch.setattr("sys.platform", "win32")
+        calls: list = []
+
+        assert (
+            maybe_relaunch_unelevated(
+                ["py"], cwd=".", _elevated=lambda: None, _spawn=_spawner(calls)
+            )
+            is None
+        )
+        assert calls == []
+
+    def test_the_opt_out_is_honoured(self, monkeypatch):
+        monkeypatch.setattr("sys.platform", "win32")
+        monkeypatch.setenv(KEEP_ELEVATION_ENV, "1")
+        calls: list = []
+
+        assert (
+            maybe_relaunch_unelevated(
+                ["py"], cwd=".", _elevated=lambda: True, _spawn=_spawner(calls)
+            )
+            is None
+        )
+        assert calls == []
+
+    def test_posix_is_a_no_op(self, monkeypatch):
+        """Dropping from root to "whoever ran sudo" is guesswork that would
+        strand file ownership — the user is told instead."""
+        monkeypatch.setattr("sys.platform", "linux")
+        calls: list = []
+
+        assert (
+            maybe_relaunch_unelevated(
+                ["py"], cwd=".", _elevated=lambda: True, _spawn=_spawner(calls)
+            )
+            is None
+        )
+        assert calls == []
+
+    def test_a_refused_handover_is_reported_not_swallowed(self, monkeypatch):
+        """The caller must be able to tell "exit now" from "boot elevated and
+        warn", so a failure has to come back as a result, never as ``None``."""
+        monkeypatch.setattr("sys.platform", "win32")
+
+        result = maybe_relaunch_unelevated(
+            ["py"], cwd=".", _elevated=lambda: True, _spawn=_spawner([], ok=False)
+        )
+
+        assert result is not None and result.ok is False
