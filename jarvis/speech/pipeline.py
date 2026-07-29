@@ -678,6 +678,15 @@ _DICTATION_HANDOVER_TIMEOUT_S = 5.0
 # Small enough to be imperceptible, large enough not to spin the loop.
 _DICTATION_HANDOVER_POLL_S = 0.02
 
+# How many times the FINAL dictation transcription is attempted, and how long it
+# waits between attempts. Only the final call is retried: every earlier one is a
+# probe tick that gets another chance a second later anyway, while this one is
+# the last thing that ever sees the audio — the buffer is gone once the session
+# returns. Three attempts over ~1.2 s covers a transient 429 / socket reset
+# without making a genuinely dead provider feel like a hang.
+_DICTATION_FINAL_ATTEMPTS = 3
+_DICTATION_FINAL_RETRY_DELAY_S = 0.6
+
 
 class _SessionInputBuffer:
     """Replayable bounded handoff for one continuously captured mic stream.
@@ -1341,6 +1350,13 @@ class SpeechPipeline:
         # key and a toggle key armed at the same time, and the legacy
         # ``[dictation].mode = "toggle"`` still only governs ``dictate_hotkeys``.
         dictate_toggle_hotkeys: tuple[str, ...] = (),
+        # "Insert the last dictation again" — its own binding, because it needs
+        # neither a microphone nor a speech-to-text provider and therefore stays
+        # useful on a host where dictation itself cannot run. It was editable in
+        # the Voice → Shortcuts tab for a while WITHOUT arriving here: the save
+        # persisted, the UI showed the new combo, and the key did nothing —
+        # forever, restart included (the AP-4 trap: one layer never told).
+        paste_last_hotkeys: tuple[str, ...] = (),
         # Resolved DictationConfig (jarvis.core.config.DictationConfig) or None.
         # None keeps every legacy call site and test on the built-in defaults.
         dictation_config: Any = None,
@@ -1350,6 +1366,10 @@ class SpeechPipeline:
         self._hangup_hotkeys = hangup_hotkeys
         self._dictate_hotkeys = list(dictate_hotkeys)
         self._dictate_toggle_hotkeys = list(dictate_toggle_hotkeys)
+        self._paste_last_hotkeys = list(paste_last_hotkeys)
+        # One paste at a time — two overlapping ones race over the clipboard
+        # restore and the loser puts the wrong content back (see _on_paste_last).
+        self._paste_last_busy = False
         self._dictate_mode = "toggle" if str(dictate_mode).lower() == "toggle" else "hold"
         self._dictation_cfg = dictation_config
         # Push-to-talk runtime state. ``_ptt_mode`` arms the raw-recording path
@@ -2079,6 +2099,63 @@ class SpeechPipeline:
         self._ack_pcm = b""
         self._task_ack_pcm.clear()
 
+    def set_stt_language(self, language: str) -> bool:
+        """Live-apply a new recognition language. Returns True when it took.
+
+        The utterance recogniser carries its language from construction, so
+        changing the setting used to do nothing at all until the app was
+        restarted — while the settings route reported the change as applied,
+        because "applied" only ever meant the WAKE plan. The honest outcome is
+        either a recogniser that actually speaks the new language now, or a
+        False the caller can turn into "restart to apply".
+
+        Rebuilding is cheap: cloud providers are a constructor plus an HTTP
+        client, and the local faster-whisper loads its weights lazily on the
+        first transcription. The swap is a clean cut-over like ``set_tts`` — an
+        in-flight transcription keeps the old instance and finishes normally
+        (AP-24: never reach into a native engine that is mid-inference).
+
+        The WAKE recogniser (``self._stt``) is deliberately untouched: it is
+        acoustically tied to the wake phrase and has its own language setting.
+        """
+        cfg_stt = getattr(getattr(self, "_config", None), "stt", None)
+        if cfg_stt is None:
+            return False
+        try:
+            cfg_stt.language = language
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("in-memory stt.language update skipped: %s", exc)
+        try:
+            from jarvis.plugins.stt import build_stt_from_config
+
+            rebuilt = build_stt_from_config(cfg_stt)
+        except Exception as exc:  # noqa: BLE001 — never break voice on a settings click
+            log.warning("STT language live-switch failed to build a provider: %s", exc)
+            return False
+        if rebuilt is None:
+            return False
+
+        try:
+            from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+            rebuilt = wrap_stt_with_dictionary(rebuilt)
+        except Exception as exc:  # noqa: BLE001 — corrections are not load-bearing here
+            log.debug("STT dictionary wrapper unavailable on live switch: %s", exc)
+
+        previous = self._utterance_stt
+        self._utterance_stt = rebuilt
+        # The preview probe follows only when it was the SAME object — in the
+        # local-Whisper path it is the wake model, which must keep its own
+        # language (AP-27: the wake never rides on the utterance setting).
+        if previous is not None and self._probe_stt is previous:
+            self._probe_stt = rebuilt
+        log.info(
+            "STT-Live-Switch: recognition language is now %r (%s)",
+            language,
+            type(rebuilt).__name__,
+        )
+        return True
+
     def set_silence_window_ms(self, ms: int) -> None:
         """Live-apply a new voice silence window to the running VAD.
 
@@ -2351,6 +2428,7 @@ class SpeechPipeline:
         ptt: list[str] | None = None,
         dictate: list[str] | None = None,
         dictate_toggle: list[str] | None = None,
+        paste_last: list[str] | None = None,
     ) -> None:
         """Live-apply changed voice keybinds — no app/pipeline restart.
 
@@ -2367,7 +2445,11 @@ class SpeechPipeline:
         Every keyword here is spelled exactly like its entry in
         ``config_writer.KEYBIND_ACTIONS``: the settings route calls
         ``set_keybinds(**{action: [...]})``, so a keyword that drifts from the
-        action string turns a successful save into a silent no-op.
+        action string turns a successful save into a silent no-op — and a
+        keyword that is MISSING turns it into a ``TypeError`` the route catches
+        and reports as "applies on restart", which is worse: it is a promise
+        nothing downstream keeps. Every action in ``KEYBIND_ACTIONS`` therefore
+        needs a keyword here, and a binding in ``_build_hotkey_bindings``.
         """
         if call is not None:
             self._call_hotkeys = list(call)
@@ -2379,14 +2461,17 @@ class SpeechPipeline:
             self._dictate_hotkeys = list(dictate)
         if dictate_toggle is not None:
             self._dictate_toggle_hotkeys = list(dictate_toggle)
+        if paste_last is not None:
+            self._paste_last_hotkeys = list(paste_last)
         log.info(
             "Keybinds live-switched: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s] "
-            "DICTATE-TOGGLE=[%s]",
+            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s]",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
             ", ".join(self._dictate_hotkeys) or "off",
             ", ".join(self._dictate_toggle_hotkeys) or "off",
+            ", ".join(getattr(self, "_paste_last_hotkeys", None) or []) or "off",
         )
         self._hotkey_reload_event.set()
 
@@ -2435,6 +2520,11 @@ class SpeechPipeline:
             # Never an edge binding: the whole point of a toggle is one event
             # per press. Asking for both edges would start on the down edge and
             # stop again on the up edge, i.e. turn it back into push-to-talk.
+        paste_last = getattr(self, "_paste_last_hotkeys", None) or []
+        if paste_last:
+            # Single-fire on release, like every non-hold action: holding the
+            # key must paste once, not once per polling tick.
+            bindings["paste_last"] = list(paste_last)
         return bindings, edge_events
 
     # ------------------------------------------------------------------
@@ -4264,7 +4354,7 @@ class SpeechPipeline:
         hotkey_bindings, ptt_events = self._build_hotkey_bindings()
         log.info(
             "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] "
-            "DICTATE-TOGGLE=[%s] OWW=%s "
+            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s] OWW=%s "
             "WAKE=%s (threshold=%.2f) WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
@@ -4272,6 +4362,7 @@ class SpeechPipeline:
             ", ".join(self._dictate_hotkeys) or "off",
             self._dictate_mode,
             ", ".join(getattr(self, "_dictate_toggle_hotkeys", None) or []) or "off",
+            ", ".join(getattr(self, "_paste_last_hotkeys", None) or []) or "off",
             "on" if self._openwakeword_enabled else "off",
             list(self._wake._keywords),
             self._wake._threshold,
@@ -4779,6 +4870,8 @@ class SpeechPipeline:
             elif event_name == "dictate_toggle":
                 # The dedicated hands-free key. Same handler, its own binding.
                 self._on_dictate_toggle()
+            elif event_name == "paste_last":
+                self._on_paste_last()
             elif event_name == "hangup":
                 log.info("📵 HANGUP via Hotkey")
                 self._trigger_voice_hangup()
@@ -4859,6 +4952,80 @@ class SpeechPipeline:
             self.stop_dictation()
             return
         self.start_dictation(target=self._configured_dictation_target())
+
+    def _on_paste_last(self) -> None:
+        """"Insert the last dictation again" key — re-deliver the last transcript.
+
+        Needs no microphone, no speech-to-text and no recording, which is the
+        whole point: it stays useful exactly where dictation itself cannot run.
+
+        Scheduled as a task rather than executed here, because the work behind
+        it is blocking — it parses the history file and sleeps around the paste
+        chord — and this handler runs ON the pipeline's event loop, the same
+        loop a live voice turn uses (AP-9). A press while one is still running
+        is dropped rather than queued: two overlapping pastes race over the
+        clipboard restore and the loser puts the WRONG content back.
+        """
+        if getattr(self, "_paste_last_busy", False):
+            log.debug("paste-last key ignored: a paste is already in flight")
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            log.debug("paste-last key ignored: no running event loop")
+            return
+        self._paste_last_busy = True
+        loop.create_task(self._paste_last_dictation(), name="dictation-paste-last")
+
+    async def _paste_last_dictation(self) -> None:
+        """The blocking half of :meth:`_on_paste_last`. Never raises.
+
+        Goes through ``insert_last_dictation`` — the SAME delivery path the
+        REST route and a fresh dictation use — so the three can never drift
+        apart. Anything short of "the text was typed where you were pointing"
+        is announced on the bus instead of logged: the reported bug for this
+        whole feature was a key that looked bound and did nothing visible.
+        """
+        try:
+            from jarvis.dictation.insert import insert_last_dictation
+
+            result = await asyncio.to_thread(
+                insert_last_dictation, settings=getattr(self, "_dictation_cfg", None)
+            )
+        except Exception as exc:  # noqa: BLE001 — a paste is never worth a crash
+            log.warning("paste-last failed (non-fatal)", exc_info=True)
+            self._refuse_dictation(
+                "paste_unavailable",
+                "The last dictation could not be pasted again "
+                f"({type(exc).__name__}).",
+            )
+            return
+        finally:
+            self._paste_last_busy = False
+
+        reason = str(getattr(result, "reason", "") or "")
+        detail = str(getattr(result, "detail", "") or "")
+        insert = getattr(result, "insert", None)
+        status = str(getattr(insert, "status", "") or "")
+        log.info(
+            "📋 paste-last: ok=%s reason=%s status=%s (%d chars)",
+            bool(getattr(result, "ok", False)),
+            reason or "-",
+            status or "-",
+            len(str(getattr(result, "text", "") or "")),
+        )
+        if getattr(result, "ok", False) and status not in ("clipboard_only", "paste_sent"):
+            return  # the text is in the field the user was looking at — proof enough
+        # Everything else owes an explanation: nothing saved, history off, or a
+        # host that cannot type into another window (the text is on the
+        # clipboard then, which the detail sentence says).
+        token = {
+            "not_found": "nothing_to_paste",
+            "history_disabled": "history_disabled",
+        }.get(reason, "paste_unavailable")
+        self._refuse_dictation(
+            token, detail or "The last dictation could not be pasted again."
+        )
 
     def _configured_dictation_target(self) -> str:
         """``[dictation].target`` — ``auto`` by default, resolved at start."""
@@ -8199,12 +8366,21 @@ class SpeechPipeline:
         pinned_language = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
         forced_language = pinned_language if pinned_language not in ("", "auto") else None
 
-        async def _transcribe(pcm: bytes) -> tuple[str, str]:
-            """One transcription. Returns ``(text, language)``; never raises.
+        async def _transcribe(pcm: bytes) -> tuple[str, str, bool]:
+            """One transcription. ``(text, language, ok)``; never raises.
 
             Records the failure in ``stt_error`` instead of swallowing it. A
             later successful call clears it again — a single flaky segment in an
             otherwise working dictation is not a failed dictation.
+
+            ``ok`` is the part the caller cannot do without: an empty ``text``
+            has TWO causes that need opposite handling — silence (the segment is
+            genuinely done) and a failed call (the audio has not been read yet).
+            Without this flag the segment loop treated both as "done" and
+            advanced past audio nobody had transcribed, so one network hiccup
+            deleted eight seconds of speech from the middle of the result with
+            nothing anywhere saying so. That is the reported "I said more than
+            this" bug in its entirety.
             """
             nonlocal stt_error
             inference_active.set()
@@ -8224,13 +8400,13 @@ class SpeechPipeline:
             except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
                 log.debug("dictation transcribe failed: %s", exc)
                 stt_error = f"{type(exc).__name__}: {exc}".strip()
-                return "", ""
+                return "", "", False
             finally:
                 inference_active.clear()
             stt_error = None
             text = (getattr(transcript, "text", "") or "").strip()
             lang = str(getattr(transcript, "language", "") or "")
-            return text, lang
+            return text, lang, True
 
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
@@ -8255,21 +8431,42 @@ class SpeechPipeline:
 
                         cut = quietest_cut(tail, segment_bytes, bytes_per_second)
                         if cut >= min_bytes:
-                            text, lang = await _transcribe(tail[:cut])
+                            text, lang, ok = await _transcribe(tail[:cut])
                             if stop_event.is_set():
                                 return
+                            if not ok:
+                                # The CALL failed — the audio is unread, not
+                                # silent. Closing the segment here would delete
+                                # those seconds from the result permanently
+                                # (a closed segment is never re-sent) and the
+                                # next successful call would clear ``stt_error``,
+                                # so the user would be handed a transcript with
+                                # a hole in it and no hint that anything went
+                                # wrong. Leave the segment open instead: the
+                                # next tick retries it, and if every retry fails
+                                # the final pass still transcribes the whole
+                                # tail. Slower on a flaky link, never lossy.
+                                log.info(
+                                    "dictation segment kept open after a failed "
+                                    "transcription (%s) — retrying with the next "
+                                    "tick rather than dropping %.1fs of audio.",
+                                    stt_error or "unknown error",
+                                    cut / bytes_per_second,
+                                )
+                                continue
                             if text:
                                 closed_parts.append(text)
                                 language = lang or language
-                            # Advance regardless: a segment that transcribed to
-                            # nothing was silence, and re-sending it forever
-                            # would rebuild the very O(n²) loop this replaces.
+                            # Advance on SUCCESS only: a segment that transcribed
+                            # to nothing really was silence, and re-sending it
+                            # forever would rebuild the very O(n²) loop this
+                            # replaces.
                             closed_bytes += cut
                             tail = bytes(buffer[closed_bytes:])
 
                     tail_text = ""
                     if len(tail) >= min_bytes:
-                        tail_text, lang = await _transcribe(tail)
+                        tail_text, lang, _ok = await _transcribe(tail)
                         language = lang or language
                         if stop_event.is_set():
                             return
@@ -8372,8 +8569,27 @@ class SpeechPipeline:
                 tail = bytes(buffer[closed_bytes:])
                 tail_text = ""
                 if len(tail) >= min_bytes:
-                    tail_text, lang = await _transcribe(tail)
-                    language = lang or language
+                    # RETRIED, unlike every call before it. A probe-tick failure
+                    # costs a retry a second later; this one is the last chance
+                    # the audio ever gets — the buffer is dropped the moment
+                    # this function returns. One transient 429 / socket reset
+                    # here used to silently truncate the dictation at the last
+                    # closed segment, which is the worst possible moment to give
+                    # up: the user has finished speaking and is waiting.
+                    for attempt in range(_DICTATION_FINAL_ATTEMPTS):
+                        tail_text, lang, ok = await _transcribe(tail)
+                        language = lang or language
+                        if ok:
+                            break
+                        if attempt + 1 < _DICTATION_FINAL_ATTEMPTS:
+                            log.info(
+                                "final dictation transcription failed (%s) — "
+                                "retry %d/%d.",
+                                stt_error or "unknown error",
+                                attempt + 1,
+                                _DICTATION_FINAL_ATTEMPTS - 1,
+                            )
+                            await asyncio.sleep(_DICTATION_FINAL_RETRY_DELAY_S)
                 raw_text = " ".join([*closed_parts, tail_text]).strip()
                 final_text = raw_text
 
@@ -8489,6 +8705,36 @@ class SpeechPipeline:
         # reason="no_rules", i.e. no cleanup at all despite an explicit pin.
         pinned = str(getattr(cfg, "language", "auto") or "auto").strip().lower()
         effective_language = pinned if pinned not in ("", "auto") else language
+        # Last resort: read the language off the TEXT. Not every provider
+        # reports one — ``transcribe_pcm`` is only contracted to return text —
+        # and on ``[dictation].language = auto`` (the shipped default) a silent
+        # provider left ``effective_language`` empty, which the cleanup can only
+        # answer with "no rules for this language". The observable consequence
+        # is the whole filler removal never running: every "äh" and "ähm" the
+        # user hesitated with shipped straight into the text while the setting
+        # said it was on. Resolved through the ONE canonical language resolver
+        # (CLAUDE.md §1: no layer invents its own detection), and only when
+        # nothing better is known — a provider that DID report a language keeps
+        # the last word.
+        if raw_text and not hung_up:
+            try:
+                from jarvis.core.turn_language import (
+                    detect_text_language,
+                    normalize_language_tag,
+                )
+
+                if normalize_language_tag(effective_language) == "unknown":
+                    detected = detect_text_language(raw_text)
+                    if detected != "unknown":
+                        log.debug(
+                            "dictation language resolved from the transcript: %s "
+                            "(the provider reported %r)",
+                            detected,
+                            language,
+                        )
+                        effective_language = detected
+            except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
+                log.debug("dictation language detection failed", exc_info=True)
 
         if raw_text and not hung_up:
             try:
@@ -11800,6 +12046,11 @@ async def _main() -> None:
         dictate_toggle_hotkeys=(
             (config.trigger.hotkey_dictate_toggle,)
             if config.trigger.hotkey_dictate_toggle.strip()
+            else ()
+        ),
+        paste_last_hotkeys=(
+            (config.trigger.hotkey_paste_last,)
+            if config.trigger.hotkey_paste_last.strip()
             else ()
         ),
         dictate_mode=config.dictation.mode,

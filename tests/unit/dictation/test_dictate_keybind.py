@@ -37,6 +37,56 @@ def test_hands_free_dictation_is_its_own_keybind_action() -> None:
     assert hasattr(TriggerConfig(), "hotkey_dictate_toggle")
 
 
+def test_paste_last_is_its_own_keybind_action() -> None:
+    """Needs no microphone and no provider, so it is not a mode of dictation."""
+    assert "paste_last" in KEYBIND_ACTIONS
+    assert KEYBIND_TOML_KEY["paste_last"] == "hotkey_paste_last"
+    assert hasattr(TriggerConfig(), "hotkey_paste_last")
+
+
+#: The attribute holding each action's live combos on the pipeline. Written out
+#: rather than derived, so a NEW action fails the two tests below loudly instead
+#: of quietly skipping itself.
+_ACTION_ATTR = {
+    "call": "_call_hotkeys",
+    "hangup": "_hangup_hotkeys",
+    "dictate": "_dictate_hotkeys",
+    "dictate_toggle": "_dictate_toggle_hotkeys",
+    "paste_last": "_paste_last_hotkeys",
+}
+
+
+def test_every_keybind_action_has_a_live_apply_keyword() -> None:
+    """The settings route calls ``set_keybinds(**{action: [...]})``.
+
+    An action WITHOUT a matching keyword raises ``TypeError`` there, which the
+    route catches and reports as "applies on restart" — a promise the next boot
+    does not keep either, because the same gap exists in the binding table. That
+    is exactly how ``paste_last`` shipped as a row the UI could edit and nothing
+    could fire. One assertion is cheaper than the bug report.
+    """
+    import inspect
+
+    params = inspect.signature(SpeechPipeline.set_keybinds).parameters
+    missing = [action for action in KEYBIND_ACTIONS if action not in params]
+    assert missing == [], f"set_keybinds cannot live-apply: {missing}"
+    assert sorted(_ACTION_ATTR) == sorted(KEYBIND_ACTIONS)
+
+
+def test_every_keybind_action_reaches_the_os_binding_table() -> None:
+    """A bound action that never reaches ``_build_hotkey_bindings`` is a row
+    that saves, displays, survives a restart — and never fires."""
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._ptt_hotkeys = []
+    pipe._dictate_mode = "hold"
+    for index, action in enumerate(KEYBIND_ACTIONS):
+        setattr(pipe, _ACTION_ATTR[action], [f"ctrl+alt+f{index + 1}"])
+
+    bindings, _edges = pipe._build_hotkey_bindings()
+    missing = [action for action in KEYBIND_ACTIONS if action not in bindings]
+    assert missing == [], f"never registered with the OS: {missing}"
+
+
 def test_dictation_ships_bound_on_both_rows() -> None:
     """Maintainer directive 2026-07-28. Shipping unbound made the headline
     feature do nothing on a fresh install; these two combos are curated
@@ -197,6 +247,22 @@ def test_an_unbound_hands_free_row_arms_nothing() -> None:
         dictate=["ctrl+right_alt+j"], dictate_toggle=[]
     )._build_hotkey_bindings()
     assert "dictate_toggle" not in bindings
+
+
+def test_paste_last_fires_once_per_press() -> None:
+    """Single-fire on release. Both edges would paste once per polling tick."""
+    pipe = _pipeline(dictate=[])
+    pipe._paste_last_hotkeys = ["ctrl+alt+v"]
+    bindings, edges = pipe._build_hotkey_bindings()
+    assert bindings["paste_last"] == ["ctrl+alt+v"]
+    assert "paste_last" not in edges
+
+
+def test_an_unbound_paste_last_row_arms_nothing() -> None:
+    pipe = _pipeline(dictate=[])
+    pipe._paste_last_hotkeys = []
+    bindings, _edges = pipe._build_hotkey_bindings()
+    assert "paste_last" not in bindings
 
 
 # --------------------------------------------------------------------------
@@ -380,6 +446,39 @@ async def test_the_hands_free_key_stops_a_running_dictation() -> None:
     await pipe._hotkey_loop(_ScriptedTrigger(["dictate_toggle"]))
     assert pipe.stopped == 1
     assert pipe.started == []
+
+
+@pytest.mark.asyncio
+async def test_the_paste_last_event_reaches_its_handler() -> None:
+    """The third half of the wiring: registered, fired — and dispatched.
+
+    Without this arm the key registers with the OS, the OS delivers it, and the
+    loop drops it on the floor.
+    """
+    pipe = _RecordingPipeline()
+    calls: list[str] = []
+    pipe._on_paste_last = lambda: calls.append("paste")  # type: ignore[method-assign]
+
+    await pipe._hotkey_loop(_ScriptedTrigger(["paste_last"]))
+
+    assert calls == ["paste"]
+    # It records nothing and stops nothing — it only re-delivers saved text.
+    assert pipe.started == []
+    assert pipe.stopped == 0
+
+
+@pytest.mark.asyncio
+async def test_a_paste_already_in_flight_is_not_queued_a_second_time() -> None:
+    """Two overlapping pastes race over the clipboard restore, and the loser
+    puts the PREVIOUS clipboard content back over the transcript."""
+    pipe = _RecordingPipeline()
+    pipe._paste_last_busy = True
+    scheduled: list[object] = []
+    pipe._paste_last_dictation = lambda: scheduled.append(1)  # type: ignore[method-assign]
+
+    pipe._on_paste_last()
+
+    assert scheduled == []
 
 
 @pytest.mark.asyncio

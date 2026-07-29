@@ -138,6 +138,11 @@ async def _main() -> None:
             if config.trigger.hotkey_dictate_toggle.strip()
             else ()
         ),
+        paste_last_hotkeys=(
+            (config.trigger.hotkey_paste_last,)
+            if config.trigger.hotkey_paste_last.strip()
+            else ()
+        ),
         dictate_mode=config.dictation.mode,
         dictation_config=config.dictation,
         hangup_hotkeys=(

@@ -189,6 +189,22 @@ class DictationCompleted(Event):
 #:     render an unknown-reason blank.
 #: ``pipeline_not_running``
 #:     The speech pipeline has no running event loop to host the session.
+#:
+#: The last three belong to the "insert the last dictation again" key rather
+#: than to a recording. It starts nothing, so it can never be refused for a
+#: microphone reason — but it CAN do nothing at all, and a key that does
+#: nothing in silence is the exact failure this vocabulary exists to prevent.
+#:
+#: ``nothing_to_paste``
+#:     The history holds no dictation to re-insert (nothing recorded yet, or
+#:     every entry was discarded).
+#: ``history_disabled``
+#:     ``[dictation].history_enabled`` is off, so no transcript was kept and
+#:     there is nothing this key could paste. Recoverable in the settings.
+#: ``paste_unavailable``
+#:     The text could not be typed into the focused window — Wayland, a
+#:     headless host, an elevated window in front, macOS secure input. The
+#:     detail says where the text ended up instead (usually the clipboard).
 DICTATION_REFUSAL_REASONS: Final[tuple[str, ...]] = (
     "microphone_unavailable",
     "no_stt",
@@ -196,6 +212,9 @@ DICTATION_REFUSAL_REASONS: Final[tuple[str, ...]] = (
     "handover_failed",
     "voice_session_active",
     "pipeline_not_running",
+    "nothing_to_paste",
+    "history_disabled",
+    "paste_unavailable",
 )
 
 

@@ -2912,6 +2912,15 @@ class DesktopApp:
                     if self.cfg.trigger.hotkey_dictate_toggle.strip()
                     else ()
                 ),
+                # "Insert the last dictation again". Editable in the same tab,
+                # so it has to be armed here for the same reason the two above
+                # are — a shortcut the UI can change but the pipeline never
+                # reads is a row that lies.
+                paste_last_hotkeys=(
+                    (self.cfg.trigger.hotkey_paste_last,)
+                    if self.cfg.trigger.hotkey_paste_last.strip()
+                    else ()
+                ),
                 dictate_mode=self.cfg.dictation.mode,
                 dictation_config=self.cfg.dictation,
                 hangup_hotkeys=(
