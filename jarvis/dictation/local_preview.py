@@ -186,6 +186,10 @@ class LocalPreviewTranscriber:
                 timeout=PREVIEW_TIMEOUT_S,
             )
         except TimeoutError:
+            # Not silent: _note_failure logs the attempt and drops the engine once
+            # the failures persist. Returning None is the whole handling — a
+            # preview that missed its slot has nothing left to say, and raising
+            # here would break the dictation the preview only decorates.
             self._note_failure("timed out")
             return None
         except Exception as exc:  # noqa: BLE001 — a preview must never break dictation
