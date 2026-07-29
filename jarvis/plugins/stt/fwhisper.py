@@ -153,6 +153,32 @@ def _multilingual_equivalent(model: str) -> str | None:
     return None
 
 
+def _is_english_only(model: str) -> bool:
+    """True when ``model`` is a checkpoint that only ever produces English."""
+    return _multilingual_equivalent(model) is not None
+
+
+#: The per-call ``language`` value that REQUESTS detection. Spelled out here (and
+#: in every other STT plugin) because plugins may not import from ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the model detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English;
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
+
 def _cpu_safe_compute_type(compute_type: str) -> str:
     """Downgrade CUDA-only compute types to a CPU-compatible one.
 
@@ -364,6 +390,9 @@ class FasterWhisperProvider:
         # 2026-06-29) or return garbage. This lock makes the model call mutually
         # exclusive per instance so the two callers serialize instead of racing.
         self._infer_lock = threading.Lock()
+        # One-shot latch for the "auto-detect on an English-only model" warning
+        # below, so a long dictation cannot fill the log with the same line.
+        self._warned_english_only_autodetect = False
         # True once ``warm_up`` completed (model constructed + one priming
         # inference). Boot-time consumers (the rolling-whisper wake poll loop,
         # the heavy-backend gate) wait on this instead of poking the model
@@ -574,6 +603,19 @@ class FasterWhisperProvider:
             ignore_initial_prompt,
         )
 
+    def _warn_english_only_autodetect(self) -> None:
+        """Warn ONCE that this model cannot honour an auto-detect request."""
+        if getattr(self, "_warned_english_only_autodetect", False):
+            return
+        self._warned_english_only_autodetect = True
+        log.warning(
+            "STT model %r is English-only, so this auto-detect request can only "
+            "produce English. Set the recognition language to 'auto' (which picks "
+            "a multilingual model) or choose a multilingual model to transcribe "
+            "other languages.",
+            self._model_name,
+        )
+
     def _transcribe_sync(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
@@ -584,8 +626,20 @@ class FasterWhisperProvider:
             # A resample would be needed here — but we expect 16 kHz from capture
             raise ValueError(f"Expected 16 kHz, got {sample_rate} Hz")
 
-        # Per-call override takes precedence over self._language
-        effective_lang = language if language is not None else self._language
+        # Per-call override takes precedence over self._language. ``"auto"`` is
+        # an explicit REQUEST to detect, not an absent argument: it must clear a
+        # configured pin for THIS call, never inherit it. Without that, dictation
+        # in auto mode silently transcribed every language as whatever
+        # ``[stt].language`` happened to be (live bug 2026-07-28: German spoken,
+        # English written, because the recognition language was pinned to "en").
+        effective_lang = _detect_or(language, self._language)
+        if effective_lang is None and _is_english_only(self._model_name):
+            # A deliberate "en" pin keeps the fast English-only checkpoint (see
+            # __init__), so a later auto-detect call can still land on a model
+            # that only knows English. Say so once instead of quietly mangling
+            # the speech — the honest fix is a multilingual model or an "auto"
+            # recognition language.
+            self._warn_english_only_autodetect()
 
         # NON-BLOCKING acquire across BOTH the transcribe() call and the lazy
         # generator materialization (``list(segments_iter)`` runs the actual

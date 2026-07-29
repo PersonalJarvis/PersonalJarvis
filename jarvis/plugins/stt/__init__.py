@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterable
 from functools import lru_cache
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -57,6 +58,13 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
     "groq-api", "openrouter-stt", "openai-api", "gemini-api",
 )
+
+# Constructor kwargs the factory offers but no provider is required to accept.
+# A plugin that predates one of them raises TypeError, and the build retries
+# with every one of them dropped rather than falling all the way through to the
+# local engine a base install does not ship. Anything NOT listed here (the
+# language, the team-proxy endpoint/key) is load-bearing and never dropped.
+_OPTIONAL_PROVIDER_KWARGS: tuple[str, ...] = ("prompt", "timeout_s")
 
 
 def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
@@ -129,6 +137,102 @@ def _resolve_keyed_stt_provider(primary_name: str) -> str:
     return primary_name
 
 
+def stt_family_id(provider_name: str) -> str:
+    """The CREDENTIAL family a provider id belongs to.
+
+    "Family" is defined by the credential slot, never by the provider NAME
+    (AP-21). What makes a fallback worthless is landing on a provider that draws
+    on the SAME key as the one that just answered 429 / 402 / 401: a depleted or
+    rejected credential is not rescued by a sibling id that reads the same
+    keyring entry. Two ids that resolve the same primary secret are therefore
+    ONE family, however differently they are spelled — which is exactly the
+    trap ``openrouter`` (brain) vs ``openrouter-stt`` (STT) would set for a
+    naive name comparison.
+
+    Unknown / third-party ids (absent from ``_STT_SECRET_CANDIDATES``) are each
+    their own family: we cannot prove they share a credential with anything, and
+    excluding them would silently drop a provider that works. The key-free local
+    engine is the ``local`` family — it has no credential to exhaust.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return ""
+    if name == "faster-whisper":
+        return "local"
+    candidates = _STT_SECRET_CANDIDATES.get(name)
+    if not candidates:
+        return name
+    return candidates[0][0]
+
+
+def resolve_keyed_stt_fallback(
+    current_id: str,
+    *,
+    exclude_family: str | Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Cloud STT providers to cross to when ``current_id`` fails at CALL time.
+
+    The runtime half of AP-22. ``_resolve_keyed_stt_provider`` above decides at
+    BUILD time and only when a key is entirely MISSING; a provider that has a
+    key and then returns 429 / 402 / 401 mid-session was, until this existed,
+    the end of the transcription — even with three other keyed families sitting
+    unused. Mirrors the TTS tier's ``resolve_keyed_fallback``
+    (``jarvis/plugins/tts/__init__.py``), which the TTS plugins have called from
+    their real error handlers for months.
+
+    Returns provider ids, in the shipped cross-family order, that are ALL of:
+
+    * from a different family than ``current_id`` (and than every entry in
+      ``exclude_family`` — pass the families a session already burned so a long
+      dictation does not walk back into one that is still rate-limited);
+    * one entry per family, never two ids drawing on the same credential;
+    * backed by a credential this host actually holds, AND registered as a
+      ``jarvis.stt`` entry-point — we never promise a provider we cannot build.
+
+    ``exclude_family`` accepts a single value or an iterable, and each value may
+    be a provider id or a family id from :func:`stt_family_id`.
+
+    An empty tuple is the honest answer, not an error: this user has exactly one
+    keyed STT family and the caller must degrade the way it always has (an
+    honest message, or the key-free local floor via ``_build_local_fallback`` /
+    ``jarvis.speech.stt_fallback.alternate_provider_names``, which is the one
+    option no quota can take away). The local engine is deliberately NOT in this
+    chain — it is a floor, not a family, and it is absent on a base install.
+
+    Names only, nothing built: constructing an alternate here would put a model
+    load on whatever path called us (AP-26). The caller builds the one it needs
+    via ``build_named_stt_provider`` and keeps it. The caller also owns the
+    user-facing message; this function stays quiet so a per-failure call cannot
+    turn into log spam.
+    """
+    excluded = {stt_family_id(current_id)}
+    if isinstance(exclude_family, str):
+        exclude_family = (exclude_family,)
+    for name in exclude_family:
+        family = stt_family_id(str(name))
+        if family:
+            excluded.add(family)
+    excluded.discard("")
+
+    chain: list[str] = []
+    seen: set[str] = set()
+    for cand in _STT_CROSS_FAMILY_ORDER:
+        family = stt_family_id(cand)
+        if family in excluded or family in seen:
+            continue
+        if not _stt_family_has_key(cand) or _load_provider_class(cand) is None:
+            continue
+        seen.add(family)
+        chain.append(cand)
+    logger.debug(
+        "STT runtime fallback for {!r} (excluding {}): {}",
+        current_id,
+        sorted(excluded),
+        ", ".join(chain) or "<none — this host has one keyed STT family>",
+    )
+    return tuple(chain)
+
+
 def _load_provider_class(name: str) -> type | None:
     """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``)."""
     eps = importlib_metadata.entry_points()
@@ -190,6 +294,22 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             kwargs["language"] = language
         if bias_prompt:
             kwargs["prompt"] = bias_prompt
+        # Per-request timeout. Forwarded only when the config actually carries
+        # one, so every provider keeps its own documented default otherwise. It
+        # matters most for Gemini: google-genai FORCES ``timeout=None`` on its
+        # HTTP client unless it is told otherwise, and its call runs in an
+        # uncancellable thread — so without a value arriving here there is no
+        # layer left that could bound the request (the pipeline's ``wait_for``
+        # stops waiting, it cannot stop the thread).
+        timeout_s = getattr(stt_cfg, "timeout_s", None)
+        try:
+            if timeout_s is not None and float(timeout_s) > 0:
+                kwargs["timeout_s"] = float(timeout_s)
+        except (TypeError, ValueError):
+            logger.debug(
+                "STT timeout_s {!r} is not a number; using the provider default.",
+                timeout_s,
+            )
         # Team-proxy mode (2026-06-20 spec §4): route the cloud STT through the
         # key proxy with the per-user token instead of the real vendor key. Only
         # groq-api (the cloud STT exposing `endpoint` + `api_key` constructor
@@ -222,16 +342,22 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             )
             return instance
         except TypeError as exc:
-            # The provider class refused one of our kwargs — most likely because
-            # it predates the bias_prompt addition. Retry without it so a stale
-            # third-party plugin still loads. (faster-whisper local path is
-            # handled below as the explicit fallback.)
-            if "prompt" in kwargs:
-                kwargs.pop("prompt", None)
+            # The provider class refused one of our OPTIONAL kwargs — most
+            # likely a third-party plugin that predates ``prompt`` or
+            # ``timeout_s``. Retry with all of them dropped (we cannot tell from
+            # a TypeError WHICH one offended) so a stale plugin still loads;
+            # only ``language`` and the proxy pair are load-bearing.
+            # (faster-whisper local path is handled below as the explicit
+            # fallback.)
+            refused = [k for k in _OPTIONAL_PROVIDER_KWARGS if k in kwargs]
+            if refused:
+                for key in refused:
+                    kwargs.pop(key, None)
                 logger.warning(
-                    "STT provider {!r} does not accept bias_prompt yet ({}); "
-                    "retrying without it.",
+                    "STT provider {!r} does not accept {} yet ({}); retrying "
+                    "without those.",
                     provider_name,
+                    " / ".join(refused),
                     exc,
                 )
                 try:
@@ -940,6 +1066,8 @@ __all__ = [
     "build_stt_from_config",
     "build_wake_whisper",
     "mark_wake_gpu_bad",
+    "resolve_keyed_stt_fallback",
     "start_wake_model_prefetch",
+    "stt_family_id",
     "wake_gpu_probe_cached",
 ]

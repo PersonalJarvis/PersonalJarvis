@@ -39,6 +39,28 @@ import httpx
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 DEFAULT_MODEL = "whisper-large-v3"
 
+#: The per-call ``language`` value that REQUESTS detection instead of a pinned
+#: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the service detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English
+      (live bug 2026-07-28);
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
+
 # Whisper accepts up to 224 prompt tokens; ~1000 chars is a safe cap that
 # stays under that even for token-dense German compounds (avg ~4 chars/token).
 # Going over makes Groq reject the whole turn with HTTP 400 and the user
@@ -120,7 +142,7 @@ class GroqWhisperAPI:
         wav_bytes = _wrap_pcm_as_wav(
             b"".join(pcm_pieces), sample_rate=sample_rate, channels=channels
         )
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(wav_bytes, language=self._language)
 
     async def stream_transcribe(
         self, audio: AsyncIterator[Any]
@@ -141,19 +163,16 @@ class GroqWhisperAPI:
         full VAD-segmented utterance as raw int16 PCM. The Groq endpoint
         accepts a single WAV upload, so we wrap and POST directly without the
         AsyncIterator dance.
+
+        ``language="auto"`` forces per-utterance detection for THIS call even
+        when a language is configured — see :func:`_detect_or`.
         """
         if not pcm_bytes:
             return Transcript(text="", language="unknown", confidence=0.0)
         wav_bytes = _wrap_pcm_as_wav(pcm_bytes, sample_rate=sample_rate, channels=1)
-        # Optional per-call language override
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(wav_bytes)
-            finally:
-                self._language = previous
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(
+            wav_bytes, language=_detect_or(language, self._language)
+        )
 
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
@@ -192,17 +211,16 @@ class GroqWhisperAPI:
         """
         if not data:
             return Transcript(text="", language="unknown", confidence=0.0)
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(data, filename=filename)
-            finally:
-                self._language = previous
-        return await self._post_transcription(data, filename=filename)
+        return await self._post_transcription(
+            data, filename=filename, language=_detect_or(language, self._language)
+        )
 
     async def _post_transcription(
-        self, wav_bytes: bytes, *, filename: str = "audio.wav"
+        self,
+        wav_bytes: bytes,
+        *,
+        filename: str = "audio.wav",
+        language: str | None = None,
     ) -> Transcript:
         if not self._api_key:
             raise RuntimeError(
@@ -219,8 +237,10 @@ class GroqWhisperAPI:
             "response_format": "verbose_json",
             "temperature": str(self._temperature),
         }
-        if self._language:
-            data["language"] = self._language
+        # Omitted entirely when None — that is what asks Whisper to detect the
+        # spoken language instead of decoding it as a pinned one.
+        if language:
+            data["language"] = language
         if self._prompt:
             data["prompt"] = self._prompt
 
@@ -229,6 +249,17 @@ class GroqWhisperAPI:
         response = await client.post(
             self._endpoint, headers=headers, data=data, files=files
         )
+        # ``httpx.HTTPStatusError`` carries the status on ``.response.status_code``
+        # and the ``Retry-After`` header on ``.response.headers`` — which is
+        # exactly why the pipeline's transient-error retry ladder worked for THIS
+        # provider and for no other one, and what the shared
+        # ``jarvis.plugins.stt.errors.STTHTTPError`` reproduces for the plugins
+        # that used to flatten every status into a bare RuntimeError. This plugin
+        # deliberately does NOT raise that shared type: it is the one STT plugin
+        # held to a total ``jarvis.*``-import ban (CLAUDE.md §5, pinned by
+        # tests/contract/test_stt_protocol.py), even for a lazy import inside a
+        # method. It already emits the classifiable shape, so there is nothing to
+        # gain and a purity contract to lose. Do not "unify" this line.
         response.raise_for_status()
         payload = response.json()
         return _payload_to_transcript(payload)

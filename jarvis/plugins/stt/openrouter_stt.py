@@ -66,6 +66,28 @@ DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 # in the model dropdown; the picker only offers transcription-capable models.
 DEFAULT_MODEL = "openai/whisper-large-v3"
 
+#: The per-call ``language`` value that REQUESTS detection instead of a pinned
+#: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the model detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English
+      (live bug 2026-07-28);
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
+
 # The OpenRouter attribution headers (same values the brain adapter sends).
 _ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://github.com/PersonalJarvis",
@@ -158,7 +180,7 @@ class OpenRouterSTT:
         wav_bytes = _wrap_pcm_as_wav(
             b"".join(pcm_pieces), sample_rate=sample_rate, channels=channels
         )
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(wav_bytes, language=self._language)
 
     async def stream_transcribe(
         self, audio: AsyncIterator[Any]
@@ -178,19 +200,16 @@ class OpenRouterSTT:
         The speech pipeline delivers a full VAD-segmented utterance as raw int16
         PCM (mono, 16 kHz by default). We wrap it in a WAV container and POST it
         as a single JSON request.
+
+        ``language="auto"`` forces per-utterance detection for THIS call even
+        when a language is configured — see :func:`_detect_or`.
         """
         if not pcm_bytes:
             return Transcript(text="", language="unknown", confidence=0.0)
         wav_bytes = _wrap_pcm_as_wav(pcm_bytes, sample_rate=sample_rate, channels=1)
-        # Optional per-call language override (restore afterwards).
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(wav_bytes)
-            finally:
-                self._language = previous
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(
+            wav_bytes, language=_detect_or(language, self._language)
+        )
 
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
@@ -258,7 +277,9 @@ class OpenRouterSTT:
         self._endpoint_url = base.rstrip("/") + "/audio/transcriptions"
         return self._endpoint_url
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
+    async def _post_transcription(
+        self, wav_bytes: bytes, *, language: str | None = None
+    ) -> Transcript:
         import base64
 
         url = self._ensure_endpoint()
@@ -269,8 +290,10 @@ class OpenRouterSTT:
                 "format": "wav",
             },
         }
-        if self._language:
-            body["language"] = self._language
+        # Omitted entirely when None — that is what asks the model to detect the
+        # spoken language instead of decoding it as a pinned one.
+        if language:
+            body["language"] = language
         # Temperature is omitted unless explicitly configured: keeping the body
         # minimal maximises portability across the ~10 transcription backends the
         # gateway fronts (some reject unexpected fields).
@@ -384,34 +407,24 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
 
 
 def _http_error_to_runtime(response: httpx.Response) -> RuntimeError:
-    """Map an HTTP error status to a clear English RuntimeError.
+    """Map an HTTP error status to a clear English, CLASSIFIABLE error.
 
     401 (bad/dead key), 402 (out of credit), 429 (rate limited) and any other
-    4xx/5xx all become a RuntimeError so the caller degrades honestly to the
-    local floor rather than bricking the STT tier (AP-22).
+    4xx/5xx all become an ``STTHTTPError`` — still a ``RuntimeError``, so the
+    caller degrades honestly to the local floor exactly as before (AP-22), but
+    now carrying the ``status`` and the server's ``Retry-After``. Without those
+    the pipeline's transient-error retry ladder was dead code for this plugin
+    (it could only read a status off the one provider that raised an
+    ``httpx.HTTPStatusError``), so an OpenRouter-key user lost the whole turn to
+    the first rate limit. The English wording is unchanged; only the type is.
     """
-    status = response.status_code
-    detail = ""
-    try:
-        payload = response.json()
-        if isinstance(payload, dict):
-            err = payload.get("error")
-            if isinstance(err, dict):
-                detail = str(err.get("message", "")).strip()
-            elif isinstance(err, str):
-                detail = err.strip()
-    except Exception:  # noqa: BLE001 — body may not be JSON
-        detail = (response.text or "").strip()[:200]
+    # Imported here, not at module top, to keep the plugin ``jarvis.*``-free at
+    # import time (the entry-point purity contract) — the same lazy seam the
+    # credential lookup uses. This runs only on an already-failed request, so
+    # the import costs nothing on the happy path.
+    from jarvis.plugins.stt.errors import http_error_from_response
 
-    reason = {
-        401: "invalid or missing OpenRouter API key",
-        402: "OpenRouter account out of credit",
-        429: "OpenRouter rate limit / quota exceeded",
-    }.get(status, f"OpenRouter STT HTTP {status}")
-    msg = f"OpenRouter STT failed: {reason}"
-    if detail:
-        msg = f"{msg} ({detail})"
-    return RuntimeError(msg)
+    return http_error_from_response(response, vendor="OpenRouter")
 
 
 def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
