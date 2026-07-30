@@ -95,6 +95,34 @@ try {
     exit 4
 }
 
+# A provider chosen through Jarvis is the authoritative STT selection. Older
+# desktop processes may have left a different User-scope environment value or
+# desired-state entry behind; repairing TOML from either would silently undo
+# the user's explicit choice. Use the marked TOML provider as the in-memory
+# desired value for both comparisons. The writer normally keeps all layers in
+# sync, while this protects the partial-write and stale-process edge cases.
+$tomlSnapshot = Get-Content -Path $tomlFile -Raw -Encoding utf8
+$sttSectionMatch = [regex]::Match($tomlSnapshot, '(?ms)^\[stt\][^\[]*')
+if ($sttSectionMatch.Success) {
+    $sttSectionBody = $sttSectionMatch.Value
+    $selectionMarker = [regex]::Match(
+        $sttSectionBody,
+        '(?im)^\s*provider_user_selected\s*=\s*true\b'
+    )
+    $selectedProvider = [regex]::Match(
+        $sttSectionBody,
+        '(?m)^\s*provider\s*=\s*"([^"]+)"'
+    )
+    if (
+        $selectionMarker.Success -and
+        $selectedProvider.Success -and
+        $null -ne $desired.stt -and
+        $null -ne $desired.stt.PSObject.Properties['provider']
+    ) {
+        $desired.stt.provider = $selectedProvider.Groups[1].Value
+    }
+}
+
 # A JARVIS__SECTION__KEY override can represent one scalar only. PowerShell
 # stringifies nested JSON objects as "@{key=value}"; Python then receives a
 # string where the config schema expects a mapping and the desktop app cannot

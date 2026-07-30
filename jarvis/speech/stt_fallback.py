@@ -267,6 +267,25 @@ def alternate_provider_names(configured: str, available: Sequence[str]) -> list[
     return ordered
 
 
+def configured_fallback_names(
+    stt_cfg: Any,
+    configured: str,
+    automatic: Sequence[str],
+) -> tuple[str, ...]:
+    """Apply the user's ``[stt].fallback`` setting to an automatic chain.
+
+    An empty setting disables crossover, a concrete provider pins exactly that
+    provider, and ``auto`` keeps the key-aware chain supplied by the caller.
+    The selected provider is never repeated as its own fallback.
+    """
+    setting = str(getattr(stt_cfg, "fallback", "auto") or "").strip()
+    if not setting:
+        return ()
+    if setting.lower() != "auto":
+        return () if setting == configured else (setting,)
+    return tuple(name for name in automatic if name != configured)
+
+
 def wrap_stt_with_fallback(provider: Any, stt_cfg: Any) -> Any:
     """Wrap ``provider`` in a :class:`FallbackSTT` over the user's other keys.
 
@@ -283,8 +302,10 @@ def wrap_stt_with_fallback(provider: Any, stt_cfg: Any) -> Any:
         )
 
         configured = (getattr(stt_cfg, "provider", "") or "").strip()
-        alternates = alternate_provider_names(
-            configured, available_stt_provider_names()
+        alternates = configured_fallback_names(
+            stt_cfg,
+            configured,
+            alternate_provider_names(configured, available_stt_provider_names()),
         )
         if not alternates:
             return provider
@@ -310,5 +331,6 @@ __all__ = [
     "RATE_LIMIT_COOLDOWN_S",
     "TRANSIENT_COOLDOWN_S",
     "alternate_provider_names",
+    "configured_fallback_names",
     "wrap_stt_with_fallback",
 ]

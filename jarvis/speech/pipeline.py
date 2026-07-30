@@ -657,13 +657,9 @@ def _stt_crossover_would_leave_the_machine() -> bool:
 def _resolve_stt_fallback_chain(stt_cfg: Any, configured: str) -> tuple[str, ...]:
     """Provider ids to cross to when ``configured`` fails at CALL time.
 
-    The ONE place ``[stt].fallback`` is interpreted, and the reason it exists is
-    that the key was shipped in configs for a long time while nothing read it —
-    a switch whose value is ignored is a lie the user cannot detect (AP-31), and
-    it was documented in ``STTConfig`` as honoured. Both consumers — the
-    dictation lane's session chain and the voice lane's last-resort crossover —
-    resolve through here, because two readings of one switch are two readings
-    that will drift.
+    Both consumers use ``configured_fallback_names`` for the setting semantics,
+    so the utterance wrapper and this last-resort resolver cannot disagree about
+    whether fallback is automatic, pinned, or disabled (AP-31).
 
     Three settings, all of them the user's call:
 
@@ -694,19 +690,11 @@ def _resolve_stt_fallback_chain(stt_cfg: Any, configured: str) -> tuple[str, ...
     unimportable plugin package or an unreadable keyring costs the crossover,
     never the transcription. Names only, nothing built (AP-26).
     """
+    from jarvis.speech.stt_fallback import configured_fallback_names
+
     setting = str(getattr(stt_cfg, "fallback", "auto") or "").strip()
-    if not setting:
-        log.debug("STT crossover disabled by [stt].fallback = '' (empty).")
-        return ()
     if setting.lower() != "auto":
-        if setting == configured:
-            log.debug(
-                "STT crossover pinned to the configured provider %r — the same "
-                "failure twice is not a fallback; ignoring the pin.",
-                setting,
-            )
-            return ()
-        return (setting,)
+        return configured_fallback_names(stt_cfg, configured, ())
     if _stt_crossover_would_leave_the_machine():
         log.info(
             "STT crossover declined: [stt].provider = %s transcribes on this "
@@ -721,7 +709,11 @@ def _resolve_stt_fallback_chain(stt_cfg: Any, configured: str) -> tuple[str, ...
     try:
         from jarvis.plugins.stt import resolve_keyed_stt_fallback
 
-        return tuple(resolve_keyed_stt_fallback(configured))
+        return configured_fallback_names(
+            stt_cfg,
+            configured,
+            resolve_keyed_stt_fallback(configured),
+        )
     except Exception as exc:  # noqa: BLE001 — no chain is worse than no transcript
         log.warning(
             "STT crossover chain could not be resolved (%s); this transcription "

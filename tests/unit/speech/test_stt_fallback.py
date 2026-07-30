@@ -13,8 +13,10 @@ import pytest
 from jarvis.core.protocols import Transcript
 from jarvis.plugins.stt import _STT_CROSS_FAMILY_ORDER
 from jarvis.speech.stt_fallback import (
+    RATE_LIMIT_COOLDOWN_S,
     FallbackSTT,
     alternate_provider_names,
+    configured_fallback_names,
     wrap_stt_with_fallback,
 )
 
@@ -58,6 +60,35 @@ async def test_rate_limit_crosses_to_the_next_provider():
 
     assert result.text == "die echten Worte"
     assert backup.calls == 1
+
+
+@pytest.mark.parametrize(
+    "selected",
+    (
+        "openrouter-stt",
+        "openai-api",
+        "gemini-api",
+        "groq-api",
+        "faster-whisper",
+        "nemotron-local",
+    ),
+)
+async def test_every_healthy_user_selected_provider_stays_primary(selected: str):
+    primary = FakeSTT(text="selected")
+    backup = FakeSTT(text="fallback")
+    chain = FallbackSTT(
+        primary,
+        ["emergency-stt"],
+        lambda _name: backup,
+        primary_name=selected,
+    )
+
+    result = await chain.transcribe_pcm(b"x")
+
+    assert result.text == "selected"
+    assert chain.last_used_provider == selected
+    assert primary.calls == 1
+    assert backup.calls == 0
 
 
 async def test_fallback_exposes_the_model_that_actually_answered():
@@ -137,6 +168,25 @@ async def test_a_rate_limited_provider_is_skipped_on_the_next_call():
     assert backup.calls == 2
 
 
+async def test_selected_provider_returns_after_its_emergency_cooldown(monkeypatch):
+    import jarvis.speech.stt_fallback as fallback_mod
+
+    now = 0.0
+    monkeypatch.setattr(fallback_mod.time, "monotonic", lambda: now)
+    primary = FakeSTT(error=RuntimeError("429 Too Many Requests"))
+    backup = FakeSTT(text="temporary fallback")
+    chain = _chain(primary, **{"openai-api": backup})
+
+    assert (await chain.transcribe_pcm(b"x")).text == "temporary fallback"
+    primary.error = None
+    primary.text = "selected provider restored"
+    now = RATE_LIMIT_COOLDOWN_S + 1.0
+
+    assert (await chain.transcribe_pcm(b"x")).text == "selected provider restored"
+    assert primary.calls == 2
+    assert backup.calls == 1
+
+
 async def test_a_cooling_provider_is_still_the_last_resort():
     """Skipped is not dropped: with every alternate dead it gets the last word."""
     primary = FakeSTT(text="from the configured provider")
@@ -213,6 +263,26 @@ def test_a_single_key_install_is_not_wrapped():
         assert wrap_stt_with_fallback(provider, Cfg()) is provider
     finally:
         stt_mod.available_stt_provider_names = original
+
+
+def test_empty_fallback_setting_disables_the_runtime_wrapper():
+    class Cfg:
+        provider = "openrouter-stt"
+        fallback = ""
+
+    provider = FakeSTT(text="x")
+    assert wrap_stt_with_fallback(provider, Cfg()) is provider
+
+
+def test_concrete_fallback_setting_pins_exactly_one_provider():
+    class Cfg:
+        fallback = "gemini-api"
+
+    assert configured_fallback_names(
+        Cfg(),
+        "openrouter-stt",
+        ("openai-api", "groq-api"),
+    ) == ("gemini-api",)
 
 
 def test_attributes_delegate_to_the_provider_in_front():

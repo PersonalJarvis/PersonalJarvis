@@ -74,7 +74,9 @@ def test_set_stt_provider_writes_all_three_layers(
     config_writer.set_stt_provider("faster-whisper", path=sample_toml)
 
     # Layer 1: TOML.
-    assert 'provider = "faster-whisper"' in sample_toml.read_text(encoding="utf-8")
+    toml_text = sample_toml.read_text(encoding="utf-8")
+    assert 'provider = "faster-whisper"' in toml_text
+    assert "provider_user_selected = true" in toml_text
 
     # Layer 2: config-soll.json stt.provider.  # i18n-allow
     soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow

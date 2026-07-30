@@ -413,8 +413,16 @@ def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     drift-guard reverts it within 5 minutes. Layers 2 + 3 are best-effort
     (cloud-first) and never break the TOML write.
     """
-    # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
-    _patch_table(path, "stt", "provider", name)
+    # Layer 1 — universal, runs on every platform. The marker lands in the
+    # same atomic write and makes this explicit user choice authoritative over
+    # a stale provider override inherited by a later desktop process.
+    _patch_table(
+        path,
+        "stt",
+        "provider",
+        name,
+        extra={"provider_user_selected": True},
+    )
     # Layers 2 + 3 — best-effort, never raise.
     _sync_stt_provider_drift_soll(name)  # i18n-allow
 

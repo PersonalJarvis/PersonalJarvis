@@ -193,3 +193,66 @@ def test_structured_stt_models_never_becomes_one_env_override(
     assert toml_file.read_text(encoding="utf-8") == (
         '[stt.models]\nopenrouter-stt = "openai/gpt-4o-transcribe"\n'
     )
+
+
+def test_user_selected_stt_provider_survives_stale_desired_state(
+    tmp_path: Path,
+) -> None:
+    """The guard heals stale ENV toward the user's selection, never away."""
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if powershell is None:
+        pytest.skip("PowerShell is unavailable")
+
+    guard = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "jarvis-config-drift-guard.ps1"
+    )
+    sandbox = tmp_path / "repo"
+    sandbox.mkdir()
+    desired_file = sandbox / "desired.json"
+    desired_file.write_text(
+        json.dumps({"stt": {"provider": "groq-api"}}),
+        encoding="utf-8",
+    )
+    toml_file = sandbox / "jarvis.toml"
+    expected = (
+        '[stt]\nprovider = "openrouter-stt"\nprovider_user_selected = true\n'
+    )
+    toml_file.write_text(expected, encoding="utf-8")
+    env = os.environ.copy()
+    env["JARVIS__STT__PROVIDER"] = "groq-api"
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(guard),
+            "-RepoRoot",
+            str(sandbox),
+            "-DesiredFile",
+            str(desired_file),
+            "-EnvironmentTarget",
+            "Process",
+        ],
+        cwd=sandbox,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = (sandbox / "logs" / "config-drift-guard.log").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "JARVIS__STT__PROVIDER := 'openrouter-stt'" in log
+    assert "[stt] provider: actual='openrouter-stt' desired='groq-api'" not in log
+    assert toml_file.read_text(encoding="utf-8") == expected

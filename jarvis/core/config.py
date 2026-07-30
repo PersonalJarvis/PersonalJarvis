@@ -428,6 +428,12 @@ class TriggerConfig(BaseModel):
 
 class STTConfig(BaseModel):
     provider: str = "groq-api"
+    # Set by every user-facing provider switch. Once present, the persisted
+    # provider is authoritative over a stale JARVIS__STT__PROVIDER inherited
+    # from an older desktop process or User-scope environment entry. Fresh
+    # headless installs keep the normal ENV-over-TOML contract until a user
+    # explicitly chooses a provider through Jarvis.
+    provider_user_selected: bool = False
     # Where transcription goes when ``provider`` keeps failing at RUNTIME — a
     # depleted or revoked key (401/402), or a rate limit that survives the
     # retry ladder. ``auto`` (the default) asks the key-aware resolver for a
@@ -3689,10 +3695,21 @@ def _apply_env_overrides(data: dict[str, Any], prefix: str = "JARVIS__") -> dict
 
     Example: JARVIS__BRAIN__PRIMARY=openrouter → config["brain"]["primary"]
     """
+    stt_section = data.get("stt")
+    stt_provider_user_selected = bool(
+        isinstance(stt_section, dict)
+        and stt_section.get("provider_user_selected") is True
+    )
     for env_key, env_val in tuple(os.environ.items()):
         if not env_key.startswith(prefix):
             continue
         path = env_key[len(prefix):].lower().split("__")
+        if path == ["stt", "provider"] and stt_provider_user_selected:
+            logging.getLogger(__name__).debug(
+                "Ignoring %s because the persisted STT provider was user-selected",
+                env_key,
+            )
+            continue
         cursor = data
         blocked = False
         for segment in path[:-1]:
