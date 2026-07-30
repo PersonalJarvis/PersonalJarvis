@@ -827,6 +827,19 @@ class Terminal:
     # cannot be missed: it is read at mount, at every reconnect and at every
     # poll, so the receipt is still there when somebody looks ten minutes later.
     last_prompt_at: float | None = None
+    # When this pane was last GIVEN something to do — by Jarvis or by a person
+    # pressing Enter in it. Distinct from `last_prompt_at`, which only knows
+    # about the injection path, and from `last_input_at`, which counts every
+    # arrow key.
+    #
+    # It exists because the activity detector reads MOVEMENT, and a coding CLI
+    # moves plenty on its own: starting up, it paints a banner, a model line and
+    # whatever warnings it has, then stands still. That is indistinguishable
+    # from an agent finishing a job, so a freshly opened workspace rang its bell
+    # once per pane — sometimes twice, when the startup drawing came in two
+    # bursts — for work nobody had asked for. A pane nobody has given an
+    # instruction cannot have finished one, and this is how that is known.
+    last_submit_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
     # Did it arrive with its line structure intact? False means the pane
@@ -2711,6 +2724,11 @@ class Registry:
             # stalled agent behind an accidental one.
             term.continuation_pending = False
             term.resume_continuation_needed = False
+            # And this pane now has an instruction of its own, which is what
+            # makes its next stop worth reporting — a pane driven only by hand
+            # never goes through `send_prompt`, so without this hook the bell
+            # would stay silent for everybody who types their own prompts.
+            term.last_submit_at = term.last_input_at
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -3169,6 +3187,19 @@ class Registry:
                 # (a new "Mika" in the same workspace). Dropping it here is what
                 # stops a fresh pane opening under the last one's sentence.
                 recap_engine.forget(term.key)
+                # Its bell entries go the same way and for the same reason.
+                # Each one is a "jump to this pane" button, and the pane has
+                # just stopped existing — while its key has not, so waiting for
+                # the sweep to notice would hand them to whoever takes the name
+                # next.
+                try:
+                    from . import notifications
+
+                    notifications.center().forget_pane(session.id, term.key)
+                except Exception as exc:  # noqa: BLE001 - never fail a close on bookkeeping
+                    logger.warning(
+                        "Agentic IDE: could not clear notifications for a closed pane: {}", exc
+                    )
             self._renumber(session)
             if resolved:
                 await self._persist()
@@ -3279,6 +3310,11 @@ class Registry:
         # never disagree about when this happened — and so a viewer that arrives
         # a second later reads the same instant the notice carried.
         term.last_prompt_at = time.time()
+        # The same stamp under the name the activity watcher reads, so a pane
+        # driven by Jarvis and one driven by hand prove the same thing the same
+        # way. Set even for a hard False: the text is in the pane's input box,
+        # and whatever it does next was still asked of it.
+        term.last_submit_at = term.last_prompt_at
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         # Somebody is driving this pane again, whatever the prompt said. Cleared

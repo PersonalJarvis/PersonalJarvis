@@ -165,9 +165,19 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const bellRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // Re-rendered on a slow beat so "3m ago" does not sit at "3m ago" for an
-  // hour while the panel stays open.
-  const [tick, setTick] = useState(() => Date.now());
+  /*
+   * A counter, not a clock. It only exists to force a re-render on a slow beat
+   * so "3m ago" does not sit at "3m ago" for an hour while the panel stays
+   * open; the time itself is read at render, from `Date.now()`.
+   *
+   * It used to hold the timestamp, and that was the bug behind every entry
+   * reading "0s ago" however old it was: the value was taken once when the
+   * workspace mounted and refreshed only every 30 s while the panel was open,
+   * so anything filed after the workspace opened was compared against a moment
+   * BEFORE it happened. That is a negative age, which the clamp in `ago` turns
+   * into zero. A counter cannot go stale, because it is never used as a time.
+   */
+  const [, setTick] = useState(0);
 
   const refresh = useCallback(async (): Promise<PaneNotificationsState> => {
     try {
@@ -199,7 +209,10 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
 
   useEffect(() => {
     if (!open) return;
-    const timer = window.setInterval(() => setTick(Date.now()), 30_000);
+    // Every 15 s rather than 30: under a minute the panel counts in seconds,
+    // and a seconds display that moves in half-minute jumps reads as frozen —
+    // which is exactly what the bug above looked like.
+    const timer = window.setInterval(() => setTick((n) => n + 1), 15_000);
     return () => window.clearInterval(timer);
   }, [open]);
 
@@ -379,7 +392,10 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
                     <Row
                       key={entry.id}
                       entry={entry}
-                      now={tick}
+                      // Read here, at render, so it is the time the user is
+                      // looking at the list rather than the time something
+                      // last happened to schedule a render.
+                      now={Date.now()}
                       onJump={() => jump(entry)}
                       onDiscard={() => void discard(entry.id)}
                     />

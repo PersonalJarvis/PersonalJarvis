@@ -210,4 +210,39 @@ describe("relative time", () => {
     expect(ago(at - 7200, now)).toBe("2h ago");
     expect(ago(at - 172_800, now)).toBe("2d ago");
   });
+
+  it("ages an entry filed long after the workspace was opened", async () => {
+    /*
+     * The bug this pins read "0s ago" on every entry in the panel, however old,
+     * and it survived the test above because that one calls `ago` directly.
+     * The component used to freeze its idea of "now" when it MOUNTED — which is
+     * when the workspace opens — and refresh it only every 30 s, and only while
+     * the panel was open. So a notification filed at any point after the
+     * workspace opened was measured against a moment before it existed, and the
+     * clamp in `ago` turned that negative age into zero.
+     *
+     * Hence the shape here: mount first, let an hour pass, and only then does
+     * anything arrive.
+     */
+    // Only the clock is faked — the polling and the queries keep their real
+    // timers, so this stays an ordinary render-and-click test.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-07-30T12:00:00Z"));
+      fetchMock.mockResolvedValue(state([]));
+      render(<PaneNotifications onJump={vi.fn()} />);
+      await screen.findByTestId("pane-notifications-bell");
+
+      // An hour of the workspace sitting open, and then a pane finishes.
+      vi.setSystemTime(new Date("2026-07-30T13:00:00Z"));
+      fetchMock.mockResolvedValue(state([entry({ created_at: Date.now() / 1000 - 600 })]));
+
+      const panel = await open();
+
+      expect(panel.textContent).toContain("10m ago");
+      expect(panel.textContent).not.toContain("0s ago");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

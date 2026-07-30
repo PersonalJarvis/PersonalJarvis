@@ -7,8 +7,10 @@ that edge right rather than about the store around it:
 
 * a pane that was busy and went quiet is reported ONCE,
 * a pane that has been idle since it appeared is never reported at all,
+* a pane nobody has instructed yet is never reported either, however much its
+  starting CLI paints itself across the screen,
 * the gap a TUI leaves between two steps does not produce a notification,
-* and an entry never outlives the workspace whose pane it points at.
+* and an entry never outlives the pane it points at — nor the workspace.
 
 Each of those has an obvious wrong implementation that looks correct in a demo
 and is unusable in a grid of twelve.
@@ -94,7 +96,7 @@ REST_SCREENS = {
     ),
     "kimi": (
         "\r\n ✦ Use Kimi K3 with High thinking effort\r\n"
-        "   Error: LLM not set, send \"/login\" to login\r\n"
+        '   Error: LLM not set, send "/login" to login\r\n'
         " │ >                                        \r\n"
         " C:\\probe-repo                              \r\n"
     ),
@@ -123,9 +125,7 @@ async def _noop_exit(_code: int) -> None:
     return None
 
 
-async def _pane(
-    registry: Registry, folder: Path, *, name: str = "Alex", agent: str = "claude"
-):
+async def _pane(registry: Registry, folder: Path, *, name: str = "Alex", agent: str = "claude"):
     """One live pane in one workspace, through the real attach path."""
     session = await registry.start(str(folder), [{"agent": agent, "name": name}])
     term = await registry.attach(name, 100, 30, _noop, _noop_exit)
@@ -157,7 +157,13 @@ def _busy(watcher: Any, registry: Registry, term: Any, *, start: float, sweeps: 
     test means changing its picture — repeatedly, since a single change cannot
     be told from a pane that was already still. Returns the moment of the last
     sweep, which is when the screen stopped moving.
+
+    The pane is also stamped as having been GIVEN the job, because that is what
+    a working pane is: an agent does not start moving on its own account except
+    while it is starting up, which is the case
+    `test_a_starting_cli_painting_itself_is_not_a_finished_job` covers.
     """
+    term.last_submit_at = start - 0.1
     at = start
     for step in range(sweeps):
         at = start + step * notifications.SWEEP_INTERVAL_S
@@ -206,9 +212,7 @@ async def test_a_moving_screen_is_a_working_pane(
     assert read_activity(term, now=1000.5, still_since=1000.0) == "working"
 
 
-async def test_movement_is_the_only_thing_that_counts(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_movement_is_the_only_thing_that_counts(registry: Registry, tmp_path: Path) -> None:
     """The rows this build draws while WORKING are not treated as special.
 
     The point of the rewrite: these are the exact rows that fooled two earlier
@@ -239,9 +243,7 @@ async def test_a_pane_whose_screen_keeps_changing_is_working(
         assert watcher._panes[(_session.id, term.key)].activity == "working"
 
 
-async def test_the_startup_banner_is_not_a_question(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_the_startup_banner_is_not_a_question(registry: Registry, tmp_path: Path) -> None:
     """It sits there for the pane's whole life — a standing banner, not an ask."""
     _session, term = await _pane(registry, tmp_path)
     _draw(term, REAL_STARTUP_BANNER)
@@ -285,14 +287,13 @@ async def test_movement_after_the_typing_stopped_is_work(
     assert read_activity(term, now=1010.2, still_since=1010.0) == "working"
 
 
-async def test_a_real_pane_finishing_files_one_entry(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_real_pane_finishing_files_one_entry(registry: Registry, tmp_path: Path) -> None:
     """End to end on the real rows: working → finished → exactly one entry."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
 
     _draw(term, REAL_WORKING)
+    term.last_submit_at = 999.0
     term.last_output_at = 1000.0
     assert watcher.poll(registry, now=1000.5) == []
 
@@ -321,9 +322,7 @@ async def test_the_interrupt_hint_is_what_marks_a_pane_busy(
     assert read_activity(term) == "working"
 
 
-async def test_a_pane_at_its_prompt_reads_as_waiting(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_pane_at_its_prompt_reads_as_waiting(registry: Registry, tmp_path: Path) -> None:
     _session, term = await _pane(registry, tmp_path)
 
     _draw(term, IDLE_SCREEN)
@@ -434,6 +433,79 @@ async def test_a_pane_that_was_never_busy_is_never_reported(
         assert watcher.poll(registry, now=moment) == []
 
 
+async def test_a_starting_cli_painting_itself_is_not_a_finished_job(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The bug this rule exists for, in the form the user actually hit.
+
+    Open a workspace and the CLIs in it draw themselves: a logo, a model line,
+    an authentication banner. That is a screen moving and then stopping, which
+    is frame for frame what an agent finishing a job looks like — so the bell
+    filed "Finished and waiting at its prompt" for every pane in a workspace
+    nobody had typed a word into, and twice for the panes whose startup drawing
+    arrived in two bursts.
+
+    Movement alone can never mean this again: the pane has to have been GIVEN
+    something to do first.
+    """
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    watcher.poll(registry, now=100.0)
+
+    # The banner arrives in two bursts, exactly as a real cold start does.
+    for step, chunk in enumerate(("\r\n           Claude Code v2.1.220\r\n", REAL_STARTUP_BANNER)):
+        term.transcript.clear()
+        _draw(term, chunk)
+        assert watcher.poll(registry, now=102.0 + step * 2) == []
+
+    # And then it stands still at its prompt, for as long as anybody looks.
+    for moment in (110.0, 120.0, 600.0):
+        assert watcher.poll(registry, now=moment) == []
+    assert notifications.center().list() == []
+
+
+async def test_a_prompt_typed_by_hand_arms_the_report(registry: Registry, tmp_path: Path) -> None:
+    """The other side of that rule — and the half a `send_prompt` check misses.
+
+    A pane driven by a person pressing Enter in it never goes through Jarvis'
+    injection path, so a rule that only counted prompts Jarvis sent would leave
+    the bell permanently silent for anybody who types their own.
+    """
+    watcher = notifications.watcher()
+    session, term = await _pane(registry, tmp_path)
+    watcher.poll(registry, now=100.0)
+    assert term.prompts_sent == 0, "the point: nothing went through send_prompt"
+
+    registry.write(term.key, "run the tests\r", workspace_id=session.id)
+
+    stopped = _busy(watcher, registry, term, start=200.0)
+    watcher.poll(registry, now=stopped + STILL_S + 1)
+    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+
+    assert [entry.kind for entry in filed] == ["completed"]
+
+
+async def test_arrow_keys_and_half_typed_lines_are_not_an_instruction(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Typing is not submitting, or reading a prompt back would arm the bell."""
+    watcher = notifications.watcher()
+    session, term = await _pane(registry, tmp_path)
+    watcher.poll(registry, now=100.0)
+
+    registry.write(term.key, "run the te", workspace_id=session.id)
+
+    assert term.last_submit_at is None
+    stopped = _busy(watcher, registry, term, start=200.0)
+    # `_busy` stamps the pane, so undo that here — this test is about the pane
+    # NOT having been given anything, with a screen that moved regardless.
+    term.last_submit_at = None
+    watcher._panes[(session.id, term.key)].tasked = False
+    watcher.poll(registry, now=stopped + STILL_S + 1)
+
+    assert watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2) == []
+
+
 async def test_a_repaint_gap_does_not_file_a_notification(
     registry: Registry, tmp_path: Path
 ) -> None:
@@ -474,16 +546,12 @@ async def test_a_question_is_reported_even_though_it_never_worked(
     _draw(term, QUESTION_SCREEN)
     watcher.poll(registry, now=101.0)
     assert watcher.poll(registry, now=101.0 + STILL_S + 1) == []
-    filed = watcher.poll(
-        registry, now=101.0 + STILL_S + notifications.SETTLE_S + 2
-    )
+    filed = watcher.poll(registry, now=101.0 + STILL_S + notifications.SETTLE_S + 2)
 
     assert [entry.kind for entry in filed] == ["needs_input"]
 
 
-async def test_going_back_to_work_re_arms_the_report(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_going_back_to_work_re_arms_the_report(registry: Registry, tmp_path: Path) -> None:
     """A pane given a second job reports its second stop too."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
@@ -491,15 +559,11 @@ async def test_going_back_to_work_re_arms_the_report(
     for round_start in (100.0, 500.0):
         stopped = _busy(watcher, registry, term, start=round_start)
         watcher.poll(registry, now=stopped + STILL_S + 1)
-        filed = watcher.poll(
-            registry, now=stopped + STILL_S + notifications.SETTLE_S + 2
-        )
+        filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
         assert [entry.kind for entry in filed] == ["completed"], round_start
 
 
-async def test_a_dead_agent_is_reported_without_waiting(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_dead_agent_is_reported_without_waiting(registry: Registry, tmp_path: Path) -> None:
     """There is no repaint gap to sit out — the state cannot flip back by itself."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
@@ -553,6 +617,83 @@ def test_the_store_is_bounded() -> None:
 
     assert len(center.list()) == 3
     assert [entry.id for entry in center.list()] == ["n9", "n8", "n7"]
+
+
+async def _file_one(watcher: Any, registry: Registry, term: Any, *, start: float) -> None:
+    """Put exactly one ``completed`` entry in the bell for ``term``."""
+    stopped = _busy(watcher, registry, term, start=start)
+    watcher.poll(registry, now=stopped + STILL_S + 1)
+    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+    assert [entry.pane for entry in filed] == [term.name]
+
+
+async def test_closing_a_pane_takes_its_notifications_with_it(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """An entry is a "jump to this pane" button and the pane has just gone.
+
+    The workspace stays open, so the entry used to stay with it — the bell kept
+    counting terminals the user could no longer see, and pressing one of them
+    did nothing at all.
+    """
+    watcher = notifications.watcher()
+    session = await registry.start(
+        str(tmp_path),
+        [{"agent": "claude", "name": "T1"}, {"agent": "claude", "name": "T2"}],
+    )
+    first = await registry.attach("T1", 100, 30, _noop, _noop_exit)
+    second = await registry.attach("T2", 100, 30, _noop, _noop_exit)
+    await _file_one(watcher, registry, first, start=100.0)
+    await _file_one(watcher, registry, second, start=500.0)
+    assert {entry.pane for entry in notifications.center().list()} == {"T1", "T2"}
+
+    await registry.close_terminal("T2")
+
+    assert [entry.pane for entry in notifications.center().list()] == ["T1"]
+    assert session.id
+
+
+async def test_a_new_pane_never_inherits_the_closed_ones_entries(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Call-signs are handed back out, and with them the pane KEY.
+
+    So an entry left behind by a closed T2 does not merely dangle — it
+    re-attaches itself to whatever opens as T2 next, and "jump to pane" lands
+    somewhere plausible and wrong. This is why the close path clears them
+    itself instead of leaving it to the next sweep.
+    """
+    watcher = notifications.watcher()
+    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    first = await registry.attach("T1", 100, 30, _noop, _noop_exit)
+    await _file_one(watcher, registry, first, start=100.0)
+
+    await registry.close_terminal("T1")
+    await registry.add_terminal(agent="claude", name="T1")
+    reborn = await registry.attach("T1", 100, 30, _noop, _noop_exit)
+
+    assert reborn.key == first.key, "the premise: the key came back with the name"
+    assert notifications.center().list() == []
+
+
+async def test_an_entry_follows_the_pane_when_it_is_renamed(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Otherwise it names a terminal that is not on screen under that name.
+
+    The rename is applied to the pane directly rather than through whichever
+    route offers it, because the claim under test belongs to the sweep: an
+    entry carries a LABEL, and a label is refreshed from the pane rather than
+    frozen at the moment it was filed.
+    """
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path, name="T1")
+    await _file_one(watcher, registry, term, start=100.0)
+
+    term.name = "Reviewer"
+    watcher.poll(registry, now=900.0)
+
+    assert [entry.pane for entry in notifications.center().list()] == ["Reviewer"]
 
 
 async def test_closing_a_workspace_takes_its_notifications_with_it(

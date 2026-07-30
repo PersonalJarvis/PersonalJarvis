@@ -18,7 +18,7 @@ that raised each one.
 
 Four kinds, and each one is something the pane itself established:
 
-* ``completed`` — it was working, and it is not any more.
+* ``completed`` — it was given a job, it was working, and it is not any more.
 * ``needs_input`` — it is not working and there is a question on its screen.
 * ``exited`` — its process is gone (with the exit code, if there was one).
 * ``failed`` — its agent could not be started at all.
@@ -27,6 +27,23 @@ Nothing here reads the agent's prose to decide whether the job went well: a
 "completed" entry means the pane went quiet, never that the work is correct.
 That distinction is in the wording the UI shows, because promising the second
 one would be a lie the module is in no position to tell.
+
+## Why "completed" needs a job as well as a stop
+
+The detector underneath reads MOVEMENT (see :mod:`.activity`), and a coding CLI
+moves plenty on its own account. Starting up it paints a banner, a model line
+and whatever warnings it carries, then stands still — which is, frame for
+frame, what an agent finishing a job looks like. So the first version of this
+rang the bell once per pane the moment a workspace opened, twice for the panes
+whose startup drawing arrived in two bursts, before anybody had typed a word.
+
+A stop is therefore only reported once the pane has been GIVEN something to do:
+a prompt from Jarvis, or a person pressing Enter in it
+(``Terminal.last_submit_at``). The flag latches — a pane in service stays in
+service — because the thing it rules out is the period BEFORE the first
+instruction, not the second job. The other three kinds are unconditional: a
+question, a dead process and a failed start are news whether or not the pane
+ever worked.
 
 ## Why a debounce, and why it is the whole trick
 
@@ -44,6 +61,14 @@ An entry's whole value is the "jump to pane" behind it. Panes do not survive a
 restart of the app, so a notification that did would point at a terminal that
 no longer exists — the one thing worse than no notification. The store is a
 bounded deque and is deliberately lost with the process.
+
+The same reasoning inside one run: every sweep tells the store which panes are
+still there (:meth:`NotificationCenter.retain`), and entries whose pane has been
+closed go with it. A pane closed by name is cleared on the spot instead
+(:meth:`NotificationCenter.forget_pane`), because its call-sign — and with it
+its KEY — is handed straight back out to whatever opens next. That sweep is
+also where a live pane's call-sign is refreshed, so an entry cannot go on naming
+a terminal the user has since renamed.
 
 One boolean does survive: whether a pane was observed actively working. The
 resume snapshot uses that evidence to distinguish genuinely interrupted work
@@ -65,14 +90,14 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from itertools import count
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
 from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from .session import Registry
 
@@ -104,6 +129,20 @@ SWITCH_TTL_S = 15.0
 DETAIL_CHARS = 160
 
 _ids = count(1)
+
+
+class PaneLabel(NamedTuple):
+    """What a live pane is called right now, and the tab it sits in.
+
+    Both travel with an entry so the panel can be read without opening
+    anything, and both can change under it while the entry is on screen: a pane
+    can be given a new call-sign and a workspace a new tab name. Hence a label
+    rather than a bare name — the entry is refreshed from this, not frozen at
+    the moment it was filed.
+    """
+
+    pane: str
+    workspace: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,9 +244,64 @@ class NotificationCenter:
         Their "jump to pane" cannot be honoured any more, and an entry that
         silently does nothing when pressed is worse than one that is gone.
         """
+        return self.clear(entry.id for entry in self._entries if entry.workspace_id == workspace_id)
+
+    def forget_pane(self, workspace_id: str, pane_key: str) -> int:
+        """Drop the entries of a single pane that has just been closed.
+
+        The sweep would get to this on its own (:meth:`retain`), but not soon
+        enough: pane keys are REUSED — a new pane taking the closed one's name
+        takes its key with it — so an entry left in the gap between the close
+        and the next sweep would re-attach itself to a terminal it was never
+        about, and "jump to pane" would go somewhere plausible and wrong.
+        """
         return self.clear(
-            entry.id for entry in self._entries if entry.workspace_id == workspace_id
+            entry.id
+            for entry in self._entries
+            if entry.workspace_id == workspace_id and entry.pane_key == pane_key
         )
+
+    def retain(self, live: Mapping[tuple[str, str], PaneLabel]) -> int:
+        """Keep only the entries whose pane still exists, and relabel those.
+
+        ``live`` is every watched pane in every open workspace, keyed by
+        ``(workspace_id, pane_key)`` — the sweep has just built exactly that, so
+        this costs one pass over a list of at most a couple of hundred.
+
+        Two jobs, and they are the same job: an entry has to name something that
+        is still there. One whose pane has been closed is a "jump to pane"
+        button that does nothing — the net under :meth:`forget_pane`, catching
+        every other way a pane can disappear. One whose pane has since been
+        RENAMED, or whose workspace has, is worse than useless: it names a
+        terminal the user cannot find, in a tab that no longer goes by that.
+
+        Returns how many entries were DROPPED. Relabelling is not counted: it
+        keeps an entry honest rather than removing it.
+        """
+        kept: list[Notification] = []
+        for entry in self._entries:
+            label = live.get((entry.workspace_id, entry.pane_key))
+            if label is None:
+                continue
+            if entry.pane == label.pane and entry.workspace == label.workspace:
+                kept.append(entry)
+                continue
+            # Frozen on purpose, as in `mark_read` — replaced, never mutated.
+            kept.append(
+                Notification(
+                    **{**entry.to_dict(), "pane": label.pane, "workspace": label.workspace}
+                )
+            )
+        dropped = len(self._entries) - len(kept)
+        if dropped:
+            self._entries.clear()
+            self._entries.extend(kept)
+            return dropped
+        # Same length, possibly different objects: replace in place so a
+        # relabel is visible without disturbing the deque's bound.
+        for index, entry in enumerate(kept):
+            self._entries[index] = entry
+        return 0
 
 
 @dataclass(slots=True)
@@ -219,6 +313,12 @@ class _PaneWatch:
     #: Has this pane been working since the last entry was filed for it? What
     #: makes "it finished" different from "it has been idle all along".
     worked: bool = False
+    #: Has anybody ever given this pane an instruction? A latch, never cleared
+    #: while the pane lives: it rules out the stretch BEFORE the first one,
+    #: where the only movement on screen is the CLI drawing itself. Without it
+    #: a workspace rings its own bell once per pane the moment it opens — see
+    #: the module docstring.
+    tasked: bool = False
     #: Already reported for the CURRENT episode. Cleared when the pane changes
     #: state, so the next stop is reported again.
     announced: bool = False
@@ -297,7 +397,7 @@ class ActivityWatcher:
         """Look at every pane once and file whatever has just happened."""
         moment = time.time() if now is None else now
         filed: list[Notification] = []
-        alive: set[tuple[str, str]] = set()
+        alive: dict[tuple[str, str], PaneLabel] = {}
 
         for session in registry.sessions:
             for term in session.terminals:
@@ -307,15 +407,24 @@ class ActivityWatcher:
                     # the moment it is opened and never again.
                     continue
                 ident = (session.id, str(getattr(term, "key", "") or ""))
-                alive.add(ident)
+                alive[ident] = PaneLabel(
+                    pane=str(getattr(term, "name", "") or ""),
+                    workspace=str(getattr(session, "name", "") or ""),
+                )
                 entry = self._step(session, term, ident, moment, emit=emit)
                 if entry is not None:
                     filed.append(entry)
 
         # Panes that were closed take their memory with them, or a workspace
         # cycled often enough would grow this dict without bound.
-        for gone in self._panes.keys() - alive:
+        for gone in self._panes.keys() - alive.keys():
             del self._panes[gone]
+        # And their entries, whose "jump to pane" has nowhere to go. Done from
+        # the sweep rather than hooked onto the close path, because a pane
+        # disappears in more than one way — closed singly, closed in a batch,
+        # taken down with its workspace — and a hook per way is a hook missing
+        # from the next one. The sweep sees whatever is actually left.
+        self.center.retain(alive)
         return filed
 
     def _step(
@@ -351,6 +460,7 @@ class ActivityWatcher:
                 activity=activity,
                 since=now,
                 announced=True,
+                tasked=_tasked(term),
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
                 digest=digest,
                 changed_at=settled_at,
@@ -362,6 +472,8 @@ class ActivityWatcher:
         if digest != watch.digest:
             watch.digest = digest
             watch.changed_at = now
+        if not watch.tasked and _tasked(term):
+            watch.tasked = True
         # ``now`` travels into the read as well, so a test can place a pane on
         # its own timeline instead of racing the wall clock.
         activity = read_activity(term, now=now, still_since=watch.changed_at)
@@ -460,9 +572,33 @@ class ActivityWatcher:
             # asking for the user by name, and a CLI that asks one at startup
             # (an unauthenticated MCP server, a trust prompt) has never worked.
             return "needs_input"
-        if activity == "waiting" and watch.worked:
+        if activity == "waiting" and watch.worked and watch.tasked:
+            # Both halves are load-bearing. `worked` says the screen moved and
+            # then stopped; `tasked` says somebody asked for that. A starting
+            # CLI painting its own banner satisfies the first and none of the
+            # second, and it is the whole reason a fresh workspace used to
+            # announce every pane in it as finished.
             return "completed"
         return None
+
+
+def _tasked(term: Any) -> bool:
+    """Has anybody ever given this pane an instruction?
+
+    Two proofs, because a pane can be driven two ways and both count. A
+    timestamp from the moment something was submitted into it — by Jarvis or by
+    a person pressing Enter — and the counter of prompts Jarvis has sent, which
+    is the half that survives into a restored workspace where the timestamp does
+    not. A pane typed into by hand before a restart therefore starts its next
+    life unproven, and stays quiet until the next thing is typed into it: a
+    missing notice, rather than an invented one.
+    """
+    if getattr(term, "last_submit_at", None):
+        return True
+    try:
+        return int(getattr(term, "prompts_sent", 0) or 0) > 0
+    except (TypeError, ValueError):  # a test double may carry anything
+        return False
 
 
 def _is_agent(term: Any) -> bool:
@@ -631,6 +767,7 @@ __all__ = [
     "Kind",
     "Notification",
     "NotificationCenter",
+    "PaneLabel",
     "center",
     "enabled",
     "reset",
