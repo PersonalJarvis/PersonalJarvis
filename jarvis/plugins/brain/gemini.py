@@ -60,6 +60,15 @@ _MAX_CACHE_SLOTS = 4
 # the cache isn't worth it — then we skip it and fall back to the direct path.
 _MIN_CACHE_TOKENS = 4096
 
+# Runtime capability memory shared by every short-lived GeminiBrain instance.
+# Curator/UltraWiki calls deliberately instantiate a fresh brain per item, so
+# an instance-only rejection cache made every item repeat the same doomed 400
+# probe before succeeding. The process lifetime is the right scope: model
+# capabilities are stable across calls, while a restart naturally re-probes
+# after an SDK or remote-model change. Keys include the budget so rejecting
+# the router's zero budget never disables a positive budget in another tier.
+_REJECTED_THINKING_BUDGETS: set[tuple[str, int]] = set()
+
 
 def _is_stale_context_cache_error(exc: Exception) -> bool:
     """True if *exc* is Gemini's stale-context-cache failure (BUG-019).
@@ -780,6 +789,8 @@ class GeminiBrain:
         if (
             effective_thinking_budget is not None
             and effective_thinking_budget not in self._rejected_thinking_budgets
+            and (self._model, effective_thinking_budget)
+            not in _REJECTED_THINKING_BUDGETS
         ):
             try:
                 from google.genai import types as _genai_types
@@ -992,6 +1003,9 @@ class GeminiBrain:
                     # on this instance skip that budget (and the extra 400)
                     # entirely.
                     self._rejected_thinking_budgets.add(pending_rejected_budget)
+                    _REJECTED_THINKING_BUDGETS.add(
+                        (self._model, pending_rejected_budget)
+                    )
                     log.info(
                         "Gemini model %s rejects thinking_budget=%d — "
                         "omitting it from now on",
@@ -1071,6 +1085,9 @@ class GeminiBrain:
                             # The message names the thinking config — no
                             # further evidence needed.
                             self._rejected_thinking_budgets.add(rejected_budget)
+                            _REJECTED_THINKING_BUDGETS.add(
+                                (self._model, rejected_budget)
+                            )
                         elif not dropped_cache:
                             pending_rejected_budget = rejected_budget
                     continue

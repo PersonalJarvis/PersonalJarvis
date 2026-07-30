@@ -24,16 +24,27 @@ so these tests skip cleanly on environments without the SDK.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
-from jarvis.plugins.brain.gemini import GeminiBrain
+from jarvis.plugins.brain.gemini import (
+    _REJECTED_THINKING_BUDGETS,
+    GeminiBrain,
+)
 
 pytest.importorskip("google.genai")
+
+
+@pytest.fixture(autouse=True)
+def _clear_process_capability_memory() -> Iterator[None]:
+    """Keep process-wide production capability memory isolated per test."""
+    _REJECTED_THINKING_BUDGETS.clear()
+    yield
+    _REJECTED_THINKING_BUDGETS.clear()
 
 
 class _FakeGeminiClient:
@@ -217,6 +228,31 @@ async def test_parameterless_400_recovers_and_is_remembered() -> None:
     await _drain(provider.complete(_request("none")))
     assert len(fake.calls) == 3
     assert "thinking_config" not in fake.calls[2]
+
+
+@pytest.mark.asyncio
+async def test_parameterless_400_is_remembered_across_instances() -> None:
+    """Short-lived curator brains must share a proven model capability.
+
+    UltraWiki creates a fresh provider for each distilled item. An
+    instance-only cache therefore paid one rejected request per item even
+    though the first accepted retry had already proved the capability.
+    """
+    first = GeminiBrain(model="gemini-short-lived-curator")
+    first_fake = _FakeGeminiClient(reject_thinking_generic=True)
+    first._client = first_fake  # type: ignore[assignment]
+
+    await _drain(first.complete(_request("none")))
+    assert len(first_fake.calls) == 2
+
+    second = GeminiBrain(model="gemini-short-lived-curator")
+    second_fake = _FakeGeminiClient(reject_thinking_generic=True)
+    second._client = second_fake  # type: ignore[assignment]
+
+    await _drain(second.complete(_request("none")))
+
+    assert len(second_fake.calls) == 1
+    assert "thinking_config" not in second_fake.calls[0]
 
 
 @pytest.mark.asyncio
