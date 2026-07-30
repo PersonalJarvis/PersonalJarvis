@@ -193,6 +193,22 @@ def _is_own_data_dir(path: Path, own_data: tuple[Path, ...]) -> bool:
     return any(resolved == own for own in own_data)
 
 
+def _is_linked_git_worktree(path: Path) -> bool:
+    """Whether *path* is a linked Git worktree nested below the chosen root.
+
+    Git marks linked worktrees with a ``.git`` file that points back to the
+    primary checkout. They are machine-created copies of content already
+    present elsewhere and can multiply a Desktop import by every active task.
+    A primary checkout has a ``.git`` directory and is intentionally retained.
+    Selecting a worktree itself as the source remains an explicit opt-in,
+    because the walker filters children and never rejects its root.
+    """
+    try:
+        return (path / ".git").is_file()
+    except OSError:
+        return False
+
+
 #: Text-shaped suffixes read as UTF-8. Deliberately an ALLOWLIST: a folder
 #: full of photos, videos and installers must import as nothing rather than
 #: as megabytes of replacement characters. Grouped for review, flattened
@@ -494,6 +510,7 @@ class LocalFolderConnector:
                 if not d.startswith(".")
                 and d.lower() not in skip
                 and not _is_own_data_dir(base / d, own_data)
+                and not _is_linked_git_worktree(base / d)
             )
             for name in filenames:
                 if name.startswith("."):

@@ -326,6 +326,35 @@ class TestLocalFolderNoiseDirectories:
         assert {"AppData", "Library"} <= LocalFolderConnector.SKIP_DIR_NAMES
 
 
+    async def test_nested_linked_git_worktrees_are_skipped(self, tmp_path: Path):
+        """A Desktop source must not clone every task worktree into memory."""
+        primary = tmp_path / "primary"
+        primary.mkdir()
+        (primary / ".git").mkdir()
+        (primary / "keep.md").write_text("canonical", encoding="utf-8")
+        linked = tmp_path / "task-worktree"
+        linked.mkdir()
+        (linked / ".git").write_text("gitdir: ../primary/.git/worktrees/task\n")
+        (linked / "duplicate.md").write_text("duplicate", encoding="utf-8")
+
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+
+        assert [item.external_id for item in items] == ["primary/keep.md"]
+
+    async def test_a_worktree_selected_as_the_root_is_imported(self, tmp_path: Path):
+        """The nested filter must preserve an explicit source selection."""
+        (tmp_path / ".git").write_text("gitdir: ../primary/.git/worktrees/task\n")
+        (tmp_path / "note.md").write_text("unique work", encoding="utf-8")
+
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+
+        assert [item.external_id for item in items] == ["note.md"]
+
+
 class TestLocalFolderExcludes:
     """A built-in noise list cannot know what THIS folder is cluttered with.
 
