@@ -239,6 +239,30 @@ def test_a_truncated_replay_still_says_who_owns_the_screen() -> None:
     assert replay.index("\x1b[?1049h") < replay.index("x" * 20)
 
 
+def test_private_modes_survive_every_pty_chunk_boundary() -> None:
+    """The terminal negotiation may be split after any byte by a PTY read."""
+    mode = "\x1b[?1000;1006h"
+    for cut in range(1, len(mode)):
+        buffer = ReplayBuffer(limit=16)
+        buffer.feed(mode[:cut])
+        buffer.feed(mode[cut:] + "screen")
+        buffer.feed("x" * 64)
+
+        replay = buffer.text()
+        assert "\x1b[?1000h" in replay, f"mode 1000 lost at byte {cut}"
+        assert "\x1b[?1006h" in replay, f"mode 1006 lost at byte {cut}"
+
+
+def test_clearing_a_replay_forgets_an_incomplete_mode_prefix() -> None:
+    buffer = ReplayBuffer(limit=16)
+    buffer.feed("\x1b[?10")
+    buffer.clear()
+    buffer.feed("00hplain output")
+    buffer.feed("x" * 64)
+
+    assert "\x1b[?1000h" not in buffer.text()
+
+
 def test_a_mode_the_agent_turned_off_comes_back_off() -> None:
     """Several private modes are ON in a terminal that was just built.
 

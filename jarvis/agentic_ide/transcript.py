@@ -52,6 +52,10 @@ _CSI_TAIL_RE = re.compile(r"\[?[0-?]*[ -/]*[@-~]")
 
 #: ``ESC [ ? <params> h|l`` — how a CLI turns terminal features on and off.
 _PRIVATE_MODE_RE = re.compile(r"\x1b\[\?([0-9;]+)([hl])")
+# A private-mode prefix at the END of the bytes seen so far. PTY reads can cut
+# after any byte, including between ``ESC[?10`` and ``00h``.
+_PRIVATE_MODE_PARTIAL_RE = re.compile(r"\x1b(?:\[(?:\?(?:[0-9;]*))?)?$")
+_PRIVATE_MODE_PARTIAL_MAX = 128
 
 _DECORATION_CHARS = set("─│┌┐└┘├┤┬┴┼━┃╭╮╯╰═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓▔▁·.-_=*#~ ")
 _SPINNER_CHARS = set("|/\\-◐◓◑◒✻✽✢·✳✶⣿")
@@ -224,6 +228,8 @@ class ReplayBuffer:
     #: value it was last given. Insertion order matters: a screen switch has to
     #: be replayed before what was drawn on that screen.
     _modes: dict[str, bool] = field(default_factory=dict, init=False)
+    #: Incomplete private-mode prefix from the preceding PTY read.
+    _mode_scan_tail: str = field(default="", init=False)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
@@ -243,12 +249,20 @@ class ReplayBuffer:
         ``ESC[?1000;1006h`` sets several at once, so each parameter is recorded
         on its own. Modes are kept whichever way they were set — a mode the
         agent turned OFF is restored as off, because several of them (wraparound,
-        the cursor) are ON in a terminal that was just built.
+        the cursor) are ON in a terminal that was just built. The scan carries
+        an incomplete prefix across PTY reads because the kernel may split the
+        sequence after any byte.
         """
-        for params, action in _PRIVATE_MODE_RE.findall(chunk):
+        scanned = self._mode_scan_tail + chunk
+        for params, action in _PRIVATE_MODE_RE.findall(scanned):
             for param in params.split(";"):
                 if param:
                     self._modes[param] = action == "h"
+        partial = _PRIVATE_MODE_PARTIAL_RE.search(scanned)
+        candidate = partial.group(0) if partial is not None else ""
+        self._mode_scan_tail = (
+            candidate if len(candidate) <= _PRIVATE_MODE_PARTIAL_MAX else ""
+        )
 
     def _mode_prologue(self) -> str:
         """The negotiation a truncated replay lost, re-stated in order."""
@@ -293,6 +307,7 @@ class ReplayBuffer:
         self.truncated = False
         self._open_escape = False
         self._modes.clear()
+        self._mode_scan_tail = ""
 
 
 __all__ = [
