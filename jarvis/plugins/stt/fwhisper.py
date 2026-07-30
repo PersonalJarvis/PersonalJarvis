@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sys
 import threading
 from collections.abc import AsyncIterator, Iterator
-from typing import Any
+from pathlib import Path
+from typing import Any, Final
 
 import numpy as np
 
@@ -190,6 +192,119 @@ def _cpu_safe_compute_type(compute_type: str) -> str:
     return compute_type
 
 
+#: Package directories that ship the CUDA runtime DLLs ctranslate2 links
+#: against, relative to a site-packages root. ``torch`` carries a complete set
+#: (``cublas64_12.dll``, ``cudnn64_9.dll``, ...) and the standalone
+#: ``nvidia-*-cu12`` wheels carry them one subdirectory deeper, so a host with
+#: either is covered without depending on either.
+_CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, ...], ...]] = (
+    ("torch", "lib"),
+    ("nvidia", "cublas", "bin"),
+    ("nvidia", "cudnn", "bin"),
+)
+
+#: Loaded explicitly, in dependency order, once a directory holding them is
+#: found. Adding that directory to the search path is NOT enough on its own —
+#: measured: ctranslate2 still raised "Library cublas64_12.dll is not found or
+#: cannot be loaded" with the directory added, and succeeded once these were
+#: loaded by name. cuDNN is optional here (only some compute types reach it), so
+#: a miss on it never blocks the rest.
+_CUDA_DLL_PRELOAD: Final[tuple[str, ...]] = (
+    "cublasLt64_12.dll",  # cublas depends on it — must come first
+    "cublas64_12.dll",
+    "cudnn64_9.dll",
+)
+
+#: Set once the libraries are actually in the process, so repeated model builds
+#: do not re-walk site-packages.
+_cuda_dll_path_prepared = False
+
+
+def ensure_cuda_libraries_findable() -> None:
+    """Load the CUDA runtime DLLs ctranslate2 needs, on Windows. No-op elsewhere.
+
+    This does NOT decide, promise, or probe whether the GPU is usable (AP-25) —
+    it only removes a way for the question to be answered wrongly. The existing
+    ``cuda -> cpu`` self-heal in :meth:`FasterWhisperProvider._ensure_model`
+    remains the verdict, and a machine where this changes nothing lands there
+    exactly as before.
+
+    Why it is needed at all: on Windows ``cublas64_12.dll`` is resolved through
+    the DLL search path, and a pip-installed ``torch`` keeps its copy inside its
+    OWN package directory, which is not on that path. ctranslate2 then fails
+    with ``Library cublas64_12.dll is not found or cannot be loaded`` on a
+    machine that demonstrably has a working CUDA stack — measured on an RTX 5070
+    Ti with the same runtime reporting CUDA available. The configured GPU device
+    fell back to the CPU on every load: honest behaviour, wrong outcome. The
+    local recogniser ran at ~1.1x realtime, an 8 s dictation segment taking a
+    full 8 s, where the same model on the GPU runs at ~7.9x and that segment
+    takes 1.05 s (measured 2026-07-30, large-v3/int8_float16).
+
+    Both halves are load-bearing and were separated by measurement:
+    ``add_dll_directory`` alone did NOT fix it (the failure reproduced with the
+    directory added), and loading the libraries by name did — the directory
+    entry is what then lets their own dependencies resolve.
+
+    Deliberately does NOT import torch: only the spec's location is needed.
+    Importing it would cost seconds on a lazy path and collide with
+    :func:`inference_only_import_shield`, which stubs that exact module while
+    ctranslate2 loads.
+
+    Never raises. Every failure mode — not Windows, no such package, no DLLs in
+    it — is an ordinary state on some install and leaves the process untouched.
+    """
+    global _cuda_dll_path_prepared
+    if _cuda_dll_path_prepared:
+        return
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if add_dll_directory is None:
+        # POSIX resolves shared libraries through the loader's own search path,
+        # where a pip-installed CUDA runtime already lands. Nothing to do.
+        _cuda_dll_path_prepared = True
+        return
+    import ctypes
+    import importlib.util
+
+    for parts in _CUDA_DLL_PACKAGE_DIRS:
+        try:
+            spec = importlib.util.find_spec(parts[0])
+        except (ImportError, ValueError):
+            # ValueError is what find_spec raises for a module stubbed as None
+            # in sys.modules — exactly what the import shield does to torch.
+            # Leaving the flag unset means a later build tries again.
+            continue
+        origin = getattr(spec, "origin", None) if spec is not None else None
+        if not origin:
+            continue
+        directory = Path(origin).parent.joinpath(*parts[1:])
+        if not directory.is_dir() or not any(directory.glob("cublas64_*.dll")):
+            continue
+        with contextlib.suppress(OSError):
+            # Lets the loaded libraries find their own dependencies by name.
+            add_dll_directory(str(directory))
+        loaded = []
+        for name in _CUDA_DLL_PRELOAD:
+            library = directory / name
+            if not library.is_file():
+                continue
+            try:
+                ctypes.WinDLL(str(library))
+            except OSError as exc:
+                log.debug("could not load %s: %s", library, exc)
+                continue
+            loaded.append(name)
+        if not any(name.startswith("cublas64") for name in loaded):
+            continue  # the one that actually blocks ctranslate2 is still missing
+        log.info(
+            "CUDA runtime libraries loaded from %s (%s) — the GPU device is now "
+            "reachable. Whether it works is still decided by the model build.",
+            directory,
+            ", ".join(loaded),
+        )
+        _cuda_dll_path_prepared = True
+        return
+
+
 def _new_whisper_model(
     model_name: str, device: str, compute_type: str, cpu_threads: int = 0
 ) -> Any:
@@ -211,6 +326,10 @@ def _new_whisper_model(
     internal cross-thread contention. Only the wake model sets this (it coexists
     with torch on the always-on loop); the utterance STT keeps auto threads.
     """
+    if device != "cpu":
+        # Before the engine loads, not after it failed: the load is where the
+        # DLL is resolved, and a miss there costs the GPU for the whole session.
+        ensure_cuda_libraries_findable()
     with inference_only_import_shield():
         from faster_whisper import WhisperModel
 
