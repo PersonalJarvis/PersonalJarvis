@@ -11,7 +11,7 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [1.2.0] — 2026-07-29
+## [1.2.0] — 2026-07-30
 
 This is the first public release since 1.1.5 and it is a large one: a
 voice-driven workspace for coding agents, a personal knowledge base, voice
@@ -125,10 +125,12 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   carries the target the pipeline resolved, so a dictation meant for another
   program is no longer written into whatever Jarvis field last had focus —
   invisibly, in a section you were not even looking at.
-- **A finished terminal pane now rings the bell.** The notification was
-  anchored on an interrupt hint that never appears in a real pane, so a pane
-  that had been waiting for you announced nothing. It now runs off a live
-  clock, and a pane that ends says why it ended.
+- **A finished terminal pane now rings the bell.** The notification used to
+  wait for something a particular coding CLI prints — first an interrupt hint,
+  then a running clock — and neither is printed by every product in every
+  phase, so panes finished all around you and announced nothing. A pane is now
+  judged by whether its screen is still moving, which is true of any terminal
+  and of a CLI nobody has taught it about yet. A pane that ends says why.
 - **A skill imported from a link no longer activates itself.** Imported
   skills are stored as drafts and stay inactive until explicitly enabled, and
   a downloaded file can no longer declare itself active.
@@ -142,6 +144,29 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   dictation and auto-type tools went dead while the app ran elevated.
 - Disconnecting a marketplace plugin now revokes the grant at the provider
   instead of only forgetting it locally.
+- **A dictation is no longer punished for being corrected.** The safety check
+  that watches for words going missing counted a repair as a loss, so
+  "deskto" becoming "desktop" was treated as a deleted word and the tidied
+  text was thrown away — taking the corrections you wanted with it. A word
+  that reappears spelled correctly now counts as fixed, while a word that
+  genuinely vanishes still stops the pass.
+- **Dictation recognises the spoken language reliably**, and translation
+  works out of any supported language rather than only out of English, with
+  the two ends no longer swapped.
+- **The on-device voice speaks the right language.** Switching to the local
+  Piper voice inherited a pinned German setting from whatever provider came
+  before, so every answer came out in German — including the ones meant to be
+  English or Spanish. A downloaded voice you picked yourself is also kept
+  across a switch instead of being reset.
+- **A terminal pane no longer shows a screen full of garbled characters**
+  when you return to it: the replay was being drawn over what was already
+  there instead of on a cleared screen. The pane scrollbar also works in
+  every CLI now, rather than only the one whose wording it was reading.
+- **The app starts and responds faster.** A catalogue of installed extensions
+  was being re-read from disk on every lookup — a sweep across hundreds of
+  packages that blocked the app for seconds at a time. It is read once. A
+  stall in the interface now also names the code responsible, instead of
+  reporting that something, somewhere, was slow.
 
 ---
 
