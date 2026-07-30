@@ -84,6 +84,12 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   and offer to resume. When a spoken call-sign is unclear, the assistant asks
   once instead of guessing — and says so plainly when an instruction reached
   nobody.
+- **Screen Context — private, one-shot visual context for voice and chat.**
+  Jarvis can capture the active screen only when explicitly asked, shows a
+  visible capture indicator, redacts password fields and sensitive text, and
+  never stores the image. Windows, macOS and Linux/X11 are supported; Wayland
+  and headless systems fail closed with an honest explanation. Screen
+  observation remains separate from desktop-control permission.
 - **UltraWiki — a personal knowledge base built from your own material.** A
   staged import pipeline, hybrid keyword and semantic search, and an Explore
   view with topics, moments and a graph. Readers cover local folders, GitHub
@@ -98,6 +104,9 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   default and needs no setup; Postgres and Supabase are optional
   (`pip install "personal-jarvis[ultrawiki-postgres]"`). Your own content
   never leaves your machine except to the providers you configure.
+  UltraWiki can now answer questions with real citations, returns
+  `insufficient_evidence` instead of inventing a source, keeps configured
+  folders fresh automatically, and lets users edit source settings in-app.
 - **Local and subscription brains.** A generic provider for any server
   speaking the OpenAI chat API (llama.cpp, vLLM, LM Studio, HF serve), a
   keyless local Ollama provider, and an Anthropic-subscription option — a
@@ -115,6 +124,9 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   supported agent is reachable by voice the day it lands.
 - UltraWiki's background import paces itself against a configurable share of
   the machine instead of monopolising a core.
+- The in-app documentation now covers 50 maintained guides, including
+  Dictation, Agentic IDE, Screen Context, UltraWiki, local AI and Home
+  Assistant.
 
 ### Fixed
 
@@ -167,6 +179,15 @@ that can run entirely offline, and a dictation pass that tidies your wording.
   packages that blocked the app for seconds at a time. It is read once. A
   stall in the interface now also names the code responsible, instead of
   reporting that something, somewhere, was slow.
+- Startup now recovers cleanly from malformed structured environment values
+  instead of leaving the desktop app unable to open.
+- Chat history once again prefers real voice sessions, hides phantom text
+  threads with no user message, and persists new text conversations without
+  duplicate websocket output.
+- UltraWiki no longer imports linked worktrees or retains raw content in
+  deletion tombstones. Legacy tombstones self-heal, stale source timestamps
+  are corrected, and Gemini capability probing no longer repeats a rejected
+  request for every background summary.
 
 ---
 
