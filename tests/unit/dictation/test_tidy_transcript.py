@@ -55,7 +55,7 @@ def test_filler_removal_no_longer_glues_the_following_ellipsis() -> None:
 
 def test_a_space_before_a_lone_period_is_still_pulled_back() -> None:
     """The narrowed rule must not stop doing the job it was written for."""
-    result = clean_transcript("The meeting is at four um.", language="en")
+    result = clean_transcript("The meeting is at four umm.", language="en")
     assert result.text == "The meeting is at four."
 
 

@@ -17,6 +17,7 @@ from jarvis.plugins.stt.transcript_filter import (
     collapse_repetitions,
     normalize_characters,
     repair_stutters,
+    resolve_language,
     strip_wrapping_quotes,
 )
 
@@ -162,7 +163,7 @@ def test_no_phonetic_source_is_a_real_word_elsewhere() -> None:
 
 
 def test_english_filler_and_quotes_in_one_pass() -> None:
-    raw = '"Uh, I think we should um ship it."'
+    raw = '"Uh, I think we should umm ship it."'
     assert clean_stt_text(raw, language="en") == "I think we should ship it."
 
 
@@ -194,7 +195,7 @@ def test_empty_and_blank_input_is_returned_unchanged() -> None:
 
 def test_a_transcript_of_only_filler_survives_the_destruction_ceiling() -> None:
     """The delegated ceiling: rules that leave nothing behind are a defect."""
-    assert clean_stt_text("um uh umm", language="en") == "um uh umm"
+    assert clean_stt_text("umm uh uhh", language="en") == "umm uh uhh"
 
 
 def test_cleanup_never_raises_on_a_broken_rule(
@@ -207,3 +208,55 @@ def test_cleanup_never_raises_on_a_broken_rule(
         "jarvis.plugins.stt.transcript_filter.collapse_repetitions", _boom
     )
     assert clean_stt_text("turn on the light", language="en") == "turn on the light"
+
+
+# ----------------------------------------------------------------------
+# The provider's language tag is a hint, not the verdict (2026-07-30)
+# ----------------------------------------------------------------------
+#
+# Every rule keyed off that string DELETES tokens, and the cloud endpoints
+# report a language confidently when it is wrong ("English" for German speech;
+# a `[stt].language` pin echoed back for speech in any language). So the filter
+# resolves the language from the tag AND the repaired text, through the same
+# canonical resolver the dictation lane uses.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # i18n-allow: German speech under test (§1 list #4)
+        "Kümmere dich um das Update",
+        "Erinnere mich um fünf Uhr an den Termin",
+        "Es geht um die Rechnung von gestern",
+    ],
+)
+def test_german_speech_mistagged_english_keeps_its_prepositions(text: str) -> None:
+    """The reported defect: a preposition vanished from the sentence middle.
+
+    Two independent guards now stop it — "um" left the English filler table,
+    and a tag the text contradicts no longer selects that table at all — so the
+    sentence survives whichever spelling of "English" the provider sends.
+    """
+    for tag in ("en", "English", "english", "en-US"):
+        assert clean_stt_text(text, language=tag) == text
+
+
+def test_a_mistagged_transcript_resolves_to_the_language_it_is_in() -> None:
+    assert resolve_language("Mach bitte das Licht an", "English") == "de"  # i18n-allow: fixture
+
+
+def test_an_agreeing_tag_is_kept() -> None:
+    assert resolve_language("Turn on the lights please", "English") == "en"
+
+
+def test_a_language_we_have_no_rules_for_stays_a_no_op() -> None:
+    # Neither the French tag nor the French text may resolve to one of the
+    # three tables — that is how "je" would be judged by German rules.
+    assert resolve_language("Je pense que c'est bien", "French") is None
+
+
+def test_english_fillers_still_go_when_the_text_agrees() -> None:
+    assert (
+        clean_stt_text("Uh, I think we should umm ship it.", language="en")
+        == "I think we should ship it."
+    )

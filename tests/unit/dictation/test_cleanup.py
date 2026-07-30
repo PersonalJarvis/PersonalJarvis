@@ -25,7 +25,7 @@ from jarvis.dictation.cleanup import (
     ("text", "language", "expected"),
     [
         (
-            "Uh, I think we should um ship it tomorrow.",
+            "Uh, I think we should umm ship it tomorrow.",
             "en",
             "I think we should ship it tomorrow.",
         ),
@@ -83,9 +83,10 @@ def test_content_words_are_never_removed(text: str, language: str) -> None:
 
 
 def test_filler_inside_a_word_is_not_touched() -> None:
-    """Whole-word matching only — "umbrella" must not lose its "um"."""
-    text = "The umbrella and the ehrenamt are fine."
-    assert clean_transcript(text, language="en").text == text
+    """Whole-word matching only — "kommen" must not lose its "mm"."""
+    # i18n-allow: German fixture under test (§1 list #4)
+    text = "Wir kommen gleich, das Hemd ist da."
+    assert clean_transcript(text, language="de").text == text
 
 
 # --------------------------------------------------------------------------
@@ -113,6 +114,31 @@ def test_german_text_tagged_english_keeps_its_pronouns() -> None:
     assert result.text == text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # i18n-allow: German fixtures under test (§1 list #4)
+        "Kümmere dich um das Update.",
+        "Erinnere mich um fünf Uhr an den Termin.",
+        "Es geht um die Rechnung von gestern.",
+        "Ich gehe um das Haus herum.",
+    ],
+)
+def test_german_preposition_um_survives_an_english_tag(text: str) -> None:
+    """The 2026-07-30 report: a preposition vanished out of the sentence middle.
+
+    "um" is the canonical English hesitation sound and one of the most common
+    German prepositions, so a German utterance tagged "English" came back
+    without it — "Kümmere dich um das Update" as "Kümmere dich das Update".
+    One function word is a small fraction of the text, so the destruction
+    ceiling never fired: the sentence arrived ungrammatical, reported clean,
+    and the router acted on the mangled instruction.
+    """
+    result = clean_transcript(text, language="English")
+    assert result.removed_words == 0
+    assert result.text == text
+
+
 def test_german_eh_survives_a_spanish_tag() -> None:
     """The mirror hole: Spanish "eh" against German "eh" ("anyway")."""
     text = "Das mache ich eh morgen, das ist eh klar."  # i18n-allow: fixture (§1 #4)
@@ -129,6 +155,7 @@ def test_german_eh_survives_a_spanish_tag() -> None:
         ("eh", "en", "ordinary German for 'anyway'"),
         ("eh", "es", "ordinary German for 'anyway'"),
         ("ah", "en", "a spoken interjection that carries meaning of its own"),
+        ("um", "en", "one of the most common German prepositions"),
     ],
 )
 def test_a_filler_must_be_meaningless_in_every_supported_language(
@@ -147,15 +174,15 @@ def test_a_filler_must_be_meaningless_in_every_supported_language(
 
 
 def test_all_filler_input_is_refused_rather_than_emptied() -> None:
-    result = clean_transcript("um uh umm", language="en")
+    result = clean_transcript("umm uh uhh", language="en")
     assert result.applied is False
     assert result.reason == "ceiling"
-    assert result.text == "um uh umm"
+    assert result.text == "umm uh uhh"
 
 
 def test_absolute_cap_refuses_a_short_sentence_losing_too_many_words() -> None:
     # 8 words, 4 of them filler -> past the absolute cap for short texts.
-    text = "um uh umm uhh the plan is ready"
+    text = "umm uh uhh mhm the plan is ready"
     result = clean_transcript(text, language="en")
     assert result.applied is False
     assert result.reason == "ceiling"
@@ -171,13 +198,13 @@ def test_short_sentence_with_two_fillers_is_still_cleaned() -> None:
 
 def test_long_text_uses_the_proportional_ceiling() -> None:
     body = " ".join(["word"] * 40)
-    result = clean_transcript(f"um {body}", language="en")
+    result = clean_transcript(f"umm {body}", language="en")
     assert result.applied is True
     assert result.removed_words == 1
 
 
 def test_ceiling_is_configurable() -> None:
-    text = " ".join(["um"] * 5 + ["word"] * 15)  # 25 % filler in 20 words
+    text = " ".join(["umm"] * 5 + ["word"] * 15)  # 25 % filler in 20 words
     lenient = clean_transcript(text, language="en", max_removed_fraction=0.9)
     strict = clean_transcript(text, language="en", max_removed_fraction=0.01)
     assert lenient.applied is True
@@ -235,14 +262,14 @@ def test_language_NAMES_are_accepted_not_just_codes(
 
 
 def test_cleanup_runs_when_the_provider_reports_a_language_name() -> None:
-    result = clean_transcript("Uh, I think we should um ship it.", language="English")
+    result = clean_transcript("Uh, I think we should umm ship it.", language="English")
     assert result.applied is True
     assert result.text == "I think we should ship it."
 
 
 def test_unknown_language_is_a_no_op_not_an_english_guess() -> None:
     """Applying English rules to French speech is how content gets eaten."""
-    text = "Euh, je pense que um c'est bien."
+    text = "Euh, je pense que umm c'est bien."
     result = clean_transcript(text, language="fr")
     assert result.applied is False
     assert result.reason == "no_rules"
@@ -250,10 +277,10 @@ def test_unknown_language_is_a_no_op_not_an_english_guess() -> None:
 
 
 def test_disabled_returns_the_raw_text() -> None:
-    result = clean_transcript("um hello", language="en", remove_fillers=False)
+    result = clean_transcript("umm hello", language="en", remove_fillers=False)
     assert result.applied is False
     assert result.reason == "disabled"
-    assert result.text == "um hello"
+    assert result.text == "umm hello"
 
 
 def test_empty_input() -> None:
@@ -268,16 +295,16 @@ def test_empty_input() -> None:
 
 
 def test_leading_capital_is_restored_after_removing_the_first_word() -> None:
-    result = clean_transcript("Um, the meeting is at four.", language="en")
+    result = clean_transcript("Umm, the meeting is at four.", language="en")
     assert result.text == "The meeting is at four."
 
 
 def test_lowercase_stays_lowercase() -> None:
-    result = clean_transcript("um the meeting is at four", language="en")
+    result = clean_transcript("umm the meeting is at four", language="en")
     assert result.text == "the meeting is at four"
 
 
 def test_punctuation_is_pulled_back_onto_the_previous_word() -> None:
-    result = clean_transcript("We should go um, tomorrow please.", language="en")
+    result = clean_transcript("We should go umm, tomorrow please.", language="en")
     assert "  " not in result.text
     assert " ," not in result.text

@@ -959,38 +959,25 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
         return pin
     tag = str(reported or "")
     try:
-        from jarvis.core.turn_language import (
-            detect_text_language,
-            normalize_language_tag,
-        )
+        from jarvis.core.turn_language import resolve_transcript_language
 
-        lowered = tag.strip().lower()
-        tag_code = normalize_language_tag(lowered)
-        # No text to reason from (a hangup transcribed nothing): the tag is the
-        # only signal there is, but it still leaves as a code when it has one.
-        if not text:
-            return tag_code if tag_code != "unknown" else tag
-        detected = detect_text_language(text)
-        if detected != "unknown" and (
-            # Nothing to contradict: no tag at all, or one that says "I could
-            # not tell".
-            lowered in ("", "auto", "unknown", "und")
-            # A tag we CAN place, which the text disagrees with.
-            or (tag_code != "unknown" and tag_code != detected)
-        ):
-            log.debug(
-                "dictation language resolved from the transcript: %s "
-                "(the provider reported %r)",
-                detected,
-                tag,
-            )
-            return detected
-        # The tag stands — as a CODE when it has one. Reaching this line is the
-        # NORMAL case (the provider agreed with the text), which is exactly why
-        # handing the provider's own spelling on from here disarmed the guards
-        # on nearly every dictation.
-        if tag_code != "unknown":
-            return tag_code
+        # Points 2 and 3 above live in the canonical resolver, which the voice
+        # lane's transcript filter reads too — one decision, not two copies
+        # that drift the first time either is touched (CLAUDE.md §1).
+        code = resolve_transcript_language(tag, text)
+        if code != "unknown":
+            if code != normalize_language_tag(tag):
+                log.debug(
+                    "dictation language resolved from the transcript: %s "
+                    "(the provider reported %r)",
+                    code,
+                    tag,
+                )
+            # The tag stands as a CODE whenever it has one. Reaching that case
+            # is the NORMAL one (the provider agreed with the text), which is
+            # exactly why handing the provider's own spelling on from here
+            # disarmed the guards on nearly every dictation.
+            return code
     except Exception:  # noqa: BLE001 — a detection hiccup is not fatal
         log.debug("dictation language detection failed", exc_info=True)
     return tag

@@ -35,6 +35,7 @@ __all__ = [
     "is_substantive_turn",
     "normalize_language_tag",
     "resolve_output_language",
+    "resolve_transcript_language",
     "resolve_turn_language",
 ]
 
@@ -161,6 +162,54 @@ def resolve_turn_language(
     if code != "unknown":
         return code
     return default
+
+
+def resolve_transcript_language(reported: object, text: str) -> str:
+    """Which language a TRANSCRIPT may be run through text rules as.
+
+    Sibling of :func:`resolve_turn_language`, and deliberately stricter: that
+    one answers "which language do we SPEAK back", where a wrong guess sounds
+    odd; this one answers "whose word list may DELETE tokens from what the user
+    said", where a wrong guess removes content and reports success. Returns a
+    code (``de`` / ``en`` / ``es``) or ``"unknown"`` — and ``"unknown"`` means
+    *run no language's rules*, never *pick a default*.
+
+    Precedence, and the order is the whole point:
+
+    1. **A tag we cannot place stays unplaced.** ``detect_text_language`` only
+       knows three languages, so letting it overrule a "French" or "ja" tag
+       would relabel that utterance as whichever of the three it scored highest
+       on and then run THAT language's word lists over it. ``unknown`` is the
+       honest answer for ~95 of the 100 recognition languages STT supports.
+    2. **Otherwise the TEXT outranks a tag that contradicts it.** The cloud
+       Whisper APIs report a language on every request and report it
+       confidently when it is wrong — the live history has German utterances
+       tagged "English", and ``[stt].language`` pins make the provider echo the
+       pin back for speech in any language at all (forensic 2026-06-10). A
+       filler list applied on that word deletes function words from a sentence
+       it has no business touching: German "um" is the English hesitation
+       sound, so "Kümmere dich um das Update" came back as "Kümmere dich das
+       Update" — grammatically broken, and the cleanup reported a clean success
+       (2026-07-30).  # i18n-allow: verbatim German transcript under test
+    3. **Ambiguous text defers to the tag.** Text too short or too neutral to
+       place ("ok", a bare proper noun) leaves the provider's reading standing.
+
+    Pure set lookups, no IO — safe on the voice critical path.
+    """
+    lowered = str(reported or "").strip().lower()
+    tag_code = normalize_language_tag(lowered)
+    if not (text or "").strip():
+        return tag_code
+    detected = detect_text_language(text)
+    if detected != "unknown" and (
+        # Nothing to contradict: no tag at all, or one that says "I could not
+        # tell".
+        lowered in ("", "auto", "unknown", "und")
+        # A tag we CAN place, which the text disagrees with.
+        or (tag_code != "unknown" and tag_code != detected)
+    ):
+        return detected
+    return tag_code
 
 
 def is_substantive_turn(text: str) -> bool:

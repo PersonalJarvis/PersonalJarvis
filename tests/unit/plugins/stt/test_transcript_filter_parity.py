@@ -28,7 +28,7 @@ from jarvis.plugins.stt import gemini_api, groq_api, openai_api, openrouter_stt
 
 #: One payload carrying three artifact classes at once: an outer quote pair the
 #: model added, a hesitation sound, and a decoder repetition loop.
-DIRTY_TEXT = '"Um, turn on the light. Thank you. Thank you. Thank you."'
+DIRTY_TEXT = '"Umm, turn on the light. Thank you. Thank you. Thank you."'
 CLEAN_TEXT = "Turn on the light. Thank you."
 
 #: Modules in the package that are not providers.

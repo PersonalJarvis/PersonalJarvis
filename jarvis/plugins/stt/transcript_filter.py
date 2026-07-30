@@ -282,6 +282,41 @@ def apply_phonetic_fixes(text: str, language: str | None) -> str:
     return out
 
 
+def resolve_language(text: str, language: str | None) -> str | None:
+    """Which language's word lists may run on ``text``. ``None`` = none of them.
+
+    The provider's word is a HINT here, never the verdict. Cloud Whisper
+    endpoints answer with a language on every request and answer confidently
+    when they are wrong, and a ``[stt].language`` pin makes them echo the pin
+    back for speech in any language at all. Every rule that keys off this
+    string DELETES tokens, so a wrong tag is not a cosmetic mislabel — it runs
+    one language's filler list over another language's sentence and removes
+    words that carry meaning there (the German preposition "um" is the English
+    hesitation sound; see ``FILLER_WORDS`` in :mod:`jarvis.dictation.cleanup`).
+
+    So the decision goes through the canonical resolver
+    (:func:`jarvis.core.turn_language.resolve_transcript_language`) — the same
+    one the dictation lane uses — rather than being re-derived here (CLAUDE.md
+    §1: no layer re-derives the language). Fails soft: if that module cannot be
+    imported, the provider's tag is normalised on its own, which is the
+    behaviour this function replaced.
+    """
+    try:
+        from jarvis.core.turn_language import resolve_transcript_language
+
+        code = resolve_transcript_language(language, text)
+        return None if code == "unknown" else code
+    except Exception as exc:  # noqa: BLE001 — degrade to the tag alone
+        log.debug("Transcript language resolution unavailable (%s).", exc)
+    try:
+        from jarvis.dictation.cleanup import normalize_language
+
+        return normalize_language(language)
+    except Exception as exc:  # noqa: BLE001 — degrade to the neutral rules
+        log.debug("Language normalisation unavailable (%s).", exc)
+        return None
+
+
 def _delegated_cleanup(
     text: str, *, language: str | None, remove_fillers: bool
 ) -> tuple[str, str]:
@@ -331,16 +366,14 @@ def clean_stt_text(
         out = collapse_repetitions(out)
         out = repair_stutters(out)
 
-        # One resolved language for the two rule sets that need one, taken from
-        # the cleanup module so "German" / "de-DE" / "de" mean the same thing
-        # here as they do there.
-        lang: str | None = None
-        try:
-            from jarvis.dictation.cleanup import normalize_language
-
-            lang = normalize_language(language)
-        except Exception as exc:  # noqa: BLE001 — degrade to the neutral rules
-            log.debug("Language normalisation unavailable (%s).", exc)
+        # One resolved language for the two rule sets that need one. Resolved
+        # from the tag AND the text (see :func:`resolve_language`), so a
+        # confidently wrong provider tag can no longer point one language's
+        # word list at another language's sentence. The repaired text is what
+        # gets read, not the raw payload: the character normalisation above is
+        # what makes a German umlaut spell as one codepoint, and the detector
+        # scores umlauts.
+        lang = resolve_language(out, language)
 
         out = apply_phonetic_fixes(out, lang)
         out, reason = _delegated_cleanup(
@@ -369,5 +402,6 @@ __all__ = [
     "collapse_repetitions",
     "normalize_characters",
     "repair_stutters",
+    "resolve_language",
     "strip_wrapping_quotes",
 ]

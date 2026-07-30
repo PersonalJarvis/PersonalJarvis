@@ -189,7 +189,7 @@ async def test_gateway_artifacts_are_cleaned_and_the_raw_text_is_kept() -> None:
     owns a user switch for filler removal — still transcribes from it.
     """
     payload = {
-        "text": '"Um, turn on the light. Thank you. Thank you. Thank you."',
+        "text": '"Umm, turn on the light. Thank you. Thank you. Thank you."',
         "language": "English",
     }
 

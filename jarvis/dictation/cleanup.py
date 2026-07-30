@@ -66,9 +66,23 @@ from dataclasses import dataclass
 #: is a content word in ANY language this module serves does not belong in a
 #: list applied on a provider's word. The longer spellings ("erm", "ahh",
 #: "ehh") stay: no language spells a word that way.
+#:
+#: DE-MINED again on 2026-07-30: "um" left the English table for exactly the
+#: same reason, and it was the most damaging entry of the family. It is the
+#: canonical English hesitation sound AND one of the highest-frequency German
+#: prepositions ("um fünf Uhr", "es geht um", "kümmere dich um"), so a German
+#: utterance tagged English lost the preposition out of the MIDDLE of the
+#: sentence: "Kümmere dich um das Update" was delivered as "Kümmere dich das
+#: Update".  # i18n-allow: verbatim German transcript under test
+#: One dropped function word there is a fraction of a percent of the text, so
+#: the destruction ceiling never fires and nothing is reported — the sentence
+#: simply arrives ungrammatical and the router acts on a mangled instruction.
+#: English dictation keeps "umm"/"ummm" (no language spells a word that way);
+#: a bare spoken "um" now survives into English text, which is the cheap half
+#: of this trade and visible to the person who said it.
 FILLER_WORDS: dict[str, tuple[str, ...]] = {
     "en": (
-        "uh", "uhh", "uhhh", "um", "umm", "ummm",
+        "uh", "uhh", "uhhh", "umm", "ummm",
         "erm", "ahh",
         "hm", "hmm", "hmmm", "mhm", "mm", "mmm",
     ),
