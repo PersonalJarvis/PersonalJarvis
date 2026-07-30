@@ -516,6 +516,44 @@ async def test_embed_work_resumes_after_the_cooldown(store):
     assert item["state"] == ItemState.EMBEDDED.value
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "fake: embedding request failed (ConnectError)",
+        "fake: embedding request failed (ConnectTimeout)",
+        "fake: embedding request failed with HTTP 401",
+        "fake: embedding request failed with HTTP 502",
+    ],
+)
+async def test_provider_wide_embed_failures_do_not_poison_items(store, message):
+    """Network, auth and upstream failures pause the slot without charging
+    attempts to whichever item happened to be in flight."""
+    from jarvis.ultrawiki.embeddings import EmbeddingError
+
+    await store.upsert_items("src1", [make_item(1)])
+
+    class BrokenBackend(FakeEmbeddingBackend):
+        async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+            self.embed_calls.append(list(texts))
+            raise EmbeddingError(message)
+
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: BrokenBackend(),
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001
+
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item["attempt_count"] == 0
+    assert item["state"] == ItemState.KEYWORD_INDEXED.value
+    assert worker.embed_block() is not None
+
+
 async def test_distill_pass_rests_through_the_embed_cooldown(store):
     """The distilled summary must be embedded too, so the distill stage
     shares the provider cooldown instead of burning chat-model calls whose

@@ -110,8 +110,33 @@ EMBED_COOLDOWN_S = 600.0
 MEDIA_STALL_COOLDOWN_S = 300.0
 
 #: Provider-answer shapes that mean "stop asking for a while" rather than
-#: "this item is poisoned": rate limit, out of credit, service unavailable.
-_RATE_LIMIT_MARKERS = ("HTTP 429", "HTTP 402", "HTTP 503")
+#: "this item is poisoned". Authentication, quota, transport and upstream
+#: failures are properties of the embedding SLOT, never of the item that
+#: happened to be in flight. Only content-specific 4xx responses stay on the
+#: per-item retry path.
+_GLOBAL_EMBED_FAILURE_MARKERS = (
+    "HTTP 401",
+    "HTTP 402",
+    "HTTP 403",
+    "HTTP 408",
+    "HTTP 429",
+    "HTTP 500",
+    "HTTP 502",
+    "HTTP 503",
+    "HTTP 504",
+    "ConnectError",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteTimeout",
+    "PoolTimeout",
+    "connection error",
+    "connection failed",
+    "network error",
+    "server disconnected",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
 
 #: ...and the words that mark the subset which will NOT clear by waiting. A
 #: rate limit ends on its own; an exhausted quota or an unpaid bill ends only
@@ -134,8 +159,8 @@ _QUOTA_WORDS = (
 )
 
 
-def _rate_limited_embed(exc: BaseException) -> bool:
-    """True for an EmbeddingError carrying a rate/quota/unavailable status.
+def _global_embed_failure(exc: BaseException) -> bool:
+    """True when an embedding failure belongs to the provider, not the item.
 
     Checked by class NAME so this module keeps its lazy-import discipline
     (AP-26); the marker strings come from the adapters' honest error texts.
@@ -143,7 +168,11 @@ def _rate_limited_embed(exc: BaseException) -> bool:
     if type(exc).__name__ != "EmbeddingError":
         return False
     message = str(exc)
-    return any(marker in message for marker in _RATE_LIMIT_MARKERS)
+    lowered = message.lower()
+    return any(
+        marker in message or marker.lower() in lowered
+        for marker in _GLOBAL_EMBED_FAILURE_MARKERS
+    )
 
 
 def _embed_block_needs_attention(message: str) -> bool:
@@ -154,7 +183,7 @@ def _embed_block_needs_attention(message: str) -> bool:
     pace — otherwise it is an ordinary rate limit and the cooldown handles it.
     """
     lowered = message.lower()
-    if "http 402" in lowered:
+    if any(status in lowered for status in ("http 401", "http 402", "http 403")):
         return True
     return "http 429" in lowered and any(word in lowered for word in _QUOTA_WORDS)
 
@@ -598,7 +627,7 @@ class PipelineWorker:
         self._pause_reasons.pop(stage, None)
 
     def _begin_embed_cooldown(self, exc: BaseException) -> None:
-        """One rate/quota rejection rests BOTH embedding-dependent stages.
+        """One provider-wide failure rests BOTH embedding-dependent stages.
 
         No attempt is charged and no retry is written: the failure is the
         provider's global state, not any item's fault — the claims were
@@ -628,14 +657,14 @@ class PipelineWorker:
         # that repeats itself is a log nobody reads.
         if first:
             log.warning(
-                "UltraWiki embedding provider rejected with a rate/quota answer "
-                "(%s) — resting the embed and distill stages for %.0f minutes "
+                "UltraWiki embedding provider failed globally (%s) — resting "
+                "the embed and distill stages for %.0f minutes "
                 "instead of hammering it per item%s",
                 exc,
                 EMBED_COOLDOWN_S / 60.0,
                 (
-                    ". This will not clear by waiting: add credit to that "
-                    "provider or choose another embedding backend"
+                    ". This will not clear by waiting: check that provider's "
+                    "credentials or billing, or choose another embedding backend"
                     if self._embed_block["needs_attention"]
                     else ""
                 ),
@@ -693,7 +722,7 @@ class PipelineWorker:
         if remaining <= 0:
             return ""
         return (
-            "embedding provider is rate-limited or out of quota — retrying "
+            "embedding provider is temporarily unavailable — retrying "
             f"in {max(1, int(remaining // 60))} minute(s)"
         )
 
@@ -954,7 +983,7 @@ class PipelineWorker:
             # A rate/quota rejection is GLOBAL, not a poison item: retrying
             # the members individually would multiply one 429 into 33 calls
             # per pass. Rest instead; the read-only claims release themselves.
-            if _rate_limited_embed(exc):
+            if _global_embed_failure(exc):
                 self._begin_embed_cooldown(exc)
                 return 0
             # ONE unembeddable text (provider 400 on some content) used to
@@ -1009,7 +1038,7 @@ class PipelineWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — only this item is charged
-                if _rate_limited_embed(exc):
+                if _global_embed_failure(exc):
                     # Mid-loop quota exhaustion: stop charging anyone and
                     # rest — the remaining claims are read-only anyway.
                     self._begin_embed_cooldown(exc)
@@ -1106,7 +1135,7 @@ class PipelineWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
-                if _rate_limited_embed(exc):
+                if _global_embed_failure(exc):
                     self._begin_embed_cooldown(exc)
                     break
                 await self._retry(item, "distill", exc)
