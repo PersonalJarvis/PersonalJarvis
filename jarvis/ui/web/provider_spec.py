@@ -644,18 +644,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ),
     # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
-        id="groq-api",
-        label="Groq STT (Whisper)",
-        tier="stt",
-        auth_mode="api_key",
-        secret_keys=("groq_api_key",),
-        dashboard_url="https://console.groq.com/keys",
-        credential_help=(
-            "Groq API key (starts with gsk_). Fast hosted Whisper "
-            "speech-to-text, billed per token."
-        ),
-    ),
-    ProviderSpec(
         id="openai-api",
         label="OpenAI Whisper STT",
         tier="stt",
@@ -721,6 +709,26 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "transcribes several times faster than real time on a plain CPU — "
             "no graphics card required. Pick Whisper instead if you want the "
             "highest accuracy and have the hardware for it."
+        ),
+    ),
+    # Deliberately last in the Voice Input picker and last among cloud runtime
+    # fallbacks. It remains available for users who only have a Groq key, but
+    # live German dictation has been substantially less reliable than the other
+    # hosted choices and must not be presented as a preferred takeover.
+    ProviderSpec(
+        id="groq-api",
+        label="Groq STT (Whisper)",
+        tier="stt",
+        auth_mode="api_key",
+        secret_keys=("groq_api_key",),
+        dashboard_url="https://console.groq.com/keys",
+        credential_help=(
+            "Groq API key (starts with gsk_). Fast hosted Whisper "
+            "speech-to-text, billed per token."
+        ),
+        caution=(
+            "Not recommended for primary transcription: real-world dictation "
+            "quality has been less reliable than the other hosted choices."
         ),
     ),
     # ── Dictation polish ──────────────────────────────────────────────────

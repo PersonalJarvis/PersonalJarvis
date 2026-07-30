@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.core.protocols import Transcript
+from jarvis.plugins.stt import _STT_CROSS_FAMILY_ORDER
 from jarvis.speech.stt_fallback import (
     FallbackSTT,
     alternate_provider_names,
@@ -180,6 +181,21 @@ def test_local_whisper_is_the_floor_not_the_first_choice():
     )
     assert order == ["openai-api", "gemini-api", "faster-whisper"]
     assert "groq-api" not in order  # never falls back to the one that just failed
+
+
+def test_groq_is_the_last_cloud_fallback():
+    """Poor dictation quality keeps Groq available, but never preferred."""
+    assert _STT_CROSS_FAMILY_ORDER == (
+        "openrouter-stt",
+        "openai-api",
+        "gemini-api",
+        "groq-api",
+    )
+
+    order = alternate_provider_names(
+        "openrouter-stt", [*_STT_CROSS_FAMILY_ORDER, "faster-whisper"]
+    )
+    assert order == ["openai-api", "gemini-api", "groq-api", "faster-whisper"]
 
 
 def test_a_single_key_install_is_not_wrapped():

@@ -88,6 +88,14 @@ def test_get_spec_lookup() -> None:
     assert get_spec("does-not-exist") is None
 
 
+def test_groq_stt_is_last_and_not_recommended() -> None:
+    """Groq remains selectable, but the Voice Input UI must de-emphasize it."""
+    stt_specs = [spec for spec in PROVIDERS if spec.tier == "stt"]
+    assert stt_specs[-1].id == "groq-api"
+    assert stt_specs[-1].recommended is False
+    assert stt_specs[-1].caution
+
+
 def test_all_secret_keys_collects_unique_set() -> None:
     keys = all_secret_keys()
     assert "anthropic_api_key" in keys

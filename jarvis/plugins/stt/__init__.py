@@ -45,18 +45,17 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-# Cross-family probe order when the configured cloud STT has no usable key: the
-# family the maintainer ships first, then the common BYO-key alternatives. Only a
-# family that BOTH has a key AND is registered as a `jarvis.stt` entry-point is
-# ever chosen (a keyed-but-unregistered name is skipped, so we never promise an
-# STT we cannot build). Every entry here now HAS a plugin (groq-api, openrouter-
-# stt, openai-api, gemini-api); the dead `deepgram*` names were removed so the
-# resolver can never cross to a non-existent provider. This mirrors the TTS
-# factory's `_TTS_CROSS_FAMILY_ORDER`; it is what lets a fresh downloader whose
-# only key is (say) an OpenAI or Gemini key get working voice input instead of
-# dead-ending on local faster-whisper the base install never shipped.
+# Cross-family probe order when the configured cloud STT has no usable key.
+# OpenRouter leads because its shared Brain key commonly needs no second setup;
+# OpenAI and Gemini follow, while Groq is deliberately the LAST cloud option.
+# Live German dictation showed materially worse transcription quality on Groq,
+# so availability must not make it the preferred takeover. Only a family that
+# BOTH has a key AND is registered as a `jarvis.stt` entry-point is ever chosen
+# (a keyed-but-unregistered name is skipped, so we never promise an STT we cannot
+# build). The key-free local engine remains the final floor below every cloud
+# family when it is installed.
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "groq-api", "openrouter-stt", "openai-api", "gemini-api",
+    "openrouter-stt", "openai-api", "gemini-api", "groq-api",
 )
 
 # Constructor kwargs the factory offers but no provider is required to accept.
