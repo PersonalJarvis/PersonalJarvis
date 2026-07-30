@@ -1,226 +1,193 @@
 ---
 title: "Complete First-Run Setup"
 slug: first-run-setup
-summary: "Walk through language, permissions, microphone, wake word, and provider setup without exposing credentials."
+summary: "Choose languages, a local or connected Brain, permissions, and voice activation without exposing credentials."
 section: "Start here"
 section_order: 1
 order: 3
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [setup, onboarding, language, permissions, microphone, wake-word, providers]
 related: [providers-and-api-keys, audio-and-wake-word, permissions, start-your-first-chat]
 ---
 
-First-run setup records your acceptance of the Terms, then guides you through
-language, provider guidance, system permissions, and voice activation. You do
-not enter a provider credential during onboarding. The app shows you where to
-connect one after setup.
-
-The interface supports English, German, and Spanish. A fresh installation
-starts in English, and missing interface text falls back to English. Replies
-start in **Auto**, which follows the language of the conversation. If Jarvis
-cannot determine a reply language, it falls back to English.
-
-You can finish setup without a microphone, a wake word, or an online provider.
-The main app will still open, but chat replies and provider-backed voice
-features need a working provider or local integration for the relevant stage.
+First-run setup accepts the Terms, introduces model choices, checks system
+access, and sets voice activation. You can finish without a cloud account or
+microphone, but chat needs a ready local or connected Brain.
 
 ## Before You Start
 
-- Install and open the desktop app.
-- Have a microphone available only if you want to use voice.
-- If you plan to use an online provider, get its credential from the
-  provider's official account page. A provider is the service or local
-  integration that handles a request.
+- Open the installed desktop app. The first launch may take several seconds.
+- For a keyless Brain, start Ollama with one installed model. Connect a
+  microphone only if testing a wake word.
+- On macOS, launch the signed app from its application bundle before granting
+  access; permissions belong to that exact app identity.
 
-> [!warning] Enter a provider credential only in **API Keys & Providers**.
-> Never paste it into chat, speak it to Jarvis, add it to `jarvis.toml`, or
-> include it in a screenshot.
-
-Jarvis saves credentials in the operating system's credential store when one
-is available: Windows Credential Manager, macOS Keychain, or Linux Secret
-Service. If that store is missing or unusable, Jarvis uses a local file that is
-written with best-effort user-only permissions. That fallback is not
-OS-encrypted storage.
+> [!warning] Enter a provider credential only under **API Keys & Providers**
+> after onboarding. Never paste one into chat, speak it, put it in a wake word,
+> add it to configuration, or include it in a screenshot.
 
 ## Complete the Setup
 
-### 1. Accept the Terms and open the guide
+### 1. Accept the risk notice and view the tour
 
-1. On **Before you continue**, review the risk notice. Use **View the full
-   Terms of Use** if you want to read the complete document.
-2. Select the acknowledgment checkbox, then select **I understand —
-   continue**. If you select **Decline & quit**, the app closes without
-   completing setup. The same screen returns the next time you open the app.
-3. On **Watch the 2-minute tour**, play the video or select **Skip the video**.
-   Select **Continue** when you are ready.
-4. On **Welcome to Personal Jarvis**, select **Get started**.
+1. On **Before you continue**, read the summary and use **View the full Terms of
+   Use** for the complete text.
+2. Accept the risk checkbox, then select **I understand — continue**. **Decline
+   & quit** closes the app; the notice returns next time.
+3. Play or skip **Watch the 2-minute tour**, then select **Get started** on the
+   welcome screen.
 
-The **Skip setup for now** link on the welcome screen records that screen as
-skipped and continues to language setup. It does not close the first-run guide.
+**Skip setup for now** skips only the welcome step and continues to language.
+It does not dismiss the remaining first-run guide.
 
-### 2. Choose your languages
+### 2. Choose interface and reply languages
 
-1. On **Choose your language**, choose **English**, **Deutsch**, or
-   **Español** under **Interface language**. English is selected on a fresh
-   installation.
-2. Under **Reply language**, choose **Auto**, **English**, **Deutsch**, or
-   **Español**. Auto is the initial setting and follows the current
-   conversation.
-3. Select **Next**. The interface changes to the selected language.
+On **Choose your language**, select **Interface language** and **Reply
+language**, then **Next**. English, German, and Spanish are supported.
 
-Interface and reply language are separate settings. Changing menu text does
-not force every answer into the same language.
+Interface language changes menus. Reply language controls answers; **Auto**
+follows the conversation without switching for short interjections. Wake-word
+pronunciation is separate and can be pinned under **Settings > Wake Word**.
 
-### 3. Review the provider setup path
+### 3. Choose a Brain path and learn the voice modes
 
-The **Set up API keys after onboarding** screen is a guide only. It does not
-contain a credential field and does not choose a provider for you.
+**Set up API keys after onboarding** previews **API Keys & Providers**. It does
+not accept a key, choose a cloud provider, or test an account.
 
-1. Review where **API Keys** appears in the main sidebar.
-2. Review the two voice modes:
+| Voice mode | What the onboarding screen offers |
+|---|---|
+| **Realtime (recommended, research preview)** | One compatible OpenAI or Gemini credential handles listening, reasoning, and speech in one live connection |
+| **Pipeline (not recommended)** | Separate choices handle **Brain**, **Voice Input**, and **Voice Output** |
 
-   | Voice mode | What it uses | Product status |
-   |---|---|---|
-   | Realtime | One compatible provider listens and replies in a live audio stream | Recommended, research preview |
-   | Pipeline | Separate Brain, Voice Input, and Voice Output providers | Available, not recommended |
+The same step checks this machine for Ollama:
 
-3. Select **Continue onboarding**. You will choose providers and enter any
-   required credentials after the main app opens.
+- **Use local model** appears when Ollama is reachable with a model; it makes
+  Ollama the active Brain without a key.
+- If Ollama is empty, install a model there first. The wizard does not download
+  one.
+- **Get Ollama** appears when no server is detected; you may choose another
+  Brain later.
 
-### 4. Review system permissions
+This button changes only the Brain, not voice, vision, or other model features.
+Select **Continue onboarding** when ready.
 
-On macOS, **Allow access on this Mac** lists six capabilities:
-**Microphone**, **Screen Recording**, **Accessibility**, **Input Monitoring**,
-**Input control**, and **Keychain (API keys)**. Use **Allow** or **Open
-Settings** for the features you want, then return to Jarvis. The status updates
-automatically.
+### 4. Review operating-system permissions
 
-Select **Continue** when it becomes available. **Allowed** and **Not required**
-are ready states; Screen Recording can show **Restart pending** and still allow
-you to finish. Pending grants take effect with the single automatic restart at
-the end of onboarding. The setup screen does not require a separate mid-flow
-restart.
+On macOS, **Allow access on this Mac** shows **Microphone**, **Screen
+Recording**, **Accessibility**, **Input Monitoring**, **Input control**, and
+**Keychain (API keys)**. Grant only what you need:
 
-If you do not want to grant all access now, select **Continue with text only**.
-Voice input, global shortcuts, Computer Use, or OS-backed credential storage
-may remain unavailable until you return to Permissions in Settings.
+- Microphone supports voice input; Screen Recording, Accessibility, and Input
+  control support Computer Use; Input Monitoring supports global shortcuts;
+  Keychain stores credentials encrypted.
 
-On Windows and Linux, the page reports that no extra desktop privacy
-permissions are required and allows you to continue. Features can still depend
-on a microphone, display, or other capability being present on the machine.
+Use **Allow** or **Open Settings**, return, and wait for the status. **Allowed**,
+**Not required**, and **Restart pending** are ready. Pending access applies
+during the final restart. To defer access, select **Continue with text only**.
 
-### 5. Choose how to activate voice
+Windows and Linux show **No extra desktop privacy permissions are required on
+this operating system**. This does not prove that a microphone, display,
+shortcut, or platform backend is available.
 
-The activation screen offers two choices:
+### 5. Choose how voice starts and name the assistant
 
-- **Wake word** keeps a local listener ready for a phrase you choose.
-- **Keyboard shortcut** turns the wake listener off and uses the Call shortcut
-  to start a voice session. You can change the shortcut later under **Settings
-  > Voice Keybinds**.
+On the activation screen, choose one path:
 
-If you choose **Keyboard shortcut**, select **Continue**.
+- **Keyboard shortcut** disables always-listening activation. Use the Call
+  shortcut later. With no wake phrase, the neutral name is **Assistant**.
+- **Wake word** keeps a local listener ready for your phrase. **Hey** is fixed;
+  enter at least two characters for the rest. The phrase also defines the
+  assistant's display name. For example, entering **Nova** shows **Your
+  assistant will be called: Nova**.
 
-If you choose **Wake word**:
+Accept responsibility for the name, then optionally select **Test your
+microphone** or **Say your wake word once**. Both check the input level and
+report good, quiet, missing, blocked, or temporarily unavailable input. The
+check does not block saving.
 
-1. Enter at least two characters after the fixed word **Hey**.
-2. Select the checkbox confirming that you are responsible for the word you
-   choose.
-3. Optionally select **Test your microphone** or **Say your wake word once**.
-   Both listen for a short period and report **Sounds good**, a quiet input, a
-   missing device, a permission problem, or a temporary check error. The check
-   does not block saving.
-4. Select **Save wake word**.
+Select **Save wake word**. If no local engine supports it, choose **Enable any
+wake word** to install the optional local wake speech pack, then save again.
+This repairs wake detection, not the full Pipeline voice stack. **Continue
+anyway** leaves the Call shortcut as the reliable path until wake is healthy.
 
-If the chosen phrase needs a local engine that is not ready, Jarvis offers
-**Enable any wake word** to install the local speech pack. You can select
-**Continue anyway**, but use the Call shortcut until the app reports that the
-wake word is available.
+### 6. Finish and restart once
 
-### 6. Finish onboarding
+On **You're all set!**, review skipped entries. Enable **Start Jarvis
+automatically at login** only if the supported switch appears.
 
-1. On **You're all set!**, enable **Start Jarvis automatically at login** if
-   the option appears and you want it. The option is hidden on unsupported or
-   headless systems.
-2. Select **Get started**.
+Select **Get started**. Setup is saved before one fresh restart initializes the
+new choices. If it does not restart, reopen the app manually.
 
-The desktop app records setup as complete, then normally closes and reopens
-once so language, permissions, and wake-word choices can start from fresh
-state. If the automatic restart cannot be scheduled, setup still remains
-complete and the current process stays open.
+## Connect and Test Providers After Setup
 
-### 7. Connect only the providers you need
+Open **API Keys**. Under **Brain**, use Ollama or connect one provider you have.
+For voice, choose **Realtime** or **Pipeline** and connect only its required
+categories. Each card shows its supported sign-in method.
 
-After the main app opens:
+Save credentials only in the masked card, then select **Test**. **Works** proves
+the account, model, quota, and service answered. The app prefers the OS
+credential store; its user-local fallback is not OS-encrypted.
 
-1. In the sidebar, open **API Keys**. The page title is **API Keys &
-   Providers**.
-2. Choose **Realtime** or **Pipeline** for voice. For text chat, open
-   **Brain**. Realtime needs a compatible provider credential before it can
-   become the active voice mode.
-3. Open a provider card and follow the authentication method it shows. Local
-   providers may need no credential. Subscription providers can show a sign-in
-   action. API-key providers show a masked credential field and may include
-   **Get your key here**.
-4. For an API key, enter it in the provider card and select **Save**. If that
-   category already has an active provider, select **Set active** for the new
-   one.
-5. Select **Test**. **Works** means the provider answered the live test.
+## Recover a Skipped or Deferred Choice
 
-You do not need to fill every credential field. Connect only the categories
-you intend to use. A saved key can make a card ready, but only a successful
-test proves that the account, model, quota, and service can answer now.
+- Change interface and reply languages under **Settings > Languages**.
+- Repair macOS access under **Settings > Privacy permissions**.
+- Change the phrase, spoken wake language, activation switch, or local wake
+  pack under **Settings > Wake Word**.
+- Record or change the Call shortcut under **Settings > Voice Keybinds**.
+- Connect and test models under **API Keys & Providers**; change login startup
+  under **Settings > App settings** where supported.
 
 ## How It Fits Together
 
-1. The first-run guide records your Terms decision and setup choices.
-2. Interface language controls app text. Reply language controls answers;
-   **Auto** follows the conversation and keeps a short interjection in the
-   conversation's established language.
-3. A wake word or the Call shortcut starts voice input. The microphone and the
-   relevant operating-system permissions must be ready for that input method.
-4. A Brain provider handles chat answers. Pipeline voice uses separate Voice
-   Input, Brain, and Voice Output stages, while Realtime uses one live audio
-   connection.
-5. Computer Use and other actions can require more system access and a safety
-   confirmation. Granting a permission during setup does not approve future
-   actions.
-6. When a preferred provider is unavailable, Jarvis can use a compatible
-   fallback that you have configured. If no compatible provider is ready, the
-   affected feature reports that setup or attention is required.
+1. Interface language controls menus; reply language controls answers.
+2. The wake phrase supplies both local activation and the assistant's name.
+   The Call shortcut starts voice without an always-listening wake engine.
+3. Permissions allow an operating-system capability; they do not approve a
+   later Computer Use action or bypass its safety check.
+4. The Brain handles chat reasoning. Pipeline adds separate voice input and
+   output; Realtime combines the live voice path.
+5. Ready compatible providers can act as fallbacks; otherwise the affected
+   feature reports that setup is needed.
 
 ## Check That It Works
 
-After you select **Get started**, wait for the desktop app to reopen. Setup is
-complete when the main sidebar appears and the first-run guide does not return.
-If the app does not reopen automatically, open it once yourself; the completion
-record was saved before the restart was attempted.
+1. After **Get started**, confirm the app returns to the main sidebar and the
+   first-run guide stays closed.
+2. Open **API Keys**, select **Test** on the active Brain card, and look for
+   **Works**.
+3. Open **Chats** and send a harmless message. Confirm a reply arrives in the
+   selected reply language.
+4. For voice, verify **Settings > Audio devices** and try the Call shortcut. If
+   wake is enabled, run **Test wake word** and try the phrase after restart.
 
-If you connected a Brain provider, select **Test** on its card before opening
-**Chats**. A **Works** result confirms that the provider is ready for a first
-message.
+On a headless system, verify text chat or the Control API; desktop-only features
+should report their limits rather than prevent startup.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **Continue** is unavailable on the macOS permissions page | A permission, app identity check, or status refresh is still pending | Use **Allow** or **Open Settings**, return to Jarvis, and wait for the row to update; or select **Continue with text only** |
-| The microphone check reports quiet input, no device, or required permission | Jarvis cannot capture a usable signal from the selected input | Check the operating-system input device and level, grant **Microphone** access on macOS, then try again |
-| The saved wake phrase does not activate Jarvis | The local engine is missing, the listener is off, the spoken language setting is wrong, or the microphone is unavailable | Use the Call shortcut, then review **Settings > Wake Word**, including the language you speak and the offered local-engine install |
-| A provider card is ready but its test does not say **Works** | A credential is stored, but the account, model, quota, or service is not working | Follow the **Test** result and try another compatible provider family if one is available |
-| Menus and answers use different languages | Interface language and reply language are independent | Review both choices in **Languages** and use **Auto** only when replies should follow the conversation |
+| **Use local model** does not appear | Ollama was unreachable or empty | Continue, prepare Ollama, then use its Brain card under **API Keys** |
+| **Continue** is disabled on macOS | A permission or stable app-identity check is unresolved | Use **Allow** or **Open Settings**, return and wait for refresh, or choose **Continue with text only** |
+| Microphone check reports quiet, missing, or blocked | The input has no usable signal | Check OS access and **Settings > Audio devices** |
+| Saved wake word does not respond | Its local model, spoken-language pin, microphone, or activation switch is not ready | Use the Call shortcut; under **Settings > Wake Word**, choose the language you speak, install the offered model, and run **Test wake word** |
+| Provider card is active but chat cannot answer | Active does not guarantee a successful live request | Select **Test**, follow the visible error, or configure another compatible provider family |
+| App does not reopen | The restart could not start a fresh process | Open the app; setup was already saved |
+| First-run setup returns every launch | The completion state is not being read from the same writable data location | Stop repeating setup and follow [Troubleshooting](troubleshooting) for data-directory and version checks |
 
 ## Next Steps
 
-- Read [Providers and API Keys](providers-and-api-keys) to understand provider
-  categories, tests, fallback choices, and credential storage.
-- Read [Audio and Wake Word](audio-and-wake-word) to adjust your microphone,
-  spoken language, activation phrase, local engine, and Call shortcut.
-- Read [Permissions](permissions) before enabling voice, global shortcuts, or
-  Computer Use on a new operating system.
-- Follow [Start Your First Chat](start-your-first-chat) for a simple first
-  conversation and the signs that your Brain provider is ready.
+- Follow [Start Your First Chat](start-your-first-chat) for a safe first test.
+- Read [Providers and API Keys](providers-and-api-keys) before connecting a
+  cloud account or changing fallbacks.
+- Read [Local AI Providers](local-ai-providers) for Ollama setup and limits.
+- Use [Audio and Wake Word](audio-and-wake-word) to finish microphone, wake
+  language, activation, or shortcut setup.
+- Review [Permissions](permissions) before enabling Computer Use or global
+  shortcuts on a new operating system.

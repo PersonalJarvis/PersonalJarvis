@@ -8,177 +8,144 @@ order: 6
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [speech-recognition, dictionary, voice, pipeline]
 related: [voice-conversations, audio-and-wake-word, languages-and-voices]
 ---
 
-The Speech Dictionary corrects repeatable mistakes in Pipeline voice
-transcripts. Pipeline is the voice mode that turns your speech into text before
-Jarvis handles the request. Use the Dictionary for names, abbreviations,
-product terms, and specialist words that speech recognition often gets wrong.
+Use the **Dictionary** for names, brands, abbreviations, and specialist terms
+that speech recognition repeatedly spells the wrong way. It is a **Research
+Preview**, but its local corrections now reach Pipeline voice, Realtime
+transcripts, and Dictation.
 
-The app marks the Dictionary as **Research Preview**. It changes recognized
-text after transcription. It does not train the speech provider, repair poor
-microphone audio, or change how Jarvis pronounces a word in a reply.
+The Dictionary changes recognized text. It does not train a provider, improve
+microphone audio, detect the wake phrase, or change reply pronunciation.
 
 ## Before You Start
 
-- Use **Pipeline** for the voice turn you want to correct. Dictionary rules do
-  not change Realtime transcripts.
-- Test the word once and note the exact text shown in **Transcription**. A
-  repeatable mistake is easier to correct than a different result each time.
-- Use a short, non-sensitive test phrase. Never add passwords, credentials,
-  recovery codes, or other secrets to the Dictionary.
+1. Open **Voice > Dictionary**.
+2. Say the term in the failing path and copy the visible wrong transcript.
+3. Use a harmless test phrase. Never save credentials, recovery codes, or
+   private keys as vocabulary.
 
-The saved list stays in the local data for this Jarvis installation and
-survives restarts. It does not sync to another installation. A compatible
-cloud speech provider may receive some correct terms as recognition hints when
-Jarvis creates that provider. The provider still receives audio according to
-your selected voice setup.
+Rules are shared across all input languages. A broad correction that is safe in
+one language can alter an ordinary word in another.
 
 ## Choose the Right Entry
 
-Start with the smallest rule that describes what you see.
-
-| What appears in Transcription | Entry to use | What Jarvis changes |
+| What recognition produces | Best entry | Result |
 |---|---|---|
-| The right word with the wrong capitalization | Add the correct word or phrase | Complete matches use your saved capitalization |
-| A close, single-word spelling mistake | Add the correct word | A conservative near match may be repaired |
-| The same wrong word or phrase appears repeatedly | Turn on **Fix a misrecognition** | That whole word or phrase is replaced with the correct form |
-| The result is missing, random, or changes every time | Improve the audio or language setup first | The Dictionary does not guess from unclear audio |
+| Correct letters, wrong capitalization | Add the correct term | Exact matches use your saved capitalization |
+| One close spelling error | Add the correct single word | A conservative near match may be repaired |
+| The same wrong word or phrase | Turn on **Fix a misrecognition** | The saved wrong form is replaced predictably |
+| Missing, random, or changing text | Fix audio, provider, or language first | A text rule cannot recover words that never appear |
 
-Every entry preserves the saved capitalization of an exact word or phrase. A
-single-word term with at least four characters may also repair a near match
-that starts with the same letter and differs by only one or two edits,
-depending on its length. Jarvis leaves distant or ambiguous matches unchanged.
-Use an explicit correction when you know the exact wrong word or phrase.
+Near-match repair needs a single word of at least four characters, the same
+first letter, and only a small spelling difference. Ambiguous and multi-word
+cases need an explicit variant.
 
-## Add a Word
+## Add a Name or Term
 
-1. Open **Dictionary** from the app navigation.
-2. Select **Add word**.
-3. Leave **Fix a misrecognition** off.
-4. Enter the spelling and capitalization you want in **Add a new word**.
-5. Select **Add word** in the dialog. The new entry appears in the list.
-6. Wait up to one second, then start a new Pipeline voice turn. You do not need
-   to restart the app.
+1. Select **Add word**.
+2. Leave **Fix a misrecognition** off.
+3. Enter the intended spelling, save, and wait about one second.
+4. Start a new utterance in the same path and inspect its transcript.
 
-The next transcript can use the saved capitalization or a conservative
-single-word repair. If the mistake is not close enough, add its exact form as a
-misrecognition instead.
+Compatible providers may also receive the term as a recognition hint. Local
+capitalization and near-match repair are the cross-provider behavior.
 
-## Correct a Repeated Mistake
+## Fix a Repeated Misrecognition
 
-1. Open **Dictionary** and select **Add word**.
-2. Turn on **Fix a misrecognition**.
-3. In **Misrecognized as…**, enter the exact wrong word or phrase from the
-   transcript.
-4. In **Correct spelling**, enter the form you want to see.
-5. To cover several known variants, separate them with commas. Keep each
-   variant specific enough that it will not replace ordinary speech. A comma
-   cannot be part of a variant because it separates entries.
-6. Select **Add word**, wait up to one second, then repeat the same
-   non-sensitive phrase in a new Pipeline turn.
+1. Select **Add word** and enable **Fix a misrecognition**.
+2. Enter the wrong form on the left and intended form on the right.
+3. Separate known alternatives with commas, save, wait one second, and retest.
 
-Corrections ignore capitalization, allow different spacing between words, and
-match complete words or phrases. They do not replace part of a longer word. If
-speech recognition produces a new variant, edit the existing entry and add it
-there.
+Rules ignore capitalization, tolerate different spaces, and replace only whole
+words or phrases. Keep variants specific; commas separate them.
 
-The same list applies to English, German, Spanish, and any other language used
-by a Pipeline speech provider. Rules are not separated by language, so avoid a
-broad variant that could be an ordinary word in another language.
+## Understand Where Corrections Apply
 
-## Edit, Find, or Remove an Entry
+| Path | What the Dictionary changes | Important limit |
+|---|---|---|
+| **Pipeline** | Preview and final transcripts, including fallback | Provider hints load when the provider is built; later edits still correct locally |
+| **Realtime** | Transcript, local routing, tools, and hang-up matching | The provider may have begun its own response before local correction |
+| **Dictation** | Preview, final text, and insertion into another app | Optional polish or translation happens later; saved terms are protected |
 
-- Use **Search dictionary…** to find either the correct form or one of its
-  misheard variants.
-- Use the button labeled **Edit** to change the correct form or its variants.
-- Use **Delete** to remove an entry. Deletion happens immediately without a
-  confirmation dialog. You can add the entry again if you remove it by mistake.
+Edits usually affect the next new transcript within one second. Existing
+transcripts and Dictation history are unchanged.
 
-With a keyboard, use Tab to reach an entry's **Edit** and **Delete** buttons.
-Screen readers announce the same labels.
+Some providers receive a capped list of correct terms when built; variants stay
+local. Provider fallback keeps local correction. If the list cannot load,
+speech continues with raw text.
 
-Jarvis removes extra whitespace and duplicate variants when it saves an entry.
-It accepts one entry for each correct form, regardless of capitalization. An
-entry can contain up to 20 misheard variants. A correct form or variant can
-contain up to 100 characters, and the Dictionary can hold up to 2,000 entries.
+## Find, Edit, or Delete Rules
+
+- **Search dictionary...** matches terms and variants.
+- **Edit** changes them; turning correction mode off keeps plain vocabulary.
+- **Delete** removes an entry immediately, without confirmation or undo.
+
+Correct terms are unique regardless of capitalization. Edit the existing entry
+after a duplicate warning. Within an entry, repeated variants merge, spaces are
+normalized, and a variant identical to the term is discarded.
+
+One variant can still appear in different entries; avoid this because the
+earlier rule can win. Limits are 100 characters per term or variant, 20
+variants per entry, and 2,000 entries.
+
+Deletion stops local correction after reload, but does not change history or
+retract a hint held by a running provider. Rebuild that provider if needed.
+
+## Privacy and Storage
+
+Entries stay in local app data, survive restarts, and do not sync.
+
+Cloud speech can receive audio and some terms as hints. Dictation polish or
+translation can receive terms as protected spellings. Variants stay in the
+local corrector. Deletion cannot retract data already sent.
+
+## What Does Not Change
+
+The Dictionary does not fix typed text, history, bad audio, the wrong
+microphone, wake detection, reply language, voice, or pronunciation. It cannot
+force provider hints or infer a homophone without a repeatable pattern.
+
+Use [Audio and Wake Word](audio-and-wake-word) for capture or activation
+problems and [Voice Conversations](voice-conversations) for Pipeline and
+Realtime behavior.
 
 ## How It Fits Together
 
-1. **Jarvis captures your speech.** Your microphone, wake setup, and input
-   language determine what audio reaches Pipeline. Dictionary rules do not run
-   during wake detection.
-2. **A speech provider creates raw text.** Providers that accept recognition
-   hints may receive a capped list of correct terms when Jarvis creates the
-   provider. Those hints are not refreshed by a later Dictionary edit.
-3. **Jarvis applies the local rules.** Explicit replacements run first,
-   followed by saved capitalization and conservative single-word repair. This
-   step corrects Pipeline's live preview and final transcript within about one
-   second of an edit.
-4. **The corrected request continues.** The final text appears in
-   **Transcription** and goes to the assistant or action that handles the
-   request.
-5. **Provider fallback keeps the correction.** The full local rule set wraps
-   any Pipeline speech provider. A provider that does not accept hints still
-   gets the same post-transcription corrections.
-
-Realtime follows a separate live-audio path and does not pass its transcript
-through the Dictionary. Read [Voice Conversations](voice-conversations) for
-the full Pipeline and Realtime comparison. Read [Audio and Wake Word](audio-and-wake-word)
-and [Languages and Voices](languages-and-voices) for the settings that affect
-the audio and raw transcript before correction.
-
-## What the Dictionary Cannot Improve
-
-The Dictionary cannot:
-
-- repair silence, clipping, background noise, or the wrong microphone;
-- make a wake phrase easier to detect;
-- rewrite Realtime transcripts;
-- choose the correct meaning when two words sound alike without a consistent
-  transcript pattern;
-- change Jarvis's reply language, speaking voice, or pronunciation;
-- correct text you already typed;
-- keep separate rules for different input languages;
-- guarantee that a speech provider will use recognition hints.
-
-Use [Audio and Wake Word](audio-and-wake-word) for capture or activation
-problems, and [Languages and Voices](languages-and-voices) when recognition is
-using the wrong language or the spoken reply sounds wrong.
+1. The microphone, language, and active path produce raw text; wake detection
+   happens earlier.
+2. Explicit replacements run first, then capitalization and cautious
+   single-word repair.
+3. Pipeline sends corrected text to the assistant, Realtime uses it locally,
+   and Dictation may polish it before insertion.
+4. A fallback can change the provider while local rules remain.
 
 ## Check That It Works
 
-1. In a Pipeline voice turn, say a short non-sensitive phrase containing a term
-   that is misheard consistently.
-2. Open **Transcription** and put only the incorrect word or phrase in a new
-   **Fix a misrecognition** entry. Add the intended form in **Correct spelling**.
-3. Wait one second, then repeat the same phrase in a new Pipeline turn.
-4. Confirm that **Transcription** shows the intended form and that the
-   request reaches Jarvis with that wording.
-
-Success means the repeated transcript changes. It does not require restarting
-Jarvis or reconnecting the voice service.
+1. Say one harmless phrase and note a repeatable wrong term.
+2. Add that exact form under **Fix a misrecognition** and save the intended form.
+3. Wait one second, then repeat the phrase in the same path.
+4. Confirm the Pipeline/Realtime transcript or Dictation draft shows the saved
+   form. No app restart should be needed for local correction.
 
 ## Troubleshooting
 
-| What you see | What it usually means | What to do |
+| What you see | Likely cause | What to do |
 |---|---|---|
-| The entry saves, but the next transcript is unchanged | The turn used Realtime, the edit has not reloaded yet, or speech recognition produced a different variant | Choose Pipeline, wait one second, and add the exact new variant shown in Transcription |
-| **Add word** stays unavailable | The correct form is empty, or correction mode has no misheard value | Complete the required field, or turn correction mode off for a plain word |
-| The app says the word already exists | Correct forms are compared without capitalization | Search for the existing entry and edit it |
-| An unrelated phrase changes | A correction variant is too broad | Edit it to a more specific phrase, or delete the entry |
-| Recognition changes on every attempt | Audio quality or the input language is unstable | Check the selected microphone and language before adding more rules |
+| The next transcript is unchanged | The provider produced a different form, or reload has not happened | Wait one second and add the exact new variant |
+| A plain word does not repair the error | The difference is too large, multi-word, or ambiguous | Use **Fix a misrecognition** with the exact source |
+| Realtime transcript is fixed but its reply is not | The provider interpreted audio before local correction | Retry in Pipeline when corrected text must drive the answer |
+| An unrelated phrase changes | A variant is too broad or shared across entries | Make it more specific, remove the duplicate mapping, or delete it |
+| Recognition varies every time | Audio, language, or provider behavior is unstable | Check microphone and input language before adding more rules |
 
 ## Next Steps
 
-- Read [Voice Conversations](voice-conversations) to understand where
-  Dictionary correction sits in Pipeline and why Realtime behaves differently.
-- Read [Audio and Wake Word](audio-and-wake-word) to fix microphone quality or
-  activation problems that text correction cannot solve.
-- Read [Languages and Voices](languages-and-voices) to choose the input language
-  and the voice used for Jarvis's reply.
+- Read [Dictate Into Any App](dictation) for Dictation delivery, polish, and
+  recovery.
+- Read [Voice Conversations](voice-conversations) for Pipeline and Realtime.
+- Use [Audio and Wake Word](audio-and-wake-word) for microphone and wake issues.

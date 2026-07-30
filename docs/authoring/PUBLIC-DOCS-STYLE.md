@@ -8,7 +8,7 @@ order: 1
 diataxis: reference
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-30
 phase: "-"
 audience: developer
 tags: [docs, writing, accessibility, privacy]
@@ -133,8 +133,11 @@ inline code.
 - Define jargon on first use: "a provider - the service that answers your
   request." Do not send readers to a glossary for the first explanation.
 - Expand acronyms on first use. Avoid acronyms that appear only once.
-- Use `Jarvis-Agents` and `Jarvis-Agent`; do not revive historical internal
-  names.
+- Use `Jarvis-Agents` and `Jarvis-Agent` for the internal feature; do not
+  revive historical internal names. When quoting a visible label, explain that
+  the app derives it from the configured assistant name, for example
+  **Nova-Agents**, with **Assistant-Agents** as the neutral fallback. Never
+  present **Jarvis-Agents** as a fixed label every reader will see.
 - Address limitations directly. Do not use marketing claims such as
   "seamless," "magic," or "always works."
 - Distinguish what Jarvis does automatically from what the reader must do.

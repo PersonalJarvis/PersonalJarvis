@@ -8,134 +8,152 @@ order: 4
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [desktop-app, navigation, chats, agents, tools, settings, help]
 related: [start-your-first-chat, chats, find-help-in-the-app]
 ---
 
-The desktop app keeps conversations, longer jobs, connected tools, saved
-results, and settings in one place. Choose an area in the sidebar, and the main
-area changes to match it.
+The desktop app puts conversations, jobs, tools, knowledge, results, and
+settings in one window. Sidebar rows change the main area while shared status
+stays visible.
 
-You do not need to learn every area before you begin. Start in **Chats**, then
-open another area when you want to follow longer work, find an earlier result,
-or change how your assistant behaves.
+Start in **Chats**. Several other rows are hubs, with related features behind
+tabs instead of separate sidebar entries.
 
-Two sidebar labels use your assistant's name. If the assistant is named Nova,
-the agent view appears as **Nova-Agents** and the personal instructions view as
-**Nova.md**. This guide calls them **Agents** and **Instructions**.
+## Read the Shared App Frame
 
-## Know What Jarvis Is Doing
+The sidebar shows your assistant name and voice state: **Starting**, **Voice
+starting**, **Ready**, **Listening**, **Thinking**, **Speaking**, **Error**, or
+**Offline**. The box below follows the latest transcript. Text can work while
+voice warms.
 
-The header beside your assistant's name shows **Starting…**, **Voice
-starting…**, **Ready**, **Listening**, **Thinking**, **Speaking**, **Error**, or
-**Offline**. The box below shows a live transcript while your assistant hears
-speech. The header and transcript box stay visible when you change areas.
+The Agents area, personal instructions file, and Voice hub adapt to your chosen
+name. This guide calls them **Agents**, **Instructions**, and **Voice**.
 
-The card at the bottom of the sidebar is labeled **Brain** in Pipeline mode and
-**Realtime** in Realtime mode. It shows the provider and model selected for
-that mode. During a live Realtime call, it follows the provider and model that
-are actually serving the call. A provider is a service or local program that
-handles part of a request. Select the card to open **API Keys & Providers**.
+The bottom card shows the Pipeline **Brain** or **Realtime** provider and model.
+Select it to open **API Keys**; during a Realtime call it follows the provider
+actually serving the session.
 
-The top bar always shows **Restart**. Select it once to reveal **Confirm
-restart?**, then select it again to continue. If an agent mission is running,
-the app blocks the first attempt and offers **Restart anyway?**. On a headless
-host that cannot relaunch a desktop app, the action reports **Restart failed**.
+Drag the sidebar divider to resize it. When it becomes an icon rail, hover for
+labels; double-click the divider to restore its width.
 
-A managed installation shows **Update available** when a newer published
-release is ready. If an update was downloaded but the restart did not finish,
-the button changes to **Finish update**. Manual clones and development
-checkouts do not show either update action.
+The top bar provides **Restart** and, when available, an update action. Restart
+needs confirmation and warns about active missions. Unlike navigation, it can
+interrupt voice or terminal panes while they reconnect or resume.
+
+## Understand Health and Attention Cues
+
+| Cue | Meaning | Where it leads |
+|---|---|---|
+| Spinner beside the assistant name | App or voice is warming | Use text, or wait for **Ready** before speaking |
+| Red dot on **API Keys** | A configured provider is failing | Open its tab, then test or replace it |
+| Amber dot on **Skills, Plugins & MCPs** | A plugin needs reconnection | Open its **Plugins** tab and notice |
+| Amber dot inside an API Keys tab | The selected capability still needs setup | Connect one suitable provider for that category |
+| Red dot inside an API Keys tab | The capability is configured but not working | Read the card error and run its test |
+| **Coding mode ON/OFF** | A workspace may or may not shape all replies | Select it to return to **Agentic IDE** |
+
+Permission, input-isolation, and voice-warming notices describe host or device
+conditions. Follow the action shown in the notice.
 
 ## Choose an Area by Goal
 
-**MCP** means Model Context Protocol, a standard that lets a server offer tools
-or data to your assistant. A **CLI**, or command-line interface, is a program
-your assistant can run through text commands.
+| Area | Use it for |
+|---|---|
+| **Chats** | Start, speak into, or reopen a conversation and attach context. |
+| **Agents** | Follow delegated goals, questions, tool activity, and results. |
+| **Skills, Plugins & MCPs** | Manage instructions, service connections, and Model Context Protocol servers. |
+| **CLIs & CLI Test Hub** | Manage command-line tools and run capability checks. |
+| **Tasks** | Create and review scheduled or persistent work and its status. |
+| **Transcription** | Read recent voice sessions turn by turn. |
+| **Run Inspector** | Inspect a recorded run's timing, decisions, tools, and errors. |
+| **Board** | See a local activity, task, and tool-use summary. |
+| **Wiki** | Browse either the Normal Wiki or UltraWiki knowledge experience. |
+| **Contacts**, **Profile**, and **Instructions** | Store people, facts, memory, and standing preferences. |
+| **Docs** | Search guides, related pages, and the current contents list. |
+| **API Keys** | Choose providers, Pipeline or Realtime, the Control Key, and advanced connections. |
+| **Settings** | Change language, audio, wake behavior, appearance, permissions, and app behavior. |
+| **Voice** | Open Dictation, Dictionary, Shortcuts, Language, and speech-input keys. |
+| **Outputs** | Find reports and files produced by chats, tools, or Agents. |
+| **Socials** and **Feedback** | Open project links or send a problem report or suggestion. |
+| **Agentic IDE** | Open coding workspaces with live agent terminals. |
 
-| What you want to do | Open | What you find |
-|---|---|---|
-| Ask, dictate, or continue a conversation | **Chats** | The current conversation, **New chat**, and **History** |
-| Follow a longer delegated job | **Agents**, named for your assistant | Active and recent goals, status, and tool activity |
-| Add abilities or connections | **Skills, Plugins & MCPs** or **CLIs & CLI Test Hub** | Skills, optional connections, command-line tools, and their test hub |
-| Plan work that runs now or later | **Tasks** | Scheduled, running, completed, and interrupted tasks |
-| Find earlier activity | **Chats**, **Transcription**, **Run Inspector**, or **Board** | Conversation history, spoken turns, run details, or activity summaries |
-| Give your assistant useful context | **Wiki**, **Contacts**, **Profile**, or **Instructions** | Notes, contacts, profile facts, and personal instructions |
-| Connect services or change behavior | **API Keys**, **Settings**, or **Dictionary** | Providers, voice and app preferences, safety choices, and speech-recognition corrections |
-| Retrieve created files | **Outputs** | Reports and other files written by your assistant or its agents |
-| Learn more or contact the project | **Docs**, **Socials**, or **Feedback** | Guides, community links, and a way to report a problem or suggest an idea |
+## Use the Consolidated Hubs
 
-### Find the Right Kind of History
+Large hubs use a top tab bar:
 
-The app separates history by purpose so one long list does not mix unrelated
-information:
+- **Skills, Plugins & MCPs** has matching **Skills**, **Plugins**, and **MCPs**
+  tabs. Read [Plugins](plugins), or [Connect Home
+  Assistant](connect-home-assistant) for a self-hosted example.
+- **CLIs & CLI Test Hub** manages connections under **CLIs** and checks them
+  under **CLI Test Hub**.
+- **Voice** has **Dictation**, **Dictionary**, **Shortcuts**, **Language**, and
+  speech-input **API Keys**. Full provider setup remains in the main **API
+  Keys** area. See [Dictation](dictation).
+- **API Keys** changes provider tabs with Pipeline or Realtime and also holds
+  Tool Model, Agents, the Control Key, and **Advanced**. See [Use Local AI
+  Providers](local-ai-providers).
+- **Settings** now includes language choices and on-screen overlay controls
+  that previously had separate sidebar entries.
 
-- Open **Chats > History** to continue an earlier conversation.
-- Open **Transcription** to read recent voice sessions turn by turn.
-- Open **Run Inspector** to review one attempt to complete a request, including
-  its timeline, tools, timing, decisions, and errors.
-- Open **Outputs** when the result is a file rather than a chat reply.
-- Open **Board** for an overview of your activity over time.
+**Wiki** has one mode switch. Normal shows the vault tree, pages, graph, and
+backlinks. Ultra replaces it with **Overview**, **Explore**, **People**, **Ask**,
+**Sources**, **Contents**, and **Settings**. Switching does not delete either
+store. Read [Wiki and Memory](wiki-and-memory) or [Use UltraWiki](ultrawiki).
 
-**Transcription** and **Run Inspector** only contain data captured while their
-recorders are enabled. Each view says when its recorder is unavailable.
+## Keep an Agentic IDE Workspace Alive
+
+The Agentic IDE asks for a folder and terminal layout. After its first visit it
+is **sticky**: navigating elsewhere hides rather than closes it. Returning
+restores its panes without another setup flow. Navigation is not a stop control;
+stop or close work inside the IDE.
+
+**Coding mode ON** makes replies from Chats, voice, and other areas use the
+active workspace. **OFF** can coexist with running terminals. The badge only
+navigates; change the mode inside the IDE. Read [Agentic IDE](agentic-ide).
 
 ## How It Fits Together
 
-1. **You start in Chats.** Type a message, use **Speak**, or continue a saved
-   conversation from **History**.
-2. **The request follows its input path.** Typed requests and Pipeline voice
-   use the **Brain** provider. Realtime voice uses the provider shown on the
-   **Realtime** card. A short request can return directly to the conversation.
-3. **Longer work can move to an agent.** Follow its goal and status in the
-   assistant-named **Agents** view while you continue using the rest of the
-   app.
-4. **Available tools support the work.** Skills, plugins, MCP connections, and
-   CLIs can add actions or information. Jarvis asks for confirmation when an
-   action reaches a safety boundary.
-5. **The result returns to the useful place.** A reply stays in **Chats**, a
-   recorded voice session appears in **Transcription**, and a created file
-   appears in **Outputs**. When run recording is enabled, **Run Inspector**
-   provides more detail about a particular run.
-6. **Settings and connections shape the same flow.** **API Keys** chooses the
-   services that are available; **Settings** controls everyday behavior. If a
-   preferred service is unavailable, your assistant can try another compatible
-   provider that is ready. If none is available, the relevant view or message
-   explains what needs attention.
-
-Open **Docs** whenever you need a guide for one part of this flow. It includes
-search, related-page links, and a contents list for the page you are reading.
+1. Start a request in Chats, by voice, or from a feature control.
+2. The active provider supplies reasoning, while relevant skills, plugins,
+   MCPs, CLIs, or app commands supply capabilities.
+3. Short work returns to the conversation. Longer delegated work appears in
+   Agents; scheduled work appears in Tasks.
+4. Voice turns appear in Transcription, diagnostic runs in Run Inspector, and
+   created files in Outputs.
+5. Wiki, Contacts, Profile, and Instructions provide reusable context. API Keys
+   and Settings shape the same request path without becoming part of a chat.
 
 ## Check That It Works
 
-1. Select **Docs** in the sidebar. Confirm that the documentation sidebar and
-   either the overview or a selected guide appear.
-2. Select **Chats**. Confirm that the main area changes to the chat view and
-   shows **New chat** and **History**.
-3. Check that the assistant name and voice state remain visible in the
-   sidebar.
+1. Select **Skills, Plugins & MCPs** and switch through its three tabs.
+2. Select **Voice** and confirm that Dictation, Dictionary, Shortcuts, Language,
+   and API Keys appear in one hub.
+3. Open **Wiki** and confirm that its current Normal or Ultra mode is named.
+4. Select **Docs**, then return to **Chats**. The assistant name and status
+   should remain visible throughout.
+5. If an IDE workspace is already open, switch away and back once. Its panes
+   should return without another setup flow.
 
-These steps check the navigation and shared status area without sending a
-request. They do not require voice, a cloud provider, or a connected tool.
+These checks do not send a provider request or change a setting.
 
 ## Troubleshooting
 
-| What you see | What it usually means | What to do |
+| What you see | What it means | What to do |
 |---|---|---|
-| **Voice starting…** beside the assistant name | Voice is still warming up | Wait for **Ready**. You can use text chat while voice starts. |
-| **Offline** beside the assistant name | The app is not connected to its local service | Wait briefly. If it does not recover, select **Restart**, then **Confirm restart?**. If that reports **Restart failed**, reopen the desktop app or start the server in the usual way. |
-| A red dot beside **API Keys** | A configured provider is not working | Open **API Keys**, review the affected category, and test or choose another available provider. |
-| An amber dot beside **Skills, Plugins & MCPs** | A connected plugin needs to sign in again | Select the row to open **Plugins**, then follow the reconnect notice. |
-| A documentation page is hard to find | Its title or section may be different from the feature label | Open **Docs** and press **Ctrl+K** on Windows or Linux, or **Command+K** on macOS, then search for the feature or visible error. |
+| Sidebar labels disappeared | The sidebar snapped to its icon rail | Hover for labels, drag the divider right, or double-click it. |
+| **Voice starting** remains for a long time | The local service is connected, but voice did not finish warming | Keep using text; open Settings for device status, then restart if it never becomes ready. |
+| **Offline** | The window lost its local backend connection | Wait briefly, then use the confirmed **Restart** action or reopen the app. |
+| A feature is missing from the sidebar | It may now be a tab in Voice, Extensions, CLI, API Keys, or Settings | Open the matching consolidated hub and inspect its top tabs. |
+| Wiki says it is checking the mode | The backend has not yet confirmed Normal or Ultra | Wait for the retry; use the shown retry action if the check stalls. |
+| Replies unexpectedly focus on code | Focused coding mode is still on | Select the coding-mode badge, review the workspace, and turn the mode off there. |
+| An IDE terminal is still running after leaving the page | Sticky navigation hid the workspace instead of closing it | Return to Agentic IDE and stop or close the pane deliberately. |
+| Docs or another area stays empty | Its view did not finish loading or the backend is unavailable | Switch once, wait briefly, then use Restart if multiple areas remain empty. |
 
 ## Next Steps
 
-- Follow [Start Your First Chat](start-your-first-chat) to send a simple
-  request and see where the conversation is saved.
-- Read [Chats](chats) to organize conversations, add files, and continue
-  earlier work.
-- Use [Find Help in the App](find-help-in-the-app) to search the documentation
-  and move between guides, troubleshooting, and reference pages.
+- Follow [Start Your First Chat](start-your-first-chat).
+- Read [Chats](chats) for conversation history and attachments.
+- Use [Find Help in the App](find-help-in-the-app) to search the documentation.
+- Open [Agentic IDE](agentic-ide) before creating a coding workspace.
