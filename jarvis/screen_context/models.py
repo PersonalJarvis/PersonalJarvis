@@ -275,11 +275,11 @@ class ScreenContext:
     def describe(self) -> str:
         """One English line naming what was captured — the receipt text.
 
-        Deliberately concrete ("right monitor", the app name) rather than
-        "screen captured": the user is being told what left their machine.
+        Deliberately concrete about scope and dimensions, but never includes an
+        app or document title because receipts enter metadata/event logs.
         """
-        if self.target.kind is TargetKind.WINDOW and self.target.window.is_known:
-            where = f"window '{self.target.window.title or self.target.window.app_name}'"
+        if self.target.kind is TargetKind.WINDOW:
+            where = "active window"
         else:
             where = f"monitor {self.target.monitor_name or '?'}"
         bits = [f"captured {where}", f"{self.size[0]}x{self.size[1]}"]

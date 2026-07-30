@@ -110,6 +110,31 @@ export function useWebSocket(): void {
           payload: env.payload,
         });
 
+        if (env.event_name === "ScreenCaptureAnnounced") {
+          pushToast("info", translate("settings_view.screen_context.capturing"));
+        }
+
+        if (env.event_name === "ScreenCaptureCompleted") {
+          const payload = env.payload as {
+            width?: unknown;
+            height?: unknown;
+            redaction_count?: unknown;
+          };
+          const width = typeof payload.width === "number" ? payload.width : 0;
+          const height = typeof payload.height === "number" ? payload.height : 0;
+          const redactions =
+            typeof payload.redaction_count === "number"
+              ? payload.redaction_count
+              : 0;
+          pushToast(
+            "success",
+            translate("settings_view.screen_context.completed")
+              .replace("{0}", String(width))
+              .replace("{1}", String(height))
+              .replace("{2}", String(redactions)),
+          );
+        }
+
         // Live reasoning trace: while the text chat is waiting on a reply,
         // turn-progress events (tools, computer-use, worker dispatch, ...)
         // become visible thinking steps. Gated on chatThinking inside the

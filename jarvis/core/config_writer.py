@@ -918,9 +918,39 @@ def set_screen_context_setting(
     ``ScreenContextConfig``. These keys are not part of the drift-guard's
     reference snapshot, so the BUG-010 three-layer rule does not apply.
     """
-    if key not in SCREEN_CONTEXT_SETTING_KEYS:
-        raise ValueError(f"unknown screen_context setting: {key!r}")
-    _patch_table(path, "screen_context", key, value)
+    set_screen_context_settings({key: value}, path=path)
+
+
+def set_screen_context_settings(
+    values: dict[str, str | bool | int | float | list],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist a validated Screen Context patch in one atomic replacement."""
+    unknown = set(values).difference(SCREEN_CONTEXT_SETTING_KEYS)
+    if unknown:
+        raise ValueError(
+            f"unknown screen_context setting(s): {sorted(unknown)!r}"
+        )
+    if not values:
+        return
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("screen_context")
+        if section is None:
+            section = tomlkit.table()
+            doc["screen_context"] = section
+        for key, value in values.items():
+            section[key] = value
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
 
 
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

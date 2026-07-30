@@ -604,7 +604,10 @@ async def _run_headless(args) -> int:
                 # inline, never re-dispatched (doom-loop fix 2026-06-16). This
                 # is the headless/web (VPS) bridge; desktop_app.py mirrors it.
                 reply = await generate(
-                    evt.text, trace_id=evt.trace_id, source_layer=evt.source_layer,
+                    evt.text,
+                    trace_id=evt.trace_id,
+                    source_layer=evt.source_layer,
+                    conversation_id=thread_id,
                 )
             else:
                 reply = await brain(evt.text)

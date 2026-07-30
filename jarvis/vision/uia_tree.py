@@ -39,6 +39,55 @@ from .pruning import (
 logger = logging.getLogger(__name__)
 
 _DEPTH_RETRY_LADDER: tuple[int, ...] = (6, 5, 4)
+_RPC_E_CHANGED_MODE = 0x80010106
+
+
+def _is_changed_com_apartment(exc: Exception) -> bool:
+    """Whether COM is already initialized with a different apartment model."""
+    hresult = getattr(exc, "hresult", None)
+    if hresult is None and exc.args:
+        hresult = exc.args[0]
+    try:
+        return int(hresult) & 0xFFFFFFFF == _RPC_E_CHANGED_MODE
+    except (TypeError, ValueError):  # A non-numeric HRESULT is simply not this case.
+        return False
+
+
+def _run_traverser_with_com(
+    traverser: Callable[..., tuple[str, int, list[RawNode]]],
+    max_depth: int,
+    window_title_filter: str | None,
+) -> tuple[str, int, list[RawNode]]:
+    """Run one UIA traversal on a COM-initialized worker thread."""
+    import os  # noqa: PLC0415
+
+    if os.name != "nt":
+        return traverser(max_depth, window_title_filter)
+    try:
+        import pythoncom  # type: ignore[import-not-found]  # noqa: PLC0415
+    except ImportError:
+        logger.warning("pythoncom is unavailable — UIA tree disabled")
+        return ("", 0, [])
+    initialized = False
+    try:
+        try:
+            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            initialized = True
+        except Exception as exc:  # noqa: BLE001 - inspect the COM HRESULT
+            if not _is_changed_com_apartment(exc):
+                logger.warning("UIA worker COM initialization failed", exc_info=True)
+                return ("", 0, [])
+            # RPC_E_CHANGED_MODE means this reused executor thread is already
+            # initialized as STA. UIA can traverse in that existing apartment;
+            # it is not ours, so the finally block must not uninitialize it.
+            logger.debug("UIA worker reusing its existing COM apartment")
+        return traverser(max_depth, window_title_filter)
+    except Exception:  # noqa: BLE001 — traversal failure degrades to image-only
+        logger.warning("UIA worker traversal failed", exc_info=True)
+        return ("", 0, [])
+    finally:
+        if initialized:
+            pythoncom.CoUninitialize()
 
 
 class UIATreeSource:
@@ -105,6 +154,7 @@ class UIATreeSource:
                 raise RuntimeError(f"cancelled: {cancel_token.reason}")
             traverse_fn = self._traverser or self._traverse_via_pywinauto
             window_title, active_pid, raw_nodes = await asyncio.to_thread(
+                _run_traverser_with_com,
                 traverse_fn,
                 depth,
                 window_title_filter,
@@ -323,32 +373,36 @@ def _flatten(
     except Exception:  # noqa: BLE001
         return
 
-    # L3 value-read: the current text inside an editable control (address bar,
-    # search box) via the UIA ValuePattern. Best-effort -- most controls have no
-    # ValuePattern -> "" (graceful; a value-read failure never skips the node).
-    value = ""
-    try:
-        iface = getattr(element, "iface_value", None)
-        if iface is not None:
-            value = str(getattr(iface, "CurrentValue", "") or "")
-    except Exception:  # noqa: BLE001
-        value = ""
-
     # Accessibility state (audit #5/#16/#1B), best-effort via the underlying UIA
     # automation element. CurrentIsPassword marks a secure edit (redact before
     # upload, never read its value); CurrentHasKeyboardFocus proves a
-    # click_element actually focused the control. Any access failure (non-Windows,
-    # COM error, missing attribute) leaves both False — the safe default.
+    # click_element actually focused the control. Secure-state failure is
+    # UNKNOWN, not false: an unknown control must never have its value queried.
     is_password = False
+    secure_state_known = False
     focused = False
     try:
         raw_el = getattr(element, "element", None)
         if raw_el is not None:
-            is_password = bool(getattr(raw_el, "CurrentIsPassword", False))
+            is_password = bool(raw_el.CurrentIsPassword)
+            secure_state_known = True
             focused = bool(getattr(raw_el, "CurrentHasKeyboardFocus", False))
     except Exception:  # noqa: BLE001 — state read is best-effort, never skips the node
         is_password = False
+        secure_state_known = False
         focused = False
+
+    # Read a control's current value only after the native secure-field flag is
+    # known. Redacting later is too late: querying CurrentValue on a password
+    # edit would already bring the secret into this process' memory.
+    value = ""
+    if secure_state_known and not is_password:
+        try:
+            iface = getattr(element, "iface_value", None)
+            if iface is not None:
+                value = str(getattr(iface, "CurrentValue", "") or "")
+        except Exception:  # noqa: BLE001
+            value = ""
 
     my_index = len(out)
     out.append(RawNode(

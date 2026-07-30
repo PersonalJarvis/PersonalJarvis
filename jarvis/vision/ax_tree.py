@@ -502,6 +502,7 @@ def _ax_flatten(
             native_subrole = str(_ax_copy_attr(current, _AX_SUBROLE) or "")
             canonical = normalize_role(native_role, "darwin")
             role = canonical or ""
+            secure_state_known = bool(native_role.strip())
 
             is_password = (
                 native_role.casefold() == "axsecuretextfield"
@@ -510,7 +511,7 @@ def _ax_flatten(
             focused = bool(_ax_copy_attr(current, _AX_FOCUSED) or False)
 
             name = _ax_copy_attr(current, _AX_TITLE)
-            if not name and not is_password:
+            if not name and secure_state_known and not is_password:
                 name = _ax_copy_attr(current, _AX_VALUE)
             if not name:
                 name = _ax_copy_attr(current, _AX_DESCRIPTION)
@@ -529,7 +530,7 @@ def _ax_flatten(
             # control (search box, text field). Read separately from the
             # name-fallback above so the loop can see what a field holds.
             value = (
-                "" if is_password
+                "" if is_password or not secure_state_known
                 else str(_ax_copy_attr(current, _AX_VALUE) or "")
             )
         except Exception:  # noqa: BLE001, S112 — one broken AX element never

@@ -970,8 +970,8 @@ class ScreenCaptureAnnounced(Event):
     a capture happened with no visible sign — which is the one thing this
     feature must never do.
 
-    ``target_kind`` is ``"monitor"`` or ``"window"``; ``target_label`` is the
-    monitor identity or window title the user will see in the receipt.
+    ``target_kind`` is ``"monitor"`` or ``"window"``; ``target_label`` is a
+    privacy-safe generic surface label and never contains app or window titles.
     """
     target_kind: str = "monitor"
     target_label: str = ""

@@ -24,6 +24,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import re
 import time
@@ -516,6 +517,7 @@ _NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset(
 # question; this holds what turn N+1 needs to resolve the user's "ja"/"nein".
 # Bounded re-asks avoid a soft-lock on a persistently ambiguous answer.
 _MAX_CONFIRM_REASKS = 2
+_SCREEN_CONFIRM_TTL_S = 20.0
 
 
 class _PendingVoiceConfirm:
@@ -528,6 +530,16 @@ class _PendingVoiceConfirm:
         self.lang = lang
         self.tool_name = tool_name
         self.reasks = reasks
+
+
+class _PendingScreenConfirm:
+    """A short-lived, conversation-scoped proposal to inspect the screen."""
+
+    __slots__ = ("expires_at", "lang")
+
+    def __init__(self, lang: str, expires_at: float) -> None:
+        self.lang = lang
+        self.expires_at = expires_at
 
 
 # Option A (2026-06-15): a heavy-research request whose deliverable is an ANSWER
@@ -2253,6 +2265,12 @@ class BrainManager:
             getattr(getattr(config, "brain", None), "voice_confirm", True)
         )
         self._pending_voice_confirm: _PendingVoiceConfirm | None = None
+        # Ambiguous visual requests use a separate, read-only yes/no proposal.
+        # Keying by source keeps a web-chat answer from authorizing a voice
+        # capture (and vice versa); entries expire quickly and never persist.
+        self._pending_screen_confirms: dict[
+            tuple[str, str], _PendingScreenConfirm
+        ] = {}
         self._system_prompt_extra = system_prompt_extra
         self._user_profile = user_profile
         self._soul = soul
@@ -8255,7 +8273,136 @@ class BrainManager:
         2026-06-26). Mirrors how ``_background_mission_in_flight`` keeps a running
         mission's session alive.
         """
-        return self._pending_voice_confirm is not None
+        screen_pending = getattr(self, "_pending_screen_confirms", {})
+        if screen_pending:
+            now = time.monotonic()
+            expired = [
+                key
+                for key, pending in screen_pending.items()
+                if pending.expires_at <= now
+            ]
+            for key in expired:
+                screen_pending.pop(key, None)
+        voice_screen_pending = any(
+            surface == "voice" for surface, _conversation_id in screen_pending
+        )
+        return self._pending_voice_confirm is not None or voice_screen_pending
+
+    async def _resolve_screen_context_turn(
+        self,
+        user_text: str,
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+        trace_id: UUID,
+    ) -> Any:
+        """Resolve a one-shot screen look and its optional next-turn consent.
+
+        Screen consent is isolated by conversation surface and expires quickly.
+        A bare confirmation can therefore authorize only the proposal the user
+        just heard on that same surface; unrelated text drops the proposal and
+        continues as a normal turn.
+        """
+        from jarvis.screen_context.intent import (  # noqa: PLC0415
+            cancelled_reply,
+            clarifying_question,
+        )
+        from jarvis.screen_context.turn import (  # noqa: PLC0415
+            TurnScreenContext,
+            screen_context_for_turn,
+        )
+
+        confirm_key = self._screen_confirm_key(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        )
+        pending_map = getattr(self, "_pending_screen_confirms", None)
+        if pending_map is None:
+            pending_map = self._pending_screen_confirms = {}
+        pending = pending_map.get(confirm_key)
+        now = time.monotonic()
+        if pending is not None and pending.expires_at <= now:
+            pending_map.pop(confirm_key, None)
+            pending = None
+
+        if pending is not None:
+            # Lazy import avoids pulling self-mod's confirmation graph into the
+            # brain manager at module import time.
+            from jarvis.voice.echo_confirmation import classify_response  # noqa: PLC0415
+
+            verdict = classify_response(user_text, language=pending.lang)
+            if verdict == "confirm":
+                pending_map.pop(confirm_key, None)
+                return await screen_context_for_turn(
+                    "",
+                    locale=pending.lang,
+                    bus=self._bus,
+                    force=True,
+                    trace_id=trace_id,
+                )
+            if verdict == "veto":
+                pending_map.pop(confirm_key, None)
+                return TurnScreenContext(
+                    status="cancelled", message=cancelled_reply(pending.lang)
+                )
+            if verdict == "ambiguous":
+                pending.expires_at = now + _SCREEN_CONFIRM_TTL_S
+                return TurnScreenContext(
+                    status="clarify", question=clarifying_question(pending.lang)
+                )
+            pending_map.pop(confirm_key, None)
+
+        locale = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        outcome = await screen_context_for_turn(
+            user_text,
+            locale=locale,
+            bus=self._bus,
+            trace_id=trace_id,
+        )
+        if outcome.status == "clarify":
+            pending_map[confirm_key] = _PendingScreenConfirm(
+                locale, now + _SCREEN_CONFIRM_TTL_S
+            )
+        return outcome
+
+    @staticmethod
+    def _screen_confirm_key(
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+    ) -> tuple[str, str]:
+        surface = "voice" if allow_voice_confirm else (source_layer or "chat")
+        return (surface, conversation_id or "default")
+
+    def _has_pending_screen_confirm(
+        self,
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+    ) -> bool:
+        """Return whether this exact conversation owns a live look proposal."""
+        key = self._screen_confirm_key(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        )
+        pending = self._pending_screen_confirms.get(key)
+        if pending is None:
+            return False
+        if pending.expires_at <= time.monotonic():
+            self._pending_screen_confirms.pop(key, None)
+            return False
+        return True
 
     def _arm_voice_confirm(self, descriptor: dict[str, Any], user_text: str) -> None:
         """Turn N: record a deferred consequential action awaiting yes/no.
@@ -8935,6 +9082,7 @@ class BrainManager:
         text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
+        conversation_id: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
@@ -8965,6 +9113,7 @@ class BrainManager:
                 text_consumer=text_consumer,
                 on_progress=on_progress,
                 source_layer=source_layer,
+                conversation_id=conversation_id,
                 allow_voice_confirm=allow_voice_confirm,
                 prefer_tool_model=prefer_tool_model,
                 emit_tool_ack=emit_tool_ack,
@@ -8991,6 +9140,7 @@ class BrainManager:
         text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
+        conversation_id: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
@@ -9050,6 +9200,7 @@ class BrainManager:
         # confirmation is a VETO of that one action, not a global cancel-all.
         # Returns the spoken outcome (turn consumed) or None (user moved on →
         # the pending action is dropped and this utterance runs as a normal turn).
+        screen_context = None
         if self._pending_voice_confirm is not None:
             resumed = await self._resume_voice_confirm(user_text)
             if resumed is not None:
@@ -9058,6 +9209,32 @@ class BrainManager:
                     use_history=use_history, trace_id=turn_trace_id,
                 )
                 return resumed
+
+        # A veto such as "stop" belongs to the pending one-shot look, not to
+        # the global cancel-all gate below. Resolve only an already-armed,
+        # conversation-scoped proposal here; ordinary turns still take the
+        # cheap classifier at the normal Screen Context integration point.
+        if self._has_pending_screen_confirm(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        ):
+            screen_context = await self._resolve_screen_context_turn(
+                user_text,
+                source_layer=source_layer,
+                conversation_id=conversation_id,
+                allow_voice_confirm=allow_voice_confirm,
+                trace_id=turn_trace_id,
+            )
+            if screen_context.ends_the_turn:
+                screen_reply = screen_context.question or screen_context.message or ""
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=screen_reply,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return screen_reply
 
         if self._detect_cancel_intent(user_text):
             confirmation = self._cancel_readback(self._cancel_all_background_tasks())
@@ -9334,6 +9511,28 @@ class BrainManager:
                 )
                 return mission_reply
 
+        # Screen Context is a one-shot, explicit look request. It must run on
+        # the production BrainManager path before desktop-action routing: an
+        # ambiguous request asks first, a privacy refusal shuts every alternate
+        # screen path, and a successful capture owns the visual part of the turn.
+        if screen_context is None:
+            screen_context = await self._resolve_screen_context_turn(
+                user_text,
+                source_layer=source_layer,
+                conversation_id=conversation_id,
+                allow_voice_confirm=allow_voice_confirm,
+                trace_id=turn_trace_id,
+            )
+        if screen_context.ends_the_turn:
+            screen_reply = screen_context.question or screen_context.message or ""
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=screen_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return screen_reply
+
         # An addressed Agentic-IDE terminal outranks the desktop gate — the
         # mirror image of the skill stand-down just above, and for the same
         # reason: whichever gate holds the MORE SPECIFIC evidence wins.
@@ -9353,8 +9552,10 @@ class BrainManager:
         # names the background-worker vehicle), so this third consumer cannot
         # drift away from them. The turn is not answered here — it simply stays
         # available for the Agentic-IDE fast path a few lines below.
-        if self._skill_turn_match is None and not self._agentic_ide_owns_turn(
-            user_text
+        if (
+            not screen_context.has_image
+            and self._skill_turn_match is None
+            and not self._agentic_ide_owns_turn(user_text)
         ):
             local_action = await self._run_local_action_fast_path(
                 user_text, trace_id=turn_trace_id,
@@ -9450,7 +9651,7 @@ class BrainManager:
         # refusal must not fire on a skill turn.
         unsupported = (
             None
-            if self._skill_turn_match is not None
+            if self._skill_turn_match is not None or screen_context.has_image
             else self._check_unsupported_intent(user_text)
         )
         if unsupported is not None:
@@ -9466,7 +9667,9 @@ class BrainManager:
         # the LLM tool-use loop. Prevents spawn reflex on ambiguous smalltalk
         # inputs (see docs/persona-research.md section 2 — 60% empty smalltalk
         # outputs from the reflexive LLM spawn path).
-        if (
+        if screen_context.has_image:
+            forced_spawn = None
+        elif (
             contextual_tool_names
             and not self._is_explicit_heavy_request(user_text)
             and not self._research_wants_artifact(user_text)
@@ -9699,12 +9902,27 @@ class BrainManager:
         # after (AP-9: keep the deictic turn off the serial hot path). The task does
         # the regex gate itself, so non-deictic turns complete instantly with
         # ("", None) and fast-skip on a headless host. Awaited just below.
-        pointer_task = self._start_pointer_task(user_text, is_smalltalk_turn)
-        images: tuple[ImageBlock, ...] = await self._collect_vision_images(
-            trace_id=trace_uuid,
-            user_text=user_text,
-            is_smalltalk=is_smalltalk_turn,
+        pointer_task = (
+            None
+            if screen_context.has_image
+            else self._start_pointer_task(user_text, is_smalltalk_turn)
         )
+        if screen_context.has_image:
+            pending_images = getattr(self, "_pending_turn_images", None)
+            injected = pending_images.pop(trace_uuid, ()) if pending_images else ()
+            images = tuple(injected) + (
+                ImageBlock(
+                    mime=screen_context.mime,
+                    data_b64=base64.b64encode(screen_context.image).decode("ascii"),
+                    source_hash=screen_context.source_hash,
+                ),
+            )
+        else:
+            images = await self._collect_vision_images(
+                trace_id=trace_uuid,
+                user_text=user_text,
+                is_smalltalk=is_smalltalk_turn,
+            )
         # Per-provider error aggregation for a meaningful user message when
         # the whole chain fails. Pattern: (provider, model, kind, detail).
         # kind ∈ {"rate_limit", "missing_key", "skipped_cooldown", "init_fail",
@@ -9742,6 +9960,12 @@ class BrainManager:
         # message (keeping the cached system prompt stable); empty in legacy
         # mode. Reused for every provider in the fallback chain below.
         turn_context = self._build_turn_context()
+        if screen_context.note:
+            turn_context = (
+                f"{turn_context}\n\n{screen_context.note}"
+                if turn_context
+                else screen_context.note
+            )
 
         # AD-S3/S4: on a skill-matched turn the rendered instructions ride on
         # the per-turn context (guaranteed invocation, no run-skill round
@@ -9787,7 +10011,7 @@ class BrainManager:
         # (2) drop the full-screen screenshot + inspect-pointer tools (below), and
         # (3) inject a "do not guess" instruction when resolution failed.
         pointing_turn = (not is_smalltalk_turn) and self._is_pointer_intent(user_text)
-        if pointing_turn:
+        if pointing_turn and not screen_context.has_image:
             images = (pointer_image,) if pointer_image is not None else ()
             if not pointer_block:
                 pointer_block = (
@@ -9816,6 +10040,8 @@ class BrainManager:
         _tool_ack_emitter = (
             self._build_tool_ack_emitter(user_text) if emit_tool_ack else None
         )
+
+        vision_capable_seen = False
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
@@ -9865,8 +10091,28 @@ class BrainManager:
                 provider_errors.append((prov_name, model, kind, msg[:200]))
                 continue
 
+            # Attached pixels are evidence, not decoration. A provider that
+            # cannot inspect them must never answer as though it had; skip it
+            # by runtime capability and preserve the normal cross-family retry
+            # order for the remaining vision-capable providers.
+            if images and getattr(brain, "supports_vision", False) is not True:
+                provider_errors.append(
+                    (prov_name, model, "vision_unsupported", "vision unsupported")
+                )
+                log.info(
+                    "Skipping %s(%s): this turn carries an image but the "
+                    "provider does not advertise vision support",
+                    prov_name,
+                    model,
+                )
+                continue
+            if images:
+                vision_capable_seen = True
+
             _turn_tools = (
-                self._smalltalk_tool_override() if is_smalltalk_turn
+                {}
+                if screen_context.has_image
+                else self._smalltalk_tool_override() if is_smalltalk_turn
                 # Non-smalltalk turn: drop plugin tools irrelevant to this
                 # utterance (progressive disclosure), then hide any plugin whose
                 # CLI counterpart is connected (req 4: CLI > plugin fallback).
@@ -10267,6 +10513,27 @@ class BrainManager:
         # stale context cannot leak into the next voice turn.
         self._wiki_context_suffix = ""
 
+        if screen_context.has_image and not vision_capable_seen:
+            from jarvis.screen_context.intent import (  # noqa: PLC0415
+                no_vision_provider_reply,
+            )
+
+            language = resolve_output_language(
+                self._reply_language,
+                "unknown",
+                user_text,
+                default=DEFAULT_LOCALE,
+                conversation_language=self._conversation_language,
+            )
+            response_text = no_vision_provider_reply(language)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=response_text,
+                use_history=use_history,
+                trace_id=trace_uuid,
+            )
+            return response_text
+
         if used_provider is None:
             self._last_turn_all_failed = True
             log.error("Alle %d Provider-Versuche fehlgeschlagen. Letzter Fehler: %s",
@@ -10484,12 +10751,25 @@ class BrainManager:
                 vision.current(), timeout=_VISION_COLLECT_TIMEOUT_S
             )
             hash_prefix = (obs.screenshot_hash or "")[:16]
+            geometry = tuple(
+                getattr(obs, "monitor_geom", (0, 0, 0, 0))
+                or (0, 0, 0, 0)
+            )
+            width, height = (
+                (int(geometry[2]), int(geometry[3]))
+                if len(geometry) >= 4
+                else (0, 0)
+            )
+            capture_age_ms = max(
+                0, int((time.time_ns() - obs.timestamp_ns) / 1_000_000)
+            )
             log.info(
-                "Vision-Inject Observation: screenshot_path=%s "
-                "screenshot_hash=%s window=%r",
-                obs.screenshot_path,
+                "Vision-Inject Observation: screenshot_hash=%s "
+                "dimensions=%dx%d capture_age_ms=%d",
                 hash_prefix,
-                getattr(obs, "window_title", None),
+                width,
+                height,
+                capture_age_ms,
             )
             mime, image_b64 = await _read_observation_image_b64(obs)
             # Wave 1 (omni-latency): enforce max_image_kb (was dead config) —
@@ -10554,6 +10834,7 @@ class BrainManager:
         trace_id: UUID | None = None,
         on_progress: Callable[[], None] | None = None,
         allow_voice_confirm: bool = False,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
@@ -10611,6 +10892,7 @@ class BrainManager:
                     text_consumer=_consumer,
                     on_progress=on_progress,
                     allow_voice_confirm=allow_voice_confirm,
+                    conversation_id=conversation_id,
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".

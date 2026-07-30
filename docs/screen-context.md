@@ -1,7 +1,8 @@
 # Screen Context — architecture, flow, privacy plan, MVP roadmap
 
 **Date:** 2026-07-29
-**Status:** Waves 1–2 implemented (service + voice wiring); Waves 3–5 scoped
+**Status:** Production implementation complete across the brain, desktop, REST,
+settings, indicator, receipt, privacy, and optional OCR paths
 **Scope:** a local, on-demand screen-context service for the on-screen bar and
 the live voice session, on Windows, macOS and Linux, extensible to a fourth
 platform through the same adapter seam.
@@ -104,7 +105,7 @@ test, and no test needs a screen.
 | `DisplayEnumerator` | Which monitors, which one holds a point? | mss + `MonitorFromPoint` | mss + Quartz | mss + xrandr | single virtual rect |
 | `WindowProbe` | What is focused, titled, where? | Win32/DWM | Quartz/AX | xdotool/EWMH | empty `WindowFacts` |
 | `SurfaceCapturer` | Give me these pixels, once. | GDI rect grab | ScreenCaptureKit | X11 root grab | `CaptureUnavailable` |
-| `UiTextReader` | What text is visible? | UIA | AXUIElement | AT-SPI | empty, flagged |
+| `UiTextReader` | What text is visible? | UIA | AXUIElement | AT-SPI | unavailable, flagged |
 
 Every port obeys the same two rules the existing platform seam already follows:
 **never raise into the caller** and **degrade to a value that reads as "not
@@ -184,10 +185,10 @@ Two details in that flow are load-bearing and easy to get wrong:
 means there is a window in which a capture happened with no visible sign. The
 service awaits the indicator's acknowledgement (bounded by a short timeout) and
 only then grabs pixels. If the indicator cannot be shown at all, the capture
-still proceeds *only* if the user has an alternative signal configured; the
-default is to proceed and log the degradation, because a silently-failed
-indicator must not brick the feature, but the degradation is surfaced in the
-receipt. This is a deliberate trade-off, stated rather than hidden.
+proceeds only for an explicit request and carries a named degradation in its
+receipt. Headless and Wayland hosts cannot reach the shutter in the first
+place. This preserves the user's requested action without pretending that the
+visual signal succeeded.
 
 **Ambiguity does not capture, and does not silently drop the turn either.**
 `AMBIGUOUS` produces a question, in the resolved output language, through the
@@ -310,6 +311,12 @@ Five layers, in the order they run:
    transport the brain provider already uses (TLS to the provider, in-process
    for a local one). Nothing is written to disk.
 
+Screen pixels, OCR, and accessibility text are untrusted evidence. They are
+wrapped in fixed `SCREEN_EVIDENCE` delimiters with an instruction boundary, and
+the production brain exposes no tools on a captured look turn. Text rendered by
+a webpage or document therefore cannot turn a read-only inspection into an
+action or tool call.
+
 Default patterns ship for card numbers, IBANs, API-key shapes, and
 `Authorization:`-style headers. They are configurable, additive, and each entry
 carries a label that appears in the redaction report.
@@ -319,12 +326,11 @@ carries a label that appears in the redaction report.
 - Image bytes live in memory inside a `_Handle`, keyed by an opaque id.
 - One consumption. `consume()` removes the handle; a second call gets nothing.
 - TTL (default 120 s) sweeps unconsumed handles.
-- `POST /api/screen-context/{id}/save` is the **only** path that writes a file,
-  it requires an explicit call with an explicit destination, and it records the
-  save in the session log so "I never agreed to that" is checkable.
+- There is no save endpoint. Screen Context has no code path that writes image
+  bytes or extracted text to disk.
 - Nothing about a capture reaches the flight recorder except metadata: target
   kind, monitor identity, sizes, redaction counts, degradations. Never pixels,
-  never scrubbed text.
+  scrubbed text, app name, or window/document title.
 
 This is a deliberate departure from `ScreenshotSource`, which writes every frame
 to `data/flight_recorder/blobs/`. That behaviour is correct for Computer-Use
@@ -353,10 +359,12 @@ honest refusal in a `python:3.11-slim` container.
 
 ### Wave 2 — voice-session wiring ✅ *implemented*
 
-`turn.py` (the one call a conversation layer makes) plus the `RouterBrain.handle`
-wiring. Screen Context is consulted **before** the permanent-vision path and
-takes precedence when it answers; the clarifying question resolves through
-`resolve_output_language`; the model-facing description rides in the
+`turn.py` plus the production `BrainManager.generate` / `generate_stream`
+wiring. `RouterBrain.handle` delegates to the same policy for compatibility.
+Screen Context is consulted **before** desktop-action and permanent-vision
+paths and takes precedence when it answers. Confirmation state is short-lived
+and isolated by conversation, so a reply in another web thread or on another
+surface cannot authorize a capture. The model-facing description rides in the
 dispatcher's existing `turn_context` channel.
 
 Two decisions were made during implementation and are worth stating here,
@@ -376,7 +384,8 @@ Refusals are now:
 | Kind | Cause | Ends the turn? | Fallback path |
 |---|---|---|---|
 | `policy` | denylist match, feature switched off | yes, spoken | **shut** — falling through would photograph the very window the rule protects |
-| `technical` | no display, no permission, capture error | no | **open** — nothing was forbidden, it was merely impossible here |
+| `technical-unavailable` | no display, no permission | no | **open** — the legacy path may answer normally, but its own capability gate still prevents capture |
+| `technical-failure` | unexpected classifier/capture failure | yes, spoken | **shut** — a second, unindicated screenshot attempt would violate the privacy contract |
 
 Collapsing those two fails in one of two quiet ways: leak a protected window,
 or break the feature on every machine without a screen.
@@ -391,24 +400,25 @@ Two pre-existing test files pin Screen Context to `none` via an autouse fixture,
 because they cover the permanent-vision path and would otherwise pass or fail
 depending on whether the host running them has a screen.
 
-### Wave 3 — the indicator and the receipt
+### Wave 3 — the indicator and the receipt ✅ *implemented*
 
-A capture indicator on the bar: a brief, unmistakable shutter affordance shown
-before the grab, plus a receipt line in the transcript naming what was captured
-("captured: right monitor, 2 regions redacted"). Reuses the existing
-`jarvis/cu/indicator/` sidecar shape rather than inventing a second overlay
-mechanism, extended to the non-Windows backends it currently lacks.
+A capture indicator is acknowledged as visible before the grab, blanked during
+the grab so it is not photographed, and dismissed in a `finally` path. The
+receipt reports dimensions and redaction count without leaking a window title.
+The shared sidecar works on Windows, macOS and Linux/X11; its Windows capture
+exclusion has the same blank/unblank correctness backstop as the other OSes.
 
 **Done when:** every capture is preceded by a visible indicator on all three
 OSes, or by a logged degradation naming why it could not be shown.
 
-### Wave 4 — settings surface
+### Wave 4 — settings surface ✅ *implemented*
 
-A Screen Context group in Settings: master switch, denylist editor, redaction
-pattern editor with a live test field, OCR toggle, TTL. Recoverable entirely
-in-app, no TOML editing (§3).
+A Screen Context group in Settings exposes the master switch, capability state,
+denylist and redaction-pattern editors, default-rule and OCR toggles, retention
+promise, and an immediate discard action. The REST surface also exposes TTL and
+text-budget settings. Multi-field changes use one atomic config replacement.
 
-### Wave 5 — OCR supplement
+### Wave 5 — OCR supplement ✅ *implemented*
 
 Optional local OCR behind a capability probe, used only when accessibility text
 is empty. Off by default, base install stays torch-free.
@@ -430,13 +440,13 @@ is empty. Off by default, base install stays torch-free.
 
 ---
 
-## 7. Open questions for the maintainer
+## 7. Operating limits
 
-1. **Indicator without a bar.** When the bar is not running (headless-ish
-   desktop, bar disabled), Wave 3 has no host for the shutter affordance.
-   Options: a transient always-on-top window of its own, or refusing capture
-   without an indicator. Current default: capture proceeds, degradation logged
-   and surfaced. Worth confirming.
-2. **Denylist defaults.** Shipping title patterns for password managers and
-   banking is a guess about what users consider sensitive. The mechanism is
-   right; the default list deserves review before it is advertised.
+1. **Wayland.** Global screen capture and foreground-window identity require a
+   compositor portal with interactive user mediation. This implementation
+   refuses honestly and points users to X11/XWayland; it never returns a blank
+   frame as success.
+2. **Headless.** Status and settings remain available through REST/CLI, while a
+   capture returns a named no-display refusal.
+3. **Optional accessibility/OCR.** A missing UI-text backend does not block the
+   image. OCR is opt-in, capability-probed, and absent from the base install.

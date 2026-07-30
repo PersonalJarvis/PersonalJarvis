@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -40,29 +41,20 @@ from pydantic import BaseModel, Field
 from jarvis.screen_context.models import VisualIntent
 from jarvis.screen_context.service import (
     ScreenContextService,
-    settings_from_config,
+)
+from jarvis.screen_context.turn import (
+    get_service as get_shared_service,
+)
+from jarvis.screen_context.turn import (
+    reset_service as reset_shared_service,
 )
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/screen-context", tags=["screen-context"])
 
-#: Process-wide service. Built on first use, never at import (AP-26), and
-#: rebuilt whenever settings change so a config edit takes effect without a
-#: restart.
-_service: ScreenContextService | None = None
-
-
 def _get_service(request: Request) -> ScreenContextService:
-    global _service
-    if _service is None:
-        from jarvis.core.config import load_config  # noqa: PLC0415
-
-        _service = ScreenContextService(
-            settings=settings_from_config(load_config()),
-            bus=getattr(request.app.state, "bus", None),
-        )
-    return _service
+    return get_shared_service(bus=getattr(request.app.state, "bus", None))
 
 
 def _reset_service() -> None:
@@ -71,10 +63,7 @@ def _reset_service() -> None:
     Also discards anything it still holds: a settings change that tightens the
     denylist must not leave a capture taken under the old rules in memory.
     """
-    global _service
-    if _service is not None:
-        _service.discard_all()
-    _service = None
+    reset_shared_service()
 
 
 class ClassifyRequest(BaseModel):
@@ -124,9 +113,6 @@ def _context_metadata(context: Any, handle_id: str | None) -> dict[str, Any]:
             "kind": str(context.target.kind),
             "reason": str(context.target.reason),
             "monitor": context.target.monitor_name,
-            "bbox": list(context.target.bbox),
-            "app": context.target.window.app_name,
-            "window_title": context.target.window.title,
         },
         "image": {
             "mime": context.mime,
@@ -154,17 +140,20 @@ def _context_metadata(context: Any, handle_id: str | None) -> dict[str, Any]:
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
     """Capability and live state — answers honestly on a machine with no screen."""
+    import asyncio  # noqa: PLC0415
+
     service = _get_service(request)
     from jarvis.screen_context.ports import capture_permission_error  # noqa: PLC0415
 
-    monitors = service.displays.monitors()
-    permission_error = capture_permission_error()
+    monitors = await asyncio.to_thread(service.displays.monitors)
+    permission_error = await asyncio.to_thread(capture_permission_error)
+    cursor_readable = await asyncio.to_thread(service.cursor.position)
     return {
         "enabled": service.settings.enabled,
         "available": bool(monitors) and permission_error is None,
         "blocked_reason": permission_error,
         "monitor_count": max(0, len(monitors) - 1) if monitors else 0,
-        "cursor_readable": service.cursor.position() is not None,
+        "cursor_readable": cursor_readable is not None,
         "held_captures": service.held_count,
         "ttl_s": service.settings.ttl_s,
     }
@@ -236,7 +225,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
     import asyncio  # noqa: PLC0415
 
     from jarvis.core.config import ScreenContextConfig  # noqa: PLC0415
-    from jarvis.core.config_writer import set_screen_context_setting  # noqa: PLC0415
+    from jarvis.core.config_writer import set_screen_context_settings  # noqa: PLC0415
 
     changes = patch.model_dump(exclude_none=True)
     if not changes:
@@ -251,9 +240,47 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
             status_code=400, detail=f"Invalid setting: {exc}"
         ) from exc
 
+    if "ttl_s" in changes and not 1.0 <= float(changes["ttl_s"]) <= 600.0:
+        raise HTTPException(
+            status_code=400,
+            detail="Capture retention must be between 1 and 600 seconds.",
+        )
+    if "max_text_chars" in changes and not (
+        128 <= int(changes["max_text_chars"]) <= 20_000
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="The on-screen text limit must be between 128 and 20000.",
+        )
+
+    denylist = changes.get("denylist", ())
+    patterns = changes.get("sensitive_patterns", ())
+    if len(denylist) > 100 or any(len(str(item)) > 200 for item in denylist):
+        raise HTTPException(
+            status_code=400,
+            detail="The denylist accepts at most 100 entries of 200 characters.",
+        )
+    if len(patterns) > 100 or any(len(str(item)) > 500 for item in patterns):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Sensitive-pattern settings accept at most 100 entries of "
+                "500 characters."
+            ),
+        )
+    for entry in patterns:
+        _label, separator, expression = str(entry).partition(":")
+        source = expression if separator else str(entry)
+        try:
+            re.compile(source, re.IGNORECASE)
+        except re.error as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sensitive pattern: {exc}",
+            ) from exc
+
     def _write() -> None:
-        for key, value in changes.items():
-            set_screen_context_setting(key, value)
+        set_screen_context_settings(changes)
 
     try:
         await asyncio.to_thread(_write)

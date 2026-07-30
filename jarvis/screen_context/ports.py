@@ -26,6 +26,9 @@ the first capture, not at boot.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -37,6 +40,33 @@ log = logging.getLogger(__name__)
 Point = tuple[int, int]
 #: ``(left, top, width, height)``.
 Rect = tuple[int, int, int, int]
+
+
+@contextmanager
+def _input_space() -> Iterator[None]:
+    """Pin native geometry and capture to one OS coordinate convention."""
+    try:
+        from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
+
+        ensure_dpi_awareness()
+    except Exception:  # noqa: BLE001 - non-Windows/minimal hosts are valid
+        log.debug("DPI-awareness probe unavailable", exc_info=True)
+    try:
+        from jarvis.cu.geometry import input_space  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - base/headless install
+        yield
+        return
+    with input_space():
+        yield
+
+
+def _is_wayland() -> bool:
+    try:
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        return bool(is_wayland())
+    except Exception:  # noqa: BLE001 - an absent probe is not Wayland evidence
+        return False
 
 
 class CaptureUnavailable(RuntimeError):
@@ -84,7 +114,8 @@ class PlatformCursorLocator:
                 from jarvis.platform.mouse import make_cursor_backend  # noqa: PLC0415
 
                 self._backend = make_cursor_backend()
-            return self._backend.position()
+            with _input_space():
+                return self._backend.position()
         except Exception:  # noqa: BLE001 — the seam must never raise
             log.debug("cursor position probe failed", exc_info=True)
             return None
@@ -154,10 +185,16 @@ class MssDisplayEnumerator:
     name = "mss-displays"
 
     def monitors(self) -> list[dict]:
+        if _is_wayland():
+            log.info(
+                "display enumeration unavailable: Wayland requires a portal "
+                "capture backend"
+            )
+            return []
         try:
             import mss  # type: ignore[import-not-found]  # noqa: PLC0415
 
-            with mss.mss() as sct:
+            with _input_space(), mss.mss() as sct:
                 return [dict(m) for m in sct.monitors]
         except Exception:  # noqa: BLE001 — no display / no mss / X error
             log.debug("display enumeration failed", exc_info=True)
@@ -179,6 +216,18 @@ class WindowProbe(Protocol):
         """Facts about the focused window, or ``None`` when unreadable."""
         ...
 
+    def visible_windows(self) -> tuple[WindowFacts, ...] | None:
+        """Visible top-level windows, or ``None`` when unverifiable."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class WindowSnapshot:
+    """Facts and native identity sampled from one foreground-window read."""
+
+    facts: WindowFacts
+    handle: int | None = None
+
 
 class PlatformWindowProbe:
     """Delegates to ``jarvis.platform.window_state``.
@@ -197,24 +246,34 @@ class PlatformWindowProbe:
 
     name = "platform-window"
 
-    def foreground(self) -> WindowFacts | None:
+    def foreground_snapshot(self) -> WindowSnapshot | None:
+        """Sample facts, frame and native handle atomically."""
         try:
             from jarvis.platform import window_state as ws  # noqa: PLC0415
 
-            win = ws.foreground_window()
-            if win is None:
-                return None
-            rect = ws.window_frame_rect(win) or ws.window_rect(win)
-            pid = int(getattr(win, "pid", 0) or 0)
-            return WindowFacts(
-                app_name=_app_name_for_pid(pid),
-                title=str(getattr(win, "title", "") or ""),
-                pid=pid,
-                frame_rect=rect,
-            )
+            with _input_space():
+                win = ws.foreground_window()
+                if win is None:
+                    return None
+                rect = ws.window_frame_rect(win) or ws.window_rect(win)
+                pid = int(getattr(win, "pid", 0) or 0)
+                handle = getattr(win, "handle", None)
+                return WindowSnapshot(
+                    facts=WindowFacts(
+                        app_name=_app_name_for_pid(pid),
+                        title=str(getattr(win, "title", "") or ""),
+                        pid=pid,
+                        frame_rect=rect,
+                    ),
+                    handle=int(handle) if handle is not None else None,
+                )
         except Exception:  # noqa: BLE001 — the seam must never raise
             log.debug("foreground window probe failed", exc_info=True)
             return None
+
+    def foreground(self) -> WindowFacts | None:
+        snapshot = self.foreground_snapshot()
+        return snapshot.facts if snapshot is not None else None
 
     def foreground_handle(self) -> int | None:
         """The native window handle of the focused window, when the OS gives one.
@@ -224,13 +283,47 @@ class PlatformWindowProbe:
         platform-specific integer into the model-facing data.
         """
         try:
-            from jarvis.platform import window_state as ws  # noqa: PLC0415
-
-            win = ws.foreground_window()
-            handle = getattr(win, "handle", None) if win is not None else None
-            return int(handle) if handle is not None else None
+            snapshot = self.foreground_snapshot()
+            return snapshot.handle if snapshot is not None else None
         except Exception:  # noqa: BLE001
             log.debug("foreground handle probe failed", exc_info=True)
+            return None
+
+    def visible_windows(self) -> tuple[WindowFacts, ...] | None:
+        """Visible windows for monitor-wide privacy checks.
+
+        A window with unknown geometry is deliberately retained. The service
+        treats a denylist match with no rect as intersecting every monitor;
+        false refusal is safer than photographing a protected surface.
+        """
+        if _is_wayland():
+            return None
+        try:
+            from jarvis.platform import window_state as ws  # noqa: PLC0415
+
+            with _input_space():
+                windows = ws.list_windows()
+                if not windows:
+                    return None
+                facts: list[WindowFacts] = []
+                for window in windows:
+                    if bool(getattr(window, "minimized", False)):
+                        continue
+                    pid = int(getattr(window, "pid", 0) or 0)
+                    facts.append(
+                        WindowFacts(
+                            app_name=_app_name_for_pid(pid),
+                            title=str(getattr(window, "title", "") or ""),
+                            pid=pid,
+                            frame_rect=(
+                                ws.window_frame_rect(window)
+                                or ws.window_rect(window)
+                            ),
+                        )
+                    )
+                return tuple(facts)
+        except Exception:  # noqa: BLE001 - privacy verification fails closed above
+            log.warning("visible-window privacy probe failed", exc_info=True)
             return None
 
 
@@ -303,18 +396,28 @@ class NativeSurfaceCapturer:
 
         if window_handle is not None:
             try:
+                from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
+                    indicator_suppressed,
+                )
                 from jarvis.platform.window_capture import grab_window  # noqa: PLC0415
 
-                native = grab_window(
-                    int(window_handle),
-                    {"left": left, "top": top, "width": width, "height": height},
-                )
+                with indicator_suppressed(), _input_space():
+                    native = grab_window(
+                        int(window_handle),
+                        {"left": left, "top": top, "width": width, "height": height},
+                    )
                 if native is not None:
                     return native
             except Exception:  # noqa: BLE001 — fall through to the rect grab
                 log.debug("native window capture failed; using rect grab", exc_info=True)
 
         try:
+            if _is_wayland():
+                raise CaptureUnavailable(
+                    "Screen capture is unavailable in this Wayland session. "
+                    "Use an X11 session or install a supported desktop-portal "
+                    "capture backend."
+                )
             import mss  # type: ignore[import-not-found]  # noqa: PLC0415
         except ImportError as exc:
             raise CaptureUnavailable(
@@ -323,7 +426,11 @@ class NativeSurfaceCapturer:
             ) from exc
 
         try:
-            with mss.mss() as sct:
+            from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
+                indicator_suppressed,
+            )
+
+            with indicator_suppressed(), _input_space(), mss.mss() as sct:
                 raw = sct.grab(
                     {"left": left, "top": top, "width": width, "height": height}
                 )
@@ -401,6 +508,12 @@ def capture_permission_error() -> str | None:
     successful screenshot of an empty desktop. One native call per capture is
     the right price for not lying about what was seen.
     """
+    if _is_wayland():
+        return (
+            "Screen capture is unavailable in this Wayland session because "
+            "no desktop-portal capture backend is installed. Use an X11 "
+            "session or install a supported portal backend, then ask again."
+        )
     try:
         from jarvis.platform.permissions import (  # noqa: PLC0415
             PermissionId,
@@ -488,6 +601,7 @@ __all__ = [
     "SurfaceCapturer",
     "UiTextReader",
     "WindowProbe",
+    "WindowSnapshot",
     "accessibility_permission_error",
     "capture_permission_error",
     "make_bar_locator",

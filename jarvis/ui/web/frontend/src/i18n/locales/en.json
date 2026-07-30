@@ -1366,6 +1366,26 @@
       "saved_toast": "Thinking pause set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
+    "screen_context": {
+      "title": "Screen Context",
+      "description": "Lets {name} inspect one screenshot only when you explicitly ask. A visible border appears first; pixels stay in memory and are consumed once.",
+      "available": "Ready on {0} monitor(s).",
+      "unavailable": "Screen capture is unavailable. Check the system permission and desktop session; headless and Wayland systems degrade safely.",
+      "denylist": "Never capture these apps or window titles (one per line)",
+      "denylist_placeholder": "Password Manager\nPrivate Banking",
+      "patterns": "Additional sensitive patterns (label:regular expression)",
+      "patterns_placeholder": "customer_id:CUST-[0-9]+",
+      "default_patterns": "Redact built-in password, card, token, and personal-data patterns",
+      "ocr": "Use optional OCR when accessibility text is unavailable",
+      "retention_label": "Retention (seconds, 1–600)",
+      "save_privacy": "Save privacy rules",
+      "discard": "Discard held captures now",
+      "retention": "Unconsumed captures expire after {0} seconds. Nothing is written to disk.",
+      "saved": "Screen Context settings saved.",
+      "discarded": "All held screen captures were discarded.",
+      "capturing": "Screen Context is looking at the requested surface.",
+      "completed": "Screen captured: {0}×{1}, {2} redaction(s)."
+    },
     "volume": {
       "title": "Volume",
       "description": "How loudly {name} speaks its answers. 100% is the loudest — turn it down if {name} is too loud. Speech is boosted so it carries as loud as music, without distortion.",

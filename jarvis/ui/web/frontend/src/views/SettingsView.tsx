@@ -21,6 +21,7 @@ import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
+import { ScreenContextGroup } from "@/views/settings/ScreenContextGroup";
 import {
   useWakeWord,
   useLocalSpeechInstall,
@@ -99,6 +100,9 @@ export function SettingsView() {
         </SettingsGroupBoundary>
         <SettingsGroupBoundary group="permissions">
           <PermissionsPanel />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="screen-context">
+          <ScreenContextGroup />
         </SettingsGroupBoundary>
         <SettingsGroupBoundary group="realtime-voice">
           <RealtimeVoiceGroup />

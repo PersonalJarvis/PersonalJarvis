@@ -1365,6 +1365,26 @@
       "saved_toast": "Denkpause auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
+    "screen_context": {
+      "title": "Bildschirmkontext",
+      "description": "Erlaubt {name}, genau einen Screenshot zu prüfen, wenn du ausdrücklich darum bittest. Vorher erscheint ein sichtbarer Rand; die Pixel bleiben im Speicher und werden einmalig verbraucht.",
+      "available": "Auf {0} Monitor(en) bereit.",
+      "unavailable": "Die Bildschirmaufnahme ist nicht verfügbar. Prüfe die Systemberechtigung und Desktop-Sitzung; Headless- und Wayland-Systeme werden sicher eingeschränkt.",
+      "denylist": "Diese Apps oder Fenstertitel nie aufnehmen (ein Eintrag pro Zeile)",
+      "denylist_placeholder": "Passwortmanager\nPrivates Banking",
+      "patterns": "Zusätzliche sensible Muster (Bezeichnung:regulärer Ausdruck)",
+      "patterns_placeholder": "kunden_id:KUNDE-[0-9]+",
+      "default_patterns": "Eingebaute Muster für Passwörter, Karten, Tokens und persönliche Daten schwärzen",
+      "ocr": "Optionale Texterkennung nutzen, wenn Bedienungshilfen keinen Text liefern",
+      "retention_label": "Aufbewahrung (Sekunden, 1–600)",
+      "save_privacy": "Datenschutzregeln speichern",
+      "discard": "Gespeicherte Aufnahmen jetzt verwerfen",
+      "retention": "Nicht verwendete Aufnahmen verfallen nach {0} Sekunden. Es wird nichts auf die Festplatte geschrieben.",
+      "saved": "Einstellungen für den Bildschirmkontext gespeichert.",
+      "discarded": "Alle gespeicherten Bildschirmaufnahmen wurden verworfen.",
+      "capturing": "Der Bildschirmkontext betrachtet die angeforderte Oberfläche.",
+      "completed": "Bildschirm aufgenommen: {0}×{1}, {2} Schwärzung(en)."
+    },
     "volume": {
       "title": "Lautstärke",
       "description": "Wie laut {name} seine Antworten ausgibt. 100% ist am lautesten — herunterregeln, wenn {name} zu laut ist. Die Sprache wird angehoben, damit sie so laut wie Musik trägt, ohne zu verzerren.",

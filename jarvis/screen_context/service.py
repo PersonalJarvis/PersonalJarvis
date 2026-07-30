@@ -32,6 +32,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import UUID, uuid4
 
 from jarvis.screen_context import intent as intent_module
 from jarvis.screen_context import redaction, uitext
@@ -70,7 +71,8 @@ _MIN_JPEG_QUALITY = 50
 #: How long the announcement gets to reach a subscriber before the shutter.
 #: Short by design: a hung subscriber must not stall a voice turn, and the
 #: degradation is recorded rather than the capture being abandoned.
-_ANNOUNCE_TIMEOUT_S = 0.4
+_ANNOUNCE_TIMEOUT_S = 1.5
+_INDICATOR_DWELL_S = 0.12
 
 CaptureStatus = Literal["captured", "clarify", "refused", "not_requested"]
 
@@ -120,6 +122,8 @@ class CaptureOutcome:
     * ``technical`` — this machine could not (no display, no permission). A
       caller MAY fall back to whatever it did before this feature existed,
       because nothing was forbidden — it was merely impossible here.
+    * ``failure`` — an unexpected implementation/backend defect. Alternate
+      screen paths stay closed so they cannot retry without this policy layer.
     """
 
     status: CaptureStatus
@@ -128,7 +132,7 @@ class CaptureOutcome:
     handle_id: str | None = None
     question: str | None = None
     message: str | None = None
-    reason_kind: Literal["", "policy", "technical"] = ""
+    reason_kind: Literal["", "policy", "technical", "failure"] = ""
 
 
 @dataclass
@@ -216,6 +220,15 @@ class ScreenContextService:
             self._ui_text_reader = make_ui_text_reader()
         return self._ui_text_reader
 
+    def bind_bus(self, bus: Any) -> None:
+        """Attach the application bus when REST created the service first."""
+        if self._bus is None:
+            self._bus = bus
+        elif self._bus is not bus:
+            log.warning(
+                "screen_context: ignored an attempt to bind a second EventBus"
+            )
+
     # ---- intent ----------------------------------------------------------
 
     def classify(self, text: str, *, locale: str = "") -> IntentVerdict:
@@ -225,7 +238,12 @@ class ScreenContextService:
     # ---- the capture -----------------------------------------------------
 
     async def capture_for_turn(
-        self, text: str, *, locale: str = "", force: bool = False
+        self,
+        text: str,
+        *,
+        locale: str = "",
+        force: bool = False,
+        trace_id: UUID | None = None,
     ) -> CaptureOutcome:
         """Classify one user turn and capture only if it unambiguously asked.
 
@@ -273,13 +291,18 @@ class ScreenContextService:
                 question=intent_module.clarifying_question(locale),
             )
 
-        return await self.capture(verdict=verdict)
+        return await self.capture(verdict=verdict, trace_id=trace_id)
 
-    async def capture(self, *, verdict: IntentVerdict | None = None) -> CaptureOutcome:
+    async def capture(
+        self,
+        *,
+        verdict: IntentVerdict | None = None,
+        trace_id: UUID | None = None,
+    ) -> CaptureOutcome:
         """Take exactly one capture. Assumes intent is already established."""
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
 
-        permission_error = self._permission_probe()
+        permission_error = await asyncio.to_thread(self._permission_probe)
         if permission_error:
             log.info("screen_context: capture refused — %s", permission_error)
             return CaptureOutcome(
@@ -291,9 +314,30 @@ class ScreenContextService:
 
         # The cursor is sampled ONCE, here, and threaded through. See
         # targeting.resolve_target for why re-reading it later is a race.
-        cursor_point = self.cursor.position()
-        bar_point = self.bar.position() if cursor_point is None else None
-        window_facts = self.window_probe.foreground()
+        cursor_point = await asyncio.to_thread(self.cursor.position)
+        bar_point = (
+            await asyncio.to_thread(self.bar.position)
+            if cursor_point is None
+            else None
+        )
+        # Facts and native handle must describe the SAME foreground window.
+        # Reading them separately lets a focus switch route a denylist verdict
+        # for window A into a native capture of window B (especially on macOS).
+        window_handle = None
+        window_probe = self.window_probe
+        snapshot_getter = getattr(window_probe, "foreground_snapshot", None)
+        snapshot = (
+            await asyncio.to_thread(snapshot_getter)
+            if callable(snapshot_getter)
+            else None
+        )
+        if snapshot is not None:
+            window_facts = snapshot.facts
+            window_handle = snapshot.handle
+        else:
+            # Compatibility seam for injected test/platform probes. Production
+            # PlatformWindowProbe always provides the atomic snapshot method.
+            window_facts = await asyncio.to_thread(window_probe.foreground)
 
         degradations: list[Degradation] = []
         if window_facts is None:
@@ -309,6 +353,17 @@ class ScreenContextService:
 
         # Denylist BEFORE targeting and before any pixels exist.
         if window_facts is not None:
+            if self._settings.denylist and not window_facts.app_name:
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="policy",
+                    message=(
+                        "I did not capture the screen because the active "
+                        "application could not be identified for your privacy "
+                        "denylist."
+                    ),
+                )
             blocked_by = redaction.blocked_by_denylist(
                 window_facts, self._settings.denylist
             )
@@ -328,16 +383,15 @@ class ScreenContextService:
                     context=None,
                 )
 
-        window_handle = None
-        if verdict.intent is VisualIntent.WINDOW:
-            getter = getattr(self.window_probe, "foreground_handle", None)
+        if verdict.intent is VisualIntent.WINDOW and snapshot is None:
+            getter = getattr(window_probe, "foreground_handle", None)
             if callable(getter):
-                window_handle = getter()
+                window_handle = await asyncio.to_thread(getter)
 
         try:
             target, target_degradations = resolve_target(
                 verdict.intent,
-                monitors=self.displays.monitors(),
+                monitors=await asyncio.to_thread(self.displays.monitors),
                 cursor_point=cursor_point,
                 bar_point=bar_point,
                 window=window_facts,
@@ -354,9 +408,26 @@ class ScreenContextService:
             )
         degradations.extend(target_degradations)
 
+        # A monitor capture contains more than the foreground window. When the
+        # user configured a denylist, verify every visible surface intersecting
+        # that monitor before any pixels exist. Unknown window geometry counts
+        # as intersecting (fail closed), and an unavailable enumeration blocks
+        # monitor scope rather than silently weakening the privacy rule.
+        monitor_privacy_error = await asyncio.to_thread(
+            self._monitor_privacy_error, target
+        )
+        if monitor_privacy_error:
+            return CaptureOutcome(
+                status="refused",
+                verdict=verdict,
+                reason_kind="policy",
+                message=monitor_privacy_error,
+            )
+
         # Announce BEFORE the shutter so the indicator is up while there is
         # still something to indicate.
-        announced = await self._announce(target)
+        event_trace_id = trace_id or uuid4()
+        announced = await self._announce(target, trace_id=event_trace_id)
         if not announced:
             degradations.append(
                 Degradation(
@@ -367,43 +438,149 @@ class ScreenContextService:
                     ),
                 )
             )
+        else:
+            # Give the composited border a perceptible pre-shutter moment. The
+            # renderer ACK proves it was processed; this short dwell makes the
+            # privacy signal human-visible rather than a one-frame flicker.
+            await asyncio.sleep(_INDICATOR_DWELL_S)
 
         try:
-            size, rgb = await asyncio.to_thread(
-                self.capturer.grab, target.bbox, window_handle=target.window_handle
+            # Recheck at the shutter boundary. A password manager can gain
+            # focus or open on the selected monitor while the indicator is
+            # appearing; the earlier policy decision must not authorize that
+            # newly visible surface.
+            if target.window.is_known and not await asyncio.to_thread(
+                self._foreground_still_matches,
+                target.window,
+                expected_window_handle=window_handle,
+            ):
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="policy",
+                    message=(
+                        "I did not capture the screen because the active window "
+                        "changed while the capture was being prepared. Ask again "
+                        "when the intended window is in front."
+                    ),
+                )
+            monitor_privacy_error = await asyncio.to_thread(
+                self._monitor_privacy_error, target
             )
-        except CaptureUnavailable as exc:
-            log.info("screen_context: capture failed — %s", exc)
-            return CaptureOutcome(
-                status="refused",
-                verdict=verdict,
-                reason_kind="technical",
-                message=str(exc),
+            if monitor_privacy_error:
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="policy",
+                    message=monitor_privacy_error,
+                )
+            try:
+                size, rgb = await asyncio.to_thread(
+                    self.capturer.grab,
+                    target.bbox,
+                    window_handle=target.window_handle,
+                )
+            except CaptureUnavailable as exc:
+                log.info("screen_context: capture failed — %s", exc)
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    message=str(exc),
+                )
+            except Exception:  # noqa: BLE001 - port bugs stay turn-local
+                log.error("screen_context: unexpected capture failure", exc_info=True)
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="failure",
+                    message=(
+                        "The screen could not be captured because the capture "
+                        "backend failed."
+                    ),
+                )
+
+            # Treat a post-shutter identity change as untrusted: discard the
+            # raw bytes before redaction/storage rather than attaching pixels
+            # from a surface different from the one that passed policy.
+            if target.window.is_known and not await asyncio.to_thread(
+                self._foreground_still_matches,
+                target.window,
+                expected_window_handle=window_handle,
+            ):
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="policy",
+                    message=(
+                        "I discarded the screenshot because the active window "
+                        "changed during capture. Ask again when the intended "
+                        "window is stable."
+                    ),
+                )
+            monitor_privacy_error = await asyncio.to_thread(
+                self._monitor_privacy_error, target
             )
-        except Exception as exc:  # noqa: BLE001 — a port bug must not kill the turn
-            log.error("screen_context: unexpected capture failure", exc_info=True)
-            return CaptureOutcome(
-                status="refused",
-                verdict=verdict,
-                reason_kind="technical",
-                message=f"The screen could not be captured ({exc}).",
+            if monitor_privacy_error:
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="policy",
+                    message=monitor_privacy_error,
+                )
+
+            context = await self._build_context(
+                target=target,
+                raw_size=size,
+                rgb=rgb,
+                degradations=degradations,
+                expected_window_handle=window_handle,
             )
 
-        context = await self._build_context(
-            target=target,
-            raw_size=size,
-            rgb=rgb,
-            degradations=degradations,
-        )
-
-        handle_id = self.store(context)
-        await self._publish_completed(context)
-        log.info("screen_context: %s", context.describe())
-        return CaptureOutcome(
-            status="captured", verdict=verdict, context=context, handle_id=handle_id
-        )
+            handle_id = self.store(context)
+            await self._publish_completed(context, trace_id=event_trace_id)
+            log.info("screen_context: %s", context.describe())
+            return CaptureOutcome(
+                status="captured",
+                verdict=verdict,
+                context=context,
+                handle_id=handle_id,
+            )
+        finally:
+            await self._dismiss_indicator(trace_id=event_trace_id)
 
     # ---- assembly --------------------------------------------------------
+
+    def _monitor_privacy_error(self, target: CaptureTarget) -> str | None:
+        """Return a refusal when monitor-wide denylist safety is unverifiable."""
+        if target.kind is not TargetKind.MONITOR or not self._settings.denylist:
+            return None
+        visible_getter = getattr(self.window_probe, "visible_windows", None)
+        visible = visible_getter() if callable(visible_getter) else None
+        if visible is None:
+            return (
+                "I did not capture the monitor because its visible windows "
+                "could not be verified against your privacy denylist. Ask for "
+                "the active window instead."
+            )
+        for candidate in visible:
+            if not candidate.app_name:
+                return (
+                    "I did not capture the monitor because a visible "
+                    "application could not be identified for your privacy "
+                    "denylist. Ask for the active window instead."
+                )
+            blocked_by = redaction.blocked_by_denylist(
+                candidate, self._settings.denylist
+            )
+            if blocked_by and _rects_intersect_or_unknown(
+                candidate.frame_rect, target.bbox
+            ):
+                return (
+                    "I did not capture the monitor because a visible window "
+                    f"matches your privacy rule '{blocked_by}'."
+                )
+        return None
 
     async def _build_context(
         self,
@@ -412,6 +589,7 @@ class ScreenContextService:
         raw_size: tuple[int, int],
         rgb: bytes,
         degradations: list[Degradation],
+        expected_window_handle: int | None,
     ) -> ScreenContext:
         """Read text, redact pixels and text, encode. In that order.
 
@@ -425,7 +603,7 @@ class ScreenContextService:
 
         # -- on-screen text -------------------------------------------------
         text, text_source, nodes, text_degradations = "", "none", (), ()
-        access_error = accessibility_permission_error()
+        access_error = await asyncio.to_thread(accessibility_permission_error)
         if access_error:
             degradations.append(
                 Degradation(code=DegradationCode.NO_UI_TEXT, message=access_error)
@@ -435,11 +613,30 @@ class ScreenContextService:
                 self.ui_text_reader,
                 target_rect=target.bbox,
                 max_chars=self._settings.max_text_chars,
+                keep_unbounded_nodes=target.kind is TargetKind.WINDOW,
                 window_title_filter=(
                     target.window.title if target.kind is TargetKind.WINDOW else None
                 ),
+                expected_pid=target.window.pid,
+                expected_window_title=target.window.title,
             )
             degradations.extend(text_degradations)
+            if nodes and not await asyncio.to_thread(
+                self._foreground_still_matches,
+                target.window,
+                expected_window_handle=expected_window_handle,
+            ):
+                text, text_source, nodes = "", "none", ()
+                degradations.append(
+                    Degradation(
+                        code=DegradationCode.NO_UI_TEXT,
+                        message=(
+                            "The active window changed after the screenshot, so "
+                            "its accessibility text was discarded instead of "
+                            "being attached to the earlier image."
+                        ),
+                    )
+                )
 
         # -- image redaction, on the raw frame ------------------------------
         # macOS returns backing pixels for a rect measured in points, so the
@@ -485,6 +682,33 @@ class ScreenContextService:
             degradations=tuple(degradations),
             captured_at_ns=self._clock(),
         )
+
+    def _foreground_still_matches(
+        self,
+        expected: Any,
+        *,
+        expected_window_handle: int | None,
+    ) -> bool:
+        """Recheck focus after accessibility traversal to close its race."""
+        snapshot_getter = getattr(self.window_probe, "foreground_snapshot", None)
+        if not callable(snapshot_getter):
+            return True  # injected legacy/test seam; production always supports it
+        current = snapshot_getter()
+        if current is None:
+            return False
+
+        comparisons: list[bool] = []
+        if expected_window_handle is not None and current.handle is not None:
+            comparisons.append(int(expected_window_handle) == int(current.handle))
+        if expected.pid and current.facts.pid:
+            comparisons.append(int(expected.pid) == int(current.facts.pid))
+        expected_title = " ".join(str(expected.title or "").casefold().split())
+        current_title = " ".join(
+            str(current.facts.title or "").casefold().split()
+        )
+        if expected_title and current_title:
+            comparisons.append(expected_title == current_title)
+        return all(comparisons) if comparisons else not expected.is_known
 
     # ---- handles ---------------------------------------------------------
 
@@ -538,7 +762,7 @@ class ScreenContextService:
 
     # ---- bus -------------------------------------------------------------
 
-    async def _announce(self, target: CaptureTarget) -> bool:
+    async def _announce(self, target: CaptureTarget, *, trace_id: UUID) -> bool:
         """Publish the pre-capture announcement. ``False`` if nobody heard it.
 
         A missing or slow bus degrades to a recorded limitation rather than to
@@ -547,24 +771,35 @@ class ScreenContextService:
         """
         if self._bus is None:
             return False
+        waiter = None
         try:
             from jarvis.core.events import ScreenCaptureAnnounced  # noqa: PLC0415
+            from jarvis.screen_context import indicator  # noqa: PLC0415
+
+            # Minimal recording fakes intentionally expose only ``publish``.
+            # The real EventBus exposes ``subscribe`` and therefore uses the
+            # renderer acknowledgement rather than equating publish with sight.
+            truthful_ack = callable(getattr(self._bus, "subscribe", None))
+            if truthful_ack:
+                waiter = indicator.prepare(trace_id)
 
             await asyncio.wait_for(
                 self._bus.publish(
                     ScreenCaptureAnnounced(
+                        trace_id=trace_id,
                         target_kind=str(target.kind),
-                        target_label=(
-                            target.window.title
-                            if target.kind is TargetKind.WINDOW
-                            else target.monitor_name
-                        ),
+                        target_label=_safe_target_label(target),
                         reason=str(target.reason),
                     )
                 ),
                 timeout=_ANNOUNCE_TIMEOUT_S,
             )
-            return True
+            if not truthful_ack:
+                return True
+            assert waiter is not None
+            return await asyncio.wait_for(
+                asyncio.shield(waiter), timeout=_ANNOUNCE_TIMEOUT_S
+            )
         except TimeoutError:
             log.warning(
                 "screen_context: capture indicator did not acknowledge within "
@@ -575,21 +810,40 @@ class ScreenContextService:
         except Exception:  # noqa: BLE001 — a subscriber bug must not stop a capture
             log.warning("screen_context: capture announcement failed", exc_info=True)
             return False
+        finally:
+            if waiter is not None:
+                indicator.discard(trace_id)
 
-    async def _publish_completed(self, context: ScreenContext) -> None:
+    async def _dismiss_indicator(self, *, trace_id: UUID) -> None:
         if self._bus is None:
             return
-        with contextlib.suppress(Exception):
+        try:
+            from jarvis.screen_context.indicator import (  # noqa: PLC0415
+                ScreenCaptureIndicatorDismissed,
+            )
+
+            await self._bus.publish(
+                ScreenCaptureIndicatorDismissed(trace_id=trace_id)
+            )
+        except Exception:  # noqa: BLE001 - hiding is best effort but observable
+            log.warning(
+                "screen_context: capture indicator dismissal failed",
+                exc_info=True,
+            )
+
+    async def _publish_completed(
+        self, context: ScreenContext, *, trace_id: UUID
+    ) -> None:
+        if self._bus is None:
+            return
+        try:
             from jarvis.core.events import ScreenCaptureCompleted  # noqa: PLC0415
 
             await self._bus.publish(
                 ScreenCaptureCompleted(
+                    trace_id=trace_id,
                     target_kind=str(context.target.kind),
-                    target_label=(
-                        context.target.window.title
-                        if context.target.kind is TargetKind.WINDOW
-                        else context.target.monitor_name
-                    ),
+                    target_label=_safe_target_label(context.target),
                     width=context.size[0],
                     height=context.size[1],
                     bytes_size=context.byte_size,
@@ -598,6 +852,18 @@ class ScreenContextService:
                     ui_text_source=context.ui_text_source,
                 )
             )
+        except Exception:  # noqa: BLE001 - receipt failure cannot erase the capture
+            log.warning(
+                "screen_context: capture receipt publication failed",
+                exc_info=True,
+            )
+
+
+def _safe_target_label(target: CaptureTarget) -> str:
+    """Metadata-only target label; never expose an app or document title."""
+    if target.kind is TargetKind.WINDOW:
+        return "active window"
+    return f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
 
 
 def _encode(image: Any) -> tuple[bytes, tuple[int, int]]:
@@ -621,6 +887,18 @@ def _encode(image: Any) -> tuple[bytes, tuple[int, int]]:
         if len(data) <= _MAX_IMAGE_BYTES or quality <= _MIN_JPEG_QUALITY:
             return data, image.size
         quality -= 10
+
+
+def _rects_intersect_or_unknown(
+    window: tuple[int, int, int, int] | None,
+    monitor: tuple[int, int, int, int],
+) -> bool:
+    """Whether a window may be visible in a monitor capture (fail closed)."""
+    if window is None:
+        return True
+    wl, wt, ww, wh = window
+    ml, mt, mw, mh = monitor
+    return wl < ml + mw and wl + ww > ml and wt < mt + mh and wt + wh > mt
 
 
 # --------------------------------------------------------------------------

@@ -26,7 +26,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
@@ -656,6 +656,7 @@ class RouterBrain:
         *,
         history: list[BrainMessage] | None = None,
         trace_id: UUID | None = None,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[BrainDelta]:
         """Processes a user utterance and streams `BrainDelta` chunks.
 
@@ -699,13 +700,16 @@ class RouterBrain:
         # window the user's rule protects. A merely TECHNICAL failure (no
         # display, no permission) does NOT end the turn: it returns
         # "unavailable" and the existing path runs, so a headless or
-        # unpermitted host behaves exactly as it did before this feature.
-        # Any unexpected failure inside returns "none" for the same reason —
-        # this block cannot break a voice turn.
-        from jarvis.screen_context.turn import screen_context_for_turn
-
-        screen = await screen_context_for_turn(
-            utterance, locale=self._output_locale(utterance), bus=self._bus
+        # An expected unavailable host may keep the old non-capture path open;
+        # an unexpected failure closes every alternate screen path so the turn
+        # cannot trigger a second, unindicated screenshot attempt.
+        turn_trace_id = trace_id or uuid4()
+        screen = await self._manager._resolve_screen_context_turn(
+            utterance,
+            source_layer="brain.router.handle",
+            conversation_id=conversation_id,
+            allow_voice_confirm=False,
+            trace_id=turn_trace_id,
         )
         if screen.ends_the_turn:
             spoken = screen.question or screen.message or ""
@@ -764,12 +768,25 @@ class RouterBrain:
             try:
                 obs = await self._vision.current()
                 hash_prefix = (obs.screenshot_hash or "")[:16]
+                geometry = tuple(
+                    getattr(obs, "monitor_geom", (0, 0, 0, 0))
+                    or (0, 0, 0, 0)
+                )
+                width, height = (
+                    (int(geometry[2]), int(geometry[3]))
+                    if len(geometry) >= 4
+                    else (0, 0)
+                )
+                capture_age_ms = max(
+                    0, int((time.time_ns() - obs.timestamp_ns) / 1_000_000)
+                )
                 log.info(
-                    "Vision-Inject Observation: screenshot_path=%s "
-                    "screenshot_hash=%s window=%r",
-                    obs.screenshot_path,
+                    "Vision-Inject Observation: screenshot_hash=%s "
+                    "dimensions=%dx%d capture_age_ms=%d",
                     hash_prefix,
-                    getattr(obs, "window_title", None),
+                    width,
+                    height,
+                    capture_age_ms,
                 )
                 mime, image_b64 = await _read_observation_image_b64(obs)
                 log.info(
@@ -791,7 +808,7 @@ class RouterBrain:
                     bytes_size = len(image_b64) * 3 // 4
                     age_ms = int((time.time_ns() - obs.timestamp_ns) / 1_000_000)
                     await self._bus.publish(VisionInjected(
-                        trace_id=trace_id or obs.trace_id,
+                        trace_id=turn_trace_id,
                         screenshot_hash=obs.screenshot_hash,
                         bytes_size=bytes_size,
                         capture_age_ms=age_ms,
@@ -835,7 +852,7 @@ class RouterBrain:
                 utterance,
                 images=images,
                 history=history,
-                trace_id=trace_id,
+                trace_id=turn_trace_id,
                 ack_emitter=ack_emitter,
                 turn_context=screen_note,
             )

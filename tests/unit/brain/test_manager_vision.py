@@ -14,6 +14,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.events import VisionInjected
 from jarvis.core.protocols import BrainDelta, BrainRequest, Observation
+from jarvis.screen_context.turn import TurnScreenContext
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
@@ -96,6 +97,14 @@ def _manager_with_recorder() -> tuple[BrainManager, _RecordingDispatcher]:
     manager._build_fallback_chain = lambda _level: [("fake", "fake-model")]  # type: ignore[method-assign]
     manager._get_brain = lambda _name, _model: _FakeBrain()  # type: ignore[method-assign]
     manager._build_dispatcher = lambda _brain, *, tools_override=None: recorder  # type: ignore[method-assign]
+
+    async def _screen_unavailable(*_args, **_kwargs) -> TurnScreenContext:
+        # These tests pin the legacy permanent-vision fallback specifically.
+        # The production Screen Context path has its own manager integration
+        # tests and must not capture the developer's real display here.
+        return TurnScreenContext(status="unavailable")
+
+    manager._resolve_screen_context_turn = _screen_unavailable  # type: ignore[method-assign]
     return manager, recorder
 
 

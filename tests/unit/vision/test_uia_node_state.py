@@ -13,8 +13,7 @@ from typing import Any
 
 from jarvis.core.protocols import UIANode
 from jarvis.vision.pruning import RawNode
-from jarvis.vision.uia_tree import UIATreeSource, _flatten
-
+from jarvis.vision.uia_tree import UIATreeSource, _flatten, _run_traverser_with_com
 
 # --- defaults + copy ---------------------------------------------------------
 
@@ -63,6 +62,22 @@ def test_flatten_populates_password_and_focus():
     assert out[0].focused is True
 
 
+def test_flatten_never_reads_a_password_value():
+    class _SecretValue:
+        @property
+        def CurrentValue(self):  # noqa: N802 - mirror the COM property name
+            raise AssertionError("secure values must never be queried")
+
+    element = _fake_element(is_password=True)
+    element.iface_value = _SecretValue()
+    out: list[RawNode] = []
+
+    _flatten(element, depth=0, max_depth=0, parent_index=-1, out=out)
+
+    assert out[0].is_password is True
+    assert out[0].value == ""
+
+
 def test_flatten_defaults_false_for_plain_control():
     out: list[RawNode] = []
     _flatten(_fake_element(is_password=False, focused=False),
@@ -92,3 +107,71 @@ def test_flatten_state_read_never_skips_node_on_error():
     _flatten(el, depth=0, max_depth=0, parent_index=-1, out=out)
     assert len(out) == 1
     assert out[0].is_password is False
+
+
+def test_flatten_never_reads_value_when_secure_state_is_unknown():
+    class _SecretValue:
+        @property
+        def CurrentValue(self):  # noqa: N802
+            raise AssertionError("value must not be queried without secure state")
+
+    el = _fake_element(with_element=False)
+    el.iface_value = _SecretValue()
+    out: list[RawNode] = []
+
+    _flatten(el, depth=0, max_depth=0, parent_index=-1, out=out)
+
+    assert out[0].value == ""
+
+
+def test_uia_worker_initializes_and_releases_com(monkeypatch):
+    import os
+    import sys
+
+    if os.name != "nt":
+        return
+    calls: list[object] = []
+    fake = SimpleNamespace(
+        COINIT_MULTITHREADED=0,
+        CoInitializeEx=lambda mode: calls.append(("init", mode)),
+        CoUninitialize=lambda: calls.append("uninit"),
+    )
+    monkeypatch.setitem(sys.modules, "pythoncom", fake)
+
+    result = _run_traverser_with_com(
+        lambda depth, title: (title or "", depth, []), 4, "x"
+    )
+
+    assert result == ("x", 4, [])
+    assert calls == [("init", 0), "uninit"]
+
+
+def test_uia_worker_reuses_existing_sta_apartment(monkeypatch):
+    import os
+    import sys
+
+    if os.name != "nt":
+        return
+
+    class _ChangedMode(Exception):
+        hresult = -2147417850
+
+    calls: list[object] = []
+
+    def _init(_mode):
+        calls.append("init")
+        raise _ChangedMode("thread is already STA")
+
+    fake = SimpleNamespace(
+        COINIT_MULTITHREADED=0,
+        CoInitializeEx=_init,
+        CoUninitialize=lambda: calls.append("uninit"),
+    )
+    monkeypatch.setitem(sys.modules, "pythoncom", fake)
+
+    result = _run_traverser_with_com(
+        lambda depth, title: (title or "", depth, []), 4, "x"
+    )
+
+    assert result == ("x", 4, [])
+    assert calls == ["init"]

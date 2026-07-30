@@ -13,6 +13,8 @@ assertion about behaviour rather than about call plumbing.
 """
 from __future__ import annotations
 
+import threading
+
 from jarvis.screen_context.models import (
     DegradationCode,
     RedactionRule,
@@ -20,7 +22,7 @@ from jarvis.screen_context.models import (
     TargetReason,
     WindowFacts,
 )
-from jarvis.screen_context.ports import CaptureUnavailable
+from jarvis.screen_context.ports import CaptureUnavailable, WindowSnapshot
 from jarvis.screen_context.service import (
     ScreenContextService,
     ScreenContextSettings,
@@ -119,8 +121,16 @@ class FakeNode:
 
 
 class FakeObservation:
-    def __init__(self, nodes=()) -> None:
+    def __init__(
+        self,
+        nodes=(),
+        *,
+        active_pid: int = 42,
+        window_title: str = "notes.md",
+    ) -> None:
         self.nodes = tuple(nodes)
+        self.active_pid = active_pid
+        self.window_title = window_title
 
 
 class FakeTextReader:
@@ -225,6 +235,56 @@ async def test_the_cursor_is_sampled_exactly_once() -> None:
     assert cursor.reads == 1
 
 
+async def test_native_capture_probes_run_off_the_asyncio_thread() -> None:
+    loop_thread = threading.get_ident()
+    threads: dict[str, list[int]] = {}
+
+    def _record(name: str) -> None:
+        threads.setdefault(name, []).append(threading.get_ident())
+
+    class ThreadCursor(FakeCursor):
+        def position(self):
+            _record("cursor")
+            return super().position()
+
+    class ThreadDisplays(FakeDisplays):
+        def monitors(self):
+            _record("displays")
+            return super().monitors()
+
+    class ThreadWindow(FakeWindowProbe):
+        def foreground_snapshot(self):
+            _record("window")
+            return WindowSnapshot(self._facts, self._handle)
+
+    class ThreadCapturer(FakeCapturer):
+        def grab(self, bbox, *, window_handle=None):
+            _record("capture")
+            return super().grab(bbox, window_handle=window_handle)
+
+    def permission_probe():
+        _record("permission")
+        return None
+
+    service = make_service(
+        cursor=ThreadCursor(),
+        displays=ThreadDisplays(),
+        window_probe=ThreadWindow(),
+        capturer=ThreadCapturer(),
+        permission_probe=permission_probe,
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "captured"
+    assert {"permission", "cursor", "displays", "window", "capture"} <= threads.keys()
+    assert all(
+        thread_id != loop_thread
+        for observed in threads.values()
+        for thread_id in observed
+    )
+
+
 async def test_window_scoped_request_captures_the_window() -> None:
     capturer = FakeCapturer()
     service = make_service(capturer=capturer)
@@ -233,6 +293,33 @@ async def test_window_scoped_request_captures_the_window() -> None:
 
     assert outcome.context.target.kind is TargetKind.WINDOW
     assert capturer.grabs[0] == ((10, 10, 800, 600), 7)
+
+
+async def test_window_facts_and_handle_come_from_one_atomic_snapshot() -> None:
+    class SnapshotOnlyProbe:
+        def foreground_snapshot(self) -> WindowSnapshot:
+            return WindowSnapshot(
+                facts=WindowFacts(
+                    app_name="editor",
+                    title="report.pdf",
+                    frame_rect=(20, 30, 640, 480),
+                ),
+                handle=99,
+            )
+
+        def foreground(self):
+            raise AssertionError("the non-atomic facts path must not run")
+
+        def foreground_handle(self):
+            raise AssertionError("the non-atomic handle path must not run")
+
+    capturer = FakeCapturer()
+    service = make_service(window_probe=SnapshotOnlyProbe(), capturer=capturer)
+
+    outcome = await service.capture_for_turn("look at this window", locale="en")
+
+    assert outcome.status == "captured"
+    assert capturer.grabs[0] == ((20, 30, 640, 480), 99)
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +343,55 @@ async def test_denylisted_window_is_never_captured_at_all() -> None:
     assert outcome.status == "refused"
     assert capturer.grabs == [], "a blocked app must never reach the capturer"
     assert "1password" in (outcome.message or "").lower()
+
+
+async def test_monitor_capture_checks_every_visible_window_against_denylist() -> None:
+    class MultiWindowProbe(FakeWindowProbe):
+        def visible_windows(self):
+            return (
+                WindowFacts(
+                    app_name="editor",
+                    title="notes",
+                    frame_rect=(0, 0, 400, 400),
+                ),
+                WindowFacts(
+                    app_name="vault",
+                    title="1Password",
+                    frame_rect=(-1500, 0, 400, 400),
+                ),
+            )
+
+    capturer = FakeCapturer()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("1password",)),
+        window_probe=MultiWindowProbe(),
+        capturer=capturer,
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert capturer.grabs == []
+    assert "1password" in (outcome.message or "").lower()
+
+
+async def test_monitor_capture_fails_closed_when_denylist_cannot_be_verified() -> None:
+    class UnverifiableProbe(FakeWindowProbe):
+        def visible_windows(self):
+            return None
+
+    capturer = FakeCapturer()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("vault",)),
+        window_probe=UnverifiableProbe(),
+        capturer=capturer,
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert capturer.grabs == []
+    assert "could not be verified" in (outcome.message or "")
 
 
 async def test_missing_permission_refuses_before_capturing() -> None:
@@ -307,6 +443,7 @@ async def test_an_unexpected_port_bug_does_not_kill_the_turn() -> None:
     service = make_service(capturer=FakeCapturer(fail=ValueError("boom")))
     outcome = await service.capture_for_turn("look at this", locale="en")
     assert outcome.status == "refused"
+    assert outcome.reason_kind == "failure"
 
 
 # --------------------------------------------------------------------------
@@ -372,6 +509,29 @@ async def test_text_from_another_monitor_is_not_included() -> None:
     assert "other screen" not in outcome.context.ui_text
 
 
+async def test_unbounded_text_is_dropped_from_monitor_capture() -> None:
+    """An unplaced node may belong to a foreground window on another display."""
+    reader = FakeTextReader(
+        FakeObservation([FakeNode(name="private text from the other monitor")])
+    )
+    service = make_service(cursor=FakeCursor((-500, 400)), ui_text_reader=reader)
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.context.target.kind is TargetKind.MONITOR
+    assert outcome.context.ui_text == ""
+
+
+async def test_unbounded_text_is_retained_for_identity_bound_window_capture() -> None:
+    reader = FakeTextReader(FakeObservation([FakeNode(name="window label")]))
+    service = make_service(ui_text_reader=reader)
+
+    outcome = await service.capture_for_turn("look at this window", locale="en")
+
+    assert outcome.context.target.kind is TargetKind.WINDOW
+    assert outcome.context.ui_text == "window label"
+
+
 async def test_absent_accessibility_layer_is_reported_not_faked() -> None:
     """"We could not read" must never look like "there was no text" (AP-30)."""
     service = make_service(ui_text_reader=FakeTextReader(None))
@@ -380,6 +540,126 @@ async def test_absent_accessibility_layer_is_reported_not_faked() -> None:
 
     assert outcome.context.ui_text_source == "none"
     assert DegradationCode.NO_UI_TEXT in {d.code for d in outcome.context.degradations}
+
+
+async def test_accessibility_text_from_a_different_process_is_discarded() -> None:
+    reader = FakeTextReader(
+        FakeObservation(
+            [FakeNode(name="text from another window")],
+            active_pid=99,
+            window_title="other.txt",
+        )
+    )
+    service = make_service(ui_text_reader=reader)
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.context.ui_text == ""
+    assert outcome.context.redactions.is_empty
+    assert DegradationCode.NO_UI_TEXT in {
+        item.code for item in outcome.context.degradations
+    }
+
+
+async def test_focus_change_before_shutter_refuses_without_pixels() -> None:
+    class SwitchingWindowProbe(FakeWindowProbe):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        def foreground_snapshot(self):
+            self.reads += 1
+            if self.reads == 1:
+                return WindowSnapshot(self._facts, self._handle)
+            return WindowSnapshot(
+                WindowFacts(
+                    app_name="mail",
+                    title="private message",
+                    pid=99,
+                    frame_rect=(10, 10, 800, 600),
+                ),
+                8,
+            )
+
+    capturer = FakeCapturer()
+    service = make_service(
+        window_probe=SwitchingWindowProbe(),
+        capturer=capturer,
+        ui_text_reader=FakeTextReader(
+            FakeObservation([FakeNode(name="captured window text")])
+        ),
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "policy"
+    assert capturer.grabs == []
+
+
+async def test_focus_change_during_shutter_discards_raw_frame() -> None:
+    class SwitchingWindowProbe(FakeWindowProbe):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        def foreground_snapshot(self):
+            self.reads += 1
+            if self.reads <= 2:
+                return WindowSnapshot(self._facts, self._handle)
+            return WindowSnapshot(
+                WindowFacts(
+                    app_name="vault",
+                    title="private vault",
+                    pid=99,
+                    frame_rect=(10, 10, 800, 600),
+                ),
+                8,
+            )
+
+    capturer = FakeCapturer()
+    service = make_service(window_probe=SwitchingWindowProbe(), capturer=capturer)
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "policy"
+    assert len(capturer.grabs) == 1
+    assert service.held_count == 0
+
+
+async def test_new_denylisted_monitor_window_during_shutter_discards_frame() -> None:
+    class PopupProbe(FakeWindowProbe):
+        def __init__(self) -> None:
+            super().__init__()
+            self.visible_reads = 0
+
+        def visible_windows(self):
+            self.visible_reads += 1
+            if self.visible_reads < 3:
+                return (self._facts,)
+            return (
+                self._facts,
+                WindowFacts(
+                    app_name="vault",
+                    title="1Password",
+                    frame_rect=(-1500, 0, 400, 400),
+                ),
+            )
+
+    capturer = FakeCapturer()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("1password",)),
+        window_probe=PopupProbe(),
+        capturer=capturer,
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "policy"
+    assert len(capturer.grabs) == 1
+    assert service.held_count == 0
 
 
 # --------------------------------------------------------------------------
@@ -444,7 +724,29 @@ async def test_the_capture_is_announced_before_the_shutter() -> None:
     await service.capture_for_turn("look at this", locale="en")
 
     names = [type(e).__name__ for e in bus.events]
-    assert names == ["ScreenCaptureAnnounced", "ScreenCaptureCompleted"]
+    assert names == [
+        "ScreenCaptureAnnounced",
+        "ScreenCaptureCompleted",
+        "ScreenCaptureIndicatorDismissed",
+    ]
+
+
+async def test_capture_events_keep_the_turn_trace_id() -> None:
+    from uuid import uuid4
+
+    trace_id = uuid4()
+    bus = RecordingBus()
+    service = make_service(bus=bus)
+
+    await service.capture_for_turn(
+        "look at this", locale="en", trace_id=trace_id
+    )
+
+    assert [event.trace_id for event in bus.events] == [
+        trace_id,
+        trace_id,
+        trace_id,
+    ]
 
 
 async def test_no_bus_means_a_reported_limitation_not_a_silent_capture() -> None:
@@ -469,12 +771,48 @@ async def test_the_receipt_event_carries_no_content() -> None:
     # than a __dict__ that does not exist.
     import dataclasses
 
-    completed = bus.events[-1]
+    completed = next(
+        event
+        for event in bus.events
+        if type(event).__name__ == "ScreenCaptureCompleted"
+    )
     payload = " ".join(
         str(getattr(completed, f.name)) for f in dataclasses.fields(completed)
     )
     assert "secret business plan" not in payload
     assert completed.bytes_size > 0
+
+
+async def test_failed_capture_always_dismisses_the_indicator() -> None:
+    bus = RecordingBus()
+    service = make_service(
+        bus=bus,
+        capturer=FakeCapturer(fail=CaptureUnavailable("display disappeared")),
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert [type(event).__name__ for event in bus.events] == [
+        "ScreenCaptureAnnounced",
+        "ScreenCaptureIndicatorDismissed",
+    ]
+
+
+async def test_event_publish_without_indicator_ack_is_not_claimed_as_visible(
+    monkeypatch,
+) -> None:
+    from jarvis.core.bus import EventBus
+    from jarvis.screen_context import service as service_module
+
+    monkeypatch.setattr(service_module, "_ANNOUNCE_TIMEOUT_S", 0.01)
+    service = make_service(bus=EventBus())
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert DegradationCode.INDICATOR_UNAVAILABLE in {
+        item.code for item in outcome.context.degradations
+    }
 
 
 # --------------------------------------------------------------------------

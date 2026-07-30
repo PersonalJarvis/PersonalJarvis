@@ -1557,6 +1557,7 @@ class DesktopApp:
                             evt.text,
                             trace_id=evt.trace_id,
                             source_layer=evt.source_layer,
+                            conversation_id=thread_id,
                         ),
                         loop,
                     )

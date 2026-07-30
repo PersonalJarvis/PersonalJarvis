@@ -1365,6 +1365,26 @@
       "saved_toast": "Pausa para pensar fijada en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
+    "screen_context": {
+      "title": "Contexto de pantalla",
+      "description": "Permite que {name} revise una sola captura únicamente cuando lo pides de forma explícita. Primero aparece un borde visible; los píxeles permanecen en memoria y se consumen una vez.",
+      "available": "Listo en {0} monitor(es).",
+      "unavailable": "La captura de pantalla no está disponible. Comprueba el permiso del sistema y la sesión de escritorio; los sistemas sin pantalla y Wayland se limitan de forma segura.",
+      "denylist": "No capturar nunca estas apps o títulos de ventana (uno por línea)",
+      "denylist_placeholder": "Gestor de contraseñas\nBanca privada",
+      "patterns": "Patrones sensibles adicionales (etiqueta:expresión regular)",
+      "patterns_placeholder": "id_cliente:CLIENTE-[0-9]+",
+      "default_patterns": "Ocultar patrones integrados de contraseñas, tarjetas, tokens y datos personales",
+      "ocr": "Usar OCR opcional cuando no haya texto de accesibilidad",
+      "retention_label": "Retención (segundos, 1–600)",
+      "save_privacy": "Guardar reglas de privacidad",
+      "discard": "Descartar capturas retenidas ahora",
+      "retention": "Las capturas no consumidas caducan tras {0} segundos. No se escribe nada en disco.",
+      "saved": "Ajustes de contexto de pantalla guardados.",
+      "discarded": "Se descartaron todas las capturas retenidas.",
+      "capturing": "El contexto de pantalla está revisando la superficie solicitada.",
+      "completed": "Pantalla capturada: {0}×{1}, {2} ocultación(es)."
+    },
     "volume": {
       "title": "Volumen",
       "description": "Qué tan alto habla {name} sus respuestas. 100% es el máximo — bájalo si {name} suena demasiado alto. La voz se amplifica para sonar tan fuerte como la música, sin distorsión.",

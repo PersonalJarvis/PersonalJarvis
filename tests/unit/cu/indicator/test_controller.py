@@ -6,7 +6,11 @@ from typing import Any
 import pytest
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import CUControlEnded, CUControlStarted
+from jarvis.core.events import (
+    CUControlEnded,
+    CUControlStarted,
+    ScreenCaptureAnnounced,
+)
 from jarvis.cu.indicator import controller as controller_mod
 from jarvis.cu.indicator.controller import (
     _ESC_HINTS,
@@ -195,3 +199,46 @@ async def test_suppress_for_grab_fails_open_without_acks() -> None:
         ran = True
     assert ran is True
     assert monkeypatch_sent == ["blank", "unblank"]
+
+
+async def test_screen_capture_waits_for_real_show_ack_and_hides_afterward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from uuid import uuid4
+
+    from jarvis.screen_context.indicator import (
+        ScreenCaptureIndicatorDismissed,
+        prepare,
+    )
+
+    bus = EventBus()
+    ctl = CUIndicatorController(bus)
+    calls: list[str] = []
+
+    async def fake_show(*, hint: str, required: bool) -> bool:
+        assert required is True
+        calls.append(f"show:{hint}")
+        return True
+
+    async def fake_stop() -> None:
+        calls.append("stop")
+
+    monkeypatch.setattr(ctl, "_show_border", fake_show)
+    monkeypatch.setattr(ctl, "_stop_border", fake_stop)
+    monkeypatch.setattr(
+        ctl,
+        "_arm_escape",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("screen-only capture must not arm Escape")
+        ),
+    )
+    ctl.wire()
+    trace_id = uuid4()
+    waiter = prepare(trace_id)
+
+    await bus.publish(ScreenCaptureAnnounced(trace_id=trace_id))
+
+    assert await waiter is True
+    assert calls == ["show:"]
+    await bus.publish(ScreenCaptureIndicatorDismissed(trace_id=trace_id))
+    assert calls == ["show:", "stop"]

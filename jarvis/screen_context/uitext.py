@@ -40,7 +40,12 @@ _CHROME_ROLES: frozenset[str] = frozenset(
 )
 
 
-def nodes_in_rect(nodes: Iterable[Any], rect: Rect) -> tuple[Any, ...]:
+def nodes_in_rect(
+    nodes: Iterable[Any],
+    rect: Rect,
+    *,
+    keep_unbounded: bool,
+) -> tuple[Any, ...]:
     """Nodes whose bounds intersect ``rect``.
 
     A monitor-scoped capture must not carry text from a window on a *different*
@@ -48,9 +53,10 @@ def nodes_in_rect(nodes: Iterable[Any], rect: Rect) -> tuple[Any, ...]:
     model text it cannot see in the image is how "it described something that
     was not on my screen" happens.
 
-    A node with no bounds is kept. Some backends report zero bounds for
-    container elements that still carry the useful label, and dropping them
-    would lose real text — the image is scoped correctly either way.
+    A node with no bounds is retained only for a window-scoped capture. The
+    active window identity then binds the whole tree to the captured surface.
+    A monitor capture cannot place an unbounded node on one monitor safely, so
+    keeping it could expose text from another display.
     """
     left, top, width, height = (int(v) for v in rect)
     right, bottom = left + width, top + height
@@ -58,7 +64,8 @@ def nodes_in_rect(nodes: Iterable[Any], rect: Rect) -> tuple[Any, ...]:
     for node in nodes:
         bounds = getattr(node, "bounds", None)
         if not bounds or len(bounds) != 4 or all(int(v) == 0 for v in bounds):
-            kept.append(node)
+            if keep_unbounded:
+                kept.append(node)
             continue
         nx, ny, nw, nh = (int(v) for v in bounds)
         if nx < right and nx + nw > left and ny < bottom and ny + nh > top:
@@ -99,12 +106,38 @@ def aggregate_text(nodes: Iterable[Any], *, max_chars: int) -> tuple[str, bool]:
     return ("\n".join(parts), truncated)
 
 
+def _observation_matches_target(
+    observation: Any,
+    *,
+    expected_pid: int,
+    expected_window_title: str,
+) -> bool:
+    """Whether accessibility data still belongs to the captured foreground."""
+    observed_pid = int(getattr(observation, "active_pid", 0) or 0)
+    if expected_pid and observed_pid:
+        return expected_pid == observed_pid
+
+    expected_title = " ".join(expected_window_title.casefold().split())
+    observed_title = " ".join(
+        str(getattr(observation, "window_title", "") or "").casefold().split()
+    )
+    if expected_title and observed_title:
+        return expected_title == observed_title
+
+    # With an expected identity but no comparable field, accepting the tree
+    # would risk attaching text from a window focused after the shutter.
+    return not (expected_pid or expected_title)
+
+
 async def read_ui_text(
     reader: Any,
     *,
     target_rect: Rect,
     max_chars: int,
+    keep_unbounded_nodes: bool,
     window_title_filter: str | None = None,
+    expected_pid: int = 0,
+    expected_window_title: str = "",
 ) -> tuple[str, str, tuple[Any, ...], tuple[Degradation, ...]]:
     """Read visible text for ``target_rect``.
 
@@ -133,7 +166,28 @@ async def read_ui_text(
         )
         return ("", "none", (), tuple(degradations))
 
-    nodes = nodes_in_rect(getattr(observation, "nodes", ()) or (), target_rect)
+    if not _observation_matches_target(
+        observation,
+        expected_pid=expected_pid,
+        expected_window_title=expected_window_title,
+    ):
+        degradations.append(
+            Degradation(
+                code=DegradationCode.NO_UI_TEXT,
+                message=(
+                    "The active window changed while on-screen text was being "
+                    "read, so that text was discarded instead of attaching it "
+                    "to a different screenshot."
+                ),
+            )
+        )
+        return ("", "none", (), tuple(degradations))
+
+    nodes = nodes_in_rect(
+        getattr(observation, "nodes", ()) or (),
+        target_rect,
+        keep_unbounded=keep_unbounded_nodes,
+    )
     text, truncated = aggregate_text(nodes, max_chars=max_chars)
     if truncated:
         degradations.append(

@@ -1,11 +1,12 @@
-"""Main-process controller for the Computer-Use screen indicator.
+"""Main-process controller for the shared desktop-capture indicator.
 
 Wired once at boot (``wire_cu_indicator(bus)`` from the brain factory,
 right where the ComputerUseContext is set). Boot cost is a bus
 subscription and nothing else (AP-26): the PySide6 sidecar is spawned
 lazily when the FIRST Computer-Use mission starts and terminated when the
 LAST one ends (missions can overlap — the controller refcounts
-``CUControlStarted``/``CUControlEnded`` pairs).
+``CUControlStarted``/``CUControlEnded`` pairs). Screen Context capture events
+share the same sidecar with independent ownership and no Escape binding.
 
 While at least one mission runs, a global Escape listener is armed
 through the existing cross-platform ``HotkeyTrigger`` backends; a real
@@ -32,9 +33,9 @@ import sys
 import threading
 from contextlib import contextmanager, suppress
 from typing import Any
+from uuid import UUID
 
 from jarvis.cu.indicator import capture_guard, protocol, self_input
-from jarvis.cu.indicator.win32 import capture_exclusion_available
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ _ESC_HINTS: dict[str, str] = {
 
 _QUIT_GRACE_S = 1.5
 _BLANK_ACK_TIMEOUT_S = 0.15
+_SHOW_ACK_TIMEOUT_S = 1.2
 
 
 def _esc_binding() -> list[str]:
@@ -94,9 +96,11 @@ class CUIndicatorController:
     def __init__(self, bus: Any) -> None:
         self._bus = bus
         self._active = 0
+        self._screen_active: set[UUID] = set()
         self._lock = asyncio.Lock()
         self._proc: subprocess.Popen[str] | None = None
         self._stdin_lock = threading.Lock()
+        self._command_lock = threading.Lock()
         self._acks: queue.Queue[str] = queue.Queue()
         self._esc_task: asyncio.Task | None = None
         self._sidecar_warned = False
@@ -106,10 +110,18 @@ class CUIndicatorController:
         from jarvis.core.events import (  # noqa: PLC0415
             CUControlEnded,
             CUControlStarted,
+            ScreenCaptureAnnounced,
+        )
+        from jarvis.screen_context.indicator import (  # noqa: PLC0415
+            ScreenCaptureIndicatorDismissed,
         )
 
         self._bus.subscribe(CUControlStarted, self._on_started)
         self._bus.subscribe(CUControlEnded, self._on_ended)
+        self._bus.subscribe(ScreenCaptureAnnounced, self._on_screen_announced)
+        self._bus.subscribe(
+            ScreenCaptureIndicatorDismissed, self._on_screen_dismissed
+        )
 
     async def _on_started(self, event: Any) -> None:
         del event
@@ -127,31 +139,96 @@ class CUIndicatorController:
             if self._active == 0:
                 await self._deactivate()
 
+    async def _on_screen_announced(self, event: Any) -> None:
+        from jarvis.screen_context.indicator import acknowledge  # noqa: PLC0415
+
+        visible = False
+        try:
+            async with self._lock:
+                self._screen_active.add(event.trace_id)
+                hint = (
+                    _ESC_HINTS.get(_resolve_hint_language(), _ESC_HINTS["en"])
+                    if self._active and self._esc_task is not None
+                    else ""
+                )
+                visible = await self._show_border(hint=hint, required=True)
+        except Exception:  # noqa: BLE001 - acknowledge failure honestly
+            log.warning(
+                "[screen-context-indicator] failed to show capture border",
+                exc_info=True,
+            )
+        finally:
+            acknowledge(event.trace_id, visible=visible)
+
+    async def _on_screen_dismissed(self, event: Any) -> None:
+        async with self._lock:
+            self._screen_active.discard(event.trace_id)
+            if self._screen_active or self._active:
+                return
+            await self._stop_border()
+
     # ------------------------------------------------------------- activation
     async def _activate(self) -> None:
         esc_armed = self._arm_escape()
-        if not _screen_indicator_enabled():
+        hint = (
+            _ESC_HINTS.get(_resolve_hint_language(), _ESC_HINTS["en"])
+            if esc_armed
+            else ""
+        )
+        await self._show_border(hint=hint, required=False)
+
+    async def _show_border(self, *, hint: str, required: bool) -> bool:
+        """Ensure the shared sidecar is visibly showing and return its ACK."""
+        if not required and not _screen_indicator_enabled():
             log.debug("[cu-indicator] disabled via [computer_use].screen_indicator")
-            return
+            return False
         ok, reason = self._border_capability()
         if not ok:
             if not self._sidecar_warned:
                 self._sidecar_warned = True
                 log.info("[cu-indicator] screen border unavailable: %s", reason)
-            return
+            return False
         await asyncio.to_thread(self._spawn_sidecar)
-        hint = _ESC_HINTS.get(_resolve_hint_language(), _ESC_HINTS["en"]) if esc_armed else ""
-        self._send(protocol.CMD_SHOW, hint=hint)
-        if not capture_exclusion_available() and self._proc is not None:
-            capture_guard.register_hook(self._suppress_for_grab)
+        if self._proc is None:
+            return False
+        # Register on every OS. Windows display affinity is the fast path, but
+        # its API can fail per window; blank/unblank is the correctness backstop.
+        capture_guard.register_hook(self._suppress_for_grab)
+        return await asyncio.to_thread(
+            self._send_and_wait,
+            protocol.CMD_SHOW,
+            _SHOW_ACK_TIMEOUT_S,
+            hint=hint,
+        )
 
     async def _deactivate(self) -> None:
         self._disarm_escape()
+        if self._screen_active:
+            # A one-shot capture still owns the border. Remove the Escape
+            # promise now that no Computer-Use mission remains cancellable.
+            await asyncio.to_thread(
+                self._send_and_wait,
+                protocol.CMD_SHOW,
+                _SHOW_ACK_TIMEOUT_S,
+                hint="",
+            )
+            return
+        await self._stop_border()
+
+    async def _stop_border(self) -> None:
         capture_guard.unregister_hook()
         if self._proc is None:
             return
-        self._send(protocol.CMD_HIDE)
-        self._send(protocol.CMD_QUIT)
+        await asyncio.to_thread(
+            self._send_and_wait,
+            protocol.CMD_HIDE,
+            _SHOW_ACK_TIMEOUT_S,
+        )
+        await asyncio.to_thread(
+            self._send_and_wait,
+            protocol.CMD_QUIT,
+            _SHOW_ACK_TIMEOUT_S,
+        )
         with self._stdin_lock:
             proc, self._proc = self._proc, None
         if proc is not None:
@@ -219,11 +296,7 @@ class CUIndicatorController:
             assert proc.stdout is not None
             for line in proc.stdout:
                 ack = protocol.decode_ack(line)
-                # Only the capture guard ever WAITS on an ack, and only for
-                # blank/unblank — queueing the rest (show/hide/quit) would
-                # grow the queue unboundedly on Windows, where the guard is
-                # never registered (capture-affinity covers it).
-                if ack in (protocol.CMD_BLANK, protocol.CMD_UNBLANK):
+                if ack in protocol.ALL_COMMANDS:
                     self._acks.put(ack)
         except Exception:  # noqa: BLE001
             log.debug("[cu-indicator] ack pipe closed", exc_info=True)
@@ -254,6 +327,21 @@ class CUIndicatorController:
             capture_guard.unregister_hook()
             return False
 
+    def _send_and_wait(self, cmd: str, timeout_s: float, **fields: Any) -> bool:
+        """Serialize one command and verify the matching renderer ACK."""
+        with self._command_lock:
+            while True:
+                try:
+                    self._acks.get_nowait()
+                except queue.Empty:  # stale-ACK drain is complete
+                    break
+            if not self._send(cmd, **fields):
+                return False
+            try:
+                return self._acks.get(timeout=timeout_s) == cmd
+            except queue.Empty:  # timeout is the caller-visible false result
+                return False
+
     def _reap(self, proc: subprocess.Popen[str]) -> None:
         try:
             proc.wait(timeout=_QUIT_GRACE_S)
@@ -273,26 +361,31 @@ class CUIndicatorController:
     # ----------------------------------------------------------- capture guard
     @contextmanager
     def _suppress_for_grab(self):
-        """Blank the border around one CU frame grab (non-Windows only).
+        """Blank the border around one frame grab on every desktop OS.
 
         Fail-open: a late/lost ack only costs the timeout, never the grab.
         """
-        while True:  # drop stale acks so we wait on OUR blank
-            try:
-                self._acks.get_nowait()
-            except queue.Empty:
-                break
-        sent = self._send(protocol.CMD_BLANK)
-        if sent:
-            try:
-                self._acks.get(timeout=_BLANK_ACK_TIMEOUT_S)
-            except queue.Empty:
-                pass  # fail-open: grab anyway
-        try:
-            yield
-        finally:
+        with self._command_lock:
+            while True:
+                try:
+                    self._acks.get_nowait()
+                except queue.Empty:  # stale-ACK drain is complete
+                    break
+            sent = self._send(protocol.CMD_BLANK)
             if sent:
-                self._send(protocol.CMD_UNBLANK)
+                try:
+                    self._acks.get(timeout=_BLANK_ACK_TIMEOUT_S)
+                except queue.Empty:  # fail open after the bounded blank wait
+                    pass
+            try:
+                yield
+            finally:
+                if sent:
+                    self._send(protocol.CMD_UNBLANK)
+                    try:
+                        self._acks.get(timeout=_BLANK_ACK_TIMEOUT_S)
+                    except queue.Empty:  # cleanup remains best effort
+                        pass
 
     # ---------------------------------------------------------------- escape
     def _arm_escape(self) -> bool:

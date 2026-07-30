@@ -177,6 +177,35 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(toast.message).not.toContain("private content");
   });
 
+  it("shows a metadata-only receipt for one-shot screen capture", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("ScreenCaptureAnnounced", {
+        target_kind: "monitor",
+        target_label: "private title must not enter the toast",
+      }),
+    );
+    MockWebSocket.last!.deliver(
+      envelope("ScreenCaptureCompleted", {
+        width: 1600,
+        height: 900,
+        redaction_count: 3,
+        target_label: "private title must not enter the toast",
+      }),
+    );
+
+    const toasts = useEventStore.getState().toasts;
+    expect(toasts).toHaveLength(2);
+    expect(toasts[0].message).toContain("requested surface");
+    expect(toasts[1].message).toContain("1600×900");
+    expect(toasts[1].message).toContain("3 redaction");
+    expect(toasts.map((toast) => toast.message).join(" ")).not.toContain(
+      "private title",
+    );
+  });
+
   it("invalidates every documentation query after a registry reload", async () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     render(<Harness />);

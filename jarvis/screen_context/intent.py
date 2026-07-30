@@ -173,7 +173,8 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bwas\s+siehst\s+du\b"
     # screen nouns
     r"|\bauf\s+(?:dem|meinem)\s+bildschirm\b|\bam\s+bildschirm\b|\bmein\s+bildschirm\b"
-    r"|\b(?:mach|mache|erstelle|nimm)\s+(?:bitte\s+)?(?:einen\s+)?screenshot\b"  # i18n-allow: DE input
+    # i18n-allow: German speech-input matching data
+    r"|\b(?:mach|mache|erstelle|nimm)\s+(?:bitte\s+)?(?:einen\s+)?screenshot\b"
     r"|\bbildschirmfoto\s+(?:machen|aufnehmen|erstellen)\b"  # i18n-allow: DE input
     r"|\bauf\s+dem\s+schirm\b|\bhier\s+auf\s+dem\b"  # i18n-allow: DE input
     r"|\b(?:diese|die)\s+fehlermeldung\b"  # i18n-allow: DE input
@@ -300,6 +301,44 @@ _CLARIFY_QUESTION: dict[str, str] = {
     "es": "¿Quieres que eche un vistazo a tu pantalla?",
 }
 
+_CANCELLED_REPLY: dict[str, str] = {
+    "en": "Okay, I won't look at your screen.",
+    "de": "Okay, ich schaue nicht auf deinen Bildschirm.",  # i18n-allow: spoken
+    "es": "De acuerdo, no miraré tu pantalla.",
+}
+
+_NO_VISION_PROVIDER_REPLY: dict[str, str] = {
+    "en": (
+        "I captured the screen, but none of your available assistants can "
+        "inspect images right now. Connect a vision-capable provider in API Keys."
+    ),
+    "de": (
+        "Ich habe den Bildschirm aufgenommen, aber keiner deiner verfügbaren "  # i18n-allow
+        "Assistenten kann gerade Bilder auswerten. Verbinde unter API-Keys "  # i18n-allow
+        "einen Anbieter mit Bildverarbeitung."  # i18n-allow
+    ),  # i18n-allow: spoken
+    "es": (
+        "Capturé la pantalla, pero ninguno de tus asistentes disponibles puede "
+        "analizar imágenes ahora. Conecta un proveedor con visión en Claves API."
+    ),
+}
+
+_CAPTURE_FAILURE_REPLY: dict[str, str] = {
+    "en": (
+        "I could not inspect the screen safely because Screen Context failed. "
+        "No screenshot was attached."
+    ),
+    "de": (
+        "Ich konnte den Bildschirm nicht sicher prüfen, weil der "  # i18n-allow
+        "Bildschirmkontext fehlgeschlagen ist. Es wurde kein Screenshot "  # i18n-allow
+        "angehängt."  # i18n-allow
+    ),  # i18n-allow: spoken
+    "es": (
+        "No pude revisar la pantalla de forma segura porque falló el contexto "
+        "de pantalla. No se adjuntó ninguna captura."
+    ),
+}
+
 #: Fallback locale for a language with no entry — the repo-wide default.
 _FALLBACK_LOCALE = "en"
 
@@ -317,6 +356,27 @@ def clarifying_question(locale: str) -> str:
     return _CLARIFY_QUESTION.get(base) or _CLARIFY_QUESTION[_FALLBACK_LOCALE]
 
 
+def cancelled_reply(locale: str) -> str:
+    """The localized outcome after the user vetoes a proposed screen look."""
+    base = (locale or "").split("-")[0].split("_")[0].strip().lower()
+    return _CANCELLED_REPLY.get(base) or _CANCELLED_REPLY[_FALLBACK_LOCALE]
+
+
+def no_vision_provider_reply(locale: str) -> str:
+    """Honest fallback when no configured brain can inspect an attached image."""
+    base = (locale or "").split("-")[0].split("_")[0].strip().lower()
+    return (
+        _NO_VISION_PROVIDER_REPLY.get(base)
+        or _NO_VISION_PROVIDER_REPLY[_FALLBACK_LOCALE]
+    )
+
+
+def capture_failure_reply(locale: str) -> str:
+    """Honest fail-closed reply for an unexpected Screen Context defect."""
+    base = (locale or "").split("-")[0].split("_")[0].strip().lower()
+    return _CAPTURE_FAILURE_REPLY.get(base) or _CAPTURE_FAILURE_REPLY[_FALLBACK_LOCALE]
+
+
 #: Locales with a clarifying question. Used by the parity test that pins this
 #: table to the supported-locale list, so a new locale cannot ship half-wired.
 SUPPORTED_CLARIFY_LOCALES: frozenset[str] = frozenset(_CLARIFY_QUESTION)
@@ -324,6 +384,9 @@ SUPPORTED_CLARIFY_LOCALES: frozenset[str] = frozenset(_CLARIFY_QUESTION)
 
 __all__ = [
     "SUPPORTED_CLARIFY_LOCALES",
+    "cancelled_reply",
+    "capture_failure_reply",
     "clarifying_question",
     "classify",
+    "no_vision_provider_reply",
 ]
