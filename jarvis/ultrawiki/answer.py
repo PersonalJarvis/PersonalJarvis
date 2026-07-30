@@ -117,7 +117,9 @@ def _parse_provider_answer(
     text: str, evidence_count: int
 ) -> tuple[str, Literal["answered", "insufficient_evidence"], tuple[int, ...]]:
     """Validate and remove the model-facing insufficiency protocol marker."""
-    normalized = _normalize_citations(text.strip())
+    normalized = _normalize_citations(
+        text.strip().replace("\r\n", "\n").replace("\r", "\n")
+    )
     first_line, separator, remainder = normalized.partition("\n")
     if first_line == _INSUFFICIENT_PREFIX:
         explanation = remainder.strip() if separator else ""

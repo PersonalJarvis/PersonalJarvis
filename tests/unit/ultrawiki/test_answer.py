@@ -133,7 +133,7 @@ async def test_answer_marks_insufficient_evidence_without_false_citations(
     async def fake_complete(**kwargs):
         aggregated = SimpleNamespace(
             text=(
-                "[[ULTRAWIKI_INSUFFICIENT]]\n"
+                "[[ULTRAWIKI_INSUFFICIENT]]\r\n"
                 "The evidence does not contain the ferry schedule."
             )
         )
