@@ -35,6 +35,8 @@ _REAL_JUNK = [
     "qa-artifacts/chrome-profile-215c81b1bed945dbb720aeb3f32b38d3/Variations",
     "qa-artifacts/chrome-profile-53f907ebce1e41fe82c76f8894c64cf0/first_party_sets.db-journal",
     "qa-artifacts/chrome-profile-2889ad51367a4d8c9ae31efac95bb17f/Crashpad/settings.dat",
+    ".uv-cache-audit/wheels-v6/pypi/fastapi/fastapi-0.138.0-py3-none-any.lock",
+    ".uv-cache-wiki/builds-v0/.tmp123/Lib/site-packages/_virtualenv.py",
 ]
 
 # Real genuine deliverables from the SAME mission — every one must survive
@@ -60,6 +62,8 @@ _LEGIT_LOOKALIKES = [
     "output.log",                   # gitignored log IS a deliverable
     "data_0",                       # a bare data_N file outside a profile
     "scoped_directory/main.py",     # 'scoped_dir' prefix but not a temp profile
+    "reports/uv-cache-analysis.md", # ordinary report name, not a hidden cache root
+    ".uv-cache-audit.md",           # final filename, not a directory segment
 ]
 
 

@@ -905,6 +905,38 @@ def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
     assert _is_deliverable_relpath((*base, "qa-artifacts", "melbourne-plan-render.png"))
 
 
+def test_is_deliverable_relpath_excludes_uv_cache_scratch() -> None:
+    """A sandbox-local uv cache is process state, never a mission result."""
+    base = ("tasks", "019fa4bc-9110", "artifacts", "files")
+    assert not _is_deliverable_relpath(
+        (*base, ".uv-cache-audit", "wheels-v6", "pypi", "fastapi.lock")
+    )
+    assert not _is_deliverable_relpath(
+        (*base, ".uv-cache-wiki", "builds-v0", ".tmp123", "pyvenv.cfg")
+    )
+    assert _is_deliverable_relpath((*base, "reports", "uv-cache-analysis.md"))
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_hides_uv_cache_from_existing_missions(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """Read-side filtering repairs missions archived before the source fix."""
+    d = _make_mission_dir(tmp_path, "019fa4bc8d2b")
+    files = d / "tasks" / "019fa4bc-9110" / "artifacts" / "files"
+    _seed(files / ".uv-cache-audit" / "wheels-v6" / "fastapi.lock", "")
+    _seed(files / ".uv-cache-audit" / "builds-v0" / "pyvenv.cfg", "cache")
+    _seed(files / "wiki-audit.md", "# Findings")
+
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+
+    assert r.status_code == 200
+    assert [item["path"] for item in r.json()["files"]] == [
+        "tasks/019fa4bc-9110/artifacts/files/wiki-audit.md"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_list_artifacts_lists_only_deliverables(app: FastAPI, tmp_path: Path) -> None:
     """Only genuine deliverables are listed; the forensic ``diff.patch`` one

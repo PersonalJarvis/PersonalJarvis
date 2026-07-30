@@ -112,6 +112,19 @@ _BROWSER_PROFILE_SEG_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
+# A worker may redirect uv's cache into its sandbox when the global user cache
+# is not writable.  The cache then sits inside the worktree and the archive's
+# intentionally broad ignored-file union can mistake hundreds of uv metadata,
+# virtualenv, and zero-byte lock files for deliverables.  Match only hidden
+# directory-style names (``.uv-cache`` / ``.uv-cache-<purpose>``); a normal
+# final filename such as ``uv-cache-analysis.md`` is handled below as a genuine
+# deliverable.
+_UV_CACHE_ROOT_SEG_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\.uv-cache(?:[._-].*)?$",
+    re.IGNORECASE,
+)
+
+
 def is_browser_scratch_segment(segment: str) -> bool:
     """True iff *segment* is a browser user-data / automation profile root dir."""
     return bool(_BROWSER_PROFILE_SEG_RE.match(segment))
@@ -131,12 +144,16 @@ def is_nondeliverable_scratch(rel: str) -> bool:
     norm = rel.replace("\\", "/").strip("/")
     if not norm:
         return False
-    for seg in norm.split("/"):
-        if not seg or seg == ".":
-            continue
+    segments = [seg for seg in norm.split("/") if seg and seg != "."]
+    for index, seg in enumerate(segments):
         if seg in _JUNK_DIR_NAMES:
             return True
         if is_browser_scratch_segment(seg):
+            return True
+        # uv cache roots are directories. Restrict the prefix match to a
+        # non-final segment so a hidden report file named after the incident is
+        # not accidentally suppressed.
+        if index < len(segments) - 1 and _UV_CACHE_ROOT_SEG_RE.match(seg):
             return True
     return False
 

@@ -595,14 +595,34 @@ function isPlumbingArtifact(path: string): boolean {
   );
 }
 
+const ARCHIVED_DELIVERABLE_PREFIX = /^tasks\/[^/]+\/artifacts\/files\//;
+
+/** Hide archive plumbing from the label while retaining the full path for APIs. */
+function deliverableDisplayPath(path: string): string {
+  return path.replace(ARCHIVED_DELIVERABLE_PREFIX, "");
+}
+
+/** Put primary top-level files first, then group nested assets alphabetically. */
+function compareDeliverablePaths(a: ArtifactSummary, b: ArtifactSummary): number {
+  const left = deliverableDisplayPath(a.path);
+  const right = deliverableDisplayPath(b.path);
+  const depth = left.split("/").length - right.split("/").length;
+  return depth || left.localeCompare(right, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function ArtifactsSection({ slug }: { slug: string }) {
   const t = useT();
   const q = useArtifactsForOutput(slug);
   const caps = useOutputsCapabilities();
   const nativeActions = caps.data?.native_file_actions ?? false;
   const allFiles = q.data?.files ?? [];
-  // Show genuine deliverables + the captured diff; hide stream/stderr/mcp noise.
-  const files = allFiles.filter((f) => !isPlumbingArtifact(f.path));
+  // Keep a defensive client-side plumbing filter for older API responses.
+  const files = allFiles
+    .filter((f) => !isPlumbingArtifact(f.path))
+    .sort(compareDeliverablePaths);
 
   return (
     <section className="rounded-xl border border-border bg-card/40 p-4">
@@ -738,8 +758,12 @@ function ArtifactRow({
           ) : (
             <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
           )}
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-            {file.path}
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[11px]"
+            data-testid="artifact-path"
+            title={file.path}
+          >
+            {deliverableDisplayPath(file.path)}
           </span>
         </button>
         <span className="shrink-0 text-[10px] text-muted-foreground">

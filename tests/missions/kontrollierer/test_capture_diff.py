@@ -730,3 +730,30 @@ def test_archive_skips_browser_profile_scratch(
         if "chrome-profile-dd6355b81ddb49db87fc5045a7012b19" in p.parts
     ]
     assert not leaked, f"browser-profile scratch leaked into archive: {leaked}"
+
+
+def test_archive_skips_sandbox_local_uv_cache(
+    worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
+) -> None:
+    """A writable uv fallback cache must not become hundreds of results."""
+    (worktree / "wiki-audit.md").write_text("# Findings\n", encoding="utf-8")
+    cache = worktree / ".uv-cache-audit"
+    (cache / "wheels-v6" / "pypi" / "fastapi").mkdir(parents=True)
+    (cache / "wheels-v6" / "pypi" / "fastapi" / "fastapi.lock").write_bytes(b"")
+    (cache / "builds-v0" / ".tmp123").mkdir(parents=True)
+    (cache / "builds-v0" / ".tmp123" / "pyvenv.cfg").write_text(
+        "home = worker cache\n", encoding="utf-8"
+    )
+
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id="019fa4bc91100000",
+    )
+
+    assert artifacts is not None
+    files_dir = artifacts / "files"
+    assert (files_dir / "wiki-audit.md").is_file()
+    assert not (files_dir / ".uv-cache-audit").exists()
