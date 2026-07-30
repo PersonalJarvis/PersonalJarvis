@@ -42,7 +42,6 @@ async def _explore_context(request: Request) -> tuple[Any, Any, dict[str, int]]:
     store = await _store_of(service)
     sources = await store.list_sources()
     counts = await store.counts()
-    distilled, _max_id, _newest = await store.distilled_fingerprint()
     projection = await get_projection(store)
     return (
         store,
@@ -50,7 +49,7 @@ async def _explore_context(request: Request) -> tuple[Any, Any, dict[str, int]]:
         {
             "sources": len(sources),
             "items": int(getattr(counts, "total", 0)),
-            "distilled": int(distilled),
+            "distilled": int(getattr(counts, "distilled", 0)),
         },
     )
 
@@ -70,7 +69,9 @@ def _explore_reason(corpus: dict[str, int], entity_count: int) -> str:
     return ExploreReason.OK.value
 
 
-def _entity_payload(entity: Any, projection: Any) -> dict[str, Any]:
+def _entity_payload(
+    entity: Any, projection: Any, *, neighbor_limit: int
+) -> dict[str, Any]:
     """One entity as the UI needs it — neighbours carry their display label,
     because a raw case-folded key is not something to show a human."""
     return {
@@ -79,6 +80,7 @@ def _entity_payload(entity: Any, projection: Any) -> dict[str, Any]:
         "mentions": entity.mentions,
         "first_seen": entity.first_seen,
         "last_seen": entity.last_seen,
+        "neighbor_total": len(entity.neighbors),
         "neighbors": [
             {
                 "key": key,
@@ -87,7 +89,7 @@ def _entity_payload(entity: Any, projection: Any) -> dict[str, Any]:
                 ),
                 "shared": shared,
             }
-            for key, shared in entity.neighbors
+            for key, shared in entity.neighbors[:neighbor_limit]
         ],
     }
 
@@ -129,7 +131,10 @@ async def list_explore_entities(
     page = matched[offset : offset + limit]
     return {
         "ok": True,
-        "entities": [_entity_payload(entity, projection) for entity in page],
+        "entities": [
+            _entity_payload(entity, projection, neighbor_limit=12)
+            for entity in page
+        ],
         "total": len(matched),
         "corpus": corpus,
         "reason": _explore_reason(corpus, len(projection.entities)),
@@ -153,7 +158,7 @@ async def get_explore_entity(
     moments = projection.moments_by_entity.get(entity.key, ())
     return {
         "ok": True,
-        "entity": _entity_payload(entity, projection),
+        "entity": _entity_payload(entity, projection, neighbor_limit=100),
         "moments": [_moment_payload(m) for m in moments[:limit]],
         "total": len(moments),
         "corpus": corpus,
@@ -201,6 +206,18 @@ async def get_explore_graph(
         le=100,
         description="Hide entities mentioned fewer times than this",
     ),
+    max_nodes: int = Query(
+        default=250,
+        ge=1,
+        le=2000,
+        description="Maximum graph nodes returned",
+    ),
+    max_edges: int = Query(
+        default=1000,
+        ge=0,
+        le=10000,
+        description="Maximum graph edges returned",
+    ),
 ) -> dict[str, Any]:
     """Nodes + weighted edges above a mention floor.
 
@@ -209,12 +226,26 @@ async def get_explore_graph(
     one-off at once is a hairball rather than a map.
     """
     _store, projection, corpus = await _explore_context(request)
-    nodes, edges = projection.graph(min_mentions=min_mentions)
+    all_nodes, all_edges = projection.graph(min_mentions=min_mentions)
+    nodes = all_nodes[:max_nodes]
+    kept = {str(node["key"]) for node in nodes}
+    eligible_edges = [
+        edge
+        for edge in all_edges
+        if edge["source"] in kept and edge["target"] in kept
+    ]
+    eligible_edges.sort(
+        key=lambda edge: (-int(edge["weight"]), edge["source"], edge["target"])
+    )
+    edges = eligible_edges[:max_edges]
     return {
         "ok": True,
         "nodes": nodes,
         "edges": edges,
         "min_mentions": min_mentions,
+        "available_nodes": len(all_nodes),
+        "available_edges": len(eligible_edges),
+        "truncated": len(nodes) < len(all_nodes) or len(edges) < len(eligible_edges),
         "total_entities": len(projection.entities),
         "corpus": corpus,
         "reason": _explore_reason(corpus, len(projection.entities)),

@@ -168,6 +168,7 @@ def test_entity_detail_carries_its_moments(env):
         "How do I get to Bora Bora?",
     ]
     assert [n["label"] for n in body["entity"]["neighbors"]] == ["Bora Bora"]
+    assert body["entity"]["neighbor_total"] == 1
 
 
 def test_unknown_entity_is_a_404_not_an_empty_page(env):
@@ -239,6 +240,20 @@ def test_graph_floor_of_one_shows_the_whole_corpus(env):
     body = env.client.get("/api/ultrawiki/explore/graph", params={"min_mentions": 1}).json()
 
     assert len(body["nodes"]) == 3
+
+
+def test_graph_caps_payload_without_leaving_dangling_edges(env):
+    seed(env, TRIP)
+
+    body = env.client.get(
+        "/api/ultrawiki/explore/graph",
+        params={"min_mentions": 1, "max_nodes": 1, "max_edges": 1},
+    ).json()
+
+    assert len(body["nodes"]) == 1
+    assert body["edges"] == []
+    assert body["available_nodes"] == 3
+    assert body["truncated"] is True
 
 
 # ---------------------------------------------------------------------------

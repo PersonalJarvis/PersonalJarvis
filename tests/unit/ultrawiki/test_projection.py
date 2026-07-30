@@ -17,7 +17,9 @@ import json
 
 import pytest
 
+from jarvis.ultrawiki import projection as projection_mod
 from jarvis.ultrawiki.projection import (
+    PROJECTION_CACHE_TTL_S,
     build_projection,
     get_projection,
     normalize_entity_label,
@@ -382,12 +384,20 @@ async def test_repeated_calls_reuse_the_cached_projection(store):
     assert first is second
 
 
-async def test_new_distillation_invalidates_the_cache(store):
+async def test_new_distillation_refreshes_after_the_short_cache_window(
+    store, monkeypatch
+):
+    clock = [100.0]
+    monkeypatch.setattr(projection_mod, "_monotonic", lambda: clock[0])
     await seed_source(store)
     await seed_distilled(store, "a", question="Q")
     first = await get_projection(store)
 
     await seed_distilled(store, "b", question="Q2")
+    still_cached = await get_projection(store)
+    assert still_cached is first
+
+    clock[0] += PROJECTION_CACHE_TTL_S + 0.1
     second = await get_projection(store)
 
     assert second is not first

@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
@@ -297,27 +298,59 @@ async def build_projection(store: _ProjectionSource) -> WikiProjection:
 
 #: Per-store cache. Weak keys so a closed store is collected with its entry;
 #: the value carries the fingerprint the projection was built from.
-_CACHE: WeakKeyDictionary[Any, tuple[tuple[int, int, str], WikiProjection]] = WeakKeyDictionary()
+PROJECTION_CACHE_TTL_S = 15.0
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectionCacheEntry:
+    fingerprint: tuple[int, int, str]
+    projection: WikiProjection
+    checked_at: float
+
+
+_CACHE: WeakKeyDictionary[Any, _ProjectionCacheEntry] = WeakKeyDictionary()
 _CACHE_LOCK = asyncio.Lock()
+_monotonic = time.monotonic
 
 
 async def get_projection(store: _ProjectionSource) -> WikiProjection:
-    """The cached projection, rebuilt whenever its input changed.
+    """The cached projection, refreshed shortly after its input changes.
 
-    The fingerprint query is a single aggregate; the rebuild behind it is the
-    expensive part, so concurrent callers serialize on one lock instead of
-    each folding the same corpus.
+    A busy pipeline changes the fingerprint every few seconds. Checking it on
+    every UI request made the cache useless and repeatedly folded the entire
+    corpus while the user clicked around. The projection is a browse aid, not
+    the retrieval index, so a bounded 15-second stale window is preferable to
+    multi-second page loads. Explicit invalidation remains immediate.
     """
-    fingerprint = await store.distilled_fingerprint()
+    checked_at = _monotonic()
     cached = _CACHE.get(store)
-    if cached is not None and cached[0] == fingerprint:
-        return cached[1]
+    if (
+        cached is not None
+        and checked_at - cached.checked_at < PROJECTION_CACHE_TTL_S
+    ):
+        return cached.projection
     async with _CACHE_LOCK:
         cached = _CACHE.get(store)
-        if cached is not None and cached[0] == fingerprint:
-            return cached[1]
+        checked_at = _monotonic()
+        if (
+            cached is not None
+            and checked_at - cached.checked_at < PROJECTION_CACHE_TTL_S
+        ):
+            return cached.projection
+        fingerprint = await store.distilled_fingerprint()
+        if cached is not None and cached.fingerprint == fingerprint:
+            _CACHE[store] = _ProjectionCacheEntry(
+                fingerprint=fingerprint,
+                projection=cached.projection,
+                checked_at=checked_at,
+            )
+            return cached.projection
         projection = await build_projection(store)
-        _CACHE[store] = (fingerprint, projection)
+        _CACHE[store] = _ProjectionCacheEntry(
+            fingerprint=fingerprint,
+            projection=projection,
+            checked_at=checked_at,
+        )
         return projection
 
 
