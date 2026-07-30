@@ -181,6 +181,8 @@ class JarvisConversationsConnector:
         backfill=True,
         incremental=IncrementalMode.CURSOR,
         deletes=False,
+        refresh_interval_s=60.0,
+        reconcile_interval_s=86_400.0,
     )
 
     # ------------------------------------------------------------------

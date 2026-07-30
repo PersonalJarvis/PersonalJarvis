@@ -327,6 +327,8 @@ class LocalFolderConnector:
         backfill=True,
         incremental=IncrementalMode.CURSOR,
         deletes=True,
+        refresh_interval_s=300.0,
+        reconcile_interval_s=86_400.0,
     )
 
     DEFAULT_EXTENSIONS: tuple[str, ...] = (

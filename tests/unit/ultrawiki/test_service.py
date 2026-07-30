@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -90,6 +91,18 @@ class FakeConnector:
         for item in self._items:
             if int(item.metadata.get("mtime_ns", 0)) > threshold:
                 yield item
+
+
+class ScheduledFakeConnector(FakeConnector):
+    """Fake with both scheduler lanes enabled."""
+
+    capabilities = ConnectorCapabilities(
+        backfill=True,
+        incremental=IncrementalMode.CURSOR,
+        deletes=True,
+        refresh_interval_s=60.0,
+        reconcile_interval_s=86_400.0,
+    )
 
 
 class ExportFileConnector:
@@ -289,6 +302,61 @@ async def test_approved_sync_ingests_with_checkpoints_and_cursor(service, monkey
     assert ("incremental", "1449") in calls
 
 
+async def test_freshness_scheduler_runs_incremental_then_full_reconcile(
+    service, monkeypatch
+):
+    """Approved sources stay fresh without pressing Import again."""
+    calls: list[tuple[str, Any]] = []
+    patch_connectors(
+        monkeypatch,
+        {"scheduled": lambda: ScheduledFakeConnector(make_items(3), calls)},
+    )
+    source = await service.add_source("scheduled", "Scheduled Source")
+    await service.approve_source(source["id"], auto_sync=False)
+    await wait_for_job(
+        service, await service.start_sync(source["id"], full=True)
+    )
+
+    assert await service._sync_due_sources(now=datetime.now(UTC)) == []  # noqa: SLF001
+
+    incremental_at = datetime.now(UTC) + timedelta(minutes=2)
+    [incremental_id] = await service._sync_due_sources(  # noqa: SLF001
+        now=incremental_at
+    )
+    incremental = await wait_for_job(service, incremental_id)
+    assert incremental["mode"] == "incremental"
+
+    reconcile_at = datetime.now(UTC) + timedelta(days=2)
+    [reconcile_id] = await service._sync_due_sources(  # noqa: SLF001
+        now=reconcile_at
+    )
+    reconcile = await wait_for_job(service, reconcile_id)
+    assert reconcile["mode"] == "backfill"
+    assert [kind for kind, _cursor in calls] == [
+        "backfill",
+        "incremental",
+        "backfill",
+    ]
+
+
+async def test_manual_export_source_is_not_polled(service, monkeypatch):
+    calls: list[tuple[str, Any]] = []
+    patch_connectors(
+        monkeypatch,
+        {"export-conn": lambda: ExportFileConnector(make_items(2), calls)},
+    )
+    source = await service.add_source("export-conn", "Export File")
+    await service.approve_source(source["id"], auto_sync=False)
+
+    assert (
+        await service._sync_due_sources(  # noqa: SLF001
+            now=datetime.now(UTC) + timedelta(days=30)
+        )
+        == []
+    )
+    assert calls == []
+
+
 # ---------------------------------------------------------------------------
 # Cancellation
 # ---------------------------------------------------------------------------
@@ -334,7 +402,9 @@ async def test_shutdown_leaves_no_stray_tasks(service, monkeypatch):
     )
     await service.activate({})
     pipeline_task = service._pipeline_task
+    freshness_task = service._freshness_task
     assert pipeline_task is not None and not pipeline_task.done()
+    assert freshness_task is not None and not freshness_task.done()
 
     source = await service.add_source("blocking-conn", "Blocked Source")
     await service.approve_source(source["id"], auto_sync=False)
@@ -345,8 +415,10 @@ async def test_shutdown_leaves_no_stray_tasks(service, monkeypatch):
     await service.shutdown()
 
     assert pipeline_task.done()
+    assert freshness_task.done()
     assert sync_task.done()
     assert service._pipeline_task is None
+    assert service._freshness_task is None
     assert service._sync_tasks == {}
     assert service._store is None
     snap = service.job_snapshot(job_id)

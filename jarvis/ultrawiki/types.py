@@ -145,11 +145,19 @@ class RawItem:
 @dataclass(frozen=True, slots=True)
 class ConnectorCapabilities:
     """Declaration that drives the scheduler; connector authors never
-    write scheduling logic themselves."""
+    write scheduling logic themselves.
+
+    ``refresh_interval_s`` asks the runtime to run the cheapest available
+    incremental read. ``reconcile_interval_s`` asks for a from-scratch walk
+    that repairs missed edits and, when ``deletes`` is true, tombstones
+    source-side deletions. ``None`` means manual-only for that lane.
+    """
 
     backfill: bool = True
     incremental: IncrementalMode = IncrementalMode.NONE
     deletes: bool = False
+    refresh_interval_s: float | None = None
+    reconcile_interval_s: float | None = None
 
 
 @dataclass(slots=True)

@@ -408,6 +408,8 @@ class CustomSourceConnector:
         # idempotent, so the worst case is repeated work, never duplicates.
         incremental=IncrementalMode.CURSOR,
         deletes=False,
+        refresh_interval_s=900.0,
+        reconcile_interval_s=86_400.0,
     )
 
     async def backfill(

@@ -283,6 +283,8 @@ class PluginBridgeConnector:
         backfill=True,
         incremental=IncrementalMode.NONE,  # prototype: freshness = re-run backfill
         deletes=False,
+        refresh_interval_s=3_600.0,
+        reconcile_interval_s=86_400.0,
     )
 
     async def backfill(

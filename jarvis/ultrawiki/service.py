@@ -91,6 +91,12 @@ SYNC_PHASES: tuple[str, ...] = (
 #: Items per ``upsert_items`` transaction / sync-state checkpoint.
 SYNC_CHUNK_SIZE = 200
 
+#: Source freshness runs off the boot path and wakes cheaply to find due work.
+#: Connector capabilities own the actual per-source cadence.
+FRESHNESS_STARTUP_GRACE_S = 30.0
+FRESHNESS_TICK_S = 30.0
+FRESHNESS_MAX_CONCURRENT_SYNCS = 2
+
 #: What a plugin-bridge source is told when its integration has no pull
 #: adapter yet: the sync really ran, it really imported nothing, and that is
 #: not the user's fault or a broken credential.
@@ -156,6 +162,31 @@ def _slugify(name: str) -> str:
 
 def _iso_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _seconds_since(value: Any, now: datetime) -> float | None:
+    """Age of an ISO timestamp, or ``None`` when absent/unusable."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(0.0, (now - parsed.astimezone(UTC)).total_seconds())
+
+
+def _is_due(value: Any, interval_s: Any, now: datetime) -> bool:
+    try:
+        interval = float(interval_s)
+    except (TypeError, ValueError):
+        return False
+    if interval <= 0:
+        return False
+    age = _seconds_since(value, now)
+    return age is None or age >= interval
 
 
 def _counts_dict(counts: PipelineCounts) -> dict[str, int]:
@@ -359,6 +390,7 @@ class UltraWikiService:
         self._backend_in_use = ""
         self._pipeline: Any = None
         self._pipeline_task: asyncio.Task[None] | None = None
+        self._freshness_task: asyncio.Task[None] | None = None
         self._cancel_event: asyncio.Event | None = None
         self._start_lock = asyncio.Lock()
         self._sync_tasks: dict[str, asyncio.Task[None]] = {}
@@ -478,6 +510,20 @@ class UltraWikiService:
                     ),
                     name="ultrawiki-pipeline",
                 )
+            if (
+                self._uw_enabled()
+                and self._cancel_event is not None
+                and self._freshness_task is None
+            ):
+                freshness_grace = max(
+                    FRESHNESS_STARTUP_GRACE_S, float(pipeline_grace_s or 0.0)
+                )
+                self._freshness_task = asyncio.create_task(
+                    self._run_freshness_after_grace(
+                        self._cancel_event, freshness_grace
+                    ),
+                    name="ultrawiki-source-freshness",
+                )
 
     @staticmethod
     async def _run_pipeline_after_grace(
@@ -498,6 +544,111 @@ class UltraWikiService:
             if cancel_event.is_set():
                 return
         await pipeline.run(cancel_event)
+
+    async def _run_freshness_after_grace(
+        self, cancel_event: asyncio.Event, grace_s: float
+    ) -> None:
+        """Schedule due source reads without entering the boot critical path."""
+        try:
+            await asyncio.wait_for(cancel_event.wait(), timeout=max(0.0, grace_s))
+        except TimeoutError:
+            pass
+        if cancel_event.is_set():
+            return
+        while not cancel_event.is_set():
+            try:
+                await self._sync_due_sources()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — one scheduler tick cannot kill freshness
+                log.warning("UltraWiki source freshness tick failed", exc_info=True)
+            try:
+                await asyncio.wait_for(
+                    cancel_event.wait(), timeout=FRESHNESS_TICK_S
+                )
+            except TimeoutError:
+                pass
+
+    async def _sync_due_sources(
+        self, *, now: datetime | None = None
+    ) -> list[str]:
+        """Start due connector jobs and return their ids.
+
+        The helper is intentionally a single scheduler for every connector.
+        Capability declarations choose cadence and mode; connector code never
+        owns timers. Recent failed attempts count as attempts too, preventing a
+        broken remote source from being hammered every scheduler tick.
+        """
+        if not self._uw_enabled() or self._store is None:
+            return []
+        instant = (now or datetime.now(UTC)).astimezone(UTC)
+        store = self._require_store()
+        sources = await store.list_sources()
+        active_count = sum(
+            1 for job in _JOBS.values() if job.status in JOB_ACTIVE_STATUSES
+        )
+        started: list[str] = []
+        for source in sources:
+            if active_count >= FRESHNESS_MAX_CONCURRENT_SYNCS:
+                break
+            source_id = str(source.get("id") or "")
+            if (
+                not source_id
+                or source.get("consent") != ConsentState.APPROVED.value
+                or not source.get("enabled", False)
+                or _active_job_for(source_id) is not None
+            ):
+                continue
+            try:
+                connector = self._build_connector(
+                    str(source.get("connector") or "")
+                )
+            except ValueError as exc:
+                log.warning(
+                    "UltraWiki freshness skipped source %s: %s", source_id, exc
+                )
+                continue
+            capabilities = getattr(connector, "capabilities", None)
+            refresh_s = getattr(capabilities, "refresh_interval_s", None)
+            reconcile_s = getattr(capabilities, "reconcile_interval_s", None)
+            if refresh_s is None and reconcile_s is None:
+                continue
+            sync_state = await store.get_sync_state(source_id) or {}
+            last_success = sync_state.get("last_success_at") or source.get(
+                "last_sync_at"
+            )
+            refresh_due = _is_due(last_success, refresh_s, instant)
+            reconcile_due = _is_due(
+                sync_state.get("backfill_complete_at"), reconcile_s, instant
+            )
+            if not refresh_due and not reconcile_due:
+                continue
+            intervals = [
+                float(value)
+                for value in (refresh_s, reconcile_s)
+                if value is not None and float(value) > 0
+            ]
+            retry_interval = min(intervals) if intervals else FRESHNESS_TICK_S
+            if not _is_due(
+                sync_state.get("last_outcome_at"), retry_interval, instant
+            ):
+                continue
+            mode = getattr(
+                capabilities, "incremental", IncrementalMode.NONE
+            )
+            full = reconcile_due or mode == IncrementalMode.NONE
+            try:
+                job_id = await self.start_sync(source_id, full=full)
+            except (SyncAlreadyRunningError, ValueError) as exc:
+                log.info(
+                    "UltraWiki freshness could not start source %s: %s",
+                    source_id,
+                    exc,
+                )
+                continue
+            started.append(job_id)
+            active_count += 1
+        return started
 
     async def _open_store(self) -> Any:
         from jarvis.ultrawiki import store as store_mod  # noqa: PLC0415 — lazy
@@ -543,6 +694,16 @@ class UltraWikiService:
         async with self._start_lock:
             if self._cancel_event is not None:
                 self._cancel_event.set()
+            freshness_task = self._freshness_task
+            if freshness_task is not None:
+                freshness_task.cancel()
+                try:
+                    await asyncio.wait_for(freshness_task, timeout=2.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                    log.warning("UltraWiki freshness shutdown error: %s", exc)
+                self._freshness_task = None
             task = self._pipeline_task
             if task is not None:
                 task.cancel()
