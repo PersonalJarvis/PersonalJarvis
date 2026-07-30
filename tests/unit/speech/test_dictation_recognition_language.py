@@ -280,3 +280,70 @@ def test_seeding_happens_once_even_when_the_history_is_unreadable(
     assert pipe._recent_dictation_language() == ""
     assert pipe._recent_dictation_language() == ""
     assert len(calls) == 1, "the seed must not be retried on every dictation"
+
+
+class TestBreakingOutOfAWrongLanguage:
+    """The escape hatch that was missing, and the loop it left running.
+
+    A session's language is seeded from the stored history, so on every
+    dictation after the first it is already set — and the only code that
+    accepted an audio reading ran under ``if not session_language``. A recogniser
+    handed the wrong language TRANSLATES rather than mislabels, so the wrong
+    result was stored as a row in that language, which fed the anchor, which
+    seeded the next session. Measured on the live history: 13 consecutive
+    dictations over ~2 h came back English from a German speaker.
+    """
+
+    def test_a_confident_sustained_disagreement_overrules_the_anchor(self) -> None:
+        from jarvis.speech.pipeline import accept_recognition_correction
+
+        # One reading is not enough, however sure it is.
+        assert not accept_recognition_correction(
+            current="en", language="de", probability=0.99, streak=1
+        )
+        # A second consecutive one is.
+        assert accept_recognition_correction(
+            current="en", language="de", probability=0.99, streak=2
+        )
+
+    def test_an_unsure_reading_never_overrules_it(self) -> None:
+        """The bar is higher than for a first reading, on purpose.
+
+        The anchor exists so a short clip cannot redirect a session; an escape
+        hatch that opened as easily as the first reading would hand that back.
+        """
+        from jarvis.speech.pipeline import (
+            _RECOGNITION_PIN_MIN_PROBABILITY,
+            accept_recognition_correction,
+        )
+
+        # Confident enough to SET a language from nothing, not to overturn one.
+        assert not accept_recognition_correction(
+            current="en",
+            language="de",
+            probability=_RECOGNITION_PIN_MIN_PROBABILITY,
+            streak=5,
+        )
+
+    def test_agreeing_readings_are_not_corrections(self) -> None:
+        from jarvis.speech.pipeline import accept_recognition_correction
+
+        assert not accept_recognition_correction(
+            current="de", language="de", probability=1.0, streak=9
+        )
+
+    def test_a_non_answer_never_counts_as_a_disagreement(self) -> None:
+        """"unknown" is the detector saying it could not tell, not a language."""
+        from jarvis.speech.pipeline import accept_recognition_correction
+
+        for tag in ("", "auto", "unknown", "und", "nn"):
+            assert not accept_recognition_correction(
+                current="en", language=tag, probability=1.0, streak=5
+            ), tag
+
+    def test_a_provider_reporting_no_confidence_is_refused(self) -> None:
+        from jarvis.speech.pipeline import accept_recognition_correction
+
+        assert not accept_recognition_correction(
+            current="en", language="de", probability=None, streak=5
+        )

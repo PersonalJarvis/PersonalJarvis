@@ -1002,6 +1002,58 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
 #: that would pin the WRONG language while costing nothing on real speech.
 _RECOGNITION_PIN_MIN_PROBABILITY = 0.6
 
+#: The same question asked of a reading that CONTRADICTS the language already
+#: steering this session. Deliberately stricter than the first-reading gate: the
+#: anchor exists to stop a short clip redirecting a session, and an escape hatch
+#: that opens as easily as the first reading would hand that back.
+_RECOGNITION_SWITCH_MIN_PROBABILITY = 0.85
+
+#: Consecutive contradicting readings needed before the session actually
+#: switches. One confident-but-wrong reading is ordinary; two in a row on
+#: different stretches of audio is a speaker.
+_RECOGNITION_SWITCH_STREAK = 2
+
+
+def accept_recognition_correction(
+    *, current: str, language: str, probability: float, streak: int
+) -> bool:
+    """Whether an on-device reading may OVERRULE the session's language.
+
+    This is the missing half of :func:`accept_recognition_reading`, and its
+    absence was a trap that closed and never reopened. The session language is
+    seeded from the stored history, so on any dictation after the first it is
+    already set — and the only code that accepted an audio reading ran under
+    ``if not session_language``. A session that started on the wrong language
+    therefore could not be told, by anything, that it was wrong.
+
+    What made it self-sustaining rather than merely wrong is the loop it closed.
+    A recogniser handed ``language="en"`` does not mislabel German audio, it
+    TRANSLATES it, so the result really is English; that English is stored as an
+    ``en`` row; the anchor reads those rows and answers ``en`` for the next
+    dictation. Measured on the live history: 13 consecutive dictations over
+    roughly two hours (2026-07-29 15:20-17:18) came back as fluent English from
+    a speaker talking German throughout, and nothing in the run could break out
+    of it.
+
+    So a contradicting reading is allowed to win, but has to earn it — a higher
+    confidence than a first reading needs, sustained over
+    :data:`_RECOGNITION_SWITCH_STREAK` consecutive readings, so one confident
+    mistake on a noisy stretch cannot flip a correct session.
+    """
+    code = str(language or "").strip().lower()
+    if not code or code in ("auto", "unknown", "und", "nn"):
+        return False
+    if code == str(current or "").strip().lower():
+        return False
+    try:
+        if float(probability) < _RECOGNITION_SWITCH_MIN_PROBABILITY:
+            return False
+    except (TypeError, ValueError):
+        # Same reasoning as accept_recognition_reading: an engine reporting no
+        # usable confidence is saying "not sure", and refusing IS the handling.
+        return False
+    return int(streak) >= _RECOGNITION_SWITCH_STREAK
+
 
 def resolve_recognition_language(*, pinned: str, session_language: str) -> str:
     """Which language to ASK the provider for on the next piece of audio.
@@ -9201,6 +9253,13 @@ class SpeechPipeline:
         # it is TRANSLATED. Carrying the recent reading across gives the short
         # ones the context their own audio cannot supply.
         session_language = self._recent_dictation_language()
+        # The language the on-device preview keeps hearing INSTEAD of
+        # ``session_language``, and how many consecutive readings have said so.
+        # Both reset the moment a reading agrees again, so only a sustained
+        # disagreement can overrule the anchor (see
+        # ``accept_recognition_correction``).
+        contradicting_language = ""
+        contradicting_streak = 0
 
         async def _transcribe(
             pcm: bytes,
@@ -9377,6 +9436,7 @@ class SpeechPipeline:
         async def _probe() -> None:
             """Close finished segments and publish the live transcript."""
             nonlocal last_published, language, error_backoff_s, session_language
+            nonlocal contradicting_language, contradicting_streak
             from jarvis.dictation.local_preview import local_preview
             from jarvis.dictation.preview_budget import preview_budget
             from jarvis.dictation.segment import is_silent_segment
@@ -9428,13 +9488,24 @@ class SpeechPipeline:
                     # itself is never produced here.
                     engine = local_preview() if want_preview else None
                     if engine is not None:
-                        ask_local = resolve_recognition_language(
-                            pinned=dictation_language,
-                            session_language=session_language,
-                        )
+                        # The preview is pinned by the USER's choice and never by
+                        # the session's own derived anchor. That distinction is
+                        # the whole repair: faster-whisper reports no detection
+                        # at all when it is handed a language
+                        # (``LocalPreviewTranscriber._transcribe_sync`` —
+                        # "a language the CALLER pinned is not a detection"), so
+                        # feeding the anchor back in here left the one component
+                        # that reads the AUDIO unable to say anything the anchor
+                        # had not already decided. A wrong anchor then had no
+                        # contradicting evidence anywhere in the loop.
+                        # ``[dictation].language`` still pins it outright, which
+                        # is what a person setting that switch is asking for.
                         local_text = await engine.transcribe(
                             tail,
-                            language=None if ask_local == "auto" else ask_local,
+                            language=(
+                                None if dictation_language == "auto"
+                                else dictation_language
+                            ),
                         )
                         if stop_event.is_set():
                             return
@@ -9443,12 +9514,14 @@ class SpeechPipeline:
                         # reading a cloud provider's translated words cannot
                         # contradict. It steers the segment uploads that
                         # actually produce the transcript.
+                        heard = str(getattr(engine, "last_language", "") or "")
+                        heard_probability = getattr(
+                            engine, "last_language_probability", 0.0
+                        )
                         if not session_language:
                             accepted = accept_recognition_reading(
-                                language=getattr(engine, "last_language", ""),
-                                probability=getattr(
-                                    engine, "last_language_probability", 0.0
-                                ),
+                                language=heard,
+                                probability=heard_probability,
                             )
                             if accepted:
                                 session_language = accepted
@@ -9466,6 +9539,36 @@ class SpeechPipeline:
                                     "transcribed as that language instead of "
                                     "re-detecting on each one.",
                                     accepted,
+                                )
+                        elif heard:
+                            # The session already has a language, and the audio
+                            # disagrees. Count how often in a row, because ONE
+                            # confident-but-wrong reading is ordinary and a run
+                            # of them is a speaker the anchor got wrong.
+                            if heard == contradicting_language:
+                                contradicting_streak += 1
+                            else:
+                                contradicting_language = heard
+                                contradicting_streak = 1
+                            if accept_recognition_correction(
+                                current=session_language,
+                                language=heard,
+                                probability=heard_probability,
+                                streak=contradicting_streak,
+                            ):
+                                log.info(
+                                    "dictation recognition language corrected "
+                                    "from %s to %s — the audio disagreed with "
+                                    "the anchor %d readings in a row.",
+                                    session_language,
+                                    heard,
+                                    contradicting_streak,
+                                )
+                                session_language = heard
+                                contradicting_language = ""
+                                contradicting_streak = 0
+                                self._remember_dictation_language(
+                                    heard, on_device=True
                                 )
                         if local_text is not None:
                             tail_text = local_text
