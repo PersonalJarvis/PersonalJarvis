@@ -193,7 +193,9 @@ async def test_router_handle_includes_image():
         )
         router.manager._brain_cache[("fake", "fake")] = _FakeBrain()
         recorder = _RecordingDispatcher()
-        router.manager._build_dispatcher = lambda _b: recorder  # type: ignore[method-assign]
+        router.manager._build_dispatcher = (  # type: ignore[method-assign]
+            lambda _b, **_kwargs: recorder
+        )
 
         [_ async for _ in router.handle("was siehst du")]
 
@@ -279,7 +281,9 @@ async def test_privacy_pause_drops_image():
                              tool_executor=object(), vision_provider=provider)
         router.manager._brain_cache[("fake", "fake")] = _FakeBrain()
         recorder = _RecordingDispatcher()
-        router.manager._build_dispatcher = lambda _b: recorder  # type: ignore[method-assign]
+        router.manager._build_dispatcher = (  # type: ignore[method-assign]
+            lambda _b, **_kwargs: recorder
+        )
 
         provider.pause()
 
