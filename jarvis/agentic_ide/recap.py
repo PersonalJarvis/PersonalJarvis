@@ -52,10 +52,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # status bar and a blank frame row, small enough that the scan is free.
 TAIL_LINES = 14
 
-# The header label is truncated by CSS anyway; this is the transport cap, so a
-# pane that printed a 3,000-character JSON blob cannot push that through the
-# state payload of every poll.
-HEADLINE_CHARS = 120
+# The header has room for roughly one short navigation label once the pane's
+# call-sign and controls have taken their share.  The old 120-character cap
+# delegated the real limit to CSS, which routinely hid the words that finally
+# identified the user's goal.  Forty-eight characters keeps the WHOLE label in
+# a normal pane and forces both the model and the deterministic floor to put the
+# differentiating subject first.
+HEADLINE_CHARS = 48
 # The long form is read in a card that wraps and scrolls, not in a one-line
 # tooltip — so the cap is here to bound the payload, not to make the text fit.
 # It used to be 280, which cut the second sentence off mid-word in exactly the
@@ -64,10 +67,10 @@ DETAIL_CHARS = 480
 # How much of the instruction is quoted in the long form. A prompt is often a
 # whole brief; this is the part of it that identifies the task.
 TASK_CHARS = 200
-# The same job in the header, where it shares a few centimetres with the pane's
-# call-sign and its buttons. Shorter on purpose: past this the CSS clip lands
-# before the character cap does, and two ellipses is one more than anyone needs.
-HEADLINE_TASK_CHARS = 96
+# The same job in the header.  It shares the exact cap: a fallback must not be
+# allowed to overflow merely because its source was an instruction rather than
+# a transcript row.
+HEADLINE_TASK_CHARS = HEADLINE_CHARS
 
 # Glyphs an agent TUI draws in front of its input line. A row starting with one
 # is the prompt box, not something the agent did.
@@ -114,6 +117,7 @@ def _chrome_fragments() -> tuple[str, ...]:
         extra = ()
     return (*_CHROME_FRAGMENTS, *extra)
 
+
 # Leading decoration a TUI puts in front of a real line: bullets, tree glyphs,
 # check marks, spinner frames. Stripped so the recap starts on a word. The
 # allowed openers are kept out of the class deliberately — a path, a quote or an
@@ -127,6 +131,13 @@ _MARKUP_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d{1,2}[.)]\s+|>\s+)")
 # Emphasis and code ticks, which a header renders literally because it renders
 # no markdown at all.
 _EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
+
+# A raw path list is a frequent last readable row after a search command.  It
+# contains plenty of letters, so the older "three alphabetic characters" rule
+# accepted it as work and headers ended up reading `jarvis/core/bus.py",
+# "jarvis/memory`.  A path can be useful after a verb ("Wrote src/app.py"), but
+# paths on their own name implementation debris, not the user's task.
+_PATH_PART_RE = re.compile(r"[\\/]")
 
 # Section labels a brief is structured with. On their own they name the FORM of
 # the document, not the work, so the job is on the line after them — and where
@@ -203,11 +214,24 @@ def condense(text: str, limit: int) -> str:
     cleaned = " ".join(str(text or "").split())
     if len(cleaned) <= limit:
         return cleaned
-    cut = cleaned[:limit]
+    # The ellipsis belongs INSIDE the advertised budget.  Returning `limit + 1`
+    # made every caller's cap slightly dishonest, and this cap now corresponds
+    # to actual pixels in the pane header rather than only a transport guard.
+    cut = cleaned[: max(1, limit - 1)]
     spaced = cut.rsplit(" ", 1)[0]
     # A single very long token (a path, a hash) has no space to cut at — take
     # the hard cut rather than returning nothing.
     return f"{spaced or cut}…"
+
+
+def _bare_path_list(text: str) -> bool:
+    """Whether ``text`` is only one or more filesystem-looking tokens."""
+    tokens = [
+        token.strip("\"'()[]{}<>,:;")
+        for token in re.split(r"\s+", text.strip())
+        if token.strip("\"'()[]{}<>,:;")
+    ]
+    return bool(tokens) and all(_PATH_PART_RE.search(token) for token in tokens)
 
 
 def _informative(line: str) -> bool:
@@ -217,6 +241,8 @@ def _informative(line: str) -> bool:
         return False
     lowered = text.lower()
     if any(fragment in lowered for fragment in _chrome_fragments()):
+        return False
+    if _bare_path_list(text):
         return False
     # A row of numbers, punctuation or box residue is not a sentence.
     return sum(1 for ch in text if ch.isalpha()) >= 3
@@ -323,7 +349,7 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
         problem = condense(getattr(term, "error", ""), HEADLINE_CHARS)
         problem = problem or "it could not be started"
         return Recap(
-            headline=f"Not running — {problem}",
+            headline=condense(f"Not running — {problem}", HEADLINE_CHARS),
             detail=_sentences(
                 f"This pane is not running: {problem}.",
                 asked,
@@ -332,7 +358,7 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
 
     if status == "pending":
         return Recap(
-            headline="Not started yet — connect to it to start its agent.",
+            headline="Not started — waiting for terminal connection",
             detail=_sentences(
                 "This pane has no agent running yet; it starts as soon as the terminal connects.",
                 asked if task else "",
@@ -370,10 +396,12 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     elif activity:
         headline = activity
     else:
-        headline = "Running — nothing printed yet."
+        headline = "Running — no work visible yet"
 
-    now = f"Working now, last output {idle}: {activity}." if idle and activity else (
-        f"Working now: {activity}." if activity else "Running, with nothing printed yet."
+    now = (
+        f"Working now, last output {idle}: {activity}."
+        if idle and activity
+        else (f"Working now: {activity}." if activity else "Running, with nothing printed yet.")
     )
     return Recap(
         headline=condense(headline, HEADLINE_CHARS),

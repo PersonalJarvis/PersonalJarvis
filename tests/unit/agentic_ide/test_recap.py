@@ -6,6 +6,7 @@ it has nothing to report, and which rows of a coding CLI's TUI must never end up
 in the header. Without the last one every busy pane in a grid reads "? for
 shortcuts", which is the shape of a label that answers nothing.
 """
+
 from __future__ import annotations
 
 import time
@@ -56,6 +57,15 @@ def test_the_headline_reports_the_last_printed_row_when_nothing_was_asked() -> N
     term.transcript.feed("Running pytest tests/unit/test_login.py\r\n")
 
     assert summarize(term).headline == "Running pytest tests/unit/test_login.py"
+
+
+def test_a_bare_path_list_never_becomes_the_headline() -> None:
+    """Search output names implementation debris, not the pane's user goal."""
+    term = _pane(status="live")
+    term.transcript.feed("Mapped the event bus to the speech pipeline\r\n")
+    term.transcript.feed('"/core/bus.py", "jarvis/memory"\r\n')
+
+    assert summarize(term).headline == "Mapped the event bus to the speech pipeline"
 
 
 def test_a_live_pane_that_printed_nothing_falls_back_to_its_instruction() -> None:
@@ -132,7 +142,7 @@ def test_the_headline_is_capped_for_transport() -> None:
 
     headline = summarize(term).headline
 
-    assert len(headline) <= HEADLINE_CHARS + 1  # the ellipsis
+    assert len(headline) <= HEADLINE_CHARS
     assert headline.endswith("…")
 
 

@@ -53,7 +53,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -84,11 +84,18 @@ MIN_LINES_TO_SUMMARIZE = 8
 #: simply wait for the next poll, five seconds later.
 MAX_CONCURRENT = 2
 
-#: How much of the pane is handed to the model, newest rows last. Enough to
-#: cover the arc of a task (what was asked, what was tried, where it ended) and
-#: far short of the whole 600-row scrollback.
-INPUT_LINES = 180
+#: How much of the pane is handed to the model.  The original version kept only
+#: the newest rows.  That preserves implementation activity but drops the
+#: user's request at the top of a directly driven CLI session — exactly how an
+#: outcome such as "make the workspace setup feel simple" became the process
+#: report "consolidating the workspace launcher".  Keep both bookends within
+#: the same total budget: the beginning identifies WHY; the end says WHERE IT
+#: STANDS.  The noisy middle is the least valuable part of a glance label.
+INPUT_HEAD_LINES = 48
+INPUT_TAIL_LINES = 132
 INPUT_CHARS = 9_000
+INPUT_HEAD_CHARS = 2_400
+INPUT_TAIL_CHARS = INPUT_CHARS - INPUT_HEAD_CHARS
 
 #: How long one summary may take before the pane keeps its previous recap. A
 #: recap nobody is waiting for does not deserve a long leash.
@@ -101,11 +108,27 @@ CALL_TIMEOUT_S = 30.0
 FAILURES_BEFORE_QUIET = 3
 QUIET_S = 600.0
 
-#: Transport caps. The header is clipped by the pane's width anyway; the long
-#: form is read in a card that wraps and scrolls, so its cap only has to bound
-#: the payload. It used to be 420 and cut the last sentence off mid-word.
-HEADLINE_CHARS = 120
+#: This is a DISPLAY budget, not merely a transport cap.  In a normal grid the
+#: call-sign and pane actions leave room for about 48 characters; a 90-character
+#: model instruction merely guaranteed that CSS would hide the distinguishing
+#: half.  Keep this in parity with the deterministic floor in :mod:`.recap`.
+HEADLINE_CHARS = recap.HEADLINE_CHARS
 DETAIL_CHARS = 640
+
+#: A provider whose output budget was consumed by internal reasoning has been
+#: observed returning ``DETAIL: The``.  Showing that fragment in the expanded
+#: card is worse than repeating the useful headline, so a detail needs enough
+#: substance to stand on its own.
+MIN_DETAIL_CHARS = 24
+MIN_DETAIL_WORDS = 5
+
+#: Thinking-mandatory models consume their private reasoning from the same
+#: output budget.  Most live panes still produced a complete title inside 400
+#: tokens; the two that did not were obvious invalid fragments.  Start there,
+#: then spend 800 only on an invalid answer.  This preserves title quality
+#: without doubling every background recap's cost.
+MODEL_OUTPUT_TOKENS = 400
+MODEL_RETRY_OUTPUT_TOKENS = 800
 
 #: What the user may type into a recap of their own. The same two lengths, with
 #: room to spare — a hand-written recap is checked here rather than silently
@@ -141,6 +164,9 @@ NO_PROVIDER_NOTE = "No model is reachable to summarize this pane."
 #: providers put the API key in the request URL, and this string is rendered in
 #: the recap card — where a screenshot would carry it straight out of the app.
 _SECRET_RE = re.compile(r"(?i)(key|token|secret|password|authorization)=[^\s&\"']+")
+_TITLE_WORD_RE = re.compile(r"\b[^\W\d_][\w'-]*\b", flags=re.UNICODE)
+_SHELL_FRAGMENT_RE = re.compile(r"(?:^|\s)--?[a-zA-Z]\w*|[*?][./\\\w]")
+_DETAIL_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 
 # Which language the sentence is written in. Interface languages, so this table
 # carries every locale [ui].language accepts and falls back to English for a
@@ -154,9 +180,9 @@ _LANGUAGE_NAMES = {"en": "English", "de": "German", "es": "Spanish"}
 # screen is mostly its own interface, and a summary that quotes the status bar
 # is the failure this module was built to replace.
 _SYSTEM = """\
-You write the status line for one terminal pane in a multi-agent coding \
-workspace. The user is glancing across a grid of panes and needs to know, \
-without reading any of them, what THIS pane has been doing and where it stands.
+You write a navigation label and recap for one terminal pane in a multi-agent \
+coding workspace. The user is glancing across a grid and must recognize the \
+ORIGINAL USER GOAL of this pane immediately, without reading its terminal.
 
 You are given the instruction the pane was last sent and a readable replay of \
 its terminal screen. That screen belongs to a coding CLI, so it also contains \
@@ -164,30 +190,48 @@ the CLI's own interface — banners, menus, spinners, key hints, a token \
 counter, and the text on its input line, which is what the USER typed. Read \
 past all of that to the work itself.
 
-Answer with exactly two lines and nothing else:
+Answer with exactly two physical lines and nothing else:
 
-HEADLINE: <at most 90 characters, and a COMPLETE thought inside that budget — \
-this line is clipped by the pane's width, so front-load the part that \
-identifies the work and never let it run past 90 into an ellipsis. What this \
-pane is doing or has achieved, as a plain statement. No pane name, no agent \
-name, no quotation marks, no trailing period.>
-DETAIL: <three or four full sentences, and the place where the actual answer \
-lives: what the goal was, what has been done so far, where the work stands \
-now, and what is outstanding or what the next step is. Finish every sentence \
-you start.>
+HEADLINE: <3-7 words, HARD MAXIMUM 48 characters. A self-contained navigation \
+label for the user's problem or desired outcome, normally "subject — result". \
+Put the unique subject first and a concrete result, blocker, or completion \
+state second. No pane name, agent name, quotation marks, or trailing period.>
+DETAIL: <exactly two complete sentences on this same physical line. State the \
+original goal first, then what has been achieved, what is blocked, or the next \
+step. Finish both sentences.>
 
 Rules:
-- Be concrete. "Working on the code" is worthless. Name the files, commands, \
-errors, findings and decisions that are actually on the screen.
+- The headline answers "Which user problem or outcome is this pane for?", not \
+"Which generic engineering activity is happening?" Use the user's vocabulary \
+when the original request is visible; otherwise infer the outcome cautiously \
+from the work.
+- Do not start the headline with process narration such as "Investigating", \
+"Implementing", "Working on", "Fixing", "Analyzing", "Reviewing", or an \
+equivalent phrase in the requested language. Those verbs spend the visible \
+space before identifying the task.
+- Keep file paths, class names, commands and implementation mechanisms OUT of \
+the headline. Put useful technical evidence in DETAIL instead.
+- Be concrete in DETAIL. "Working on the code" is worthless. Name supported \
+errors, findings, decisions and results there.
 - If the pane is waiting for the user — a permission prompt, a question, a \
-choice between options — say that first in both lines. It is the one thing \
-the user has to act on.
+choice between options — lead with "Needs input" (translated) in both lines. \
+It is the one thing the user has to act on.
 - Never quote the CLI's status bar, key hints, token or context counter, \
 spinner text, or the contents of its input line.
 - Say only what the screen supports. If it shows no real work yet, say that \
 plainly instead of inventing some.
 - Report, do not address the user, and do not offer help. No preamble, no \
-markdown, no bullet points, no code fences.\
+markdown, no bullet points, no code fences.
+
+Headline examples (poor -> useful):
+- "Consolidating the workspace launcher into a single screen" -> \
+"Workspace setup — one clear screen"
+- "Fixing three bugs in the terminal notification system" -> \
+"Terminal alerts — 3 reliability fixes"
+- "Implementing terminal tab renaming based on workspace renaming" -> \
+"Terminal tabs — rename without restart"
+- "Investigating terminal pane geometry and whitespace" -> \
+"Terminal panes — reclaim wasted space"\
 """
 
 
@@ -446,8 +490,7 @@ async def _run(term: Any, key: str, rows: list[str], folder: str) -> None:
         if entry.failures >= FAILURES_BEFORE_QUIET:
             entry.quiet_until = time.time() + QUIET_S
             logger.info(
-                "Agentic IDE recap: {} failed {}x ({}) — deterministic recaps for "
-                "the next {:.0f}s",
+                "Agentic IDE recap: {} failed {}x ({}) — deterministic recaps for the next {:.0f}s",
                 key,
                 entry.failures,
                 type(exc).__name__,
@@ -516,30 +559,85 @@ def _resolve_brain():  # noqa: ANN202 - Brain | None, avoids an import cycle
         return None
 
 
+def _bounded_rows(
+    rows: Sequence[str], *, max_lines: int, max_chars: int, newest: bool = False
+) -> list[str]:
+    """One end of a transcript, bounded without dropping its nearest row.
+
+    ``newest`` walks backwards so the very latest row survives when that end is
+    wider than its character allowance, then restores chronological order for
+    the model.  A single pathological JSON row is clipped rather than allowed
+    to make the whole section empty.
+    """
+    source = list(rows)
+    picked: list[str] = []
+    used = 0
+    iterable = reversed(source[-max_lines:]) if newest else iter(source[:max_lines])
+    for raw in iterable:
+        line = str(raw)
+        remaining = max_chars - used
+        if remaining <= 1:
+            break
+        cost = len(line) + 1
+        if cost > remaining:
+            if not picked:
+                picked.append(f"{line[: max(1, remaining - 1)]}…")
+            break
+        picked.append(line)
+        used += cost
+    if newest:
+        picked.reverse()
+    return picked
+
+
+def _screen_sections(rows: Sequence[str]) -> list[str]:
+    """The transcript bookends that carry user intent and current state."""
+    source = list(rows)
+    total_chars = sum(len(str(line)) + 1 for line in source)
+    total_lines = INPUT_HEAD_LINES + INPUT_TAIL_LINES
+    if len(source) <= total_lines and total_chars <= INPUT_CHARS:
+        return ["Its terminal transcript, oldest row first:\n<<<\n" + "\n".join(source) + "\n>>>"]
+
+    head = _bounded_rows(
+        source,
+        max_lines=INPUT_HEAD_LINES,
+        max_chars=INPUT_HEAD_CHARS,
+    )
+    # Never repeat rows from a short but extremely wide transcript in both
+    # sections.  The line boundary is enough: character clipping happens only
+    # inside the chosen edge row.
+    tail_source = source[min(INPUT_HEAD_LINES, len(source)) :]
+    tail = _bounded_rows(
+        tail_source,
+        max_lines=INPUT_TAIL_LINES,
+        max_chars=INPUT_TAIL_CHARS,
+        newest=True,
+    )
+    sections = [
+        "The beginning of its terminal transcript, where the original user "
+        "request often appears:\n<<<\n" + "\n".join(head) + "\n>>>"
+    ]
+    if tail:
+        sections.append(
+            "The newest part of its terminal transcript, after less useful "
+            "middle rows were omitted:\n<<<\n" + "\n".join(tail) + "\n>>>"
+        )
+    return sections
+
+
 def build_prompt(term: Any, rows: Sequence[str], *, folder: str = "") -> str:
     """What the summarizer is shown: the brief, the pane, and its screen.
 
     Public because it is the part worth asserting on — the tests pin that the
-    instruction and the newest rows survive the budget, and that the oldest rows
-    are what gets dropped when they do not.
+    instruction and both transcript bookends survive the budget, and that the
+    less useful middle is what gets dropped when they do not.
     """
-    tail: list[str] = []
-    used = 0
-    for line in reversed(list(rows)[-INPUT_LINES:]):
-        used += len(line) + 1
-        if used > INPUT_CHARS:
-            break
-        tail.append(line)
-    tail.reverse()
-
     instruction = str(getattr(term, "last_prompt", "") or "").strip()
     if len(instruction) > 1_500:
         instruction = f"{instruction[:1_500]}…"
     status = str(getattr(term, "status", "") or "pending")
-    header = [
-        f"Coding CLI: {getattr(term, 'display_name', '') or getattr(term, 'agent', '') or 'unknown'}",
-        f"Pane status: {status}",
-    ]
+    cli = getattr(term, "display_name", "") or getattr(term, "agent", "") or "unknown"
+    header = [f"Coding CLI: {cli}", f"Pane status: {status}"]
     if folder:
         header.append(f"Working folder: {folder}")
     idle = recap.idle_phrase(term)
@@ -554,11 +652,25 @@ def build_prompt(term: Any, rows: Sequence[str], *, folder: str = "") -> str:
             "This pane has not been sent an instruction from Jarvis; whatever it "
             "is doing was typed into it directly."
         )
-    parts.append("Its terminal screen, oldest row first:\n<<<\n" + "\n".join(tail) + "\n>>>")
+    parts.extend(_screen_sections(rows))
 
     language = _LANGUAGE_NAMES.get(_ui_language(), _LANGUAGE_NAMES["en"])
     parts.append(f"Write both lines in {language}.")
     return "\n\n".join(parts)
+
+
+def _valid_model_headline(headline: str) -> bool:
+    """Whether a model line is a navigation label rather than CLI debris."""
+    if len(headline.split()) < 2 or len(_TITLE_WORD_RE.findall(headline)) < 2:
+        return False
+    if '"' in headline or "`" in headline or _SHELL_FRAGMENT_RE.search(headline):
+        return False
+    if headline.lstrip().startswith(("...", "./", "../", "/", "\\")):
+        return False
+    return all(
+        headline.count(opening) == headline.count(closing)
+        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}"))
+    )
 
 
 def parse_answer(text: str, *, writer: str = "") -> SmartRecap | None:
@@ -596,8 +708,20 @@ def parse_answer(text: str, *, writer: str = "") -> SmartRecap | None:
 
     headline = recap.condense(headline.strip().strip('"').rstrip(".").strip(), HEADLINE_CHARS)
     detail = recap.condense(" ".join(detail_parts).strip().strip('"'), DETAIL_CHARS)
-    if not headline:
+    if not _valid_model_headline(headline):
         return None
+    detail_words = re.findall(r"\b[\w'-]+\b", detail, flags=re.UNICODE)
+    sentence_ends = list(_DETAIL_SENTENCE_END_RE.finditer(detail))
+    if len(detail) < MIN_DETAIL_CHARS or len(detail_words) < MIN_DETAIL_WORDS:
+        detail = headline
+    elif sentence_ends:
+        # Keep every complete sentence and drop only the provider's guillotined
+        # tail (`...where it stands. A`).  One complete sentence is more useful
+        # than repeating the headline merely because the requested second one
+        # ran out of budget.
+        detail = detail[: sentence_ends[-1].end()].strip()
+    else:
+        detail = headline
     return SmartRecap(
         headline=headline,
         detail=detail or headline,
@@ -627,19 +751,41 @@ async def summarize_with_model(
         # A recap is a reading of the screen, not an opinion about it: the same
         # pane should not be described differently on two consecutive polls.
         temperature=0.1,
-        max_tokens=400,
+        max_tokens=MODEL_OUTPUT_TOKENS,
         stream=True,
+        # This is a small deterministic extraction task.  Thinking-by-default
+        # Gemini models count internal reasoning against `max_tokens`; live, the
+        # 400-token budget was consumed before the visible answer reached more
+        # than `DETAIL: The`.  Every provider that has a reasoning control reads
+        # this shared hint, and providers without one ignore it.
+        reasoning_effort="none",
     )
-    chunks: list[str] = []
-    async for delta in brain.complete(request):
-        if delta.content:
-            chunks.append(delta.content)
     # Which model actually answered, for the card's footer. Read off whatever
     # the resolved brain exposes rather than from config: the chain may have
     # crossed to a different provider than the configured one (AP-22), and the
     # honest answer is the one that wrote the sentence.
     writer = str(getattr(brain, "model", "") or getattr(brain, "name", "") or "")
-    return parse_answer("".join(chunks), writer=writer)
+    answer = parse_answer(await _complete_text(brain, request), writer=writer)
+    if answer is not None:
+        return answer
+
+    # A thinking-mandatory model can spend the small first budget before it has
+    # emitted a usable title.  Retry only that measurable failure shape; valid
+    # headlines never pay twice merely because their detail was truncated.
+    retry = replace(request, max_tokens=MODEL_RETRY_OUTPUT_TOKENS)
+    answer = parse_answer(await _complete_text(brain, retry), writer=writer)
+    if answer is None:
+        raise ValueError("The recap model returned no usable headline.")
+    return answer
+
+
+async def _complete_text(brain: Any, request: Any) -> str:
+    """Aggregate one bounded recap request without exposing provider details."""
+    chunks: list[str] = []
+    async for delta in brain.complete(request):
+        if delta.content:
+            chunks.append(delta.content)
+    return "".join(chunks)
 
 
 def pin(key: str, headline: str, detail: str = "") -> SmartRecap:

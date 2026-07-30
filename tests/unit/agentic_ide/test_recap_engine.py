@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -181,15 +182,29 @@ def test_scheduling_never_raises(monkeypatch) -> None:
 # ----------------------------------------------------------------- the prompt
 
 
-def test_the_prompt_carries_the_instruction_and_the_newest_rows() -> None:
+def test_the_prompt_carries_the_instruction_and_both_transcript_bookends() -> None:
+    """The original request says WHY; the newest rows say where it stands."""
     term = _pane(last_prompt="Analyse swapping terminal tiles by dragging them")
 
     prompt = recap_engine.build_prompt(term, _rows(400), folder="C:/repo")
 
     assert "Analyse swapping terminal tiles" in prompt
-    assert "Step 399" in prompt  # the newest row survives the budget...
-    assert "Step 0" not in prompt  # ...and the oldest is what gets dropped
+    assert "Step 0" in prompt  # the original request is usually at this end...
+    assert "Step 399" in prompt  # ...and the current state is at this one.
+    assert "Step 200" not in prompt  # noisy implementation history is omitted
     assert "C:/repo" in prompt
+
+
+def test_the_headline_prompt_is_an_outcome_label_that_fits_the_real_header() -> None:
+    """Pin the product distinction the screenshot exposed: goal, not process."""
+    system = recap_engine._SYSTEM  # noqa: SLF001 - the contract under test
+
+    assert "navigation label" in system
+    assert "HARD MAXIMUM 48 characters" in system
+    assert "original user goal" in system.lower()
+    assert '"Investigating"' in system
+    assert "Keep file paths" in system
+    assert "Workspace setup — one clear screen" in system
 
 
 def test_a_pane_nobody_briefed_says_so_in_the_prompt() -> None:
@@ -258,7 +273,29 @@ def test_the_headline_is_capped_for_transport() -> None:
     answer = recap_engine.parse_answer("HEADLINE: " + "word " * 200)
 
     assert answer is not None
-    assert len(answer.headline) <= recap_engine.HEADLINE_CHARS + 1
+    assert len(answer.headline) <= recap_engine.HEADLINE_CHARS
+
+
+def test_a_truncated_detail_does_not_replace_a_useful_headline_with_debris() -> None:
+    """Live Gemini output once ended at `DETAIL: The` after thinking used the cap."""
+    answer = recap_engine.parse_answer(
+        "HEADLINE: Terminal alerts — 3 reliability fixes\nDETAIL: The"
+    )
+
+    assert answer is not None
+    assert answer.detail == answer.headline
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "HEADLINE: Glockenfunktion)\nDETAIL: Three notification bugs are being fixed.",
+        '... tests -g "*.py',
+        "adr/0014-memory-trigger-contract",
+    ],
+)
+def test_cli_debris_is_rejected_as_a_model_headline(answer: str) -> None:
+    assert recap_engine.parse_answer(answer) is None
 
 
 # ------------------------------------------------------------ the summary itself
@@ -269,6 +306,70 @@ def test_an_install_with_no_provider_keeps_the_deterministic_recap(monkeypatch) 
     monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: None)
 
     assert asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20))) is None
+
+
+def test_the_recap_request_disables_internal_reasoning(monkeypatch) -> None:
+    """A tiny extraction must leave its output budget for the visible answer."""
+
+    class Brain:
+        model = "test-model"
+
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            self.requests.append(request)
+            yield SimpleNamespace(
+                content=(
+                    "HEADLINE: Terminal titles — clear at a glance\n"
+                    "DETAIL: The goal is recognizable terminal titles. "
+                    "The new labels lead with the user's outcome."
+                )
+            )
+
+    brain = Brain()
+    monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: brain)
+
+    answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert answer is not None
+    assert len(brain.requests) == 1
+    assert brain.requests[0].max_tokens == recap_engine.MODEL_OUTPUT_TOKENS  # type: ignore[attr-defined]
+    assert brain.requests[0].reasoning_effort == "none"  # type: ignore[attr-defined]
+
+
+def test_an_invalid_small_answer_retries_with_the_measured_larger_budget(monkeypatch) -> None:
+    """Only malformed headlines pay for a thinking-mandatory provider retry."""
+
+    class Brain:
+        model = "test-model"
+
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            self.requests.append(request)
+            content = (
+                "adr/0014-memory-trigger-contract"
+                if len(self.requests) == 1
+                else (
+                    "HEADLINE: Terminal titles — clear at a glance\n"
+                    "DETAIL: The goal is recognizable terminal titles. "
+                    "The new labels lead with the user's outcome."
+                )
+            )
+            yield SimpleNamespace(content=content)
+
+    brain = Brain()
+    monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: brain)
+
+    answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert answer is not None
+    assert [request.max_tokens for request in brain.requests] == [  # type: ignore[attr-defined]
+        recap_engine.MODEL_OUTPUT_TOKENS,
+        recap_engine.MODEL_RETRY_OUTPUT_TOKENS,
+    ]
 
 
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
@@ -290,9 +391,7 @@ def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
         finally:
             recap_engine.summarize_with_model = original  # type: ignore[assignment]
 
-        assert recap_engine.recap_for(term, lines=[]).headline == (
-            "The sentence already on screen"
-        )
+        assert recap_engine.recap_for(term, lines=[]).headline == ("The sentence already on screen")
         assert state.failures == 1
         assert not state.inflight
 
