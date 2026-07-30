@@ -16,6 +16,7 @@ monkeypatched at the module seams the routes import through.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ from fastapi.testclient import TestClient
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.ui.web.server import WebServer
+from jarvis.ui.web.ultrawiki_routes import ULTRAWIKI_ANSWER_STATUSES
 from jarvis.ultrawiki import service as uw_service_mod
 from jarvis.ultrawiki.service import UltraWikiService
 
@@ -410,6 +412,48 @@ def test_ask_returns_a_grounded_answer_and_numbered_evidence(
     assert body["citations"] == [1]
     assert body["provider"] == "fake"
     assert body["results"][0]["permalink"]
+
+
+def test_ask_reports_insufficient_evidence_without_false_citations(
+    env, monkeypatch
+) -> None:
+    from jarvis.ultrawiki.answer import SynthesisResult
+
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    async def fake_answer(_cfg, _question, _hits):
+        return SynthesisResult(
+            answer="The retrieved notes do not answer that question.",
+            provider="fake",
+            citations=(),
+            status="insufficient_evidence",
+        )
+
+    monkeypatch.setattr("jarvis.ultrawiki.answer.answer_question", fake_answer)
+    response = env.client.post(
+        "/api/ultrawiki/ask", json={"question": "When does the ferry leave?"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["answer_status"] == "insufficient_evidence"
+    assert body["answer"] == "The retrieved notes do not answer that question."
+    assert body["citations"] == []
+
+
+def test_ask_answer_statuses_match_the_frontend_contract() -> None:
+    api_source = (
+        Path("jarvis/ui/web/frontend/src/lib/ultrawikiApi.ts")
+        .read_text(encoding="utf-8")
+        .split("export const ULTRAWIKI_ANSWER_STATUSES = [", 1)[1]
+        .split("] as const", 1)[0]
+    )
+    frontend_statuses = tuple(re.findall(r'"([a-z_]+)"', api_source))
+
+    assert frontend_statuses == ULTRAWIKI_ANSWER_STATUSES
 
 
 def test_ask_keeps_evidence_when_no_chat_provider_can_synthesize(env) -> None:

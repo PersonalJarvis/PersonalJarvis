@@ -154,6 +154,37 @@ describe("AskPanel — results with citations", () => {
     });
   });
 
+  it("shows an honest insufficiency answer without pretending evidence supports it", async () => {
+    installFetchMock({
+      "/api/ultrawiki/ask": () => ({
+        query: "ferry",
+        question: "ferry",
+        answer: "The retrieved notes do not contain the ferry schedule.",
+        answer_status: "insufficient_evidence",
+        provider: "fake",
+        citations: [],
+        results: [HIT],
+        total: 1,
+      }),
+    });
+    renderWithClient(
+      <AskPanel searchLegs={{ keyword: { available: true } }} ingestedItems={1} />,
+    );
+
+    fireEvent.change(screen.getByTestId("ultrawiki-ask-input"), {
+      target: { value: "ferry" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-ask-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ultrawiki-insufficient-evidence")).toBeDefined();
+    });
+    expect(screen.getByTestId("ultrawiki-insufficient-evidence").textContent).toContain(
+      "do not contain the ferry schedule",
+    );
+    expect(screen.queryByTestId("ultrawiki-answer")).toBeNull();
+  });
+
   it("names the credential carrying a live leg, never the key itself", async () => {
     installFetchMock({ "/api/ultrawiki/ask": () => ({ query: "", results: [], total: 0 }) });
     renderWithClient(

@@ -520,10 +520,17 @@ export interface UltraWikiSearchResponse {
   total: number;
 }
 
+// Mirrors ultrawiki_routes.py::ULTRAWIKI_ANSWER_STATUSES. The parity test
+// prevents an API state from silently rendering as an empty Ask panel.
+export const ULTRAWIKI_ANSWER_STATUSES = [
+  "answered",
+  "insufficient_evidence",
+  "no_evidence",
+  "answer_unavailable",
+] as const;
+
 export type UltraWikiAnswerStatus =
-  | "answered"
-  | "no_evidence"
-  | "answer_unavailable";
+  (typeof ULTRAWIKI_ANSWER_STATUSES)[number];
 
 export interface UltraWikiAskResponse extends UltraWikiSearchResponse {
   question: string;

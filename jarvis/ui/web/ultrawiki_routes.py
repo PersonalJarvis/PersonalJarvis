@@ -2407,6 +2407,18 @@ class AskBody(BaseModel):
     area: str | None = Field(default=None, max_length=200)
 
 
+ANSWER_STATUS_ANSWERED = "answered"
+ANSWER_STATUS_INSUFFICIENT = "insufficient_evidence"
+ANSWER_STATUS_NO_EVIDENCE = "no_evidence"
+ANSWER_STATUS_UNAVAILABLE = "answer_unavailable"
+ULTRAWIKI_ANSWER_STATUSES = (
+    ANSWER_STATUS_ANSWERED,
+    ANSWER_STATUS_INSUFFICIENT,
+    ANSWER_STATUS_NO_EVIDENCE,
+    ANSWER_STATUS_UNAVAILABLE,
+)
+
+
 @router.get("/search", summary="Hybrid search over the UltraWiki store")
 async def search_ultrawiki(
     request: Request,
@@ -2456,7 +2468,9 @@ async def ask_ultrawiki(body: AskBody, request: Request) -> dict[str, Any]:
         "query": question,
         "question": question,
         "answer": "",
-        "answer_status": "no_evidence" if not rows else "answer_unavailable",
+        "answer_status": (
+            ANSWER_STATUS_NO_EVIDENCE if not rows else ANSWER_STATUS_UNAVAILABLE
+        ),
         "provider": "",
         "citations": [],
         "results": rows,
@@ -2479,7 +2493,7 @@ async def ask_ultrawiki(body: AskBody, request: Request) -> dict[str, Any]:
     response.update(
         {
             "answer": synthesis.answer,
-            "answer_status": "answered",
+            "answer_status": synthesis.status,
             "provider": synthesis.provider,
             "citations": list(synthesis.citations),
         }

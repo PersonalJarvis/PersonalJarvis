@@ -86,6 +86,7 @@ async def test_answer_uses_cross_family_chain_and_returns_valid_citations(
 
     assert result.provider == "fake"
     assert result.citations == (1,)
+    assert result.status == "answered"
     request = captured["request"]
     assert "Output language: es" in request.messages[0].content
 
@@ -115,6 +116,39 @@ async def test_answer_normalizes_grouped_citations(
 
     assert result.answer == "Two sources agree [1] [2]."
     assert result.citations == (1, 2)
+
+
+async def test_answer_marks_insufficient_evidence_without_false_citations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain_mod = __import__(
+        "jarvis.memory.wiki.provider_chain", fromlist=["unused"]
+    )
+    monkeypatch.setattr(
+        chain_mod,
+        "credential_ready_wiki_providers",
+        lambda **_kwargs: {"fake"},
+    )
+
+    async def fake_complete(**kwargs):
+        aggregated = SimpleNamespace(
+            text=(
+                "[[ULTRAWIKI_INSUFFICIENT]]\n"
+                "The evidence does not contain the ferry schedule."
+            )
+        )
+        assert kwargs["validate"](aggregated) is None
+        return aggregated, "fake"
+
+    monkeypatch.setattr(chain_mod, "complete_with_fallback", fake_complete)
+
+    result = await answer_question(
+        cfg(), "When is the ferry?", [hit()], registry=FakeRegistry()
+    )
+
+    assert result.status == "insufficient_evidence"
+    assert result.answer == "The evidence does not contain the ferry schedule."
+    assert result.citations == ()
 
 
 async def test_answer_rejects_uncited_provider_output(

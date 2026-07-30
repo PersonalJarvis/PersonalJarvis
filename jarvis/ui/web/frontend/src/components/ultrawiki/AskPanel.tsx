@@ -162,6 +162,24 @@ export function AskPanel({
                 )}
               </section>
             )}
+            {searchQuery.data?.answer_status === "insufficient_evidence" && (
+              <section
+                className="rounded-xl border border-[#ffb84d]/30 bg-[#ffb84d]/10 p-4"
+                data-testid="ultrawiki-insufficient-evidence"
+              >
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {searchQuery.data.answer}
+                </p>
+                {searchQuery.data.provider && (
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {t("ultrawiki.ask.answered_via").replace(
+                      "{0}",
+                      searchQuery.data.provider,
+                    )}
+                  </p>
+                )}
+              </section>
+            )}
             {searchQuery.data?.answer_status === "answer_unavailable" && (
               <p
                 className="rounded-md border border-[#ffb84d]/30 bg-[#ffb84d]/10 px-3 py-2 text-xs text-[#ffb84d]"
