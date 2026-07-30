@@ -2372,6 +2372,14 @@ async def get_event(event_id: int, request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+class AskBody(BaseModel):
+    """One evidence-grounded Ask request."""
+
+    question: str = Field(min_length=1, max_length=4000)
+    k: int = Field(default=10, ge=1, le=20)
+    area: str | None = Field(default=None, max_length=200)
+
+
 @router.get("/search", summary="Hybrid search over the UltraWiki store")
 async def search_ultrawiki(
     request: Request,
@@ -2391,3 +2399,62 @@ async def search_ultrawiki(
         for hit in results
     ]
     return {"query": q, "results": rows, "total": len(rows)}
+
+
+@router.post(
+    "/ask",
+    summary="Answer a question from UltraWiki evidence with citations",
+)
+async def ask_ultrawiki(body: AskBody, request: Request) -> dict[str, Any]:
+    """Retrieve evidence, then synthesize through the cross-family chat chain.
+
+    Search remains useful when every chat provider is unavailable: this route
+    returns the evidence plus an honest ``answer_unavailable`` state instead
+    of turning a synthesis outage into a failed search.
+    """
+    service = _require_active(request)
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="question must not be blank")
+    hits = await service.search(
+        question,
+        k=body.k,
+        area_id=body.area,
+    )
+    rows = [
+        dataclasses.asdict(hit) if dataclasses.is_dataclass(hit) else dict(hit)
+        for hit in hits
+    ]
+    response: dict[str, Any] = {
+        "query": question,
+        "question": question,
+        "answer": "",
+        "answer_status": "no_evidence" if not rows else "answer_unavailable",
+        "provider": "",
+        "citations": [],
+        "results": rows,
+        "total": len(rows),
+    }
+    if not rows:
+        return response
+
+    from jarvis.ultrawiki.answer import (  # noqa: PLC0415 — lazy (AP-26)
+        AnswerUnavailable,
+        answer_question,
+    )
+
+    try:
+        synthesis = await answer_question(_config(request), question, hits)
+    except AnswerUnavailable as exc:
+        log.info("UltraWiki Ask synthesis unavailable: %s", exc)
+        response["synthesis_error"] = str(exc)
+        return response
+    response.update(
+        {
+            "answer": synthesis.answer,
+            "answer_status": "answered",
+            "provider": synthesis.provider,
+            "citations": list(synthesis.citations),
+        }
+    )
+    return response

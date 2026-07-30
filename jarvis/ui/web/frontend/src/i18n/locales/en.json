@@ -3131,7 +3131,7 @@
     },
     "ask": {
       "placeholder": "Ask your knowledge…",
-      "searching": "Searching…",
+      "searching": "Searching and composing an answer…",
       "no_results": "No hits for \"{0}\".",
       "search_failed": "Search failed: {0}",
       "open_source": "Open original",
@@ -3145,6 +3145,9 @@
       "context_toggle": "Show surrounding context ({0})",
       "leg_rerank_off": "Rerank: off",
       "via": "via {0}",
+      "answered_via": "Answer composed via {0}",
+      "answer_unavailable": "The evidence is ready, but an answer could not be composed: {0}",
+      "evidence": "Evidence",
       "nothing_ingested_title": "Nothing has been ingested yet, so there is nothing to search.",
       "nothing_ingested_step_approve": "Open Sources and approve a source you want read.",
       "nothing_ingested_step_sync": "Press Sync on that source and watch the import strip fill up.",

@@ -1,8 +1,8 @@
 /**
  * AskPanel tests — hybrid-search results with citations.
  *
- * Pins that a submitted query hits `GET /api/ultrawiki/search`, and that a
- * result row renders title, snippet, source, matched-by chips
+ * Pins that a submitted query hits `POST /api/ultrawiki/ask`, renders the
+ * synthesized cited answer, and that a result row renders title, snippet, source, matched-by chips
  * (keyword / semantic), timestamp, and the permalink as a clickable citation.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -67,8 +67,13 @@ afterEach(() => {
 describe("AskPanel — results with citations", () => {
   it("submits a query and renders the hit with matched_by chips and permalink", async () => {
     const fetchMock = installFetchMock({
-      "/api/ultrawiki/search": () => ({
+      "/api/ultrawiki/ask": () => ({
         query: "ferry",
+        question: "ferry",
+        answer: "The ferry leaves at 09:30 on weekdays [1].",
+        answer_status: "answered",
+        provider: "fake",
+        citations: [1],
         results: [HIT],
         total: 1,
       }),
@@ -90,8 +95,10 @@ describe("AskPanel — results with citations", () => {
     await waitFor(() => {
       expect(screen.getByTestId("ultrawiki-hit-42")).toBeDefined();
     });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/ultrawiki/search?q=ferry&k=20",
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/ultrawiki/ask");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    expect(screen.getByTestId("ultrawiki-answer").textContent).toContain(
+      "ferry leaves at 09:30",
     );
 
     const row = screen.getByTestId("ultrawiki-hit-42");
@@ -118,8 +125,37 @@ describe("AskPanel — results with citations", () => {
     );
   });
 
+  it("keeps evidence visible when synthesis is unavailable", async () => {
+    installFetchMock({
+      "/api/ultrawiki/ask": () => ({
+        query: "ferry",
+        question: "ferry",
+        answer: "",
+        answer_status: "answer_unavailable",
+        provider: "",
+        citations: [],
+        synthesis_error: "no credential-ready chat provider is available",
+        results: [HIT],
+        total: 1,
+      }),
+    });
+    renderWithClient(
+      <AskPanel searchLegs={{ keyword: { available: true } }} ingestedItems={1} />,
+    );
+
+    fireEvent.change(screen.getByTestId("ultrawiki-ask-input"), {
+      target: { value: "ferry" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-ask-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ultrawiki-answer-unavailable")).toBeDefined();
+      expect(screen.getByTestId("ultrawiki-hit-42")).toBeDefined();
+    });
+  });
+
   it("names the credential carrying a live leg, never the key itself", async () => {
-    installFetchMock({ "/api/ultrawiki/search": () => ({ query: "", results: [], total: 0 }) });
+    installFetchMock({ "/api/ultrawiki/ask": () => ({ query: "", results: [], total: 0 }) });
     renderWithClient(
       <AskPanel
         searchLegs={{
@@ -147,7 +183,7 @@ describe("AskPanel — results with citations", () => {
   });
 
   it("guides the user instead of showing a blank panel when nothing is ingested", async () => {
-    installFetchMock({ "/api/ultrawiki/search": () => ({ query: "", results: [], total: 0 }) });
+    installFetchMock({ "/api/ultrawiki/ask": () => ({ query: "", results: [], total: 0 }) });
     const onOpenSources = vi.fn();
     renderWithClient(
       <AskPanel
@@ -167,7 +203,7 @@ describe("AskPanel — results with citations", () => {
 
   it("keeps the normal empty state once items exist but a query finds nothing", async () => {
     installFetchMock({
-      "/api/ultrawiki/search": () => ({ query: "zzz", results: [], total: 0 }),
+      "/api/ultrawiki/ask": () => ({ query: "zzz", results: [], total: 0 }),
     });
     renderWithClient(
       <AskPanel searchLegs={{ keyword: { available: true } }} ingestedItems={7} />,
@@ -185,7 +221,7 @@ describe("AskPanel — results with citations", () => {
 
   it("shows the honest degraded-leg reason when a query finds nothing", async () => {
     installFetchMock({
-      "/api/ultrawiki/search": () => ({ query: "x", results: [], total: 0 }),
+      "/api/ultrawiki/ask": () => ({ query: "x", results: [], total: 0 }),
     });
     renderWithClient(
       <AskPanel

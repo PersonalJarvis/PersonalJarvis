@@ -3130,7 +3130,7 @@
     },
     "ask": {
       "placeholder": "Frag dein Wissen…",
-      "searching": "Suche läuft…",
+      "searching": "Suche läuft und eine Antwort wird erstellt…",
       "no_results": "Keine Treffer für \"{0}\".",
       "search_failed": "Suche fehlgeschlagen: {0}",
       "open_source": "Original öffnen",
@@ -3144,6 +3144,9 @@
       "context_toggle": "Umgebenden Zusammenhang anzeigen ({0})",
       "leg_rerank_off": "Rerank: aus",
       "via": "über {0}",
+      "answered_via": "Antwort erstellt über {0}",
+      "answer_unavailable": "Die Belege sind bereit, aber eine Antwort konnte nicht erstellt werden: {0}",
+      "evidence": "Belege",
       "nothing_ingested_title": "Es wurde noch nichts eingelesen, deshalb gibt es nichts zu durchsuchen.",
       "nothing_ingested_step_approve": "Öffne „Quellen“ und gib eine Quelle frei, die gelesen werden soll.",
       "nothing_ingested_step_sync": "Starte dort „Jetzt synchronisieren“ und sieh zu, wie sich die Importleiste füllt.",

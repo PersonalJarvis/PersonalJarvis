@@ -3130,7 +3130,7 @@
     },
     "ask": {
       "placeholder": "Pregunta a tu conocimiento…",
-      "searching": "Buscando…",
+      "searching": "Buscando y redactando una respuesta…",
       "no_results": "Sin resultados para \"{0}\".",
       "search_failed": "La búsqueda falló: {0}",
       "open_source": "Abrir original",
@@ -3144,6 +3144,9 @@
       "context_toggle": "Mostrar el contexto circundante ({0})",
       "leg_rerank_off": "Rerank: desactivado",
       "via": "mediante {0}",
+      "answered_via": "Respuesta redactada mediante {0}",
+      "answer_unavailable": "La evidencia está lista, pero no se pudo redactar una respuesta: {0}",
+      "evidence": "Evidencia",
       "nothing_ingested_title": "Todavía no se ha importado nada, así que no hay nada que buscar.",
       "nothing_ingested_step_approve": "Abre «Fuentes» y aprueba una fuente que quieras que se lea.",
       "nothing_ingested_step_sync": "Pulsa «Sincronizar ahora» en esa fuente y observa cómo se llena la barra de importación.",

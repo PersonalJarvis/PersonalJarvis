@@ -1,8 +1,9 @@
 /**
- * Ask view (design doc 04): the question box over the hybrid search
- * (`GET /api/ultrawiki/search`). Every hit is a citation — title, snippet,
- * source, matched-by chips (keyword / semantic), timestamp, and the
- * permalink that deep-links back to where the item lives.
+ * Ask view (design doc 04): evidence retrieval plus a cited answer
+ * (`POST /api/ultrawiki/ask`). Every hit is a citation — title, snippet,
+ * source, matched-by chips (keyword / semantic), timestamp, and the permalink
+ * that deep-links back to where the item lives. When synthesis is unavailable,
+ * the evidence remains usable instead of disappearing behind an error.
  *
  * Honesty: the legs line under the box states which retrieval legs are live
  * (from `/status` `search_legs`), and the empty state repeats the reason a
@@ -15,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import {
-  searchUltraWiki,
+  askUltraWiki,
   type UltraWikiSearchHit,
   type UltraWikiStatus,
 } from "@/lib/ultrawikiApi";
@@ -38,8 +39,8 @@ export function AskPanel({
   const [submitted, setSubmitted] = useState("");
 
   const searchQuery = useQuery({
-    queryKey: ["ultrawiki", "search", submitted],
-    queryFn: () => searchUltraWiki(submitted),
+    queryKey: ["ultrawiki", "ask", submitted],
+    queryFn: () => askUltraWiki(submitted),
     enabled: submitted.length > 0,
     retry: false,
     staleTime: 5_000,
@@ -142,11 +143,53 @@ export function AskPanel({
             )}
           </div>
         ) : (
-          <ul className="space-y-2" data-testid="ultrawiki-ask-results">
-            {results.map((hit) => (
-              <ResultRow key={`${hit.item_id}-${hit.permalink}`} hit={hit} />
-            ))}
-          </ul>
+          <div className="space-y-3">
+            {searchQuery.data?.answer_status === "answered" && (
+              <section
+                className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4"
+                data-testid="ultrawiki-answer"
+              >
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {searchQuery.data.answer}
+                </p>
+                {searchQuery.data.provider && (
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {t("ultrawiki.ask.answered_via").replace(
+                      "{0}",
+                      searchQuery.data.provider,
+                    )}
+                  </p>
+                )}
+              </section>
+            )}
+            {searchQuery.data?.answer_status === "answer_unavailable" && (
+              <p
+                className="rounded-md border border-[#ffb84d]/30 bg-[#ffb84d]/10 px-3 py-2 text-xs text-[#ffb84d]"
+                data-testid="ultrawiki-answer-unavailable"
+              >
+                {t("ultrawiki.ask.answer_unavailable").replace(
+                  "{0}",
+                  searchQuery.data.synthesis_error ?? "",
+                )}
+              </p>
+            )}
+            {results.length > 0 && (
+              <section>
+                <p className="mb-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {t("ultrawiki.ask.evidence")}
+                </p>
+                <ul className="space-y-2" data-testid="ultrawiki-ask-results">
+                  {results.map((hit, index) => (
+                    <ResultRow
+                      key={`${hit.item_id}-${hit.permalink}`}
+                      hit={hit}
+                      citation={index + 1}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -228,7 +271,13 @@ const MATCHED_BY_LABEL_KEY: Record<string, string> = {
   vector: "ultrawiki.ask.matched_vector",
 };
 
-function ResultRow({ hit }: { hit: UltraWikiSearchHit }): JSX.Element {
+function ResultRow({
+  hit,
+  citation,
+}: {
+  hit: UltraWikiSearchHit;
+  citation: number;
+}): JSX.Element {
   const t = useT();
   return (
     <li
@@ -237,6 +286,7 @@ function ResultRow({ hit }: { hit: UltraWikiSearchHit }): JSX.Element {
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">
+          <span className="mr-1.5 font-mono text-primary">[{citation}]</span>
           {hit.title || hit.snippet.slice(0, 60)}
         </span>
         <span className="flex items-center gap-1.5">

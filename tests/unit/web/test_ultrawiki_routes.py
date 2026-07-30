@@ -329,6 +329,64 @@ def test_search_returns_fused_hits_after_inline_pipeline(env) -> None:
     assert isinstance(hit["context"], list)
 
 
+def test_ask_returns_a_grounded_answer_and_numbered_evidence(
+    env, monkeypatch
+) -> None:
+    from jarvis.ultrawiki.answer import SynthesisResult
+
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    async def fake_answer(_cfg, _question, _hits):
+        return SynthesisResult(
+            answer="The ledger reconciliation is in the Alpha note [1].",
+            provider="fake",
+            citations=(1,),
+        )
+
+    monkeypatch.setattr(
+        "jarvis.ultrawiki.answer.answer_question", fake_answer
+    )
+    response = env.client.post(
+        "/api/ultrawiki/ask", json={"question": "Where is the ledger?"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["answer_status"] == "answered"
+    assert body["citations"] == [1]
+    assert body["provider"] == "fake"
+    assert body["results"][0]["permalink"]
+
+
+def test_ask_keeps_evidence_when_no_chat_provider_can_synthesize(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    response = env.client.post(
+        "/api/ultrawiki/ask", json={"question": "Where is the ledger?"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["answer_status"] == "answer_unavailable"
+    assert body["answer"] == ""
+    assert body["results"]
+    assert "provider" in body["synthesis_error"]
+
+
+def test_ask_disabled_is_409(env) -> None:
+    response = env.client.post(
+        "/api/ultrawiki/ask", json={"question": "Where is the ledger?"}
+    )
+
+    assert response.status_code == 409
+
+
 # ---------------------------------------------------------------------------
 # Settings guard (D-3: embedding change re-embeds the corpus)
 # ---------------------------------------------------------------------------

@@ -515,6 +515,21 @@ export interface UltraWikiSearchResponse {
   total: number;
 }
 
+export type UltraWikiAnswerStatus =
+  | "answered"
+  | "no_evidence"
+  | "answer_unavailable";
+
+export interface UltraWikiAskResponse extends UltraWikiSearchResponse {
+  question: string;
+  answer: string;
+  answer_status: UltraWikiAnswerStatus;
+  provider: string;
+  /** One-based indexes into `results`, matching inline `[n]` citations. */
+  citations: number[];
+  synthesis_error?: string;
+}
+
 export interface UltraWikiActivateBody {
   db_backend?: string;
   embedding_provider: string;
@@ -1203,6 +1218,16 @@ export function searchUltraWiki(
   return request<UltraWikiSearchResponse>(
     `/api/ultrawiki/search?${params.toString()}`,
   );
+}
+
+export function askUltraWiki(
+  question: string,
+  k = 10,
+): Promise<UltraWikiAskResponse> {
+  return postJson<UltraWikiAskResponse>("/api/ultrawiki/ask", {
+    question,
+    k,
+  });
 }
 
 /** True when any sync job is still queued or running (drives poll cadence). */
