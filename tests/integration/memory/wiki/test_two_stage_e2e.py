@@ -385,11 +385,11 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     await bus.publish(ResponseGenerated(text="Noted.", language="en"))
     for _ in range(100):
         audit_after = journal.capture_summary()
-        if audit_after["total"] > audit_before["total"]:
+        if audit_after["failed"] > audit_before["failed"]:
             break
         await asyncio.sleep(0.02)
     else:
-        raise AssertionError("secret-bearing turn was not audited")
+        raise AssertionError("secret-bearing turn was not rejected and audited")
 
     assert not (vault_root / "concepts" / "api-key-note.md").exists(), (
         "secret-shaped body must never reach disk"
