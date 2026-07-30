@@ -149,7 +149,9 @@ def resolve_outputs_root(repo_root: Path) -> Path:
     Prefers ``<repo_root>.parent/jarvis-agent-outputs/`` (post-rename, 2026-06-29).
     Falls back to ``<repo_root>.parent/sub-agents-outputs/`` when that old directory
     exists AND the new one does NOT — this keeps existing missions readable without
-    any migration step. Does NOT create the directory; callers are responsible.
+    any migration step. Read surfaces that need retained history from both locations
+    use :func:`resolve_readable_outputs_roots`. Does NOT create the directory;
+    callers are responsible.
     """
     explicit_root = os.environ.get("JARVIS_ISOLATION_ROOT", "").strip()
     if explicit_root:
@@ -165,6 +167,31 @@ def resolve_outputs_root(repo_root: Path) -> Path:
     if not new_dir.exists() and old_dir.exists():
         return old_dir  # back-compat: keep existing missions accessible
     return new_dir
+
+
+def resolve_readable_outputs_roots(repo_root: Path) -> tuple[Path, ...]:
+    """Return output roots that may contain user-visible mission history.
+
+    New missions still use :func:`resolve_outputs_root` as their single write
+    location. During the directory-name transition, however, both the canonical
+    ``jarvis-agent-outputs`` directory and the legacy ``sub-agents-outputs``
+    directory can exist at the same time. Read surfaces must include both or
+    creating the canonical directory makes every retained legacy mission vanish
+    from the UI.
+
+    Explicit isolation and application-data roots remain strictly isolated and
+    never scan a sibling directory.
+    """
+    primary = resolve_outputs_root(repo_root)
+    if os.environ.get("JARVIS_ISOLATION_ROOT", "").strip():
+        return (primary,)
+    if os.environ.get("JARVIS_DATA_DIR", "").strip():
+        return (primary,)
+
+    legacy = repo_root.resolve().parent / "sub-agents-outputs"
+    if legacy.is_dir() and legacy != primary:
+        return (primary, legacy)
+    return (primary,)
 
 
 class WorktreeManager:

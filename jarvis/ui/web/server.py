@@ -2428,11 +2428,15 @@ class WebServer:
         # cleanup_days by mtime, not DB-gated): without this seam an isolated
         # headless boot (e.g. scripts/measure_boot.py) would sweep real mission
         # outputs older than 14 days.
+        from jarvis.missions.isolation.worktree import (
+            resolve_outputs_root,
+            resolve_readable_outputs_roots,
+        )
+
         _iso_override = os.environ.get("JARVIS_ISOLATION_ROOT")
         if _iso_override:
             isolation_root = Path(_iso_override)
         else:
-            from jarvis.missions.isolation.worktree import resolve_outputs_root
             isolation_root = resolve_outputs_root(repo_root)
 
         # Fail-closed primary-instance gate: POSITIVE proof is required.
@@ -2482,6 +2486,7 @@ class WebServer:
         # otherwise have to re-derive the same WEB_DIR.parent.parent.parent
         # walk and would silently drift if the launcher layout changes.
         self.app.state.outputs_root = isolation_root
+        self.app.state.outputs_roots = resolve_readable_outputs_roots(repo_root)
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
