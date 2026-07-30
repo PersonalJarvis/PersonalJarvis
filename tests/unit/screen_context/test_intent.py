@@ -33,6 +33,7 @@ from jarvis.screen_context.models import VisualIntent
         "read this out to me",
         "what's on my screen?",
         "check this out",
+        "take a screenshot",
         # -- German (the two phrasings the feature is specified around)
         "Kannst du mal sehen?",
         "Schau dir das an",
@@ -42,11 +43,13 @@ from jarvis.screen_context.models import VisualIntent
         "was steht da?",
         "lies mir das vor",
         "auf dem Bildschirm ist eine Fehlermeldung",  # i18n-allow: DE input
+        "mach einen Screenshot",  # i18n-allow: DE input
         # -- Spanish
         "mira esto",
         "puedes ver esto?",
         "que dice ahi?",
         "echa un vistazo",
+        "haz una captura de pantalla",
     ],
 )
 def test_unambiguous_requests_capture(utterance: str) -> None:

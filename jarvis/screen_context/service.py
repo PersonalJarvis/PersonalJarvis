@@ -244,6 +244,12 @@ class ScreenContextService:
             else self.classify(text, locale=locale)
         )
 
+        # A disabled feature is a policy refusal only when the user actually
+        # asked for it. Ordinary conversation must remain a no-op; checking the
+        # switch first would make disabling Screen Context block every turn.
+        if verdict.intent is VisualIntent.NONE:
+            return CaptureOutcome(status="not_requested", verdict=verdict)
+
         if not self._settings.enabled:
             return CaptureOutcome(
                 status="refused",
@@ -254,9 +260,6 @@ class ScreenContextService:
                     "Settings."
                 ),
             )
-
-        if verdict.intent is VisualIntent.NONE:
-            return CaptureOutcome(status="not_requested", verdict=verdict)
 
         if verdict.intent is VisualIntent.AMBIGUOUS:
             log.info(

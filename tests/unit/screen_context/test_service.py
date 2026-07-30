@@ -280,6 +280,13 @@ async def test_disabled_feature_refuses_honestly() -> None:
     assert "off" in (outcome.message or "").lower()
 
 
+async def test_disabled_feature_leaves_ordinary_turns_alone() -> None:
+    """The opt-out disables captures, not the rest of the assistant."""
+    service = make_service(settings=ScreenContextSettings(enabled=False))
+    outcome = await service.capture_for_turn("tell me a joke", locale="en")
+    assert outcome.status == "not_requested"
+
+
 async def test_headless_host_refuses_with_an_explanation() -> None:
     service = make_service(displays=FakeDisplays([]))
     outcome = await service.capture_for_turn("look at this", locale="en")

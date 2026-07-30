@@ -151,6 +151,8 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     # screen nouns with a possessive/demonstrative
     r"|\b(?:on|at)\s+(?:my|the|this)\s+screen\b|\bmy\s+screen\b"
     r"|\bwhat(?:'|)s\s+on\s+(?:my|the)\s+screen\b"
+    r"|\b(?:take|make|capture|grab)\s+(?:a\s+)?screen(?:shot|\s+capture)\b"
+    r"|\bscreen(?:shot|\s+capture)\s+(?:this|that|my\s+screen|the\s+screen)\b"
     r"|\b(?:this|that)\s+(?:error|error\s+message|message|button|menu|popup)\b"
     # read-out requests
     r"|\bwhat\s+does\s+(?:it|this|that|the\s+\w+)\s+say\b"
@@ -171,6 +173,8 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bwas\s+siehst\s+du\b"
     # screen nouns
     r"|\bauf\s+(?:dem|meinem)\s+bildschirm\b|\bam\s+bildschirm\b|\bmein\s+bildschirm\b"
+    r"|\b(?:mach|mache|erstelle|nimm)\s+(?:bitte\s+)?(?:einen\s+)?screenshot\b"  # i18n-allow: DE input
+    r"|\bbildschirmfoto\s+(?:machen|aufnehmen|erstellen)\b"  # i18n-allow: DE input
     r"|\bauf\s+dem\s+schirm\b|\bhier\s+auf\s+dem\b"  # i18n-allow: DE input
     r"|\b(?:diese|die)\s+fehlermeldung\b"  # i18n-allow: DE input
     r"|\b(?:dieser|der)\s+fehler\s+(?:hier|da)\b"  # i18n-allow: DE input
@@ -186,6 +190,7 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bpuedes\s+ver\s+(?:esto|eso|mi\s+pantalla|la\s+pantalla)\b"
     r"|\bves\s+(?:esto|eso|mi\s+pantalla)\b|\bque\s+ves\b"
     r"|\ben\s+(?:mi|la)\s+pantalla\b|\bmi\s+pantalla\b"
+    r"|\b(?:haz|toma|captura)\s+(?:una\s+)?captura\s+de\s+pantalla\b"
     r"|\bque\s+dice\s+(?:ahi|aqui|esto|eso)\b"
     r"|\blee\s+(?:esto|eso|el\s+\w+)\b"
     r"|\beste\s+error\b|\besta\s+ventana\s+de\s+error\b"
