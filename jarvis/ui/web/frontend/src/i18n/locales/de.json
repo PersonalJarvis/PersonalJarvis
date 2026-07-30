@@ -3497,6 +3497,34 @@
     "paste_unavailable": "Zwischenablage konnte nicht gelesen werden.",
     "paste_failed": "Hier kann nicht eingefügt werden."
   },
+  "workspace_launcher": {
+    "agents": {
+      "step_title": "Coding-Agents auswählen",
+      "step_hint": "Verteile alle Terminal-Plätze auf einmal, statt jedes Terminal einzeln zu bearbeiten.",
+      "nav_summary": "{0} von {1} zugewiesen",
+      "allocation": "Terminal-Verteilung",
+      "hint": "Lege fest, wie viele Terminal-Plätze jeder installierte Agent erhält. Die Namen werden automatisch vergeben.",
+      "assigned": "Zugewiesene Terminals",
+      "unassigned": "Freie Terminal-Plätze: {0}",
+      "all_assigned": "Alle Terminals zugewiesen",
+      "quick_fill": "Schnellverteilung",
+      "one_each": "Je einer",
+      "split_evenly": "Gleichmäßig verteilen",
+      "clear": "Leeren",
+      "select": "{0} auswählen",
+      "installed": "Installiert",
+      "not_installed": "Nicht installiert",
+      "account": "Abonnement",
+      "account_for": "Abonnement für {0}",
+      "active_account": "Aktives Konto",
+      "not_signed_in": "nicht angemeldet",
+      "all": "Alle",
+      "decrease": "Ein {0}-Terminal weniger verwenden",
+      "count_for": "Terminal-Anzahl für {0}",
+      "increase": "Ein {0}-Terminal mehr verwenden",
+      "auto_names": "Die Terminal-Namen werden automatisch vergeben. Nach dem Öffnen kannst du sie im jeweiligen Terminal-Header umbenennen."
+    }
+  },
   "agent_accounts": {
     "title": "Deine Abos",
     "hint": "mehrere Logins pro CLI",

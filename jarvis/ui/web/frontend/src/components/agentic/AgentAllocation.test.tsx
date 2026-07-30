@@ -1,0 +1,192 @@
+import { useState } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentAccount } from "@/lib/agentAccountsApi";
+import type { AgentStatus } from "@/lib/agenticIdeApi";
+import { AgentAllocation, type PlannedTerminal } from "./AgentAllocation";
+
+const COPY: Record<string, string> = {
+  "workspace_launcher.agents.all": "All",
+  "workspace_launcher.agents.select": "Select {0}",
+  "workspace_launcher.agents.decrease": "Use one fewer {0} terminal",
+  "workspace_launcher.agents.count_for": "Terminal count for {0}",
+  "workspace_launcher.agents.increase": "Use one more {0} terminal",
+  "workspace_launcher.agents.account_for": "Subscription for {0}",
+};
+
+vi.mock("@/i18n", () => ({
+  useT: () => (key: string) => COPY[key] ?? key,
+}));
+
+const AGENTS: AgentStatus[] = [
+  {
+    name: "claude",
+    display_name: "Claude Code",
+    installed: true,
+    version: "2.1",
+    install_command: null,
+  },
+  {
+    name: "codex",
+    display_name: "Codex",
+    installed: true,
+    version: "0.142",
+    install_command: null,
+  },
+  {
+    name: "opencode",
+    display_name: "OpenCode",
+    installed: false,
+    version: null,
+    install_command: "npm install -g opencode-ai",
+  },
+];
+
+const ACCOUNTS: AgentAccount[] = [
+  {
+    id: "claude:default",
+    platform: "claude",
+    label: "Default",
+    config_dir: "",
+    builtin: true,
+    connected: true,
+    mode: "subscription",
+    message: "",
+    email: null,
+    tier: null,
+  },
+  {
+    id: "claude:work",
+    platform: "claude",
+    label: "Work seat",
+    config_dir: "C:/accounts/work",
+    builtin: false,
+    connected: true,
+    mode: "subscription",
+    message: "",
+    email: null,
+    tier: null,
+  },
+];
+
+function Harness({
+  count = 5,
+  accounts = [],
+}: {
+  count?: number;
+  accounts?: AgentAccount[];
+}) {
+  const [planned, setPlanned] = useState<PlannedTerminal[]>(
+    Array.from({ length: count }, (_, index) => ({
+      agent: "",
+      name: `T${index + 1}`,
+    })),
+  );
+  return (
+    <>
+      <AgentAllocation
+        planned={planned}
+        agents={AGENTS}
+        accountsFor={(platform) => (platform === "claude" ? accounts : [])}
+        onPlanned={(update) => setPlanned((previous) => update(previous))}
+      />
+      <output data-testid="plan">{JSON.stringify(planned)}</output>
+    </>
+  );
+}
+
+function plan(): PlannedTerminal[] {
+  return JSON.parse(
+    screen.getByTestId("plan").textContent ?? "[]",
+  ) as PlannedTerminal[];
+}
+
+afterEach(cleanup);
+
+describe("AgentAllocation", () => {
+  it("assigns every terminal to one agent with one click", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
+
+    expect(plan().map((pane) => pane.agent)).toEqual([
+      "claude",
+      "claude",
+      "claude",
+      "claude",
+      "claude",
+    ]);
+    expect(screen.getByText("5 / 5")).toBeTruthy();
+  });
+
+  it("turns a typed count into a batch split without per-terminal editing", () => {
+    render(<Harness count={17} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
+
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "Terminal count for Codex" }),
+      { target: { value: "7" } },
+    );
+
+    const agents = plan().map((pane) => pane.agent);
+    expect(agents.filter((agent) => agent === "claude")).toHaveLength(10);
+    expect(agents.filter((agent) => agent === "codex")).toHaveLength(7);
+  });
+
+  it("splits every slot evenly across installed agents", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByText("workspace_launcher.agents.split_evenly"));
+
+    expect(plan().map((pane) => pane.agent)).toEqual([
+      "claude",
+      "claude",
+      "claude",
+      "codex",
+      "codex",
+    ]);
+  });
+
+  it("can place one of each and leave the remaining slots visibly open", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByText("workspace_launcher.agents.one_each"));
+
+    expect(plan().map((pane) => pane.agent)).toEqual([
+      "claude",
+      "codex",
+      "",
+      "",
+      "",
+    ]);
+    expect(screen.getByText("2 / 5")).toBeTruthy();
+  });
+
+  it("applies one selected subscription to every terminal of an agent", () => {
+    render(<Harness count={3} accounts={ACCOUNTS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
+
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Subscription for Claude Code" }),
+      { target: { value: "claude:work" } },
+    );
+
+    expect(plan().map((pane) => pane.account)).toEqual([
+      "claude:work",
+      "claude:work",
+      "claude:work",
+    ]);
+  });
+
+  it("shows unavailable agents without allowing them to consume slots", () => {
+    render(<Harness />);
+
+    expect(
+      (
+        screen.getByRole("spinbutton", {
+          name: "Terminal count for OpenCode",
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(true);
+  });
+});

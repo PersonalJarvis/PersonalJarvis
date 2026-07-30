@@ -3497,6 +3497,34 @@
     "paste_unavailable": "No se pudo leer el portapapeles.",
     "paste_failed": "Aquí no se puede pegar."
   },
+  "workspace_launcher": {
+    "agents": {
+      "step_title": "Elige los agentes de programación",
+      "step_hint": "Distribuye todas las terminales de una vez en lugar de editar cada una por separado.",
+      "nav_summary": "{0} de {1} asignadas",
+      "allocation": "Distribución de terminales",
+      "hint": "Elige cuántas terminales recibe cada agente instalado. Los nombres se asignan automáticamente.",
+      "assigned": "Terminales asignadas",
+      "unassigned": "Terminales libres: {0}",
+      "all_assigned": "Todas las terminales están asignadas",
+      "quick_fill": "Asignación rápida",
+      "one_each": "Uno de cada",
+      "split_evenly": "Repartir por igual",
+      "clear": "Vaciar",
+      "select": "Seleccionar {0}",
+      "installed": "Instalado",
+      "not_installed": "No instalado",
+      "account": "Suscripción",
+      "account_for": "Suscripción para {0}",
+      "active_account": "Cuenta activa",
+      "not_signed_in": "sesión no iniciada",
+      "all": "Todos",
+      "decrease": "Usar una terminal menos de {0}",
+      "count_for": "Cantidad de terminales para {0}",
+      "increase": "Usar una terminal más de {0}",
+      "auto_names": "Los nombres de las terminales se asignan automáticamente. Después de abrirlas, puedes renombrarlas desde cada cabecera."
+    }
+  },
   "agent_accounts": {
     "title": "Tus suscripciones",
     "hint": "varios inicios de sesión por CLI",

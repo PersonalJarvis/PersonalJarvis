@@ -408,8 +408,9 @@ describe("Agentic IDE launcher", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /continue to agents/i }),
     );
-    expect(await screen.findByDisplayValue("Mika")).toBeTruthy();
-    expect(screen.getByDisplayValue("Nova")).toBeTruthy();
+    expect(await screen.findByText("0 / 2")).toBeTruthy();
+    fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
+    expect(screen.getByText("2 / 2")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
     expect(
@@ -427,14 +428,12 @@ describe("Agentic IDE launcher", () => {
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
   });
 
-  it("keeps a half-made plan across backward navigation", async () => {
+  it("keeps an aggregate agent split across backward navigation", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
     await openAgents();
 
-    fireEvent.change(await screen.findByLabelText("Call-sign for terminal 1"), {
-      target: { value: "Scout" },
-    });
+    fireEvent.click(screen.getByText("workspace_launcher.agents.split_evenly"));
     fireEvent.click(screen.getByTestId("launcher-step-folder"));
 
     const path = screen.getByTestId("folder-path-input");
@@ -443,7 +442,11 @@ describe("Agentic IDE launcher", () => {
 
     fireEvent.click(screen.getByTestId("launcher-step-agents"));
 
-    expect(screen.getByDisplayValue("Scout")).toBeTruthy();
+    expect(
+      screen
+        .getAllByRole("spinbutton")
+        .map((input) => (input as HTMLInputElement).value),
+    ).toEqual(["1", "1"]);
   });
 
   /**
@@ -535,7 +538,14 @@ describe("Agentic IDE launcher", () => {
       screen.getByRole("button", { name: /continue to agents/i }),
     );
 
-    expect(screen.getByLabelText("Call-sign for terminal 10")).toBeTruthy();
+    expect(screen.getByText("0 / 10")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("progressbar", {
+          name: "workspace_launcher.agents.assigned",
+        })
+        .getAttribute("aria-valuemax"),
+    ).toBe("10");
   });
 
   it("caps the count at the backend limit", async () => {

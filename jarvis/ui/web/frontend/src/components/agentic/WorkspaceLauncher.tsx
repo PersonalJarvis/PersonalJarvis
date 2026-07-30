@@ -8,10 +8,12 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { FolderPicker } from "./FolderPicker";
 import { ResumeCard } from "./ResumeCard";
-import { Button, Field, Notice, Select, SectionLabel } from "./controls";
+import { AgentAllocation, type PlannedTerminal } from "./AgentAllocation";
+import { Button, Notice, SectionLabel } from "./controls";
 import { CountStepper, CountTrack, WorkspaceShape } from "./WorkspaceShape";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type {
@@ -20,13 +22,7 @@ import type {
   ResumeOffer,
 } from "@/lib/agenticIdeApi";
 
-/** One pane the workspace will open with, as the launcher holds it. */
-export interface PlannedTerminal {
-  agent: string;
-  name: string;
-  /** Which subscription of `agent` this pane opens on. */
-  account?: string;
-}
+export type { PlannedTerminal } from "./AgentAllocation";
 
 export interface WorkspaceLauncherProps {
   /** True while this is opening an additional workspace beside running ones. */
@@ -85,8 +81,8 @@ const STEPS = [
   },
   {
     label: "Agents",
-    title: "Assign the terminals",
-    hint: "Name each pane and choose the coding agent that runs there.",
+    title: "Choose the coding agents",
+    hint: "Distribute all terminal slots at once instead of editing every pane.",
   },
   {
     label: "Review",
@@ -119,16 +115,12 @@ export function WorkspaceLauncher({
   onDismissOffer,
   onStart,
 }: WorkspaceLauncherProps) {
+  const t = useT();
   const [step, setStep] = useState<LauncherStep>(0);
   const planReady =
     planned.length > 0 &&
     planned.every((pane) => pane.name.trim() && pane.agent);
   const ready = Boolean(folder) && planReady;
-
-  const setPane = (index: number, patch: Partial<PlannedTerminal>) =>
-    onPlanned((previous) =>
-      previous.map((pane, i) => (i === index ? { ...pane, ...patch } : pane)),
-    );
 
   const canLeaveCurrent =
     (step === 0 && Boolean(folder)) ||
@@ -156,6 +148,10 @@ export function WorkspaceLauncher({
   }, [busy, onStart, ready, step]);
 
   const active = STEPS[step];
+  const activeTitle =
+    step === 2 ? t("workspace_launcher.agents.step_title") : active.title;
+  const activeHint =
+    step === 2 ? t("workspace_launcher.agents.step_hint") : active.hint;
 
   return (
     <div
@@ -174,10 +170,10 @@ export function WorkspaceLauncher({
               id="workspace-launcher-title"
               className="mt-2 text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
             >
-              {active.title}
+              {activeTitle}
             </h2>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              {active.hint}
+              {activeHint}
               {addingNew && step === 0
                 ? " Your open workspaces keep running."
                 : ""}
@@ -291,11 +287,11 @@ export function WorkspaceLauncher({
               )}
 
               {step === 2 && (
-                <PanePlan
+                <AgentAllocation
                   planned={planned}
                   agents={agents}
                   accountsFor={accountsFor}
-                  onChange={setPane}
+                  onPlanned={onPlanned}
                 />
               )}
 
@@ -374,14 +370,18 @@ function StepNavigation({
   canVisit: (target: LauncherStep) => boolean;
   onStep: (step: LauncherStep) => void;
 }) {
+  const t = useT();
+  const assigned = planned.filter((pane) => Boolean(pane.agent)).length;
   const summaries = useMemo(
     () => [
       folder ? leafName(folder) : "Not chosen",
       `${count} terminal${count === 1 ? "" : "s"}`,
-      `${planned.length} assigned`,
+      t("workspace_launcher.agents.nav_summary")
+        .replace("{0}", String(assigned))
+        .replace("{1}", String(planned.length)),
       "Check and open",
     ],
-    [count, folder, planned.length],
+    [assigned, count, folder, planned.length, t],
   );
 
   return (
@@ -426,124 +426,6 @@ function StepNavigation({
         })}
       </ol>
     </nav>
-  );
-}
-
-/** One row per terminal, aligned as a table rather than framed as cards. */
-function PanePlan({
-  planned,
-  agents,
-  accountsFor,
-  onChange,
-}: {
-  planned: PlannedTerminal[];
-  agents: AgentStatus[];
-  accountsFor: (platform: string) => AgentAccount[];
-  onChange: (index: number, patch: Partial<PlannedTerminal>) => void;
-}) {
-  return (
-    <div>
-      <div className="flex flex-wrap items-end justify-between gap-3 pb-4">
-        <div>
-          <SectionLabel>Terminal assignments</SectionLabel>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Call-signs are what you say aloud when addressing a pane.
-          </p>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          “What is {planned[1]?.name || planned[0]?.name || "T2"} doing?”
-        </p>
-      </div>
-      <div className="max-h-[28rem] overflow-y-auto scrollbar-jarvis border-y border-border/70">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
-            <tr className="border-b border-border/70">
-              <th className="w-12 px-3 py-2 text-left">
-                <SectionLabel>#</SectionLabel>
-              </th>
-              <th className="px-2 py-2 text-left">
-                <SectionLabel>Call-sign</SectionLabel>
-              </th>
-              <th className="px-2 py-2 text-left">
-                <SectionLabel>Agent</SectionLabel>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {planned.map((pane, index) => {
-              const accounts = accountsFor(pane.agent);
-              return (
-                <tr
-                  key={index}
-                  className="border-b border-border/50 last:border-b-0"
-                >
-                  <td className="px-3 py-2 align-middle font-mono text-xs tabular-nums text-muted-foreground">
-                    {(index + 1).toString().padStart(2, "0")}
-                  </td>
-                  <td className="px-2 py-2 align-middle">
-                    <Field
-                      value={pane.name}
-                      onChange={(event) =>
-                        onChange(index, { name: event.target.value })
-                      }
-                      aria-label={`Call-sign for terminal ${index + 1}`}
-                      className="w-full min-w-24 font-mono sm:w-40"
-                      spellCheck={false}
-                    />
-                  </td>
-                  <td className="px-2 py-2 align-middle">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Select
-                        value={pane.agent}
-                        aria-label={`Agent for terminal ${index + 1}`}
-                        onChange={(event) =>
-                          onChange(index, {
-                            agent: event.target.value,
-                            account: undefined,
-                          })
-                        }
-                        className="w-44"
-                      >
-                        {agents.map((agent) => (
-                          <option
-                            key={agent.name}
-                            value={agent.name}
-                            disabled={!agent.installed}
-                          >
-                            {agent.display_name}
-                            {agent.installed ? "" : " — not installed"}
-                          </option>
-                        ))}
-                      </Select>
-                      {accounts.length >= 2 && (
-                        <Select
-                          value={pane.account ?? ""}
-                          aria-label={`Subscription for the ${pane.agent} terminal`}
-                          onChange={(event) =>
-                            onChange(index, {
-                              account: event.target.value || undefined,
-                            })
-                          }
-                          className="w-40 text-xs"
-                        >
-                          <option value="">Active account</option>
-                          {accounts.map((account) => (
-                            <option key={account.id} value={account.id}>
-                              {account.label}
-                              {account.connected ? "" : " (not signed in)"}
-                            </option>
-                          ))}
-                        </Select>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 

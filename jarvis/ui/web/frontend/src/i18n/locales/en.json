@@ -3498,6 +3498,34 @@
     "paste_unavailable": "Could not read the clipboard.",
     "paste_failed": "Cannot paste here."
   },
+  "workspace_launcher": {
+    "agents": {
+      "step_title": "Choose the coding agents",
+      "step_hint": "Distribute all terminal slots at once instead of editing every pane.",
+      "nav_summary": "{0} of {1} assigned",
+      "allocation": "Terminal allocation",
+      "hint": "Choose how many terminal slots each installed agent receives. Names are assigned automatically.",
+      "assigned": "Assigned terminals",
+      "unassigned": "Open terminal slots: {0}",
+      "all_assigned": "All terminals assigned",
+      "quick_fill": "Quick fill",
+      "one_each": "One of each",
+      "split_evenly": "Split evenly",
+      "clear": "Clear",
+      "select": "Select {0}",
+      "installed": "Installed",
+      "not_installed": "Not installed",
+      "account": "Subscription",
+      "account_for": "Subscription for {0}",
+      "active_account": "Active account",
+      "not_signed_in": "not signed in",
+      "all": "All",
+      "decrease": "Use one fewer {0} terminal",
+      "count_for": "Terminal count for {0}",
+      "increase": "Use one more {0} terminal",
+      "auto_names": "Terminal names are assigned automatically. After opening, you can rename them from each terminal header."
+    }
+  },
   "agent_accounts": {
     "title": "Your subscriptions",
     "hint": "several logins per CLI",

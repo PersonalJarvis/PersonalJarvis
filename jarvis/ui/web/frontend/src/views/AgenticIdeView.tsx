@@ -3,8 +3,8 @@
  *
  * Two states in one view:
  *
- * * no workspace open → a four-step wizard: folder, how many terminals, which
- *   agent + call-sign per terminal, then start,
+ * * no workspace open → a four-step wizard: folder, how many terminals, an
+ *   aggregate agent allocation, then start,
  * * workspace open → the terminal grid (see AgenticGrid).
  *
  * The wizard order is deliberate and matches how the decision actually gets
@@ -387,7 +387,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const chooseCount = (n: number) => {
     const next = Math.max(1, Math.min(maxTerminals, Math.trunc(n)));
     setCount(next);
-    setPlanned((prev) => buildPlan(next, prev, defaultAgent, suggested));
+    setPlanned((prev) => buildPlan(next, prev, "", suggested));
   };
 
   const replayRecent = (recent: {
@@ -436,9 +436,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setPlanned((previous) =>
       previous.length === count
         ? previous
-        : buildPlan(count, previous, defaultAgent, suggested),
+        : buildPlan(count, previous, "", suggested),
     );
-  }, [meta, count, defaultAgent, suggested]);
+  }, [meta, count, suggested]);
 
   const start = async () => {
     if (!folder) return;
