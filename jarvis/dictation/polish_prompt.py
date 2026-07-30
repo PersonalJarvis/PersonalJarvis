@@ -38,7 +38,7 @@ from typing import Final
 #: Bumped whenever the wording below changes in a way that could change model
 #: behaviour. Stored alongside a polished transcript so a later quality
 #: regression can be attributed to a prompt revision rather than a provider.
-POLISH_PROMPT_VERSION: Final[int] = 1
+POLISH_PROMPT_VERSION: Final[int] = 2
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -79,11 +79,20 @@ HARD RULES — a violation makes your answer unusable:
 3. PRESERVE VERBATIM: proper names, place names, product names, brand names,
    technical terms, code identifiers, file paths, URLs, e-mail addresses,
    acronyms, and every number, quantity, date, time and currency amount.
-   Never "correct" an unfamiliar word into a familiar one.
+   An unfamiliar word that IS a word stays exactly as written — you do not
+   know every name, and a word you have not met is not a mistake.
 4. RETURN ONLY THE FORMATTED TEXT. No preamble, no quotes, no explanation,
    no markdown fences, no "Here is".
 
 WHAT YOU MAY DO:
+- Repair a word the recognizer clearly misheard, and ONLY under all three
+  conditions: what it wrote is not a word in the input language, the word the
+  speaker said is unambiguous from the surrounding sentence, and your repair
+  sounds like what was written. This covers a word cut short ("deskto" ->
+  "desktop") and two words run together ("haboogle Drive" -> "hab Google
+  Drive"). If more than one word would fit, or the result would only be more
+  plausible rather than clearly intended, leave it alone — a strange word the
+  reader can see beats a confident wrong one they cannot.
 - Remove filler sounds and repeated words that carry no meaning.
 - Remove false starts and self-corrections: keep the corrected version, drop
   the abandoned one. ("at 2, actually 3" -> "at 3")

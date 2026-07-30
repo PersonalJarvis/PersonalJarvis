@@ -148,6 +148,43 @@ def test_a_dropped_proper_noun_is_rejected_even_without_a_dictionary_entry() -> 
     assert verdict(raw, polished) == "lost_term"
 
 
+def test_a_misheard_word_may_be_corrected_without_counting_as_a_loss() -> None:
+    """The guard's own worst failure: protecting the recognizer's mistakes.
+
+    A misheard word is ALWAYS rare — being misheard is what makes it rare — so
+    a rarity filter that treats "this token is gone" as "a word was lost"
+    refuses every repair, and refuses hardest on the transcripts that need one
+    most. Measured on the live history: 30 of 71 polish runs (42 %) were thrown
+    away this way. Each raw line below is a real one.
+    """
+    for raw, polished in (
+        # A word cut short by the recognizer.
+        ("Wieso legt die Javas Deskto App so extrem rum",  # i18n-allow: real transcript under test
+         "Wieso laggt die Jarvis Desktop App so extrem rum?"),  # i18n-allow
+        # Two spoken words run together into one non-word.
+        ("Ich haboogle Drive und so nicht mal offen",  # i18n-allow
+         "Ich hab Google Drive und so nicht mal offen."),  # i18n-allow
+        ("Ich hab die Promme nicht mal", "Ich hab die Prompts nicht mal."),  # i18n-allow
+    ):
+        assert verdict(raw, polished, language="de") == "", (
+            f"a repair of {raw!r} must be delivered, not refused"
+        )
+
+
+def test_a_word_replaced_by_an_unrelated_one_is_still_a_loss() -> None:
+    """Letting repairs through must not let rewrites through with them.
+
+    The line between the two is whether anything in the answer stands where the
+    word did. ``Anushka`` -> ``Anuschka`` is a spelling; ``Anushka`` -> ``Sarah``
+    is a different person.
+    """
+    raw = "I met Anushka at the conference in Lisbon on Tuesday morning"
+    assert verdict(raw, "I met Sarah at the conference in Lisbon on Tuesday "
+                        "morning.") == "lost_term"
+    assert verdict(raw, "I met Anuschka at the conference in Lisbon on Tuesday "
+                        "morning.") == ""
+
+
 def test_every_reason_this_module_can_return_is_a_declared_one() -> None:
     """A guard that invents a code the history and the UI never heard of is the
     five-layer drift this repo has hit four times (AP-4)."""

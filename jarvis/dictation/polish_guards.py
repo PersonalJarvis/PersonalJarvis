@@ -93,6 +93,33 @@ TRANSLATE_DRIFT_REASONS: Final[tuple[str, ...]] = (
 #: short tokens are dominated by inflections, particles and recognizer debris.
 _RARE_MIN_CHARS = 4
 
+#: How different a replacement may be and still count as a REPAIR of the token
+#: it replaced, rather than its loss. Levenshtein distance over the longer of
+#: the two, so it is a share and not an absolute: at 0.5, half the characters
+#: may move.
+#:
+#: The number is set by the two mistakes it has to tell apart, measured on the
+#: live history:
+#:
+#: * repairs that MUST pass — ``deskto`` -> ``desktop`` (0.14),
+#:   ``javas`` -> ``jarvis`` (0.33), ``haboogle`` -> ``hab google`` (0.11),
+#:   ``promme`` -> ``prompts`` (0.43);
+#: * losses that MUST still fail — ``anushka`` -> ``her`` (1.0),
+#:   ``kubernetes`` dropped entirely (no candidate at all).
+#:
+#: The gap between the two groups is wide, so the exact cut matters far less
+#: than being inside it. It sits nearer the repairs because the cost is not
+#: symmetric: a rejected repair hands the user a transcript they cannot use,
+#: while a wrongly accepted one is a word they can see and edit.
+_REPAIR_MAX_DISTANCE_SHARE = 0.5
+
+#: How many output tokens a single misheard token may have been split into.
+#: A recognizer that runs two words together (``hab Google`` -> ``haboogle``)
+#: is repaired by splitting them apart again, so the candidate has to be looked
+#: for across token boundaries as well. Two is what the observed failures need;
+#: more would start matching unrelated phrases by coincidence.
+_REPAIR_MAX_SPLIT = 2
+
 #: Scripts that do not put spaces between words. A "word count" over these is
 #: meaningless — a whole Chinese sentence counts as ONE token — so any
 #: length-ratio check that spans one of them and a space-separated script is
@@ -365,6 +392,78 @@ def rare_tokens(text: str, *, language: str) -> frozenset[str]:
     )
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance between two short tokens.
+
+    Written out rather than pulled from a dependency because this module is on
+    the dictation path and must stay import-free (same discipline as
+    ``scrub_for_voice``, AP-11). Two rolling rows, so the cost is O(len(a) *
+    len(b)) time and O(len(b)) space over strings that are words.
+    """
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    previous = list(range(len(b) + 1))
+    for i, ch_a in enumerate(a, start=1):
+        current = [i]
+        for j, ch_b in enumerate(b, start=1):
+            current.append(
+                min(
+                    previous[j] + 1,  # deletion
+                    current[j - 1] + 1,  # insertion
+                    previous[j - 1] + (ch_a != ch_b),  # substitution
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _is_repair_of(lost: str, candidate: str) -> bool:
+    """Whether *candidate* is *lost* spelled correctly, rather than a new word."""
+    if not candidate:
+        return False
+    span = max(len(lost), len(candidate))
+    if not span:
+        return False
+    return _edit_distance(lost, candidate) / span <= _REPAIR_MAX_DISTANCE_SHARE
+
+
+def _was_repaired(lost: str, out_tokens: Sequence[str]) -> bool:
+    """Whether the output carries a corrected spelling of the token *lost*.
+
+    This is the difference between the two things a vanished rare token can
+    mean, and the guard is useless until it can tell them apart:
+
+    * the formatter **dropped** a word the speaker said — ``Anushka`` becoming
+      ``her``, a protected term deleted outright. Nothing in the answer stands
+      where it was, and the guard must reject.
+    * the formatter **repaired** what the recognizer misheard — ``deskto``
+      becoming ``desktop``, ``haboogle`` becoming ``hab Google``. The word is
+      still there; only its spelling changed, towards the one the speaker
+      actually said.
+
+    Treating the second as the first is not a conservative default, it is the
+    guard failing exactly where it is needed most: a misrecognized word is
+    ALWAYS rare — that is what being misrecognized makes it — so the rarity
+    filter protects the recognizer's mistakes in direct proportion to how badly
+    it mangled them. Measured on the live history, 30 of 71 polish runs (42 %)
+    were thrown away this way, and the worse the transcript, the likelier the
+    repair was refused.
+
+    Candidates are single output tokens plus runs of up to
+    :data:`_REPAIR_MAX_SPLIT`, because one misheard token is often two spoken
+    words run together.
+    """
+    for size in range(1, _REPAIR_MAX_SPLIT + 1):
+        for start in range(len(out_tokens) - size + 1):
+            if _is_repair_of(lost, "".join(out_tokens[start : start + size])):
+                return True
+    return False
+
+
 def _digit_runs(text: str) -> frozenset[str]:
     """Every number in *text*, with grouping separators flattened away."""
     return frozenset(_DIGIT_RUN_RE.findall(_DIGIT_SEPARATOR_RE.sub("", str(text or ""))))
@@ -462,8 +561,15 @@ def drift_reason(
     # guard declining to compound it. `raw_language` is already computed above,
     # so the correction costs nothing.
     lookup = raw_language if raw_language != "unknown" else language
-    if rare_tokens(raw, language=lookup) - rare_tokens(polished, language=lookup):
-        return "lost_term"
+    vanished = rare_tokens(raw, language=lookup) - rare_tokens(polished, language=lookup)
+    if vanished:
+        # A vanished rare token is only a LOSS when nothing in the answer stands
+        # where it was. Where a corrected spelling does, it is the repair this
+        # pass exists to make — see ``_was_repaired`` for why conflating the two
+        # disarmed the guard on precisely the transcripts that needed it.
+        out_tokens = _compare_tokens(polished)
+        if any(not _was_repaired(token, out_tokens) for token in vanished):
+            return "lost_term"
 
     return ""
 

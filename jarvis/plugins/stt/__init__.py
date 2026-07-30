@@ -190,6 +190,50 @@ def provider_runs_on_device(provider_name: str) -> bool:
     return bool(getattr(_load_provider_class(name), _ON_DEVICE_ATTR, False))
 
 
+#: Class attribute a recognizer plugin sets to declare what it was BUILT for —
+#: ``"latency"`` or ``"accuracy"``. Same shape and same reason as
+#: ``runs_on_device`` above: the capability is answered by the plugin, so no
+#: caller has to carry a list of engine names (AP-21).
+_OPTIMIZED_FOR_ATTR = "optimized_for"
+
+#: What a provider that declares nothing is taken to be. "accuracy" is the
+#: right default because it changes no behaviour: every consumer of this
+#: function is looking for a reason to AVOID an engine, so an undeclared
+#: provider — including every stranger's plugin — keeps being used exactly
+#: where it was used before.
+_DEFAULT_OPTIMIZED_FOR = "accuracy"
+
+
+@lru_cache(maxsize=32)
+def provider_optimized_for_latency(provider_name: str) -> bool:
+    """Whether ``provider_name`` trades accuracy for speed by design.
+
+    A streaming recognizer emits words before the sentence containing them
+    exists: it is decoding under a deadline, with only the audio that has
+    already arrived. That is the correct trade for a spoken command, where a
+    late word is worse than an imperfect one, and the wrong one for a dictation
+    — which is recorded first, transcribed afterwards, and then READ, so there
+    is no deadline to trade against and nothing to gain by guessing early.
+
+    Asked so that the dictation lane can prefer an accuracy-first engine
+    WITHOUT naming one. The alternative that AP-21 warns about — a list of
+    engine names here — would be wrong for the next streaming recognizer
+    somebody plugs in, and wrong again for the user who configured a cloud
+    provider this repo has never heard of.
+
+    Cached per name for the same reason as :func:`provider_runs_on_device`: the
+    answer cannot change while the process runs, and reading the attribute
+    imports the plugin module.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return False
+    declared = getattr(
+        _load_provider_class(name), _OPTIMIZED_FOR_ATTR, _DEFAULT_OPTIMIZED_FOR
+    )
+    return str(declared or _DEFAULT_OPTIMIZED_FOR).strip().lower() == "latency"
+
+
 def stt_family_id(provider_name: str) -> str:
     """The CREDENTIAL family a provider id belongs to.
 

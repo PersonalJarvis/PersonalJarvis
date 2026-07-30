@@ -76,6 +76,18 @@ class NemotronLocalSTT:
     # which is a separate piece of pipeline work — claiming it before it exists
     # would be the dead-config lie this repo keeps auditing for.
     supports_streaming = False
+    # What this engine was BUILT to optimise, declared by the plugin for itself
+    # (AP-21) so no caller has to know the name "nemotron" to reason about it.
+    # A cache-aware streaming transducer buys its latency with future context it
+    # does not wait for, and this bundle can only decode greedily: sherpa-onnx
+    # rejects ``modified_beam_search`` for ``nemo_transducer``, which also means
+    # no hotwords and so no contextual biasing from the user's STT dictionary
+    # (k2-fsa/sherpa-onnx#3572). Both trades are right for a spoken command,
+    # where a word arriving late is worse than a word arriving imperfect, and
+    # wrong for a dictation, which is transcribed after the fact and read as
+    # text. Callers that transcribe a FINISHED recording read this and prefer an
+    # accuracy-first engine where the user has one.
+    optimized_for = "latency"
 
     def __init__(
         self,
