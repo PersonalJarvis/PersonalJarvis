@@ -196,6 +196,36 @@ class DictationCompleted(Event):
     #: place in the delivery path, so it is reported on every status, not only
     #: on ``applied``.
     polish_latency_ms: int = 0
+    #: STT provider ids that produced text during this dictation, in first-use
+    #: order. More than one means the runtime fallback crossed families.
+    stt_providers: tuple[str, ...] = ()
+    #: Effective/requested model ids corresponding to the successful STT calls.
+    #: Kept as a set-like ordered tuple because a fallback may use more than one.
+    stt_models: tuple[str, ...] = ()
+    #: Language tags reported by the recognizer's final windows. The transcript
+    #: remains the source of truth; these are diagnostics, never a language lock.
+    detected_languages: tuple[str, ...] = ()
+    #: Aggregate wall-clock time spent awaiting STT for this dictation.
+    stt_latency_ms: int = 0
+    #: Number of logical STT uploads, including previews and final attempts.
+    #: A provider's internal request-shape downgrade is deliberately not
+    #: observable at this layer.
+    stt_calls: int = 0
+    #: Stable reason codes observed during STT, with duplicates removed.
+    stt_errors: tuple[str, ...] = ()
+    #: Compact audit facts such as final-pass status, window count, and audio
+    #: preprocessing decisions. English machine data, no transcript content.
+    stt_audit: tuple[str, ...] = ()
+    #: Stable PCM rate delivered to STT after any capture-side resampling.
+    audio_sample_rate_hz: int = 0
+    #: Whole-recording normalized RMS in the same 0..1 convention as VAD.
+    audio_rms: float = 0.0
+    #: Share of PCM16 samples at (or immediately below) full scale.
+    audio_clipping_ratio: float = 0.0
+    #: Discontinuities inferred from capture timestamps / queue overflow counts.
+    audio_dropouts: int = 0
+    #: Approximate duration missing across timestamp-detected discontinuities.
+    audio_dropout_ms: int = 0
 
 
 #: Every reason a dictation start can be refused. Declared ONCE here, next to

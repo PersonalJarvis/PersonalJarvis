@@ -417,6 +417,28 @@ class SettingsBody(BaseModel):
     max_seconds: float | None = None
     partial_interval_s: float | None = None
     segment_seconds: float | None = None
+    final_quality_pass: bool | None = Field(
+        default=None,
+        description=(
+            "Re-transcribe the complete recording after release and deliver "
+            "that quality pass instead of the short live-preview segments"
+        ),
+    )
+    final_window_seconds: float | None = Field(
+        default=None,
+        description="Length of each final transcription window (5-60 seconds)",
+    )
+    final_overlap_seconds: float | None = Field(
+        default=None,
+        description="Audio shared by adjacent final windows (0-5 seconds)",
+    )
+    code_switching: bool | None = Field(
+        default=None,
+        description=(
+            "Let the final recognizer detect language from the audio instead "
+            "of locking the request to one configured language"
+        ),
+    )
     history_enabled: bool | None = None
     history_max_entries: int | None = None
     history_retention_days: int | None = None

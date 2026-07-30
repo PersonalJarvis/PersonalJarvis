@@ -103,6 +103,80 @@ def quietest_cut(
     return _align(min(limit, best_centre * BYTES_PER_SAMPLE))
 
 
+#: Shortest window the final pass will emit on its own. A sliver of audio is
+#: the case a recognizer answers with a hallucinated subtitle credit, and it
+#: costs a whole request to be told so.
+_MIN_WINDOW_S = 1.0
+
+
+def quality_windows(
+    pcm: bytes,
+    *,
+    window_bytes: int,
+    overlap_bytes: int = 0,
+    bytes_per_second: int = 16_000 * BYTES_PER_SAMPLE,
+) -> list[tuple[int, int]]:
+    """Byte ranges covering ALL of ``pcm``, overlapping and cut at pauses.
+
+    The shape the FINAL transcription uses, and it differs from the live
+    segmentation above in both of its properties:
+
+    * **Long windows.** A recognizer detects the spoken language from the audio
+      it is handed. Four seconds is not enough to be sure, and an unsure model
+      does not merely mislabel — it TRANSLATES. Twenty to thirty seconds is
+      long enough that detection is reliable and short enough to stay inside
+      every provider's upload limit.
+    * **They overlap.** Consecutive windows share ``overlap_bytes`` of audio,
+      so a word straddling a boundary is spoken in full inside at least one of
+      them. The duplicate that buys is removed from the TEXT afterwards
+      (:func:`jarvis.dictation.merge.merge_transcripts`) — which is possible,
+      while recovering a word that was cut in half is not.
+
+    Each window still ends at the quietest point near its nominal length, so
+    the seam usually lands in a pause and the overlap has little to repair.
+
+    Always makes progress: a pathological ``overlap_bytes`` (larger than the
+    window, negative, absurd) cannot produce a window that starts where the
+    previous one did. Returns ``[]`` for empty input.
+    """
+    total = len(pcm)
+    if total <= 0 or window_bytes <= 0:
+        return []
+    window = _align(window_bytes)
+    # More than half a window of overlap can never improve a seam enough to
+    # justify re-reading most of the same audio. More importantly, clamping to
+    # ``window - one sample`` technically made progress but could turn a bad
+    # 5s/5s configuration into millions of two-byte windows. Half a window is
+    # still far above the recommended 1--2 seconds and gives a hard O(n) bound.
+    overlap = max(0, min(_align(overlap_bytes), window // 2))
+    min_window = int(_MIN_WINDOW_S * bytes_per_second)
+
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    while start < total:
+        remaining = total - start
+        if remaining <= window:
+            ranges.append((start, total))
+            break
+        cut = quietest_cut(pcm[start:], window, bytes_per_second)
+        if cut < min_window:
+            # The scan found its quiet spot too early to be a useful window —
+            # take the nominal length instead. The overlap is what protects the
+            # word this cut may land inside.
+            cut = window
+        end = _align(min(total, start + cut))
+        if end <= start:  # pragma: no cover — _align keeps this unreachable
+            end = min(total, start + window)
+        ranges.append((start, end))
+        # Step back by the overlap, but never to (or behind) this window's own
+        # start: that would transcribe the same audio forever.
+        # A pause search may cut as early as 60% of the nominal window. Keep a
+        # half-window minimum stride even then: otherwise a legal 50% overlap
+        # plus the earliest cut advances by only 10% and multiplies requests.
+        start = max(end - overlap, start + window // 2)
+    return ranges
+
+
 #: Below these an int16 microphone signal cannot be carrying speech on ANY
 #: gain setting worth calling working — this is room tone, a fan, a desk bump.
 #: ~1.2 % of full scale peak. Deliberately far under the quietest usable speech
@@ -174,6 +248,7 @@ def is_silent_segment(pcm: bytes, *, session_peak: float = 0.0) -> bool:
 __all__ = [
     "BYTES_PER_SAMPLE",
     "is_silent_segment",
+    "quality_windows",
     "quietest_cut",
     "segment_energy",
 ]

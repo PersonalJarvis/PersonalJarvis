@@ -532,6 +532,11 @@ class FasterWhisperProvider:
         return self._warm
 
     @property
+    def last_used_model(self) -> str:
+        """Effective local checkpoint used for transcription telemetry."""
+        return self._model_name
+
+    @property
     def bias_prompt(self) -> str | None:
         """The ``initial_prompt`` this instance primes the decoder with.
 

@@ -46,7 +46,8 @@ def _pipeline(cfg: DictationConfig | None = None, *, insert: InsertResult | None
 async def test_cleans_then_inserts() -> None:
     pipe, events = _pipeline()
     text = await pipe._finish_dictation(
-        raw_text="Ähm, das ist äh wirklich gut.",  # i18n-allow: German fixture under test (§1 list #4)
+        # i18n-allow: German fixture under test (§1 list #4)
+        raw_text="Ähm, das ist äh wirklich gut.",  # i18n-allow
         language="de",
         duration_s=3.0,
         target="insert",
@@ -57,9 +58,11 @@ async def test_cleans_then_inserts() -> None:
     transcript = next(e for e in events if isinstance(e, DictationTranscript))
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert transcript.is_final is True
-    assert transcript.text == "Das ist wirklich gut."  # i18n-allow: German fixture under test (§1 list #4)
+    # i18n-allow: German fixture under test (§1 list #4)
+    assert transcript.text == "Das ist wirklich gut."  # i18n-allow
     assert completed.outcome == "inserted"
-    assert completed.raw_text == "Ähm, das ist äh wirklich gut."  # i18n-allow: German fixture under test (§1 list #4)
+    # i18n-allow: German fixture under test (§1 list #4)
+    assert completed.raw_text == "Ähm, das ist äh wirklich gut."  # i18n-allow
     assert completed.removed_words == 2
 
 
@@ -513,7 +516,7 @@ def _session_pipeline(stt, cfg: DictationConfig):
 
 
 @pytest.mark.asyncio
-async def test_the_pinned_language_reaches_the_provider(
+async def test_a_language_pin_does_not_lock_a_code_switching_dictation(
     monkeypatch: pytest.MonkeyPatch, audio_spy
 ) -> None:
     import jarvis.speech.pipeline as pipeline_mod
@@ -530,6 +533,87 @@ async def test_the_pinned_language_reaches_the_provider(
     )
     pipe, _events = _session_pipeline(
         _STT(), DictationConfig(language="es", partial_interval_s=0.0)
+    )
+    await pipe._dictation_session()
+    assert seen == [{"language": "auto"}]
+
+
+@pytest.mark.asyncio
+async def test_completion_and_history_carry_stt_quality_telemetry(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    import jarvis.speech.pipeline as pipeline_mod
+
+    class _MeasuredSTT:
+        name = "openai-api"
+        _model = "gpt-4o-transcribe"
+
+        async def transcribe_pcm(self, pcm: bytes, **_kw):
+            return SimpleNamespace(
+                text="hello 東京 equipo",  # i18n-allow: multilingual STT fixture
+                language="en-US",
+                segments=(
+                    {"language": "ja-JP"},
+                    {"language": "es-MX"},
+                ),
+            )
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, events = _session_pipeline(
+        _MeasuredSTT(), DictationConfig(partial_interval_s=0.0)
+    )
+
+    await pipe._dictation_session()
+
+    completed = next(e for e in events if isinstance(e, DictationCompleted))
+    assert completed.stt_providers == ("openai-api",)
+    assert completed.stt_models == ("gpt-4o-transcribe",)
+    assert completed.detected_languages == ("en", "ja", "es")
+    assert completed.stt_calls == 1
+    assert "final_pass:applied" in completed.stt_audit
+    assert "audio_preprocessing:raw_pcm" in completed.stt_audit
+    assert "acoustic_echo_cancellation:unavailable" in completed.stt_audit
+    assert completed.audio_sample_rate_hz == 16_000
+    assert completed.audio_rms == pytest.approx(1 / 128)
+    assert completed.audio_clipping_ratio == 0.0
+    assert completed.audio_dropouts == 0
+    assert completed.audio_dropout_ms == 0
+    stored = _FakeHistory.instances[-1].added[0]
+    assert stored["stt_providers"] == ("openai-api",)
+    assert stored["stt_models"] == ("gpt-4o-transcribe",)
+    assert stored["detected_languages"] == ("en", "ja", "es")
+    assert stored["audio_sample_rate_hz"] == 16_000
+    assert stored["audio_rms"] == pytest.approx(1 / 128)
+    assert stored["audio_clipping_ratio"] == 0.0
+    assert stored["audio_dropouts"] == 0
+    assert stored["audio_dropout_ms"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_language_pin_reaches_the_provider_when_code_switching_is_off(
+    monkeypatch: pytest.MonkeyPatch, audio_spy
+) -> None:
+    import jarvis.speech.pipeline as pipeline_mod
+
+    seen: list[dict] = []
+
+    class _STT:
+        async def transcribe_pcm(self, pcm: bytes, **kw):
+            seen.append(kw)
+            return SimpleNamespace(text="hola mundo", language="es")
+
+    monkeypatch.setattr(
+        pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
+    )
+    pipe, _events = _session_pipeline(
+        _STT(),
+        DictationConfig(
+            language="es",
+            code_switching=False,
+            partial_interval_s=0.0,
+        ),
     )
     await pipe._dictation_session()
     assert seen == [{"language": "es"}]

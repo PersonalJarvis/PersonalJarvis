@@ -136,6 +136,29 @@ async def test_temperature_is_pinned_to_zero_by_default() -> None:
         await stt.aclose()
     assert captured["body"]["temperature"] == 0.0
 
+
+@pytest.mark.asyncio
+async def test_bias_prompt_uses_capability_scoped_provider_options() -> None:
+    captured: dict[str, dict] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = __import__("json").loads(request.content)
+        return httpx.Response(200, json=_JSON_OK)
+
+    stt = OpenRouterSTT(
+        api_key="k",
+        prompt="Nova, PostgreSQL, São Paulo",
+        http_client=_mock_client(handler),
+    )
+    try:
+        await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert captured["body"]["provider"] == {
+        "options": {"groq": {"prompt": "Nova, PostgreSQL, São Paulo"}}
+    }
+
     # An explicit None is still "say nothing about it" — the escape hatch for a
     # deployment that wants the backend's own default.
     stt2 = OpenRouterSTT(
@@ -188,6 +211,25 @@ async def test_response_text_is_parsed_into_transcript() -> None:
     assert result.confidence == 1.0
     assert result.is_partial is False
     assert result.segments == ()
+    assert stt.last_usage_cost_usd == pytest.approx(0.00003)
+
+
+@pytest.mark.asyncio
+async def test_missing_gateway_cost_does_not_reuse_the_previous_request() -> None:
+    responses = iter((_JSON_OK, {"text": "second"}))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(responses))
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        await stt.transcribe_pcm(_silent_pcm())
+        assert stt.last_usage_cost_usd == pytest.approx(0.00003)
+        await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert stt.last_usage_cost_usd is None
 
 
 @pytest.mark.asyncio

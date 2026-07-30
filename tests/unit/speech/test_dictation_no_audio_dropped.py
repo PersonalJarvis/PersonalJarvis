@@ -166,7 +166,11 @@ async def test_a_failed_segment_does_not_delete_its_audio(monkeypatch) -> None:
     continuing to retry costs the user more than it can possibly return.
     """
     stt = _ScriptedSTT(fail_first=2)
-    cfg = DictationConfig(partial_interval_s=0.02, segment_seconds=0.5)
+    cfg = DictationConfig(
+        partial_interval_s=0.02,
+        segment_seconds=0.5,
+        final_quality_pass=False,
+    )
 
     await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=3)
 
@@ -185,7 +189,11 @@ async def test_a_successful_segment_still_closes(monkeypatch) -> None:
     """The gegenprobe: segmenting must keep working, or every dictation pays
     the O(n²) cost this design exists to avoid."""
     stt = _ScriptedSTT(fail_first=0)
-    cfg = DictationConfig(partial_interval_s=0.02, segment_seconds=0.5)
+    cfg = DictationConfig(
+        partial_interval_s=0.02,
+        segment_seconds=0.5,
+        final_quality_pass=False,
+    )
 
     captured = await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=3)
 
@@ -204,7 +212,11 @@ async def test_the_final_transcription_is_retried(monkeypatch) -> None:
     precise moment the user has stopped speaking and is waiting for their text.
     """
     stt = _ScriptedSTT(fail_first=1, text="the words")
-    cfg = DictationConfig(partial_interval_s=0.0, segment_seconds=0.5)
+    cfg = DictationConfig(
+        partial_interval_s=0.0,
+        segment_seconds=0.5,
+        final_quality_pass=False,
+    )
 
     captured = await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=0)
 
@@ -227,7 +239,11 @@ async def test_the_retry_gives_up_instead_of_hanging(monkeypatch) -> None:
     Restore can try again once the provider is back.
     """
     stt = _ScriptedSTT(fail_first=99)
-    cfg = DictationConfig(partial_interval_s=0.0, segment_seconds=0.5)
+    cfg = DictationConfig(
+        partial_interval_s=0.0,
+        segment_seconds=0.5,
+        final_quality_pass=False,
+    )
 
     captured = await _run_dictation(monkeypatch, stt, cfg, wait_for_calls=0)
 

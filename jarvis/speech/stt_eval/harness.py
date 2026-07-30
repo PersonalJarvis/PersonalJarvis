@@ -21,6 +21,7 @@ class Recognition:
     text: str
     latency_ms: float
     reported_languages: tuple[str, ...] = ()
+    cost_usd: float | None = None
     error: str = ""
 
 
@@ -44,6 +45,7 @@ class ContenderReport:
     switch_error_rate: float | None
     repeatability_error_rate: float | None
     median_latency_ms: float
+    measured_cost_usd: float | None
     estimated_cost_usd: float
     items: tuple[ItemReport, ...]
 
@@ -75,6 +77,8 @@ async def evaluate_contender(
     repeats = max(1, int(repeats))
     item_reports: list[ItemReport] = []
     all_latencies: list[float] = []
+    measured_costs: list[float] = []
+    measured_cost_complete = True
     total_audio_s = 0.0
     for item in items:
         pcm, duration_s = read_pcm16(item)
@@ -83,6 +87,11 @@ async def evaluate_contender(
         texts = [answer.text if not answer.error else "" for answer in answers]
         latencies = [max(0.0, answer.latency_ms) for answer in answers]
         all_latencies.extend(latencies)
+        for answer in answers:
+            if answer.error or answer.cost_usd is None:
+                measured_cost_complete = False
+            else:
+                measured_costs.append(max(0.0, float(answer.cost_usd)))
         wers = [word_error_rate(item.reference, text) for text in texts]
         switch_rates = [switch_error_rate(item.switch_anchors, text) for text in texts]
         item_reports.append(
@@ -110,6 +119,9 @@ async def evaluate_contender(
             [item.repeatability_error_rate for item in item_reports]
         ),
         median_latency_ms=statistics.median(all_latencies),
+        measured_cost_usd=(
+            sum(measured_costs) if measured_cost_complete else None
+        ),
         estimated_cost_usd=(total_audio_s / 60.0) * max(0.0, price_per_minute_usd),
         items=tuple(item_reports),
     )

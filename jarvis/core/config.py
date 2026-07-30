@@ -2745,12 +2745,61 @@ class DictationConfig(BaseModel):
     #: preview entirely (the final transcription still happens).
     partial_interval_s: float = Field(default=1.2, ge=0.0, le=10.0)
 
-    #: Segment length for streaming-style transcription. The old dictation lane
+    #: Segment length for the LIVE line while you speak. The old dictation lane
     #: re-transcribed the whole growing buffer on every tick, which costs
     #: O(n²) audio-seconds and, on a paid API, real money. Closed segments are
     #: transcribed once and never again; only the open tail is re-sent.
     #: ``0`` restores the legacy full-buffer behaviour.
+    #:
+    #: With ``final_quality_pass`` on (the default), what these short segments
+    #: produce is a PREVIEW and never the delivered text — see below for why
+    #: that distinction is the whole of the multilingual repair.
     segment_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+
+    #: Re-transcribe the WHOLE recording once, in long windows, after the key
+    #: is released — and deliver that instead of the stitched-together short
+    #: segments.
+    #:
+    #: A recognizer detects the spoken language from the audio it is handed.
+    #: On an eight-second segment it is not sure, and an unsure model does not
+    #: merely mislabel the language — it TRANSLATES. That is why one continuous
+    #: recording used to arrive with one paragraph in the language spoken and
+    #: the next in English, and why a sentence that switches language halfway
+    #: through could not survive at all: each segment was decided separately.
+    #: Long windows remove the cause rather than patching the symptom.
+    #:
+    #: The cost is one extra pass over the audio. It is paid back by the live
+    #: line moving to the on-device preview engine where there is one, so a
+    #: desktop install sends FEWER requests than before; a host without a local
+    #: engine sends the short segments as before and this pass on top.
+    final_quality_pass: bool = True
+
+    #: Length of one final-pass window, in seconds. Long enough for reliable
+    #: language detection, short enough to stay inside every provider's upload
+    #: limit and to keep one failed window cheap.
+    final_window_seconds: float = Field(default=25.0, ge=5.0, le=60.0)
+
+    #: How much audio consecutive windows share. The overlap is what stops a
+    #: word that straddles a boundary from being cut in half; the duplicate it
+    #: creates is removed from the TEXT afterwards, which is possible, while
+    #: recovering half a word is not. ``0`` disables the overlap.
+    final_overlap_seconds: float = Field(default=1.5, ge=0.0, le=5.0)
+
+    #: Allow the language to change WITHIN one dictation.
+    #:
+    #: While this is on (the default), the final pass asks the recognizer to
+    #: detect the language from each long window instead of being told one, so
+    #: a sentence that starts in one language and finishes in another is
+    #: transcribed as it was spoken. ``language`` above then still governs how
+    #: the finished text is treated — which filler rules run, which language
+    #: the polish pass writes in — but it no longer LOCKS the recognizer, which
+    #: is what used to turn a pin into a translation of everything else said.
+    #:
+    #: Turn it off to hand the pinned language to the recognizer outright. That
+    #: is the right choice when you only ever dictate in one language and the
+    #: provider keeps guessing wrong; it is the wrong choice for anyone who
+    #: mixes languages, which is why it is not the default.
+    code_switching: bool = True
 
     #: Keep a local history of dictations (raw + cleaned, for auditing what the
     #: cleanup changed). Dictated text is among the most sensitive data this app

@@ -437,6 +437,7 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
     family sits unused — and the alternates come from the resolver that
     guarantees one entry per CREDENTIAL family."""
     import jarvis.plugins.stt as stt_plugins
+    import jarvis.speech.pipeline as pipeline_mod
     import jarvis.speech.stt_dictionary as dictionary
     from jarvis.speech.stt_fallback import FallbackSTT
 
@@ -444,8 +445,8 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
         stt_plugins, "build_stt_from_config", lambda cfg: SimpleNamespace()
     )
     monkeypatch.setattr(
-        stt_plugins,
-        "resolve_keyed_stt_fallback",
+        pipeline_mod,
+        "_resolve_stt_fallback_chain",
         lambda *_a, **_k: ("openai-api", "gemini-api"),
     )
     # The dictionary wrapper sits ON TOP of the chain and its presence depends

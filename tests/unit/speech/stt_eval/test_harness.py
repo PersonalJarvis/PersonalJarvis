@@ -50,7 +50,7 @@ async def test_harness_measures_quality_latency_cost_and_repeatability(
     answers = iter(("hello mundo", "hello mundo", "hello world"))
 
     async def recognize(_pcm: bytes) -> Recognition:
-        return Recognition(text=next(answers), latency_ms=120.0)
+        return Recognition(text=next(answers), latency_ms=120.0, cost_usd=0.0002)
 
     report = await evaluate_contender(
         recognize,
@@ -66,6 +66,7 @@ async def test_harness_measures_quality_latency_cost_and_repeatability(
     assert report.switch_error_rate == pytest.approx(1 / 3)
     assert report.repeatability_error_rate == pytest.approx(1 / 4)
     assert report.median_latency_ms == 120.0
+    assert report.measured_cost_usd == pytest.approx(0.0006)
     assert report.estimated_cost_usd == pytest.approx(0.0006)
 
 
@@ -87,4 +88,5 @@ async def test_provider_error_counts_as_a_failed_transcript(tmp_path: Path) -> N
     )
 
     assert report.wer == 1.0
+    assert report.measured_cost_usd is None
     assert report.items[0].errors == ("rate_limited",)

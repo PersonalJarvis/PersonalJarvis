@@ -112,6 +112,7 @@ class GroqWhisperAPI:
             or _read_keyring_secret("personal-jarvis", "groq_api_key")
         )
         self._model = model
+        self._last_used_model = ""
         self._endpoint = endpoint
         self._language = language if language and language != "auto" else None
         # Whisper ``prompt`` biases the token distribution toward the words in
@@ -129,6 +130,11 @@ class GroqWhisperAPI:
     # ------------------------------------------------------------------
     # Public API (STTProvider contract)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload, return a final Transcript."""
@@ -300,10 +306,14 @@ class GroqWhisperAPI:
             # classifiable shape, so there is nothing to gain and a purity
             # contract to lose. Do not "unify" this line.
             response.raise_for_status()
-            return _payload_to_transcript(response.json())
+            transcript = _payload_to_transcript(response.json())
+            self._last_used_model = model
+            return transcript
 
         response.raise_for_status()
-        return _payload_to_transcript(response.json())
+        transcript = _payload_to_transcript(response.json())
+        self._last_used_model = model
+        return transcript
 
 
 # ----------------------------------------------------------------------

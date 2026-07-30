@@ -149,7 +149,7 @@ def test_restore_starts_from_the_providers_raw_decode(
     """
     stt = _FakeSTT(
         "We talked about it.",  # what the provider's own filter produced
-        raw_text="Um, we talked about it. ... and then the report went out.",
+        raw_text="Umm, we talked about it. ... and then the report went out.",
     )
     _install_pipeline(monkeypatch, _utterance_stt=stt)
     entry = _failed_with_audio()
@@ -158,24 +158,24 @@ def test_restore_starts_from_the_providers_raw_decode(
 
     assert body["retranscribed"] is True
     # The raw column is the provider's decode, not its cleaned answer.
-    assert body["entry"]["raw_text"].startswith("Um, we talked about it.")
+    assert body["entry"]["raw_text"].startswith("Umm, we talked about it.")
     # And the chain ran over that decode: the second sentence only exists in
     # the raw string, so its presence proves Restore did not read ``text``.
     assert "report went out" in body["entry"]["text"]
-    assert not body["entry"]["text"].startswith("Um,")
+    assert not body["entry"]["text"].startswith("Umm,")
 
 
 def test_restore_falls_back_to_text_for_a_provider_without_a_raw_decode(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Providers that set no ``raw_text`` behave exactly as they did before."""
-    stt = _FakeSTT("Um, we talked about it.")
+    stt = _FakeSTT("Umm, we talked about it.")
     _install_pipeline(monkeypatch, _utterance_stt=stt)
     entry = _failed_with_audio()
 
     body = client.post(f"/api/dictation/history/{entry.id}/restore").json()
 
-    assert body["entry"]["raw_text"] == "Um, we talked about it."
+    assert body["entry"]["raw_text"] == "Umm, we talked about it."
     assert body["entry"]["text"] == "We talked about it."
 
 

@@ -4,7 +4,7 @@ Example (quote contender values in shells where ``|`` is a pipe)::
 
     python -m jarvis.speech.stt_eval --corpus data/stt-eval/corpus.jsonl \
       --contender "current|groq-api|whisper-large-v3-turbo|0.0006667" \
-      --contender "candidate|openai-api|gpt-4o-transcribe|0.006"
+      --contender "candidate|openrouter-stt|openai/gpt-4o-transcribe|0"
 
 Prices are explicit inputs, not embedded facts, because providers can change
 them independently of a Jarvis release. Reports contain metrics and stable
@@ -120,6 +120,7 @@ def _recognizer(provider: Any):
             text=str(text).strip(),
             latency_ms=(time.perf_counter() - started) * 1000.0,
             reported_languages=tuple(languages),
+            cost_usd=getattr(provider, "last_usage_cost_usd", None),
         )
 
     return recognize
@@ -197,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(
-            {"schema_version": 1, "contenders": [asdict(report) for report in reports]},
+            {"schema_version": 2, "contenders": [asdict(report) for report in reports]},
             ensure_ascii=False,
             indent=2,
         ),
@@ -214,10 +215,15 @@ def main(argv: list[str] | None = None) -> int:
             if report.repeatability_error_rate is None
             else f"{report.repeatability_error_rate:.3f}"
         )
+        cost = (
+            f"measured_cost=${report.measured_cost_usd:.4f}"
+            if report.measured_cost_usd is not None
+            else f"estimated_cost=${report.estimated_cost_usd:.4f}"
+        )
         print(
             f"{report.label}: WER={report.wer:.3f}, switch={switch}, "
             f"repeatability={repeatability}, latency={report.median_latency_ms:.0f} ms, "
-            f"estimated_cost=${report.estimated_cost_usd:.4f}"
+            f"{cost}"
         )
     print(f"Report written to {out}")
     return 0

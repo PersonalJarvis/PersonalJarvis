@@ -152,6 +152,7 @@ class OpenAIWhisperAPI:
         self._api_key = api_key or None
         self._api_key_is_explicit = bool(api_key)
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
         self._base_url = base_url or None
         self._language = language if language and language != "auto" else None
         # Whisper ``prompt`` biases the token distribution toward the words in
@@ -171,6 +172,11 @@ class OpenAIWhisperAPI:
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
@@ -378,7 +384,9 @@ class OpenAIWhisperAPI:
                 ) from exc
 
             if response.status_code < 400:
-                return _payload_to_transcript(response.json())
+                transcript = _payload_to_transcript(response.json())
+                self._last_used_model = model
+                return transcript
             if response.status_code != 400:
                 raise _http_error_to_runtime(response)
 

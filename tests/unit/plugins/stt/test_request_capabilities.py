@@ -265,6 +265,7 @@ class TestTheOpenAIShapedPluginsAdapt:
 
         assert result.text == "hallo welt"
         assert models[-1] == "whisper-1"
+        assert stt.last_used_model == "whisper-1"
 
     @pytest.mark.asyncio
     async def test_an_unrelated_400_is_still_an_error(self):
@@ -303,6 +304,31 @@ class TestTheOpenAIShapedPluginsAdapt:
 
 
 class TestTheGatewayPluginAdapts:
+    @pytest.mark.asyncio
+    async def test_a_rejected_bias_prompt_is_dropped_and_the_call_retried(self):
+        bodies: list[dict] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            bodies.append(body)
+            if "provider" in body:
+                return httpx.Response(
+                    400, json={"error": {"message": "prompt is not supported"}}
+                )
+            return httpx.Response(200, json={"text": "hola mundo"})
+
+        stt = OpenRouterSTT(
+            api_key="k", prompt="Nova", http_client=_mock_client(handler)
+        )
+        try:
+            result = await stt.transcribe_pcm(_silent_pcm())
+        finally:
+            await stt.aclose()
+
+        assert result.text == "hola mundo"
+        assert "provider" in bodies[0]
+        assert "provider" not in bodies[-1]
+
     @pytest.mark.asyncio
     async def test_a_rejected_temperature_is_dropped_and_the_call_retried(self):
         bodies: list[dict] = []

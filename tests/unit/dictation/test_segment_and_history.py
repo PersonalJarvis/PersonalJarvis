@@ -96,7 +96,8 @@ def test_add_stores_raw_and_cleaned(history: DictationHistory) -> None:
     assert entry is not None
     stored = history.list_all()
     assert len(stored) == 1
-    assert stored[0].raw_text == "Ähm das ist gut"  # i18n-allow: German fixture under test (§1 list #4)
+    # i18n-allow: German fixture under test (§1 list #4)
+    assert stored[0].raw_text == "Ähm das ist gut"  # i18n-allow
     assert stored[0].text == "Das ist gut"  # i18n-allow: German fixture under test (§1 list #4)
     assert stored[0].removed_words == 1
 
@@ -298,6 +299,45 @@ def test_public_dict_reports_audio_that_is_actually_on_disk(
     stored = history.get(entry.id)
     assert stored is not None
     assert stored.to_dict()["audio_available"] is True
+
+
+def test_public_dict_exposes_only_safe_quality_telemetry(
+    history: DictationHistory,
+) -> None:
+    entry = history.add(
+        raw_text="hello",
+        text="hello",
+        stt_providers=("openai-api",),
+        stt_models=("gpt-4o-transcribe",),
+        detected_languages=("en", "ja"),
+        stt_latency_ms=123,
+        stt_calls=2,
+        stt_errors=("rate_limited",),
+        stt_audit=("final_pass:applied",),
+        audio_sample_rate_hz=16_000,
+        audio_rms=0.0125,
+        audio_clipping_ratio=0.001,
+        audio_dropouts=2,
+        audio_dropout_ms=64,
+        internal_debug_path="private/path",
+    )
+    assert entry is not None
+
+    payload = entry.to_dict()
+
+    assert payload["stt_providers"] == ("openai-api",)
+    assert payload["stt_models"] == ("gpt-4o-transcribe",)
+    assert payload["detected_languages"] == ("en", "ja")
+    assert payload["stt_latency_ms"] == 123
+    assert payload["stt_calls"] == 2
+    assert payload["stt_errors"] == ("rate_limited",)
+    assert payload["stt_audit"] == ("final_pass:applied",)
+    assert payload["audio_sample_rate_hz"] == 16_000
+    assert payload["audio_rms"] == 0.0125
+    assert payload["audio_clipping_ratio"] == 0.001
+    assert payload["audio_dropouts"] == 2
+    assert payload["audio_dropout_ms"] == 64
+    assert "internal_debug_path" not in payload
 
 
 def test_delete_also_removes_the_audio_sidecar(

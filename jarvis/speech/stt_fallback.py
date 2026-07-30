@@ -124,6 +124,30 @@ class FallbackSTT:
         """Which provider produced the most recent transcript."""
         return self._last_used
 
+    @property
+    def last_used_model(self) -> str:
+        """Model exposed by the provider that produced the latest transcript.
+
+        Alternates are constructed lazily, so an unused one has no model to
+        report. The common attribute spellings cover the cloud plugins and the
+        local faster-whisper provider without making a provider id load-bearing.
+        """
+        name = self._last_used
+        if not name:
+            return ""
+        provider = (
+            self._primary
+            if name == self._primary_name
+            else self._instances.get(name)
+        )
+        if provider is None:
+            return ""
+        for attribute in ("last_used_model", "_model", "_model_name"):
+            value = getattr(provider, attribute, "")
+            if value:
+                return str(value)
+        return ""
+
     _last_used = ""
 
     # ------------------------------------------------------------------

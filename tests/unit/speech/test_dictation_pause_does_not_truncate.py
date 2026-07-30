@@ -181,7 +181,11 @@ async def test_words_after_a_long_pause_still_reach_the_transcript(monkeypatch) 
     """
     script = [_word(0), _word(1), _silence(12.0), _word(2), _word(3)]
     stt = _MarkerSTT()
-    cfg = DictationConfig(partial_interval_s=0.02, segment_seconds=2.0)
+    cfg = DictationConfig(
+        partial_interval_s=0.02,
+        segment_seconds=2.0,
+        final_quality_pass=False,
+    )
 
     captured = await _run(monkeypatch, script=script, stt=stt, cfg=cfg)
 
@@ -218,7 +222,11 @@ async def test_the_open_tail_never_grows_past_one_segment(monkeypatch) -> None:
     """
     script = [_word(i, seconds=1.0) for i in range(12)]
     stt = _MarkerSTT()
-    cfg = DictationConfig(partial_interval_s=0.02, segment_seconds=2.0)
+    cfg = DictationConfig(
+        partial_interval_s=0.02,
+        segment_seconds=2.0,
+        final_quality_pass=False,
+    )
 
     await _run(monkeypatch, script=script, stt=stt, cfg=cfg)
 
@@ -268,7 +276,11 @@ async def test_one_dead_piece_does_not_cost_the_others(monkeypatch) -> None:
 
     script = [_word(i, seconds=1.0) for i in range(4)]
     stt = _OneBadPiece()
-    cfg = DictationConfig(partial_interval_s=0.0, segment_seconds=1.0)
+    cfg = DictationConfig(
+        partial_interval_s=0.0,
+        segment_seconds=1.0,
+        final_quality_pass=False,
+    )
 
     captured = await _run(monkeypatch, script=script, stt=stt, cfg=cfg)
 
@@ -290,7 +302,11 @@ async def test_the_final_pass_goes_out_in_pieces(monkeypatch) -> None:
     """
     script = [_word(i, seconds=1.0) for i in range(6)]
     stt = _MarkerSTT()
-    cfg = DictationConfig(partial_interval_s=0.0, segment_seconds=2.0)
+    cfg = DictationConfig(
+        partial_interval_s=0.0,
+        segment_seconds=2.0,
+        final_quality_pass=False,
+    )
 
     captured = await _run(monkeypatch, script=script, stt=stt, cfg=cfg)
 

@@ -141,6 +141,7 @@ class GeminiSTT:
         # triggers a config load on the boot critical path (AP-26).
         self._api_key = (api_key or "").strip() or None
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
         self._language = language if language and language != "auto" else None
         # A bias/vocabulary hint (proper nouns). Appended to the instruction so
         # the model favours those spellings; never treated as required content.
@@ -155,6 +156,11 @@ class GeminiSTT:
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
@@ -353,9 +359,11 @@ class GeminiSTT:
             if model != DEFAULT_MODEL and is_model_rejection(str(exc), model):
                 log_model_fallback("Gemini", model, DEFAULT_MODEL, str(exc))
                 try:
-                    return _response_to_transcript(
+                    transcript = _response_to_transcript(
                         await _generate(DEFAULT_MODEL), language
                     )
+                    self._last_used_model = DEFAULT_MODEL
+                    return transcript
                 except Exception as retry_exc:  # noqa: BLE001 — classify, never leak
                     failure = retry_exc
 
@@ -376,7 +384,9 @@ class GeminiSTT:
                 status=status,
                 headers=getattr(getattr(failure, "response", None), "headers", None),
             ) from failure
-        return _response_to_transcript(response, language)
+        transcript = _response_to_transcript(response, language)
+        self._last_used_model = model
+        return transcript
 
 
 # ----------------------------------------------------------------------

@@ -59,6 +59,19 @@ async def test_rate_limit_crosses_to_the_next_provider():
     assert backup.calls == 1
 
 
+async def test_fallback_exposes_the_model_that_actually_answered():
+    primary = FakeSTT(error=RuntimeError("429 Too Many Requests"))
+    primary._model = "whisper-large-v3-turbo"
+    backup = FakeSTT(text="recovered")
+    backup._model = "gpt-4o-transcribe"
+    chain = _chain(primary, **{"openai-api": backup})
+
+    await chain.transcribe_pcm(b"x")
+
+    assert chain.last_used_provider == "openai-api"
+    assert chain.last_used_model == "gpt-4o-transcribe"
+
+
 @pytest.mark.parametrize(
     "message",
     [

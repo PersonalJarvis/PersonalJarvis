@@ -69,6 +69,11 @@ DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 # in the model dropdown; the picker only offers transcription-capable models.
 DEFAULT_MODEL = "openai/whisper-large-v3"
 
+# OpenRouter exposes vocabulary priming through provider-specific passthrough
+# options. Keep the same conservative ceiling as the direct Whisper adapters so
+# one dictionary cannot turn a transcription into a request-size failure.
+_MAX_PROMPT_CHARS = 1000
+
 #: The per-call ``language`` value that REQUESTS detection instead of a pinned
 #: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
 AUTO_LANGUAGE = "auto"
@@ -162,15 +167,15 @@ class OpenRouterSTT:
         self._api_key = api_key or None
         self._api_key_is_explicit = bool(api_key)
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
+        self._last_usage_cost_usd: float | None = None
         self._base_url = base_url or None
         self._language = language if language and language != "auto" else None
-        # ``prompt`` (bias vocabulary) is accepted for STT-factory kwarg
-        # compatibility but NOT forwarded: the OpenRouter transcription endpoint
-        # exposes no documented bias-prompt parameter, and sending an
-        # unsupported field risks a hard 400 that silences the whole turn. It is
-        # stored only so a future API revision could opt in without a signature
-        # change.
-        self._prompt = (prompt or "").strip() or None
+        # The gateway exposes bias through provider-specific passthrough rather
+        # than a top-level field. Only the matched upstream receives it, and the
+        # request-shape downgrade below removes it when that model rejects it.
+        cleaned = (prompt or "").strip()
+        self._prompt = cleaned[:_MAX_PROMPT_CHARS] if cleaned else None
         self._temperature = temperature
         self._timeout_s = timeout_s
         self._client = http_client
@@ -181,6 +186,16 @@ class OpenRouterSTT:
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
+
+    @property
+    def last_usage_cost_usd(self) -> float | None:
+        """Billed cost reported for the latest successful gateway response."""
+        return self._last_usage_cost_usd
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
@@ -311,6 +326,10 @@ class OpenRouterSTT:
         """
         import base64
 
+        # Never let a previous successful request's cost leak into a failed
+        # evaluation sample. The harness reads this only after the call returns.
+        self._last_usage_cost_usd = None
+
         url = self._ensure_endpoint()
         encoded = base64.b64encode(wav_bytes).decode("ascii")
         headers = {
@@ -343,6 +362,10 @@ class OpenRouterSTT:
                 body["language"] = language
             if self._temperature is not None and shape.temperature:
                 body["temperature"] = float(self._temperature)
+            if self._prompt and shape.prompt:
+                body["provider"] = {
+                    "options": {"groq": {"prompt": self._prompt}}
+                }
 
             try:
                 response = await client.post(url, headers=headers, json=body)
@@ -352,7 +375,11 @@ class OpenRouterSTT:
                 ) from exc
 
             if response.status_code < 400:
-                return _payload_to_transcript(response.json())
+                payload = response.json()
+                transcript = _payload_to_transcript(payload)
+                self._last_used_model = model
+                self._last_usage_cost_usd = _payload_cost_usd(payload)
+                return transcript
             if response.status_code != 400:
                 raise _http_error_to_runtime(response)
 
@@ -515,6 +542,18 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
         segments=(),
         raw_text=raw,
     )
+
+
+def _payload_cost_usd(payload: dict[str, Any]) -> float | None:
+    """Return OpenRouter's billed USD amount when the response carries one."""
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    try:
+        value = float(usage.get("cost"))
+    except (TypeError, ValueError):  # optional telemetry: malformed means absent
+        return None
+    return value if value >= 0.0 else None
 
 
 __all__ = [

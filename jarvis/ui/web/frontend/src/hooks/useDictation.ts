@@ -215,6 +215,30 @@ export interface DictationEntry {
   /** What the pass cost in wall-clock time, for the honest "is this slowing me
    *  down" question. 0 when it never ran. */
   polish_latency_ms?: number | null;
+  /** STT providers that produced text, in first-use order (fallback is visible). */
+  stt_providers?: string[];
+  /** Requested/effective STT model ids used by successful calls. */
+  stt_models?: string[];
+  /** Provider-reported language tags across the final windows. */
+  detected_languages?: string[];
+  /** Aggregate wall-clock time spent in STT for this dictation. */
+  stt_latency_ms?: number;
+  /** Logical preview/final STT calls; provider-internal shape retries are opaque. */
+  stt_calls?: number;
+  /** Stable failure reason codes observed during this dictation. */
+  stt_errors?: string[];
+  /** Machine-readable quality-path decisions; never transcript content. */
+  stt_audit?: string[];
+  /** Stable PCM rate delivered to STT after capture-side resampling. */
+  audio_sample_rate_hz?: number;
+  /** Whole-recording normalized RMS (0..1). */
+  audio_rms?: number;
+  /** Share of PCM16 samples at or immediately below full scale. */
+  audio_clipping_ratio?: number;
+  /** Capture discontinuities inferred from timestamps / queue overflow. */
+  audio_dropouts?: number;
+  /** Approximate missing audio across timestamp-detected discontinuities. */
+  audio_dropout_ms?: number;
 }
 
 /**
@@ -247,6 +271,14 @@ export interface DictationSettings {
   max_seconds: number;
   partial_interval_s: number;
   segment_seconds: number;
+  /** Re-read the complete recording after release; live segments stay preview-only. */
+  final_quality_pass: boolean;
+  /** Length of one final quality window in seconds. */
+  final_window_seconds: number;
+  /** Overlap between adjacent final windows in seconds. */
+  final_overlap_seconds: number;
+  /** Auto-detect within the recording instead of sending a hard language lock. */
+  code_switching: boolean;
   history_enabled: boolean;
   history_max_entries: number;
   history_retention_days: number;

@@ -119,6 +119,27 @@ class DictationEntry:
         """
         from jarvis.dictation.audio import audio_exists
 
+        public_metadata = {
+            key: self.metadata[key]
+            for key in (
+                "polish_status",
+                "polish_provider",
+                "polish_latency_ms",
+                "stt_providers",
+                "stt_models",
+                "detected_languages",
+                "stt_latency_ms",
+                "stt_calls",
+                "stt_errors",
+                "stt_audit",
+                "audio_sample_rate_hz",
+                "audio_rms",
+                "audio_clipping_ratio",
+                "audio_dropouts",
+                "audio_dropout_ms",
+            )
+            if key in self.metadata
+        }
         return {
             "id": self.id,
             "created_at": self.created_at,
@@ -134,6 +155,7 @@ class DictationEntry:
             "discarded": self.discarded,
             "audio_available": audio_exists(self.audio_path),
             "error": self.error,
+            **public_metadata,
         }
 
 
@@ -300,9 +322,9 @@ class DictationHistory:
         The result was a generative pass that could rewrite a user's words while
         leaving no record anywhere of whether it had run, which provider
         answered, or which guard fired — the one question a bug report about
-        wrong words has to be able to answer. ``metadata`` is deliberately kept
-        out of :meth:`DictationEntry.to_dict`: it is diagnostic detail for the
-        sidecar, not part of the API shape.
+        wrong words has to be able to answer. :meth:`DictationEntry.to_dict`
+        exposes only its explicit safe-key allowlist; arbitrary metadata stays
+        in the local sidecar and can never drift into an API response.
         """
         from jarvis.dictation.outcomes import is_recoverable
 
