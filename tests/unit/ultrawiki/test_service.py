@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import jarvis.ultrawiki.connectors as connectors_mod
+import jarvis.ultrawiki.service as service_mod
 from jarvis.ultrawiki.service import (
     JOB_TERMINAL_STATUSES,
     SyncAlreadyRunningError,
@@ -497,6 +498,47 @@ async def test_full_refresh_resets_the_cursor_and_reconciles_deletes(
     assert (await store.counts_for_source(source_id)).total == 2
     sync_state = await store.get_sync_state(source_id)
     assert sync_state["backfill_checkpoint"] is None
+
+
+async def test_full_refresh_records_completion_after_delete_reconciliation(
+    service, monkeypatch
+):
+    items = make_items(1)
+    connector = FakeConnector(items, [])
+    patch_connectors(monkeypatch, {"fake-conn": lambda: connector})
+
+    source = await service.add_source("fake-conn", "Fake Source")
+    await service.approve_source(source["id"], auto_sync=False)
+    await wait_for_job(service, await service.start_sync(source["id"]))
+
+    store = service._require_store()
+    original_reconcile = store.reconcile_deletes
+    order: list[str] = []
+
+    async def traced_reconcile(source_id: str, yielded_ids: set[str]) -> int:
+        order.append("reconcile")
+        return await original_reconcile(source_id, yielded_ids)
+
+    completed_at = "2026-07-30T16:33:34Z"
+
+    def completion_clock() -> str:
+        order.append("clock")
+        return completed_at
+
+    monkeypatch.setattr(store, "reconcile_deletes", traced_reconcile)
+    monkeypatch.setattr(service_mod, "_iso_now", completion_clock)
+    connector._items = []
+
+    full = await wait_for_job(
+        service, await service.start_sync(source["id"], full=True)
+    )
+
+    assert full["status"] == "done"
+    assert full["tombstoned"] == 1
+    assert order == ["reconcile", "clock"]
+    sync_state = await store.get_sync_state(source["id"])
+    assert sync_state["backfill_complete_at"] == completed_at
+    assert sync_state["last_success_at"] == completed_at
 
 
 # ---------------------------------------------------------------------------

@@ -1704,7 +1704,6 @@ class UltraWikiService:
                 max_cursor = await self._flush_chunk(
                     job, source_id, buffer, max_cursor
                 )
-            now = _iso_now()
             if job.mode == "backfill":
                 deletes_capable = bool(
                     getattr(getattr(connector, "capabilities", None), "deletes", False)
@@ -1714,6 +1713,13 @@ class UltraWikiService:
                     job.tombstoned += await store.reconcile_deletes(
                         source_id, yielded_ids
                     )
+            # Stamp completion only after delete reconciliation finishes.  A
+            # large vector-backed cleanup can take minutes; using a timestamp
+            # captured before it made the source immediately look stale again
+            # and let the freshness scheduler overwrite the useful full-run
+            # outcome with a no-op incremental run.
+            now = _iso_now()
+            if job.mode == "backfill":
                 # Clearing the checkpoint is what makes the NEXT backfill a full
                 # one. Left behind, it points at the LAST item of a completed
                 # walk, so a connector that cannot run incrementally
