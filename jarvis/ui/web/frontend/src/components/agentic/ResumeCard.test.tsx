@@ -1,7 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ResumeCard, resumeSummary, savedAgo } from "./ResumeCard";
+import {
+  ResumeCard,
+  resumeSummary,
+  savedAgo,
+  summarizeAgentFleet,
+} from "./ResumeCard";
 import type {
   ResumeOffer,
   ResumeTerminalOffer,
@@ -36,7 +41,10 @@ const WORKSPACE: ResumeWorkspaceOffer = {
   resumable_count: 1,
   saved_at: 1_753_473_600,
   in_last_session: true,
-  terminals: [pane("Alex"), pane("Blake", { resumable: false, prompts_sent: 0 })],
+  terminals: [
+    pane("Alex"),
+    pane("Blake", { resumable: false, prompts_sent: 0 }),
+  ],
 };
 
 const OFFER: ResumeOffer = {
@@ -59,7 +67,12 @@ function button(testId: string): HTMLButtonElement {
 describe("ResumeCard", () => {
   it("names the workspace and its panes", () => {
     render(
-      <ResumeCard offer={OFFER} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={OFFER}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(screen.getByText("project")).toBeTruthy();
     expect(screen.getByText("Alex")).toBeTruthy();
@@ -82,7 +95,12 @@ describe("ResumeCard", () => {
       ],
     };
     render(
-      <ResumeCard offer={two} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={two}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(screen.getByTestId("resume-workspace-project")).toBeTruthy();
     expect(screen.getByTestId("resume-workspace-other")).toBeTruthy();
@@ -93,13 +111,18 @@ describe("ResumeCard", () => {
     // until the agent is asked a follow-up question, so the difference has to be
     // visible while the choice is still being made.
     render(
-      <ResumeCard offer={OFFER} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={OFFER}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(screen.getByTestId("resume-pane-blake").textContent).toMatch(
-      /starts fresh/i,
+      /fresh/i,
     );
     expect(screen.getByTestId("resume-pane-alex").textContent).not.toMatch(
-      /starts fresh/i,
+      /fresh/i,
     );
   });
 
@@ -114,15 +137,20 @@ describe("ResumeCard", () => {
       ],
     };
     render(
-      <ResumeCard offer={offer} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={offer}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(screen.getByTestId("resume-pane-blake").textContent).toMatch(
-      /not installed here/i,
+      /unavailable/i,
     );
   });
 
-  it("summarises the call-signs once there are too many to read", () => {
-    // A hundred chips is wallpaper, not information.
+  it("keeps a large fleet compact and expands every terminal on demand", () => {
+    // A hundred full tiles is wallpaper until someone explicitly asks for it.
     const many = Array.from({ length: 30 }, (_, i) => pane(`T${i}`));
     const offer: ResumeOffer = {
       ...OFFER,
@@ -130,11 +158,70 @@ describe("ResumeCard", () => {
       workspaces: [{ ...WORKSPACE, terminals: many, resumable_count: 30 }],
     };
     render(
-      <ResumeCard offer={offer} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={offer}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(screen.getByTestId("resume-pane-t0")).toBeTruthy();
     expect(screen.queryByTestId("resume-pane-t29")).toBeNull();
-    expect(screen.getByTestId("resume-more-project").textContent).toMatch(/\+22 more/);
+    const toggle = screen.getByTestId("resume-more-project");
+    expect(toggle.textContent).toMatch(/show all 30 terminals \(\+18\)/i);
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("resume-pane-t29")).toBeTruthy();
+    expect(toggle.textContent).toMatch(/show fewer terminals/i);
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("resume-pane-t29")).toBeNull();
+  });
+
+  it("uses the real local logo for each known terminal agent", () => {
+    const offer: ResumeOffer = {
+      ...OFFER,
+      workspaces: [
+        {
+          ...WORKSPACE,
+          terminals: [
+            pane("Claude"),
+            pane("Codex", { agent: "codex", display_name: "Codex" }),
+          ],
+        },
+      ],
+    };
+    render(
+      <ResumeCard
+        offer={offer}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const codexMark = screen.getAllByTestId("agent-mark-codex")[0];
+    expect(codexMark.querySelector("img")?.getAttribute("src")).toBe(
+      "/provider-logos/openai.svg",
+    );
+    const claudeMark = screen.getAllByTestId("agent-mark-claude")[0];
+    expect(claudeMark.querySelector("img")?.getAttribute("src")).toBe(
+      "/provider-logos/claude.svg",
+    );
+  });
+
+  it("shows prompt history count and original grid position on each tile", () => {
+    render(
+      <ResumeCard
+        offer={OFFER}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("resume-pane-alex").textContent).toMatch(
+      /1 prompt/i,
+    );
+    expect(screen.getByTestId("resume-pane-alex").textContent).toMatch(
+      /C1 · R1/,
+    );
   });
 
   it("resumes and dismisses through its two buttons", () => {
@@ -172,7 +259,12 @@ describe("ResumeCard", () => {
       ],
     };
     render(
-      <ResumeCard offer={offer} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={offer}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     // The good one is still resumable, so the button stays usable.
     expect(button("resume-all").disabled).toBe(false);
@@ -186,7 +278,12 @@ describe("ResumeCard", () => {
       workspaces: [{ ...WORKSPACE, folder_exists: false, available: false }],
     };
     render(
-      <ResumeCard offer={gone} busy={false} onResume={vi.fn()} onDismiss={vi.fn()} />,
+      <ResumeCard
+        offer={gone}
+        busy={false}
+        onResume={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
     );
     expect(button("resume-all").disabled).toBe(true);
     // ...but "start fresh" still works, or the card could never be cleared away.
@@ -194,7 +291,9 @@ describe("ResumeCard", () => {
   });
 
   it("locks both buttons while a resume is in flight", () => {
-    render(<ResumeCard offer={OFFER} busy onResume={vi.fn()} onDismiss={vi.fn()} />);
+    render(
+      <ResumeCard offer={OFFER} busy onResume={vi.fn()} onDismiss={vi.fn()} />,
+    );
     expect(button("resume-all").disabled).toBe(true);
     expect(button("resume-dismiss").disabled).toBe(true);
   });
@@ -202,9 +301,9 @@ describe("ResumeCard", () => {
 
 describe("resumeSummary", () => {
   it("distinguishes all, some and none", () => {
-    expect(
-      resumeSummary({ ...OFFER, resumable_count: 2 }),
-    ).toMatch(/each continuing/i);
+    expect(resumeSummary({ ...OFFER, resumable_count: 2 })).toMatch(
+      /each continuing/i,
+    );
     expect(resumeSummary(OFFER)).toMatch(/1 continue/i);
     expect(resumeSummary({ ...OFFER, resumable_count: 0 })).toMatch(
       /none of their conversations/i,
@@ -212,9 +311,9 @@ describe("resumeSummary", () => {
   });
 
   it("counts folders as well as terminals", () => {
-    expect(resumeSummary({ ...OFFER, workspace_count: 3, terminal_count: 9 })).toMatch(
-      /3 folders, 9 terminals/,
-    );
+    expect(
+      resumeSummary({ ...OFFER, workspace_count: 3, terminal_count: 9 }),
+    ).toMatch(/3 folders, 9 terminals/);
   });
 
   it("leads with the reason nothing can be reopened", () => {
@@ -232,6 +331,66 @@ describe("resumeSummary", () => {
         workspaces: [{ ...WORKSPACE, available: false }],
       }),
     ).toMatch(/not installed/i);
+  });
+
+  it("does not count an unavailable terminal as starting fresh", () => {
+    const offer: ResumeOffer = {
+      ...OFFER,
+      terminal_count: 3,
+      workspaces: [
+        {
+          ...WORKSPACE,
+          terminals: [
+            pane("One"),
+            pane("Two", { resumable: false }),
+            pane("Three", { available: false, resumable: false }),
+          ],
+        },
+      ],
+    };
+    expect(resumeSummary(offer)).toMatch(
+      /1 continue their conversation, 1 start fresh\. 1 cannot reopen/i,
+    );
+  });
+});
+
+describe("summarizeAgentFleet", () => {
+  it("groups agents and preserves recovery and prompt facts", () => {
+    const fleet = summarizeAgentFleet([
+      {
+        ...WORKSPACE,
+        terminals: [
+          pane("One", { prompts_sent: 3 }),
+          pane("Two", { resumable: false, prompts_sent: 2 }),
+          pane("Three", {
+            agent: "codex",
+            display_name: "Codex",
+            available: false,
+            prompts_sent: 4,
+          }),
+        ],
+      },
+    ]);
+    expect(fleet).toEqual([
+      {
+        agent: "claude",
+        displayName: "Claude Code",
+        total: 2,
+        resumable: 1,
+        fresh: 1,
+        unavailable: 0,
+        prompts: 5,
+      },
+      {
+        agent: "codex",
+        displayName: "Codex",
+        total: 1,
+        resumable: 0,
+        fresh: 0,
+        unavailable: 1,
+        prompts: 4,
+      },
+    ]);
   });
 });
 
