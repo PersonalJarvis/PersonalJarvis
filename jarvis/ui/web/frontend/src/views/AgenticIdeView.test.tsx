@@ -302,13 +302,13 @@ describe("Agentic IDE — before the first read lands", () => {
   /**
    * A workspace the view has not heard about yet is NOT "no workspace".
    *
-   * This view used to fall straight through to the wizard while it waited, so
+   * This view used to fall straight through to the launcher while it waited, so
    * a user returning to a running workspace was met by step 1 of the onboarding
    * flow asking which folder the agents should work in — in front of eleven
    * agents that had never stopped (maintainer report 2026-07-29). Being told to
    * wait a moment is a far better answer than being told to start over.
    */
-  it("shows a neutral placeholder rather than the onboarding wizard", async () => {
+  it("shows a neutral placeholder rather than the onboarding screen", async () => {
     // Both reads hang: this is the state the view is in on every cold start,
     // held open so it can be asserted on.
     vi.mocked(api.fetchIdeState).mockReturnValue(new Promise(() => {}));
@@ -317,9 +317,8 @@ describe("Agentic IDE — before the first read lands", () => {
     render(<AgenticIdeView />);
 
     expect(await screen.findByTestId("agentic-ide-loading")).toBeTruthy();
-    // The two things that would read as "there is nothing open here".
-    expect(screen.queryByText(/which folder should the agents work in/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
+    // The thing that would read as "there is nothing open here".
+    expect(screen.queryByTestId("workspace-launcher")).toBeNull();
   });
 
   it("draws a running workspace without waiting for the CLI sweep", async () => {
@@ -337,7 +336,7 @@ describe("Agentic IDE — before the first read lands", () => {
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
   });
 
-  it("holds the placeholder until the wizard has agents to offer", async () => {
+  it("holds the placeholder until the launcher has agents to offer", async () => {
     // The reverse: with no workspace open, the wizard's agent step is the whole
     // point of the sweep, so showing the wizard before it lands would offer an
     // empty list.
@@ -346,43 +345,45 @@ describe("Agentic IDE — before the first read lands", () => {
     render(<AgenticIdeView />);
 
     expect(await screen.findByTestId("agentic-ide-loading")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
+    expect(screen.queryByTestId("workspace-launcher")).toBeNull();
   });
 });
 
-describe("Agentic IDE wizard", () => {
-  it("starts on the folder step and blocks Next until a folder is picked", async () => {
+describe("Agentic IDE launcher", () => {
+  it("blocks the one action until a folder is picked", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
-    const next = screen.getByRole("button", {
-      name: /next/i,
+    const open = screen.getByRole("button", {
+      name: /open workspace/i,
     }) as HTMLButtonElement;
-    expect(next.disabled).toBe(true);
+    expect(open.disabled).toBe(true);
 
     fireEvent.click(await screen.findByRole("button", { name: /project/i }));
-    await waitFor(() => expect(next.disabled).toBe(false));
+    await waitFor(() => expect(open.disabled).toBe(false));
   });
 
-  it("walks folder → count → agents → start and opens the workspace", async () => {
+  /**
+   * The three decisions are on ONE screen, so opening is: pick a folder, press
+   * the button. The count and the call-signs are already answered with
+   * defaults, and both are on screen while the folder is being chosen — which
+   * is what let the wizard's Back/Next pair and its confirmation step go.
+   */
+  it("opens the workspace from one screen, with no step to walk", async () => {
     vi.mocked(api.startIdeSession).mockResolvedValue(
       stateWith(sessionWith(["Mika", "Nova"])),
     );
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
-    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
-
-    // Count step — pick 2 terminals.
-    fireEvent.click(screen.getByRole("button", { name: "2" }));
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
-
-    // Agent step — the call-signs are pre-filled from the suggested pool.
-    expect(screen.getByDisplayValue("Mika")).toBeTruthy();
+    // Visible before anything has been chosen, with the call-signs pre-filled
+    // from the pool the backend suggested.
+    expect(await screen.findByDisplayValue("Mika")).toBeTruthy();
     expect(screen.getByDisplayValue("Nova")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect(screen.queryByRole("button", { name: /^next$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^back$/i })).toBeNull();
 
+    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
     await waitFor(() =>
@@ -395,18 +396,36 @@ describe("Agentic IDE wizard", () => {
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
   });
 
+  it("keeps a half-made plan when the folder is changed afterwards", async () => {
+    // What the wizard charged two Back presses for. The plan lives in the view,
+    // not in the panel that renders it, so re-deciding the folder cannot cost
+    // the call-signs someone has already typed.
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+
+    fireEvent.change(await screen.findByLabelText("Call-sign for terminal 1"), {
+      target: { value: "Scout" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
+
+    expect(screen.getByDisplayValue("Scout")).toBeTruthy();
+  });
+
   /**
-   * Drive the wizard to the count step in a workspace of ``width`` pixels, set
-   * the count to ``n``, and return the stage — the miniature of the workspace
-   * that is about to open.
+   * Set the count to ``n`` in a workspace of ``width`` × ``height`` pixels and
+   * return the stage — the miniature of the workspace that is about to open.
    */
-  async function stageAt(width: number, n: string): Promise<HTMLElement> {
+  async function stageAt(
+    width: number,
+    n: string,
+    height: number = 0,
+  ): Promise<HTMLElement> {
     const previous = globalThis.ResizeObserver;
     class WidthObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
       observe(): void {
         this.callback(
-          [{ contentRect: { width } } as ResizeObserverEntry],
+          [{ contentRect: { width, height } } as ResizeObserverEntry],
           this as unknown as ResizeObserver,
         );
       }
@@ -418,10 +437,12 @@ describe("Agentic IDE wizard", () => {
     try {
       render(<AgenticIdeView />);
       await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
-      fireEvent.click(await screen.findByRole("button", { name: /project/i }));
-      fireEvent.click(screen.getByRole("button", { name: /next/i }));
+      // No steps to walk to reach the count: it sits on the same screen as the
+      // folder list, which is what these arrangement assertions render against.
       fireEvent.change(
-        screen.getByRole("spinbutton", { name: /number of terminals/i }),
+        await screen.findByRole("spinbutton", {
+          name: /number of terminals/i,
+        }),
         { target: { value: n } },
       );
       return screen.getByTestId("workspace-stage-grid");
@@ -445,8 +466,8 @@ describe("Agentic IDE wizard", () => {
   const grouped = (digits: string) => digits.replace(/ /g, "\u202F");
 
   it("sets any count from one control instead of cards plus a custom row", async () => {
-    // Two ways to set one number meant two competing "selected" states. The
-    // track covers every value, and the common ones are notches on it.
+    // Two ways to set one number meant two competing "selected" states. One
+    // control now covers every value, and its two grips must never disagree.
     await stageAt(2328, "10");
 
     expect(
@@ -456,7 +477,13 @@ describe("Agentic IDE wizard", () => {
         }) as HTMLInputElement
       ).value,
     ).toBe("10");
-    expect(screen.getByTestId("terminal-count-value").textContent).toBe("10");
+    expect(
+      (
+        screen.getByRole("spinbutton", {
+          name: /number of terminals/i,
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("10");
     expect(
       screen.queryByRole("button", { name: /custom terminals/i }),
     ).toBeNull();
@@ -465,13 +492,10 @@ describe("Agentic IDE wizard", () => {
   it("builds the requested number of terminal plans", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(
-      screen.getByRole("spinbutton", { name: /number of terminals/i }),
+      await screen.findByRole("spinbutton", { name: /number of terminals/i }),
       { target: { value: "10" } },
     );
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     expect(screen.getByLabelText("Call-sign for terminal 10")).toBeTruthy();
   });
@@ -516,6 +540,16 @@ describe("Agentic IDE wizard", () => {
     const stage = await stageAt(1314, "3");
     expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+  });
+
+  it("previews four terminals as two by two in a tall 2K workspace", async () => {
+    // The live grid gets 1,100 px after its 64 px toolbar/composer chrome. Four
+    // full-height TUI columns would pin their input at the bottom and leave the
+    // reported half-screen gap above it, so the preview must show the same 2 x
+    // 2 arrangement the running workspace now chooses.
+    const stage = await stageAt(2048, "4", 1164);
+    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
   });
 
   it("draws one pane per terminal and never more than the stage can hold", async () => {
@@ -594,7 +628,7 @@ describe("Agentic IDE running workspace", () => {
     );
     render(<AgenticIdeView />);
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
+    expect(screen.queryByTestId("workspace-launcher")).toBeNull();
   });
 
   it("toggles focus mode through the API, not just locally", async () => {
@@ -709,13 +743,13 @@ describe("AgenticIdeView — resuming the last workspace", () => {
 
     await screen.findByTestId("resume-card");
     expect(screen.getByTestId("resume-pane-alex")).toBeTruthy();
-    // The wizard is still right there — the offer never blocks it.
-    expect(screen.getByText("Folder")).toBeTruthy();
+    // The launcher is still right there — the offer never blocks it.
+    expect(screen.getByTestId("workspace-launcher")).toBeTruthy();
   });
 
   it("says nothing when there is nothing to resume", async () => {
     render(<AgenticIdeView />);
-    await screen.findByText("Folder");
+    await screen.findByTestId("workspace-launcher");
     expect(screen.queryByTestId("resume-card")).toBeNull();
   });
 
@@ -835,7 +869,7 @@ describe("AgenticIdeView — the workspace bar", () => {
 
   it("stays hidden while nothing is open", async () => {
     render(<AgenticIdeView />);
-    await screen.findByText("Folder");
+    await screen.findByTestId("workspace-launcher");
     expect(screen.queryByTestId("workspace-bar")).toBeNull();
   });
 
@@ -875,8 +909,8 @@ describe("AgenticIdeView — the workspace bar", () => {
     );
     expect(api.closeWorkspace).not.toHaveBeenCalled();
     expect(api.endIdeSession).not.toHaveBeenCalled();
-    // The wizard is showing, and the bar still lists both workspaces.
-    await screen.findByText("Folder");
+    // The launcher is showing, and the bar still lists both workspaces.
+    await screen.findByTestId("workspace-launcher");
     expect(screen.getByTestId("workspace-tab-ide_other")).toBeTruthy();
     expect(screen.getByTestId("workspace-tab-ide_test")).toBeTruthy();
   });

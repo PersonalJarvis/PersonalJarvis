@@ -1,13 +1,13 @@
 /**
- * Folder picker for step 1 of the Agentic-IDE wizard.
+ * Which folder the agents work in.
  *
- * Five ways to arrive at a folder, because people arrive differently:
+ * Six ways to arrive at one, because people arrive differently:
  *
  * 1. **The system folder window** — Explorer on Windows, Finder on macOS, the
  *    desktop's own dialog on Linux. The one people already know. Offered only
  *    when the backend confirms this machine can actually show it (see below).
- * 2. **Recents** — the workspaces opened before, with their previous layout.
- *    One click and the wizard already knows how many terminals to open.
+ * 2. **Recents** — the folders opened before, with their previous layout. One
+ *    click and the launcher already knows how many terminals to open.
  * 3. **Search** — type a name, get matches from anywhere under home and the
  *    usual code directories. Faster than clicking down five levels.
  * 4. **Browsing** — the list, projects and repositories sorted first.
@@ -20,25 +20,40 @@
  * over a network and absent on a headless server. Everything here therefore
  * works without it, and the button appears only where it can deliver.
  *
+ * ## Six ways, one list
+ *
+ * Those six used to be six regions stacked down a column — a grid of recent
+ * cards, a search row, a breadcrumb, the listing, a drop result, a path field,
+ * and a bar repeating what was selected — each with its own border and its own
+ * heading. Every one of them answers the same question, so a reader had to scan
+ * seven bordered boxes to find the one route they wanted.
+ *
+ * Now there is one scrolling list. Recents are a labelled group at the top of
+ * it, not a separate control with a different shape; search filters that same
+ * list in place; the path field sits under it as a single line. What is above
+ * the list is only ever navigation, what is below it is only ever typing, and
+ * the folder that is chosen is reported once — in the launcher's header, where
+ * the button that acts on it is.
+ *
  * The start view is labelled with the machine's own name rather than the account
  * folder: "Administrator" says nothing about which computer you are looking at,
  * "Ruben's MacBook" does.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CornerDownLeft,
   CornerLeftUp,
   Folder,
   FolderGit2,
   FolderOpen,
-  Laptop,
   Loader2,
   RefreshCw,
   Search,
   Star,
-  Terminal,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button, Field, IconButton, SectionLabel } from "./controls";
 import {
   fetchFolders,
   fetchNativePickerSupport,
@@ -93,9 +108,12 @@ export function extractDropPayload(dt: DataTransfer | null): {
   const items = dt.items ? Array.from(dt.items) : [];
   for (const item of items) {
     const getAsEntry = (
-      item as DataTransferItem & { webkitGetAsEntry?: () => { isDirectory?: boolean; name?: string } | null }
+      item as DataTransferItem & {
+        webkitGetAsEntry?: () => { isDirectory?: boolean; name?: string } | null;
+      }
     ).webkitGetAsEntry;
-    const entry = typeof getAsEntry === "function" ? getAsEntry.call(item) : null;
+    const entry =
+      typeof getAsEntry === "function" ? getAsEntry.call(item) : null;
     if (entry?.isDirectory && entry.name) {
       out.name = entry.name;
       break;
@@ -103,14 +121,19 @@ export function extractDropPayload(dt: DataTransfer | null): {
   }
 
   if (!out.name && dt.files && dt.files.length > 0) {
-    const rel = (dt.files[0] as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const rel = (dt.files[0] as File & { webkitRelativePath?: string })
+      .webkitRelativePath;
     if (rel && rel.includes("/")) out.name = rel.split("/")[0];
   }
 
   return out;
 }
 
-export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPickerProps) {
+export function FolderPicker({
+  selected,
+  onSelect,
+  onSelectRecent,
+}: FolderPickerProps) {
   const [path, setPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<FolderItem[]>([]);
@@ -128,7 +151,9 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
   const [dropChoices, setDropChoices] = useState<FolderItem[]>([]);
   const dragDepth = useRef(0);
 
-  const [nativePicker, setNativePicker] = useState<NativePickerSupport | null>(null);
+  const [nativePicker, setNativePicker] = useState<NativePickerSupport | null>(
+    null,
+  );
   const [nativeOpen, setNativeOpen] = useState(false);
   const [nativeNote, setNativeNote] = useState<string | null>(null);
 
@@ -157,7 +182,7 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
         if (res.device_name) setDeviceName(res.device_name);
       })
       .catch(() => {
-        /* no recents yet — the section just stays hidden */
+        /* no recents yet — the group just stays hidden */
       });
     void fetchNativePickerSupport()
       .then(setNativePicker)
@@ -252,7 +277,9 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
     // Read the DataTransfer BEFORE awaiting anything (see extractDropPayload).
     const payload = extractDropPayload(event.dataTransfer);
     if (!payload.path && !payload.name) {
-      setDropNote("That drop carried no folder — browse to it or paste its path.");
+      setDropNote(
+        "That drop carried no folder — browse to it or paste its path.",
+      );
       return;
     }
     setDropNote("Resolving the dropped folder…");
@@ -269,6 +296,8 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
       })
       .catch((e) => setDropNote((e as Error).message));
   };
+
+  const searchingMachine = searchHits !== null;
 
   return (
     <div
@@ -288,194 +317,188 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
       }}
       onDrop={onDrop}
       data-testid="folder-drop-zone"
-      className={cn(
-        "relative space-y-4 rounded-xl transition-colors",
-        dragOver && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
-      )}
+      className="relative flex min-h-0 flex-1 flex-col"
     >
       {dragOver && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/80">
-          <div className="flex items-center gap-2 rounded-lg border border-primary/50 bg-card px-4 py-3 text-sm font-medium text-primary">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-surface bg-background/85 ring-2 ring-inset ring-primary/60">
+          <span className="flex items-center gap-2 text-sm font-medium text-primary">
             <FolderOpen className="h-4 w-4" />
             Drop a folder to open it here
-          </div>
+          </span>
         </div>
       )}
 
-      {/* ------------------------------------------------------------ recents */}
-      {recents.length > 0 && searchHits === null && (
-        <section className="space-y-2">
-          <h4 className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-            <Star className="h-3.5 w-3.5 fill-current text-primary" />
-            Recent folders
-          </h4>
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {recents.map((recent) => (
-              <li key={recent.path} className="group relative">
-                <button
-                  type="button"
-                  onClick={() => pickRecent(recent)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
-                    selected === recent.path
-                      ? "border-primary/50 bg-primary/5"
-                      : "border-border bg-card/60 hover:border-primary/40",
-                  )}
-                >
-                  <Star
-                    data-testid="recent-folder-star"
-                    className="h-4 w-4 shrink-0 fill-current text-primary"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{recent.name}</span>
-                    <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                      {recent.path}
-                    </span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-                    <Terminal className="h-3 w-3" />
-                    {recent.terminals}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Forget ${recent.name}`}
-                  title="Remove from this list (the folder itself stays)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setRecents((prev) => prev.filter((r) => r.path !== recent.path));
-                    void forgetRecent(recent.path).catch(() => {
-                      /* list refreshes on next visit */
-                    });
-                  }}
-                  className="absolute right-1 top-1 hidden rounded p-1 text-muted-foreground hover:text-foreground group-hover:block"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ------------------------------------------------------------- search */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* --------------------------------------------------------- navigation */}
+      <div className="flex items-center gap-1.5 p-3 pb-2">
         <div className="relative min-w-0 flex-1">
           {searching ? (
-            <Loader2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+            <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
           ) : (
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           )}
-          <input
+          <Field
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search folders by name…"
             aria-label="Search folders by name"
             data-testid="folder-search"
-            className="w-full rounded-lg border border-border bg-background/60 py-2 pl-9 pr-8 text-sm outline-none focus:border-primary/50"
+            className="w-full pl-8 pr-7"
             spellCheck={false}
           />
           {query && (
-            <button
-              type="button"
-              aria-label="Clear search"
+            <IconButton
+              size="sm"
+              label="Clear search"
               onClick={() => setQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+              className="absolute right-1 top-1/2 -translate-y-1/2"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
+              <X className="h-3 w-3" />
+            </IconButton>
           )}
         </div>
         {nativePicker?.available && (
-          <button
-            type="button"
-            className="btn-primary"
+          <Button
             onClick={browseNatively}
             disabled={nativeOpen}
             data-testid="native-browse"
             title="Open the folder window this computer normally uses"
           >
             {nativeOpen ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <FolderOpen className="h-4 w-4" />
+              <FolderOpen className="h-3.5 w-3.5" />
             )}
-            {nativeOpen ? "Waiting for the window…" : "Browse…"}
-          </button>
+            {nativeOpen ? "Waiting…" : "Browse"}
+          </Button>
         )}
-        <button
-          type="button"
-          className="btn-ghost"
+        <IconButton
+          label="Go up one folder"
           onClick={() => void load(parent)}
-          disabled={loading || searchHits !== null || (!parent && path === null)}
-          title="Go up one folder"
+          disabled={loading || searchingMachine || (!parent && path === null)}
         >
           <CornerLeftUp className="h-4 w-4" />
-          Up
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
+        </IconButton>
+        <IconButton
+          label="Reload this folder"
           onClick={() => void load(path)}
           disabled={loading}
-          title="Reload this folder"
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="h-4 w-4" />
           )}
-        </button>
+        </IconButton>
+      </div>
+
+      {/* ------------------------------------------------------- where you are */}
+      <div className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-xs text-muted-foreground">
+        {searchingMachine ? (
+          <span className="truncate">
+            {visible.length === 0 && !searching
+              ? `Nothing matches “${query.trim()}”`
+              : `Matches for “${query.trim()}”, anywhere on this machine`}
+          </span>
+        ) : (
+          <>
+            <span className="shrink-0 font-medium text-foreground">
+              {deviceName || "This machine"}
+            </span>
+            {path && (
+              <>
+                <span className="shrink-0 opacity-50">›</span>
+                <code className="min-w-0 truncate font-mono">{path}</code>
+              </>
+            )}
+          </>
+        )}
       </div>
 
       {/* The window can still end up behind the app despite being opened
           topmost — a user who does not know it is there just sees a button
           that hung. Saying so costs one line and saves the confusion. */}
       {nativeOpen && (
-        <p className="text-xs text-primary" role="status">
+        <p className="px-3 pb-2 text-xs text-primary" role="status">
           A folder window is open — pick a folder there. If you cannot see it,
           check behind this window or on your taskbar.
         </p>
       )}
-      {nativeNote && !nativeOpen && (
-        <p className="text-xs text-muted-foreground" role="alert">
-          {nativeNote}
-        </p>
-      )}
-
-      {/* ---------------------------------------------------------- breadcrumb */}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {searchHits !== null ? (
-          <span>
-            {visible.length === 0 && !searching
-              ? `Nothing matches “${query.trim()}”`
-              : `Matches for “${query.trim()}”`}
-          </span>
-        ) : (
-          <>
-            <Laptop className="h-3.5 w-3.5 shrink-0 text-primary/70" />
-            <span className="shrink-0 font-medium text-foreground">
-              {deviceName || "This machine"}
-            </span>
-            {path && (
-              <code className="min-w-0 truncate rounded bg-background/60 px-2 py-0.5 font-mono">
-                {path}
-              </code>
-            )}
-          </>
-        )}
-      </div>
 
       {/* --------------------------------------------------------------- list */}
-      <div className="max-h-[300px] overflow-y-auto scrollbar-jarvis rounded-xl border border-border bg-card/40">
+      <div className="min-h-[16rem] flex-1 overflow-y-auto scrollbar-jarvis border-y border-border/70">
+        {recents.length > 0 && !searchingMachine && (
+          <>
+            <div className="sticky top-0 z-10 bg-card/95 px-3 py-1.5 backdrop-blur">
+              <SectionLabel>Recent folders</SectionLabel>
+            </div>
+            <ul>
+              {recents.map((recent) => (
+                <li key={recent.path} className="group/row relative">
+                  <button
+                    type="button"
+                    onClick={() => pickRecent(recent)}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors",
+                      selected === recent.path
+                        ? "bg-primary/10"
+                        : "hover:bg-secondary/60",
+                    )}
+                  >
+                    <Star
+                      data-testid="recent-folder-star"
+                      className="h-3.5 w-3.5 shrink-0 fill-current text-primary"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">
+                        {recent.name}
+                      </span>
+                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                        {recent.path}
+                      </span>
+                    </span>
+                    <span className="shrink-0 pr-5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {recent.terminals}
+                    </span>
+                  </button>
+                  <IconButton
+                    size="sm"
+                    label={`Forget ${recent.name}`}
+                    title="Remove from this list (the folder itself stays)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRecents((prev) =>
+                        prev.filter((r) => r.path !== recent.path),
+                      );
+                      void forgetRecent(recent.path).catch(() => {
+                        /* list refreshes on next visit */
+                      });
+                    }}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100"
+                  >
+                    <X className="h-3 w-3" />
+                  </IconButton>
+                </li>
+              ))}
+            </ul>
+            {/*
+              Not the machine's name a second time: it is already in the line
+              above the list, and a label repeated twelve pixels apart reads as
+              two different things being named rather than one.
+            */}
+            <div className="sticky top-0 z-10 bg-card/95 px-3 py-1.5 backdrop-blur">
+              <SectionLabel>Browse</SectionLabel>
+            </div>
+          </>
+        )}
+
         {visible.length === 0 && !loading && !searching ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            {searchHits !== null
+          <p className="px-3 py-4 text-sm text-muted-foreground">
+            {searchingMachine
               ? "No folder with that name was found."
-              : "Nothing to list here — search above, drop a folder, or paste a path below."}
+              : "Nothing to list here — search above, drop a folder, or type its path below."}
           </p>
         ) : (
-          <ul className="divide-y divide-border/50">
+          <ul>
             {visible.map((item) => {
               const isSelected = selected === item.path;
               return (
@@ -484,27 +507,46 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
                     type="button"
                     onClick={() => open(item)}
                     className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-                      isSelected ? "bg-primary/10 text-foreground" : "hover:bg-background/60",
+                      "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors",
+                      isSelected ? "bg-primary/10" : "hover:bg-secondary/60",
                     )}
                   >
                     {item.is_repo ? (
-                      <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
-                    ) : item.is_project ? (
-                      <FolderOpen className="h-4 w-4 shrink-0 text-primary/70" />
+                      <FolderGit2
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
                     ) : (
-                      <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <Folder
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          isSelected
+                            ? "text-primary"
+                            : "text-muted-foreground/60",
+                        )}
+                      />
                     )}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate">{item.name}</span>
-                      {searchHits !== null && (
+                      <span
+                        className={cn(
+                          "block truncate",
+                          isSelected && "text-primary",
+                        )}
+                      >
+                        {item.name}
+                      </span>
+                      {searchingMachine && (
                         <span className="block truncate font-mono text-[10px] text-muted-foreground">
                           {item.path}
                         </span>
                       )}
                     </span>
                     {item.is_repo && (
-                      <span className="chip shrink-0 text-[10px] uppercase tracking-wide">git</span>
+                      <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                        git
+                      </span>
                     )}
                   </button>
                 </li>
@@ -514,49 +556,49 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
         )}
       </div>
 
-      {error && (
-        <p className="text-xs text-destructive" role="alert">
-          {error}
-        </p>
-      )}
-
-      {/* --------------------------------------------------------- drop result */}
-      {dropNote && (
-        <div className="space-y-2 rounded-lg border border-border bg-card/60 px-3 py-2">
-          <p className="text-xs text-muted-foreground">{dropNote}</p>
-          {dropChoices.length > 0 && (
-            <ul className="space-y-1">
-              {dropChoices.map((choice) => (
-                <li key={choice.path}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDropNote(null);
-                      setDropChoices([]);
-                      open(choice);
-                    }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-background/60"
-                  >
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary/70" />
-                    <code className="min-w-0 truncate font-mono">{choice.path}</code>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* ----------------------------------------------------------- raw path */}
+      {/* ------------------------------------------------------------- typing */}
       <PathInput base={path} onUse={usePath} />
 
-      {selected && (
-        <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
-          <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
-          <span className="text-muted-foreground">Selected:</span>
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-            {selected}
-          </code>
+      {/* ---------------------------------------------------------- reporting */}
+      {(error || nativeNote || dropNote) && (
+        <div className="space-y-1 px-3 pb-3">
+          {error && (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+          {nativeNote && !nativeOpen && (
+            <p className="text-xs text-muted-foreground" role="alert">
+              {nativeNote}
+            </p>
+          )}
+          {dropNote && (
+            <>
+              <p className="text-xs text-muted-foreground">{dropNote}</p>
+              {dropChoices.length > 0 && (
+                <ul>
+                  {dropChoices.map((choice) => (
+                    <li key={choice.path}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDropNote(null);
+                          setDropChoices([]);
+                          open(choice);
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-secondary/60"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <code className="min-w-0 truncate font-mono">
+                          {choice.path}
+                        </code>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -600,7 +642,13 @@ export function joinPath(base: string, name: string): string {
  * above it: `cd` shows what is in THIS folder, and a field that answered with
  * matches from across the disk would be a different tool wearing the same shape.
  */
-function PathInput({ base, onUse }: { base: string | null; onUse: (value: string) => void }) {
+function PathInput({
+  base,
+  onUse,
+}: {
+  base: string | null;
+  onUse: (value: string) => void;
+}) {
   const [value, setValue] = useState("");
   const [options, setOptions] = useState<FolderItem[]>([]);
   const [active, setActive] = useState(-1);
@@ -623,7 +671,9 @@ function PathInput({ base, onUse }: { base: string | null; onUse: (value: string
           if (cancelled) return;
           const needle = leaf.toLowerCase();
           setOptions(
-            res.entries.filter((e) => !needle || e.name.toLowerCase().startsWith(needle)),
+            res.entries.filter(
+              (e) => !needle || e.name.toLowerCase().startsWith(needle),
+            ),
           );
           setActive(-1);
         })
@@ -683,65 +733,72 @@ function PathInput({ base, onUse }: { base: string | null; onUse: (value: string
   };
 
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <input
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              setOpen(true);
-            }}
-            onKeyDown={onKeyDown}
-            onFocus={() => setOpen(true)}
-            // Closing on blur is delayed: a click on a suggestion blurs the
-            // input first, and an immediate close would remove the element
-            // under the pointer before the click lands on it.
-            onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-            placeholder="…or type a path — Tab completes, like cd"
-            aria-label="Folder path"
-            data-testid="folder-path-input"
-            className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
-            spellCheck={false}
-            autoComplete="off"
-          />
-          {open && options.length > 0 && (
-            <ul
-              data-testid="path-suggestions"
-              className="absolute bottom-full z-20 mb-1 max-h-48 w-full overflow-y-auto scrollbar-jarvis rounded-lg border border-border bg-card shadow-lg"
-            >
-              {options.slice(0, 40).map((item, index) => (
-                <li key={item.path}>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => complete(item)}
-                    className={cn(
-                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs",
-                      index === active ? "bg-primary/15" : "hover:bg-background/60",
-                    )}
-                  >
-                    {item.is_repo ? (
-                      <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    ) : (
-                      <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="truncate font-mono">{item.name}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <button
-          type="button"
-          className="btn-ghost"
-          disabled={!value.trim()}
+    <div className="relative p-3">
+      <Field
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={onKeyDown}
+        onFocus={() => setOpen(true)}
+        // Closing on blur is delayed: a click on a suggestion blurs the input
+        // first, and an immediate close would remove the element under the
+        // pointer before the click lands on it.
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        placeholder="…or type a path — Tab completes, like cd"
+        aria-label="Folder path"
+        data-testid="folder-path-input"
+        className="w-full pr-8 font-mono text-xs"
+        spellCheck={false}
+        autoComplete="off"
+      />
+      {/*
+        The field's own confirm, in place of the "Use this path" button that
+        used to sit beside it. Enter already does this, but only for someone who
+        guesses that it will — and a control that can only be reached by guessing
+        is not a route, so the affordance stays. It is inside the field because
+        it belongs to it: as a sibling it was a second full-width control for a
+        line of text nobody had typed yet.
+      */}
+      {value.trim() && (
+        <IconButton
+          size="sm"
+          label="Use this path"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={submit}
+          className="absolute right-4 top-1/2 -translate-y-1/2 text-primary"
         >
-          Use this path
-        </button>
-      </div>
+          <CornerDownLeft className="h-3.5 w-3.5" />
+        </IconButton>
+      )}
+      {open && options.length > 0 && (
+        <ul
+          data-testid="path-suggestions"
+          className="absolute bottom-full left-3 right-3 z-30 mb-1 max-h-48 overflow-y-auto scrollbar-jarvis rounded-control border border-border bg-popover shadow-xl"
+        >
+          {options.slice(0, 40).map((item, index) => (
+            <li key={item.path}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => complete(item)}
+                className={cn(
+                  "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs",
+                  index === active ? "bg-primary/15" : "hover:bg-secondary/60",
+                )}
+              >
+                {item.is_repo ? (
+                  <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                )}
+                <span className="truncate font-mono">{item.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
