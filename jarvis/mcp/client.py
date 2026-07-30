@@ -6,9 +6,9 @@ circuit breaker: after 3 consecutive failures the client is marked
 
 MCP-SDK quirk: the official client transports (``stdio_client``,
 ``sse_client``) are async context managers. We must set them up via
-``AsyncExitStack`` manually so that ``start()`` and ``stop()`` work as
-separate methods — ``async with`` does not work because ownership must
-be held for the entire lifetime of the client.
+``AsyncExitStack`` on one long-lived owner task. AnyIO cancel scopes are
+task-bound, so that same task must both enter and exit every transport context
+even when public ``start()`` and ``stop()`` calls come from different tasks.
 """
 from __future__ import annotations
 
@@ -110,6 +110,9 @@ class MCPClient:
         self._env_overrides = env_overrides or {}
         self._exit_stack: AsyncExitStack | None = None
         self._session: Any | None = None  # mcp.ClientSession (typed locally)
+        self._owner_task: asyncio.Task[None] | None = None
+        self._owner_ready: asyncio.Future[None] | None = None
+        self._stop_requested: asyncio.Event | None = None
         self._tools_cache: list[dict[str, Any]] = []
         self._circuit_breaker_failures = 0
         self._disabled_until_ns: int = 0
@@ -121,12 +124,44 @@ class MCPClient:
         if self._session is not None:
             return  # idempotent
 
-        # Lazy imports — MCP lib is optional-but-expected (requirements.txt).
-        from mcp import ClientSession
-        from mcp.client.stdio import StdioServerParameters, stdio_client
+        if self._owner_task is not None and self._owner_ready is not None:
+            await asyncio.shield(self._owner_ready)
+            return
+
+        loop = asyncio.get_running_loop()
+        ready = loop.create_future()
+        stop_requested = asyncio.Event()
+        owner = asyncio.create_task(
+            self._run_lifecycle(ready, stop_requested),
+            name=f"mcp-owner-{self.spec.name}",
+        )
+        self._owner_task = owner
+        self._owner_ready = ready
+        self._stop_requested = stop_requested
+        try:
+            await asyncio.shield(ready)
+        except BaseException:
+            if not ready.done():
+                ready.cancel()
+            owner.cancel()
+            await asyncio.gather(owner, return_exceptions=True)
+            if self._owner_task is owner:
+                self._clear_lifecycle_state()
+            raise
+
+    async def _run_lifecycle(
+        self,
+        ready: asyncio.Future[None],
+        stop_requested: asyncio.Event,
+    ) -> None:
+        """Own every task-bound MCP context from entry through final exit."""
 
         stack = AsyncExitStack()
         try:
+            # Lazy imports — MCP lib is optional-but-expected (requirements.txt).
+            from mcp import ClientSession
+            from mcp.client.stdio import StdioServerParameters, stdio_client
+
             if self.spec.transport == "stdio":
                 command, args, env = self._resolve_install_command()
                 if shutil.which(command) is None:
@@ -182,29 +217,49 @@ class MCPClient:
                 self.spec.name,
                 len(self._tools_cache),
             )
-        except Exception:
-            await stack.aclose()
-            raise
+            if not ready.done():
+                ready.set_result(None)
+            await stop_requested.wait()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            elif not isinstance(exc, asyncio.CancelledError):
+                log.warning("MCPClient[%s] lifecycle error: %s", self.spec.name, exc)
+        finally:
+            await self._close_exit_stack(stack)
+            if self._exit_stack is stack:
+                self._exit_stack = None
+                self._session = None
+            if self._owner_task is asyncio.current_task():
+                self._clear_lifecycle_state()
 
     async def stop(self) -> None:
         """Close the session and transport cleanly.
 
-        Bounded by a hard timeout: the MCP SDK's ``streamablehttp_client`` wraps
-        its transport in an ``anyio`` task group whose cancel scope must be
-        entered and exited on the SAME task. When ``aclose()`` runs on a
-        different task than ``start()`` did, the exit both raises
-        ``RuntimeError: Attempted to exit cancel scope in a different task`` AND
-        can stall for ~20 s first while the underlying HTTP stream drains. If
-        that close is awaited unbounded on a load-bearing teardown path (a voice
-        session end, app shutdown), the whole teardown hangs — the live symptom
-        was a bar-X hangup of a realtime session freezing the JarvisBar on
-        "listening" and deafening wake for ~20 s (2026-07-23). Abandon the
-        transport on timeout so no caller can ever hang on it.
+        The lifecycle owner task performs the bounded close because AnyIO
+        requires context entry and exit on the same task. The public caller only
+        signals that owner and joins it, so registry/bootstrap task boundaries
+        cannot break transport shutdown.
         """
-        if self._exit_stack is None:
+        owner = self._owner_task
+        if owner is None:
+            stack = self._exit_stack
+            if stack is not None:
+                await self._close_exit_stack(stack)
+            self._clear_lifecycle_state()
             return
+
+        if self._stop_requested is not None:
+            self._stop_requested.set()
+        await asyncio.shield(owner)
+        if self._owner_task is owner:
+            self._clear_lifecycle_state()
+
+    async def _close_exit_stack(self, stack: Any) -> None:
+        """Close one transport stack on its owner task with a hard ceiling."""
         try:
-            await asyncio.wait_for(self._exit_stack.aclose(), timeout=_STOP_TIMEOUT_S)
+            async with asyncio.timeout(_STOP_TIMEOUT_S):
+                await stack.aclose()
         except TimeoutError:
             log.warning(
                 "MCPClient[%s] stop timed out after %.1fs — abandoning the "
@@ -214,9 +269,13 @@ class MCPClient:
             )
         except Exception as e:  # noqa: BLE001
             log.warning("MCPClient[%s] stop error: %s", self.spec.name, e)
-        finally:
-            self._exit_stack = None
-            self._session = None
+
+    def _clear_lifecycle_state(self) -> None:
+        self._exit_stack = None
+        self._session = None
+        self._owner_task = None
+        self._owner_ready = None
+        self._stop_requested = None
 
     # ---- Interaction ----------------------------------------------------
 

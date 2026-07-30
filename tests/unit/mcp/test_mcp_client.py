@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -145,3 +146,122 @@ async def test_stop_times_out_instead_of_hanging_on_a_stalled_transport(
     # The stall was abandoned and the client reset so a later start() is clean.
     assert client._exit_stack is None
     assert client._session is None
+
+
+@pytest.mark.asyncio
+async def test_start_and_stop_keep_contexts_on_one_owner_task(monkeypatch) -> None:
+    """Transport contexts stay task-bound across separate public call tasks."""
+
+    context_tasks: list[tuple[str, asyncio.Task[object] | None]] = []
+
+    class _TaskBoundTransport:
+        async def __aenter__(self):
+            context_tasks.append(("transport-enter", asyncio.current_task()))
+            return object(), object()
+
+        async def __aexit__(self, *_exc):
+            context_tasks.append(("transport-exit", asyncio.current_task()))
+
+    class _TaskBoundSession:
+        def __init__(self, *_args) -> None:
+            pass
+
+        async def __aenter__(self):
+            context_tasks.append(("session-enter", asyncio.current_task()))
+            return self
+
+        async def __aexit__(self, *_exc):
+            context_tasks.append(("session-exit", asyncio.current_task()))
+
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    import mcp
+    import mcp.client.stdio as stdio_mod
+
+    monkeypatch.setattr(shutil, "which", lambda _cmd: r"C:\fake\npx.cmd")
+    monkeypatch.setattr(stdio_mod, "stdio_client", lambda _params: _TaskBoundTransport())
+    monkeypatch.setattr(mcp, "ClientSession", _TaskBoundSession)
+
+    client = MCPClient(_stdio_spec())
+    start_task = asyncio.create_task(client.start())
+    await start_task
+    owner_task = client._owner_task
+    assert owner_task is not None
+    assert owner_task is not start_task
+
+    stop_task = asyncio.create_task(client.stop())
+    await stop_task
+
+    assert [name for name, _task in context_tasks] == [
+        "transport-enter",
+        "session-enter",
+        "session-exit",
+        "transport-exit",
+    ]
+    assert {task for _name, task in context_tasks} == {owner_task}
+    assert client._session is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_finishes_owner_cleanup_and_allows_restart(
+    monkeypatch,
+) -> None:
+    """Caller cancellation cannot strand stale lifecycle state."""
+
+    exit_started = asyncio.Event()
+    release_exit = asyncio.Event()
+
+    class _SlowExitTransport:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *_exc):
+            exit_started.set()
+            await release_exit.wait()
+
+    class _Session:
+        def __init__(self, *_args) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    import mcp
+    import mcp.client.stdio as stdio_mod
+
+    monkeypatch.setattr(shutil, "which", lambda _cmd: r"C:\fake\npx.cmd")
+    monkeypatch.setattr(stdio_mod, "stdio_client", lambda _params: _SlowExitTransport())
+    monkeypatch.setattr(mcp, "ClientSession", _Session)
+
+    client = MCPClient(_stdio_spec())
+    await client.start()
+    owner = client._owner_task
+    assert owner is not None
+
+    stop_task = asyncio.create_task(client.stop())
+    await exit_started.wait()
+    stop_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stop_task
+
+    release_exit.set()
+    await asyncio.wait_for(asyncio.shield(owner), timeout=1.0)
+    assert client._owner_task is None
+    assert client._session is None
+
+    await client.start()
+    assert client._session is not None
+    await client.stop()
