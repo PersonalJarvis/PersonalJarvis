@@ -2278,6 +2278,11 @@ class Registry:
         progress every time somebody looked away, which is precisely what having
         several workspaces would otherwise cost.
 
+        A replay is valid only at the geometry that produced its cursor moves.
+        When the viewer comes back at another size, the old drawing is replaced
+        by its terminal-mode prologue and a live repaint. This is still the same
+        process and conversation; only the stale pixels are discarded.
+
         **That replay goes out on ``on_replay``, not on ``on_output``, because a
         viewer has to CLEAR its screen before drawing it.** The two are the same
         bytes and completely different instructions: live output continues a
@@ -2331,25 +2336,40 @@ class Registry:
             _watch(term, on_output, on_exit)
             term.reattached = True
             term.stopping = False
-            term.transcript.resize(cols, rows)
-            manager.resize(term.pty_id, cols, rows)
-            replay = term.replay.text()
+            geometry_changed = (term.transcript.cols, term.transcript.rows) != (
+                cols,
+                rows,
+            )
+            if geometry_changed:
+                geometry_changed = manager.resize(term.pty_id, cols, rows)
+                if geometry_changed:
+                    term.transcript.resize(cols, rows)
+            needs_repaint = term.replay.truncated
+            if geometry_changed and is_coding_agent(term.agent):
+                # A cursor-addressed TUI stream is meaningful only at the size
+                # that produced it. Replaying the old geometry after a grid
+                # re-layout leaves status rows and command fragments behind
+                # the new paint. Keep the terminal modes, drop those drawing
+                # bytes, and let the live agent rebuild one clean screen below.
+                replay = term.replay.rebase_for_resize()
+                needs_repaint = True
+            else:
+                replay = term.replay.text()
             if replay:
-                # Hand over the raw stream that drew the current screen. A
-                # coding agent's TUI is a painted surface, not a log: without
-                # this the pane comes back blank until the agent happens to
-                # repaint, which looks exactly like a dead terminal.
+                # Hand over either the stream that drew the current screen, or
+                # (after a geometry change) the terminal-mode prologue that a
+                # clean repaint must draw on. A coding agent's TUI is a painted
+                # surface, not a log: the viewer needs one of those two rebuild
+                # paths rather than an append to whatever it held before.
                 #
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
                 # a copy of it looked like.
                 await (on_replay or on_output)(replay)
-            if term.replay.truncated:
-                # The tail is all this pane has, and it no longer starts where
-                # the agent started drawing. Replaying it alone brings back the
-                # one row the agent rewrote last and empty space where its
-                # prompt box should be — see ReplayBuffer's docstring. Ask for
-                # a fresh paint instead of hoping one arrives.
+            if needs_repaint:
+                # Either the tail lost its opening frame, or its cursor moves
+                # belong to another geometry. Neither can rebuild this viewer.
+                # Ask for a fresh paint instead of hoping one arrives.
                 await self._nudge_repaint(term, cols, rows)
             logger.debug("Agentic IDE: {} re-joined a running agent", term.name)
             return term
@@ -2861,8 +2881,17 @@ class Registry:
             return False
         # The replayed screen has to follow the real one; otherwise the
         # transcript keeps wrapping at the old width.
+        if (term.transcript.cols, term.transcript.rows) == (cols, rows):
+            return True
+        if not self._manager().resize(term.pty_id, cols, rows):
+            return False
+        if is_coding_agent(term.agent):
+            # Future viewers must not replay cursor moves produced for the old
+            # grid into the new one. The live viewer already has its screen;
+            # this only starts a clean replay epoch for the next reconnect.
+            term.replay.rebase_for_resize()
         term.transcript.resize(cols, rows)
-        return self._manager().resize(term.pty_id, cols, rows)
+        return True
 
     def detach(self, key: str, workspace_id: str | None = None, viewer: Any = None) -> None:
         """Let go of a pane's viewer. The agent behind it keeps running.

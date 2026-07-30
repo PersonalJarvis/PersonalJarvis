@@ -9,8 +9,9 @@
  * 2. Appearance and font size are applied to the LIVE instance in their own
  *    effects. Rebuilding the terminal when the user flips to dark mode would
  *    tear down the WebSocket, which kills the agent running behind it and
- *    loses the whole session. So the connect effect depends on the pane key
- *    alone.
+ *    loses the whole session. So the connect effect depends on pane identity,
+ *    restart intent and one-way initial geometry readiness — never live
+ *    appearance state.
  *
  * ## Why this pane is configured the way it is
  *
@@ -220,6 +221,15 @@ interface AgenticTerminalProps {
   promptCount?: number;
   appearance: TerminalAppearance;
   fontSize: number;
+  /**
+   * Has the grid measured the pane's final opening geometry?
+   *
+   * Area-aware layouts cannot know their band count until the container has a
+   * height. Opening the PTY during the width-only first pass attaches it at one
+   * size and immediately moves it to another, while its replay is still being
+   * parsed. Omitted for standalone uses, which already render at a fixed size.
+   */
+  geometryReady?: boolean;
   /** Highlight this pane as the prompt target. */
   focused?: boolean;
   onFocus?: () => void;
@@ -304,6 +314,7 @@ export function AgenticTerminal({
   promptCount = 0,
   appearance,
   fontSize,
+  geometryReady = true,
   focused = false,
   onFocus,
   onStatus,
@@ -389,6 +400,7 @@ export function AgenticTerminal({
   layoutBusyRef.current = layoutBusy;
 
   useEffect(() => {
+    if (!geometryReady) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -954,7 +966,7 @@ export function AgenticTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
-  }, [name, restartToken]);
+  }, [name, restartToken, geometryReady]);
 
   // Live restyle — no reconnect, so the running agent is untouched. The canvas
   // renderer caches rendered glyphs per colour in a texture atlas, so a theme

@@ -141,6 +141,32 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.open).toHaveBeenCalledWith(host);
     expect(terminalHarness.observe).toHaveBeenCalledWith(host);
   });
+
+  it("waits for the area-aware grid measurement before opening the PTY", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        geometryReady={false}
+      />,
+    );
+
+    expect(terminalHarness.open).not.toHaveBeenCalled();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        geometryReady
+      />,
+    );
+
+    expect(terminalHarness.open).toHaveBeenCalled();
+  });
 });
 
 describe("pane keyboard", () => {

@@ -264,6 +264,24 @@ def test_an_untruncated_replay_is_still_verbatim() -> None:
     assert buffer.text() == stream
 
 
+def test_rebasing_for_a_resize_drops_old_drawing_but_preserves_modes() -> None:
+    """A TUI stream is geometry-bound; its negotiated terminal state is not."""
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[?1006hOLD STATUS ROW")
+
+    prologue = buffer.rebase_for_resize()
+
+    assert "OLD STATUS ROW" not in prologue
+    assert "OLD STATUS ROW" not in buffer.text()
+    assert "\x1b[?1049h" in prologue
+    assert "\x1b[?1006h" in prologue
+    assert prologue.endswith("\x1b[0m")
+    assert buffer.truncated is False
+
+    buffer.feed("NEW SCREEN")
+    assert buffer.text() == prologue + "NEW SCREEN"
+
+
 def test_a_replay_forgets_the_modes_when_it_is_cleared() -> None:
     buffer = ReplayBuffer(limit=32)
     buffer.feed("\x1b[?1049h" + "z" * 100)

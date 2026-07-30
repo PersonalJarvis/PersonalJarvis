@@ -1690,6 +1690,7 @@ export function AgenticGrid({
                 promptCount={term.prompts_sent}
                 appearance={appearance}
                 fontSize={fontSize}
+                geometryReady={gridWidth > 0 && gridHeight > 0}
                 focused={target === term.name}
                 maximized={isMaximized}
                 layoutBusy={layoutBusy}

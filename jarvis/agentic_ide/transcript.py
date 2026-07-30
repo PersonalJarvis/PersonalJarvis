@@ -278,6 +278,29 @@ class ReplayBuffer:
                 text = text[remnant.end() :]
         return self._mode_prologue() + "\x1b[0m" + text
 
+    def rebase_for_resize(self) -> str:
+        """Forget drawing bytes tied to the old geometry, preserving modes.
+
+        Cursor-addressed TUI output only has meaning at the terminal size that
+        produced it.  Replaying that stream into a differently sized viewer
+        leaves old status rows and fragments between the newly painted ones.
+        A resize therefore starts a new replay epoch: the caller sends this
+        returned prologue to a reset viewer, then asks the live TUI to repaint.
+
+        Private modes survive because most coding CLIs negotiate alternate
+        screen and mouse tracking only once, at process startup.  Dropping
+        those together with the stale drawing would repair the text while
+        silently breaking the pane's mouse and scrollbar.
+        """
+        prologue = self._mode_prologue() + "\x1b[0m"
+        self._chunks.clear()
+        self._size = 0
+        self.truncated = False
+        self._open_escape = False
+        self._chunks.append(prologue)
+        self._size = len(prologue)
+        return prologue
+
     def clear(self) -> None:
         """Forget everything — this buffer is being handed to a fresh process.
 
