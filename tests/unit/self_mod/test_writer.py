@@ -390,6 +390,37 @@ class TestReloadFailRollback:
 
 
 class TestAtomicWrite:
+    def test_retries_transient_replace_permission_error(
+        self,
+        fixture_path: Path,
+        tmp_path: Path,
+        audit_log: SelfModAudit,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A short-lived Windows sharing lock must not reject a safe write."""
+        writer = AtomicConfigWriter(
+            config_path=fixture_path,
+            backup_dir=tmp_path / "backups",
+            audit=audit_log,
+            config_loader=_isolated_loader,
+        )
+        real_replace = os.replace
+        attempts = 0
+
+        def flaky_replace(src: str | Path, dst: str | Path) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError("simulated transient sharing lock")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", flaky_replace)
+
+        result = writer.mutate(_make_request("tts.provider", "elevenlabs"))
+
+        assert result.ok is True
+        assert attempts == 3
+
     def test_no_orphan_tmp_after_failure(
         self,
         fixture_path: Path,
@@ -620,6 +651,78 @@ class TestConcurrencySamePath:
 
 
 class TestListBackups:
+    def test_default_backup_dir_is_outside_config_watchdog_scope(
+        self,
+        fixture_path: Path,
+        tmp_path: Path,
+        audit_log: SelfModAudit,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        data_root = tmp_path / "jarvis-data"
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(data_root))
+
+        writer = AtomicConfigWriter(
+            config_path=fixture_path,
+            audit=audit_log,
+            config_loader=_isolated_loader,
+        )
+
+        assert writer.backup_dir == data_root / "backups" / "self_mod"
+        assert writer.backup_dir.parent != fixture_path.parent
+
+    def test_default_user_data_fallback_creates_discoverable_backup(
+        self,
+        fixture_path: Path,
+        tmp_path: Path,
+        audit_log: SelfModAudit,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        data_root = tmp_path / "fallback-user-data"
+        monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
+        monkeypatch.setattr(
+            "jarvis.core.self_mod.writer.user_data_dir", lambda: data_root
+        )
+        writer = AtomicConfigWriter(
+            config_path=fixture_path,
+            audit=audit_log,
+            config_loader=_isolated_loader,
+        )
+
+        writer.mutate(_make_request("tts.speed", 1.25))
+
+        assert writer.backup_dir == data_root / "backups" / "self_mod"
+        assert len(writer.list_backups()) == 1
+
+    def test_legacy_backup_remains_listed_and_restorable_after_upgrade(
+        self,
+        fixture_path: Path,
+        tmp_path: Path,
+        audit_log: SelfModAudit,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        legacy_dir = fixture_path.parent / ".backups"
+        legacy_writer = AtomicConfigWriter(
+            config_path=fixture_path,
+            backup_dir=legacy_dir,
+            audit=audit_log,
+            config_loader=_isolated_loader,
+        )
+        legacy_writer.mutate(_make_request("tts.speed", 1.5))
+        legacy_filename = legacy_writer.list_backups()[0].filename
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "new-user-data"))
+        upgraded_writer = AtomicConfigWriter(
+            config_path=fixture_path,
+            audit=audit_log,
+            config_loader=_isolated_loader,
+        )
+
+        listed = upgraded_writer.list_backups()
+        assert [backup.filename for backup in listed] == [legacy_filename]
+        restored = upgraded_writer.rollback(legacy_filename)
+        assert restored.parent == legacy_dir.resolve()
+        assert _isolated_loader(fixture_path).tts.speed == 1.0
+
     def test_returns_empty_for_no_backups(
         self,
         fixture_path: Path,

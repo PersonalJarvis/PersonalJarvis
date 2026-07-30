@@ -8,7 +8,7 @@ Pipeline per `mutate(request)` call (all steps mandatory, order fixed):
   3. Read `old_value` via dotted path.
   4. Apply mutation in-memory.
   5. Pre-validate: full `JarvisConfig.model_validate(doc.unwrap())`.
-  6. Backup to `<config>.parent / .backups / jarvis.toml.<iso>.bak`.
+  6. Backup outside the config watchdog scope under the user data directory.
   7. Atomic write: `tempfile.mkstemp` in the same directory,
      `fsync` the tempfile contents, `os.replace` as the atomic swap.
   8. Reload test: synchronous `ConfigLoader.load()` call. On crash:
@@ -53,6 +53,7 @@ from jarvis.core.config import (
     resolve_config_path,
 )
 from jarvis.core.events import ConfigReloaded
+from jarvis.core.paths import user_data_dir
 
 from .audit import SelfModAudit
 from .errors import (
@@ -77,10 +78,19 @@ from .schema import (
 
 _LOG = logging.getLogger(__name__)
 
-# Plan-§AD-6 / §7.2: Backup directory lives directly next to `jarvis.toml`.
-DEFAULT_BACKUP_SUBDIR = ".backups"
+# Plan-§AD-6 / §7.2: backups stay outside the config watchdog scope.
+DEFAULT_BACKUP_SUBDIR = "backups/self_mod"
+_LEGACY_BACKUP_SUBDIR = ".backups"
 BACKUP_FILE_GLOB = f"{CONFIG_FILE_NAME}.*.bak"
 BACKUP_TS_FORMAT = "%Y%m%dT%H%M%S_%fZ"
+_ATOMIC_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
+
+
+def _default_backup_dir() -> Path:
+    """Return a portable backup path outside the config watchdog scope."""
+    configured = os.environ.get("JARVIS_DATA_DIR", "").strip()
+    base = Path(configured).expanduser() if configured else user_data_dir()
+    return base / DEFAULT_BACKUP_SUBDIR
 
 
 class AtomicConfigWriter:
@@ -104,10 +114,16 @@ class AtomicConfigWriter:
         self._config_path: Path = (
             Path(config_path) if config_path is not None else resolve_config_path()
         )
+        using_default_backup_dir = backup_dir is None
         self._backup_dir: Path = (
             Path(backup_dir)
             if backup_dir is not None
-            else self._config_path.parent / DEFAULT_BACKUP_SUBDIR
+            else _default_backup_dir()
+        )
+        self._legacy_backup_dirs: tuple[Path, ...] = (
+            (self._config_path.parent / _LEGACY_BACKUP_SUBDIR,)
+            if using_default_backup_dir
+            else ()
         )
         if max_backups < backup_min_keep:
             raise ValueError(
@@ -202,15 +218,22 @@ class AtomicConfigWriter:
         unlink files. We therefore snapshot in a single pass and skip
         missing files (TOCTOU-tolerant).
         """
-        if not self._backup_dir.exists():
-            return []
-        snapshot: list[tuple[Path, float, int]] = []
-        for path in self._backup_dir.glob(BACKUP_FILE_GLOB):
-            try:
-                stat = path.stat()
-            except OSError:
+        snapshot_by_name: dict[str, tuple[Path, float, int]] = {}
+        for root in (self._backup_dir, *self._legacy_backup_dirs):
+            if not root.exists():
                 continue
-            snapshot.append((path, stat.st_mtime, stat.st_size))
+            for path in root.glob(BACKUP_FILE_GLOB):
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                # The new, out-of-watchdog location wins if an old backup has
+                # the same generated filename. Legacy directories are read-only
+                # compatibility inputs and never receive new writes or GC.
+                snapshot_by_name.setdefault(
+                    path.name, (path, stat.st_mtime, stat.st_size)
+                )
+        snapshot = list(snapshot_by_name.values())
         snapshot.sort(key=lambda triplet: triplet[1], reverse=True)
         now = time.time()
         result: list[BackupRef] = []
@@ -234,21 +257,26 @@ class AtomicConfigWriter:
         restore run under `_LOCK` so that a concurrent GC cannot remove
         the file between check and use.
         """
-        candidate = (self._backup_dir / backup_filename).resolve()
-        try:
-            candidate.relative_to(self._backup_dir.resolve())
-        except ValueError as exc:
+        if Path(backup_filename).name != backup_filename or backup_filename in {
+            "",
+            ".",
+            "..",
+        }:
             raise BackupError(
                 f"Backup path '{backup_filename}' lies outside the "
-                f"backup directory {self._backup_dir}"
-            ) from exc
+                "configured backup directories"
+            )
         with type(self)._LOCK:
-            if not candidate.is_file():
-                raise BackupError(
-                    f"Backup '{backup_filename}' does not exist"
-                )
-            self._restore(candidate)
-            return candidate
+            for root in (self._backup_dir, *self._legacy_backup_dirs):
+                candidate = (root / backup_filename).resolve()
+                try:
+                    candidate.relative_to(root.resolve())
+                except ValueError:
+                    continue
+                if candidate.is_file():
+                    self._restore(candidate)
+                    return candidate
+            raise BackupError(f"Backup '{backup_filename}' does not exist")
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -463,7 +491,21 @@ class AtomicConfigWriter:
             if was_readonly:
                 os.chmod(target, mode | stat.S_IWRITE)
         try:
-            os.replace(tmp_path, target)
+            last_error: PermissionError | None = None
+            for delay_s in _ATOMIC_REPLACE_RETRY_DELAYS_S:
+                if delay_s:
+                    time.sleep(delay_s)
+                if was_readonly and target.exists():
+                    current = target.stat().st_mode
+                    if not current & stat.S_IWRITE:
+                        os.chmod(target, current | stat.S_IWRITE)
+                try:
+                    os.replace(tmp_path, target)
+                    return
+                except PermissionError as exc:
+                    last_error = exc
+            if last_error is not None:
+                raise last_error
         finally:
             # On success ``target`` is the freshly swapped file; on failure it is
             # the still-present old file. Either way re-arm the read-only flag so

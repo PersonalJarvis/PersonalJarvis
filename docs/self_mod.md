@@ -78,9 +78,13 @@ a "***" badge instead of cleartext.
 
 ## 4. Rollback behavior
 
-Before every mutation the `AtomicConfigWriter` creates a backup in
-`<jarvis.toml.parent>/.backups/jarvis.toml.<iso>.bak`. If, after the
-write, the reload test (`ConfigLoader.load(jarvis.toml)`) crashes — e.g.
+Before every mutation the `AtomicConfigWriter` creates a backup under
+`JARVIS_DATA_DIR/backups/self_mod/`, or under the platform user-data directory
+when `JARVIS_DATA_DIR` is not set. This keeps backup writes outside the config
+watchdog scope. Backups from older installations remain discoverable and
+restorable from `<jarvis.toml.parent>/.backups/`, but new backups are never
+written there. If, after the write, the reload test
+(`ConfigLoader.load(jarvis.toml)`) crashes — e.g.
 because a subtle schema error slipped through pre-validate — the backup is
 restored **automatically** and a `ReloadError` is raised. The user hears
 a TTS message "Konnte nicht gespeichert werden, hab den vorherigen <!-- i18n-allow -->

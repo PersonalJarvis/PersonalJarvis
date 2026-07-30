@@ -354,7 +354,9 @@ Voice/chat must never accept secrets (AP-2: STT log leak vector).
 3. Read old value via dotted path
 4. In-memory mutate
 5. **Pre-validate** via `JarvisConfig.model_validate(doc.unwrap())`
-6. Backup to `<config>.parent/.backups/jarvis.toml.<iso>.bak` (**outside watchdog scope, AP-13**)
+6. Backup to `JARVIS_DATA_DIR/backups/self_mod/`, or the platform user-data
+   fallback (**outside watchdog scope, AP-13**). The former
+   `<config>.parent/.backups/` location remains read-only upgrade compatibility.
 7. Tempfile + `os.replace` atomic swap
 8. **Synchronous reload-test** via `ConfigLoader.load()` (AP-14 forbids watchdog-driven verify)
 9. `ConfigReloaded` bus event
