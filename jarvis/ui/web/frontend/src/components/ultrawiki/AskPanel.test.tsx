@@ -40,7 +40,7 @@ const HIT: UltraWikiSearchHit = {
 };
 
 function installFetchMock(routes: Record<string, () => unknown>) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     for (const prefix of Object.keys(routes)) {
       if (url.startsWith(prefix)) {
