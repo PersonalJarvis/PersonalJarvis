@@ -46,9 +46,8 @@ const FALLBACK_NAMES: Readonly<Record<string, string>> = {
  * Curated order for the short language band shown above the complete list.
  *
  * The product's three interface languages lead, followed by Chinese and other
- * frequently selected European languages. Hindi and Arabic remain available
- * at the end of the shortcut band, and every backend language is still present
- * in the complete alphabetical list below it.
+ * frequently selected European languages. Every backend language remains
+ * available in the complete list below it.
  */
 export const COMMON_LANGUAGE_CODES: readonly string[] = [
   "en",
@@ -64,9 +63,25 @@ export const COMMON_LANGUAGE_CODES: readonly string[] = [
   "no",
   "da",
   "fi",
-  "hi",
-  "ar",
 ];
+
+/** Languages deliberately kept out of the shortcut band and at the list end. */
+const TRAILING_LANGUAGE_CODES: readonly string[] = ["hi", "ar"];
+
+function compareLanguageOptions(
+  a: { code: string; label: string },
+  b: { code: string; label: string },
+  collator: Intl.Collator,
+): number {
+  const aTrailing = TRAILING_LANGUAGE_CODES.indexOf(a.code);
+  const bTrailing = TRAILING_LANGUAGE_CODES.indexOf(b.code);
+  if (aTrailing >= 0 || bTrailing >= 0) {
+    if (aTrailing < 0) return -1;
+    if (bTrailing < 0) return 1;
+    return aTrailing - bTrailing;
+  }
+  return collator.compare(a.label, b.label);
+}
 
 // One instance per UI language: constructing an Intl formatter is not free, and
 // this runs once per option in a ~100-row list.
@@ -195,7 +210,7 @@ export function sortedLanguageOptions(
   const rest = codes
     .filter((c) => c !== "auto")
     .map((code) => ({ code, label: languageName(code, uiLanguage) }))
-    .sort((a, b) => collator.compare(a.label, b.label));
+    .sort((a, b) => compareLanguageOptions(a, b, collator));
   return [
     ...auto.map((code) => ({ code, label: languageName(code, uiLanguage, autoLabel) })),
     ...rest,
@@ -260,7 +275,7 @@ export function groupedLanguageOptions(
   const all = codes
     .filter((c) => c !== "auto")
     .map((code) => decorate(code))
-    .sort((a, b) => collator.compare(a.label, b.label));
+    .sort((a, b) => compareLanguageOptions(a, b, collator));
 
   const groups: LanguageOptionGroup[] = [];
   if (lead.length) groups.push({ id: "", options: lead });
