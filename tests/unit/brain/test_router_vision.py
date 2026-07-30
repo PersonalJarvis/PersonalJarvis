@@ -41,7 +41,6 @@ from jarvis.core.protocols import (
     ToolResult,
 )
 
-
 # ----------------------------------------------------------------------
 # Fakes
 # ----------------------------------------------------------------------
@@ -214,7 +213,10 @@ def _make_jpeg_file() -> tuple[str, bytes]:
     return fh.name, data
 
 
-def _make_obs(path: str | None = "/tmp/fake.png", sha: str = "abc123") -> Observation:
+def _make_obs(
+    path: str | None = "/tmp/fake.png",  # noqa: S108 - inert fake path, never written
+    sha: str = "abc123",
+) -> Observation:
     return Observation(
         trace_id=uuid4(),
         timestamp_ns=time.time_ns(),
@@ -245,7 +247,9 @@ def _build_router(
     fb = _FakeBrain()
     router.manager._brain_cache[("fake", "fake-model")] = fb
     recorder = _RecordingDispatcher()
-    router.manager._build_dispatcher = lambda _brain: recorder  # type: ignore[method-assign]
+    router.manager._build_dispatcher = (  # type: ignore[method-assign]
+        lambda _brain, *, tools_override=None, **_kwargs: recorder
+    )
     return router, recorder
 
 
@@ -396,7 +400,10 @@ async def test_router_continues_on_vision_failure(caplog: pytest.LogCaptureFixtu
     assert len(recorder.calls) == 1
     assert recorder.calls[0]["images"] == ()
     assert any(d.content for d in deltas)
-    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)  # i18n-allow
+    assert any(
+        "Vision-Inject fehlgeschlagen" in rec.message  # i18n-allow
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio

@@ -85,8 +85,41 @@ def generate_ready_pcm(
     return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
 
 
+def generate_screen_capture_pcm(
+    sample_rate: int = 24_000,
+    amplitude: float = 0.42,
+) -> bytes:
+    """Generate an original mechanical-camera shutter cue.
+
+    Two short deterministic noise transients form the shutter blades, with a
+    quiet resonant body underneath. The sound is synthesized in memory so it
+    is portable and carries no third-party recording or licensing baggage.
+    """
+    duration_s = 0.16
+    n = int(duration_s * sample_rate)
+    t = np.arange(n, dtype=np.float32) / float(sample_rate)
+    rng = np.random.default_rng(0x5C4E_454E)
+    noise = rng.uniform(-1.0, 1.0, n).astype(np.float32)
+
+    wave = np.zeros(n, dtype=np.float32)
+    for onset, strength, decay in ((0.0, 1.0, 150.0), (0.052, 0.78, 115.0)):
+        local_t = np.maximum(t - onset, 0.0)
+        active = (t >= onset).astype(np.float32)
+        transient = noise * np.exp(-local_t * decay) * active
+        resonance = np.sin(2.0 * np.pi * 1850.0 * local_t) * np.exp(
+            -local_t * (decay * 0.62)
+        ) * active
+        wave += strength * (0.78 * transient + 0.22 * resonance)
+
+    # A short fade avoids a digital edge while preserving the crisp first hit.
+    fade_out = np.minimum((duration_s - t) * 180.0, 1.0)
+    wave *= np.clip(fade_out, 0.0, 1.0) * amplitude
+    return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+
+
 # Pre-generated at import time — loaded once by the pipeline
 CHIME_PCM: bytes = generate_chime_pcm()
 CHIME_SAMPLE_RATE: int = 24_000
 DISCONNECT_PCM: bytes = generate_disconnect_pcm()
 READY_PCM: bytes = generate_ready_pcm()
+SCREEN_CAPTURE_PCM: bytes = generate_screen_capture_pcm()

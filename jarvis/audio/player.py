@@ -50,6 +50,7 @@ TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_FIRST_WRITE_BUFFER_MS = 40
 TTS_WRITE_BUFFER_MS = 120
 _MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
+_ONE_SHOT_CANCEL_JOIN_TIMEOUT_S = 0.5
 
 # How much audio the OUTPUT DEVICE is asked to hold (PortAudio's ``latency``).
 #
@@ -503,6 +504,11 @@ class AudioPlayer:
         # from a running event loop. stop() deliberately stays outside the
         # lock so barge-in can preempt a held playback.
         self._play_lock: asyncio.Lock | None = None
+        # A cancelled ``to_thread`` worker that ignored PortAudio abort keeps
+        # this player fail-closed. No later producer may open a second native
+        # stream until that exact worker exits (AP-24-style native isolation).
+        self._poisoned_worker: asyncio.Task[None] | None = None
+        self._unclean_stream: sd.OutputStream | None = None
         # Persistent OutputStream across play_chunks() calls. The streaming-
         # TTS pipeline calls play_chunks() once per sentence; without a
         # persistent stream every sentence boundary triggered a fresh
@@ -570,6 +576,33 @@ class AudioPlayer:
         if self._play_lock is None:
             self._play_lock = asyncio.Lock()
         return self._play_lock
+
+    def _native_playback_poisoned(self) -> bool:
+        worker = getattr(self, "_poisoned_worker", None)
+        return (
+            (worker is not None and not worker.done())
+            or getattr(self, "_unclean_stream", None) is not None
+        )
+
+    def _mark_native_playback_poisoned(self, worker: asyncio.Task[None]) -> None:
+        self._poisoned_worker = worker
+
+        def _recover(done: asyncio.Task[None]) -> None:
+            try:
+                done.exception()
+            except asyncio.CancelledError:
+                pass
+            if getattr(self, "_poisoned_worker", None) is done:
+                self._poisoned_worker = None
+                if getattr(self, "_unclean_stream", None) is None:
+                    log.info("Native one-shot audio worker exited; playback recovered.")
+                else:
+                    log.error(
+                        "Native audio worker exited but its stream did not close; "
+                        "this player remains fail-closed."
+                    )
+
+        worker.add_done_callback(_recover)
 
     def _get_stream_state_lock(self) -> threading.Lock:
         lock = getattr(self, "_stream_state_lock", None)
@@ -724,20 +757,118 @@ class AudioPlayer:
         stream produces no clicks. For streaming TTS playback see
         ``play_chunks``, which keeps a persistent stream open.
         """
+        if self._native_playback_poisoned():
+            log.error("One-shot playback skipped: native audio worker is still wedged.")
+            return
         self._log_device_once()
         rate = sample_rate or self._sample_rate
         pcm = _apply_edge_fades(pcm, rate)
         async with self._get_play_lock():
-            await asyncio.to_thread(self._play_blob, pcm, rate)
+            if self._native_playback_poisoned():
+                log.error(
+                    "One-shot playback skipped after lock wait: native audio "
+                    "worker is still wedged."
+                )
+                return
+            playback_generation = getattr(self, "_playback_generation", 0)
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    self._play_blob,
+                    pcm,
+                    rate,
+                    playback_generation,
+                )
+            )
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # A timeout/caller cancellation cannot stop ``to_thread``.
+                # Abort the registered native stream and JOIN the worker while
+                # still holding the async playback lock; otherwise a later TTS
+                # call could open a second PortAudio stream beside the orphan.
+                self.abort_active()
+                # Mark BEFORE awaiting cleanup: a second Task.cancel() may
+                # interrupt any await, but it must never reopen the overlap race.
+                self._mark_native_playback_poisoned(worker)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(worker),
+                        timeout=_ONE_SHOT_CANCEL_JOIN_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    log.error(
+                        "Native one-shot audio worker ignored abort for %.1fs; "
+                        "this player is fail-closed until that worker exits.",
+                        _ONE_SHOT_CANCEL_JOIN_TIMEOUT_S,
+                    )
+                except Exception as exc:  # noqa: BLE001 - preserve cancellation
+                    log.debug("Cancelled one-shot playback unwound (%s).", exc)
+                raise
+            except _PlaybackSuperseded:  # stop() won; its generation owns cleanup
+                return
 
-    def _play_blob(self, pcm: bytes, source_rate: int) -> None:
-        """Sync: open stream, write blob, close stream."""
+    def _play_blob(
+        self, pcm: bytes, source_rate: int, playback_generation: int
+    ) -> None:
+        """Sync: open, register, write, and close one cancellation-safe stream."""
         arr = np.frombuffer(pcm, dtype=np.int16)
+        state_lock = self._get_stream_state_lock()
+        with state_lock:
+            if getattr(self, "_playback_generation", 0) != playback_generation:
+                raise _PlaybackSuperseded
+            # ``play_chunks`` intentionally keeps its stream open between
+            # sentences. The async playback lock guarantees it is idle here;
+            # retire it before opening the one-shot stream so two native
+            # outputs never coexist.
+            old_stream = self._active_stream
+            self._active_stream = None
+            self._active_source_rate = None
+            self._active_device_rate = None
+        if old_stream is not None:
+            if self._close_output_stream(old_stream) is False:
+                with state_lock:
+                    self._unclean_stream = old_stream
+                raise _PlaybackSuperseded
+
         stream, device_rate = self._open_output_stream(source_rate)
+        with state_lock:
+            superseded = (
+                getattr(self, "_playback_generation", 0) != playback_generation
+            )
+            if not superseded:
+                self._active_stream = stream
+                self._active_source_rate = source_rate
+                self._active_device_rate = device_rate
+        if superseded:
+            if self._close_output_stream(stream) is False:
+                with state_lock:
+                    self._unclean_stream = stream
+            raise _PlaybackSuperseded
         try:
-            self._write_samples(stream, arr, source_rate, device_rate)
+            self._write_samples(
+                stream,
+                arr,
+                source_rate,
+                device_rate,
+                playback_generation=playback_generation,
+            )
         finally:
-            self._close_output_stream(stream)
+            should_close = False
+            with state_lock:
+                if self._active_stream is stream:
+                    self._active_stream = None
+                    self._active_source_rate = None
+                    self._active_device_rate = None
+                    should_close = True
+            # ``abort_active`` already closes a cancelled stream. Avoid a
+            # second native close while still joining the worker deterministically.
+            if should_close:
+                closed = self._close_output_stream(stream)
+                with state_lock:
+                    if closed is not False and getattr(self, "_unclean_stream", None) is stream:
+                        self._unclean_stream = None
+                    elif closed is False:
+                        self._unclean_stream = stream
 
     def _open_output_stream(self, source_rate: int) -> tuple[sd.OutputStream, int]:
         """Open a persistent ``sd.OutputStream`` (float32 stereo or mono).
@@ -977,7 +1108,7 @@ class AudioPlayer:
                     out.shape[0] / device_rate,
                 )
 
-    def _close_output_stream(self, stream: sd.OutputStream) -> None:
+    def _close_output_stream(self, stream: sd.OutputStream) -> bool:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""
         try:
             stream.stop()
@@ -987,6 +1118,8 @@ class AudioPlayer:
             stream.close()
         except Exception:  # noqa: BLE001
             log.debug("Output stream close failed", exc_info=True)
+            return False
+        return True
 
     async def play_chunks(
         self,
@@ -1027,6 +1160,9 @@ class AudioPlayer:
         No edge fades on chunks: the stream stays open and chunks are
         appended seamlessly → no discontinuity, no clicks.
         """
+        if self._native_playback_poisoned():
+            log.error("Streaming playback skipped: native audio worker is still wedged.")
+            return False
         self._log_device_once()
         stream_state_lock = self._get_stream_state_lock()
         with stream_state_lock:
@@ -1079,6 +1215,12 @@ class AudioPlayer:
                 yield _c
 
         async with self._get_play_lock():
+            if self._native_playback_poisoned():
+                log.error(
+                    "Streaming playback skipped after lock wait: native audio "
+                    "worker is still wedged."
+                )
+                return False
             # Staleness gate: re-check at the last moment before any audio is
             # written. A preamble whose synthesis / lock-wait was overtaken by
             # the main answer is dropped here rather than queued behind it.
@@ -1314,8 +1456,14 @@ class AudioPlayer:
                 log.debug("abort_active: stream.abort() failed: %s", exc)
             try:
                 stream.close()
-            except Exception:  # noqa: BLE001, S110
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("abort_active: stream.close() failed: %s", exc)
+                # Preserve ownership so the worker's ``finally`` retries the
+                # close after the blocked write unwinds. Until that succeeds,
+                # poison prevents every producer from opening another stream.
+                with self._get_stream_state_lock():
+                    self._active_stream = stream
+                    self._unclean_stream = stream
 
     def stop(self) -> None:
         """Abort ongoing playback (e.g. for barge-in).

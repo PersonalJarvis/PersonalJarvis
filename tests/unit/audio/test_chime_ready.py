@@ -12,7 +12,9 @@ from jarvis.audio.chime import (
     CHIME_PCM,
     DISCONNECT_PCM,
     READY_PCM,
+    SCREEN_CAPTURE_PCM,
     generate_ready_pcm,
+    generate_screen_capture_pcm,
 )
 
 
@@ -32,3 +34,9 @@ def test_ready_pcm_distinct_from_wake_and_disconnect() -> None:
 def test_generate_ready_pcm_is_deterministic() -> None:
     """Same parameters -> identical bytes (pre-generated once at import)."""
     assert generate_ready_pcm() == generate_ready_pcm()
+
+
+def test_screen_capture_cue_is_original_and_deterministic() -> None:
+    assert SCREEN_CAPTURE_PCM == generate_screen_capture_pcm()
+    assert SCREEN_CAPTURE_PCM not in (CHIME_PCM, READY_PCM, DISCONNECT_PCM)
+    assert len(SCREEN_CAPTURE_PCM) % 2 == 0

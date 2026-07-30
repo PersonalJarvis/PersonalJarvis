@@ -124,7 +124,11 @@ def test_product_name_masking_leaves_real_commands_intact(utterance: str) -> Non
         "Open the browser and search for Gulfstream G100 runway length.",
         "Click the settings icon.",
         "Type hello into the search field.",
+        "Refresh this page.",
+        "Reload the current tab.",
+        "Aktualisiere diese Seite.",  # i18n-allow: DE trigger
         "Abre el navegador.",
+        "Actualiza esta pÃ¡gina.",
         "Haz clic en el botón azul.",
         # Naming the vehicle makes even a web lookup a desktop task.
         "Google das mal im Browser.",  # i18n-allow: DE trigger

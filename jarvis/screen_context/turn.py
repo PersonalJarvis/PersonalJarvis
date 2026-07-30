@@ -68,7 +68,8 @@ def get_service(*, bus: Any | None = None) -> ScreenContextService:
         from jarvis.core.config import load_config  # noqa: PLC0415
 
         _service = ScreenContextService(
-            settings=settings_from_config(load_config()), bus=bus
+            settings=settings_from_config(load_config()),
+            bus=bus,
         )
     elif bus is not None:
         # REST may create the service before the conversational brain is ready.
@@ -104,17 +105,15 @@ class TurnScreenContext:
       ``message`` and end the turn. A caller must not reach the screen by some
       other route here; that would photograph the very window the rule exists
       to protect.
-    * ``unavailable`` — this machine could not (no display, no permission,
-      capture error). Nothing was forbidden, so the caller SHOULD continue with
-      whatever it did before this feature existed. The reason is logged, and
-      the fallback path reports its own failure honestly if it also fails.
+    * ``unavailable`` — this machine could not capture (no display, no
+      permission, capture error). Speak ``message`` and stop. A pure look turn
+      must never fall through into Computer-Use as an accidental fallback.
     * ``cancelled`` — the user answered no to the clarifying question. Speak
       ``message`` and end the turn without consulting another screen path.
 
-    The ``refused`` / ``unavailable`` split is the important one: collapsing
-    them either leaks a protected window (treating a privacy rule as a
-    technical hiccup) or breaks every look-request on a headless host (treating
-    a missing display as a prohibition).
+    The ``refused`` / ``unavailable`` split remains observable for diagnostics,
+    but both close alternate screen paths. Headless hosts degrade honestly
+    instead of starting a desktop-driving tool that cannot work there.
     """
 
     status: TurnStatus
@@ -126,6 +125,10 @@ class TurnScreenContext:
     text: str = ""
     question: str | None = None
     message: str | None = None
+    #: Stable machine-readable remediation category for technical unavailability.
+    reason_code: str = ""
+    #: Internal platform detail for logs/diagnostics; never spoken directly.
+    diagnostic_detail: str = ""
     #: One user-facing line naming what was captured, for the transcript.
     receipt: str = ""
     source_hash: str = ""
@@ -138,16 +141,17 @@ class TurnScreenContext:
     @property
     def ends_the_turn(self) -> bool:
         """Whether the caller must stop and speak instead of calling the brain."""
-        return self.status in ("clarify", "refused", "cancelled")
+        return self.status in ("clarify", "refused", "unavailable", "cancelled")
 
     @property
     def blocks_other_screen_paths(self) -> bool:
         """Whether any OTHER way of seeing the screen must stay shut this turn.
 
-        True for a privacy refusal and for the clarifying question. False for
-        ``unavailable``, which is the whole point of that status.
+        True for every requested look that did not produce evidence. This keeps
+        permanent vision and Computer-Use from silently bypassing the one-shot
+        Screen Context contract.
         """
-        return self.status in ("clarify", "refused", "cancelled")
+        return self.status in ("clarify", "refused", "unavailable", "cancelled")
 
 
 def _model_note(context: ScreenContext) -> str:
@@ -261,16 +265,20 @@ async def screen_context_for_turn(
 
         if outcome.status == "refused":
             if outcome.reason_kind == "technical":
-                # Not forbidden — impossible here. Log it and let the caller
-                # carry on with whatever it did before; ending the turn would
-                # break every look-request on a headless or unpermitted host.
+                # Impossible here. End honestly instead of letting a pure look
+                # request fall into Computer-Use or permanent vision.
                 log.info(
                     "screen_context: capture unavailable on this machine (%s) "
-                    "— the turn continues on the existing path",
+                    "— alternate screen paths stay closed",
                     outcome.message,
                 )
                 return TurnScreenContext(
-                    status="unavailable", message=outcome.message or ""
+                    status="unavailable",
+                    message=intent_module.capture_unavailable_reply(
+                        locale, outcome.reason_code
+                    ),
+                    reason_code=outcome.reason_code,
+                    diagnostic_detail=outcome.message or "",
                 )
             if outcome.reason_kind == "failure":
                 log.error(

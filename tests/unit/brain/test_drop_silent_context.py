@@ -18,6 +18,7 @@ from jarvis.brain.streaming import StreamingAggregate
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import BrainDelta, BrainRequest, ImageBlock
+from jarvis.screen_context.turn import TurnScreenContext
 
 
 class _FakeBrain:
@@ -51,6 +52,16 @@ def _manager() -> tuple[BrainManager, _RecordingDispatcher]:
     m._build_fallback_chain = lambda _l: [("fake", "fake-model")]  # type: ignore[method-assign]
     m._get_brain = lambda _n, _mo: _FakeBrain()  # type: ignore[method-assign]
     m._build_dispatcher = lambda _b, *, tools_override=None: rec  # type: ignore[method-assign]
+
+    async def _screen_not_requested(*_args, **_kwargs) -> TurnScreenContext:
+        return TurnScreenContext(status="none")
+
+    m._resolve_screen_context_turn = _screen_not_requested  # type: ignore[method-assign]
+
+    async def _no_permanent_vision(**_kwargs) -> tuple[ImageBlock, ...]:
+        return ()
+
+    m._collect_vision_images = _no_permanent_vision  # type: ignore[method-assign]
     return m, rec
 
 
@@ -83,7 +94,7 @@ async def test_dropped_image_reaches_next_turn_only() -> None:
     m, rec = _manager()
     m.add_dropped_context("[dropped photo.png]", (_IMG,))
 
-    await m.generate("what is this", trace_id=uuid4(), use_history=True)
+    await m.generate("describe the dropped photo", trace_id=uuid4(), use_history=True)
     await m.generate("and now", trace_id=uuid4(), use_history=True)
 
     assert _IMG in rec.calls[0]["images"]      # consumed on the first real turn

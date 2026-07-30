@@ -30,7 +30,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from jarvis.screen_context.models import WindowFacts
 
@@ -76,6 +76,14 @@ class CaptureUnavailable(RuntimeError):
     read by the model, so "capture failed" is never acceptable — it must name
     the cause and, where one exists, the setting that fixes it.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePermissionIssue:
+    """Structured platform remediation returned before any pixels are read."""
+
+    code: Literal["capture_permission", "wayland_portal"]
+    message: str
 
 
 # --------------------------------------------------------------------------
@@ -500,7 +508,7 @@ class AccessibilityTextReader:
 # --------------------------------------------------------------------------
 
 
-def capture_permission_error() -> str | None:
+def capture_permission_error() -> CapturePermissionIssue | None:
     """``None`` when capture is permitted, else an actionable English message.
 
     Deliberately uncached: macOS can revoke a TCC grant while Jarvis runs, and
@@ -509,10 +517,13 @@ def capture_permission_error() -> str | None:
     the right price for not lying about what was seen.
     """
     if _is_wayland():
-        return (
-            "Screen capture is unavailable in this Wayland session because "
-            "no desktop-portal capture backend is installed. Use an X11 "
-            "session or install a supported portal backend, then ask again."
+        return CapturePermissionIssue(
+            code="wayland_portal",
+            message=(
+                "Screen capture is unavailable in this Wayland session because "
+                "no desktop-portal capture backend is installed. Use an X11 "
+                "session or install a supported portal backend, then ask again."
+            ),
         )
     try:
         from jarvis.platform.permissions import (  # noqa: PLC0415
@@ -523,11 +534,14 @@ def capture_permission_error() -> str | None:
         port = get_system_permission_port()
         if port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
             return None
-        return (
-            "Screen capture is blocked because this app does not have the "
-            "screen-recording permission. Grant it in your system privacy "
-            "settings (macOS: System Settings > Privacy & Security > Screen "
-            "Recording), then ask again."
+        return CapturePermissionIssue(
+            code="capture_permission",
+            message=(
+                "Screen capture is blocked because this app does not have the "
+                "screen-recording permission. Grant it in your system privacy "
+                "settings (macOS: System Settings > Privacy & Security > Screen "
+                "Recording), then ask again."
+            ),
         )
     except Exception:  # noqa: BLE001 — an unavailable probe must not block Windows/Linux
         log.debug("screen-recording permission probe failed", exc_info=True)

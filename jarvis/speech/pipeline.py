@@ -37,8 +37,14 @@ from jarvis.audio.capture import (
     capture_chunks_for_duration,
     pcm_bytes_to_np,
 )
-from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
+from jarvis.audio.chime import (
+    CHIME_PCM,
+    CHIME_SAMPLE_RATE,
+    DISCONNECT_PCM,
+    READY_PCM,
+)
 from jarvis.audio.device_init import wait_for_stable_audio_devices
+from jarvis.audio.effects import bind_shared_audio_player
 from jarvis.audio.player import AudioPlayer
 from jarvis.audio.vad import SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
@@ -2346,6 +2352,7 @@ class SpeechPipeline:
             volume=_tts_volume,
             device_priority=self._output_priority,
         )
+        bind_shared_audio_player(self._player)
         # Kept so warm-up can re-resolve the output device against a freshly
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device

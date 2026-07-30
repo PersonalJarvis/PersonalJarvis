@@ -22,7 +22,11 @@ from jarvis.screen_context.models import (
     TargetReason,
     WindowFacts,
 )
-from jarvis.screen_context.ports import CaptureUnavailable, WindowSnapshot
+from jarvis.screen_context.ports import (
+    CapturePermissionIssue,
+    CaptureUnavailable,
+    WindowSnapshot,
+)
 from jarvis.screen_context.service import (
     ScreenContextService,
     ScreenContextSettings,
@@ -183,6 +187,19 @@ async def test_a_plain_turn_captures_nothing() -> None:
     assert capturer.grabs == [], "a normal turn must never touch the screen"
 
 
+async def test_a_desktop_operation_is_left_to_computer_use_without_a_capture() -> None:
+    capturer = FakeCapturer()
+    service = make_service(capturer=capturer)
+
+    outcome = await service.capture_for_turn(
+        "Klick den Knopf auf meinem Bildschirm",  # i18n-allow: DE input
+        locale="de",
+    )
+
+    assert outcome.status == "not_requested"
+    assert capturer.grabs == []
+
+
 async def test_an_ambiguous_turn_asks_and_does_not_capture() -> None:
     capturer = FakeCapturer()
     service = make_service(capturer=capturer)
@@ -283,6 +300,21 @@ async def test_native_capture_probes_run_off_the_asyncio_thread() -> None:
         for observed in threads.values()
         for thread_id in observed
     )
+
+
+async def test_wayland_permission_issue_keeps_its_platform_reason_code() -> None:
+    service = make_service(
+        permission_probe=lambda: CapturePermissionIssue(
+            code="wayland_portal",
+            message="A desktop portal is required in this Wayland session.",
+        )
+    )
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "technical"
+    assert outcome.reason_code == "wayland_portal"
 
 
 async def test_window_scoped_request_captures_the_window() -> None:
@@ -618,7 +650,10 @@ async def test_focus_change_during_shutter_discards_raw_frame() -> None:
             )
 
     capturer = FakeCapturer()
-    service = make_service(window_probe=SwitchingWindowProbe(), capturer=capturer)
+    bus = RecordingBus()
+    service = make_service(
+        bus=bus, window_probe=SwitchingWindowProbe(), capturer=capturer
+    )
 
     outcome = await service.capture_for_turn("look at this", locale="en")
 
@@ -626,6 +661,11 @@ async def test_focus_change_during_shutter_discards_raw_frame() -> None:
     assert outcome.reason_kind == "policy"
     assert len(capturer.grabs) == 1
     assert service.held_count == 0
+    assert [type(event).__name__ for event in bus.events] == [
+        "ScreenCaptureAnnounced",
+        "ScreenCaptureGrabbed",
+        "ScreenCaptureIndicatorDismissed",
+    ]
 
 
 async def test_new_denylisted_monitor_window_during_shutter_discards_frame() -> None:
@@ -726,6 +766,7 @@ async def test_the_capture_is_announced_before_the_shutter() -> None:
     names = [type(e).__name__ for e in bus.events]
     assert names == [
         "ScreenCaptureAnnounced",
+        "ScreenCaptureGrabbed",
         "ScreenCaptureCompleted",
         "ScreenCaptureIndicatorDismissed",
     ]
@@ -743,6 +784,7 @@ async def test_capture_events_keep_the_turn_trace_id() -> None:
     )
 
     assert [event.trace_id for event in bus.events] == [
+        trace_id,
         trace_id,
         trace_id,
         trace_id,

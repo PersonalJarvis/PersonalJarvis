@@ -46,6 +46,7 @@ from jarvis.screen_context.models import (
     VisualIntent,
 )
 from jarvis.screen_context.ports import (
+    CapturePermissionIssue,
     CaptureUnavailable,
     accessibility_permission_error,
     capture_permission_error,
@@ -120,8 +121,8 @@ class CaptureOutcome:
       caller must NOT quietly fall back to some other way of seeing the screen;
       that would photograph the very window the rule protects.
     * ``technical`` — this machine could not (no display, no permission). A
-      caller MAY fall back to whatever it did before this feature existed,
-      because nothing was forbidden — it was merely impossible here.
+      caller should expose the structured remediation and must not turn a pure
+      observation into Computer-Use as an implicit fallback.
     * ``failure`` — an unexpected implementation/backend defect. Alternate
       screen paths stay closed so they cannot retry without this policy layer.
     """
@@ -133,6 +134,13 @@ class CaptureOutcome:
     question: str | None = None
     message: str | None = None
     reason_kind: Literal["", "policy", "technical", "failure"] = ""
+    reason_code: Literal[
+        "",
+        "capture_permission",
+        "wayland_portal",
+        "no_display",
+        "capture_backend_unavailable",
+    ] = ""
 
 
 @dataclass
@@ -159,7 +167,9 @@ class ScreenContextService:
         clock: Any | None = None,
     ) -> None:
         self._settings = settings or ScreenContextSettings()
-        self._bus = bus
+        self._bus = None
+        if bus is not None:
+            self.bind_bus(bus)
         # Ports are constructed lazily on first use, never at import or at
         # boot (AP-26): building a cursor backend or an accessibility source
         # costs native library loads that must not sit on the startup path.
@@ -221,13 +231,18 @@ class ScreenContextService:
         return self._ui_text_reader
 
     def bind_bus(self, bus: Any) -> None:
-        """Attach the application bus when REST created the service first."""
+        """Attach receipts and the lazy process-wide sound-effect service."""
         if self._bus is None:
             self._bus = bus
         elif self._bus is not bus:
             log.warning(
                 "screen_context: ignored an attempt to bind a second EventBus"
             )
+            return
+        if hasattr(bus, "subscribe"):
+            from jarvis.audio.effects import attach_audio_effects  # noqa: PLC0415
+
+            attach_audio_effects(bus)
 
     # ---- intent ----------------------------------------------------------
 
@@ -302,14 +317,23 @@ class ScreenContextService:
         """Take exactly one capture. Assumes intent is already established."""
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
 
-        permission_error = await asyncio.to_thread(self._permission_probe)
-        if permission_error:
-            log.info("screen_context: capture refused — %s", permission_error)
+        permission_issue = await asyncio.to_thread(self._permission_probe)
+        if permission_issue:
+            if isinstance(permission_issue, CapturePermissionIssue):
+                reason_code = permission_issue.code
+                permission_message = permission_issue.message
+            else:
+                # Compatibility for injected third-party/test probes that still
+                # implement the original ``str | None`` port contract.
+                reason_code = "capture_permission"
+                permission_message = str(permission_issue)
+            log.info("screen_context: capture refused — %s", permission_message)
             return CaptureOutcome(
                 status="refused",
                 verdict=verdict,
                 reason_kind="technical",
-                message=permission_error,
+                reason_code=reason_code,
+                message=permission_message,
             )
 
         # The cursor is sampled ONCE, here, and threaded through. See
@@ -404,6 +428,7 @@ class ScreenContextService:
                 status="refused",
                 verdict=verdict,
                 reason_kind="technical",
+                reason_code="no_display",
                 message=str(exc),
             )
         degradations.extend(target_degradations)
@@ -486,6 +511,7 @@ class ScreenContextService:
                     status="refused",
                     verdict=verdict,
                     reason_kind="technical",
+                    reason_code="capture_backend_unavailable",
                     message=str(exc),
                 )
             except Exception:  # noqa: BLE001 - port bugs stay turn-local
@@ -499,6 +525,11 @@ class ScreenContextService:
                         "backend failed."
                     ),
                 )
+
+            # This is the shutter boundary: pixels exist now. Publish only
+            # metadata so the shared audio layer can play its cue at the
+            # truthful moment without receiving or retaining screen content.
+            await self._publish_grabbed(size, trace_id=event_trace_id)
 
             # Treat a post-shutter identity change as untrusted: discard the
             # raw bytes before redaction/storage rather than attaching pixels
@@ -855,6 +886,27 @@ class ScreenContextService:
         except Exception:  # noqa: BLE001 - receipt failure cannot erase the capture
             log.warning(
                 "screen_context: capture receipt publication failed",
+                exc_info=True,
+            )
+
+    async def _publish_grabbed(
+        self, size: tuple[int, int], *, trace_id: UUID
+    ) -> None:
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.events import ScreenCaptureGrabbed  # noqa: PLC0415
+
+            await self._bus.publish(
+                ScreenCaptureGrabbed(
+                    trace_id=trace_id,
+                    width=size[0],
+                    height=size[1],
+                )
+            )
+        except Exception:  # noqa: BLE001 - an audio receipt cannot erase pixels
+            log.warning(
+                "screen_context: shutter receipt publication failed",
                 exc_info=True,
             )
 

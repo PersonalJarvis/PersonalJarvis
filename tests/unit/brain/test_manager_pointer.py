@@ -16,6 +16,7 @@ from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import ImageBlock
 from jarvis.pointer import turn as pturn
 from jarvis.pointer.context import PointerContext
+from jarvis.screen_context.turn import TurnScreenContext
 from jarvis.vision.pointer_types import PointerElement
 
 
@@ -23,6 +24,10 @@ class _FakeNamed:
     def __init__(self, name: str) -> None:
         self.name = name
         self.schema: dict = {}
+
+
+class _FakeBrain:
+    supports_vision = True
 
 
 class _Recorder:
@@ -46,12 +51,17 @@ def _manager(
     manager = BrainManager(config=cfg, bus=EventBus(), tools=tools or {})
     rec = _Recorder()
     manager._build_fallback_chain = lambda _level: [("fake", "fake-model")]  # type: ignore[method-assign]
-    manager._get_brain = lambda _name, _model: object()  # type: ignore[method-assign]
+    manager._get_brain = lambda _name, _model: _FakeBrain()  # type: ignore[method-assign]
 
     async def _civ(**_kw):
         return vision_images
 
     manager._collect_vision_images = _civ  # type: ignore[method-assign]
+
+    async def _screen_not_requested(*_args, **_kwargs) -> TurnScreenContext:
+        return TurnScreenContext(status="none")
+
+    manager._resolve_screen_context_turn = _screen_not_requested  # type: ignore[method-assign]
 
     def _bd(_brain, *, tools_override=None):
         rec.tools_seen.append(dict(tools_override or {}))
@@ -112,7 +122,12 @@ async def test_push_turn_suppresses_inspect_pointer_tool(monkeypatch) -> None:
 
     monkeypatch.setattr(pturn, "resolve_pointer_context_async", fake_resolve)
 
-    manager, rec = _manager(tools={"inspect-pointer": _FakeNamed("inspect-pointer"), "other": _FakeNamed("other")})
+    manager, rec = _manager(
+        tools={
+            "inspect-pointer": _FakeNamed("inspect-pointer"),
+            "other": _FakeNamed("other"),
+        }
+    )
     await manager.generate("was ist das da?", use_history=False)
 
     tools = rec.tools_seen[0]
@@ -129,7 +144,12 @@ async def test_non_push_turn_keeps_inspect_pointer_tool(monkeypatch) -> None:
 
     monkeypatch.setattr(pturn, "resolve_pointer_context_async", fake_resolve)
 
-    manager, rec = _manager(tools={"inspect-pointer": _FakeNamed("inspect-pointer"), "other": _FakeNamed("other")})
+    manager, rec = _manager(
+        tools={
+            "inspect-pointer": _FakeNamed("inspect-pointer"),
+            "other": _FakeNamed("other"),
+        }
+    )
     await manager.generate("erzaehl mir einen Witz", use_history=False)
 
     tools = rec.tools_seen[0]

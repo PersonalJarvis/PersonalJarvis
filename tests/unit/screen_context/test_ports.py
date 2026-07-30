@@ -29,10 +29,11 @@ def test_wayland_permission_probe_is_actionable(
 ) -> None:
     monkeypatch.setattr(ports, "_is_wayland", lambda: True)
 
-    message = ports.capture_permission_error()
+    issue = ports.capture_permission_error()
 
-    assert message is not None
-    assert "portal" in message.lower()
+    assert issue is not None
+    assert issue.code == "wayland_portal"
+    assert "portal" in issue.message.lower()
 
 
 def test_visible_windows_retains_untitled_password_manager_candidate(

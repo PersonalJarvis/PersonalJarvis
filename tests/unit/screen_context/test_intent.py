@@ -18,6 +18,7 @@ from jarvis.screen_context.intent import (
     SUPPORTED_CLARIFY_LOCALES,
     clarifying_question,
     classify,
+    requests_screen_operation,
 )
 from jarvis.screen_context.models import VisualIntent
 
@@ -43,6 +44,7 @@ from jarvis.screen_context.models import VisualIntent
         "was steht da?",
         "lies mir das vor",
         "auf dem Bildschirm ist eine Fehlermeldung",  # i18n-allow: DE input
+        "Wenn sowas auf meinem Bildschirm ist, was bedeutet das?",  # i18n-allow: DE input
         "mach einen Screenshot",  # i18n-allow: DE input
         # -- Spanish
         "mira esto",
@@ -56,6 +58,65 @@ def test_unambiguous_requests_capture(utterance: str) -> None:
     verdict = classify(utterance)
     assert verdict.wants_capture, f"{utterance!r} -> {verdict.intent}"
     assert verdict.evidence, "an unambiguous verdict must record its evidence"
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "click the button on my screen",
+        "look at this and then scroll down",
+        "use Computer-Use and take a screenshot",
+        "submit this form on my screen",
+        "zoom in on my screen",
+        "save this document on my screen",
+        "delete this file on my screen",
+        "Refresh this page",
+        "Log in",
+        "Would you mind clicking the button?",
+        "Klick den Knopf auf meinem Bildschirm",  # i18n-allow: DE input
+        "Kannst du den Button auf meinem Bildschirm anklicken?",  # i18n-allow: DE input
+        "Bitte den Knopf auf meinem Bildschirm anklicken",  # i18n-allow: DE input
+        "Schau dir das an und scrolle dann nach unten",  # i18n-allow: DE input
+        "pulsa el botón en mi pantalla",
+        "Explain this, then close the window.",
+    ],
+)
+def test_desktop_operations_belong_to_computer_use(utterance: str) -> None:
+    assert requests_screen_operation(utterance)
+    assert classify(utterance).intent is VisualIntent.NONE
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "which button should I click on my screen?",
+        "Welchen Knopf soll ich auf meinem Bildschirm anklicken?",  # i18n-allow: DE input
+        "¿qué botón debo pulsar en mi pantalla?",
+    ],
+)
+def test_operation_advice_remains_a_read_only_look(utterance: str) -> None:
+    assert not requests_screen_operation(utterance)
+    assert classify(utterance).wants_capture
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "I clicked the button and now this error is on my screen",
+        "can you explain which button to click on my screen?",
+        "Save is greyed out on my screen",
+        # i18n-allow: German speech-input fixtures
+        (
+            "Ich habe den Knopf angeklickt und jetzt ist der Fehler "  # i18n-allow
+            "auf meinem Bildschirm"  # i18n-allow
+        ),
+        "Kannst du erklären, welchen Knopf ich auf meinem Bildschirm anklicken soll?",  # i18n-allow
+        "Pulsé el botón y ahora aparece este error en mi pantalla",
+    ],
+)
+def test_past_actions_and_action_advice_never_drive_the_desktop(utterance: str) -> None:
+    assert not requests_screen_operation(utterance)
+    assert classify(utterance).wants_capture
 
 
 @pytest.mark.parametrize(

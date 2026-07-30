@@ -675,8 +675,6 @@ class RouterBrain:
             self._manager.active_provider,
             self._manager._fast_model(self._manager.active_provider),
         )
-        dispatcher = self._manager._build_dispatcher(brain)
-
         images: tuple[ImageBlock, ...] = ()
         screen_note = ""
 
@@ -697,12 +695,9 @@ class RouterBrain:
         # falling through would attach an image while asking whether to look
         # at one. A PRIVACY refusal likewise ends the turn and shuts the path
         # below, because falling through there would photograph the exact
-        # window the user's rule protects. A merely TECHNICAL failure (no
-        # display, no permission) does NOT end the turn: it returns
-        # "unavailable" and the existing path runs, so a headless or
-        # An expected unavailable host may keep the old non-capture path open;
-        # an unexpected failure closes every alternate screen path so the turn
-        # cannot trigger a second, unindicated screenshot attempt.
+        # window the user's rule protects. A TECHNICAL failure (no display, no
+        # permission) also ends honestly: a pure look must never turn into a
+        # Computer-Use action just because the capture backend is unavailable.
         turn_trace_id = trace_id or uuid4()
         screen = await self._manager._resolve_screen_context_turn(
             utterance,
@@ -834,6 +829,13 @@ class RouterBrain:
             )
         )
 
+        # A successful one-shot look is evidence-only. Build the dispatcher
+        # without tools so neither Computer-Use nor any other action can be
+        # selected from untrusted pixels. The production BrainManager already
+        # enforces this boundary; RouterBrain must enforce the same contract.
+        dispatcher = self._manager._build_dispatcher(
+            brain, tools_override={} if screen.has_image else None
+        )
         tools_payload = dispatcher.tools_payload()
         system_prompt = self._manager._build_system_prompt()
 

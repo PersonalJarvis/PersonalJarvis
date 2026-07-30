@@ -50,6 +50,7 @@ class _FakeBrain:
 class _RecordingDispatcher:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.tool_overrides: list[dict[str, Any] | None] = []
 
     def tools_payload(self) -> list[dict[str, Any]]:
         return []
@@ -127,7 +128,11 @@ def _build_router(vision_provider: Any = None) -> tuple[RouterBrain, _RecordingD
     )
     router.manager._brain_cache[("fake", "fake-model")] = _FakeBrain()
     recorder = _RecordingDispatcher()
-    router.manager._build_dispatcher = lambda _brain: recorder  # type: ignore[method-assign]
+    def _dispatcher(_brain: Any, *, tools_override=None, **_kwargs: Any):
+        recorder.tool_overrides.append(tools_override)
+        return recorder
+
+    router.manager._build_dispatcher = _dispatcher  # type: ignore[method-assign]
     return router, recorder
 
 
@@ -163,6 +168,9 @@ async def test_captured_context_is_attached_with_its_note(
     assert call["user_text"] == "look at this", (
         "the raw utterance must reach the gates unchanged — the note travels "
         "in turn_context precisely so it cannot widen cu_gate/spawn_gate"
+    )
+    assert recorder.tool_overrides == [{}], (
+        "a read-only screen turn must expose no Computer-Use or action tools"
     )
 
 
@@ -228,10 +236,10 @@ async def test_privacy_refusal_is_spoken_and_shuts_the_fallback(
     )
 
 
-async def test_technical_failure_falls_through_to_the_old_path(
+async def test_technical_failure_ends_honestly_without_computer_use(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Headless / unpermitted hosts must answer normally, not refuse."""
+    """Headless hosts degrade honestly and never turn looking into acting."""
     _patch_screen(
         monkeypatch,
         TurnScreenContext(status="unavailable", message="No display available."),
@@ -241,11 +249,9 @@ async def test_technical_failure_falls_through_to_the_old_path(
 
     deltas = [d async for d in router.handle("look at this")]
 
-    assert recorder.calls, "the turn must still reach the brain"
-    assert provider.consulted == 1, "the existing vision path must be tried"
-    assert "No display" not in "".join(d.content or "" for d in deltas), (
-        "a technical limitation is logged, not spoken as a refusal"
-    )
+    assert recorder.calls == []
+    assert provider.consulted == 0
+    assert "No display" in "".join(d.content or "" for d in deltas)
 
 
 async def test_a_plain_turn_is_untouched(monkeypatch: pytest.MonkeyPatch) -> None:

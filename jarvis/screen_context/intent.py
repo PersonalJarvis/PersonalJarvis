@@ -201,6 +201,114 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
 
 
 # --------------------------------------------------------------------------
+# Ownership boundary — observing is not operating
+# --------------------------------------------------------------------------
+
+# Split only at command-sequencing boundaries. This lets an explanatory clause
+# stay read-only while a later independent clause still owns its operation:
+# "Explain this, then close the window." -> [observe, operate].
+_COMMAND_CLAUSE_SPLIT_RE: re.Pattern[str] = re.compile(
+    r"[.!?;]+|,\s*(?=(?:then|dann|luego)\b)|"
+    r"\b(?:and\s+then|then|und\s+dann|dann|y\s+luego|luego)\b",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_COMPUTER_USE_RE: re.Pattern[str] = re.compile(
+    r"\b(?:use|with|via|using)\s+(?:the\s+)?computer[-\s]?use\b"
+    # i18n-allow: German speech-input matching data
+    r"|\b(?:mit|per|ueber|via|nutz\w*|benutz\w*|verwend\w*)\s+"  # i18n-allow
+    r"(?:der\s+|die\s+|das\s+|den\s+)?computer[-\s]?use\b",  # i18n-allow
+    re.IGNORECASE,
+)
+
+_EN_ACTION = (
+    r"(?:click|double-?click|right-?click|tap|scroll|drag|drop|hover|press|"
+    r"type|enter|paste|select|choose|submit|zoom|save|delete|remove|download|"
+    r"upload|open|close|refresh|reload|minimi[sz]e|maximi[sz]e|move|resize|"
+    r"switch|navigate|log\s+(?:in|out))\w*"
+)
+_DE_ACTION = (
+    # i18n-allow: German speech-input matching data
+    r"(?:(?:an|drauf|darauf|doppel|rechts)?klick|(?:hoch|runter)?scroll|"
+    r"(?:ein)?tipp|zieh|verschieb|drueck|(?:ein)?fueg|(?:aus)?waehl|markier|"  # i18n-allow
+    r"kopier|reich\w*\s+ein|send\w*\s+ab|zoom|speicher|loesch|entfern|"
+    r"lad\w*\s+(?:hoch|runter)|oeffn|schliess|aktualisier|neu\s+lad|"
+    r"anmeld|abmeld|minimier|maximier|verkleiner|vergroesser|wechsel|navigier)\w*"
+)
+_ES_ACTION = (
+    r"(?:haz\s+clic|cliquea|pincha|pulsa|teclea|escribe|pega|desplaza|arrastr|"
+    r"selecciona|elige|envia|guarda|elimina|borra|descarga|sube|abre|cierra|"
+    r"actualiza|recarga|inicia\s+sesion|cierra\s+sesion|minimiza|maximiza|"
+    r"mueve|cambia|navega|amplia|reduce)\w*"
+)
+
+_ACTION_CONNECTOR_SPLIT_RE: re.Pattern[str] = re.compile(
+    rf"\b(?:and|und|y)\s+(?=(?:{_EN_ACTION}|{_DE_ACTION}|{_ES_ACTION})\b)",
+    re.IGNORECASE,
+)
+
+_OPERATION_EXPLANATION_CLAUSE_RE: re.Pattern[str] = re.compile(
+    r"^(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|please\s+)?"
+    r"(?:explain|show|tell)\b"
+    # i18n-allow: German speech-input matching data
+    r"|^(?:(?:kannst|koenntest|wuerdest|wirst)\s+du\s+(?:bitte\s+)?|bitte\s+)?"
+    r"(?:erklaer|zeig|sag)\w*\b"
+    r"|^(?:(?:puedes|podrias)\s+(?:por\s+favor\s+)?|por\s+favor\s+)?"
+    r"(?:explica|muestra|dime)\b",
+    re.IGNORECASE,
+)
+
+_SCREEN_OPERATION_CLAUSE_RE: re.Pattern[str] = re.compile(
+    # English imperatives and request forms, including "would you mind clicking".
+    rf"^(?:please\s+)?{_EN_ACTION}\b"
+    rf"|^(?:can|could|will)\s+you\s+(?:please\s+)?[^.?!]{{0,72}}?{_EN_ACTION}\b"
+    rf"|^would\s+you\s+(?:please\s+)?(?:mind\s+)?[^.?!]{{0,72}}?{_EN_ACTION}\b"
+    rf"|^i\s+(?:want|need)\s+you\s+to\s+[^.?!]{{0,72}}?{_EN_ACTION}\b"
+    # German: allow the object before the final infinitive ("Bitte den Knopf anklicken").
+    rf"|^(?:bitte\s+)?{_DE_ACTION}\b"  # i18n-allow
+    rf"|^bitte\s+[^.?!]{{0,96}}?{_DE_ACTION}\b"  # i18n-allow
+    rf"|^(?:kannst|koenntest|wuerdest|wirst)\s+du\s+(?:bitte\s+)?"
+    rf"[^.?!]{{0,96}}?{_DE_ACTION}\b"  # i18n-allow
+    # Spanish imperative and modal request forms.
+    rf"|^(?:por\s+favor\s+)?{_ES_ACTION}\b"
+    rf"|^(?:puedes|podrias)\s+(?:por\s+favor\s+)?[^.?!]{{0,96}}?{_ES_ACTION}\b",
+    re.IGNORECASE,
+)
+
+_ACTION_STATE_OBSERVATION_RE: re.Pattern[str] = re.compile(
+    rf"^(?:{_EN_ACTION})\s+(?:is|are|was|were|looks?|seems?|appears?)\b"
+    rf"|^(?:{_DE_ACTION})\s+(?:ist|sind|war|waren|scheint)\b"  # i18n-allow
+    rf"|^(?:{_ES_ACTION})\s+(?:esta|estan|parece)\b",
+    re.IGNORECASE,
+)
+
+
+def requests_screen_operation(text: str) -> bool:
+    """Return whether the turn asks Jarvis to operate the live desktop.
+
+    This is the hard ownership boundary between Screen Context and
+    Computer-Use.  It is deliberately deterministic and multilingual: an
+    operation request never captures a separate one-shot context first, while
+    a question about what to operate remains a read-only look.
+    """
+    normalized = _normalize(text).strip()
+    if not normalized:
+        return False
+    if _EXPLICIT_COMPUTER_USE_RE.search(normalized):
+        return True
+    for sequence in _COMMAND_CLAUSE_SPLIT_RE.split(normalized):
+        for raw_clause in _ACTION_CONNECTOR_SPLIT_RE.split(sequence):
+            clause = raw_clause.strip(" ,:\t\r\n")
+            if not clause or _OPERATION_EXPLANATION_CLAUSE_RE.search(clause):
+                continue
+            if _ACTION_STATE_OBSERVATION_RE.search(clause):
+                continue
+            if _SCREEN_OPERATION_CLAUSE_RE.search(clause):
+                return True
+    return False
+
+
+# --------------------------------------------------------------------------
 # Level 3 — weak signals: ask, never capture
 # --------------------------------------------------------------------------
 
@@ -254,6 +362,12 @@ def classify(text: str, *, locale: str = "") -> IntentVerdict:
     """
     normalized = _normalize(text).strip()
     if not normalized:
+        return IntentVerdict(intent=VisualIntent.NONE, locale=locale)
+
+    # Operating the desktop is Computer-Use's job.  This check precedes every
+    # visual noun match so phrases such as "click the button on my screen" do
+    # not take a one-shot screenshot and then disable the very tools requested.
+    if requests_screen_operation(normalized):
         return IntentVerdict(intent=VisualIntent.NONE, locale=locale)
 
     window_hits = _evidence(_WINDOW_SCOPE_RE, normalized)
@@ -339,6 +453,78 @@ _CAPTURE_FAILURE_REPLY: dict[str, str] = {
     ),
 }
 
+_CAPTURE_UNAVAILABLE_REPLY: dict[str, dict[str, str]] = {
+    "en": {
+        "capture_permission": (
+            "I cannot capture your screen until Screen Recording is allowed in "
+            "system settings. Grant that permission and ask again. No desktop "
+            "action was started."
+        ),
+        "wayland_portal": (
+            "Screen capture is unavailable in this Wayland session. Install and "
+            "enable an XDG desktop portal for your compositor, or sign in with "
+            "an X11 session, then ask again. No desktop action was started."
+        ),
+        "no_display": (
+            "I cannot access an interactive display on this device. Sign in to "
+            "a desktop session or connect a display, then ask again. No desktop "
+            "action was started."
+        ),
+        "capture_backend_unavailable": (
+            "The screen-capture backend is unavailable right now. Restart the "
+            "desktop app and ask again. No desktop action was started."
+        ),
+    },
+    "de": {  # i18n-allow: spoken
+        "capture_permission": (
+            "Ich kann deinen Bildschirm erst aufnehmen, wenn die "  # i18n-allow
+            "Bildschirmaufnahme in den Systemeinstellungen erlaubt ist. "  # i18n-allow
+            "Erteile die Berechtigung und frag noch einmal. Es wurde keine "  # i18n-allow
+            "Desktop-Aktion gestartet."  # i18n-allow
+        ),
+        "wayland_portal": (
+            "Die Bildschirmaufnahme ist in dieser Wayland-Sitzung nicht "  # i18n-allow
+            "verfügbar. Installiere und aktiviere ein XDG-Desktop-Portal für "  # i18n-allow
+            "deinen Compositor oder melde dich über X11 an und frag noch "  # i18n-allow
+            "einmal. Es wurde keine Desktop-Aktion gestartet."  # i18n-allow
+        ),
+        "no_display": (
+            "Ich kann auf diesem Gerät gerade keine interaktive Anzeige "  # i18n-allow
+            "erreichen. Melde dich an einer Desktop-Sitzung an oder verbinde "  # i18n-allow
+            "einen Bildschirm und frag noch einmal. Es wurde keine "  # i18n-allow
+            "Desktop-Aktion gestartet."  # i18n-allow
+        ),
+        "capture_backend_unavailable": (
+            "Die Bildschirmaufnahme ist gerade nicht verfügbar. Starte die "  # i18n-allow
+            "Desktop-App neu und frag noch einmal. Es wurde keine "  # i18n-allow
+            "Desktop-Aktion gestartet."  # i18n-allow
+        ),
+    },
+    "es": {
+        "capture_permission": (
+            "No puedo capturar tu pantalla hasta que permitas la grabación de "
+            "pantalla en los ajustes del sistema. Concede el permiso y vuelve a "
+            "pedirlo. No se inició ninguna acción de escritorio."
+        ),
+        "wayland_portal": (
+            "La captura de pantalla no está disponible en esta sesión de "
+            "Wayland. Instala y activa un portal de escritorio XDG para tu "
+            "compositor, o inicia una sesión X11, y vuelve a pedirlo. No se "
+            "inició ninguna acción de escritorio."
+        ),
+        "no_display": (
+            "No puedo acceder a una pantalla interactiva en este dispositivo. "
+            "Inicia una sesión de escritorio o conecta una pantalla y vuelve a "
+            "pedirlo. No se inició ninguna acción de escritorio."
+        ),
+        "capture_backend_unavailable": (
+            "El sistema de captura de pantalla no está disponible ahora. "
+            "Reinicia la aplicación de escritorio y vuelve a pedirlo. No se "
+            "inició ninguna acción de escritorio."
+        ),
+    },
+}
+
 #: Fallback locale for a language with no entry — the repo-wide default.
 _FALLBACK_LOCALE = "en"
 
@@ -377,6 +563,16 @@ def capture_failure_reply(locale: str) -> str:
     return _CAPTURE_FAILURE_REPLY.get(base) or _CAPTURE_FAILURE_REPLY[_FALLBACK_LOCALE]
 
 
+def capture_unavailable_reply(locale: str, reason_code: str = "") -> str:
+    """Honest no-action reply when this host cannot provide screen evidence."""
+    base = (locale or "").split("-")[0].split("_")[0].strip().lower()
+    phrases = _CAPTURE_UNAVAILABLE_REPLY.get(base) or _CAPTURE_UNAVAILABLE_REPLY[
+        _FALLBACK_LOCALE
+    ]
+    fallback = "capture_backend_unavailable"
+    return phrases.get(reason_code) or phrases[fallback]
+
+
 #: Locales with a clarifying question. Used by the parity test that pins this
 #: table to the supported-locale list, so a new locale cannot ship half-wired.
 SUPPORTED_CLARIFY_LOCALES: frozenset[str] = frozenset(_CLARIFY_QUESTION)
@@ -386,7 +582,9 @@ __all__ = [
     "SUPPORTED_CLARIFY_LOCALES",
     "cancelled_reply",
     "capture_failure_reply",
+    "capture_unavailable_reply",
     "clarifying_question",
     "classify",
     "no_vision_provider_reply",
+    "requests_screen_operation",
 ]

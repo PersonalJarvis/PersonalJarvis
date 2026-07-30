@@ -980,6 +980,19 @@ class ScreenCaptureAnnounced(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ScreenCaptureGrabbed(Event):
+    """Raw pixels were grabbed for a one-off Screen Context request.
+
+    Published immediately after the platform capture returns, before redaction
+    and encoding. Carries dimensions only: pixels and captured text never enter
+    the event bus. A later privacy recheck may still discard the frame.
+    """
+
+    width: int = 0
+    height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class ScreenCaptureCompleted(Event):
     """A Screen Context capture finished — the receipt.
 

@@ -115,6 +115,7 @@ _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
     r"\bopen(?:s|ed|ing)?\b|\blaunch\w*\b|\bclick\w*\b|\bdouble-?click\w*\b|\btap\b"
     r"|\bscroll\w*\b|\bdrag\w*\b|\bhover\b|\bpress\w*\b|\bpaste\b"
     r"|\bminimi[sz]e\b|\bmaximi[sz]e\b|\bnavigate\b|\bbrowse\b"
+    r"|\brefresh\w*\b|\breload\w*\b"
     r"|\blog\s?in\b|\bsign\s?in\b|\bgo\s+to\b"
     r"|(?<!what )(?<!which )(?<!of )\btype\b"
     r"|\bstart(?:s|ed|ing)?\s+(?:up\s+)?(?:the|a|an|my)\b"
@@ -122,12 +123,14 @@ _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
     r"|\boeffn\w*|\baufmach\w*|\bklick\w*|\btipp\w*|\bscroll\w*"
     r"|\bzieh\w*\b|\bdrueck\w*|\bschliess\w*|\bnavigier\w*|\beinfueg\w*"
     r"|\bstart(?:e|et|en)\b"
+    r"|\baktualisier\w*\b|\bneu\s+lad\w*\b"
     r"|\bmach\w*\b[^.?!]{0,40}\b(?:auf|zu)\b"
     r"|\bgeh\w*\s+(?:auf|zu|in)\b"
     r"|\blogg\w*\b"
     # --- action verbs (es) ---  # i18n-allow: Spanish speech-input matching data
     r"|\babr(?:e|a|as|ir)\b|\bcli(?:c|ca|quea)\b|\bpincha\w*|\bpulsa\w*"
     r"|\btecle\w*|\bdesplaz\w*|\barrastr\w*|\bpega\b|\bcierr\w*|\bnaveg\w*"
+    r"|\bactualiz\w*|\brecarg\w*"
     # --- screen/app/browser nouns (en/de/es share most brand tokens) ---
     r"|\bscreen\w*|\bdesktop\b|\bbrowser\w*|\bchrome\b|\bsafari\b"
     r"|\bfirefox\b|\bedge\b|\btabs?\b|\bwindows?\b|\bmouse\b|\bcursor\w*"

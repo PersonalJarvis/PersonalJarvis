@@ -19,6 +19,7 @@ monkeypatched to no-ops.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 
 import pytest
@@ -122,6 +123,293 @@ async def test_lock_is_lazy_constructed_and_idempotent(monkeypatch) -> None:
     lock2 = player._get_play_lock()
     assert isinstance(lock1, asyncio.Lock)
     assert lock1 is lock2, "lock must be idempotent across calls"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_one_shot_aborts_and_joins_native_thread_before_unlock(
+    monkeypatch,
+) -> None:
+    """A timed-out cue cannot orphan a PortAudio stream beside later TTS."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    started = threading.Event()
+    released = threading.Event()
+    active = 0
+    max_active = 0
+
+    class BlockingStream:
+        def abort(self) -> None:
+            released.set()
+
+        def close(self) -> None:
+            return None
+
+    stream = BlockingStream()
+    monkeypatch.setattr(player, "_open_output_stream", lambda rate: (stream, rate))
+    monkeypatch.setattr(player, "_close_output_stream", lambda _stream: None)
+
+    def blocking_write(*_args, **_kwargs) -> None:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        started.set()
+        try:
+            assert released.wait(1.0), "abort_active did not release native playback"
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(player, "_write_samples", blocking_write)
+
+    task = asyncio.create_task(player.play_pcm(b"\x01\x00" * 100))
+    assert await asyncio.to_thread(started.wait, 1.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert released.is_set()
+    assert active == 0, "the native worker must be joined before cancellation returns"
+    assert not player._get_play_lock().locked()
+    await player.play_pcm(b"\x02\x00" * 100)
+    assert max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_one_shot_retires_idle_stream_before_opening_its_stream(
+    monkeypatch,
+) -> None:
+    """A persistent TTS stream and a shutter stream never coexist."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    old_stream = object()
+    new_stream = object()
+    player._active_stream = old_stream
+    player._active_source_rate = 24_000
+    player._active_device_rate = 48_000
+    closed: list[object] = []
+
+    def open_after_old_closed(rate: int) -> tuple[object, int]:
+        assert closed == [old_stream]
+        return new_stream, rate
+
+    monkeypatch.setattr(player, "_open_output_stream", open_after_old_closed)
+    monkeypatch.setattr(player, "_close_output_stream", closed.append)
+    monkeypatch.setattr(player, "_write_samples", lambda *_a, **_kw: None)
+
+    await player.play_pcm(b"\x01\x00" * 100)
+
+    assert closed == [old_stream, new_stream]
+    assert player._active_stream is None
+
+
+@pytest.mark.asyncio
+async def test_failed_idle_stream_retirement_prevents_replacement_open(
+    monkeypatch,
+) -> None:
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    old_stream = object()
+    player._active_stream = old_stream
+    player._active_source_rate = 24_000
+    player._active_device_rate = 48_000
+    opens = 0
+
+    def forbidden_open(rate: int) -> tuple[object, int]:
+        nonlocal opens
+        opens += 1
+        return object(), rate
+
+    monkeypatch.setattr(player, "_open_output_stream", forbidden_open)
+    monkeypatch.setattr(player, "_close_output_stream", lambda _stream: False)
+
+    await player.play_pcm(b"\x01\x00" * 100)
+
+    assert opens == 0
+    assert player._unclean_stream is old_stream
+    assert player._native_playback_poisoned()
+
+
+@pytest.mark.asyncio
+async def test_failed_late_stream_close_keeps_player_fail_closed(
+    monkeypatch,
+) -> None:
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    late_stream = object()
+
+    def superseded_open(rate: int) -> tuple[object, int]:
+        player._playback_generation += 1
+        return late_stream, rate
+
+    monkeypatch.setattr(player, "_open_output_stream", superseded_open)
+    monkeypatch.setattr(player, "_close_output_stream", lambda _stream: False)
+
+    await player.play_pcm(b"\x01\x00" * 100)
+
+    assert player._unclean_stream is late_stream
+    assert player._native_playback_poisoned()
+
+
+@pytest.mark.asyncio
+async def test_failed_native_abort_poison_closes_player_until_worker_exits(
+    monkeypatch,
+) -> None:
+    """A broken PortAudio abort degrades audio without opening a rival stream."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    started = threading.Event()
+    release = threading.Event()
+    opens = 0
+
+    class UnabortableStream:
+        def abort(self) -> None:
+            raise OSError("abort failed")
+
+        def close(self) -> None:
+            raise OSError("close failed")
+
+    stream = UnabortableStream()
+
+    def open_stream(rate: int) -> tuple[UnabortableStream, int]:
+        nonlocal opens
+        opens += 1
+        return stream, rate
+
+    def wedged_write(*_args, **_kwargs) -> None:
+        started.set()
+        assert release.wait(1.0)
+
+    monkeypatch.setattr(player, "_open_output_stream", open_stream)
+    monkeypatch.setattr(player, "_write_samples", wedged_write)
+    monkeypatch.setattr(player, "_close_output_stream", lambda _stream: False)
+    monkeypatch.setattr(
+        "jarvis.audio.player._ONE_SHOT_CANCEL_JOIN_TIMEOUT_S", 0.01
+    )
+
+    task = asyncio.create_task(player.play_pcm(b"\x01\x00" * 100))
+    assert await asyncio.to_thread(started.wait, 1.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert player._native_playback_poisoned()
+    await player.play_pcm(b"\x02\x00" * 100)
+    assert opens == 1, "a poisoned player must not open a second native stream"
+
+    poisoned_worker = player._poisoned_worker
+    assert poisoned_worker is not None
+    release.set()
+    await asyncio.gather(poisoned_worker, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert player._native_playback_poisoned()
+    await player.play_pcm(b"\x03\x00" * 100)
+    assert opens == 1, "repeated close failure must keep the player fail-closed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_native_open_is_bounded_and_fail_closed(
+    monkeypatch,
+) -> None:
+    """A wedged PortAudio open has no handle to abort, so poison gates recovery."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    started = threading.Event()
+    release = threading.Event()
+    opened_stream = object()
+    opens = 0
+    closed: list[object] = []
+
+    def wedged_open(rate: int) -> tuple[object, int]:
+        nonlocal opens
+        opens += 1
+        started.set()
+        assert release.wait(1.0)
+        return opened_stream, rate
+
+    monkeypatch.setattr(player, "_open_output_stream", wedged_open)
+    monkeypatch.setattr(player, "_close_output_stream", closed.append)
+    monkeypatch.setattr(
+        "jarvis.audio.player._ONE_SHOT_CANCEL_JOIN_TIMEOUT_S", 0.01
+    )
+
+    task = asyncio.create_task(player.play_pcm(b"\x01\x00" * 100))
+    assert await asyncio.to_thread(started.wait, 1.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert player._native_playback_poisoned()
+    await player.play_pcm(b"\x02\x00" * 100)
+    assert opens == 1
+
+    poisoned_worker = player._poisoned_worker
+    assert poisoned_worker is not None
+    release.set()
+    await asyncio.gather(poisoned_worker, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert not player._native_playback_poisoned()
+    assert closed == [opened_stream]
+
+
+@pytest.mark.asyncio
+async def test_double_cancel_keeps_worker_poisoned_until_native_exit(
+    monkeypatch,
+) -> None:
+    """A second cancellation cannot bypass the fail-closed worker marker."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    player._stream_state_lock = threading.Lock()
+    player._playback_generation = 0
+    started = threading.Event()
+    release = threading.Event()
+    opens = 0
+
+    class UnabortableStream:
+        def abort(self) -> None:
+            raise OSError("abort failed")
+
+        def close(self) -> None:
+            raise OSError("close failed")
+
+    stream = UnabortableStream()
+
+    def open_stream(rate: int) -> tuple[UnabortableStream, int]:
+        nonlocal opens
+        opens += 1
+        return stream, rate
+
+    def wedged_write(*_args, **_kwargs) -> None:
+        started.set()
+        assert release.wait(1.0)
+
+    monkeypatch.setattr(player, "_open_output_stream", open_stream)
+    monkeypatch.setattr(player, "_write_samples", wedged_write)
+    monkeypatch.setattr(player, "_close_output_stream", lambda _stream: True)
+
+    task = asyncio.create_task(player.play_pcm(b"\x01\x00" * 100))
+    assert await asyncio.to_thread(started.wait, 1.0)
+    task.cancel()
+    for _ in range(20):
+        if player._native_playback_poisoned():
+            break
+        await asyncio.sleep(0)
+    assert player._native_playback_poisoned()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await player.play_pcm(b"\x02\x00" * 100)
+    assert opens == 1
+    poisoned_worker = player._poisoned_worker
+    assert poisoned_worker is not None
+    release.set()
+    await asyncio.gather(poisoned_worker, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert not player._native_playback_poisoned()
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,12 @@
 """Turn integration — the contract a conversation layer relies on.
 
-The refused/unavailable split gets the most attention here. Collapsing it fails
-in one of two ways, and both are the kind that ship quietly:
+The refused/unavailable split stays observable for diagnostics, while both
+outcomes shut alternate screen paths:
 
 * treating a privacy refusal as technical lets the caller fall back to another
   screen path and photograph the protected window;
-* treating a missing display as a prohibition ends every look-request on a
-  headless host with a refusal instead of a normal answer.
+* letting a missing display fall through can turn a read-only look into
+  Computer-Use, which is a materially different action.
 """
 from __future__ import annotations
 
@@ -104,17 +104,41 @@ async def test_privacy_refusal_ends_the_turn_and_shuts_other_paths() -> None:
     )
 
 
-async def test_technical_unavailability_lets_the_turn_continue() -> None:
-    """A headless host must answer normally, not refuse every look-request."""
+async def test_technical_unavailability_ends_without_an_action_fallback() -> None:
+    """A headless host must degrade honestly without starting Computer-Use."""
     service = FakeService(
-        outcome("refused", reason_kind="technical", message="No display available.")
+        outcome(
+            "refused",
+            reason_kind="technical",
+            reason_code="no_display",
+            message="No display available.",
+        )
     )
     result = await screen_context_for_turn("look at this", locale="en", service=service)
 
     assert result.status == "unavailable"
-    assert not result.ends_the_turn
-    assert not result.blocks_other_screen_paths
-    assert result.message, "the reason must survive for the log"
+    assert result.ends_the_turn
+    assert result.blocks_other_screen_paths
+    assert "No desktop action" in (result.message or "")
+    assert result.reason_code == "no_display"
+    assert result.diagnostic_detail == "No display available."
+
+
+async def test_wayland_unavailability_returns_portal_remediation() -> None:
+    service = FakeService(
+        outcome(
+            "refused",
+            reason_kind="technical",
+            reason_code="wayland_portal",
+            message="portal missing",
+        )
+    )
+
+    result = await screen_context_for_turn("look at this", locale="en", service=service)
+
+    assert result.status == "unavailable"
+    assert "XDG desktop portal" in (result.message or "")
+    assert "No desktop action" in (result.message or "")
 
 
 async def test_unexpected_capture_failure_shuts_other_screen_paths() -> None:
