@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import types
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -566,6 +568,64 @@ async def test_a_gemini_sdk_failure_becomes_a_polish_provider_error() -> None:
         await client.complete(
             "system", "user", max_output_tokens=64, temperature=0.0, timeout_s=1.0
         )
+
+
+def test_the_gemini_request_deadline_never_goes_under_the_server_minimum(
+    monkeypatch,
+) -> None:
+    """The polish budget must not become the REQUEST deadline.
+
+    generate-content rejects anything under 10 s outright — ``400
+    INVALID_ARGUMENT: Manually set deadline 2s is too short`` — before the model
+    runs. This family's budget is 1.5 s, so sending it as the deadline made every
+    call fail: measured on the live log, 56 failures and 0 successes, i.e. a user
+    who pinned Gemini never once got it and every dictation crossed silently to
+    another family (AP-31). The caller's ``wait_for`` still bounds the wait.
+    """
+    from jarvis.dictation import polish_client as pc
+
+    captured: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules, "google", types.SimpleNamespace(genai=types.SimpleNamespace(Client=_Client))
+    )
+    monkeypatch.setitem(
+        sys.modules, "google.genai", types.SimpleNamespace(Client=_Client)
+    )
+
+    client = GeminiPolishClient(GEMINI, model="m", api_key="k")
+    client._ensure_client(1.5)
+
+    timeout_ms = captured["http_options"]["timeout"]  # type: ignore[index]
+    assert timeout_ms >= pc._GEMINI_MIN_DEADLINE_S * 1000, (
+        f"a {timeout_ms} ms deadline is rejected by the server before the "
+        "model runs, so the pinned provider can never answer"
+    )
+
+
+def test_a_generous_caller_budget_is_still_honoured(monkeypatch) -> None:
+    """The floor raises a too-short deadline; it does not cap a long one."""
+    captured: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules, "google", types.SimpleNamespace(genai=types.SimpleNamespace(Client=_Client))
+    )
+    monkeypatch.setitem(
+        sys.modules, "google.genai", types.SimpleNamespace(Client=_Client)
+    )
+
+    client = GeminiPolishClient(GEMINI, model="m", api_key="k")
+    client._ensure_client(30.0)
+
+    assert captured["http_options"]["timeout"] == 30_000  # type: ignore[index]
 
 
 @dataclass

@@ -785,6 +785,14 @@ def _relax_payload(payload: dict[str, Any], body: str) -> dict[str, Any] | None:
     return adjusted if changed else None
 
 
+#: Shortest request deadline the generate-content endpoint accepts. Anything
+#: under it is rejected BEFORE the model runs, with
+#: ``400 INVALID_ARGUMENT: Manually set deadline Ns is too short. Minimum
+#: allowed deadline is 10s.`` — so a polish budget below this cannot buy a
+#: faster answer, only a guaranteed failure.
+_GEMINI_MIN_DEADLINE_S = 10.0
+
+
 class GeminiPolishClient:
     """Adapter for Google's generate-content schema."""
 
@@ -804,9 +812,22 @@ class GeminiPolishClient:
             # an explicit http_options timeout is the ONLY thing below the
             # caller's wait_for that can stop a hung request from holding a
             # connection open after we have already given up on it.
+            #
+            # It is deliberately NOT the polish budget. This family's budget is
+            # 1.5 s, and sending that as the request deadline made the server
+            # reject every single call with a 400 before the model ran: measured
+            # on the live log, Gemini failed 56 times and succeeded 0 times, so a
+            # user who pinned it never once got the provider they chose — every
+            # dictation crossed silently to the next family (AP-31: a switch
+            # whose value is ignored). The deadline is what the SERVER is willing
+            # to accept; the caller's ``wait_for`` is what actually bounds the
+            # wait, and it is unchanged. Giving up at 1.5 s and letting the
+            # socket close on its own is strictly better than not asking at all.
             self._client = genai.Client(
                 api_key=self._api_key,
-                http_options={"timeout": int(max(timeout_s, 0.1) * 1000)},
+                http_options={
+                    "timeout": int(max(timeout_s, _GEMINI_MIN_DEADLINE_S) * 1000)
+                },
             )
         return self._client
 
