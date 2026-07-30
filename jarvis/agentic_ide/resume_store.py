@@ -61,6 +61,9 @@ class SnapshotTerminal:
     key: str
     name: str
     agent: str
+    # Opaque identity of the pane's on-demand prompt-history stream. Additive:
+    # older snapshots leave it empty and receive a fresh id when restored.
+    history_id: str = ""
     column: int = 0
     slot: int = 0
     resume: ResumeHandle | None = None
@@ -82,6 +85,7 @@ class SnapshotTerminal:
             "key": self.key,
             "name": self.name,
             "agent": self.agent,
+            "history_id": self.history_id,
             "column": self.column,
             "slot": self.slot,
             "resume": self.resume.to_dict() if self.resume else None,
@@ -102,6 +106,7 @@ class SnapshotTerminal:
             key=str(data.get("key") or "").strip() or name.lower(),
             name=name,
             agent=agent,
+            history_id=str(data.get("history_id") or "").strip(),
             column=_as_int(data.get("column")),
             slot=_as_int(data.get("slot")),
             resume=ResumeHandle.from_dict(data.get("resume")),

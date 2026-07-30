@@ -471,6 +471,41 @@ export function fetchLastPrompt(
   );
 }
 
+/** One exact prompt in a pane's durable delivery history. */
+export interface PromptHistoryItem {
+  id: string;
+  sequence: number;
+  text: string;
+  chars: number;
+  /** Epoch seconds. */
+  at: number;
+  submitted: boolean | null;
+}
+
+export interface PromptHistoryResponse {
+  name: string;
+  /** Known delivery count, including prompts from before history recording existed. */
+  total: number;
+  /** Exact prompt records available to inspect and copy. */
+  available: number;
+  complete: boolean;
+  /** Newest first. */
+  items: PromptHistoryItem[];
+}
+
+/** Read every exact prompt handed to this pane without loading it into workspace state. */
+export function fetchPromptHistory(
+  name: string,
+  workspaceId?: string,
+): Promise<PromptHistoryResponse> {
+  const query = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
+  return getJson<PromptHistoryResponse>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompts${query}`,
+  );
+}
+
 function recapUrl(name: string, workspaceId?: string, suffix = ""): string {
   const query = workspaceId
     ? `?workspace_id=${encodeURIComponent(workspaceId)}`

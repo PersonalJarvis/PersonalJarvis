@@ -78,7 +78,7 @@ from loguru import logger
 
 from jarvis.workspace import agents as workspace_agents
 
-from . import recap_engine, resume_store
+from . import prompt_history, recap_engine, resume_store
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -781,6 +781,11 @@ class Terminal:
     # pane to the anchor's OWN column and leaves every other column alone.
     #
     # The second axis is load-bearing. With only a row number, "split down"
+    # Stable for THIS pane's lifetime and deliberately unrelated to its visible
+    # call-sign. A closed T1 and a new T1 are different panes; a renamed T1 is
+    # still the same pane. Prompt-history files use this id to preserve exactly
+    # that boundary across app restarts.
+    history_id: str = field(default_factory=lambda: uuid4().hex)
     # could only mean "open a new row", and a row is window-wide by definition —
     # so splitting one pane squashed every other pane to half height. A full
     # split TREE (arbitrary nesting, draggable separators) is still deliberately
@@ -820,6 +825,12 @@ class Terminal:
     # terminal stream, and that is the whole point. A pane proves a prompt
     # arrived by echoing it, which requires a chain of things to have gone
     # right at one particular moment: the pane on screen, its output un-parked,
+    # The current process's records are kept as a fallback if the local history
+    # file cannot be written. The full durable history is loaded only when its
+    # UI is opened, never in the workspace-state hot path.
+    prompt_records: list[prompt_history.PromptHistoryEntry] = field(
+        default_factory=list, repr=False, compare=False
+    )
     # its socket up, the emulator painted. Every link in that chain has failed
     # in production at least once, and each failure looks identical from the
     # user's chair — Jarvis says it sent the brief and the pane shows nothing,
@@ -1055,6 +1066,7 @@ class Terminal:
             prompts_sent=self.prompts_sent,
             account=self.account,
             continuation_needed=self.resume_continuation_needed,
+            history_id=self.history_id,
         )
 
 
@@ -1815,6 +1827,7 @@ class Registry:
         #
         # **The bug this fixes.** `continuation_pending` used to be raised in
         # `attach`, which is the moment a pane's process is spawned — and cold
+                history_id=entry.history_id or uuid4().hex,
         # starts are deliberately staggered (see COLD_START_LIMIT), so in a
         # workspace of a dozen panes most of them are still `pending` seconds
         # after the grid appears. Anybody pressing "Continue" in that window got
@@ -3397,6 +3410,25 @@ class Registry:
             )
             return None
         return left_the_box
+        history_entry = prompt_history.PromptHistoryEntry(
+            id=uuid4().hex,
+            sequence=term.prompts_sent,
+            text=payload,
+            at=term.last_prompt_at,
+            submitted=submitted,
+        )
+        # Memory first: even a read-only or temporarily unavailable data folder
+        # must not make a prompt disappear from the history while the pane is
+        # still open. Disk is the persistence layer, not the only copy.
+        term.prompt_records.append(history_entry)
+        try:
+            await asyncio.to_thread(prompt_history.append, term.history_id, history_entry)
+        except OSError as exc:
+            logger.warning(
+                "Agentic IDE: could not persist the prompt history for {}: {}",
+                term.name,
+                exc,
+            )
 
     async def _await_arrival(self, term: Terminal, payload: str) -> bool:
         """Wait until the pane visibly holds ``payload``, or give up.

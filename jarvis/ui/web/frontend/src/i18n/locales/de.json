@@ -3520,6 +3520,27 @@
       "above": "Über {0}",
       "below": "Unter {0}"
     },
+    "history": {
+      "open": "Prompt-Verlauf für {0} öffnen",
+      "title": "Prompt-Verlauf",
+      "description": "Jeder Prompt, den {name} an {0} gesendet hat — exakt so gespeichert, wie der Agent ihn erhalten hat.",
+      "close": "Prompt-Verlauf schließen",
+      "load_failed": "Der Prompt-Verlauf konnte nicht geladen werden.",
+      "retry": "Erneut versuchen",
+      "empty_title": "Noch keine Prompts",
+      "empty_detail": "Prompts, die per Sprache, Chat oder Prompt-Leiste an dieses Fenster gesendet werden, erscheinen hier.",
+      "count_one": "1 Prompt",
+      "count_many": "{0} Prompts",
+      "partial": "Frühere Prompts nicht verfügbar",
+      "prompt_number": "Prompt #{0}",
+      "characters": "{0} Zeichen",
+      "copy": "Prompt kopieren",
+      "copied": "Kopiert",
+      "copy_failed": "Kopieren fehlgeschlagen",
+      "sent": "An Agent gesendet",
+      "waiting": "Wartet auf Enter",
+      "unconfirmed": "Zustellung unbestätigt"
+    },
     "selection": {
       "start": "Terminals auswählen",
       "finish": "Auswahl beenden",

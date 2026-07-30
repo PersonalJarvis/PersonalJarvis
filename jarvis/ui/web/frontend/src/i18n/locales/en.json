@@ -3521,6 +3521,27 @@
       "above": "Above {0}",
       "below": "Below {0}"
     },
+    "history": {
+      "open": "View prompt history for {0}",
+      "title": "Prompt history",
+      "description": "Every prompt {name} sent to {0}, preserved exactly as the agent received it.",
+      "close": "Close prompt history",
+      "load_failed": "The prompt history could not be loaded.",
+      "retry": "Try again",
+      "empty_title": "No prompts yet",
+      "empty_detail": "Prompts sent to this pane by voice, chat, or the prompt bar will appear here.",
+      "count_one": "1 prompt",
+      "count_many": "{0} prompts",
+      "partial": "Earlier prompts unavailable",
+      "prompt_number": "Prompt #{0}",
+      "characters": "{0} characters",
+      "copy": "Copy prompt",
+      "copied": "Copied",
+      "copy_failed": "Copy failed",
+      "sent": "Sent to agent",
+      "waiting": "Waiting for Enter",
+      "unconfirmed": "Delivery unconfirmed"
+    },
     "selection": {
       "start": "Select terminals",
       "finish": "Done selecting",

@@ -3520,6 +3520,27 @@
       "above": "Encima de {0}",
       "below": "Debajo de {0}"
     },
+    "history": {
+      "open": "Ver el historial de prompts de {0}",
+      "title": "Historial de prompts",
+      "description": "Todos los prompts que {name} envió a {0}, conservados exactamente como los recibió el agente.",
+      "close": "Cerrar el historial de prompts",
+      "load_failed": "No se pudo cargar el historial de prompts.",
+      "retry": "Intentar de nuevo",
+      "empty_title": "Aún no hay prompts",
+      "empty_detail": "Los prompts enviados a este panel por voz, chat o la barra de prompts aparecerán aquí.",
+      "count_one": "1 prompt",
+      "count_many": "{0} prompts",
+      "partial": "Los prompts anteriores no están disponibles",
+      "prompt_number": "Prompt n.º {0}",
+      "characters": "{0} caracteres",
+      "copy": "Copiar prompt",
+      "copied": "Copiado",
+      "copy_failed": "Error al copiar",
+      "sent": "Enviado al agente",
+      "waiting": "Esperando Enter",
+      "unconfirmed": "Entrega sin confirmar"
+    },
     "selection": {
       "start": "Seleccionar terminales",
       "finish": "Terminar selección",

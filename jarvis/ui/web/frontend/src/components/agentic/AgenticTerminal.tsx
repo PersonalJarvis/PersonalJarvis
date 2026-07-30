@@ -104,6 +104,7 @@ import {
 import { PromptReceipt } from "./PromptReceipt";
 
 /**
+import { PromptHistoryButton } from "./PromptHistoryButton";
  * How old a delivery may be and still raise its receipt on a fresh connection.
  *
  * Only applies to the receipt recovered from the HANDSHAKE — a prompt arriving
@@ -215,6 +216,8 @@ interface AgenticTerminalProps {
   /** True while this pane fills the whole grid. */
   maximized?: boolean;
   onToggleMaximize?: () => void;
+  /** Number shown beside the pane header's prompt-history icon. */
+  promptCount?: number;
   /**
    * Open another terminal beside or below this one.
    *
@@ -298,6 +301,7 @@ export function AgenticTerminal({
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // The padded box around the xterm host — the pane's visible inset, kept off
+  promptCount = 0,
   // the host itself because FitAddon reads the host's border-box. The pane's
   // scrollbar overlays this box and measures hover against it.
   const scrollRegionRef = useRef<HTMLDivElement | null>(null);
@@ -1130,6 +1134,7 @@ export function AgenticTerminal({
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
         host's border-box but does not subtract padding on that host, so putting
+        workspaceId={workspaceId}
         the inset there made it report one row more than the pane could show.
         The last terminal line was consequently clipped after a vertical resize.
 
@@ -1141,6 +1146,7 @@ export function AgenticTerminal({
         className="relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5"
       >
         <div
+        promptCount={promptCount}
           ref={containerRef}
           data-testid={`agentic-terminal-host-${name}`}
           // Read by ./index.css, which anchors the contents to the bottom for
@@ -1256,6 +1262,7 @@ function PaneHeader({
   displayName: string;
   recap?: string;
   recapDetail?: string;
+  workspaceId,
   recapMeta?: PaneRecapMeta;
   recapActions?: PaneRecapActions;
   accountLabel?: string | null;
@@ -1263,6 +1270,7 @@ function PaneHeader({
   focused: boolean;
   maximized: boolean;
   onToggleMaximize?: () => void;
+  promptCount,
   onSplit?: (direction: SplitDirection, agent?: string) => void;
   agents?: SplitAgentChoice[];
   onClose?: () => void;
@@ -1277,6 +1285,7 @@ function PaneHeader({
   const light = appearance === "light";
   // Which split button opened the CLI picker, if any.
   const [picking, setPicking] = useState<SplitDirection | null>(null);
+  workspaceId?: string;
 
   // With one installed CLI there is nothing to pick, so the button splits
   // straight away — a menu with a single entry is a click tax, not a choice.
@@ -1284,6 +1293,7 @@ function PaneHeader({
   const offersChoice = choices.filter((a) => a.installed).length > 1;
 
   const startSplit = (direction: SplitDirection) => {
+  promptCount: number;
     if (offersChoice)
       setPicking((current) => (current === direction ? null : direction));
     else onSplit?.(direction);
@@ -1538,6 +1548,12 @@ function SplitAgentMenu({
               <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                 {agent.kind === "shell" ? "no shell here" : "not installed"}
               </span>
+        <PromptHistoryButton
+          terminal={name}
+          workspaceId={workspaceId}
+          count={promptCount}
+          light={light}
+        />
             )}
           </button>
         ))}

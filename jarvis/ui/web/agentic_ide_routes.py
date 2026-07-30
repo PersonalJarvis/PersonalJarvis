@@ -67,6 +67,7 @@ from jarvis.agentic_ide import (
     notifications,
     recap_engine,
     recents,
+    prompt_history,
     resume_store,
 )
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -917,6 +918,34 @@ class RecapEdit(BaseModel):
         description="The longer version behind it. Optional; the header line stands alone.",
         max_length=recap_engine.MAX_EDIT_DETAIL * 2,
     )
+
+class PromptHistoryItem(BaseModel):
+    """One exact prompt in a pane's delivery history."""
+
+    id: str = Field(description="Opaque stable id for this history entry.")
+    sequence: int = Field(description="Delivery number within this pane.")
+    text: str = Field(description="Exact prompt text, unabridged.")
+    chars: int = Field(description="Length of ``text``.")
+    at: float = Field(description="When it was delivered (epoch seconds).")
+    submitted: bool | None = Field(
+        description=(
+            "True when the agent accepted it, false when it remained in the input "
+            "box, null when delivery could not be confirmed."
+        )
+    )
+
+
+class PromptHistoryResponse(BaseModel):
+    """All prompt text still belonging to one pane, newest first."""
+
+    name: str
+    total: int = Field(description="How many prompts this pane is known to have received.")
+    available: int = Field(description="How many exact prompt records are available here.")
+    complete: bool = Field(
+        description="False only when this pane predates durable prompt-history recording."
+    )
+    items: list[PromptHistoryItem] = Field(default_factory=list)
+
 
 
 # --------------------------------------------------------------------------- #
@@ -2062,6 +2091,43 @@ async def terminal_attach(
       which is what makes dropping a screenshot work against an agent that
       cannot open one.
     * ``deliver=false`` stores and analyses without typing anything into the
+@router.get(
+    "/terminals/{name}/prompts",
+    response_model=PromptHistoryResponse,
+    summary="Every prompt sent to one terminal",
+)
+async def get_prompt_history(
+    name: str, workspace_id: str | None = None
+) -> PromptHistoryResponse:
+    """Read every exact prompt handed to this pane, newest first.
+
+    Prompt bodies live outside the workspace snapshot and are loaded only for
+    this request. That keeps the IDE's state poll and first-screen restore small
+    even when a workspace has many panes with long coding briefs.
+    """
+    term, _session = _pane_for_recap(name, workspace_id)
+    stored = await asyncio.to_thread(prompt_history.load, term.history_id)
+    entries = prompt_history.merged(stored, term.prompt_records)
+    total = max(term.prompts_sent, len(entries))
+    return PromptHistoryResponse(
+        name=term.name,
+        total=total,
+        available=len(entries),
+        complete=len(entries) >= term.prompts_sent,
+        items=[
+            PromptHistoryItem(
+                id=entry.id,
+                sequence=entry.sequence,
+                text=entry.text,
+                chars=len(entry.text),
+                at=entry.at,
+                submitted=entry.submitted,
+            )
+            for entry in reversed(entries)
+        ],
+    )
+
+
       pane, for a caller that is assembling a prompt rather than handing the
       agent a path right now. The files are on disk and referenced either way,
       so nothing is lost if the user then walks away.
