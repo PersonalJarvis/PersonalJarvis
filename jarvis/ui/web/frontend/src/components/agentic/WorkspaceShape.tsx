@@ -147,7 +147,8 @@ export function WorkspaceShape({
 }
 
 /**
- * The stepper the count is read off — the header half of this control.
+ * The stepper the count is read from or typed into — the header half of this
+ * control.
  *
  * Lives in the panel's title row rather than above the stage, so the number sits
  * on the same line as the word "Terminals" and the stage below it is the only
@@ -162,54 +163,88 @@ export function CountStepper({
   max: number;
   onChange: (next: number) => void;
 }) {
-  const set = (next: number) =>
-    onChange(Math.max(1, Math.min(max, Math.trunc(next))));
+  const [draft, setDraft] = useState(String(count));
+
+  useEffect(() => setDraft(String(count)), [count]);
+
+  const set = (next: number) => {
+    const bounded = Math.max(1, Math.min(max, Math.trunc(next)));
+    setDraft(String(bounded));
+    onChange(bounded);
+  };
+
   return (
-    <div className="flex items-center gap-0.5 rounded-control border border-border bg-background p-0.5">
-      <IconButton
-        size="sm"
-        label="Use one fewer terminal"
-        disabled={count <= 1}
-        onClick={() => set(count - 1)}
+    <div className="flex flex-col items-end gap-1.5">
+      <label
+        htmlFor="workspace-terminal-count"
+        className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
       >
-        <Minus className="h-3.5 w-3.5" />
-      </IconButton>
-      <input
-        type="number"
-        min={1}
-        max={max}
-        value={count}
-        aria-label="Number of terminals"
-        data-testid="terminal-count-value"
-        onChange={(event) =>
-          set(
-            Number.isFinite(event.currentTarget.valueAsNumber)
-              ? event.currentTarget.valueAsNumber
-              : 1,
-          )
-        }
-        /*
-         * The spin buttons the browser adds are hidden: this field already has
-         * a minus and a plus either side of it, at a size a pointer can hit, and
-         * the native pair is a third of that size and only appears on hover.
-         * Two steppers on one number is the exact duplication this control was
-         * rebuilt to remove.
-         */
-        className={
-          "h-6 w-10 border-0 bg-transparent p-0 text-center font-mono text-sm " +
-          "font-semibold tabular-nums text-foreground outline-none " +
-          "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none " +
-          "[&::-webkit-outer-spin-button]:appearance-none"
-        }
-      />
-      <IconButton
-        size="sm"
-        label="Use one more terminal"
-        disabled={count >= max}
-        onClick={() => set(count + 1)}
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </IconButton>
+        Exact count · type a number
+      </label>
+      <div className="flex h-11 items-stretch overflow-hidden rounded-control border border-border bg-background transition-colors focus-within:border-primary/70 focus-within:ring-2 focus-within:ring-primary/15">
+        <IconButton
+          label="Use one fewer terminal"
+          disabled={count <= 1}
+          onClick={() => set(count - 1)}
+          className="h-full w-11 rounded-none border-r border-border/70"
+        >
+          <Minus className="h-4 w-4" />
+        </IconButton>
+        <div className="flex min-w-[6.5rem] items-center justify-center gap-1.5 px-2">
+          <input
+            id="workspace-terminal-count"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={max}
+            value={draft}
+            aria-label="Number of terminals"
+            data-testid="terminal-count-value"
+            onFocus={(event) => event.currentTarget.select()}
+            onChange={(event) => {
+              const raw = event.currentTarget.value;
+              setDraft(raw);
+              if (
+                raw !== "" &&
+                Number.isFinite(event.currentTarget.valueAsNumber)
+              ) {
+                set(event.currentTarget.valueAsNumber);
+              }
+            }}
+            onBlur={() => {
+              if (draft === "") setDraft(String(count));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            /*
+             * The spin buttons the browser adds are hidden: this field already
+             * has accessible minus and plus controls, while the native pair is
+             * tiny and appears only on hover.
+             */
+            className={
+              "h-full min-w-0 w-12 border-0 bg-transparent p-0 text-right font-mono " +
+              "text-base font-semibold tabular-nums text-foreground outline-none " +
+              "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none " +
+              "[&::-webkit-outer-spin-button]:appearance-none"
+            }
+          />
+          <span
+            aria-hidden="true"
+            className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
+          >
+            / {max}
+          </span>
+        </div>
+        <IconButton
+          label="Use one more terminal"
+          disabled={count >= max}
+          onClick={() => set(count + 1)}
+          className="h-full w-11 rounded-none border-l border-border/70"
+        >
+          <Plus className="h-4 w-4" />
+        </IconButton>
+      </div>
     </div>
   );
 }

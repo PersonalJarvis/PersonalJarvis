@@ -526,6 +526,30 @@ describe("Agentic IDE launcher", () => {
     ).toBeNull();
   });
 
+  it("lets the exact terminal count be cleared and typed directly", async () => {
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openLayout();
+
+    const input = await screen.findByRole("spinbutton", {
+      name: /number of terminals/i,
+    });
+    fireEvent.change(input, { target: { value: "" } });
+    expect((input as HTMLInputElement).value).toBe("");
+
+    fireEvent.change(input, { target: { value: "11" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect((input as HTMLInputElement).value).toBe("11");
+    expect(
+      (
+        screen.getByRole("slider", {
+          name: /number of terminals/i,
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("11");
+  });
+
   it("builds the requested number of terminal plans", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
