@@ -141,6 +141,32 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.open).toHaveBeenCalledWith(host);
     expect(terminalHarness.observe).toHaveBeenCalledWith(host);
   });
+
+  it("waits for the area-aware grid measurement before opening the PTY", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        geometryReady={false}
+      />,
+    );
+
+    expect(terminalHarness.open).not.toHaveBeenCalled();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        geometryReady
+      />,
+    );
+
+    expect(terminalHarness.open).toHaveBeenCalled();
+  });
 });
 
 describe("pane keyboard", () => {
@@ -643,5 +669,121 @@ describe("pane start-up feedback", () => {
     });
 
     expect(screen.queryByTestId("agentic-pane-starting-T5")).toBeNull();
+  });
+});
+
+describe("renaming a pane", () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver = ResizeObserverHarness;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("offers no rename control when the owner cannot save one", () => {
+    render(
+      <AgenticTerminal
+        name="T1"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    // A pencil that opens an editor nothing can save would be worse than the
+    // plain badge it replaces.
+    expect(screen.queryByTestId("pane-rename-T1")).toBeNull();
+  });
+
+  it("saves the typed call-sign", async () => {
+    const onRename = vi.fn(async () => true);
+    render(
+      <AgenticTerminal
+        name="T1"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-rename-T1"));
+    const input = screen.getByTestId("pane-rename-input-T1") as HTMLInputElement;
+    // It opens on the current name, so a small correction is not a retype.
+    expect(input.value).toBe("T1");
+    fireEvent.change(input, { target: { value: "Frontend" } });
+    fireEvent.click(screen.getByTestId("pane-rename-save-T1"));
+
+    await act(async () => undefined);
+    expect(onRename).toHaveBeenCalledWith("Frontend");
+    expect(screen.queryByTestId("pane-rename-input-T1")).toBeNull();
+  });
+
+  it("keeps the typing when the name was refused", async () => {
+    const onRename = vi.fn(async () => false);
+    render(
+      <AgenticTerminal
+        name="T1"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-rename-T1"));
+    fireEvent.change(screen.getByTestId("pane-rename-input-T1"), {
+      target: { value: "Api" },
+    });
+    fireEvent.click(screen.getByTestId("pane-rename-save-T1"));
+
+    await act(async () => undefined);
+    // A duplicate call-sign is a name to CHANGE — throwing the typing away
+    // would make the user retype the part that was fine.
+    const input = screen.getByTestId("pane-rename-input-T1") as HTMLInputElement;
+    expect(input.value).toBe("Api");
+  });
+
+  it("closes on Escape without saving", async () => {
+    const onRename = vi.fn(async () => true);
+    render(
+      <AgenticTerminal
+        name="T1"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-rename-T1"));
+    fireEvent.keyDown(screen.getByTestId("pane-rename-input-T1"), {
+      key: "Escape",
+    });
+
+    await act(async () => undefined);
+    expect(onRename).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("pane-rename-input-T1")).toBeNull();
+  });
+
+  it("does not call the backend when the name was not changed", async () => {
+    const onRename = vi.fn(async () => true);
+    render(
+      <AgenticTerminal
+        name="T1"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-rename-T1"));
+    fireEvent.click(screen.getByTestId("pane-rename-save-T1"));
+
+    await act(async () => undefined);
+    expect(onRename).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("pane-rename-input-T1")).toBeNull();
   });
 });

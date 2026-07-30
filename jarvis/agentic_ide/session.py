@@ -201,6 +201,12 @@ def _unavailable(agent: str) -> str:
 # Nobody reaches 100 deliberately; anyone who mistypes their way past it gets a
 # sentence instead of a frozen desktop.
 MAX_TERMINALS = 100
+# How long a pane's call-sign may be. Half the workspace tab's 80, and for a
+# different reason: a workspace name is read, a call-sign is SAID — it is how a
+# user addresses one agent among several out loud, and it also has to fit in a
+# pane header that may be a quarter of a screen wide. Long enough for "Frontend
+# rewrite", short enough that it stays a name rather than a description.
+MAX_TERMINAL_NAME = 40
 # Where a pane may land when it is dragged onto another one, in the same two
 # axes the grid is built from (columns of stacked panes). "swap" is listed first
 # because it is the one a user reaches for most: two panes are the wrong way
@@ -775,17 +781,17 @@ class Terminal:
     agent: str  # "claude" | "codex"
     display_name: str  # "Claude Code"
     index: int
+    # Stable for THIS pane's lifetime and deliberately unrelated to its visible
+    # call-sign. A closed T1 and a new T1 are different panes; a renamed T1 is
+    # still the same pane. Prompt-history files use this id to preserve exactly
+    # that boundary across app restarts.
+    history_id: str = field(default_factory=lambda: uuid4().hex)
     # Where the pane sits in the grid, on TWO axes: the workspace is a
     # left-to-right list of columns, and each column is a top-to-bottom stack.
     # "Split right" opens a new column beside the anchor; "split down" adds a
     # pane to the anchor's OWN column and leaves every other column alone.
     #
     # The second axis is load-bearing. With only a row number, "split down"
-    # Stable for THIS pane's lifetime and deliberately unrelated to its visible
-    # call-sign. A closed T1 and a new T1 are different panes; a renamed T1 is
-    # still the same pane. Prompt-history files use this id to preserve exactly
-    # that boundary across app restarts.
-    history_id: str = field(default_factory=lambda: uuid4().hex)
     # could only mean "open a new row", and a row is window-wide by definition —
     # so splitting one pane squashed every other pane to half height. A full
     # split TREE (arbitrary nesting, draggable separators) is still deliberately
@@ -819,18 +825,18 @@ class Terminal:
     last_input_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
-    # When the last prompt was handed to this pane, as a wall-clock timestamp.
-    #
-    # The receipt the user is shown is built from THIS rather than from the
-    # terminal stream, and that is the whole point. A pane proves a prompt
-    # arrived by echoing it, which requires a chain of things to have gone
-    # right at one particular moment: the pane on screen, its output un-parked,
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
     prompt_records: list[prompt_history.PromptHistoryEntry] = field(
         default_factory=list, repr=False, compare=False
     )
+    # When the last prompt was handed to this pane, as a wall-clock timestamp.
+    #
+    # The receipt the user is shown is built from THIS rather than from the
+    # terminal stream, and that is the whole point. A pane proves a prompt
+    # arrived by echoing it, which requires a chain of things to have gone
+    # right at one particular moment: the pane on screen, its output un-parked,
     # its socket up, the emulator painted. Every link in that chain has failed
     # in production at least once, and each failure looks identical from the
     # user's chair — Jarvis says it sent the brief and the pane shows nothing,
@@ -1060,13 +1066,13 @@ class Terminal:
             key=self.key,
             name=self.name,
             agent=self.agent,
+            history_id=self.history_id,
             column=self.column,
             slot=self.slot,
             resume=self.resume,
             prompts_sent=self.prompts_sent,
             account=self.account,
             continuation_needed=self.resume_continuation_needed,
-            history_id=self.history_id,
         )
 
 
@@ -1104,12 +1110,24 @@ class Session:
     restored_from: str = ""
 
     def find(self, wanted: str) -> Terminal | None:
-        """Terminal by key, call-sign, or a spoken phrase containing one."""
+        """Terminal by call-sign, key, or a spoken phrase containing one.
+
+        Call-signs are tried across EVERY pane before any key is, and that
+        order is load-bearing once panes can be renamed. A pane keeps the key
+        it was opened with (it is what the running pseudo-terminal is filed
+        under), so renaming T1 to "Frontend" leaves a pane whose key is still
+        ``t1`` — and the next pane opened is free to take the call-sign T1.
+        Asking about keys first would then hand "T1" to the pane the user
+        renamed precisely so it would stop being T1.
+        """
         if not wanted:
             return None
         key = normalize(wanted)
         for term in self.terminals:
-            if normalize(term.key) == key or normalize(term.name) == key:
+            if normalize(term.name) == key:
+                return term
+        for term in self.terminals:
+            if normalize(term.key) == key:
                 return term
         matched = resolve(wanted, [t.name for t in self.terminals])
         if matched is None:
@@ -1809,6 +1827,7 @@ class Registry:
                 agent=entry.agent,
                 display_name=agent_display(entry.agent),
                 index=index,
+                history_id=entry.history_id or uuid4().hex,
                 column=entry.column,
                 slot=entry.slot,
                 resume=entry.resume,
@@ -1827,7 +1846,6 @@ class Registry:
         #
         # **The bug this fixes.** `continuation_pending` used to be raised in
         # `attach`, which is the moment a pane's process is spawned — and cold
-                history_id=entry.history_id or uuid4().hex,
         # starts are deliberately staggered (see COLD_START_LIMIT), so in a
         # workspace of a dozen panes most of them are still `pending` seconds
         # after the grid appears. Anybody pressing "Continue" in that window got
@@ -2260,6 +2278,11 @@ class Registry:
         progress every time somebody looked away, which is precisely what having
         several workspaces would otherwise cost.
 
+        A replay is valid only at the geometry that produced its cursor moves.
+        When the viewer comes back at another size, the old drawing is replaced
+        by its terminal-mode prologue and a live repaint. This is still the same
+        process and conversation; only the stale pixels are discarded.
+
         **That replay goes out on ``on_replay``, not on ``on_output``, because a
         viewer has to CLEAR its screen before drawing it.** The two are the same
         bytes and completely different instructions: live output continues a
@@ -2313,25 +2336,40 @@ class Registry:
             _watch(term, on_output, on_exit)
             term.reattached = True
             term.stopping = False
-            term.transcript.resize(cols, rows)
-            manager.resize(term.pty_id, cols, rows)
-            replay = term.replay.text()
+            geometry_changed = (term.transcript.cols, term.transcript.rows) != (
+                cols,
+                rows,
+            )
+            if geometry_changed:
+                geometry_changed = manager.resize(term.pty_id, cols, rows)
+                if geometry_changed:
+                    term.transcript.resize(cols, rows)
+            needs_repaint = term.replay.truncated
+            if geometry_changed and is_coding_agent(term.agent):
+                # A cursor-addressed TUI stream is meaningful only at the size
+                # that produced it. Replaying the old geometry after a grid
+                # re-layout leaves status rows and command fragments behind
+                # the new paint. Keep the terminal modes, drop those drawing
+                # bytes, and let the live agent rebuild one clean screen below.
+                replay = term.replay.rebase_for_resize()
+                needs_repaint = True
+            else:
+                replay = term.replay.text()
             if replay:
-                # Hand over the raw stream that drew the current screen. A
-                # coding agent's TUI is a painted surface, not a log: without
-                # this the pane comes back blank until the agent happens to
-                # repaint, which looks exactly like a dead terminal.
+                # Hand over either the stream that drew the current screen, or
+                # (after a geometry change) the terminal-mode prologue that a
+                # clean repaint must draw on. A coding agent's TUI is a painted
+                # surface, not a log: the viewer needs one of those two rebuild
+                # paths rather than an append to whatever it held before.
                 #
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
                 # a copy of it looked like.
                 await (on_replay or on_output)(replay)
-            if term.replay.truncated:
-                # The tail is all this pane has, and it no longer starts where
-                # the agent started drawing. Replaying it alone brings back the
-                # one row the agent rewrote last and empty space where its
-                # prompt box should be — see ReplayBuffer's docstring. Ask for
-                # a fresh paint instead of hoping one arrives.
+            if needs_repaint:
+                # Either the tail lost its opening frame, or its cursor moves
+                # belong to another geometry. Neither can rebuild this viewer.
+                # Ask for a fresh paint instead of hoping one arrives.
                 await self._nudge_repaint(term, cols, rows)
             logger.debug("Agentic IDE: {} re-joined a running agent", term.name)
             return term
@@ -2843,8 +2881,17 @@ class Registry:
             return False
         # The replayed screen has to follow the real one; otherwise the
         # transcript keeps wrapping at the old width.
+        if (term.transcript.cols, term.transcript.rows) == (cols, rows):
+            return True
+        if not self._manager().resize(term.pty_id, cols, rows):
+            return False
+        if is_coding_agent(term.agent):
+            # Future viewers must not replay cursor moves produced for the old
+            # grid into the new one. The live viewer already has its screen;
+            # this only starts a clean replay epoch for the next reconnect.
+            term.replay.rebase_for_resize()
         term.transcript.resize(cols, rows)
-        return self._manager().resize(term.pty_id, cols, rows)
+        return True
 
     def detach(self, key: str, workspace_id: str | None = None, viewer: Any = None) -> None:
         """Let go of a pane's viewer. The agent behind it keeps running.
@@ -3147,6 +3194,60 @@ class Registry:
             )
             return moved
 
+    async def rename_terminal(self, wanted: str, name: str) -> tuple[Session, Terminal]:
+        """Give one pane a new call-sign, without touching what runs in it.
+
+        The pane's own identity as far as its RUNNING agent is concerned is its
+        key, not its call-sign: the pseudo-terminal is filed under the key, and
+        the key is deliberately left alone here. So renaming is exactly what a
+        user expects it to be — the label changes, the agent keeps working, its
+        conversation and scrollback are untouched. The viewer reconnects (it
+        addresses the pane by call-sign) and repaints from the transcript,
+        which is the same path a workspace switch already takes.
+
+        The new call-sign has to be usable as ONE, which is what the checks are
+        about: a name nobody can say is a pane nobody can send work to.
+
+        * It must contain something to compare — ``normalize`` keeps letters
+          and digits only, so a name of pure punctuation would leave the pane
+          addressable by nothing at all.
+        * It must be free within THIS workspace, the scope a call-sign lives
+          in. Two panes answering to one name make every spoken instruction a
+          coin flip over which agent gets the work.
+
+        Searching every open workspace rather than only the front one, because
+        a custom call-sign is exactly what somebody gives a pane so they can
+        address it from anywhere — including to rename it.
+        """
+        cleaned = " ".join(name.split()).strip()
+        if not cleaned:
+            raise SessionError("Give the terminal a name.")
+        if len(cleaned) > MAX_TERMINAL_NAME:
+            raise SessionError(
+                f"Terminal names can be at most {MAX_TERMINAL_NAME} characters."
+            )
+        if not normalize(cleaned):
+            raise SessionError("Give the terminal a name with letters or numbers in it.")
+        async with self._lock:
+            found = self.find_terminal(wanted)
+            if found is None:
+                raise self._unknown_terminal(wanted)
+            session, term = found
+            if term.name == cleaned:
+                return session, term
+            if any(
+                other is not term and normalize(other.name) == normalize(cleaned)
+                for other in session.terminals
+            ):
+                raise SessionError(
+                    f"Another terminal in this workspace is already called {cleaned!r}."
+                )
+            previous = term.name
+            term.name = cleaned
+            await self._persist()
+            logger.info("Agentic IDE: renamed terminal {} to {}", previous, cleaned)
+            return session, term
+
     async def close_terminal(self, wanted: str) -> Terminal:
         """Stop one terminal's agent and remove its pane from the workspace."""
         closed, failed = await self.close_terminals([wanted])
@@ -3338,6 +3439,25 @@ class Registry:
         term.last_submit_at = term.last_prompt_at
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
+        history_entry = prompt_history.PromptHistoryEntry(
+            id=uuid4().hex,
+            sequence=term.prompts_sent,
+            text=payload,
+            at=term.last_prompt_at,
+            submitted=submitted,
+        )
+        # Memory first: even a read-only or temporarily unavailable data folder
+        # must not make a prompt disappear from the history while the pane is
+        # still open. Disk is the persistence layer, not the only copy.
+        term.prompt_records.append(history_entry)
+        try:
+            await asyncio.to_thread(prompt_history.append, term.history_id, history_entry)
+        except OSError as exc:
+            logger.warning(
+                "Agentic IDE: could not persist the prompt history for {}: {}",
+                term.name,
+                exc,
+            )
         # Somebody is driving this pane again, whatever the prompt said. Cleared
         # even when the pane did not submit the text: the instruction is sitting
         # in its input box in full, so offering to type "continue" behind it
@@ -3418,25 +3538,6 @@ class Registry:
             )
             return None
         return left_the_box
-        history_entry = prompt_history.PromptHistoryEntry(
-            id=uuid4().hex,
-            sequence=term.prompts_sent,
-            text=payload,
-            at=term.last_prompt_at,
-            submitted=submitted,
-        )
-        # Memory first: even a read-only or temporarily unavailable data folder
-        # must not make a prompt disappear from the history while the pane is
-        # still open. Disk is the persistence layer, not the only copy.
-        term.prompt_records.append(history_entry)
-        try:
-            await asyncio.to_thread(prompt_history.append, term.history_id, history_entry)
-        except OSError as exc:
-            logger.warning(
-                "Agentic IDE: could not persist the prompt history for {}: {}",
-                term.name,
-                exc,
-            )
 
     async def _await_arrival(self, term: Terminal, payload: str) -> bool:
         """Wait until the pane visibly holds ``payload``, or give up.

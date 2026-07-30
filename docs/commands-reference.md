@@ -341,6 +341,16 @@ Open one or more additional coding terminals in the open workspace, WITHOUT givi
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "spawn five new claude code terminals"
 
+## `agentic-ide-rename-terminal` — Rename an Agentic-IDE terminal
+
+Give one running terminal another call-sign without restarting its agent or losing its conversation. Use it when the user asks to rename a pane, for example 'rename T1 to Frontend'. The old call-sign must name a terminal that is already open, and the new one must be unique inside that workspace.
+
+- **Endpoint:** `PATCH /api/agentic-ide/terminals/{terminal}`
+- **Arguments:** `terminal` (string; required); `name` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "rename t1 to frontend"
+
 ## `agentic-ide-move-terminal` — Move an Agentic-IDE terminal in the grid
 
 Rearrange the open workspace: put one terminal at another one's place. Nothing is started or stopped — the panes keep their agents and their conversations, only where they are drawn changes. Use it for 'swap Mika and Nova', 'put Mika next to Nova', 'move Mika under Nova'. 'swap' exchanges the two panes and leaves the rest of the grid alone; 'left'/'right' give the moved pane its own column beside the target; 'above'/'below' stack it in the target's column. Both names must be terminals that are already open.

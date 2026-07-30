@@ -101,6 +101,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## ide
 
 - `jarvis ide close-terminals <names> --yes --dry-run` — Stop several coding agents and close their terminal panes.
+- `jarvis ide rename-terminal <name> <new_name> --dry-run` — Rename a running terminal pane without restarting its agent.
 
 ## marketplace
 

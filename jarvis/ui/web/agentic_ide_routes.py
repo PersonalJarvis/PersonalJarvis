@@ -31,6 +31,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /fanout``                     → run ONE task across several agents
   (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
+* ``PATCH  /terminals/{terminal}``       → give that pane another call-sign
+* ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
 * ``WS     /pty/{name}``                 → the pane's live terminal stream
@@ -65,9 +67,9 @@ from jarvis.agentic_ide import (
     interrupted,
     native_picker,
     notifications,
+    prompt_history,
     recap_engine,
     recents,
-    prompt_history,
     resume_store,
 )
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -82,6 +84,7 @@ from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
     MAX_PROMPT_CHARS,
+    MAX_TERMINAL_NAME,
     MAX_TERMINALS,
     MAX_WORKSPACES,
     Session,
@@ -314,6 +317,19 @@ class RenameWorkspaceRequest(BaseModel):
         min_length=1,
         max_length=80,
         description="New workspace tab name; the folder itself is unchanged.",
+    )
+
+
+class RenameTerminalRequest(BaseModel):
+    """A new call-sign for one pane."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=MAX_TERMINAL_NAME,
+        description=(
+            "New call-sign for the pane. The agent running in it is not touched — "
+            "only the name it is addressed by changes."
+        ),
     )
 
 
@@ -903,22 +919,6 @@ class LastPrompt(BaseModel):
     prompts_sent: int = Field(default=0, description="How many prompts this pane has been sent.")
 
 
-class RecapEdit(BaseModel):
-    """A recap the user is writing for one pane themselves."""
-
-    recap: str = Field(
-        description=(
-            "The header line. Empty clears a hand-written recap and hands the "
-            "pane back to the automatic one."
-        ),
-        max_length=recap_engine.MAX_EDIT_HEADLINE * 4,
-    )
-    recap_detail: str = Field(
-        default="",
-        description="The longer version behind it. Optional; the header line stands alone.",
-        max_length=recap_engine.MAX_EDIT_DETAIL * 2,
-    )
-
 class PromptHistoryItem(BaseModel):
     """One exact prompt in a pane's delivery history."""
 
@@ -946,6 +946,22 @@ class PromptHistoryResponse(BaseModel):
     )
     items: list[PromptHistoryItem] = Field(default_factory=list)
 
+
+class RecapEdit(BaseModel):
+    """A recap the user is writing for one pane themselves."""
+
+    recap: str = Field(
+        description=(
+            "The header line. Empty clears a hand-written recap and hands the "
+            "pane back to the automatic one."
+        ),
+        max_length=recap_engine.MAX_EDIT_HEADLINE * 4,
+    )
+    recap_detail: str = Field(
+        default="",
+        description="The longer version behind it. Optional; the header line stands alone.",
+        max_length=recap_engine.MAX_EDIT_DETAIL * 2,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1854,6 +1870,39 @@ async def close_terminals_by_agent(request: Request, agent: str) -> dict:
     }
 
 
+@router.patch("/terminals/{terminal}", summary="Rename one terminal")
+async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
+    """Give the pane ``terminal`` another call-sign.
+
+    Nothing is started, stopped or restarted: the agent in the pane keeps
+    working and keeps its conversation. Only the name it is addressed by
+    changes — on screen, in a spoken instruction, and in every route that takes
+    a ``{name}``.
+
+    ``404`` when no pane answers to ``name``, ``409`` when another pane in the
+    same workspace already carries the new one.
+    """
+    try:
+        session, term = await get_registry().rename_terminal(terminal, req.name)
+    except SessionError as exc:
+        message = str(exc)
+        if "already called" in message:
+            status = 409
+        elif message.startswith("No terminal called"):
+            status = 404
+        else:
+            status = 422
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {
+        "ok": True,
+        "renamed": term.name,
+        "previous": terminal,
+        "terminal": term.to_dict(),
+        "workspace_id": session.id,
+        "state": get_registry().state(),
+    }
+
+
 @router.delete(
     "/terminals/{name}",
     summary="Close one terminal",
@@ -2047,6 +2096,43 @@ async def get_last_prompt(name: str, workspace_id: str | None = None) -> LastPro
     )
 
 
+@router.get(
+    "/terminals/{name}/prompts",
+    response_model=PromptHistoryResponse,
+    summary="Every prompt sent to one terminal",
+)
+async def get_prompt_history(
+    name: str, workspace_id: str | None = None
+) -> PromptHistoryResponse:
+    """Read every exact prompt handed to this pane, newest first.
+
+    Prompt bodies live outside the workspace snapshot and are loaded only for
+    this request. That keeps the IDE's state poll and first-screen restore small
+    even when a workspace has many panes with long coding briefs.
+    """
+    term, _session = _pane_for_recap(name, workspace_id)
+    stored = await asyncio.to_thread(prompt_history.load, term.history_id)
+    entries = prompt_history.merged(stored, term.prompt_records)
+    total = max(term.prompts_sent, len(entries))
+    return PromptHistoryResponse(
+        name=term.name,
+        total=total,
+        available=len(entries),
+        complete=len(entries) >= term.prompts_sent,
+        items=[
+            PromptHistoryItem(
+                id=entry.id,
+                sequence=entry.sequence,
+                text=entry.text,
+                chars=len(entry.text),
+                at=entry.at,
+                submitted=entry.submitted,
+            )
+            for entry in reversed(entries)
+        ],
+    )
+
+
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
 async def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
@@ -2091,43 +2177,6 @@ async def terminal_attach(
       which is what makes dropping a screenshot work against an agent that
       cannot open one.
     * ``deliver=false`` stores and analyses without typing anything into the
-@router.get(
-    "/terminals/{name}/prompts",
-    response_model=PromptHistoryResponse,
-    summary="Every prompt sent to one terminal",
-)
-async def get_prompt_history(
-    name: str, workspace_id: str | None = None
-) -> PromptHistoryResponse:
-    """Read every exact prompt handed to this pane, newest first.
-
-    Prompt bodies live outside the workspace snapshot and are loaded only for
-    this request. That keeps the IDE's state poll and first-screen restore small
-    even when a workspace has many panes with long coding briefs.
-    """
-    term, _session = _pane_for_recap(name, workspace_id)
-    stored = await asyncio.to_thread(prompt_history.load, term.history_id)
-    entries = prompt_history.merged(stored, term.prompt_records)
-    total = max(term.prompts_sent, len(entries))
-    return PromptHistoryResponse(
-        name=term.name,
-        total=total,
-        available=len(entries),
-        complete=len(entries) >= term.prompts_sent,
-        items=[
-            PromptHistoryItem(
-                id=entry.id,
-                sequence=entry.sequence,
-                text=entry.text,
-                chars=len(entry.text),
-                at=entry.at,
-                submitted=entry.submitted,
-            )
-            for entry in reversed(entries)
-        ],
-    )
-
-
       pane, for a caller that is assembling a prompt rather than handing the
       agent a path right now. The files are on disk and referenced either way,
       so nothing is lost if the user then walks away.

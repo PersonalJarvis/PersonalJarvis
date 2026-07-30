@@ -837,8 +837,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "Send an instruction to the coding agent in ONE terminal. "
                 "Terminals are called T plus their place in the grid (T1, T2, "
                 "T3, left to right). Use this whenever the user tells a "
-                "terminal to do something "
-                "('tell T1 to ...', 'T2 soll ...', 'let terminal three "  # i18n-allow: quoted addressing example
+                "terminal to do something ('tell T1 to ...', "
+                "'T2 soll ...', "  # i18n-allow: quoted addressing example
+                "'let terminal three "
                 "refactor ...', 'prompt the second terminal') "
                 "— that work belongs to that agent, never to a background "
                 "worker. For SEVERAL terminals ('T1 and T2 both ...', 'let "
@@ -979,7 +980,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             ui_section="agentic-ide",
             voice_aliases={
-                "de": ("spawne ein terminal und lass es die tests fixen",),  # i18n-allow: input vocab
+                "de": (
+                    "spawne ein terminal und lass es die tests fixen",  # i18n-allow
+                ),
                 "en": ("open a terminal and have it fix the tests",),
                 "es": ("abre una terminal y que arregle las pruebas",),  # i18n-allow: input vocab
             },
@@ -1033,6 +1036,41 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "de": ("spawne fünf neue terminals",),  # i18n-allow: input vocab
                 "en": ("spawn five new claude code terminals",),
                 "es": ("abre dos terminales de codex",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-rename-terminal",
+            title="Rename an Agentic-IDE terminal",
+            description=(
+                "Give one running terminal another call-sign without restarting "
+                "its agent or losing its conversation. Use it when the user asks "
+                "to rename a pane, for example 'rename T1 to Frontend'. The old "
+                "call-sign must name a terminal that is already open, and the new "
+                "one must be unique inside that workspace."
+            ),
+            method="PATCH",
+            path="/api/agentic-ide/terminals/{terminal}",
+            params={
+                "type": "object",
+                "properties": {
+                    "terminal": _str_param(
+                        "Current call-sign of the terminal, e.g. 'T1'.",
+                        min_length=1,
+                    ),
+                    "name": _str_param(
+                        "New call-sign for the terminal, e.g. 'Frontend'.",
+                        min_length=1,
+                        max_length=40,
+                    ),
+                },
+                "required": ["terminal", "name"],
+            },
+            path_params=("terminal",),
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("benenne t1 in frontend um",),  # i18n-allow: input vocab
+                "en": ("rename t1 to frontend",),
+                "es": ("renombra t1 a frontend",),  # i18n-allow: input vocab
             },
         ),
         AppCommand(

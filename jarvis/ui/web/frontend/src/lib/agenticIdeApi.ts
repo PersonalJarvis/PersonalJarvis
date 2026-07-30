@@ -842,6 +842,32 @@ export async function moveTerminal(
   return body.state.session;
 }
 
+/**
+ * Give one pane another call-sign.
+ *
+ * Nothing is started or stopped — the agent keeps working and keeps its
+ * conversation. The pane simply answers to a different name afterwards, in the
+ * header, in a spoken instruction, and in every route that takes a name.
+ */
+export async function renameTerminal(
+  name: string,
+  newName: string,
+): Promise<SessionState> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while renaming a terminal.");
+  return body.state.session;
+}
+
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
 export async function closeTerminal(name: string): Promise<SessionState> {
   const res = await fetch(
