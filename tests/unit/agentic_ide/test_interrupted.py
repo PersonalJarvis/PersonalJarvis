@@ -14,12 +14,13 @@ a false one offers to type "continue" behind a prompt the user is still writing.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from jarvis.agentic_ide import interrupted, resume_store
+from jarvis.agentic_ide import activity, interrupted, resume_store
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 from jarvis.agentic_ide.session import Registry
@@ -122,23 +123,33 @@ async def test_a_finished_conversation_is_not_called_interrupted(
     assert interrupted.scan(registry) == []
 
 
-@pytest.mark.parametrize(
-    "screen",
-    [
-        "\r\nCooking (12s · esc to interrupt)\r\n",
-        "\r\nDo you want to continue?\r\n❯ 1. Yes\r\n",
-    ],
-)
-async def test_a_resumed_pane_already_working_or_asking_is_not_offered_continue(
-    registry: Registry,
-    tmp_path: Path,
-    existing_conversation: Any,
-    screen: str,
+async def test_a_resumed_pane_already_working_is_not_offered_continue(
+    registry: Registry, tmp_path: Path, existing_conversation: Any
 ) -> None:
-    """Active work needs no nudge; a question needs an answer, not a nudge."""
+    """Active work needs no nudge.
+
+    "Working" is a moving screen, not a phrase — `activity` deliberately stopped
+    reading what the CLI prints, so this drives the property it does read. Faking
+    it with a status line here would test a rule the product no longer has, and
+    would keep passing after that rule broke.
+    """
+    _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
+    term.last_output_at = time.time()
+
+    assert interrupted.scan(registry) == []
+
+
+async def test_a_resumed_pane_asking_a_question_is_not_offered_continue(
+    registry: Registry, tmp_path: Path, existing_conversation: Any
+) -> None:
+    """A question needs an answer, not a blind "continue".
+
+    The one place content is still consulted, and only ever to make a settled
+    pane MORE specific — so this one does belong on the screen.
+    """
     _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
     term.transcript.clear()
-    term.transcript.feed(screen)
+    term.transcript.feed("\r\nDo you want to continue?\r\n❯ 1. Yes\r\n")
 
     assert interrupted.scan(registry) == []
 
@@ -256,6 +267,10 @@ async def test_a_pane_that_never_submitted_is_reported_separately(
     # Make the screen look like the input line kept the text.
     on_output = fake_pty.spawns[-1]["on_output"]
     await on_output("pty", f"\x1b[2J\x1b[H❯ {interrupted.CONTINUE_PROMPT}\r\n")
+    # That write is what a pane RECEIVING this screen does, and it stamps the
+    # pane as having just moved. The state under test is the one after it came
+    # to rest: the text is sitting on the input line and nothing else happens.
+    term.last_output_at = time.time() - activity.STILL_S - 1
 
     report = await interrupted.continue_panes(registry)
 

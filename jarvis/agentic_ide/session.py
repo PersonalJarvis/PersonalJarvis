@@ -2501,7 +2501,15 @@ class Registry:
         term.error = ""
         term.exit_code = None
         term.started_at = time.time()
-        term.last_output_at = time.time()
+        # No output has arrived from THIS process yet, and saying otherwise is
+        # not a harmless placeholder: `activity.read_activity` falls back to
+        # "bytes arrived recently" when it has no previous screen to compare
+        # against, so a start-stamp claims the pane is working the instant it
+        # goes live. A resumed pane was then never reported as waiting to be
+        # continued, because it looked busy from the moment it came back.
+        # Cleared rather than left alone so a restarted pane cannot inherit the
+        # previous process's last output either.
+        term.last_output_at = None
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
