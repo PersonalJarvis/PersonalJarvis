@@ -6,12 +6,9 @@ import { cn } from "@/lib/utils";
 const AGENT_LOGOS: Record<string, string> = {
   claude: "/provider-logos/claude.svg",
   codex: "/provider-logos/openai.svg",
+  glm: "/agent-logos/zai.svg",
   kimi: "/agent-logos/kimi.svg",
   opencode: "/agent-logos/opencode.svg",
-};
-
-const AGENT_MONOGRAMS: Record<string, string> = {
-  glm: "GLM",
 };
 
 interface AgentMarkProps {
@@ -37,8 +34,7 @@ export function AgentMark({
 }: AgentMarkProps) {
   const [failed, setFailed] = useState(false);
   const logo = AGENT_LOGOS[agent];
-  const monogram =
-    AGENT_MONOGRAMS[agent] ?? (label.trim().slice(0, 2).toUpperCase() || "?");
+  const monogram = label.trim().slice(0, 2).toUpperCase() || "?";
   const sizeClass =
     size === "sm"
       ? "h-7 w-7 rounded-[5px]"

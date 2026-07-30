@@ -2,11 +2,12 @@
  * Allocate terminal slots by agent instead of editing every pane separately.
  * The backend still receives its existing one-entry-per-terminal plan.
  */
-import { Check, Minus, Plus, SquareTerminal } from "lucide-react";
+import { Check, Minus, Plus } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
+import { AgentMark } from "./AgentMark";
 import { Button, Select, SectionLabel } from "./controls";
 
 export interface PlannedTerminal {
@@ -264,17 +265,24 @@ export function AgentAllocation({
                   disabled={!agent.installed}
                   onClick={() => setCount(agent.name, count > 0 ? 0 : 1)}
                   className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-control border transition-colors",
+                    "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-control transition-transform active:scale-95",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40",
-                    count > 0
-                      ? "border-primary/60 bg-primary text-primary-foreground"
-                      : "border-border bg-card/60 text-muted-foreground hover:border-primary/40",
                   )}
                 >
-                  {count > 0 ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <SquareTerminal className="h-4 w-4" />
+                  <AgentMark
+                    agent={agent.name}
+                    label={agent.display_name}
+                    className={cn(
+                      "transition-colors",
+                      count > 0
+                        ? "border-primary/70 bg-primary/[0.08]"
+                        : "hover:border-primary/40",
+                    )}
+                  />
+                  {count > 0 && (
+                    <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground">
+                      <Check className="h-2.5 w-2.5 stroke-[3]" />
+                    </span>
                   )}
                 </button>
                 <div className="min-w-0">
@@ -327,16 +335,19 @@ export function AgentAllocation({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-1.5">
+              <div className="flex items-center justify-end gap-2">
                 <Button
                   variant="subtle"
-                  className="px-2 text-xs uppercase tracking-wide"
+                  className="h-10 min-w-12 px-3 text-[10px] uppercase tracking-[0.12em]"
                   disabled={!agent.installed}
                   onClick={() => commitCounts({ [agent.name]: total })}
                 >
                   {t("workspace_launcher.agents.all")}
                 </Button>
-                <div className="grid grid-cols-[2rem_3rem_2rem] items-center rounded-control border border-border bg-background">
+                <div
+                  data-testid={`allocation-stepper-${agent.name}`}
+                  className="grid grid-cols-[2.5rem_6.5rem_2.5rem] items-center overflow-hidden rounded-control border border-border bg-background shadow-inner transition-colors focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20"
+                >
                   <button
                     type="button"
                     aria-label={t("workspace_launcher.agents.decrease").replace(
@@ -345,24 +356,40 @@ export function AgentAllocation({
                     )}
                     disabled={!agent.installed || count === 0}
                     onClick={() => setCount(agent.name, count - 1)}
-                    className="flex h-8 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground active:scale-95 disabled:opacity-30"
                   >
                     <Minus className="h-3.5 w-3.5" />
                   </button>
-                  <input
-                    type="number"
-                    min={0}
-                    max={total}
-                    value={count}
-                    aria-label={t(
-                      "workspace_launcher.agents.count_for",
-                    ).replace("{0}", agent.display_name)}
-                    disabled={!agent.installed}
-                    onChange={(event) =>
-                      setCount(agent.name, Number(event.target.value))
-                    }
-                    className="h-8 min-w-0 border-x border-border bg-transparent text-center font-mono text-sm tabular-nums text-foreground outline-none focus:bg-secondary/50 disabled:opacity-40"
-                  />
+                  <label className="flex h-10 min-w-0 items-center justify-center border-x border-border bg-card/30 px-2 focus-within:bg-secondary/45">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      step={1}
+                      min={0}
+                      max={total}
+                      value={count}
+                      aria-label={t(
+                        "workspace_launcher.agents.count_for",
+                      ).replace("{0}", agent.display_name)}
+                      disabled={!agent.installed}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onChange={(event) =>
+                        setCount(
+                          agent.name,
+                          Number.isFinite(event.currentTarget.valueAsNumber)
+                            ? event.currentTarget.valueAsNumber
+                            : 0,
+                        )
+                      }
+                      className="h-10 w-10 border-0 bg-transparent p-0 text-right font-mono text-base font-semibold tabular-nums text-foreground outline-none [appearance:textfield] disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <span
+                      aria-hidden="true"
+                      className="ml-1 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
+                    >
+                      / {total}
+                    </span>
+                  </label>
                   <button
                     type="button"
                     aria-label={t("workspace_launcher.agents.increase").replace(
@@ -371,7 +398,7 @@ export function AgentAllocation({
                     )}
                     disabled={!agent.installed || count >= total}
                     onClick={() => setCount(agent.name, count + 1)}
-                    className="flex h-8 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground active:scale-95 disabled:opacity-30"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>

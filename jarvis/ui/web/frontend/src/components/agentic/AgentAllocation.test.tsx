@@ -40,6 +40,20 @@ const AGENTS: AgentStatus[] = [
     version: null,
     install_command: "npm install -g opencode-ai",
   },
+  {
+    name: "kimi",
+    display_name: "Kimi Code",
+    installed: false,
+    version: null,
+    install_command: "npm install -g @moonshot-ai/kimi-code",
+  },
+  {
+    name: "glm",
+    display_name: "GLM Coding Plan",
+    installed: false,
+    version: null,
+    install_command: null,
+  },
 ];
 
 const ACCOUNTS: AgentAccount[] = [
@@ -131,6 +145,60 @@ describe("AgentAllocation", () => {
     const agents = plan().map((pane) => pane.agent);
     expect(agents.filter((agent) => agent === "claude")).toHaveLength(10);
     expect(agents.filter((agent) => agent === "codex")).toHaveLength(7);
+  });
+
+  it("uses local product marks and keeps the selected agent logo visible", () => {
+    render(<Harness />);
+
+    const claudeMark = screen.getByTestId("agent-mark-claude");
+    expect(claudeMark.querySelector("img")?.getAttribute("src")).toBe(
+      "/provider-logos/claude.svg",
+    );
+    expect(
+      screen
+        .getByTestId("agent-mark-codex")
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("/provider-logos/openai.svg");
+    expect(
+      screen
+        .getByTestId("agent-mark-opencode")
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("/agent-logos/opencode.svg");
+    expect(
+      screen
+        .getByTestId("agent-mark-kimi")
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("/agent-logos/kimi.svg");
+    expect(
+      screen
+        .getByTestId("agent-mark-glm")
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("/agent-logos/zai.svg");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
+    expect(claudeMark.querySelector("img")).toBeTruthy();
+  });
+
+  it("presents a wide keyboard-friendly count field without native spinners", () => {
+    render(<Harness count={17} />);
+
+    const input = screen.getByRole("spinbutton", {
+      name: "Terminal count for Codex",
+    }) as HTMLInputElement;
+    expect(input.inputMode).toBe("numeric");
+    expect(input.step).toBe("1");
+    expect(input.className).toContain("[appearance:textfield]");
+    expect(input.className).toContain(
+      "[&::-webkit-inner-spin-button]:appearance-none",
+    );
+    expect(input.value).toBe("0");
+    expect(screen.getByTestId("allocation-stepper-codex").textContent).toMatch(
+      /\/\s*17/,
+    );
   });
 
   it("splits every slot evenly across installed agents", () => {
