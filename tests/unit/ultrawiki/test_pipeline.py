@@ -174,6 +174,28 @@ async def test_full_ladder_captured_to_distilled(store, tmp_path):
     assert any("What about Item 1?" in texts[0] for texts in backend.embed_calls if texts)
 
 
+async def test_pipeline_drains_legacy_tombstones_during_normal_passes(
+    store, monkeypatch
+):
+    calls: list[int] = []
+
+    async def repair(*, limit: int) -> int:
+        calls.append(limit)
+        return 2
+
+    monkeypatch.setattr(store, "repair_legacy_tombstones", repair)
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: None,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    assert await worker.run_once() == 2
+    assert calls == [5000]
+
+
 # ---------------------------------------------------------------------------
 # Unconfigured embedding slot — honest backlog
 # ---------------------------------------------------------------------------

@@ -203,6 +203,10 @@ async def test_tombstones_and_reconcile_deletes(store):
     assert (await store.counts()).total == 3
     tombstoned = await store.get_item_by_external_id("src1", "ext-0000")
     assert tombstoned["deleted_at"] is not None
+    assert tombstoned["title"] == ""
+    assert tombstoned["body_raw"] == ""
+    assert tombstoned["permalink"] == ""
+    assert tombstoned["metadata"] == {}
     assert await store.keyword_search("number0") == []
 
     # A FULL backfill that no longer yields ext-0001 tombstones it.
@@ -210,6 +214,9 @@ async def test_tombstones_and_reconcile_deletes(store):
     removed = await store.reconcile_deletes("src1", survivors)
     assert removed == 1
     assert (await store.counts()).total == 2
+    reconciled = await store.get_item_by_external_id("src1", "ext-0001")
+    assert reconciled["deleted_at"] is not None
+    assert reconciled["body_raw"] == ""
     assert await store.keyword_search("number1") == []
     assert len(await store.keyword_search("number2")) == 1
 
@@ -217,6 +224,43 @@ async def test_tombstones_and_reconcile_deletes(store):
     revived = await store.upsert_items("src1", [make_item(0)])
     assert revived.changed == 1
     assert (await store.counts()).total == 3
+    revived_row = await store.get_item_by_external_id("src1", "ext-0000")
+    assert revived_row["body_raw"] == make_item(0).body
+
+
+async def test_legacy_tombstone_repair_scrubs_payload_and_derivatives(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    [claimed] = await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1)
+    await index_keyword(store, claimed)
+    await store.add_document(
+        claimed["id"], DocType.RAW, "legacy derived document"
+    )
+
+    # Reproduce a database written by the old path: deleted_at was set while
+    # the raw payload, FTS row and document were left behind.
+    conn = await store._ensure_open()
+    await conn.execute(
+        "UPDATE uw_items SET deleted_at = ? WHERE id = ?",
+        ("2026-07-28T13:40:00Z", claimed["id"]),
+    )
+
+    assert await store.repair_legacy_tombstones(limit=1) == 1
+    repaired = await store.get_item_by_external_id("src1", "ext-0000")
+    assert repaired["deleted_at"] == "2026-07-28T13:40:00Z"
+    assert repaired["title"] == ""
+    assert repaired["body_raw"] == ""
+    assert repaired["permalink"] == ""
+    assert repaired["metadata"] == {}
+    assert await store.keyword_search("number0") == []
+    row = await store._fetchone(
+        conn,
+        "SELECT COUNT(*) AS n FROM uw_documents WHERE item_id = ?",
+        (claimed["id"],),
+    )
+    assert row["n"] == 0
+    assert await store.repair_legacy_tombstones(limit=1) == 0
+    assert await store.repair_legacy_tombstones(limit=1) == 0
 
 
 # ---------------------------------------------------------------------------

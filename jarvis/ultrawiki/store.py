@@ -572,6 +572,11 @@ class UltraStore(IdentityMixin, EventMixin):
         self._readers_unavailable = False
         self._reader_vec_loaded: set[int] = set()
         self._pool_lock = asyncio.Lock()
+        # Older builds could set deleted_at without removing searchable
+        # derivatives or the original payload. The background pipeline drains
+        # those legacy rows in bounded batches; current writes keep the
+        # invariant after one clean pass has been observed.
+        self._legacy_tombstone_repair_done = False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -1039,6 +1044,7 @@ class UltraStore(IdentityMixin, EventMixin):
                 if item.deleted:
                     if row is not None and row["deleted_at"] is None:
                         await self._purge_derived(conn, [row["id"]])
+                        await self._clear_deleted_payload(conn, [row["id"]])
                         await conn.execute(
                             "UPDATE uw_items SET deleted_at = ?, updated_at = ?"
                             " WHERE id = ?",
@@ -1145,6 +1151,66 @@ class UltraStore(IdentityMixin, EventMixin):
                 f"DELETE FROM uw_documents WHERE item_id IN ({marks})",  # noqa: S608 — placeholders only
                 chunk,
             )
+
+    async def _clear_deleted_payload(
+        self, conn: aiosqlite.Connection, item_ids: Sequence[int]
+    ) -> None:
+        """Keep only a tombstone's stable identity, never its source content."""
+        for chunk in _chunks(list(item_ids)):
+            sql = (
+                "UPDATE uw_items SET thread_key = '', author_raw = '', title = '',"  # noqa: S608
+                " body_raw = '', permalink = '', timestamp_utc = '',"
+                " areas_json = '[]', metadata_json = '{}', attempt_count = 0,"
+                " next_retry_at = NULL, last_error = NULL, reembed_pending = 0"
+                f" WHERE id IN ({_placeholders(len(chunk))})"
+            )
+            await conn.execute(sql, chunk)
+
+    async def repair_legacy_tombstones(self, *, limit: int = 5000) -> int:
+        """Scrub legacy tombstones and purge derivatives in bounded batches."""
+        if self._legacy_tombstone_repair_done:
+            return 0
+        batch_limit = min(10_000, max(1, int(limit)))
+        async with self._txn() as conn:
+            rows = await self._fetchall(
+                conn,
+                "SELECT id FROM uw_items WHERE deleted_at IS NOT NULL AND ("
+                " thread_key != '' OR author_raw != '' OR title != '' OR"
+                " body_raw != '' OR permalink != '' OR timestamp_utc != '' OR"
+                " areas_json != '[]' OR metadata_json != '{}' OR"
+                " attempt_count != 0 OR next_retry_at IS NOT NULL OR"
+                " last_error IS NOT NULL OR reembed_pending != 0) LIMIT ?",
+                (batch_limit,),
+            )
+            item_ids = [int(row["id"]) for row in rows]
+            remaining = batch_limit - len(item_ids)
+            if remaining:
+                # A partially repaired row may already have a blank payload
+                # while an old derivative remains. These code-owned tables are
+                # the three independent derivative roots on SQLite.
+                for table in ("uw_documents", "uw_events", "uw_fts"):
+                    extra = await self._fetchall(
+                        conn,
+                        f"SELECT DISTINCT d.item_id AS id FROM {table} d"  # noqa: S608
+                        " JOIN uw_items i ON i.id = d.item_id"
+                        " WHERE i.deleted_at IS NOT NULL LIMIT ?",
+                        (remaining,),
+                    )
+                    known = set(item_ids)
+                    item_ids.extend(
+                        int(row["id"])
+                        for row in extra
+                        if int(row["id"]) not in known
+                    )
+                    remaining = batch_limit - len(item_ids)
+                    if not remaining:
+                        break
+            if not item_ids:
+                self._legacy_tombstone_repair_done = True
+                return 0
+            await self._purge_derived(conn, item_ids)
+            await self._clear_deleted_payload(conn, item_ids)
+        return len(item_ids)
 
     @staticmethod
     def _item_row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
@@ -1563,6 +1629,7 @@ class UltraStore(IdentityMixin, EventMixin):
             ]
             if doomed:
                 await self._purge_derived(conn, doomed)
+                await self._clear_deleted_payload(conn, doomed)
                 for chunk in _chunks(doomed):
                     await conn.execute(
                         f"UPDATE uw_items SET deleted_at = ?, updated_at = ?"  # noqa: S608 — placeholders only
@@ -2711,6 +2778,7 @@ class PostgresStore(IdentityMixin, EventMixin):
         self._lock = asyncio.Lock()
         self._vec_state: tuple[bool, str] | None = None
         self._vec_dim: int | None = None
+        self._legacy_tombstone_repair_done = False
 
     async def _id_insert(self, conn: Any, sql: str, params: Sequence[Any]) -> int:
         """Identity-layer INSERT hook: Postgres reports the id via RETURNING."""
@@ -3272,6 +3340,7 @@ class PostgresStore(IdentityMixin, EventMixin):
                 if item.deleted:
                     if row is not None and row["deleted_at"] is None:
                         await self._purge_derived(conn, [row["id"]])
+                        await self._clear_deleted_payload(conn, [row["id"]])
                         await conn.execute(
                             "UPDATE uw_items SET deleted_at = %s, updated_at = %s"
                             " WHERE id = %s",
@@ -3355,6 +3424,64 @@ class PostgresStore(IdentityMixin, EventMixin):
             "DELETE FROM uw_documents WHERE item_id = ANY(%s)", (ids,)
         )
         await conn.execute("DELETE FROM uw_events WHERE item_id = ANY(%s)", (ids,))
+
+    async def _clear_deleted_payload(
+        self, conn: Any, item_ids: Sequence[int]
+    ) -> None:
+        ids = list(item_ids)
+        if not ids:
+            return
+        await conn.execute(
+            "UPDATE uw_items SET thread_key = '', author_raw = '', title = '',"
+            " body_raw = '', permalink = '', timestamp_utc = '',"
+            " areas_json = '[]', metadata_json = '{}', attempt_count = 0,"
+            " next_retry_at = NULL, last_error = NULL, reembed_pending = 0"
+            " WHERE id = ANY(%s)",
+            (ids,),
+        )
+
+    async def repair_legacy_tombstones(self, *, limit: int = 5000) -> int:
+        """Postgres twin of the bounded legacy-tombstone repair."""
+        if self._legacy_tombstone_repair_done:
+            return 0
+        batch_limit = min(10_000, max(1, int(limit)))
+        async with self._txn() as conn:
+            rows = await self._fetchall(
+                conn,
+                "SELECT id FROM uw_items WHERE deleted_at IS NOT NULL AND ("
+                " thread_key != '' OR author_raw != '' OR title != '' OR"
+                " body_raw != '' OR permalink != '' OR timestamp_utc != '' OR"
+                " areas_json != '[]' OR metadata_json != '{}' OR"
+                " attempt_count != 0 OR next_retry_at IS NOT NULL OR"
+                " last_error IS NOT NULL OR reembed_pending != 0) LIMIT %s",
+                (batch_limit,),
+            )
+            item_ids = [int(row["id"]) for row in rows]
+            remaining = batch_limit - len(item_ids)
+            if remaining:
+                for table in ("uw_documents", "uw_events"):
+                    extra = await self._fetchall(
+                        conn,
+                        f"SELECT DISTINCT d.item_id AS id FROM {table} d"  # noqa: S608
+                        " JOIN uw_items i ON i.id = d.item_id"
+                        " WHERE i.deleted_at IS NOT NULL LIMIT %s",
+                        (remaining,),
+                    )
+                    known = set(item_ids)
+                    item_ids.extend(
+                        int(row["id"])
+                        for row in extra
+                        if int(row["id"]) not in known
+                    )
+                    remaining = batch_limit - len(item_ids)
+                    if not remaining:
+                        break
+            if not item_ids:
+                self._legacy_tombstone_repair_done = True
+                return 0
+            await self._purge_derived(conn, item_ids)
+            await self._clear_deleted_payload(conn, item_ids)
+        return len(item_ids)
 
     @staticmethod
     def _item_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -3684,6 +3811,7 @@ class PostgresStore(IdentityMixin, EventMixin):
             ]
             if doomed:
                 await self._purge_derived(conn, doomed)
+                await self._clear_deleted_payload(conn, doomed)
                 await conn.execute(
                     "UPDATE uw_items SET deleted_at = %s, updated_at = %s"
                     " WHERE id = ANY(%s)",

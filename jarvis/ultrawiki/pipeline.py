@@ -76,6 +76,11 @@ KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
 
+#: Legacy stores may contain tombstones created before source payloads and
+#: derivatives were scrubbed. Repair enough per pass to converge promptly,
+#: while keeping every transaction bounded and paced with normal ingest work.
+LEGACY_TOMBSTONE_REPAIR_BATCH = 5000
+
 #: Items per pass of the deterministic event backfill. Bigger than the model
 #: lanes because it costs no model call, no network and no vector: it reads a
 #: distillation that is already on the row and does arithmetic on it. Bounded
@@ -487,6 +492,7 @@ class PipelineWorker:
         if not attempted or self._media_mode() == "eager":
             attempted += await self._media_pass()
         await self._promote_pass()
+        attempted += await self._legacy_tombstone_repair_pass()
         # Sample AFTER every pass, including passes that achieved nothing: a
         # lane that is refused or paused has to keep feeding its meter, or a
         # standstill would simply stop updating and read as the last healthy
@@ -495,6 +501,29 @@ class PipelineWorker:
         for name, meter in self._rate.items():
             meter.sample(now, self.processed.get(name, 0))
         return attempted
+
+    async def _legacy_tombstone_repair_pass(self) -> int:
+        """Drain payloads/derivatives left by pre-invariant tombstones."""
+        repair = getattr(self._store, "repair_legacy_tombstones", None)
+        if repair is None:
+            return 0
+        try:
+            repaired = int(
+                await repair(limit=LEGACY_TOMBSTONE_REPAIR_BATCH) or 0
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — maintenance never kills ingestion
+            log.warning(
+                "UltraWiki legacy tombstone repair failed; retrying next pass",
+                exc_info=True,
+            )
+            return 0
+        if repaired:
+            log.info(
+                "UltraWiki scrubbed %d legacy tombstone payload(s)", repaired
+            )
+        return repaired
 
     async def _reembed_is_running(self) -> bool:
         """Is a model switch rebuilding the vector space? Never raises.
