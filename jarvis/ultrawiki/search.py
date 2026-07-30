@@ -57,6 +57,7 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from jarvis.ultrawiki.types import SearchResult
 
@@ -394,6 +395,28 @@ def _configured_model(ultrawiki: Any, provider: str, defaults: dict[str, str]) -
 #: exists to prevent.
 _QUERY_VECTOR_CACHE: dict[tuple[str, str, str], list[float]] = {}
 _QUERY_VECTOR_CACHE_MAX = 256
+_QUERY_VECTOR_INFLIGHT: dict[
+    tuple[str, str, str], asyncio.Task[list[list[float]]]
+] = {}
+
+#: The exact same semantic query often arrives twice in one turn (context
+#: injection + explicit tool/UI). sqlite-vec is an exact scan on the universal
+#: SQLite floor, so two concurrent 3,072-dimensional scans made each other
+#: several times slower on the live corpus. Coalesce in-flight work and retain
+#: a tiny, short-lived result cache; it is memory-only and bounded.
+_VECTOR_RESULT_TTL_S = 10.0
+_VECTOR_RESULT_CACHE_MAX = 64
+_VECTOR_RESULT_CACHE: WeakKeyDictionary[
+    Any,
+    dict[tuple[str, str, str, str], tuple[float, tuple[list[SearchResult], str]]],
+] = WeakKeyDictionary()
+_VECTOR_RESULT_INFLIGHT: WeakKeyDictionary[
+    Any,
+    dict[
+        tuple[str, str, str, str],
+        asyncio.Task[tuple[list[SearchResult], str]],
+    ],
+] = WeakKeyDictionary()
 
 
 def _query_cache_key(provider: str, model: str, query: str) -> tuple[str, str, str]:
@@ -412,6 +435,81 @@ def _remember_query_vector(key: tuple[str, str, str], vector: list[float]) -> No
     _QUERY_VECTOR_CACHE[key] = vector
     while len(_QUERY_VECTOR_CACHE) > _QUERY_VECTOR_CACHE_MAX:
         del _QUERY_VECTOR_CACHE[next(iter(_QUERY_VECTOR_CACHE))]
+
+
+def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+    """Retrieve a detached shared task's exception after all waiters cancel."""
+    if task.cancelled():
+        return
+    task.exception()
+
+
+async def _embed_query_once(
+    key: tuple[str, str, str], backend: Any, query: str, model: str
+) -> list[list[float]]:
+    """Coalesce concurrent misses for one query embedding."""
+    task = _QUERY_VECTOR_INFLIGHT.get(key)
+    if task is None:
+        task = asyncio.create_task(
+            backend.embed([query], model=model),
+            name="ultrawiki-query-embedding",
+        )
+        _QUERY_VECTOR_INFLIGHT[key] = task
+        task.add_done_callback(_consume_task_exception)
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _QUERY_VECTOR_INFLIGHT.get(key) is task:
+            _QUERY_VECTOR_INFLIGHT.pop(key, None)
+
+
+async def _run_vector_search_once(
+    store: Any,
+    key: tuple[str, str, str, str],
+    query_vector: list[float],
+    area_id: str | None,
+) -> tuple[list[SearchResult], str]:
+    """Own one physical ANN scan and publish its short-lived result."""
+    try:
+        result = await store.vector_search(
+            query_vector, k=LEG_POOL, area_id=area_id
+        )
+        cache = _VECTOR_RESULT_CACHE.setdefault(store, {})
+        cache[key] = (time.monotonic() + _VECTOR_RESULT_TTL_S, result)
+        while len(cache) > _VECTOR_RESULT_CACHE_MAX:
+            del cache[next(iter(cache))]
+        return result
+    finally:
+        inflight = _VECTOR_RESULT_INFLIGHT.get(store)
+        current = asyncio.current_task()
+        if inflight is not None and inflight.get(key) is current:
+            inflight.pop(key, None)
+
+
+async def _vector_search_once(
+    store: Any,
+    key: tuple[str, str, str, str],
+    query_vector: list[float],
+    area_id: str | None,
+) -> tuple[list[SearchResult], str]:
+    """Serve a recent identical scan or share the one already running."""
+    cache = _VECTOR_RESULT_CACHE.setdefault(store, {})
+    cached = cache.get(key)
+    if cached is not None:
+        if cached[0] > time.monotonic():
+            cache[key] = cache.pop(key)
+            return cached[1]
+        cache.pop(key, None)
+    inflight = _VECTOR_RESULT_INFLIGHT.setdefault(store, {})
+    task = inflight.get(key)
+    if task is None:
+        task = asyncio.create_task(
+            _run_vector_search_once(store, key, query_vector, area_id),
+            name="ultrawiki-vector-search",
+        )
+        inflight[key] = task
+        task.add_done_callback(_consume_task_exception)
+    return await asyncio.shield(task)
 
 
 async def _bounded_vector_leg(
@@ -469,7 +567,9 @@ async def _vector_leg(
     if query_vector is None:
         try:
             vectors = await _timed(
-                "vector_embed_ms", factory(cfg).embed([query], model=model), sink
+                "vector_embed_ms",
+                _embed_query_once(cache_key, factory(cfg), query, model),
+                sink,
             )
         except EmbeddingError as exc:
             log.info("vector leg skipped: %s", exc)
@@ -487,9 +587,10 @@ async def _vector_leg(
         _remember_query_vector(cache_key, query_vector)
     else:
         log.debug("query vector served from the in-process cache")
+    result_key = (*cache_key, str(area_id or ""))
     results, reason = await _timed(
         "vector_ann_ms",
-        store.vector_search(query_vector, k=LEG_POOL, area_id=area_id),
+        _vector_search_once(store, result_key, query_vector, area_id),
         sink,
     )
     if reason:

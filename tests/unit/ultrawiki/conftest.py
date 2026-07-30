@@ -13,5 +13,11 @@ def _fresh_query_vector_cache():
     must never satisfy (or mask) another test's embedding path — that would
     make the suite order-dependent."""
     search_mod._QUERY_VECTOR_CACHE.clear()
+    search_mod._QUERY_VECTOR_INFLIGHT.clear()
+    search_mod._VECTOR_RESULT_CACHE.clear()
+    search_mod._VECTOR_RESULT_INFLIGHT.clear()
     yield
     search_mod._QUERY_VECTOR_CACHE.clear()
+    search_mod._QUERY_VECTOR_INFLIGHT.clear()
+    search_mod._VECTOR_RESULT_CACHE.clear()
+    search_mod._VECTOR_RESULT_INFLIGHT.clear()

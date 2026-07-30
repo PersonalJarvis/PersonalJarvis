@@ -11,6 +11,7 @@ network, no credentials, no models.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import logging
 from datetime import UTC, datetime, timedelta
@@ -1058,6 +1059,40 @@ async def test_repeated_query_embeds_only_once(store, monkeypatch):
     await hybrid_search(store, cfg, "  Alpha   CONTENT ")  # same after normalizing
 
     assert len(fake.calls) == 1
+
+
+async def test_concurrent_identical_searches_share_embedding_and_ann(monkeypatch):
+    """One UI/brain turn must not multiply the two expensive vector steps."""
+    gate = asyncio.Event()
+
+    class SlowEmbedding(FakeEmbedding):
+        async def embed(self, texts, *, model):
+            await gate.wait()
+            return await super().embed(texts, model=model)
+
+    class SlowStore(FakeStore):
+        async def vector_search(self, query_vector, k=10, *, area_id=None):
+            await asyncio.sleep(0.02)
+            return await super().vector_search(
+                query_vector, k=k, area_id=area_id
+            )
+
+    fake = SlowEmbedding()
+    register_fake_embedding(monkeypatch, fake)
+    store = SlowStore(
+        keyword_hits=[make_result(1, matched_by=("keyword",))],
+        vector_hits=[make_result(1, matched_by=("vector",))],
+    )
+    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+
+    first = asyncio.create_task(hybrid_search(store, cfg, "alpha"))
+    second = asyncio.create_task(hybrid_search(store, cfg, "alpha"))
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(first, second)
+
+    assert len(fake.calls) == 1
+    assert len(store.vector_calls) == 1
 
 
 async def test_cache_is_scoped_by_model_and_query(store, monkeypatch):
