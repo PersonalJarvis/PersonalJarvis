@@ -1470,6 +1470,15 @@ class DesktopApp:
                 return
 
             thread_id = evt.thread_id or "default"
+            # Persist the initiating turn before the reply. Older builds stored
+            # only the assistant half, producing anonymous "New Thread" rows
+            # that looked like text messages the user never sent.
+            await chat_store.add_message(
+                thread_id=thread_id,
+                role="user",
+                text=evt.text,
+                publish_event=False,
+            )
             from loguru import logger
             brain = await _await_brain_ready()
 

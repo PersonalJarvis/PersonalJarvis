@@ -244,7 +244,7 @@ async def list_conversations(
     session_store = _optional_session_store(request)
 
     items: list[ConversationSummary] = [
-        _text_thread_to_summary(t) for t in chat_store.list_threads()
+        _text_thread_to_summary(t) for t in chat_store.list_threads(include_empty=False)
     ]
     if session_store is not None:
         try:

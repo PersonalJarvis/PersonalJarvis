@@ -561,6 +561,15 @@ async def _run_headless(args) -> int:
         if evt.source_layer in ("chat", "brain:mock"):
             return
         thread_id = evt.thread_id or "default"
+        # Persist the initiating turn before the reply. Older builds stored only
+        # the assistant half, producing anonymous "New Thread" rows that looked
+        # like text messages the user never sent.
+        await chat_store.add_message(
+            thread_id=thread_id,
+            role="user",
+            text=evt.text,
+            publish_event=False,
+        )
         # The brain is built in the background (off the boot critical path); a
         # first turn that arrives before it finishes waits (bounded) for it
         # rather than erroring — the honest deferral contract.

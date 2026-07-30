@@ -100,6 +100,20 @@ async def test_list_text_only_without_session_store() -> None:
     assert [row["kind"] for row in rows] == ["text"]
 
 
+async def test_list_hides_unsent_and_assistant_only_text_threads() -> None:
+    app, store = await _make_app(with_session=False)
+    await store.create_thread(title="New Chat", thread_id="draft")
+    await store.add_message(thread_id="orphan", role="assistant", text="internal reply")
+    await store.add_message(thread_id="blank", role="user", text="   ")
+    await store.add_message(thread_id="real", role="user", text="actual text chat")
+
+    async with _client(app) as c:
+        r = await c.get("/api/chats")
+
+    assert r.status_code == 200
+    assert [row["id"] for row in r.json()] == ["real"]
+
+
 async def test_get_text_conversation_detail() -> None:
     app, store = await _make_app()
     await store.add_message(thread_id="t1", role="user", text="q")
