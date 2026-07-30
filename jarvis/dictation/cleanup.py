@@ -70,10 +70,10 @@ from dataclasses import dataclass
 #: DE-MINED again on 2026-07-30: "um" left the English table for exactly the
 #: same reason, and it was the most damaging entry of the family. It is the
 #: canonical English hesitation sound AND one of the highest-frequency German
-#: prepositions ("um fünf Uhr", "es geht um", "kümmere dich um"), so a German
+#: prepositions ("um fünf Uhr", "es geht um", "kümmere dich um"), so a German  # i18n-allow
 #: utterance tagged English lost the preposition out of the MIDDLE of the
-#: sentence: "Kümmere dich um das Update" was delivered as "Kümmere dich das
-#: Update".  # i18n-allow: verbatim German transcript under test
+#: sentence:
+#:     "Kümmere dich um das Update" -> "Kümmere dich das Update"  # i18n-allow
 #: One dropped function word there is a fraction of a percent of the text, so
 #: the destruction ceiling never fires and nothing is reported — the sentence
 #: simply arrives ungrammatical and the router acts on a mangled instruction.

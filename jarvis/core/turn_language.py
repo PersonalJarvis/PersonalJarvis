@@ -188,9 +188,10 @@ def resolve_transcript_language(reported: object, text: str) -> str:
        pin back for speech in any language at all (forensic 2026-06-10). A
        filler list applied on that word deletes function words from a sentence
        it has no business touching: German "um" is the English hesitation
-       sound, so "Kümmere dich um das Update" came back as "Kümmere dich das
-       Update" — grammatically broken, and the cleanup reported a clean success
-       (2026-07-30).  # i18n-allow: verbatim German transcript under test
+       sound, so the transcript came back grammatically broken while the
+       cleanup reported a clean success (2026-07-30)::
+
+           "Kümmere dich um das Update" -> "Kümmere dich das Update"  # i18n-allow
     3. **Ambiguous text defers to the tag.** Text too short or too neutral to
        place ("ok", a bare proper noun) leaves the provider's reading standing.
 

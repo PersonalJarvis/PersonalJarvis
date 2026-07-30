@@ -224,10 +224,11 @@ def test_cleanup_never_raises_on_a_broken_rule(
 @pytest.mark.parametrize(
     "text",
     [
-        # i18n-allow: German speech under test (§1 list #4)
-        "Kümmere dich um das Update",
-        "Erinnere mich um fünf Uhr an den Termin",
-        "Es geht um die Rechnung von gestern",
+        # German speech under test (§1 list #4). The escape is per LINE, not
+        # per block — both language gates read it that way.
+        "Kümmere dich um das Update",  # i18n-allow
+        "Erinnere mich um fünf Uhr an den Termin",  # i18n-allow
+        "Es geht um die Rechnung von gestern",  # i18n-allow
     ],
 )
 def test_german_speech_mistagged_english_keeps_its_prepositions(text: str) -> None:

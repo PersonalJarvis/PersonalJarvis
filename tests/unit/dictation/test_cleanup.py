@@ -84,8 +84,8 @@ def test_content_words_are_never_removed(text: str, language: str) -> None:
 
 def test_filler_inside_a_word_is_not_touched() -> None:
     """Whole-word matching only — "kommen" must not lose its "mm"."""
-    # i18n-allow: German fixture under test (§1 list #4)
-    text = "Wir kommen gleich, das Hemd ist da."
+    # German fixture under test (§1 list #4); escape is per line.
+    text = "Wir kommen gleich, das Hemd ist da."  # i18n-allow
     assert clean_transcript(text, language="de").text == text
 
 
@@ -117,11 +117,12 @@ def test_german_text_tagged_english_keeps_its_pronouns() -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        # i18n-allow: German fixtures under test (§1 list #4)
-        "Kümmere dich um das Update.",
-        "Erinnere mich um fünf Uhr an den Termin.",
-        "Es geht um die Rechnung von gestern.",
-        "Ich gehe um das Haus herum.",
+        # German fixtures under test (§1 list #4). The escape is per LINE, not
+        # per block — both language gates read it that way.
+        "Kümmere dich um das Update.",  # i18n-allow
+        "Erinnere mich um fünf Uhr an den Termin.",  # i18n-allow
+        "Es geht um die Rechnung von gestern.",  # i18n-allow
+        "Ich gehe um das Haus herum.",  # i18n-allow
     ],
 )
 def test_german_preposition_um_survives_an_english_tag(text: str) -> None:
@@ -129,7 +130,10 @@ def test_german_preposition_um_survives_an_english_tag(text: str) -> None:
 
     "um" is the canonical English hesitation sound and one of the most common
     German prepositions, so a German utterance tagged "English" came back
-    without it — "Kümmere dich um das Update" as "Kümmere dich das Update".
+    without it:
+
+        "Kümmere dich um das Update" -> "Kümmere dich das Update"  # i18n-allow
+
     One function word is a small fraction of the text, so the destruction
     ceiling never fired: the sentence arrived ungrammatical, reported clean,
     and the router acted on the mangled instruction.
