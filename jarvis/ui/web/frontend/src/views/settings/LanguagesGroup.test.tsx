@@ -77,13 +77,15 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     );
     // ~100 alphabetical entries put Afrikaans, Albanian, Amharic and Armenian
     // on the first screen and everything most people speak below the fold.
-    // The shortlist is ordered by speakers worldwide, so English, Chinese,
-    // Hindi and Spanish come before the A-Z band — and every one of them is
-    // still IN that band as well, which is what keeps it a convenience rather
-    // than a two-tier list.
+    // The shortcut band keeps the requested leading order, retains Hindi and
+    // Arabic at its end, and still repeats every shortcut in the complete A-Z
+    // band so the feature remains a convenience rather than a restricted list.
     const firstAll = values.indexOf("af");
     expect(firstAll).toBeGreaterThan(0);
-    for (const code of ["en", "zh", "hi", "es", "fr"]) {
+    expect(values.slice(1, 5)).toEqual(["en", "de", "es", "zh"]);
+    const commonBand = values.slice(1, firstAll);
+    expect(commonBand.slice(-2)).toEqual(["hi", "ar"]);
+    for (const code of ["en", "de", "es", "zh", "fr", "hi", "ar"]) {
       expect(values.indexOf(code)).toBeLessThan(firstAll);
       expect(values.lastIndexOf(code)).toBeGreaterThan(firstAll);
     }

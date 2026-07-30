@@ -30,12 +30,11 @@ export interface LanguageSelectProps {
  * someone choose one had a native `<select>`, where the list arrives as an
  * unstyled operating-system widget with no search — so finding Japanese meant
  * scrolling past ninety entries, and the first screenful was Afrikaans,
- * Albanian, Amharic, Armenian. The shortlist is ordered by speakers worldwide
- * with the user's own interface language pulled to the front, so it is about
- * the person holding the app rather than a preference written into the source
- * (§3). Nothing is hidden: every language is still in the list below it, and
- * typing searches the translated name, the language's own name, the English
- * name, and the code.
+ * Albanian, Amharic, Armenian. The shortlist has a stable curated order and
+ * appends the user's interface language or saved choice when necessary.
+ * Nothing is hidden: every language is still in the list below it, and typing
+ * searches the translated name, the language's own name, the English name, and
+ * the code.
  */
 export function LanguageSelect({
   value,

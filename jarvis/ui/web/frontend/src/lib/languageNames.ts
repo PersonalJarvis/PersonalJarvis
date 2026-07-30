@@ -43,32 +43,29 @@ const FALLBACK_NAMES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The languages most people on earth speak, most-spoken first.
+ * Curated order for the short language band shown above the complete list.
  *
- * Ordered by total speakers worldwide — an outside fact about the planet, not
- * about whoever happens to maintain this repo (§3: the maintainer's own
- * languages are never the baseline). It exists because scrolling an
- * alphabetical ~100-row list past Afrikaans, Albanian, Amharic and Armenian to
- * reach English is a worse first screen than showing the handful of entries a
- * random downloader is most likely to want.
- *
- * It only ever REORDERS: every code the backend serves stays reachable in the
- * full list below, and the user's own interface language is put ahead of this
- * ranking at build time, so a Hungarian UI leads with Hungarian.
+ * The product's three interface languages lead, followed by Chinese and other
+ * frequently selected European languages. Hindi and Arabic remain available
+ * at the end of the shortcut band, and every backend language is still present
+ * in the complete alphabetical list below it.
  */
 export const COMMON_LANGUAGE_CODES: readonly string[] = [
   "en",
-  "zh",
-  "hi",
-  "es",
-  "ar",
-  "fr",
-  "bn",
-  "pt",
-  "ru",
-  "ur",
-  "id",
   "de",
+  "es",
+  "zh",
+  "fr",
+  "it",
+  "pt",
+  "nl",
+  "pl",
+  "sv",
+  "no",
+  "da",
+  "fi",
+  "hi",
+  "ar",
 ];
 
 // One instance per UI language: constructing an Intl formatter is not free, and
@@ -223,10 +220,10 @@ export interface LanguageOptionGroup {
  * the picker draws: the lead entry ("auto"), a short most-likely band, and the
  * complete alphabetical list.
  *
- * `preferred` is the user's interface language — it heads the common band, so
- * the shortlist is about the person using the app, not about a ranking baked
- * into the source. `keepInCommon` (the currently stored value) is pulled up too,
- * so a saved choice is never a scroll away from where it was picked.
+ * `preferred` is the user's interface language and `keepInCommon` is the
+ * currently stored value. Either is appended when it is not already in the
+ * curated band, so a language outside the shortcuts stays easy to reach without
+ * changing the fixed leading order.
  *
  * Nothing is hidden: every language appears in the `all` band as well, which is
  * what makes the shortlist a convenience rather than a two-tier list.
@@ -250,11 +247,10 @@ export function groupedLanguageOptions(
     .filter((c) => c === "auto")
     .map((code) => decorate(code, languageName(code, uiLanguage, autoLabel)));
 
-  // Order inside the shortlist: the interface language, then the saved pick,
-  // then the world ranking — de-duplicated, and never a code the backend does
-  // not actually accept.
+  // Keep the curated leading order stable, then append the interface language
+  // and saved pick when needed. Never add a code the backend does not accept.
   const commonCodes: string[] = [];
-  for (const code of [preferred, keepInCommon, ...COMMON_LANGUAGE_CODES]) {
+  for (const code of [...COMMON_LANGUAGE_CODES, preferred, keepInCommon]) {
     if (!code || code === "auto") continue;
     if (!served.has(code)) continue;
     if (commonCodes.includes(code)) continue;
