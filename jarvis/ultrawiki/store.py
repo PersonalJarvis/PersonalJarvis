@@ -717,9 +717,11 @@ class UltraStore(IdentityMixin, EventMixin):
         assert self._conn is not None
         return self._conn
 
-    #: Two pooled readers cover the concurrent search legs (keyword ‖ vector)
-    #: without spawning a thread per query.
-    _READ_POOL_SIZE = 2
+    #: Four pooled readers cover the concurrent search legs (keyword, vector,
+    #: events and term signals) without spawning a thread per query. With two,
+    #: the signal query regularly queued behind a multi-second sqlite-vec scan
+    #: on the live corpus, making a cheap keyword fallback wait for semantics.
+    _READ_POOL_SIZE = 4
 
     async def _read_conn(self) -> aiosqlite.Connection:
         """A pooled read-only connection for the search legs.
@@ -2297,9 +2299,9 @@ class UltraStore(IdentityMixin, EventMixin):
         winner_rowids = [int(row["fts_rowid"]) for row in rows]
         snippet_rows = await self._fetchall(
             conn,
-            "SELECT rowid AS fts_rowid,"
+            "SELECT rowid AS fts_rowid,"  # noqa: S608 — placeholder marks only
             " snippet(uw_fts, 2, '', '', '…', 32) AS snip"
-            " FROM uw_fts WHERE uw_fts MATCH ?"  # noqa: S608 — placeholder marks only
+            " FROM uw_fts WHERE uw_fts MATCH ?"
             f" AND rowid IN ({_placeholders(len(winner_rowids))})",
             [match_expr, *winner_rowids],
         )
