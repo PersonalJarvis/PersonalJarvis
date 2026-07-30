@@ -11,8 +11,7 @@
    it reads as somebody else's chrome bolted onto a matte-black app, and it
    was the single loudest non-theme surface left on screen. This makes every
    scroll container in the app agree: a thin dark thumb floating on the
-   content, no track, no buttons. Individual surfaces still opt out
-   (.agentic-terminal-host below, PaneScrollbar) — a class beats `*`. */
+   content, no track, no buttons. */
 * {
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
@@ -66,23 +65,22 @@
   display: none;
 }
 
-/* Agentic IDE panes never show the BROWSER's scroll track. It is permanently
-   on screen down the side of every pane in the grid, and it is powered by the
-   xterm viewport, which a full-screen CLI like Claude Code leaves empty
-   because it runs on the alternate screen and keeps its history in its own
-   process. The pane draws its own hover-only bar instead (PaneScrollbar),
-   which can also drive a full-screen CLI; the wheel keeps reaching whichever
-   side owns the screen either way.
-
-   Hiding it here rather than switching the viewport to `overflow: hidden` is
-   deliberate: xterm still needs a scrollable viewport for the wheel itself.
-   Keep this top-level — xterm creates the viewport at runtime, so Tailwind
-   would purge a rule for it out of an @layer. */
+/* Agentic IDE scroll ownership is explicit. A normal xterm buffer exposes its
+   exact native scrollback. A full-screen application owns the alternate
+   buffer and mouse wheel, so its inert browser track is hidden while xterm
+   continues relaying wheel reports to the application. `data-scroll-owner`
+   is synchronized in terminalScrollSurface.ts from xterm's real parser state.
+   Keep these rules top-level because xterm creates the viewport at runtime. */
 .agentic-terminal-host .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+.agentic-terminal-host[data-scroll-owner="application"] .xterm-viewport {
   scrollbar-width: none;
 }
 
-.agentic-terminal-host .xterm-viewport::-webkit-scrollbar {
+.agentic-terminal-host[data-scroll-owner="application"]
+  .xterm-viewport::-webkit-scrollbar {
   width: 0;
   height: 0;
 }

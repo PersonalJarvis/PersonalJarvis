@@ -90,7 +90,6 @@ import {
   clearTerminalRecap,
   fetchTerminalRecaps,
   refreshTerminalRecap,
-  renameTerminal,
   setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
@@ -100,7 +99,6 @@ import {
   type PaneNotification,
   type SessionState,
   type TerminalRecap,
-  type TerminalState,
 } from "@/lib/agenticIdeApi";
 
 interface AgenticGridProps {
@@ -401,23 +399,6 @@ function writeStored(key: string, value: string): void {
  */
 function takesPrompts(term: { accepts_prompts?: boolean }): boolean {
   return term.accepts_prompts !== false;
-}
-
-/**
- * The same map with one pane's entry filed under its new call-sign.
- *
- * This grid keys a pane's UI state (its status, its recap, its restart token)
- * by call-sign, which is the right key right up until a pane is renamed. An
- * untouched map would leave that state stranded under a name nothing looks up
- * any more, and the pane would come back blank for no reason a user could see.
- *
- * Returns the map unchanged when there is nothing filed under `from`, so a
- * rename cannot churn state that was never there.
- */
-function rekey<T>(map: Record<string, T>, from: string, to: string): Record<string, T> {
-  if (!(from in map)) return map;
-  const { [from]: value, ...rest } = map;
-  return { ...rest, [to]: value };
 }
 
 function storedAppearance(): TerminalAppearance | null {
@@ -1069,68 +1050,6 @@ export function AgenticGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump]);
 
-  /**
-   * Give one pane another call-sign.
-   *
-   * The backend changes a label and nothing else — the agent keeps running and
-   * keeps its conversation. This side has more to do than redraw, because a
-   * call-sign is the key half this grid files a pane's UI state under: which
-   * pane the prompt bar types into, which one is maximized, which are selected,
-   * what each is doing. Every one of those maps is carried across to the new
-   * name here rather than left to expire, since a pane that loses its focus,
-   * its maximized state and its status line the moment it is renamed reads as a
-   * rename that restarted something.
-   *
-   * `knownPanes` is carried too: it is what tells a genuinely NEW pane apart
-   * from one that was already here, and without this a rename would announce
-   * the pane as freshly opened.
-   *
-   * Answers whether the name was taken, so the editor can stay open on a
-   * refusal (a duplicate call-sign) with the text still in it.
-   */
-  const renamePane = useCallback(
-    async (pane: TerminalState, wanted: string): Promise<boolean> => {
-      const from = pane.name;
-      const cleaned = wanted.trim();
-      if (!cleaned || cleaned === from) return true;
-      setWorking(true);
-      try {
-        const next = await renameTerminal(from, cleaned);
-        // The name the backend really settled on, read back off the pane's key
-        // rather than assumed from the input — the key is what survives a
-        // rename, which is exactly why it is the thing to look the pane up by.
-        const to =
-          next.terminals.find((term) => term.key === pane.key)?.name ?? cleaned;
-        setStatuses((current) => rekey(current, from, to));
-        setRecaps((current) => rekey(current, from, to));
-        setRestartTokens((current) => rekey(current, from, to));
-        setTarget((current) => (current === from ? to : current));
-        setMaximized((current) => (current === from ? to : current));
-        setPendingClose((current) => (current === from ? to : current));
-        setSelectedTerminals((current) => {
-          if (!current.has(from)) return current;
-          const set = new Set(current);
-          set.delete(from);
-          set.add(to);
-          return set;
-        });
-        const known = knownPanes.current;
-        if (known?.has(from)) {
-          known.delete(from);
-          known.add(to);
-        }
-        onSessionChanged?.(next);
-        return true;
-      } catch (error) {
-        pushToast("error", (error as Error).message);
-        return false;
-      } finally {
-        setWorking(false);
-      }
-    },
-    [onSessionChanged, pushToast],
-  );
-
   /** Where the bell's "jump to pane" goes — here, or via the view for a tab. */
   const jumpToNotification = useCallback(
     (entry: PaneNotification) => {
@@ -1690,7 +1609,6 @@ export function AgenticGrid({
                 promptCount={term.prompts_sent}
                 appearance={appearance}
                 fontSize={fontSize}
-                geometryReady={gridWidth > 0 && gridHeight > 0}
                 focused={target === term.name}
                 maximized={isMaximized}
                 layoutBusy={layoutBusy}
@@ -1704,7 +1622,6 @@ export function AgenticGrid({
                   setMaximized((current) => (current === term.name ? null : term.name))
                 }
                 onSplit={(direction, agent) => void split(term.name, direction, agent)}
-                onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
                 onAttachError={(message) => pushToast("error", message)}
                 // Picked up by its header, put down on another pane. Undefined

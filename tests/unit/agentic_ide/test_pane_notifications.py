@@ -312,16 +312,13 @@ async def test_a_real_pane_finishing_files_one_entry(registry: Registry, tmp_pat
 
 
 # ------------------------------------------------------------------- reading
-async def test_the_interrupt_hint_is_what_marks_a_pane_busy(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """The one signal every coding TUI draws while — and only while — it works."""
-    _session, term = await _pane(registry, tmp_path)
-
-    _draw(term, BUSY_SCREEN)
-    assert read_activity(term) == "working"
-
-
+# There is deliberately no test here that a BUSY-looking screen reads as
+# working: that is the rule the rewrite removed, and it is pinned the other way
+# round by `test_movement_is_the_only_thing_that_counts` above. The one that
+# used to sit here asserted it, and passed for a reason that had nothing to do
+# with its name — attaching a pane stamped `last_output_at` with the wall clock,
+# so the fallback in `_moving` called every freshly-attached pane busy no matter
+# what was on its screen. Fixing that stamp is what exposed it.
 async def test_a_pane_at_its_prompt_reads_as_waiting(registry: Registry, tmp_path: Path) -> None:
     _session, term = await _pane(registry, tmp_path)
 

@@ -9,9 +9,8 @@
  * 2. Appearance and font size are applied to the LIVE instance in their own
  *    effects. Rebuilding the terminal when the user flips to dark mode would
  *    tear down the WebSocket, which kills the agent running behind it and
- *    loses the whole session. So the connect effect depends on pane identity,
- *    restart intent and one-way initial geometry readiness — never live
- *    appearance state.
+ *    loses the whole session. So the connect effect depends on the pane key
+ *    alone.
  *
  * ## Why this pane is configured the way it is
  *
@@ -50,14 +49,12 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import {
   AlertCircle,
-  Check,
   Circle,
   Columns2,
   Loader2,
   Maximize2,
   Minimize2,
   Paperclip,
-  Pencil,
   Rows2,
   RotateCcw,
   X,
@@ -116,13 +113,6 @@ import { PromptHistoryButton } from "./PromptHistoryButton";
  * the user long since watched play out.
  */
 const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
-
-/**
- * How long a call-sign may be — the same cap the backend enforces
- * (`MAX_TERMINAL_NAME`), so the field stops where the save would have failed
- * rather than letting somebody type a name that comes back rejected.
- */
-const MAX_TERMINAL_NAME = 40;
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -215,21 +205,12 @@ interface AgenticTerminalProps {
    * Which subscription this pane runs on ("Work seat"), when that is worth
    * saying. Undefined for everyone with a single login — the header must not
    * grow a badge that answers a question the user does not have.
-   */
+  */
   accountLabel?: string | null;
   /** Number shown beside the pane header's prompt-history icon. */
   promptCount?: number;
   appearance: TerminalAppearance;
   fontSize: number;
-  /**
-   * Has the grid measured the pane's final opening geometry?
-   *
-   * Area-aware layouts cannot know their band count until the container has a
-   * height. Opening the PTY during the width-only first pass attaches it at one
-   * size and immediately moves it to another, while its replay is still being
-   * parsed. Omitted for standalone uses, which already render at a fixed size.
-   */
-  geometryReady?: boolean;
   /** Highlight this pane as the prompt target. */
   focused?: boolean;
   onFocus?: () => void;
@@ -249,15 +230,6 @@ interface AgenticTerminalProps {
    * choose, so the split buttons act immediately instead of opening a menu.
    */
   agents?: SplitAgentChoice[];
-  /**
-   * Give this pane another call-sign.
-   *
-   * Answers whether the name was accepted, so the editor can stay open with the
-   * text still in it when the workspace already has a pane by that name.
-   * Omitted, the header shows no rename control at all rather than one that
-   * would do nothing.
-   */
-  onRename?: (name: string) => Promise<boolean>;
   /** Close this pane (the caller asks for confirmation first). */
   onClose?: () => void;
   /** Disable the split buttons — the workspace is at its terminal limit. */
@@ -308,13 +280,10 @@ export function AgenticTerminal({
   displayName,
   recap,
   recapDetail,
-  recapMeta,
-  recapActions,
   accountLabel,
   promptCount = 0,
   appearance,
   fontSize,
-  geometryReady = true,
   focused = false,
   onFocus,
   onStatus,
@@ -322,7 +291,6 @@ export function AgenticTerminal({
   onToggleMaximize,
   onSplit,
   agents,
-  onRename,
   onClose,
   splitDisabled = false,
   onAttachError,
@@ -400,7 +368,6 @@ export function AgenticTerminal({
   layoutBusyRef.current = layoutBusy;
 
   useEffect(() => {
-    if (!geometryReady) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -966,7 +933,7 @@ export function AgenticTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
-  }, [name, restartToken, geometryReady]);
+  }, [name, restartToken]);
 
   // Live restyle — no reconnect, so the running agent is untouched. The canvas
   // renderer caches rendered glyphs per colour in a texture atlas, so a theme
@@ -1155,8 +1122,6 @@ export function AgenticTerminal({
         displayName={displayName}
         recap={recap}
         recapDetail={recapDetail}
-        recapMeta={recapMeta}
-        recapActions={recapActions}
         accountLabel={accountLabel}
         promptCount={promptCount}
         appearance={appearance}
@@ -1165,7 +1130,6 @@ export function AgenticTerminal({
         onToggleMaximize={onToggleMaximize}
         onSplit={onSplit}
         agents={agents}
-        onRename={onRename}
         onClose={onClose}
         splitDisabled={splitDisabled}
       />
@@ -1289,7 +1253,6 @@ function PaneHeader({
   onToggleMaximize,
   onSplit,
   agents,
-  onRename,
   onClose,
   splitDisabled,
   dead,
@@ -1312,7 +1275,6 @@ function PaneHeader({
   onToggleMaximize?: () => void;
   onSplit?: (direction: SplitDirection, agent?: string) => void;
   agents?: SplitAgentChoice[];
-  onRename?: (name: string) => Promise<boolean>;
   onClose?: () => void;
   splitDisabled: boolean;
   /** The agent in this pane has exited or failed — offer to start it again. */
@@ -1325,26 +1287,6 @@ function PaneHeader({
   const light = appearance === "light";
   // Which split button opened the CLI picker, if any.
   const [picking, setPicking] = useState<SplitDirection | null>(null);
-  // The call-sign editor: null while the badge is just a badge, otherwise the
-  // text being typed. Empty string is a real state (the field was cleared), so
-  // "is it open" cannot be read off the text — hence null rather than "".
-  const [draft, setDraft] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const commitRename = async () => {
-    const wanted = (draft ?? "").trim();
-    if (!wanted || wanted === name) {
-      setDraft(null);
-      return;
-    }
-    setSaving(true);
-    // Kept open on a refusal — a duplicate call-sign is a name to CHANGE, and
-    // throwing the typing away would make the user retype the part that was
-    // fine. The grid says what went wrong.
-    const accepted = await onRename?.(wanted);
-    setSaving(false);
-    if (accepted !== false) setDraft(null);
-  };
 
   // With one installed CLI there is nothing to pick, so the button splits
   // straight away — a menu with a single entry is a click tax, not a choice.
@@ -1397,115 +1339,24 @@ function PaneHeader({
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {draft !== null ? (
-          /*
-           * The call-sign, being typed.
-           *
-           * A form rather than a bare input so Enter saves the way it does in
-           * every other name field in the app, and Escape closes it — the two
-           * keys somebody renaming a pane will reach for without looking.
-           */
-          <form
-            className="flex shrink-0 items-center gap-1"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void commitRename();
-            }}
-          >
-            <input
-              autoFocus
-              value={draft}
-              maxLength={MAX_TERMINAL_NAME}
-              disabled={saving}
-              aria-label={`Rename ${name}`}
-              data-testid={`pane-rename-input-${name}`}
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setDraft(null);
-                // The pane underneath is a live terminal listening for keys.
-                // Without this, typing a name also types into the agent.
-                event.stopPropagation();
-              }}
-              className={cn(
-                "w-32 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight outline-none",
-                "border border-primary/50 focus:border-primary disabled:opacity-60",
-              )}
-              style={{
-                color: light ? "#2b2b33" : "#e8e8ec",
-                background: light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.06)",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={saving || !draft.trim()}
-              aria-label={`Save name for ${name}`}
-              data-testid={`pane-rename-save-${name}`}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-primary hover:bg-primary/15 disabled:opacity-40"
-            >
-              {saving ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Check className="h-3 w-3" />
-              )}
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              aria-label={`Cancel renaming ${name}`}
-              onClick={() => setDraft(null)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </form>
-        ) : (
-          <>
-            <span
-              // Double-click is the gesture every tab strip and file manager
-              // already uses for "rename this", so it is offered here too — but
-              // it is never the only way in, because nothing on screen advertises
-              // it. The pencil beside it is what makes the feature findable.
-              onDoubleClick={onRename ? () => setDraft(name) : undefined}
-              title={onRename ? `${name} — double-click to rename` : undefined}
-              className={cn(
-                "shrink-0 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
-                focused ? "bg-primary/20 text-primary" : "",
-              )}
-              style={
-                focused
-                  ? undefined
-                  : {
-                      color: light ? "#2b2b33" : "#e8e8ec",
-                      background: light
-                        ? "rgba(0,0,0,0.05)"
-                        : "rgba(255,255,255,0.06)",
-                    }
-              }
-            >
-              {name}
-            </span>
-            {onRename && (
-              <button
-                type="button"
-                aria-label={`Rename ${name}`}
-                title={`Rename ${name}`}
-                data-testid={`pane-rename-${name}`}
-                onClick={() => setDraft(name)}
-                onMouseDown={(event) => event.stopPropagation()}
-                className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-opacity",
-                  "opacity-0 focus-visible:opacity-100 group-hover/header:opacity-100",
-                  light
-                    ? "text-[#6b6b73] hover:bg-black/10"
-                    : "text-[#9a9aa5] hover:bg-white/10",
-                )}
-              >
-                <Pencil className="h-3 w-3" />
-              </button>
-            )}
-          </>
-        )}
+        <span
+          className={cn(
+            "shrink-0 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
+            focused ? "bg-primary/20 text-primary" : "",
+          )}
+          style={
+            focused
+              ? undefined
+              : {
+                  color: light ? "#2b2b33" : "#e8e8ec",
+                  background: light
+                    ? "rgba(0,0,0,0.05)"
+                    : "rgba(255,255,255,0.06)",
+                }
+          }
+        >
+          {name}
+        </span>
         <PaneRecap
           name={name}
           displayName={displayName}

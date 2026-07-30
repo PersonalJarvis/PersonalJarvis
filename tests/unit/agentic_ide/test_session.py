@@ -281,14 +281,12 @@ async def test_coming_back_rejoins_the_running_agent_and_replays_its_screen(
     async def _capture(text: str) -> None:
         seen.append(text)
 
-    fake_pty.resizes.clear()
-    back = await registry.attach(term.name, 80, 24, _capture, _noop_exit)
+    back = await registry.attach(term.name, 100, 30, _capture, _noop_exit)
 
     assert back.pty_id == original_pty, "the same agent process must be re-joined"
     assert len(fake_pty.spawns) == spawns_before, "nothing may be respawned"
     assert back.reattached is True
     assert "building…" in "".join(seen), "the screen must come back with the pane"
-    assert fake_pty.resizes == [], "re-joining at the current size must not redraw it"
 
 
 async def test_a_pane_whose_replay_lost_its_start_asks_the_agent_to_repaint(
@@ -321,37 +319,27 @@ async def test_a_pane_whose_replay_lost_its_start_asks_the_agent_to_repaint(
     assert sizes[-1] == (100, 30), "the pane must be left at the size it really is"
 
 
-async def test_a_geometry_change_rebases_an_intact_replay_and_repaints(
+async def test_an_intact_replay_leaves_the_agent_alone(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """Cursor moves recorded at one size must never be replayed at another."""
+    """No nudge when the tail is whole — it already rebuilds the screen.
+
+    The redraw is cheap but not free, and it is the common case that must stay
+    untouched: a pane that printed less than its replay budget comes back from
+    its own bytes.
+    """
     session = await _open(registry, tmp_path, [{"agent": "claude"}])
     term = session.terminals[0]
     await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
     pty = term.pty_id
-    await fake_pty.emit(pty, "\x1b[?1049h\x1b[32mOLD STATUS ROW\x1b[0m")
+    await fake_pty.emit(pty, "\x1b[32mbuilding…\x1b[0m")
     registry.detach(term.key, session.id)
 
-    replayed: list[str] = []
-
-    async def _capture_replay(text: str) -> None:
-        replayed.append(text)
-
     fake_pty.resizes.clear()
-    await registry.attach(
-        term.name,
-        100,
-        30,
-        _noop_output,
-        _noop_exit,
-        on_replay=_capture_replay,
-    )
+    await registry.attach(term.name, 100, 30, _noop_output, _noop_exit)
 
     sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
-    restored = "".join(replayed)
-    assert "OLD STATUS ROW" not in restored
-    assert "\x1b[?1049h" in restored, "alternate-screen ownership must survive"
-    assert sizes == [(100, 30), (100, 29), (100, 30)]
+    assert sizes == [(100, 30)], "an intact replay must not cost a repaint"
 
 
 async def test_closing_a_workspace_stops_only_its_own_agents(
@@ -548,8 +536,8 @@ async def test_a_displaced_viewer_cannot_resize_the_pane_it_lost(
     assert fake_pty.resizes == [], "a displaced viewer must not move the agent's screen"
 
     # The viewer that actually holds the pane still can.
-    assert registry.resize(term.key, 201, 50, viewer=second_viewer) is True
-    assert fake_pty.resizes == [(term.pty_id, 201, 50)]
+    assert registry.resize(term.key, 200, 50, viewer=second_viewer) is True
+    assert fake_pty.resizes == [(term.pty_id, 200, 50)]
 
 
 async def test_an_internal_resize_needs_no_viewer(
@@ -566,16 +554,3 @@ async def test_an_internal_resize_needs_no_viewer(
 
     assert registry.resize(term.key, 120, 40) is True
     assert fake_pty.resizes == [(term.pty_id, 120, 40)]
-
-
-async def test_a_duplicate_resize_does_not_make_the_tui_repaint(
-    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
-) -> None:
-    """The socket handshake already applied this size; its echo is a no-op."""
-    await _open(registry, tmp_path, [{"agent": "claude"}])
-    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
-    term = registry.session.terminals[0]
-    fake_pty.resizes.clear()
-
-    assert registry.resize(term.key, 80, 24) is True
-    assert fake_pty.resizes == []

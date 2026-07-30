@@ -39,7 +39,6 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeTerminals: vi.fn(),
   composePrompt: vi.fn(),
   moveTerminal: vi.fn(),
-  renameTerminal: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
   // doing. Resolves empty by default; the recap tests give it real rows.
   fetchTerminalRecaps: vi.fn(async () => ({
@@ -100,7 +99,6 @@ vi.mock("./AgenticTerminal", () => ({
     agents,
     onToggleMaximize,
     onSplit,
-    onRename,
     onClose,
     onArrangeStart,
     arranging,
@@ -116,7 +114,6 @@ vi.mock("./AgenticTerminal", () => ({
     agents?: Array<{ name: string }>;
     onToggleMaximize?: () => void;
     onSplit?: (direction: "right" | "down", agent?: string) => void;
-    onRename?: (name: string) => Promise<boolean>;
     onClose?: () => void;
     onArrangeStart?: (event: PointerEventLike) => void;
     arranging?: boolean;
@@ -167,14 +164,6 @@ vi.mock("./AgenticTerminal", () => ({
         onClick={() => onSplit?.("down", "codex")}
       >
         down as codex
-      </button>
-      {/* The real editor lives in the pane header; here it stands for "the user
-          typed a new call-sign and pressed Save". */}
-      <button
-        data-testid={`pane-rename-${name}`}
-        onClick={() => void onRename?.("Frontend")}
-      >
-        rename
       </button>
       <button data-testid={`pane-close-${name}`} onClick={onClose}>
         close
@@ -1982,80 +1971,5 @@ describe("panes that appear from outside the grid", () => {
     expect(screen.getByTestId("pane-cell-T1").className).not.toContain("ring-2");
 
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
-  });
-});
-
-describe("renaming a pane", () => {
-  /** The workspace as it comes back once "Mika" has become "Frontend". */
-  const RENAMED = (() => {
-    const next = sessionWith([
-      ["Frontend", 0],
-      ["Nova", 1],
-    ]);
-    // The key is what survives a rename — it is what the running terminal is
-    // filed under — so the answer keeps Mika's.
-    next.terminals[0] = { ...next.terminals[0], key: "mika" };
-    return next;
-  })();
-
-  it("asks the backend and redraws from its answer", async () => {
-    vi.mocked(api.renameTerminal).mockResolvedValue(RENAMED);
-    const { onSessionChanged } = renderGrid();
-
-    fireEvent.click(screen.getByTestId("pane-rename-Mika"));
-
-    await waitFor(() =>
-      expect(api.renameTerminal).toHaveBeenCalledWith("Mika", "Frontend"),
-    );
-    expect(onSessionChanged).toHaveBeenCalledWith(RENAMED);
-  });
-
-  it("carries the maximized pane across to its new name", async () => {
-    vi.mocked(api.renameTerminal).mockResolvedValue(RENAMED);
-    const { rerender } = renderGrid();
-
-    fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("yes");
-
-    fireEvent.click(screen.getByTestId("pane-rename-Mika"));
-    await waitFor(() => expect(api.renameTerminal).toHaveBeenCalled());
-    rerender({ session: RENAMED });
-
-    // Renaming a pane must not un-maximize it: the state is filed under a name
-    // this grid itself just changed, and losing it would look like the rename
-    // had restarted something.
-    expect(screen.getByTestId("pane-Frontend").getAttribute("data-maximized")).toBe(
-      "yes",
-    );
-  });
-
-  it("keeps the prompt bar pointed at the pane it was pointed at", async () => {
-    vi.mocked(api.renameTerminal).mockResolvedValue(RENAMED);
-    const { rerender } = renderGrid();
-
-    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId("pane-rename-Mika"));
-    await waitFor(() => expect(api.renameTerminal).toHaveBeenCalled());
-    rerender({ session: RENAMED });
-
-    expect(screen.getByPlaceholderText(/instruction for Frontend/i)).toBeTruthy();
-  });
-
-  it("says what went wrong and leaves the workspace alone", async () => {
-    vi.mocked(api.renameTerminal).mockRejectedValue(
-      new Error("Another terminal in this workspace is already called 'Nova'."),
-    );
-    const { onSessionChanged } = renderGrid();
-
-    fireEvent.click(screen.getByTestId("pane-rename-Mika"));
-
-    await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith(
-        "error",
-        expect.stringContaining("already called"),
-      ),
-    );
-    expect(onSessionChanged).not.toHaveBeenCalled();
   });
 });
