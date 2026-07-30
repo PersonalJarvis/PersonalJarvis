@@ -1786,7 +1786,9 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
     """The value currently in effect for ``provider_id``'s picker (tier-aware).
 
     Brain → the per-provider model; TTS → the global voice (``voice_de``) or model;
-    Cartesia → its own ``[tts.cartesia].model_id``; STT → the global ``stt.model``.
+    Cartesia → its own ``[tts.cartesia].model_id``; STT → its per-provider pin in
+    ``[stt.models]``, falling back to the global ``[stt] model`` (which is the
+    on-device checkpoint name, so it is only ever the right answer there).
     """
     if cat.tier == "brain":
         return _current_brain_model(cfg, provider_id)
@@ -1798,7 +1800,14 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
             return _cartesia_model(tts) or "sonic-3.5"
         return getattr(tts, "model", "") or ""
     if cat.tier == "stt":
-        return getattr(getattr(cfg, "stt", None), "model", "") or ""
+        stt = getattr(cfg, "stt", None)
+        pins = getattr(stt, "models", None) or {}
+        pinned = ""
+        if hasattr(pins, "get"):
+            pinned = str(pins.get(provider_id, "") or "")
+        if pinned:
+            return pinned
+        return getattr(stt, "model", "") or ""
     return ""
 
 
@@ -1987,13 +1996,32 @@ def _apply_tts_selection(
 def _apply_stt_model(
     provider_id: str, value: str, body: BrainModelBody, request: Request
 ) -> BrainModelSaveResponse:
-    """Persist a STT model (global ``[stt] model``). Takes effect on voice restart."""
+    """Persist a STT model for ``provider_id``. Takes effect on voice restart.
+
+    Written to ``[stt.models].<provider id>`` — the slot the STT factory reads
+    (``jarvis.plugins.stt.resolve_stt_model``). The global ``[stt] model`` is
+    kept in step ONLY for an on-device recognizer, because that key holds a
+    faster-whisper checkpoint name and the local engine is its one consumer;
+    writing a cloud model id there would leave the local path pointing at a
+    checkpoint that does not exist.
+    """
+    on_device = False
+    try:
+        from jarvis.plugins.stt import provider_runs_on_device
+
+        on_device = provider_runs_on_device(provider_id)
+    except Exception as exc:  # noqa: BLE001 — an unknown provider is treated as cloud
+        log.debug("STT on-device probe failed for %s (%s); treating as cloud.",
+                  provider_id, exc)
+
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_stt_model
+            from jarvis.core.config_writer import set_stt_model, set_stt_provider_model
 
-            set_stt_model(value)
+            set_stt_provider_model(provider_id, value)
+            if on_device:
+                set_stt_model(value)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2005,7 +2033,14 @@ def _apply_stt_model(
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "stt", None) is not None:
         try:
-            cfg.stt.model = value  # type: ignore[attr-defined]
+            pins = dict(getattr(cfg.stt, "models", None) or {})  # type: ignore[attr-defined]
+            if value:
+                pins[provider_id] = value
+            else:
+                pins.pop(provider_id, None)
+            cfg.stt.models = pins  # type: ignore[attr-defined]
+            if on_device:
+                cfg.stt.model = value  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001
             log.debug("In-memory stt model update skipped: %s", exc)
 

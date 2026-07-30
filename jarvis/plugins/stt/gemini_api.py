@@ -318,23 +318,48 @@ class GeminiSTT:
         # ``config`` as a plain dict is accepted by google-genai; temperature 0.0
         # keeps the transcription as deterministic as a generative model allows.
         config = {"temperature": self._temperature}
-        try:
+
+        async def _generate(model: str) -> Any:
             # google-genai's ``generate_content`` is synchronous, so run it off
             # the event loop (same pattern as the Gemini Flash TTS plugin).
-            response = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 client.models.generate_content,
-                model=self._model,
+                model=model,
                 contents=contents,
                 config=config,
             )
+
+        model = self._model
+        try:
+            response = await _generate(model)
         except Exception as exc:  # noqa: BLE001 — degrade honestly (AP-22)
             # Imported here, not at module top, to keep the plugin
             # ``jarvis.*``-free at import time (the entry-point purity contract)
             # — the same lazy seam the credential lookup uses. This runs only on
             # an already-failed request.
+            from jarvis.plugins.stt.capabilities import (
+                is_model_rejection,
+                log_model_fallback,
+            )
             from jarvis.plugins.stt.errors import STTHTTPError, status_from_exception
 
-            message = f"Gemini STT request failed: {exc}"
+            failure: BaseException = exc
+            # A model this account cannot call is a CONFIGURATION problem, not a
+            # reason to lose the utterance: fall back to the default model once
+            # and say so, exactly like the OpenAI-shaped plugins. A failure of
+            # the FALLBACK is reported through the same classification path
+            # below — a raw SDK error escaping here would cost the caller the
+            # status code its retry ladder runs on.
+            if model != DEFAULT_MODEL and is_model_rejection(str(exc), model):
+                log_model_fallback("Gemini", model, DEFAULT_MODEL, str(exc))
+                try:
+                    return _response_to_transcript(
+                        await _generate(DEFAULT_MODEL), language
+                    )
+                except Exception as retry_exc:  # noqa: BLE001 — classify, never leak
+                    failure = retry_exc
+
+            message = f"Gemini STT request failed: {failure}"
             # The SDK raises its own ``APIError``, which carries the HTTP status
             # as ``.code``. Flattening that into a bare RuntimeError threw away
             # the one fact the caller needs to tell a retryable 429 from a
@@ -343,14 +368,14 @@ class GeminiSTT:
             # type (google-genai is absent on a base install), hence the
             # duck-typed lookup. A transport error / timeout has no status and
             # stays a plain RuntimeError: inventing one would be a lie.
-            status = status_from_exception(exc)
+            status = status_from_exception(failure)
             if status is None:
-                raise RuntimeError(message) from exc
+                raise RuntimeError(message) from failure
             raise STTHTTPError(
                 message,
                 status=status,
-                headers=getattr(getattr(exc, "response", None), "headers", None),
-            ) from exc
+                headers=getattr(getattr(failure, "response", None), "headers", None),
+            ) from failure
         return _response_to_transcript(response, language)
 
 

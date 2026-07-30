@@ -10,14 +10,21 @@ shipped no plugin, so an OpenAI-only user dead-ended on the local
 Endpoint (OpenAI-compatible audio API, identical wire shape to the Groq plugin):
   * ``POST {base_url}/audio/transcriptions`` (multipart upload),
   * Headers: ``Authorization: Bearer <key>``,
-  * multipart fields: ``file`` (an in-memory WAV), ``model``, ``response_format``
-    (``verbose_json`` for segment timings + confidence), optional ``language`` /
-    ``prompt`` / ``temperature``.
+  * multipart fields: ``file`` (an in-memory WAV), ``model``, ``response_format``,
+    optional ``language`` / ``prompt`` / ``temperature``.
+
+The wire contract is NOT the same for every model, which is why the request is
+built from a per-model capability shape (:mod:`jarvis.plugins.stt.capabilities`)
+rather than from constants: ``whisper-1`` answers ``verbose_json`` with segment
+timings and log probabilities, while ``gpt-4o-transcribe`` rejects that value
+with HTTP 400 and transcribes nothing. A 400 that names an optional field
+narrows the shape and retries; a 400 that names the MODEL falls back to the
+default model once, loudly.
 
 Model default: ``whisper-1`` — the universally-available transcription model
 every OpenAI account can call. Gate on the capability, never a fancier model id
 (AP-21); a user who wants a newer transcription model sets it in the STT model
-field and the wire contract is unchanged.
+field and the request adapts itself to that model's contract.
 
 Plugin contract: structurally compatible with
 ``jarvis.core.protocols.STTProvider`` WITHOUT importing ``jarvis.*`` at import
@@ -311,40 +318,87 @@ class OpenAIWhisperAPI:
         filename: str = "audio.wav",
         language: str | None = None,
     ) -> Transcript:
+        """POST one upload, adapting the request to what the MODEL accepts.
+
+        ``whisper-1`` answers ``verbose_json``; ``gpt-4o-transcribe`` — the
+        newer multilingual model — rejects that value with HTTP 400 and
+        transcribes nothing. The request is therefore built from a per-model
+        capability shape, and a 400 that names an optional field narrows that
+        shape and retries instead of losing the utterance
+        (:mod:`jarvis.plugins.stt.capabilities`).
+        """
         url = self._ensure_endpoint()
         # The NAME is how the service identifies the container, so an imported
         # `.opus` must not be announced as `audio.wav`. The content type stays
         # generic: the extension is the signal these APIs actually read.
         upload_name = _upload_name(filename)
         mime = "audio/wav" if upload_name.endswith(".wav") else "application/octet-stream"
-        files = {"file": (upload_name, wav_bytes, mime)}
-        data: dict[str, str] = {
-            "model": self._model,
-            "response_format": "verbose_json",
-            "temperature": str(self._temperature),
-        }
-        # Omitted entirely when None — that is what asks Whisper to detect the
-        # spoken language instead of decoding it as a pinned one.
-        if language:
-            data["language"] = language
-        if self._prompt:
-            data["prompt"] = self._prompt
-
         headers = {"Authorization": f"Bearer {self._api_key}"}
         client = self._get_client()
-        try:
-            response = await client.post(
-                url, headers=headers, data=data, files=files
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"OpenAI STT request failed (network/unreachable): {exc}"
-            ) from exc
 
-        if response.status_code >= 400:
+        from jarvis.plugins.stt.capabilities import (
+            MAX_REQUEST_DOWNGRADES,
+            error_text,
+            is_model_rejection,
+            log_model_fallback,
+            remember_shape,
+            resolve_shape,
+            shape_after_rejection,
+        )
+
+        model = self._model
+        shape = resolve_shape(self.name, model)
+        # One attempt per optional field that could still be dropped, plus one
+        # for the model substitution below. Bounded so a service answering 400
+        # to everything ends in an honest error rather than a retry loop.
+        for _attempt in range(MAX_REQUEST_DOWNGRADES):
+            # A fresh file tuple per attempt: httpx consumes the buffer it is
+            # handed, so a retry with the same object uploads zero bytes.
+            files = {"file": (upload_name, wav_bytes, mime)}
+            data: dict[str, str] = {
+                "model": model,
+                "response_format": shape.response_format,
+            }
+            if shape.temperature:
+                data["temperature"] = str(self._temperature)
+            # Omitted entirely when None — that is what asks Whisper to detect
+            # the spoken language instead of decoding it as a pinned one.
+            if language and shape.language:
+                data["language"] = language
+            if self._prompt and shape.prompt:
+                data["prompt"] = self._prompt
+
+            try:
+                response = await client.post(
+                    url, headers=headers, data=data, files=files
+                )
+            except httpx.HTTPError as exc:
+                raise RuntimeError(
+                    f"OpenAI STT request failed (network/unreachable): {exc}"
+                ) from exc
+
+            if response.status_code < 400:
+                return _payload_to_transcript(response.json())
+            if response.status_code != 400:
+                raise _http_error_to_runtime(response)
+
+            detail = error_text(response)
+            narrowed = shape_after_rejection(shape, detail)
+            if narrowed is not None:
+                remember_shape(self.name, model, narrowed)
+                shape = narrowed
+                continue
+            if model != DEFAULT_MODEL and is_model_rejection(detail, model):
+                # The pinned model is not one this account can call. Falling
+                # back to the universally-available one keeps the user
+                # dictating; the warning is what tells them to fix the pin.
+                log_model_fallback("OpenAI", model, DEFAULT_MODEL, detail)
+                model = DEFAULT_MODEL
+                shape = resolve_shape(self.name, model)
+                continue
             raise _http_error_to_runtime(response)
-        payload = response.json()
-        return _payload_to_transcript(payload)
+
+        raise _http_error_to_runtime(response)
 
 
 # ----------------------------------------------------------------------

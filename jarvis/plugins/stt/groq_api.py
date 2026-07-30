@@ -235,38 +235,75 @@ class GroqWhisperAPI:
         # `.opus` must not be announced as `audio.wav`.
         upload_name = _upload_name(filename)
         mime = "audio/wav" if upload_name.endswith(".wav") else "application/octet-stream"
-        files = {"file": (upload_name, wav_bytes, mime)}
-        data: dict[str, str] = {
-            "model": self._model,
-            "response_format": "verbose_json",
-            "temperature": str(self._temperature),
-        }
-        # Omitted entirely when None — that is what asks Whisper to detect the
-        # spoken language instead of decoding it as a pinned one.
-        if language:
-            data["language"] = language
-        if self._prompt:
-            data["prompt"] = self._prompt
-
         headers = {"Authorization": f"Bearer {self._api_key}"}
         client = self._get_client()
-        response = await client.post(
-            self._endpoint, headers=headers, data=data, files=files
+
+        from jarvis.plugins.stt.capabilities import (
+            MAX_REQUEST_DOWNGRADES,
+            error_text,
+            is_model_rejection,
+            log_model_fallback,
+            remember_shape,
+            resolve_shape,
+            shape_after_rejection,
         )
-        # ``httpx.HTTPStatusError`` carries the status on ``.response.status_code``
-        # and the ``Retry-After`` header on ``.response.headers`` — which is
-        # exactly why the pipeline's transient-error retry ladder worked for THIS
-        # provider and for no other one, and what the shared
-        # ``jarvis.plugins.stt.errors.STTHTTPError`` reproduces for the plugins
-        # that used to flatten every status into a bare RuntimeError. This plugin
-        # deliberately does NOT raise that shared type: it is the one STT plugin
-        # held to a total ``jarvis.*``-import ban (CLAUDE.md §5, pinned by
-        # tests/contract/test_stt_protocol.py), even for a lazy import inside a
-        # method. It already emits the classifiable shape, so there is nothing to
-        # gain and a purity contract to lose. Do not "unify" this line.
+
+        model = self._model
+        shape = resolve_shape(self.name, model)
+        for _attempt in range(MAX_REQUEST_DOWNGRADES):
+            # A fresh file tuple per attempt: httpx consumes the buffer it is
+            # handed, so a retry with the same object would upload nothing.
+            files = {"file": (upload_name, wav_bytes, mime)}
+            data: dict[str, str] = {
+                "model": model,
+                "response_format": shape.response_format,
+            }
+            if shape.temperature:
+                data["temperature"] = str(self._temperature)
+            # Omitted entirely when None — that is what asks Whisper to detect
+            # the spoken language instead of decoding it as a pinned one.
+            if language and shape.language:
+                data["language"] = language
+            if self._prompt and shape.prompt:
+                data["prompt"] = self._prompt
+
+            response = await client.post(
+                self._endpoint, headers=headers, data=data, files=files
+            )
+            if response.status_code == 400:
+                # A refusal that names an optional field is EVIDENCE about the
+                # model, not a failure: drop that field and ask again, so a
+                # transcription model with a narrower contract than Whisper's
+                # still transcribes instead of losing the utterance.
+                detail = error_text(response)
+                narrowed = shape_after_rejection(shape, detail)
+                if narrowed is not None:
+                    remember_shape(self.name, model, narrowed)
+                    shape = narrowed
+                    continue
+                if model != DEFAULT_MODEL and is_model_rejection(detail, model):
+                    log_model_fallback("Groq", model, DEFAULT_MODEL, detail)
+                    model = DEFAULT_MODEL
+                    shape = resolve_shape(self.name, model)
+                    continue
+            # ``httpx.HTTPStatusError`` carries the status on
+            # ``.response.status_code`` and the ``Retry-After`` header on
+            # ``.response.headers`` — which is exactly why the pipeline's
+            # transient-error retry ladder worked for THIS provider and for no
+            # other one, and what the shared
+            # ``jarvis.plugins.stt.errors.STTHTTPError`` reproduces for the
+            # plugins that used to flatten every status into a bare
+            # RuntimeError. This plugin deliberately does NOT raise that shared
+            # type: it is the one STT plugin held to a total ``jarvis.*``-import
+            # ban outside its own plugin package (CLAUDE.md §5, pinned by
+            # tests/contract/test_stt_protocol.py). It already emits the
+            # classifiable shape, so there is nothing to gain and a purity
+            # contract to lose. Do not "unify" this line.
+            response.raise_for_status()
+            return _payload_to_transcript(response.json())
+
         response.raise_for_status()
-        payload = response.json()
-        return _payload_to_transcript(payload)
+        return _payload_to_transcript(response.json())
 
 
 # ----------------------------------------------------------------------

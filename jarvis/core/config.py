@@ -504,6 +504,22 @@ class STTConfig(BaseModel):
     # ignores it because an initial-prompt on silent audio used to
     # hallucinate the prompt itself as the transcript.
     bias_prompt: str = ""
+    # Which model each CLOUD recognizer uses, keyed by provider id
+    # (``{"openrouter-stt": "openai/gpt-4o-transcribe"}``). A per-provider slot
+    # rather than one global value, because ``model`` above is a
+    # faster-whisper checkpoint name and a checkpoint name is meaningless to a
+    # hosted API — forwarding one global string to whichever provider happened
+    # to be selected is how a picked cloud model reached no provider at all
+    # and a fresh install would have posted ``large-v3-turbo`` to Groq.
+    # Unset (the default) means "the plugin's own default model", which is the
+    # behaviour every install had before this key existed.
+    models: dict[str, str] = Field(default_factory=dict)
+    # Sampling temperature for transcription. ``0.0`` on purpose and by
+    # default: transcription is a measurement, so the same recording has to
+    # come back the same way twice. Forwarded only to providers whose model
+    # accepts the field (``jarvis.plugins.stt.capabilities``), so a backend
+    # that rejects it keeps working.
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class TTSConfig(BaseModel):

@@ -64,7 +64,46 @@ _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
 # with every one of them dropped rather than falling all the way through to the
 # local engine a base install does not ship. Anything NOT listed here (the
 # language, the team-proxy endpoint/key) is load-bearing and never dropped.
-_OPTIONAL_PROVIDER_KWARGS: tuple[str, ...] = ("prompt", "timeout_s")
+_OPTIONAL_PROVIDER_KWARGS: tuple[str, ...] = (
+    "prompt", "timeout_s", "model", "temperature",
+)
+
+
+def resolve_stt_model(stt_cfg: Any, provider_name: str) -> str:
+    """The model id to hand ``provider_name``; ``""`` for "your own default".
+
+    ``[stt].model`` is a faster-whisper CHECKPOINT name (``large-v3-turbo``),
+    and a checkpoint name means nothing to a hosted API. One global value
+    forwarded to whichever provider is selected would therefore post
+    ``large-v3-turbo`` to Groq on a fresh install — so the cloud pick lives in
+    its own per-provider slot, ``[stt].models.<provider id>``, written by the
+    model picker and read here.
+
+    Precedence:
+
+    1. **The per-provider pin**, when this install has one.
+    2. **``""``** otherwise: the plugin's own default, i.e. exactly what every
+       install did before per-provider pins existed.
+
+    ``[stt].model`` is deliberately NOT a fallback here. It reaches the local
+    engine through :func:`_build_local_fallback`, which is the one consumer a
+    checkpoint name is the right kind of string for; letting it leak into this
+    answer would hand ``large-v3-turbo`` to a hosted API or to the on-device
+    Nemotron recognizer, neither of which has ever heard of it.
+
+    Never raises: a config object that carries none of this (a test double, a
+    stale install) answers ``""``, which is a working value everywhere.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return ""
+    try:
+        pins = getattr(stt_cfg, "models", None) or {}
+        pinned = str(pins.get(name, "") or "").strip() if hasattr(pins, "get") else ""
+    except Exception as exc:  # noqa: BLE001 — a malformed pin is not worth a build
+        logger.debug("STT per-provider model pin unreadable ({}); using defaults.", exc)
+        pinned = ""
+    return pinned
 
 
 def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
@@ -375,6 +414,25 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             kwargs["language"] = language
         if bias_prompt:
             kwargs["prompt"] = bias_prompt
+        # The model the USER picked. Until this line existed, the STT model
+        # picker wrote a value nothing read: every cloud plugin transcribed on
+        # its own hardcoded default, so choosing a genuinely multilingual model
+        # in the app changed exactly nothing (AP-31).
+        chosen_model = resolve_stt_model(stt_cfg, provider_name)
+        if chosen_model:
+            kwargs["model"] = chosen_model
+        # Reproducibility. A transcription is a measurement, so the same audio
+        # must come back the same way twice; the providers whose model rejects
+        # the field drop it themselves (jarvis.plugins.stt.capabilities).
+        temperature = getattr(stt_cfg, "temperature", None)
+        try:
+            if temperature is not None:
+                kwargs["temperature"] = float(temperature)
+        except (TypeError, ValueError):
+            logger.debug(
+                "STT temperature {!r} is not a number; using the provider default.",
+                temperature,
+            )
         # Per-request timeout. Forwarded only when the config actually carries
         # one, so every provider keeps its own documented default otherwise. It
         # matters most for Gemini: google-genai FORCES ``timeout=None`` on its
@@ -414,7 +472,12 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
         # (AP-21). The user's STT dictionary still applies to these providers
         # through its post-transcription corrections.
         if provider_runs_on_device(provider_name):
-            for cloud_only in ("prompt", "timeout_s"):
+            # ``temperature`` joins the cloud-only set for the same reason:
+            # the on-device recognizers this repo ships configure their own
+            # decoding, and offering it only earns the misleading "this plugin
+            # is out of date" warning from the TypeError retry below. A model
+            # PIN is not stripped — that is an explicit per-provider choice.
+            for cloud_only in ("prompt", "timeout_s", "temperature"):
                 kwargs.pop(cloud_only, None)
         if not _stt_has_credential(provider_name, kwargs):
             logger.warning(
@@ -427,9 +490,12 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
         try:
             instance = cls(**kwargs) if kwargs else cls()
             logger.info(
-                "STT provider resolved via entry-point: {} (class {}, bias_prompt={} chars)",
+                "STT provider resolved via entry-point: {} (class {}, model={}, "
+                "temperature={}, bias_prompt={} chars)",
                 provider_name,
                 cls.__name__,
+                kwargs.get("model") or "<provider default>",
+                kwargs.get("temperature", "<provider default>"),
                 len(bias_prompt),
             )
             return instance
@@ -1160,6 +1226,7 @@ __all__ = [
     "mark_wake_gpu_bad",
     "provider_runs_on_device",
     "resolve_keyed_stt_fallback",
+    "resolve_stt_model",
     "start_wake_model_prefetch",
     "stt_family_id",
     "wake_gpu_probe_cached",

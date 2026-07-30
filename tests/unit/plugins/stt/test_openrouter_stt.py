@@ -113,7 +113,16 @@ async def test_language_is_sent_when_set_and_omitted_when_auto() -> None:
 
 
 @pytest.mark.asyncio
-async def test_temperature_omitted_by_default_and_sent_when_configured() -> None:
+async def test_temperature_is_pinned_to_zero_by_default() -> None:
+    """A transcription is a measurement, so it has to repeat.
+
+    The field used to be omitted unless configured, on portability grounds —
+    one backend that rejected it would have cost the whole utterance. That
+    reasoning is gone now the body is narrowed on a 400 (see
+    ``test_a_rejected_field_is_dropped_and_the_call_retried``), and what the
+    omission actually bought was a gateway default that samples: the same
+    recording came back as a different sentence on a retry.
+    """
     captured: dict[str, dict] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -125,16 +134,18 @@ async def test_temperature_omitted_by_default_and_sent_when_configured() -> None
         await stt.transcribe_pcm(_silent_pcm())
     finally:
         await stt.aclose()
-    assert "temperature" not in captured["body"]
+    assert captured["body"]["temperature"] == 0.0
 
+    # An explicit None is still "say nothing about it" — the escape hatch for a
+    # deployment that wants the backend's own default.
     stt2 = OpenRouterSTT(
-        api_key="k", temperature=0.0, http_client=_mock_client(handler)
+        api_key="k", temperature=None, http_client=_mock_client(handler)
     )
     try:
         await stt2.transcribe_pcm(_silent_pcm())
     finally:
         await stt2.aclose()
-    assert captured["body"]["temperature"] == 0.0
+    assert "temperature" not in captured["body"]
 
 
 @pytest.mark.asyncio

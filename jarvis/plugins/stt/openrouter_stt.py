@@ -13,7 +13,10 @@ Endpoint (verified live 2026-07-02):
     headers the brain adapter also sends).
   * JSON body: ``{"model": "<id>", "input_audio": {"data": "<base64 RAW audio
     bytes, NOT a data-URI>", "format": "wav"}, "language": "<ISO-639-1>"?,
-    "temperature": <0-1>?}``.
+    "temperature": <0-1>?}``. Which of the optional fields a given model
+    accepts is a per-MODEL question the gateway answers with 400, so the body
+    is shaped by :mod:`jarvis.plugins.stt.capabilities` and narrowed on a
+    refusal rather than pinned to a lowest common denominator.
   * JSON response: ``{"text": "...", "usage": {"seconds": ..., "cost": ...,
     "total_tokens": ...?}}`` with an ``X-Generation-Id`` response header. No
     streaming — a single final ``Transcript`` is returned.
@@ -141,7 +144,14 @@ class OpenRouterSTT:
         base_url: str | None = None,
         language: str | None = None,
         prompt: str | None = None,
-        temperature: float | None = None,
+        # 0.0 by DEFAULT, not "omit unless configured". Transcription is a
+        # measurement, and the same recording has to come back the same way
+        # twice — a gateway default that samples turns an unchanged dictation
+        # into a different sentence on every retry, which is exactly the kind of
+        # variance a user reads as "it got worse". The field is dropped
+        # automatically for a model that refuses it (see ``_post_transcription``),
+        # so the reproducibility costs no portability.
+        temperature: float | None = 0.0,
         timeout_s: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -288,43 +298,78 @@ class OpenRouterSTT:
     async def _post_transcription(
         self, wav_bytes: bytes, *, language: str | None = None
     ) -> Transcript:
+        """POST one upload, adapting the body to what the MODEL accepts.
+
+        The gateway fronts ~10 transcription backends whose contracts differ,
+        so the body is built from a per-model capability shape
+        (:mod:`jarvis.plugins.stt.capabilities`) and a 400 that names a field
+        narrows that shape and retries. That is what lets this plugin send a
+        temperature by DEFAULT: the field used to be omitted unless configured,
+        purely because one unsupported field would have cost the whole
+        utterance — and the cost of omitting it was a transcription that came
+        back differently every time the same audio was sent.
+        """
         import base64
 
         url = self._ensure_endpoint()
-        body: dict[str, Any] = {
-            "model": self._model,
-            "input_audio": {
-                "data": base64.b64encode(wav_bytes).decode("ascii"),
-                "format": "wav",
-            },
-        }
-        # Omitted entirely when None — that is what asks the model to detect the
-        # spoken language instead of decoding it as a pinned one.
-        if language:
-            body["language"] = language
-        # Temperature is omitted unless explicitly configured: keeping the body
-        # minimal maximises portability across the ~10 transcription backends the
-        # gateway fronts (some reject unexpected fields).
-        if self._temperature is not None:
-            body["temperature"] = float(self._temperature)
-
+        encoded = base64.b64encode(wav_bytes).decode("ascii")
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             **_ATTRIBUTION_HEADERS,
         }
         client = self._get_client()
-        try:
-            response = await client.post(url, headers=headers, json=body)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"OpenRouter STT request failed (network/unreachable): {exc}"
-            ) from exc
 
-        if response.status_code >= 400:
+        from jarvis.plugins.stt.capabilities import (
+            MAX_REQUEST_DOWNGRADES,
+            error_text,
+            is_model_rejection,
+            log_model_fallback,
+            remember_shape,
+            resolve_shape,
+            shape_after_rejection,
+        )
+
+        model = self._model
+        shape = resolve_shape(self.name, model)
+        for _attempt in range(MAX_REQUEST_DOWNGRADES):
+            body: dict[str, Any] = {
+                "model": model,
+                "input_audio": {"data": encoded, "format": "wav"},
+            }
+            # Omitted entirely when None — that is what asks the model to detect
+            # the spoken language instead of decoding it as a pinned one.
+            if language and shape.language:
+                body["language"] = language
+            if self._temperature is not None and shape.temperature:
+                body["temperature"] = float(self._temperature)
+
+            try:
+                response = await client.post(url, headers=headers, json=body)
+            except httpx.HTTPError as exc:
+                raise RuntimeError(
+                    f"OpenRouter STT request failed (network/unreachable): {exc}"
+                ) from exc
+
+            if response.status_code < 400:
+                return _payload_to_transcript(response.json())
+            if response.status_code != 400:
+                raise _http_error_to_runtime(response)
+
+            detail = error_text(response)
+            narrowed = shape_after_rejection(shape, detail)
+            if narrowed is not None:
+                remember_shape(self.name, model, narrowed)
+                shape = narrowed
+                continue
+            if model != DEFAULT_MODEL and is_model_rejection(detail, model):
+                log_model_fallback("OpenRouter", model, DEFAULT_MODEL, detail)
+                model = DEFAULT_MODEL
+                shape = resolve_shape(self.name, model)
+                continue
             raise _http_error_to_runtime(response)
-        payload = response.json()
-        return _payload_to_transcript(payload)
+
+        raise _http_error_to_runtime(response)
 
 
 # ----------------------------------------------------------------------

@@ -507,6 +507,66 @@ def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync %s to the User environment: %s", _STT_MODEL_ENV, exc)
 
 
+def set_stt_provider_model(
+    provider: str, model: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> dict[str, str]:
+    """Pin ONE provider's transcription model (``[stt.models].<provider>``).
+
+    Returns the full mapping after the write, so a caller can update the live
+    config object without re-reading the file.
+
+    Why per provider rather than the single ``[stt] model``: that key holds a
+    faster-whisper CHECKPOINT name, which means nothing to a hosted API. One
+    global value therefore could not be forwarded to a cloud recognizer without
+    a fresh install posting ``large-v3-turbo`` to Groq — so the picker's choice
+    reached no provider at all and the dropdown changed nothing (AP-31).
+
+    Two layers, not three: the mapping is a TOML sub-table, and the ENV
+    override this repo uses for single-word keys (``JARVIS__STT__MODEL``) has
+    no shape that could carry it. The ``config-soll`` sync is what keeps the  # i18n-allow
+    drift guard from reverting the pin, which is the layer that actually
+    mattered for the single-word keys anyway.
+
+    An empty ``model`` REMOVES the pin, which is how a user goes back to the
+    provider's own default without hand-editing anything.
+    """
+    key = str(provider or "").strip()
+    if not key:
+        raise ValueError("A provider id is required to pin an STT model.")
+    value = str(model or "").strip()
+    path = _ensure_writable_config_path(path)
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("stt")
+        if section is None:
+            section = tomlkit.table()
+            doc["stt"] = section
+        models = section.get("models")
+        if models is None:
+            models = tomlkit.table()
+            section["models"] = models
+        if value:
+            models[key] = value
+        else:
+            models.pop(key, None)
+        merged = {str(k): str(v) for k, v in models.items()}
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    try:
+        _update_config_soll_section("stt", {"models": merged})  # i18n-allow
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync stt.models to config-soll.json: %s", exc)  # i18n-allow
+    return merged
+
+
 def set_stt_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the STT recognition language (``[stt] language``).
 
