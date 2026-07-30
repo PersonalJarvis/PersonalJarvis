@@ -460,6 +460,44 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="ultrawiki-ask",
+            title="Ask the knowledge base",
+            description=(
+                "Answer one question from UltraWiki evidence and return the "
+                "numbered source citations used for the answer."
+            ),
+            method="POST",
+            path="/api/ultrawiki/ask",
+            worker_allowed=True,
+            params={
+                "type": "object",
+                "properties": {
+                    "question": _str_param(
+                        "Question to answer from the knowledge base.",
+                        min_length=1,
+                        max_length=4_000,
+                    ),
+                    "k": {
+                        "type": "integer",
+                        "description": "Maximum evidence items to retrieve (1-20).",
+                        "minimum": 1,
+                        "maximum": 20,
+                    },
+                    "area": _str_param(
+                        "Optional UltraWiki area id.",
+                        max_length=200,
+                    ),
+                },
+                "required": ["question"],
+            },
+            ui_section="memory",
+            voice_aliases={
+                "de": ("frag mein ultrawiki",),  # i18n-allow: input vocab
+                "en": ("ask my ultrawiki",),
+                "es": ("pregunta a mi ultrawiki",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="people-list",
             title="List the people I know",
             description=(

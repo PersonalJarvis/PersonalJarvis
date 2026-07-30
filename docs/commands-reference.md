@@ -161,6 +161,16 @@ Store one self-contained fact or summary through the guarded Wiki curator. The c
 - **Desktop UI section:** `memory`
 - **Voice example (EN):** "store that in my wiki"
 
+## `ultrawiki-ask` — Ask the knowledge base
+
+Answer one question from UltraWiki evidence and return the numbered source citations used for the answer.
+
+- **Endpoint:** `POST /api/ultrawiki/ask`
+- **Arguments:** `question` (string; required); `k` (integer; optional); `area` (string; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `memory`
+- **Voice example (EN):** "ask my ultrawiki"
+
 ## `people-list` — List the people I know
 
 List the people the knowledge base has identified, newest evidence merged, optionally filtered by a name or an identifier (an e-mail address, a phone number). Use this to answer 'who do you know about' and to look up which stored person a spoken name refers to.

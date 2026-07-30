@@ -19,6 +19,25 @@ app = typer.Typer(
 
 
 @app.command()
+def ask(
+    question: str = typer.Argument(..., help="Question to answer from the knowledge base."),
+    k: int = typer.Option(10, "--evidence", "-k", min=1, max=20),
+    area: str = typer.Option("", "--area", help="Optional UltraWiki area id."),
+) -> None:
+    """Answer from retrieved evidence and include source citations."""
+    body: dict[str, object] = {"question": question, "k": k}
+    if area:
+        body["area"] = area
+    invoke.run(
+        "POST",
+        "/api/ultrawiki/ask",
+        body=body,
+        dangerous=False,
+        request_timeout_s=90.0,
+    )
+
+
+@app.command()
 def topics(
     search: str = typer.Option("", "--search", "-s", help="Filter topic labels."),
     limit: int = typer.Option(50, "--limit", "-n", help="How many to return."),

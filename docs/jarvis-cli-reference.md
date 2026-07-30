@@ -202,6 +202,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## ultrawiki
 
+- `jarvis ultrawiki ask <question> --evidence --area` — Answer from retrieved evidence and include source citations.
 - `jarvis ultrawiki export --yes --dry-run` — Write the knowledge base to the Obsidian vault as Markdown.
 - `jarvis ultrawiki graph --min-mentions` — The entity graph: which topics come up together, and how often.
 - `jarvis ultrawiki moments --topic --month --limit` — Browse the distilled moments, newest first.

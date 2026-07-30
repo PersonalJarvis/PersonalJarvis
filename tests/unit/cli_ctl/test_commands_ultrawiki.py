@@ -15,6 +15,18 @@ from jarvis.cli_ctl.__main__ import app
 runner = CliRunner()
 
 
+def test_ask_sends_question_and_evidence_limit(capture_api):
+    result = runner.invoke(
+        app,
+        ["ultrawiki", "ask", "What changed?", "--evidence", "4", "--area", "work"],
+    )
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/ultrawiki/ask"
+    assert call["body"] == {"question": "What changed?", "k": 4, "area": "work"}
+
+
 def test_topics_lists_the_entity_pages(capture_api):
     runner.invoke(app, ["ultrawiki", "topics"])
     call = capture_api["calls"][-1]
