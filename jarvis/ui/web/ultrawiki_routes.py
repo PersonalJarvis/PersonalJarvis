@@ -1538,6 +1538,14 @@ class CreateSourceBody(BaseModel):
     areas: list[str] = Field(default_factory=list)
 
 
+class UpdateSourceBody(BaseModel):
+    """Editable source fields; omitted values keep their current setting."""
+
+    label: str | None = Field(default=None, min_length=1)
+    config: dict[str, Any] | None = None
+    areas: list[str] | None = None
+
+
 @router.post("/sources", status_code=201, summary="Register an UltraWiki source")
 async def create_source(body: CreateSourceBody, request: Request) -> dict[str, Any]:
     """Register a new source with consent PENDING — approval is a separate explicit step."""
@@ -1552,6 +1560,25 @@ async def create_source(body: CreateSourceBody, request: Request) -> dict[str, A
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return source
+
+
+@router.patch("/sources/{source_id}", summary="Update an UltraWiki source")
+async def update_source(
+    source_id: str, body: UpdateSourceBody, request: Request
+) -> dict[str, Any]:
+    """Change a source path, exclusions, label, or areas without re-approving."""
+    service = _service(request)
+    try:
+        return await service.update_source(
+            source_id,
+            label=body.label,
+            config=body.config,
+            area_ids=body.areas,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message.startswith("unknown source") else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
 
 @router.post(

@@ -261,6 +261,57 @@ def test_sync_on_pending_source_is_409(env) -> None:
     assert "not approved" in response.json()["detail"]
 
 
+def test_folder_source_settings_can_be_repaired_without_recreating_it(env) -> None:
+    _activate(env)
+    docs = env.tmp / "editable-docs"
+    docs.mkdir()
+    created = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Editable docs",
+            "config": {"root": str(docs), "exclude": ["archive"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    source_id = created.json()["id"]
+
+    updated = env.client.patch(
+        f"/api/ultrawiki/sources/{source_id}",
+        json={"config": {"root": str(docs), "exclude": ["archive", "dist"]}},
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["consent"] == "pending"
+    assert updated.json()["config"]["exclude"] == ["archive", "dist"]
+    listed = env.client.get("/api/ultrawiki/sources").json()["sources"]
+    row = next(source for source in listed if source["id"] == source_id)
+    assert row["config"] == {"root": str(docs), "exclude": ["archive", "dist"]}
+
+
+def test_folder_source_update_rejects_a_missing_path(env) -> None:
+    _activate(env)
+    docs = env.tmp / "existing-docs"
+    docs.mkdir()
+    created = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Docs",
+            "config": {"root": str(docs)},
+        },
+    )
+    source_id = created.json()["id"]
+
+    response = env.client.patch(
+        f"/api/ultrawiki/sources/{source_id}",
+        json={"config": {"root": str(env.tmp / "missing")}},
+    )
+
+    assert response.status_code == 400
+    assert "There is no folder" in response.json()["detail"]
+
+
 def test_approve_then_sync_completes_against_local_folder(env) -> None:
     _activate(env)
     source_id, job_id = _approve_and_sync_folder(env)

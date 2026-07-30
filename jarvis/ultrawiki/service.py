@@ -1051,6 +1051,12 @@ class UltraWikiService:
             str(config.get("integration_id") or "") if isinstance(config, dict) else ""
         )
         brand, connector_kind = _connector_identity(connector_id, integration_id)
+        editable_config: dict[str, Any] = {}
+        if connector_id in _FOLDER_CONNECTOR_IDS and isinstance(config, dict):
+            editable_config = {
+                "root": str(config.get("root") or ""),
+                "exclude": [str(value) for value in config.get("exclude") or []],
+            }
         return {
             "id": row.get("id"),
             "connector": connector_id,
@@ -1066,6 +1072,9 @@ class UltraWikiService:
             "consent": row.get("consent"),
             "enabled": row.get("enabled"),
             "areas": row.get("areas", []),
+            # Only folder settings are returned: they contain no credential,
+            # and the Sources view needs them to repair a path or exclusion.
+            "config": editable_config,
             "counts": _counts_dict(counts)
             if isinstance(counts, PipelineCounts)
             else counts,
@@ -1305,6 +1314,43 @@ class UltraWikiService:
         source = await store.get_source(source_id)
         assert source is not None
         return source
+
+    async def update_source(
+        self,
+        source_id: str,
+        *,
+        label: str | None = None,
+        config: dict[str, Any] | None = None,
+        area_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Update one source without resetting consent or stored content."""
+        await self.ensure_started()
+        store = self._require_store()
+        source = await store.get_source(source_id)
+        if source is None:
+            raise ValueError(f"unknown source {source_id!r}")
+        connector_id = str(source.get("connector") or "")
+        connector = self._build_connector(connector_id)
+        resolved_config: dict[str, Any] | None = None
+        if config is not None:
+            resolved_config = dict(source.get("config") or {})
+            resolved_config.update(dict(config))
+            resolved_config = await asyncio.to_thread(
+                self._checked_folder_config, connector, resolved_config
+            )
+        next_label = str(label).strip() if label is not None else str(source["label"])
+        if not next_label:
+            raise ValueError("source label must not be blank")
+        await store.upsert_source(
+            source_id,
+            connector=connector_id,
+            label=next_label,
+            config=resolved_config,
+            areas=list(area_ids) if area_ids is not None else None,
+        )
+        updated = await store.get_source(source_id)
+        assert updated is not None
+        return updated
 
     @staticmethod
     def _checked_folder_config(

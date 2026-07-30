@@ -144,6 +144,11 @@ export interface UltraWikiSource {
   consent: UltraWikiConsent | string;
   enabled: boolean;
   areas: string[];
+  /** Safe editable settings are returned only for folder-shaped sources. */
+  config?: {
+    root?: string;
+    exclude?: string[];
+  };
   counts: Partial<UltraWikiCounts> | null;
   sync_state: Record<string, unknown> | null;
   /** The run currently importing from this source, if any. */
@@ -1013,6 +1018,24 @@ export function approveUltraWikiSource(
     options.autoSync === false ? "?auto_sync=false" : "";
   return postJson<UltraWikiApproveResponse>(
     `/api/ultrawiki/sources/${encodeURIComponent(sourceId)}/approve${query}`,
+  );
+}
+
+export function updateUltraWikiSource(
+  sourceId: string,
+  body: {
+    label?: string;
+    config?: Record<string, unknown>;
+    areas?: string[];
+  },
+): Promise<UltraWikiSource> {
+  return request<UltraWikiSource>(
+    `/api/ultrawiki/sources/${encodeURIComponent(sourceId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
   );
 }
 

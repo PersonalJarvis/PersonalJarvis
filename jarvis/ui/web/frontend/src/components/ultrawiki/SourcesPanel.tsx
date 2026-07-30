@@ -30,6 +30,7 @@ import {
   FolderOpen,
   Info,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -57,6 +58,7 @@ import {
   fetchUltraWikiAreas,
   revokeUltraWikiSource,
   startUltraWikiSync,
+  updateUltraWikiSource,
   type UltraWikiSource,
 } from "@/lib/ultrawikiApi";
 
@@ -117,6 +119,7 @@ export function SourcesPanel({
     try {
       await action();
       onChanged();
+      return true;
     } catch (e) {
       pushToast(
         "error",
@@ -125,6 +128,7 @@ export function SourcesPanel({
           (e as Error).message,
         ),
       );
+      return false;
     } finally {
       setBusySource(null);
     }
@@ -197,6 +201,11 @@ export function SourcesPanel({
               onCancelJob={(jobId) =>
                 void run(source.id, () => cancelUltraWikiJob(jobId))
               }
+              onUpdate={(config) =>
+                run(source.id, () =>
+                  updateUltraWikiSource(source.id, { config }),
+                )
+              }
             />
           ))}
         </ul>
@@ -212,6 +221,7 @@ function SourceCard({
   onRevoke,
   onSync,
   onCancelJob,
+  onUpdate,
 }: {
   source: UltraWikiSource;
   busy: boolean;
@@ -219,8 +229,12 @@ function SourceCard({
   onRevoke: () => void;
   onSync: () => void;
   onCancelJob: (jobId: string) => void;
+  onUpdate: (config: Record<string, unknown>) => Promise<boolean>;
 }): JSX.Element {
   const t = useT();
+  const [editing, setEditing] = useState(false);
+  const [editRoot, setEditRoot] = useState("");
+  const [editExcludes, setEditExcludes] = useState("");
   const consent = String(source.consent);
   const badge = CONSENT_BADGE[consent] ?? CONSENT_BADGE.pending;
   const approved = consent === "approved";
@@ -231,6 +245,23 @@ function SourceCard({
   const lastFinished =
     source.last_outcome?.finished_at ?? source.last_sync_at ?? null;
   const lastFinishedText = formatRelativeTime(lastFinished, t);
+
+  function beginEdit() {
+    setEditRoot(source.config?.root ?? "");
+    setEditExcludes((source.config?.exclude ?? []).join(", "));
+    setEditing(true);
+  }
+
+  async function saveEdit(event: React.FormEvent) {
+    event.preventDefault();
+    const exclude = editExcludes
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (await onUpdate({ root: editRoot.trim(), exclude })) {
+      setEditing(false);
+    }
+  }
 
   return (
     <li
@@ -420,6 +451,18 @@ function SourceCard({
       )}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
+        {PATH_CONNECTORS.includes(source.connector) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={beginEdit}
+            disabled={busy || Boolean(activeJob)}
+            data-testid={`uw-source-edit-${source.id}`}
+          >
+            <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden />
+            {t("common.edit")}
+          </Button>
+        )}
         {!approved && (
           <Button
             size="sm"
@@ -464,6 +507,49 @@ function SourceCard({
           </>
         )}
       </div>
+
+      {editing && (
+        <form
+          onSubmit={(event) => void saveEdit(event)}
+          className="mt-3 space-y-2 rounded-lg border border-border bg-background/40 p-2.5"
+          data-testid={`uw-source-edit-form-${source.id}`}
+        >
+          <label className="block text-[11px] text-muted-foreground">
+            {t("ultrawiki.sources.path_label")}
+            <input
+              type="text"
+              value={editRoot}
+              onChange={(event) => setEditRoot(event.target.value)}
+              required
+              className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
+              data-testid={`uw-source-edit-root-${source.id}`}
+            />
+          </label>
+          <label className="block text-[11px] text-muted-foreground">
+            {t("ultrawiki.sources.exclude_label")}
+            <input
+              type="text"
+              value={editExcludes}
+              onChange={(event) => setEditExcludes(event.target.value)}
+              className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
+              data-testid={`uw-source-edit-exclude-${source.id}`}
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" size="sm" disabled={busy || !editRoot.trim()}>
+              {busy ? t("common.saving") : t("common.save")}
+            </Button>
+          </div>
+        </form>
+      )}
 
       {!approved && (
         <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">

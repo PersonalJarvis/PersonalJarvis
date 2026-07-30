@@ -165,6 +165,41 @@ describe("SourcesPanel — consent gate", () => {
       expect(onChanged).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("edits a folder path and exclusions without recreating the source", async () => {
+    const editable = source({
+      id: "src-editable",
+      consent: "approved",
+      config: { root: "C:/Notes", exclude: ["archive"] },
+    });
+    const fetchMock = installFetchMock({
+      "/api/ultrawiki/sources/src-editable": () => editable,
+    });
+    const onChanged = vi.fn();
+    renderWithClient(
+      <SourcesPanel sources={[editable]} onChanged={onChanged} />,
+    );
+
+    fireEvent.click(screen.getByTestId("uw-source-edit-src-editable"));
+    fireEvent.change(screen.getByTestId("uw-source-edit-exclude-src-editable"), {
+      target: { value: "archive, dist" },
+    });
+    const form = screen.getByTestId("uw-source-edit-form-src-editable");
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/ultrawiki/sources/src-editable",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            config: { root: "C:/Notes", exclude: ["archive", "dist"] },
+          }),
+        }),
+      );
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  });
 });
 
 describe("SourcesPanel — approve imports everything", () => {
