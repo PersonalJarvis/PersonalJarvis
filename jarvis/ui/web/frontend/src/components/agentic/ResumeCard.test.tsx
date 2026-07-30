@@ -172,6 +172,8 @@ describe("ResumeCard", () => {
     fireEvent.click(toggle);
     expect(screen.getByTestId("resume-pane-t29")).toBeTruthy();
     expect(toggle.textContent).toMatch(/show fewer terminals/i);
+    const expandedGrid = screen.getByTestId("resume-terminal-grid-project");
+    expect(expandedGrid.className).not.toMatch(/max-h|overflow-y/);
     fireEvent.click(toggle);
     expect(screen.queryByTestId("resume-pane-t29")).toBeNull();
   });

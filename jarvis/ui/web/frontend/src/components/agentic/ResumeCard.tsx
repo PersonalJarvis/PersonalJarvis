@@ -422,10 +422,8 @@ function WorkspaceRow({
       </div>
 
       <ul
-        className={cn(
-          "scrollbar-jarvis mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3",
-          expanded && "max-h-80 overflow-y-auto pr-1",
-        )}
+        data-testid={`resume-terminal-grid-${space.folder_name}`}
+        className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
       >
         {visible.map((pane) => (
           <TerminalTile key={pane.key} pane={pane} t={t} />
