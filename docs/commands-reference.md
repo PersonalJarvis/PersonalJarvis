@@ -26,7 +26,7 @@ Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Rev
 Switch the active text-to-speech provider (live, no restart).
 
 - **Endpoint:** `POST /api/tts/switch`
-- **Arguments:** `provider` (one of: cartesia, elevenlabs, gemini-flash-tts, grok-voice, inworld, openrouter-tts; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: cartesia, elevenlabs, gemini-flash-tts, grok-voice, inworld, openrouter-tts, piper-local; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the voice to elevenlabs"
@@ -36,7 +36,7 @@ Switch the active text-to-speech provider (live, no restart).
 Switch the speech-to-text provider. Takes effect on the next voice-pipeline start (restart required).
 
 - **Endpoint:** `POST /api/stt/switch`
-- **Arguments:** `provider` (one of: groq-api, openai-api, openrouter-stt; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: faster-whisper, groq-api, nemotron-local, openai-api, openrouter-stt; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch speech recognition to deepgram"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, local-openai, nvidia, ollama, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"

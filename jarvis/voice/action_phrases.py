@@ -456,10 +456,10 @@ _PHRASES: dict[str, dict[str, str]] = {
     # working (BUG-121).
     "ide_prompt_already_delivered": {
         "de": (
-            "{name} hat den Auftrag um {time} bekommen — "  # i18n-allow
-            "ich schicke ihn nicht doppelt."  # i18n-allow
+            "{name} hat den Auftrag um {time} bekommen. "  # i18n-allow
+            "Ich schicke ihn nicht doppelt."  # i18n-allow
         ),
-        "en": "{name} got the task at {time} — I am not sending it twice.",
+        "en": "{name} got the task at {time}. I am not sending it twice.",
         "es": "{name} recibió la tarea a las {time}: no la envío dos veces.",
     },
     # The separator for the final pair of an alternative list ("Maggie or Max").

@@ -1596,12 +1596,48 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "",
         "language_code": "auto",
     },
+    "piper-local": {
+        # ``language_code`` is the load-bearing key here, not the voices. A Piper
+        # voice is MONOLINGUAL: the plugin is handed the turn's resolved language
+        # and picks the matching installed voice per turn. Inheriting a
+        # predecessor's pinned "de-DE" would therefore hard-wire every answer to
+        # the German voice, including the ones the resolver decided to speak in
+        # English or Spanish — the runtime-language doctrine broken by a leftover
+        # config value rather than by any code. "auto" keeps the decision where
+        # it belongs.
+        #
+        # The voices are the two the installer actually fetches
+        # (PIPER_DEFAULT_VOICES in jarvis/speech/local_models.py). They are named
+        # rather than left blank so switching away from a cloud provider does not
+        # leave "Charon" sitting in the block: the resolver tolerates an unknown
+        # name, but the settings screen would keep showing a voice this provider
+        # cannot speak with. There is no [tts].model concept for Piper.
+        "model": "",
+        "voice_de": "vits-piper-de_DE-thorsten-medium",
+        "voice_en": "vits-piper-en_US-ryan-medium",
+        "language_code": "auto",
+    },
 }
 
 # Per-provider voice allowlist — when the existing voice does not match the
 # new provider, we overwrite with the provider default. Kept in sync with
 # `jarvis/plugins/tts/__init__.py`.
 _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
+    # Every catalogued local Piper voice, not only the two the installer fetches
+    # by default. Without this entry a switch to Piper would reset the voice to
+    # the default pair every time, silently undoing a user who downloaded Ramona
+    # or Amy and chose them — the allowlist is what tells the writer "this value
+    # is already valid for this provider, keep it".
+    "piper-local": frozenset(
+        {
+            "vits-piper-de_DE-thorsten-medium",
+            "vits-piper-de_DE-ramona-low",
+            "vits-piper-en_US-ryan-medium",
+            "vits-piper-en_US-amy-medium",
+            "vits-piper-es_ES-davefx-medium",
+            "vits-piper-es_ES-sharvard-medium",
+        }
+    ),
     "gemini-flash-tts": frozenset(
         {
             "Charon",
