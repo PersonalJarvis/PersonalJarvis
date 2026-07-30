@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import uuid
 
 import pytest
 
@@ -49,6 +51,26 @@ def test_named_pipe_transport_satisfies_protocol():
 def test_named_pipe_transport_exposes_sddl_address():
     t = NamedPipeTransport(r"\\.\pipe\jarvis-admin-S-1-5-18", sid="S-1-5-18")
     assert t.address == r"\\.\pipe\jarvis-admin-S-1-5-18"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows named pipes")
+@pytest.mark.asyncio
+async def test_named_pipe_stop_wakes_pending_overlapped_accept():
+    """Stopping an idle server must leave no executor thread in accept."""
+    pipe_name = rf"\\.\pipe\jarvis-admin-stop-{uuid.uuid4().hex}"
+    transport = NamedPipeTransport(pipe_name)
+
+    async def handler(raw: bytes) -> bytes:
+        return raw
+
+    serve_task = asyncio.create_task(transport.serve(handler))
+    assert await asyncio.to_thread(transport._accept_ready.wait, 2.0)
+
+    transport.stop()
+    transport.stop()
+
+    await asyncio.wait_for(serve_task, timeout=2.0)
+    assert not transport._accept_ready.is_set()
 
 
 @pytest.mark.asyncio

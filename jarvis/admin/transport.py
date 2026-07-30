@@ -39,6 +39,8 @@ relocated here from ``ipc.py`` for the same reason.
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -65,6 +67,10 @@ _MAX_PAYLOAD_BYTES = 12 * 1024 * 1024
 # Pipe buffer (server side), relocated verbatim from ipc.py.
 _PIPE_IN_BUFFER = _MAX_PAYLOAD_BYTES
 _PIPE_OUT_BUFFER = 64 * 1024
+
+
+class _NamedPipeStopped(Exception):
+    """Internal control flow for I/O cancelled by ``stop()``."""
 
 
 # ---------------------------------------------------------------------
@@ -111,10 +117,12 @@ def current_user_sid() -> str:
     (e.g. on CI without Windows). Tests must not rely on this — they should
     patch this call instead.
     """
+    if os.name != "nt":
+        return "S-0-0"
     try:
-        import win32api  # type: ignore[import-not-found]
-        import win32con  # type: ignore[import-not-found]
-        import win32security  # type: ignore[import-not-found]
+        import win32api  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32con  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32security  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
 
         token = win32security.OpenProcessToken(
             win32api.GetCurrentProcess(), win32con.TOKEN_QUERY
@@ -172,8 +180,11 @@ class NamedPipeTransport:
         self._pipe_name = pipe_name or default_pipe_name()
         self._sid = sid or current_user_sid()
         self._connect_timeout_ms = connect_timeout_ms
-        self._stop = asyncio.Event()
+        self._stop = threading.Event()
         self._tasks: set[asyncio.Task[None]] = set()
+        self._stop_handle: Any | None = None
+        self._stop_handle_lock = threading.Lock()
+        self._accept_ready = threading.Event()
 
     @property
     def address(self) -> str:
@@ -188,35 +199,89 @@ class NamedPipeTransport:
         """Runs until ``stop()`` is called. Each connection gets its own task."""
         logger.info("admin_pipe_transport.start",
                     pipe=self._pipe_name, sid=self._sid)
-        while not self._stop.is_set():
-            try:
-                handle = await asyncio.to_thread(self._accept_one)
-            except Exception:  # noqa: BLE001
+        try:
+            while not self._stop.is_set():
+                accept_task = asyncio.create_task(
+                    asyncio.to_thread(self._accept_one),
+                    name="admin_pipe_accept",
+                )
+                try:
+                    # Native I/O outlives a cancelled asyncio wrapper. Shielding
+                    # lets cancellation signal stop and then reap the worker.
+                    handle = await asyncio.shield(accept_task)
+                except asyncio.CancelledError:
+                    self.stop()
+                    try:
+                        await accept_task
+                    except Exception:  # noqa: BLE001
+                        logger.exception("admin_pipe_transport.accept_cancel_error")
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.exception("admin_pipe_transport.accept_error")
+                    if self._stop.is_set():
+                        break
+                    await asyncio.sleep(0.1)
+                    continue
+                if handle is None:
+                    continue
                 if self._stop.is_set():
+                    await asyncio.to_thread(self._safe_close, handle)
                     break
-                logger.exception("admin_pipe_transport.accept_error")
-                await asyncio.sleep(0.1)
-                continue
-            if handle is None:
-                continue
-            task = asyncio.create_task(
-                self._handle_connection(handle, handler),
-                name="admin_pipe_conn",
-            )
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+                task = asyncio.create_task(
+                    self._handle_connection(handle, handler),
+                    name="admin_pipe_conn",
+                )
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        finally:
+            try:
+                if self._tasks:
+                    await asyncio.gather(*self._tasks, return_exceptions=True)
+            finally:
+                self._close_stop_handle()
+                logger.info("admin_pipe_transport.stopped")
 
-        # Shutdown: wait until all running handlers have finished
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        logger.info("admin_pipe_transport.stopped")
+    def _get_stop_handle(self) -> Any | None:
+        """Return the manual-reset Win32 event shared by pending pipe I/O."""
+        if os.name != "nt":
+            return None
+        import win32event  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+
+        with self._stop_handle_lock:
+            if self._stop_handle is None:
+                self._stop_handle = win32event.CreateEvent(
+                    None,
+                    True,
+                    self._stop.is_set(),
+                    None,
+                )
+            return self._stop_handle
+
+    def _close_stop_handle(self) -> None:
+        """Close the native stop event after all overlapped I/O has drained."""
+        if os.name != "nt":
+            return
+        import win32file  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+
+        with self._stop_handle_lock:
+            handle = self._stop_handle
+            self._stop_handle = None
+            if handle is not None:
+                win32file.CloseHandle(handle)
 
     def _accept_one(self) -> Any:
-        """Blocking accept — returns a pipe handle, or None on stop."""
-        import pywintypes  # type: ignore[import-not-found]
-        import win32file  # type: ignore[import-not-found]
-        import win32pipe  # type: ignore[import-not-found]
-        import win32security  # type: ignore[import-not-found]
+        """Wait for one client or the stop event, without stranding a thread."""
+        if os.name != "nt":
+            return None
+        import _winapi  # noqa: PLC0415
+
+        import win32file  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32pipe  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32security  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+
+        stop_handle = self._get_stop_handle()
+        if stop_handle is None or self._stop.is_set():
+            return None
 
         # Security descriptor with SDDL ACL.
         sd = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
@@ -228,7 +293,7 @@ class NamedPipeTransport:
 
         handle = win32pipe.CreateNamedPipe(
             self._pipe_name,
-            win32pipe.PIPE_ACCESS_DUPLEX,
+            win32pipe.PIPE_ACCESS_DUPLEX | win32file.FILE_FLAG_OVERLAPPED,
             win32pipe.PIPE_TYPE_MESSAGE
             | win32pipe.PIPE_READMODE_MESSAGE
             | win32pipe.PIPE_WAIT,
@@ -236,23 +301,61 @@ class NamedPipeTransport:
             _PIPE_OUT_BUFFER, _PIPE_IN_BUFFER,
             0, sa,
         )
+        accepted = False
+        overlapped = None
         try:
-            win32pipe.ConnectNamedPipe(handle, None)
-        except pywintypes.error:
             try:
+                overlapped = _winapi.ConnectNamedPipe(
+                    int(handle),
+                    overlapped=True,
+                )
+            except OSError as exc:
+                # A client can connect and leave between pipe creation and the
+                # accept call; Windows still considers that instance accepted.
+                if exc.winerror != _winapi.ERROR_NO_DATA:
+                    raise
+                if self._stop.is_set():
+                    return None
+                accepted = True
+                return handle
+
+            self._accept_ready.set()
+            wait_result = _winapi.WaitForMultipleObjects(
+                [overlapped.event, int(stop_handle)],
+                False,
+                _winapi.INFINITE,
+            )
+            if wait_result == 1:
+                overlapped.cancel()
+                _transferred, error = overlapped.GetOverlappedResult(True)
+                if error not in (0, _winapi.ERROR_OPERATION_ABORTED):
+                    raise OSError(error, "named-pipe accept cancellation failed")
+                return None
+            if wait_result != 0:
+                overlapped.cancel()
+                overlapped.GetOverlappedResult(True)
+                raise OSError(wait_result, "named-pipe accept wait failed")
+
+            _transferred, error = overlapped.GetOverlappedResult(True)
+            if error:
+                raise OSError(error, "named-pipe accept failed")
+            if self._stop.is_set():
+                return None
+            accepted = True
+            return handle
+        finally:
+            self._accept_ready.clear()
+            if not accepted:
                 win32file.CloseHandle(handle)
-            except Exception:  # noqa: BLE001, S110
-                pass
-            return None
-        return handle
 
     async def _handle_connection(self, handle: Any, handler: RequestHandler) -> None:
         """Reads exactly one request, dispatches it via ``handler``, sends the response."""
-        import pywintypes  # type: ignore[import-not-found]
-
         try:
             raw = await asyncio.to_thread(self._read_message, handle)
-        except pywintypes.error as exc:
+        except _NamedPipeStopped:
+            await asyncio.to_thread(self._safe_close, handle)
+            return
+        except OSError as exc:
             logger.warning("admin_pipe_transport.read_error", error=str(exc))
             await asyncio.to_thread(self._safe_close, handle)
             return
@@ -271,40 +374,92 @@ class NamedPipeTransport:
         finally:
             await asyncio.to_thread(self._safe_close, handle)
 
-    @staticmethod
-    def _read_message(handle: Any) -> bytes:
-        import win32file  # type: ignore[import-not-found]
+    def _wait_for_io(self, overlapped: Any, initial_error: int) -> tuple[int, int]:
+        """Wait for overlapped I/O while allowing ``stop()`` to cancel it."""
+        if os.name != "nt":
+            return (0, 0)
+        import _winapi  # noqa: PLC0415
 
-        # MESSAGE mode: one ReadFile call delivers a complete message.
+        stop_handle = self._get_stop_handle()
+        if stop_handle is None:
+            raise _NamedPipeStopped
+        if initial_error == _winapi.ERROR_IO_PENDING:
+            wait_result = _winapi.WaitForMultipleObjects(
+                [overlapped.event, int(stop_handle)],
+                False,
+                _winapi.INFINITE,
+            )
+            if wait_result == 1:
+                overlapped.cancel()
+                _transferred, error = overlapped.GetOverlappedResult(True)
+                if error not in (0, _winapi.ERROR_OPERATION_ABORTED):
+                    raise OSError(error, "named-pipe I/O cancellation failed")
+                raise _NamedPipeStopped
+            if wait_result != 0:
+                overlapped.cancel()
+                overlapped.GetOverlappedResult(True)
+                raise OSError(wait_result, "named-pipe I/O wait failed")
+        return overlapped.GetOverlappedResult(True)
+
+    def _read_message(self, handle: Any) -> bytes:
+        if os.name != "nt":
+            return b""
+        import _winapi  # noqa: PLC0415
+
         chunks: list[bytes] = []
         total = 0
         while True:
-            _rc, data = win32file.ReadFile(handle, 65536)
+            overlapped, initial_error = _winapi.ReadFile(
+                int(handle),
+                65536,
+                overlapped=True,
+            )
+            transferred, error = self._wait_for_io(overlapped, initial_error)
+            buffer = overlapped.getbuffer()
+            if buffer is None:
+                raise OSError("named-pipe read completed without a buffer")
+            data = bytes(buffer)
+            if transferred != len(data):
+                data = data[:transferred]
             chunks.append(data)
-            total += len(data)
-            if total >= _MAX_PAYLOAD_BYTES:
+            total += transferred
+            if total > _MAX_PAYLOAD_BYTES:
                 raise OSError("payload exceeds limit")
-            # In MESSAGE mode, once the message is fully read the next ReadFile
-            # returns ERROR_PIPE_NOT_CONNECTED or 0 bytes. Simplified: we
-            # assume the client sends exactly one message (Pydantic envelope
-            # < 64 KB in 99 % of cases; larger content_b64 payloads are
-            # chunked through the same ReadFile).
-            if len(data) < 65536:
-                break
+            if error == _winapi.ERROR_MORE_DATA:
+                continue
+            if error:
+                raise OSError(error, "named-pipe read failed")
+            # MESSAGE mode reports success exactly at the message boundary,
+            # including a message whose size is an exact multiple of 64 KiB.
+            break
         return b"".join(chunks)
 
-    @staticmethod
-    def _write_message(handle: Any, data: bytes) -> None:
-        import win32file  # type: ignore[import-not-found]
+    def _write_message(self, handle: Any, data: bytes) -> None:
+        if os.name != "nt":
+            return
+        import _winapi  # noqa: PLC0415
 
-        win32file.WriteFile(handle, data)
+        import win32file  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+
+        overlapped, initial_error = _winapi.WriteFile(
+            int(handle),
+            data,
+            overlapped=True,
+        )
+        transferred, error = self._wait_for_io(overlapped, initial_error)
+        if error:
+            raise OSError(error, "named-pipe write failed")
+        if transferred != len(data):
+            raise OSError("named-pipe write was incomplete")
         win32file.FlushFileBuffers(handle)
 
     @staticmethod
     def _safe_close(handle: Any) -> None:
+        if os.name != "nt":
+            return
         try:
-            import win32file  # type: ignore[import-not-found]
-            import win32pipe  # type: ignore[import-not-found]
+            import win32file  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+            import win32pipe  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
 
             try:
                 win32pipe.DisconnectNamedPipe(handle)
@@ -315,8 +470,15 @@ class NamedPipeTransport:
             pass
 
     def stop(self) -> None:
-        """Signals the accept loop to exit on its next iteration."""
+        """Signal pending native pipe I/O and the accept loop to stop."""
         self._stop.set()
+        if os.name != "nt":
+            return
+        import win32event  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+
+        with self._stop_handle_lock:
+            if self._stop_handle is not None:
+                win32event.SetEvent(self._stop_handle)
 
     # ------------------------------------------------------------------
     # Client — roundtrip (relocated from AdminPipeClient._roundtrip)
@@ -328,9 +490,11 @@ class NamedPipeTransport:
 
     def _roundtrip(self, raw: bytes) -> bytes:
         """Blocking pipe connect + write + read."""
-        import pywintypes  # type: ignore[import-not-found]
-        import win32file  # type: ignore[import-not-found]
-        import win32pipe  # type: ignore[import-not-found]
+        if os.name != "nt":
+            return b""
+        import pywintypes  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32file  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
+        import win32pipe  # type: ignore[import-not-found,import-untyped]  # noqa: PLC0415
         try:
             win32pipe.WaitNamedPipe(self._pipe_name, self._connect_timeout_ms)
         except pywintypes.error as exc:
