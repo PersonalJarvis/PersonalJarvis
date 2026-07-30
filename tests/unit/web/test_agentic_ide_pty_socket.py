@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import Registry
+from jarvis.agentic_ide.session import Registry, SessionError
 from jarvis.ui.web import agentic_ide_routes as routes
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -90,17 +90,50 @@ async def test_refused_handshake_is_recorded_not_only_closed(
     assert any("Mika" in record.getMessage() for record in caplog.records)
 
 
+async def test_attach_before_the_workspace_is_open_asks_the_pane_to_wait(
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """"Not yet" and "not here" are different answers, and this is the first.
+
+    No workspace is open, which is exactly what a full grid of panes runs into
+    for a second or two after the backend restarts. Answering 4404 here made
+    every one of them give up permanently and the workspace came back frozen, so
+    this case has a code of its own (4503) that means "come back". The record in
+    the log still names the pane either way.
+    """
+    monkeypatch.setattr(routes, "credentials_valid", lambda scope: True)
+    ws = FakeWebSocket(cols="80", rows="24")
+
+    with caplog.at_level(logging.INFO, logger=routes.__name__):
+        await routes.agentic_pty(ws, "Mika")
+
+    assert ws.closed == (4503, "not ready")
+    assert ws.sent and ws.sent[0]["t"] == "error"
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "Mika" in logged
+
+
 async def test_failed_attach_is_recorded_with_pane_and_reason(
     registry: Registry,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A refused attach says which pane and why — in the log, not only on screen."""
+    """A refused attach says which pane and why — in the log, not only on screen.
+
+    This is the terminal failure, not the "try again" one above: a spawn that
+    will not come back. It is the case where nobody is hovering over the red
+    badge, because it tends to hit every pane at once.
+    """
     monkeypatch.setattr(routes, "credentials_valid", lambda scope: True)
+
+    async def _refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise SessionError("the session could not be started")
+
+    monkeypatch.setattr(registry, "attach", _refuse)
     ws = FakeWebSocket(cols="80", rows="24")
 
-    # No workspace is open, which is exactly what a pane reconnecting across a
-    # backend restart runs into.
     with caplog.at_level(logging.WARNING, logger=routes.__name__):
         await routes.agentic_pty(ws, "Mika")
 

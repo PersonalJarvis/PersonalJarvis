@@ -23,7 +23,7 @@ import pytest
 
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.activity import read_activity
+from jarvis.agentic_ide.activity import STILL_S, read_activity
 from jarvis.agentic_ide.session import Registry
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -61,6 +61,45 @@ REAL_STARTUP_BANNER = (
     ">\r\n"
 )
 
+# --- EVERY CLI a workspace can open, at rest (measured 2026-07-29) -----------
+#
+# The detector must hold for all of them, so the cases below are parametrized
+# over these rather than written against one product. They look nothing like
+# each other — different box drawing, different status lines, different
+# languages of chrome — which is the point: the rule reads the terminal, not
+# the thing running in it.
+#
+# Also measured, and the reason the rule is safe: while WAITING, all four
+# changed their screen 0 times in 40 samples over 20 seconds; while WORKING,
+# the longest gap between changes was 0.5 s.
+REST_SCREENS = {
+    "claude": (
+        "\r\n ‼ 1 MCP server needs authentication · run /mcp\r\n"
+        "❯ Reply with exactly one word: ping\r\n"
+        "● ping\r\n"
+        "✻ Sautéed for 2s\r\n"
+        "❯\r\n"
+        "  📁 probe-repo  🌿 master  Opus 5 (1M context)\r\n"
+    ),
+    "codex": (
+        "\r\n• You have 1 usage limit reset available. Run /usage to use one.\r\n"
+        "• ping\r\n"
+        "› Improve documentation in @filename\r\n"
+        "  gpt-5.6-sol xhigh fast · ~\\probe-repo\r\n"
+    ),
+    "opencode": (
+        "\r\n  ┃  Build · Nano Banana Pro Google\r\n"
+        "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\r\n"
+        "                    tab agents  ctrl+p commands\r\n"
+    ),
+    "kimi": (
+        "\r\n ✦ Use Kimi K3 with High thinking effort\r\n"
+        "   Error: LLM not set, send \"/login\" to login\r\n"
+        " │ >                                        \r\n"
+        " C:\\probe-repo                              \r\n"
+    ),
+}
+
 
 @pytest.fixture(autouse=True)
 def _clean_store() -> Any:
@@ -84,9 +123,11 @@ async def _noop_exit(_code: int) -> None:
     return None
 
 
-async def _pane(registry: Registry, folder: Path, *, name: str = "Alex"):
+async def _pane(
+    registry: Registry, folder: Path, *, name: str = "Alex", agent: str = "claude"
+):
     """One live pane in one workspace, through the real attach path."""
-    session = await registry.start(str(folder), [{"agent": "claude", "name": name}])
+    session = await registry.start(str(folder), [{"agent": agent, "name": name}])
     term = await registry.attach(name, 100, 30, _noop, _noop_exit)
     return session, term
 
@@ -96,58 +137,106 @@ def _draw(term: Any, screen: str) -> None:
     term.transcript.feed(screen)
 
 
+def _quiet_since(term: Any, at: float) -> None:
+    """Say this pane last printed at ``at`` and nobody has typed into it.
+
+    Attaching a pane stamps it with the WALL clock, while these tests run on a
+    synthetic timeline — so without this a pane is "printing right now" against
+    every `now` a test picks, and the third busy signal (see
+    `activity.OUTPUT_QUIET_S`) answers before the screen is ever consulted.
+    Tests about what is ON the screen say so explicitly.
+    """
+    term.last_output_at = at
+    term.last_input_at = None
+
+
+def _busy(watcher: Any, registry: Registry, term: Any, *, start: float, sweeps: int = 3) -> float:
+    """Drive a pane through ``sweeps`` sweeps of a MOVING screen.
+
+    A pane is busy because its picture keeps changing, so making one busy in a
+    test means changing its picture — repeatedly, since a single change cannot
+    be told from a pane that was already still. Returns the moment of the last
+    sweep, which is when the screen stopped moving.
+    """
+    at = start
+    for step in range(sweeps):
+        at = start + step * notifications.SWEEP_INTERVAL_S
+        term.transcript.clear()
+        _draw(term, f"\r\n· working, frame {step}\r\n")
+        watcher.poll(registry, now=at)
+    return at
+
+
+def _rest(
+    watcher: Any, registry: Registry, term: Any, screen: str, *, at: float, emit: bool = True
+) -> list:
+    """Show ``screen`` and let it stand still long enough to count as settled."""
+    term.transcript.clear()
+    _draw(term, screen)
+    watcher.poll(registry, now=at, emit=emit)
+    return watcher.poll(registry, now=at + STILL_S + 1, emit=emit)
+
+
 # ------------------------------------------------- reading the REAL terminals
-async def test_a_real_working_pane_is_seen_working(
+#
+# One rule, four products, no product knowledge: a screen that MOVES is an agent
+# at work, a screen that stands still is a terminal waiting. Each case below
+# drives the real rows of a real CLI through the detector.
+
+
+@pytest.mark.parametrize("agent,screen", list(REST_SCREENS.items()))
+async def test_a_still_screen_is_a_waiting_pane(
+    registry: Registry, tmp_path: Path, agent: str, screen: str
+) -> None:
+    """Every CLI at rest, read the same way — measured: idle panes never repaint."""
+    _session, term = await _pane(registry, tmp_path, agent=agent, name="Px")
+    _draw(term, screen)
+
+    assert read_activity(term, now=1030.0, still_since=1000.0) == "waiting"
+
+
+@pytest.mark.parametrize("agent,screen", list(REST_SCREENS.items()))
+async def test_a_moving_screen_is_a_working_pane(
+    registry: Registry, tmp_path: Path, agent: str, screen: str
+) -> None:
+    """And every CLI while its screen moves, whatever it happens to be drawing."""
+    _session, term = await _pane(registry, tmp_path, agent=agent, name="Px")
+    _draw(term, screen)
+
+    assert read_activity(term, now=1000.5, still_since=1000.0) == "working"
+
+
+async def test_movement_is_the_only_thing_that_counts(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The row this build actually draws while it works — no interrupt hint in it.
+    """The rows this build draws while WORKING are not treated as special.
 
-    This is the regression that made the feature do nothing on the machine it
-    was built for: the pane is plainly busy and the detector called it idle.
+    The point of the rewrite: these are the exact rows that fooled two earlier
+    versions — one looked for an interrupt hint they do not contain, the next
+    for a bracketed clock that also matched the model banner. Frozen on screen,
+    they mean a pane that has stopped, and that is now the answer.
     """
     _session, term = await _pane(registry, tmp_path)
     _draw(term, REAL_WORKING)
-    term.last_output_at = 1000.0
 
-    assert read_activity(term, now=1001.0) == "working"
+    assert read_activity(term, now=1030.0, still_since=1000.0) == "waiting"
 
 
-async def test_a_real_thinking_pane_is_seen_working(
+async def test_a_pane_whose_screen_keeps_changing_is_working(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """No tokens, no hint — just the clock. Still working."""
+    """Through the watcher, which is what actually tracks the movement."""
+    watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
-    _draw(term, REAL_THINKING)
-    term.last_output_at = 1000.0
 
-    assert read_activity(term, now=1001.0) == "working"
-
-
-async def test_a_real_finished_pane_is_seen_waiting(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """"Worked for 13m 27s" states a duration; it does not tick."""
-    _session, term = await _pane(registry, tmp_path)
-    _draw(term, REAL_FINISHED)
-    term.last_output_at = 1000.0
-
-    assert read_activity(term, now=1001.0) == "waiting"
-
-
-async def test_a_stale_clock_is_not_a_running_one(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """A bracketed duration on a screen that stopped moving is text, not a clock.
-
-    Without this pairing, a frozen last frame — or an agent quoting "(3s)" in
-    its own answer — would read as an agent that is still working, and the pane
-    would never be reported at all.
-    """
-    _session, term = await _pane(registry, tmp_path)
     _draw(term, REAL_WORKING)
-    term.last_output_at = 1000.0
-
-    assert read_activity(term, now=1000.0 + 60) == "waiting"
+    watcher.poll(registry, now=100.0)
+    for tick in range(1, 6):
+        # A different screen every sweep, exactly as a running agent produces.
+        term.transcript.clear()
+        _draw(term, f"\r\n· Scurrying… ({tick}m 4s · ↓ {tick}.6k tokens)\r\n")
+        assert watcher.poll(registry, now=100.0 + tick * 2) == []
+        assert watcher._panes[(_session.id, term.key)].activity == "working"
 
 
 async def test_the_startup_banner_is_not_a_question(
@@ -156,9 +245,44 @@ async def test_the_startup_banner_is_not_a_question(
     """It sits there for the pane's whole life — a standing banner, not an ask."""
     _session, term = await _pane(registry, tmp_path)
     _draw(term, REAL_STARTUP_BANNER)
-    term.last_output_at = 1000.0
 
-    assert read_activity(term, now=1001.0) == "waiting"
+    assert read_activity(term, now=1030.0, still_since=1000.0) == "waiting"
+
+
+async def test_a_visible_choice_is_told_apart_from_a_finished_pane(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Content decides the WORD, never whether the pane is busy."""
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, QUESTION_SCREEN)
+
+    assert read_activity(term, now=1030.0, still_since=1000.0) == "asking"
+
+
+async def test_typing_into_a_pane_is_not_the_agent_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A terminal echoes keystrokes, and an echo is not work.
+
+    Without this, writing a prompt by hand reads as a busy agent — and the
+    moment the user pauses to think, the pane is reported as finished.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, IDLE_SCREEN)
+    term.last_input_at = 1000.0
+
+    assert read_activity(term, now=1000.2, still_since=1000.0) == "waiting"
+
+
+async def test_movement_after_the_typing_stopped_is_work(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The other side of the same rule: once the keyboard is quiet, movement counts."""
+    _session, term = await _pane(registry, tmp_path)
+    _draw(term, IDLE_SCREEN)
+    term.last_input_at = 1000.0
+
+    assert read_activity(term, now=1010.2, still_since=1010.0) == "working"
 
 
 async def test_a_real_pane_finishing_files_one_entry(
@@ -174,10 +298,14 @@ async def test_a_real_pane_finishing_files_one_entry(
 
     term.transcript.clear()
     _draw(term, REAL_FINISHED)
-    term.last_output_at = 1002.0
+    _quiet_since(term, 1002.0)
+    # Still "working" here: it printed half a second ago, and a reply arrives in
+    # bursts. The clock is gone but the pane is not done talking.
     assert watcher.poll(registry, now=1002.5) == []
+    # Past the output window, so this is where the settle timer actually starts.
+    assert watcher.poll(registry, now=1010.0) == []
 
-    filed = watcher.poll(registry, now=1002.5 + notifications.SETTLE_S + 1)
+    filed = watcher.poll(registry, now=1010.0 + notifications.SETTLE_S + 1)
 
     assert [entry.kind for entry in filed] == ["completed"]
 
@@ -199,7 +327,8 @@ async def test_a_pane_at_its_prompt_reads_as_waiting(
     _session, term = await _pane(registry, tmp_path)
 
     _draw(term, IDLE_SCREEN)
-    assert read_activity(term) == "waiting"
+    _quiet_since(term, 1000.0)
+    assert read_activity(term, now=1030.0) == "waiting"
 
 
 async def test_a_visible_question_reads_as_asking(registry: Registry, tmp_path: Path) -> None:
@@ -207,7 +336,8 @@ async def test_a_visible_question_reads_as_asking(registry: Registry, tmp_path: 
     _session, term = await _pane(registry, tmp_path)
 
     _draw(term, QUESTION_SCREEN)
-    assert read_activity(term) == "asking"
+    _quiet_since(term, 1000.0)
+    assert read_activity(term, now=1030.0) == "asking"
 
 
 async def test_a_pane_with_no_agent_yet_is_not_idle(registry: Registry, tmp_path: Path) -> None:
@@ -225,17 +355,15 @@ async def test_a_pane_that_stops_working_is_reported_once(
     watcher = notifications.watcher()
     session, term = await _pane(registry, tmp_path)
 
-    _draw(term, BUSY_SCREEN)
-    assert watcher.poll(registry, now=100.0) == []
+    stopped = _busy(watcher, registry, term, start=100.0)
 
-    # A real TUI repaints the row it drew the hint on; the fake screen is told
-    # to do the same rather than letting the old row scroll along underneath.
-    term.transcript.clear()
-    _draw(term, IDLE_SCREEN)
-    # Seen as settled, but not yet for long enough to be believed.
-    assert watcher.poll(registry, now=101.0) == []
+    # The picture now stops changing. Standing still is not instantly "finished"
+    # — a pane between two steps looks exactly the same for a moment.
+    assert watcher.poll(registry, now=stopped + 1) == []
+    # Still enough to count as settled, but the settle window has not run.
+    assert watcher.poll(registry, now=stopped + STILL_S + 1) == []
 
-    filed = watcher.poll(registry, now=100.0 + notifications.SETTLE_S + 2)
+    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
     assert [entry.kind for entry in filed] == ["completed"]
     assert filed[0].pane == term.name
     assert filed[0].workspace_id == session.id
@@ -251,19 +379,25 @@ async def test_only_observed_work_is_checkpointed_for_restart(
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
 
-    _draw(term, BUSY_SCREEN)
-    watcher.poll(registry, now=100.0, emit=False)
+    stopped = _busy(watcher, registry, term, start=100.0)
     assert term.resume_continuation_needed is True
     assert watcher.take_resume_dirty() is True
     assert notifications.center().list() == [], "the bell switch does not disable checkpointing"
 
+    # The screen stops moving, but not for long enough yet: a pane between two
+    # steps must stay armed, or a restart would not offer to continue it.
     term.transcript.clear()
     _draw(term, IDLE_SCREEN)
-    watcher.poll(registry, now=101.0, emit=False)
+    watcher.poll(registry, now=stopped + 1, emit=False)
     assert term.resume_continuation_needed is True, "a repaint gap must stay armed"
     assert watcher.take_resume_dirty() is False
 
-    watcher.poll(registry, now=101.0 + notifications.SETTLE_S + 1, emit=False)
+    # Two waits stack, and both are load-bearing: the screen has to stand still
+    # long enough to count as settled at all (STILL_S), and only then does the
+    # settle window for "this really is over" start running (SETTLE_S).
+    settled_at = stopped + STILL_S + 2
+    watcher.poll(registry, now=settled_at, emit=False)
+    watcher.poll(registry, now=settled_at + notifications.SETTLE_S + 1, emit=False)
     assert term.resume_continuation_needed is False
     assert watcher.take_resume_dirty() is True
 
@@ -274,13 +408,10 @@ async def test_a_question_clears_the_restart_checkpoint_immediately(
     """A question needs the user's answer; "continue" would be the wrong input."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
-    _draw(term, BUSY_SCREEN)
-    watcher.poll(registry, now=100.0)
+    stopped = _busy(watcher, registry, term, start=100.0)
     watcher.take_resume_dirty()
 
-    term.transcript.clear()
-    _draw(term, QUESTION_SCREEN)
-    watcher.poll(registry, now=101.0)
+    _rest(watcher, registry, term, QUESTION_SCREEN, at=stopped + 2)
 
     assert term.resume_continuation_needed is False
     assert watcher.take_resume_dirty() is True
@@ -337,10 +468,15 @@ async def test_a_question_is_reported_even_though_it_never_worked(
     _draw(term, IDLE_SCREEN)
     watcher.poll(registry, now=100.0)
 
+    # The question APPEARING is itself a screen change, so it settles like any
+    # other before it is believed.
     term.transcript.clear()
     _draw(term, QUESTION_SCREEN)
     watcher.poll(registry, now=101.0)
-    filed = watcher.poll(registry, now=101.0 + notifications.SETTLE_S + 1)
+    assert watcher.poll(registry, now=101.0 + STILL_S + 1) == []
+    filed = watcher.poll(
+        registry, now=101.0 + STILL_S + notifications.SETTLE_S + 2
+    )
 
     assert [entry.kind for entry in filed] == ["needs_input"]
 
@@ -353,13 +489,11 @@ async def test_going_back_to_work_re_arms_the_report(
     _session, term = await _pane(registry, tmp_path)
 
     for round_start in (100.0, 500.0):
-        term.transcript.clear()
-        _draw(term, BUSY_SCREEN)
-        watcher.poll(registry, now=round_start)
-        term.transcript.clear()
-        _draw(term, IDLE_SCREEN)
-        watcher.poll(registry, now=round_start + 1)
-        filed = watcher.poll(registry, now=round_start + notifications.SETTLE_S + 2)
+        stopped = _busy(watcher, registry, term, start=round_start)
+        watcher.poll(registry, now=stopped + STILL_S + 1)
+        filed = watcher.poll(
+            registry, now=stopped + STILL_S + notifications.SETTLE_S + 2
+        )
         assert [entry.kind for entry in filed] == ["completed"], round_start
 
 
@@ -427,12 +561,9 @@ async def test_closing_a_workspace_takes_its_notifications_with_it(
     """Each entry is a "jump to this pane" button, and the panes have just died."""
     watcher = notifications.watcher()
     session, term = await _pane(registry, tmp_path)
-    _draw(term, BUSY_SCREEN)
-    watcher.poll(registry, now=100.0)
-    term.transcript.clear()
-    _draw(term, IDLE_SCREEN)
-    watcher.poll(registry, now=101.0)
-    watcher.poll(registry, now=100.0 + notifications.SETTLE_S + 2)
+    stopped = _busy(watcher, registry, term, start=100.0)
+    watcher.poll(registry, now=stopped + STILL_S + 1)
+    watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
     assert notifications.center().list() != []
 
     await registry.end(session.id)

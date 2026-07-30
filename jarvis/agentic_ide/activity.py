@@ -9,85 +9,78 @@ looks exactly like the eleven around it that are still thinking. So the user
 watches the grid, or comes back twenty minutes later to find that everything
 had been finished for nineteen of them.
 
-This module reads one pane's CURRENT SCREEN and answers with one word. The
-transitions between those words are what :mod:`.notifications` turns into
-something the user can be told.
+## The rule: read the TERMINAL, never the product
 
-## Why the screen and not the transcript
+**A pane is working while its screen keeps changing, and waiting once the
+screen has stood still.** That is the whole detector, and it is deliberately a
+property of the terminal rather than of whatever is running inside it. A
+workspace opens five different coding CLIs today and an unknown number
+tomorrow; a rule that knows what any of them prints is a rule that breaks on
+the next one, in the next release, or in the next language.
 
-The transcript walks the whole scrollback and folds repeated rows — the right
-shape for "summarize what happened here", the wrong one for "what is on screen
-right now", which is a single grid of at most a few dozen rows. The screen is
-what a person looking at the pane would see, and that is the question.
+Two earlier versions proved that the hard way:
 
-## What it looks at, and what it deliberately does not
+* **"It draws an interrupt hint while busy."** The installed Claude Code does
+  not, in the states that matter. No pane was ever seen working, so the one
+  transition the feature watches for could not happen, and the bell stayed
+  empty while terminals finished all around it.
+* **"It ticks a bracketed clock while busy."** Codex ticks one while it THINKS
+  and drops it while it WRITES, so a reply still arriving read as finished. The
+  same pattern also matched the model banner every pane carries — ``Opus 5 (1M
+  context)`` case-folds to ``(1m context)`` — and read every idle terminal as
+  busy.
 
-**Working** is answered by THREE signals, most specific first, because no
-single one covers every product or every phase of a turn. Rows below are copied
-off real sessions of the CLIs installed here, not imagined:
+Both mistakes have the same shape: a claim about a product, checked against one
+product. Screen movement makes no claim at all.
 
-1. **A running clock** — the bracketed elapsed time these products tick once a
-   second while they work, and drop the instant they stop::
+## Why this is safe, measured rather than assumed
 
-       ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← Claude Code, thinking
-       • Working (1s • esc to interrupt)          ← Codex, thinking
-       ✻ Worked for 13m 27s                       ← finished, no brackets
+Sampled twice a second across Claude Code, Codex, OpenCode and Kimi
+(2026-07-29):
 
-2. **An interrupt hint** ("esc to interrupt"), for a CLI that shows one without
-   a clock.
+===================  ==========================================
+While WAITING        0 screen changes in 40 samples, all four
+While WORKING        a change every sample — longest gap 0.5 s
+After finishing      still for 107 s and counting
+===================  ==========================================
 
-3. **The pane is printing right now** — no knowledge of the CLI at all, which
-   is what makes a product nobody has measured behave correctly.
+So the two states are not close: a working pane repaints at least twice a
+second, and an idle one is perfectly still. None of these products draws its
+own blinking cursor, keeps a clock in a status bar, or emits a heartbeat — any
+of which would have sunk this approach, which is why it was measured first.
+:data:`STILL_S` sits eight times above the longest observed gap.
 
-Each covers a phase the others miss, and both gaps were measured rather than
-guessed. The first version of this module used the hint ALONE, reasoning that
-it is near-universal: the installed Claude Code does not draw one in the states
-that matter, so no pane was ever seen working and the bell stayed empty while
-terminals finished all around it. A clock-only rule then failed the other way —
-Codex draws its clock while it thinks and DROPS it while it writes the answer,
-so a reply still arriving read as a pane that had finished.
+## Screen CONTENT, not bytes
 
-**Idle time alone never says "finished"**, and that is load-bearing. An agent
-thinking hard about a large refactor prints nothing readable for minutes at a
-time, while a stalled one may redraw its status bar every second — the same
-reasoning :mod:`.interrupted` sets out. Freshness is used only in the positive
-direction: to confirm a clock on screen is TICKING, and to notice that output
-is arriving. Silence on its own proves nothing.
+Bytes arriving is the weaker signal and would be the tempting one, since it
+needs no state. A terminal receives plenty of bytes that change nothing a
+person can see: cursor moves, a row repainted with identical characters, replies
+to the emulator queries a CLI makes at startup. Fingerprinting the visible rows
+answers "did anything CHANGE", which is the question. (Bytes are still used as
+a fallback for a caller that has no previous screen to compare against.)
 
-**Output in the shadow of a keystroke is not the agent working.** A terminal
-echoes what a person types, so a pane being typed into is "producing output";
-without that exclusion, pausing mid-sentence while writing a prompt would read
-as an agent that just finished.
+## The one exclusion
 
-**A finished pane is not read from its prose.** The rule is only ever "it was
-drawing a running clock and now it is not", so what the agent WROTE never
-decides whether it is done. That keeps the detector working for a CLI nobody
-has taught it about, in a language nobody anticipated.
-
-The one place content is consulted is :data:`ASK_FRAGMENTS` — telling "it
-finished" apart from "it is asking you something" genuinely needs to see the
-question. It can only ever UPGRADE a pane that has already been established as
-not-working, never claim one is busy or idle, so a phrase it has never seen
-costs the user a more specific word and nothing else.
+**Movement in the shadow of a keystroke is not the agent working.** A terminal
+echoes what a person types, so a pane being typed into is a pane whose screen
+changes; without this, writing a prompt by hand reads as a busy agent, and the
+moment the user pauses to think the pane is reported finished. Keystrokes are
+stamped on the pane (``Terminal.last_input_at``) and movement in their shadow
+does not count.
 
 ## Honest limits
 
-A CLI that draws neither a clock nor a hint AND thinks in complete silence for
-longer than the settle window reads as finished while it is still thinking.
-Both CLIs measurable here show something the whole time — an agent that gave no
-sign of life for a minute would be indistinguishable from a hung one for its
-user too — but a product nobody has run cannot be promised more than this.
-
-An agent whose process WEDGES stops ticking, so it reads as finished a few
+An agent whose process WEDGES stops repainting, so it reads as finished a few
 seconds later; the wording ("finished and waiting at its prompt") is then
 optimistic, which is the one case where this is wrong in the user's favour
-rather than silent. A plain shell pane is not an agent and is left out entirely
-by the caller.
+rather than silent. A CLI that genuinely draws nothing at all while it works —
+none of the four measured — would be reported early. A plain shell pane is not
+an agent and is left out entirely by the caller.
 """
 
 from __future__ import annotations
 
-import re
+import hashlib
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -97,91 +90,42 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: What one pane is doing, in one word.
 #:
 #: ``starting`` — no agent process yet (a pane waiting for a cold-start slot).
-#: ``working`` — its CLI is drawing an interrupt hint, so it is busy.
-#: ``waiting`` — alive, not busy: sitting at its prompt.
-#: ``asking`` — not busy AND showing a question or a choice.
+#: ``working`` — its screen is moving.
+#: ``waiting`` — alive and still.
+#: ``asking`` — still, AND showing a question or a choice.
 #: ``failed`` — its agent could not be started.
 #: ``exited`` — its process is gone.
 Activity = Literal["starting", "working", "waiting", "asking", "failed", "exited"]
 
-#: How many of the pane's visible rows are read. A TUI keeps its status row and
-#: its input box at the BOTTOM of the screen, so the answer is always in the
-#: last few rows — and a full-screen agent's upper rows are its transcript,
-#: which may quote any phrase here without meaning it now.
-TAIL_ROWS = 8
+#: How long the screen must stand still before the pane counts as waiting.
+#:
+#: Eight times the longest gap measured while an agent worked (0.5 s, see the
+#: module docstring), so an agent between two steps is never mistaken for one
+#: that stopped — while a pane that really has finished is recognised within a
+#: few seconds. The notification on top of this waits again (`SETTLE_S`), so
+#: nothing is filed until a pane has been quiet for roughly ten seconds.
+STILL_S = 4.0
 
-#: The RUNNING CLOCK a coding CLI draws while it is working: an elapsed time in
-#: brackets, ticking once a second.
+#: How many of the pane's visible rows the fingerprint covers.
 #:
-#: This is the primary signal, and it is structural rather than verbal — which
-#: is the whole reason it was chosen over the wording. Measured against the CLIs
-#: actually installed here:
-#:
-#:     ✻ Meandering… (2m 4s · ↓ 5.3k tokens)      ← working
-#:     ▌ Working (28m 55s · Esc to interrupt)     ← working
-#:     ✻ Worked for 13m 27s                       ← finished, no brackets
-#:
-#: A spinner word is random ("Meandering", "Scurrying", "Crystallizing"), the
-#: hint next to it differs per product and per version, and both are English. A
-#: bracketed live clock is none of those things: every one of these products
-#: draws one while it works and drops it the moment it stops.
-#:
-#: **Anchored on SECONDS**, and that is not cosmetic. "any number followed by a
-#: time letter in brackets" also matches the model banner these panes carry on
-#: every frame — ``Opus 5 (1M context)``, which case-folds to ``(1m context)``
-#: — so every idle terminal in the workspace read as busy and nothing was ever
-#: reported. A clock that ticks always shows the ticking unit.
-_LIVE_CLOCK_RE = re.compile(r"\(\s*(?:\d+\s*[hm]\s+)*\d+\s*s\b")
+#: The BOTTOM of the screen: a TUI keeps its status row, its spinner and its
+#: input box there, and that is where the movement is. Fingerprinting the whole
+#: screen would also work, and would additionally react to a scrollback shift
+#: that changes nothing about whether the agent is busy.
+TAIL_ROWS = 12
 
-#: How recently the pane must have printed for a visible clock to count as a
-#: RUNNING one.
+#: A visible question or choice. This does NOT decide whether a pane is busy —
+#: it only chooses the WORD for a pane already established as still, so a
+#: terminal waiting for an answer can say so rather than claiming it finished.
 #:
-#: The pairing is what makes the signal safe. A clock ticks, so a pane drawing
-#: one is producing output every second; a bracketed duration on a screen that
-#: has been still for longer than this is text about a clock, not a clock —
-#: an agent quoting "(3s)" in its own answer, or a frame frozen where it stopped.
-CLOCK_FRESH_S = 8.0
-
-#: How recently a pane must have printed to count as "still producing output".
+#: Every entry is a phrase a TUI writes only while actually asking. Two classes
+#: were tried and removed: a startup BANNER ("1 MCP server needs
+#: authentication") sits on screen for the pane's whole life and would make
+#: every idle terminal a standing question, and bare verbs ("confirm",
+#: "approve") match an agent's ordinary prose about its own work.
 #:
-#: The THIRD signal, and the only one that needs no knowledge of the CLI at all
-#: — which is what makes the detector work for a product nobody has measured.
-#: Measured need: Codex draws its clock while it thinks and DROPS it while it
-#: writes the answer, so a clock-only rule reports "finished" in the middle of a
-#: reply that is still arriving. A pane that is printing is working, whatever it
-#: is printing and whichever product is printing it.
-#:
-#: Generous rather than tight: a streaming answer arrives in bursts with pauses
-#: between them, and each pause must not read as the end.
-OUTPUT_QUIET_S = 3.0
-
-#: Interrupt hints some CLIs draw while busy, lower-cased. The SECOND way in,
-#: kept because a CLI may show one without a clock; a product that shows neither
-#: simply never reports finishing, which is the safe way to be wrong.
-#:
-#: Shared rather than per-product: the wording is near-universal among those
-#: that show it at all, and splitting it per entry would mean a CLI registered
-#: tomorrow starting with an empty set. An entry adds its own peculiarities
-#: through ``WorkspaceAgent.busy_fragments``.
-BUSY_FRAGMENTS: tuple[str, ...] = (
-    "to interrupt",
-    "esc to stop",
-    "ctrl+c to stop",
-    "ctrl-c to stop",
-    "to cancel",
-)
-
-#: A visible question or choice: the pane is not busy, and it is not simply
-#: waiting either — somebody has to answer it before anything else happens.
-#:
-#: Deliberately SHORT, and every entry is a phrase a TUI only writes when it is
-#: actually asking. Two classes were tried and removed: a startup BANNER ("1 MCP
-#: server needs authentication") sits on screen for the pane's whole life and
-#: would make every idle terminal a standing question, and bare verbs
-#: ("confirm", "approve") match an agent's ordinary prose about its own work.
-#:
-#: Only ever consulted for a pane already established as not-working (see the
-#: module docstring), so a miss costs a word, never a wrong state.
+#: A phrase nobody has anticipated costs the user a more specific word and
+#: nothing else — the entry is still filed, as "finished".
 ASK_FRAGMENTS: tuple[str, ...] = (
     "do you want",
     "would you like",
@@ -197,29 +141,11 @@ ASK_FRAGMENTS: tuple[str, ...] = (
 )
 
 
-def _extra_busy_fragments(agent: str) -> tuple[str, ...]:
-    """Whatever the registered CLI adds to the shared busy set.
+def visible_rows(term: Any) -> list[str]:
+    """The pane's bottom rows as they are on screen right now.
 
-    Defensive like the rest of the read path: a build without the registry, or
-    an entry that predates the field, contributes nothing rather than raising
-    inside a poll that runs every couple of seconds.
-    """
-    try:
-        from jarvis.workspace.agents import get_agent
-
-        spec = get_agent(str(agent or ""))
-    except Exception:  # noqa: BLE001 - a state read must never fail on decoration
-        return ()
-    if spec is None:
-        return ()
-    return tuple(str(f).lower() for f in getattr(spec, "busy_fragments", ()) or ())
-
-
-def _visible_rows(term: Any) -> list[str]:
-    """The pane's bottom rows as they are on screen right now, lower-cased.
-
-    Reads the replayed SCREEN rather than the cleaned transcript: a status row
-    that repeats unchanged is folded away by the transcript, and that row is
+    Reads the replayed SCREEN rather than the cleaned transcript: the transcript
+    folds a status row that repeats unchanged, and movement in that row is
     precisely the signal here.
     """
     transcript = getattr(term, "transcript", None)
@@ -228,63 +154,70 @@ def _visible_rows(term: Any) -> list[str]:
         rows = screen.display() if screen is not None else []
     except Exception:  # noqa: BLE001 - a test double may expose no real screen
         return []
-    return [str(row).lower() for row in rows[-TAIL_ROWS:]]
+    return [str(row) for row in rows[-TAIL_ROWS:]]
+
+
+def screen_digest(term: Any) -> str:
+    """A fingerprint of what this pane is showing.
+
+    Compared against the previous one to answer "did the screen move?". Short
+    and cheap: a dozen rows hashed, called once per pane per sweep.
+    """
+    return hashlib.sha1(  # noqa: S324 - a change detector, not a security digest
+        "\n".join(visible_rows(term)).encode("utf-8", "replace")
+    ).hexdigest()
 
 
 def _contains(rows: Sequence[str], fragments: Sequence[str]) -> bool:
-    return any(fragment in row for row in rows for fragment in fragments)
+    lowered = [row.lower() for row in rows]
+    return any(fragment in row for row in lowered for fragment in fragments)
 
 
-def _clock_running(rows: Sequence[str], term: Any, *, now: float | None = None) -> bool:
-    """Is a live elapsed-time clock being drawn right now?
+def _typing_now(term: Any, moment: float) -> bool:
+    """Is somebody at this pane's keyboard right now?
 
-    Both halves are required, and the second is what keeps the first honest —
-    see :data:`CLOCK_FRESH_S`. ``now`` is injectable so a test can place a pane
-    on a timeline instead of racing the wall clock.
+    A terminal echoes keystrokes, so movement while a person types is not the
+    agent working — see the module docstring.
     """
-    if not any(_LIVE_CLOCK_RE.search(row) for row in rows):
-        return False
-    last = getattr(term, "last_output_at", None)
-    if not last:
-        return False
-    moment = time.time() if now is None else now
-    return moment - float(last) <= CLOCK_FRESH_S
-
-
-def _printing_now(term: Any, *, now: float | None = None) -> bool:
-    """Is this pane producing output that is the AGENT's rather than an echo?
-
-    A terminal echoes every character a person types, so "bytes arrived" alone
-    would call a pane busy while somebody writes a prompt into it — and then
-    report it finished the moment they paused to think. Keystrokes are stamped
-    on the pane (``last_input_at``), and output arriving in their shadow does
-    not count.
-
-    This is the signal that needs no knowledge of the CLI, and it is what makes
-    a product nobody has measured behave correctly.
-    """
-    last_out = getattr(term, "last_output_at", None)
-    if not last_out:
-        return False
-    moment = time.time() if now is None else now
-    since = moment - float(last_out)
-    # A stamp in the FUTURE is not freshness, it is a clock that does not agree
-    # with the caller's — a pane carrying wall-clock times read on a synthetic
-    # timeline, or a machine whose clock stepped. Silence is the honest answer.
-    if since < 0 or since > OUTPUT_QUIET_S:
-        return False
     last_in = getattr(term, "last_input_at", None)
-    if last_in and 0 <= moment - float(last_in) <= OUTPUT_QUIET_S:
+    if not last_in:
         return False
-    return True
+    since = moment - float(last_in)
+    return 0 <= since <= STILL_S
 
 
-def read_activity(term: Any, *, now: float | None = None) -> Activity:
+def _moving(term: Any, moment: float, still_since: float | None) -> bool:
+    """Has this pane's screen changed recently enough to call it busy?
+
+    ``still_since`` is when the screen was last seen to CHANGE, tracked by the
+    caller across sweeps. Without it — a caller with no previous screen to
+    compare against — this falls back to "bytes arrived recently", which is the
+    weaker form of the same question and errs towards "busy".
+    """
+    if _typing_now(term, moment):
+        return False
+    if still_since is None:
+        last_out = getattr(term, "last_output_at", None)
+        if not last_out:
+            return False
+        since = moment - float(last_out)
+        return 0 <= since <= STILL_S
+    since = moment - float(still_since)
+    # A stamp in the FUTURE is not freshness — it is a clock that does not agree
+    # with the caller's. Silence is the honest answer.
+    return 0 <= since <= STILL_S
+
+
+def read_activity(
+    term: Any, *, now: float | None = None, still_since: float | None = None
+) -> Activity:
     """What ``term`` is doing at this instant.
 
-    Duck-typed on purpose — :class:`~.session.Terminal` imports this module's
-    siblings, and every attribute is read defensively so a test double carrying
-    half a pane answers with a word instead of an ``AttributeError``.
+    ``still_since`` is the moment this pane's screen last changed, which the
+    caller tracks across sweeps (see :func:`screen_digest`). Duck-typed on
+    purpose — :class:`~.session.Terminal` imports this module's siblings — so a
+    test double carrying half a pane answers with a word rather than an
+    ``AttributeError``.
     """
     status = str(getattr(term, "status", "") or "pending")
     if status == "error":
@@ -296,18 +229,10 @@ def read_activity(term: Any, *, now: float | None = None) -> Activity:
         # a pane that has not started has not finished anything either.
         return "starting"
 
-    rows = _visible_rows(term)
-    # Three ways to be busy, most specific first. Each covers a phase the others
-    # miss: the clock covers thinking with nothing to show, the hint covers a
-    # CLI that shows one without a clock, and printing covers writing an answer
-    # — which is exactly when Codex drops its clock.
-    if _clock_running(rows, term, now=now):
+    moment = time.time() if now is None else now
+    if _moving(term, moment, still_since):
         return "working"
-    if _contains(rows, (*BUSY_FRAGMENTS, *_extra_busy_fragments(getattr(term, "agent", "")))):
-        return "working"
-    if _printing_now(term, now=now):
-        return "working"
-    if _contains(rows, ASK_FRAGMENTS):
+    if _contains(visible_rows(term), ASK_FRAGMENTS):
         return "asking"
     return "waiting"
 
@@ -325,12 +250,12 @@ def is_settled(activity: str) -> bool:
 
 __all__ = [
     "ASK_FRAGMENTS",
-    "BUSY_FRAGMENTS",
-    "CLOCK_FRESH_S",
-    "OUTPUT_QUIET_S",
     "SETTLED",
+    "STILL_S",
     "TAIL_ROWS",
     "Activity",
     "is_settled",
     "read_activity",
+    "screen_digest",
+    "visible_rows",
 ]

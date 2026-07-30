@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
-from .activity import Activity, is_settled, read_activity
+from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Iterable
@@ -226,6 +226,13 @@ class _PaneWatch:
     #: well as on the terminal so an explicit prompt submission can change the
     #: live field without making the sweep forget what is already on disk.
     resume_needed: bool = False
+    #: Fingerprint of what this pane was showing at the previous sweep, and when
+    #: that picture last CHANGED. This pair is the detector: a screen that keeps
+    #: moving is an agent at work, one that stands still is a terminal waiting
+    #: (see :mod:`.activity`). Held here rather than on the terminal because it
+    #: is the watcher's own bookkeeping — nothing else has any use for it.
+    digest: str = ""
+    changed_at: float = 0.0
 
 
 def _detail(term: Any) -> str:
@@ -239,9 +246,9 @@ def _detail(term: Any) -> str:
 def _title(kind: Kind, term: Any) -> str:
     """What the entry says, in one clause.
 
-    Careful about what it claims: a pane that stopped drawing its interrupt hint
-    has gone quiet, and that is all anybody knows. "Finished" is the honest word
-    for that; "done" or "succeeded" would not be.
+    Careful about what it claims: a pane whose screen stopped moving has gone
+    quiet, and that is all anybody knows. "Finished" is the honest word for
+    that; "done" or "succeeded" would not be.
     """
     if kind == "completed":
         return "Finished and waiting at its prompt"
@@ -320,26 +327,44 @@ class ActivityWatcher:
         *,
         emit: bool,
     ) -> Notification | None:
-        # ``now`` travels into the read as well: whether a clock on screen is a
-        # RUNNING one is measured against the pane's last output, and a test
-        # that places a pane on its own timeline must not be judged against the
-        # wall clock (see activity.CLOCK_FRESH_S).
-        activity = read_activity(term, now=now)
+        # Whether this pane's screen is MOVING is the whole detector, and
+        # movement can only be seen by comparing against the previous sweep —
+        # so the fingerprint is taken first and the answer is derived from it.
         watch = self._panes.get(ident)
-
+        digest = screen_digest(term)
         if watch is None:
             # First sight. Nothing is filed: the pane may have been sitting
             # finished for an hour before this watcher existed, and announcing
             # that on startup would fill the bell with history.
+            #
+            # Its screen is recorded as having stood still for a LONG time, not
+            # as having just changed, and the difference is a bug that got as
+            # far as the tests: whether the screen is moving cannot be known
+            # from a single look, and assuming movement makes the pane "busy"
+            # for one sweep — after which it "stops", which is a finished
+            # notification for every quiet terminal in the workspace. Assuming
+            # stillness costs one sweep of latency for a pane that really is
+            # working, and claims nothing that was not observed.
+            settled_at = now - STILL_S - 1.0
+            activity = read_activity(term, now=now, still_since=settled_at)
             watch = _PaneWatch(
                 activity=activity,
                 since=now,
                 announced=True,
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
+                digest=digest,
+                changed_at=settled_at,
             )
             self._panes[ident] = watch
             self._checkpoint_resume_state(term, activity, watch, now)
             return None
+
+        if digest != watch.digest:
+            watch.digest = digest
+            watch.changed_at = now
+        # ``now`` travels into the read as well, so a test can place a pane on
+        # its own timeline instead of racing the wall clock.
+        activity = read_activity(term, now=now, still_since=watch.changed_at)
 
         if activity != watch.activity:
             if watch.activity == "working":
