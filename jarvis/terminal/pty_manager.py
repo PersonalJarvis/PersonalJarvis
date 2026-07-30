@@ -99,9 +99,11 @@ falsy. So quitting an agent with ``/exit`` was reported as a crash, and the
 resume self-healing in ``jarvis/agentic_ide/session.py`` (which restarts a pane
 whose exit code is not 0) restarted agents the user had deliberately closed.
 """
+
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
@@ -139,6 +141,30 @@ _EMPTY_READ_BACKOFF_S = 0.005
 #: stop", which is the one distinction anything above actually acts on.
 UNKNOWN_EXIT_CODE = -1
 
+#: The browser terminal is xterm.js on every desktop platform.  A launcher may
+#: legitimately describe *its* non-interactive stdout as ``dumb``, but that
+#: description stops being true once a child is attached to our PTY.  Recent
+#: interactive CLIs refuse or pause in that mismatch instead of trusting the
+#: TTY handles, so advertise the terminal the child is actually connected to.
+_INTERACTIVE_TERM = "xterm-256color"
+
+
+def _interactive_child_env(env: Mapping[str, str] | None) -> Mapping[str, str] | None:
+    """Replace a missing/``dumb`` parent TERM at the PTY capability boundary.
+
+    ``env`` is a complete replacement when supplied to either backend.  Only
+    materialize one when TERM needs correction; otherwise preserve the old
+    inheritance/identity behaviour exactly.  A meaningful caller-selected
+    terminal type (for example ``screen-256color``) remains authoritative.
+    """
+    source = os.environ if env is None else env
+    term = source.get("TERM", "").strip()
+    if term and term.lower() != "dumb":
+        return env
+    child_env = dict(source)
+    child_env["TERM"] = _INTERACTIVE_TERM
+    return child_env
+
 
 def normalize_exit_code(raw: int | None) -> int:
     """One convention for an exit code, whatever the backend reported.
@@ -172,7 +198,7 @@ class PtySession:
     terminal_id: str
     shell_id: str
     pid: int
-    proc: PtyHandle       # normalized PTY handle behind the backend seam (AD-6)
+    proc: PtyHandle  # normalized PTY handle behind the backend seam (AD-6)
     stop_flag: threading.Event
     #: Kill-on-close container holding this child AND everything it spawns —
     #: the MCP servers a coding CLI starts outlive it otherwise (module
@@ -322,10 +348,13 @@ class PtyManager:
         a choice made here), so a caller passing one must hand over a COMPLETE
         environment — typically ``os.environ`` plus its own keys. Building that
         overlay is what `jarvis.agent_accounts.spawn_env` exists for. ``None``
-        inherits this process's environment and is what every caller that does
-        not care gets.
+        normally inherits this process's environment. The one correction made at
+        this layer is replacing a missing/``dumb`` TERM with the xterm.js terminal
+        type the child is actually connected to; doing that requires a complete
+        snapshot of the inherited environment.
         """
         backend = make_pty_backend()
+        child_env = _interactive_child_env(env)
 
         loop = asyncio.get_running_loop()
 
@@ -336,7 +365,7 @@ class PtyManager:
                 cwd=cwd,
                 cols=cols,
                 rows=rows,
-                env=env,
+                env=child_env,
             )
 
         proc = await loop.run_in_executor(None, _spawn_sync)
@@ -456,8 +485,7 @@ class PtyManager:
             session_b = self._sessions.get(id_b)
             if session_a is None or session_b is None:
                 logger.debug(
-                    "PTY swap refused — unknown terminal: {} (known={}) <-> {} "
-                    "(known={})",
+                    "PTY swap refused — unknown terminal: {} (known={}) <-> {} (known={})",
                     id_a,
                     session_a is not None,
                     id_b,
@@ -578,9 +606,7 @@ class PtyManager:
             )
         code = session._exit_code
         try:
-            await on_closed(
-                session.terminal_id, UNKNOWN_EXIT_CODE if code is None else code
-            )
+            await on_closed(session.terminal_id, UNKNOWN_EXIT_CODE if code is None else code)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the viewer may be gone
@@ -633,8 +659,7 @@ class PtyManager:
                 except Exception as exc:  # noqa: BLE001
                     # Process closed / pipe broken — normal end of life.
                     logger.debug(
-                        "PTY read exception (process presumably dead): "
-                        "terminal={} error={}",
+                        "PTY read exception (process presumably dead): terminal={} error={}",
                         session.terminal_id,
                         exc,
                     )
@@ -673,8 +698,7 @@ class PtyManager:
                                 session.write(reply)
                             except Exception as exc:  # noqa: BLE001
                                 logger.debug(
-                                    "PTY probe reply could not be written: "
-                                    "terminal={} error={}",
+                                    "PTY probe reply could not be written: terminal={} error={}",
                                     session.terminal_id,
                                     exc,
                                 )
