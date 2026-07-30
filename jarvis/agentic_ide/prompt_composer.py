@@ -123,12 +123,36 @@ MAX_FILE_REFERENCES = 5
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
 # thinking, not prose.
+#
+# ADMISSION RULE, inherited verbatim from ``jarvis.dictation.cleanup``: an
+# entry qualifies only if it carries NO meaning in ANY locale this project
+# serves. This regex runs language-BLIND — one pattern over German, English and
+# Spanish alike — so an entry that is a content word in a language other than
+# the speaker's is not a risk, it is a certainty. De-mined 2026-07-30 after the
+# same defect surfaced in the voice lane's filler table:
+#
+#   "um"                German preposition. "Kümmere dich um den Bug" became
+#                       "Kümmere dich den Bug".  # i18n-allow: transcript under test
+#   "like"              English verb and preposition. "Make it like the other
+#                       panel" became "Make it the other panel" — the same
+#                       words, the opposite instruction.
+#   "also"              English adverb ("also add the tests" → "add the tests"),
+#                       and a German discourse marker its own docs exclude.
+#   "kind of"/"sort of" "what kind of test" became "what test".
+#   "halt"/"eben"       German content words ("halt das Layout stabil");
+#   "ne"                colloquial German "eine", French negation particle;
+#   "quasi"/"irgendwie" German adverbs that qualify the task;
+#   "este"/"pues"/      Spanish demonstrative ("este archivo" = this file) and
+#   "bueno"             two words the cleanup module names as excluded.
+#
+# What is left is either a pure hesitation sound or a multi-word discourse
+# phrase that no locale reads as instruction. Anything added later must clear
+# the same bar in all three locales, not only in the one it came from.
 _FILLER_RE = re.compile(
     r"\b(?:"
-    r"ähm|ähmm|äh|ehm|hmm|halt|eben|einfach\s+mal|also|ne|gell|weißt\s+du|"
-    r"verstehst\s+du|sozusagen|quasi|irgendwie|jetzt\s+mal|mal\s+eben|"
-    r"um|uh|erm|like|you\s+know|i\s+mean|sort\s+of|kind\s+of|basically|"
-    r"este|o\s+sea|pues|bueno"
+    r"ähm|ähmm|äh|ehm|hmm|einfach\s+mal|gell|weißt\s+du|"
+    r"verstehst\s+du|sozusagen|jetzt\s+mal|mal\s+eben|"
+    r"uh|erm|you\s+know|i\s+mean|o\s+sea"
     r")\b[\s,]*",
     re.IGNORECASE,
 )

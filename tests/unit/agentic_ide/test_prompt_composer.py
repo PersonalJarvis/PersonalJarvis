@@ -347,3 +347,40 @@ async def test_an_explicitly_pinned_brain_is_used(
     )
 
     assert seen["brain"] is pinned
+
+
+# --------------------------------------------------------------------------
+# The deterministic filler pass may not eat words that carry the instruction
+# --------------------------------------------------------------------------
+#
+# `_FILLER_RE` runs language-BLIND — one pattern over German, English and
+# Spanish alike — so an entry that is a hesitation sound in one locale and a
+# content word in another does not merely risk damage, it guarantees it. Same
+# admission rule as `jarvis.dictation.cleanup`: an entry qualifies only if it is
+# meaningless in EVERY locale served (2026-07-30).
+
+
+@pytest.mark.parametrize(
+    ("said", "must_survive"),
+    [
+        # i18n-allow: spoken instructions under test (§1 list #4)
+        ("Kümmere dich um den Bug im Login", "um"),
+        ("Es geht um die Tests für den Router", "um"),
+        ("Also add the missing tests", "Also"),
+        ("Make it like the other panel", "like"),
+        ("What kind of test should run here", "kind of"),
+        ("Der Fehler ist halt im Cache", "halt"),
+        ("Mach das Layout eben und ruhig", "eben"),
+        ("Abre este archivo y revisa el router", "este"),
+    ],
+)
+def test_a_content_word_is_never_filtered_out(said: str, must_survive: str) -> None:
+    assert must_survive in prompt_composer._clean_speech(said)
+
+
+def test_real_hesitation_sounds_are_still_removed() -> None:
+    cleaned = prompt_composer._clean_speech(
+        "ähm mach mal die Tests grün"  # i18n-allow: German speech input under test
+    )
+    assert "ähm" not in cleaned  # i18n-allow: the German filler under test
+    assert "Tests" in cleaned
