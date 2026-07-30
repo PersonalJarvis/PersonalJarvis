@@ -489,6 +489,31 @@ describe("grid layout", () => {
     expect(box("Kai").left).toBe(75);
   });
 
+  it("wraps four tall full-screen TUIs into two balanced bands", async () => {
+    const previous = globalThis.ResizeObserver;
+    class AreaObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        this.callback(
+          [{ contentRect: { width: 2048, height: 1100 } } as ResizeObserverEntry],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = AreaObserver as unknown as typeof ResizeObserver;
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
+      await waitFor(() =>
+        expect(box("Aria")).toMatchObject({ left: 0, top: 50, width: 50, height: 50 }),
+      );
+      expect(box("Kai")).toMatchObject({ left: 50, top: 50, width: 50, height: 50 });
+    } finally {
+      globalThis.ResizeObserver = previous;
+    }
+  });
+
   it("a downward split takes only its OWN column, not the whole width", () => {
     // The reported bug: splitting one pane used to open a window-wide row and
     // squash every other pane to half height. Nova's column holds two panes;
