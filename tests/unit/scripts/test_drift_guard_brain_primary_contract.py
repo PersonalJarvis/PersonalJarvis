@@ -1,10 +1,10 @@
-"""Contract test: ``scripts/config-soll.json`` ``brain.primary`` <-> ENV mapping.  # i18n-allow: filename/jargon identifier, not translatable prose
+"""Contract tests for the desired-state ``brain.primary`` ENV mapping.
 
 The Brain-provider switch in the desktop app's API/Settings section persists
 across all three drift-defence layers (BUG-010):
 
 * ``jarvis.toml``                -> ``[brain].primary``
-* ``scripts/config-soll.json``   -> ``brain.primary``  (the drift-guard's soll)  # i18n-allow: filename/jargon identifier, not translatable prose
+* Desired-state JSON             -> ``brain.primary``
 * User-scope ENV override        -> ``JARVIS__BRAIN__PRIMARY``
 
 For the UI switch to make the drift-guard a no-op (instead of reverting the
@@ -21,21 +21,27 @@ This test mirrors that rule in Python and pins the contract so a rename on
 either side (the JSON section/key, or the guard's derivation rule) fails CI
 loudly instead of silently breaking provider persistence.
 
-No PowerShell or Windows dependency: it only parses the JSON and reproduces a
-string-formatting rule, so it runs on the cloud-first Linux CI path too.
+Most tests are platform-independent. The structured-override regression runs
+PowerShell in a process-scoped sandbox when available and skips otherwise.
 """
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
-# scripts/config-soll.json lives at <repo>/scripts/config-soll.json.  # i18n-allow: filename identifier, not translatable prose
+# Desired state: scripts/config-soll.json.  # i18n-allow: filename
 # This test file is at <repo>/tests/unit/scripts/, so parents[3] is the repo root.
-CONFIG_SOLL_PATH = (  # i18n-allow: filename/jargon identifier, not translatable prose
-    Path(__file__).resolve().parents[3] / "scripts" / "config-soll.json"  # i18n-allow: filename identifier, not translatable prose
+DESIRED_STATE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "scripts"
+    / "config-soll.json"  # i18n-allow: filename
 )
 
 
@@ -49,11 +55,11 @@ def _derive_env_name(section: str, key: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def soll() -> dict:  # i18n-allow: fixture name mirrors the config-soll.json jargon term, not translatable prose
-    assert CONFIG_SOLL_PATH.is_file(), (  # i18n-allow: filename/jargon identifier, not translatable prose
-        f"expected the drift-guard soll file at {CONFIG_SOLL_PATH}"  # i18n-allow: filename/jargon identifier, not translatable prose
+def desired_state() -> dict:
+    assert DESIRED_STATE_PATH.is_file(), (
+        f"expected the drift-guard desired-state file at {DESIRED_STATE_PATH}"
     )
-    return json.loads(CONFIG_SOLL_PATH.read_text(encoding="utf-8"))  # i18n-allow: filename/jargon identifier, not translatable prose
+    return json.loads(DESIRED_STATE_PATH.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -61,25 +67,27 @@ def soll() -> dict:  # i18n-allow: fixture name mirrors the config-soll.json jar
 # ---------------------------------------------------------------------------
 
 
-def test_config_soll_is_valid_json(soll: dict) -> None:  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+def test_desired_state_is_valid_json(desired_state: dict) -> None:
     """If the JSON is malformed the whole drift-guard fails to parse (exit 4)."""
-    assert isinstance(soll, dict)  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+    assert isinstance(desired_state, dict)
 
 
-def test_brain_section_exists(soll: dict) -> None:  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
-    assert "brain" in soll, "config-soll.json must keep a top-level 'brain' section"  # i18n-allow: filename/jargon identifier, not translatable prose
-    assert isinstance(soll["brain"], dict)  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+def test_brain_section_exists(desired_state: dict) -> None:
+    assert "brain" in desired_state, (
+        "desired-state JSON must keep a top-level 'brain' section"
+    )
+    assert isinstance(desired_state["brain"], dict)
 
 
-def test_brain_primary_is_non_empty_string(soll: dict) -> None:  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+def test_brain_primary_is_non_empty_string(desired_state: dict) -> None:
     """brain.primary must exist and be a non-empty string.
 
     The drift-guard pins this value and the UI provider switch overwrites it.
     A missing/empty value would make the guard skip the key (WARN) and the UI
-    switch would have no soll to keep in sync -> silent revert risk.  # i18n-allow: filename/jargon identifier, not translatable prose
+    switch would have no desired state to keep in sync -> silent revert risk.
     """
-    primary = soll["brain"].get("primary")  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
-    assert primary is not None, "brain.primary must be present in config-soll.json"  # i18n-allow: filename/jargon identifier, not translatable prose
+    primary = desired_state["brain"].get("primary")
+    assert primary is not None, "brain.primary must exist in the desired state"
     assert isinstance(primary, str), "brain.primary must be a string"
     assert primary.strip() != "", "brain.primary must not be empty/whitespace"
 
@@ -89,31 +97,99 @@ def test_brain_primary_is_non_empty_string(soll: dict) -> None:  # i18n-allow: i
 # ---------------------------------------------------------------------------
 
 
-def test_brain_primary_env_name_is_canonical(soll: dict) -> None:  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+def test_brain_primary_env_name_is_canonical(desired_state: dict) -> None:
     """The guard-derived ENV name for brain.primary is JARVIS__BRAIN__PRIMARY.
 
     This is the exact variable the desktop app's provider switch sets and the
-    maintainer sets by hand. If the section/key in config-soll.json is ever  # i18n-allow: filename identifier, not translatable prose
-    renamed, the derived name diverges from what the UI writes and the guard
+    maintainer sets by hand. If the desired-state section or key is renamed,
+    the derived name diverges from what the UI writes and the guard
     would re-add a 'missing' ENV var every run -> the whole fix breaks.
     """
-    assert "primary" in soll["brain"]  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+    assert "primary" in desired_state["brain"]
     env_name = _derive_env_name("brain", "primary")
     assert env_name == "JARVIS__BRAIN__PRIMARY"
 
 
-def test_env_derivation_rule_matches_guard_for_all_keys(soll: dict) -> None:  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
-    """Every (section, key) in the soll maps to a JARVIS__-prefixed ENV name.  # i18n-allow: filename/jargon identifier, not translatable prose
+def test_env_derivation_rule_matches_guard_for_all_keys(desired_state: dict) -> None:
+    """Every scalar desired-state entry maps to a JARVIS__-prefixed ENV name.
 
     Pins the general derivation rule (double-underscore separator, upper-case,
     JARVIS__ prefix) the guard relies on -- not just brain.primary -- so any
     future key inherits the same contract.
     """
-    for section, payload in soll.items():  # i18n-allow: identifier name mirrors the config-soll.json jargon term, not translatable prose
+    for section, payload in desired_state.items():
         if section.startswith("_") or not isinstance(payload, dict):
             continue
-        for key in payload:
+        for key, value in payload.items():
+            if isinstance(value, (dict, list)) or value is None:
+                continue
             env_name = _derive_env_name(section, key)
             assert env_name.startswith("JARVIS__"), env_name
             assert "__" in env_name[len("JARVIS__"):], env_name
             assert env_name == env_name.upper(), env_name
+
+
+def test_structured_stt_models_never_becomes_one_env_override(
+    desired_state: dict,
+    tmp_path: Path,
+) -> None:
+    """A sandboxed guard run removes the malformed process override."""
+    assert isinstance(desired_state["stt"]["models"], dict)
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if powershell is None:
+        pytest.skip("PowerShell is unavailable")
+
+    guard = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "jarvis-config-drift-guard.ps1"
+    )
+    sandbox = tmp_path / "repo"
+    sandbox.mkdir()
+    desired_file = sandbox / "desired.json"
+    desired_file.write_text(
+        json.dumps({"stt": {"models": desired_state["stt"]["models"]}}),
+        encoding="utf-8",
+    )
+    toml_file = sandbox / "jarvis.toml"
+    toml_file.write_text(
+        '[stt.models]\nopenrouter-stt = "openai/gpt-4o-transcribe"\n',
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["JARVIS__STT__MODELS"] = "@{openrouter-stt=openai/gpt-4o-transcribe}"
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(guard),
+            "-RepoRoot",
+            str(sandbox),
+            "-DesiredFile",
+            str(desired_file),
+            "-EnvironmentTarget",
+            "Process",
+        ],
+        cwd=sandbox,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = (sandbox / "logs" / "config-drift-guard.log").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "removed JARVIS__STT__MODELS from Process-scope environment" in log
+    assert toml_file.read_text(encoding="utf-8") == (
+        '[stt.models]\nopenrouter-stt = "openai/gpt-4o-transcribe"\n'
+    )

@@ -22,8 +22,9 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
@@ -3640,25 +3641,110 @@ def refresh_persisted_env_from_user_registry(
     return changed
 
 
+def _base_model_type(annotation: Any) -> type[BaseModel] | None:
+    """Return the BaseModel carried by an annotation, including unions."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for candidate in get_args(annotation):
+        model_type = _base_model_type(candidate)
+        if model_type is not None:
+            return model_type
+    return None
+
+
+def _container_type(annotation: Any) -> type[dict] | type[list] | None:
+    """Return the mapping/list shape carried by a field annotation."""
+    origin = get_origin(annotation)
+    candidate = origin or annotation
+    if isinstance(candidate, type) and issubclass(candidate, Mapping):
+        return dict
+    if candidate is list:
+        return list
+    for nested in get_args(annotation):
+        container_type = _container_type(nested)
+        if container_type is not None:
+            return container_type
+    return None
+
+
+@lru_cache(maxsize=256)
+def _expected_env_container(path: tuple[str, ...]) -> type[dict] | type[list] | None:
+    """Resolve a structured ENV target from the Pydantic config schema."""
+    model_type: type[BaseModel] = JarvisConfig
+    for index, segment in enumerate(path):
+        field = model_type.model_fields.get(segment)
+        if field is None:
+            return None
+        if index == len(path) - 1:
+            return _container_type(field.annotation)
+        nested_model = _base_model_type(field.annotation)
+        if nested_model is None:
+            return None
+        model_type = nested_model
+    return None
+
+
 def _apply_env_overrides(data: dict[str, Any], prefix: str = "JARVIS__") -> dict[str, Any]:
     """Override config with env variables in the format JARVIS__SECTION__KEY=value.
 
     Example: JARVIS__BRAIN__PRIMARY=openrouter → config["brain"]["primary"]
     """
-    for env_key, env_val in os.environ.items():
+    for env_key, env_val in tuple(os.environ.items()):
         if not env_key.startswith(prefix):
             continue
         path = env_key[len(prefix):].lower().split("__")
         cursor = data
+        blocked = False
         for segment in path[:-1]:
-            cursor = cursor.setdefault(segment, {})
-        cursor[path[-1]] = _coerce_env_value(env_val)
+            existing_segment = cursor.get(segment)
+            if existing_segment is None:
+                existing_segment = {}
+                cursor[segment] = existing_segment
+            if not isinstance(existing_segment, dict):
+                blocked = True
+                break
+            cursor = existing_segment
+        if blocked:
+            os.environ.pop(env_key, None)
+            logging.getLogger(__name__).warning(
+                "Ignoring config override %s because its path crosses a scalar",
+                env_key,
+            )
+            continue
+        value = _coerce_env_value(env_val)
+        existing_value = cursor.get(path[-1])
+        expected_container = _expected_env_container(tuple(path))
+        mapping_conflict = (
+            expected_container is dict or isinstance(existing_value, dict)
+        ) and not isinstance(value, dict)
+        list_conflict = (
+            expected_container is list or isinstance(existing_value, list)
+        ) and not isinstance(value, list)
+        if mapping_conflict or list_conflict:
+            # An older drift-guard serialized structured JSON as a PowerShell
+            # string such as "@{provider=model}". Replacing a TOML mapping/list
+            # with that scalar bricks Pydantic validation and desktop startup.
+            os.environ.pop(env_key, None)
+            logging.getLogger(__name__).warning(
+                "Ignoring scalar config override %s for a structured value",
+                env_key,
+            )
+            continue
+        cursor[path[-1]] = value
     return data
 
 
 def _coerce_env_value(v: str) -> Any:
-    """Coerce a string env value to bool/int/float/str."""
+    """Coerce an environment string to JSON containers or a scalar."""
     lv = v.strip().lower()
+    if lv.startswith(("{", "[")):
+        try:
+            parsed = json.loads(v)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                return parsed
     if lv in ("true", "yes", "1"):
         return True
     if lv in ("false", "no", "0"):

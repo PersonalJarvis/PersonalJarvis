@@ -182,3 +182,60 @@ def test_load_config_reflects_an_edit(tmp_path, monkeypatch):
     os.utime(target, ns=(0, 10_000_000_000))
 
     assert load_config(target).brain.primary == "openrouter"
+
+
+def test_legacy_structured_stt_env_cannot_brick_config_load(tmp_path, monkeypatch):
+    """A stale PowerShell object string must not replace the models table."""
+    from jarvis.core.config import load_config
+
+    monkeypatch.setenv(
+        "JARVIS__STT__MODELS",
+        "@{openrouter-stt=openai/gpt-4o-transcribe}",
+    )
+    target = tmp_path / "jarvis.toml"
+    _write(
+        target,
+        '[stt.models]\nopenrouter-stt = "openai/gpt-4o-transcribe"\n',
+    )
+
+    cfg = load_config(target)
+
+    assert cfg.stt.models == {"openrouter-stt": "openai/gpt-4o-transcribe"}
+    assert "JARVIS__STT__MODELS" not in os.environ
+
+
+def test_schema_blocks_legacy_mapping_env_when_toml_table_is_absent(
+    tmp_path, monkeypatch
+):
+    """Minimal configs still get their structured shape from Pydantic."""
+    from jarvis.core.config import load_config
+
+    monkeypatch.setenv("JARVIS__STT__MODELS", "@{provider=model}")
+    target = tmp_path / "jarvis.toml"
+    _write(target, '[brain]\nprimary = "gemini"\n')
+
+    cfg = load_config(target)
+
+    assert cfg.stt.models == {}
+    assert "JARVIS__STT__MODELS" not in os.environ
+
+
+def test_scalar_env_cannot_replace_an_arbitrary_mapping(monkeypatch):
+    """The safeguard follows the data shape instead of naming one STT key."""
+    monkeypatch.setenv("JARVIS__EXAMPLE__MAPPING", "@{nested=value}")
+    data = {"example": {"mapping": {"nested": "value"}}}
+
+    result = config_module._apply_env_overrides(data)
+
+    assert result["example"]["mapping"] == {"nested": "value"}
+    assert "JARVIS__EXAMPLE__MAPPING" not in os.environ
+
+
+def test_json_env_can_replace_an_arbitrary_mapping(monkeypatch):
+    """Valid JSON remains a supported structured environment override."""
+    monkeypatch.setenv("JARVIS__EXAMPLE__MAPPING", '{"nested":"updated"}')
+    data = {"example": {"mapping": {"nested": "value"}}}
+
+    result = config_module._apply_env_overrides(data)
+
+    assert result["example"]["mapping"] == {"nested": "updated"}
