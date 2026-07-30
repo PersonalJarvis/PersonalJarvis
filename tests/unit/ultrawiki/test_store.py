@@ -855,6 +855,19 @@ async def test_search_reads_run_on_the_pooled_readers(store):
     assert store._read_conns, "expected a populated read-only pool"
 
 
+async def test_status_reads_run_on_the_pooled_readers(store):
+    """Overview polling stays independent from long writer transactions."""
+    await add_source(store)
+    await seed_indexed(store, [make_item(1, body="alpha content")])
+
+    counts = await store.counts()
+    sources = await store.list_sources()
+
+    assert counts.total == 1
+    assert sources[0]["counts"].total == 1
+    assert store._read_conns, "expected status queries to populate the reader pool"
+
+
 async def test_reader_pool_failure_degrades_to_the_writer(store, monkeypatch):
     """No pool, no problem: correctness never depends on read-only
     connections being available (in-memory paths, exotic filesystems)."""

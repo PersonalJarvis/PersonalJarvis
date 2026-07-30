@@ -900,7 +900,10 @@ class UltraStore(IdentityMixin, EventMixin):
 
     async def list_sources(self) -> list[dict[str, Any]]:
         """All sources with per-source pipeline counts and sync state."""
-        conn = await self._ensure_open()
+        # Status polls must not queue behind a large import transaction on the
+        # writer connection. WAL readers see the latest committed snapshot and
+        # keep the Overview responsive while a source is being reconciled.
+        conn = await self._read_conn()
         rows = await self._fetchall(conn, "SELECT * FROM uw_sources ORDER BY id")
         count_rows = await self._fetchall(
             conn,
@@ -1504,7 +1507,7 @@ class UltraStore(IdentityMixin, EventMixin):
 
     async def counts(self) -> PipelineCounts:
         """Per-stage backlog counts over live (non-tombstoned) items."""
-        conn = await self._ensure_open()
+        conn = await self._read_conn()
         rows = await self._fetchall(
             conn,
             "SELECT state, COUNT(*) AS n FROM uw_items"
