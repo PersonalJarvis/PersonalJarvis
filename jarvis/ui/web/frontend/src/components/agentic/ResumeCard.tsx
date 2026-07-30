@@ -1,41 +1,12 @@
 /**
- * "Resume all sessions" — the offer to reopen everything that was open before.
+ * The offer to continue the last Agentic IDE session.
  *
- * Shown at the top of the wizard whenever previous workspaces can be brought
- * back: after the browser was closed, after the workspaces were closed for the
- * day, after the app restarted, after a reboot.
- *
- * ## Why a card and not a dialog
- *
- * A dialog would sit in front of the wizard on every single visit, including
- * the many where the user came here to open something else entirely. That is
- * how people learn to dismiss a thing without reading it — and this one has
- * something worth reading. A card is just as visible, stays out of the way, and
- * costs nothing to ignore.
- *
- * ## Why every workspace and every pane is listed
- *
- * Because "resumed" is not one answer. A pane can come back with its whole
- * conversation, or with nothing but its call-sign — and the two look identical
- * on screen until you ask the agent a follow-up question and get a blank stare.
- * A whole workspace can be unreachable because its folder was moved. So each
- * one says which of those it is BEFORE the click, rather than after.
- *
- * With many panes the list is summarised instead of printed in full: a hundred
- * chips is not information, it is wallpaper. The call-signs of the first few are
- * what someone recognises their workspace by; the rest are a count.
- *
- * ## Why the list is in two parts
- *
- * The store remembers folders from earlier sessions too, so that opening one new
- * workspace cannot erase the twelve panes you shut down an hour ago. Resuming
- * reopens the LAST session only — reopening the whole archive is what once
- * brought last week's folders back beside today's. So what the button will do
- * comes first, and what is merely remembered sits below it, plainly labelled and
- * reopened from the folder picker one deliberate click at a time.
+ * This is deliberately a flat section, not a card containing workspace cards
+ * containing terminal chips. Folder rows and terminal rows are separated by
+ * rules, so the hierarchy comes from alignment and type rather than outlines.
  */
-import { AlertCircle, FolderGit2, RotateCcw, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button, SectionLabel } from "./controls";
 import type { ResumeOffer, ResumeWorkspaceOffer } from "@/lib/agenticIdeApi";
 
 interface ResumeCardProps {
@@ -48,12 +19,7 @@ interface ResumeCardProps {
 /** Call-signs printed in full before the rest becomes "+N more". */
 const NAMES_SHOWN = 8;
 
-/**
- * "2 hours ago" for a POSIX timestamp.
- *
- * Deliberately coarse. The exact minute a workspace was saved is not a decision
- * input; "yesterday" versus "just now" is.
- */
+/** Coarse relative time: enough to identify the session, never false precision. */
 export function savedAgo(seconds: number, now: number = Date.now()): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "";
   const minutes = Math.floor((now - seconds * 1000) / 60_000);
@@ -72,7 +38,9 @@ export function resumeSummary(offer: ResumeOffer): string {
   const where = spaces === 1 ? "1 folder" : `${spaces} folders`;
   const what = `${panes} terminal${panes === 1 ? "" : "s"}`;
   if (!offer.available) {
-    const anyFolder = offer.workspaces.some((w) => w.folder_exists);
+    const anyFolder = offer.workspaces.some(
+      (workspace) => workspace.folder_exists,
+    );
     return anyFolder
       ? "None of these terminals can run here — their coding CLIs are not installed."
       : "Those folders are no longer on this machine.";
@@ -92,68 +60,72 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
   const hidden = space.terminals.length - shown.length;
   const fresh = space.terminals.length - space.resumable_count;
   const when = savedAgo(space.saved_at ?? 0);
+
   return (
     <li
       data-testid={`resume-workspace-${space.folder_name}`}
       className={cn(
-        "rounded-lg border p-3",
-        space.available
-          ? "border-border bg-card/60"
-          : "border-amber-500/40 bg-amber-500/10",
+        "grid gap-x-7 gap-y-3 border-t border-border/60 py-4 lg:grid-cols-[minmax(0,1fr)_auto]",
+        !space.available && "text-amber-200",
         space.in_last_session === false && "opacity-70",
       )}
     >
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <FolderGit2 className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-primary" />
-        <span className="font-medium text-foreground">
+      <div className="min-w-0">
+        <h4 className="truncate text-sm font-semibold text-foreground">
           {space.name || space.folder_name}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {space.terminals.length} terminal{space.terminals.length === 1 ? "" : "s"}
-          {space.resumable_count > 0 && ` · ${space.resumable_count} continuing`}
-          {fresh > 0 && ` · ${fresh} starting fresh`}
-          {/*
-            Per workspace, not per file. A card that says "last open 2 minutes
-            ago" over a folder nobody has touched since last week is exactly the
-            misreport that made resuming feel broken.
-          */}
-          {when && ` · ${when}`}
-        </span>
+        </h4>
+        <code className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+          {space.folder}
+        </code>
+        {!space.folder_exists && (
+          <p className="mt-2 text-xs leading-relaxed text-amber-200">
+            This folder was moved or deleted, so it cannot come back.
+          </p>
+        )}
       </div>
-      <code className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-        {space.folder}
-      </code>
-      {!space.folder_exists && (
-        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-200">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          That folder was moved or deleted, so this one cannot come back.
-        </p>
-      )}
-      <ul className="mt-2 flex flex-wrap gap-1.5">
+
+      <div className="flex flex-wrap items-baseline gap-x-3 text-[11px] text-muted-foreground lg:justify-end">
+        <span className="font-mono tabular-nums text-foreground">
+          {space.terminals.length.toString().padStart(2, "0")} terminal
+          {space.terminals.length === 1 ? "" : "s"}
+        </span>
+        {space.resumable_count > 0 && (
+          <span>{space.resumable_count} continuing</span>
+        )}
+        {fresh > 0 && <span>{fresh} starting fresh</span>}
+        {when && <span>{when}</span>}
+      </div>
+
+      <ul className="lg:col-span-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
         {shown.map((pane) => (
           <li
             key={pane.key}
             data-testid={`resume-pane-${pane.key}`}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
-              pane.available
-                ? "border-border/70 text-muted-foreground"
-                : "border-amber-500/40 text-amber-200",
-            )}
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3 border-t border-border/40 py-2 text-xs"
           >
-            <Terminal className="h-3 w-3 shrink-0 text-primary" />
-            <span className="font-medium text-foreground">{pane.name}</span>
-            {!pane.available ? (
-              <span>not installed here</span>
-            ) : (
-              !pane.resumable && <span>· starts fresh</span>
-            )}
+            <span className="truncate font-mono text-foreground">
+              {pane.name}
+            </span>
+            <span
+              className={cn(
+                "text-[10px]",
+                pane.available && pane.resumable
+                  ? "text-primary/80"
+                  : "text-amber-200",
+              )}
+            >
+              {!pane.available
+                ? "not installed here"
+                : pane.resumable
+                  ? "continues"
+                  : "starts fresh"}
+            </span>
           </li>
         ))}
         {hidden > 0 && (
           <li
             data-testid={`resume-more-${space.folder_name}`}
-            className="flex items-center rounded-md px-2 py-1 text-[11px] text-muted-foreground"
+            className="border-t border-border/40 py-2 font-mono text-[10px] text-muted-foreground"
           >
             +{hidden} more
           </li>
@@ -163,55 +135,84 @@ function WorkspaceRow({ space }: { space: ResumeWorkspaceOffer }) {
   );
 }
 
-export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps) {
+export function ResumeCard({
+  offer,
+  busy,
+  onResume,
+  onDismiss,
+}: ResumeCardProps) {
   const when = savedAgo(offer.saved_at);
-  // An older backend sends neither flag and reopened everything, so a missing
-  // one reads as "part of the last session" rather than as "earlier".
-  const coming = offer.workspaces.filter((w) => w.in_last_session !== false);
-  const earlier = offer.workspaces.filter((w) => w.in_last_session === false);
+  const coming = offer.workspaces.filter(
+    (workspace) => workspace.in_last_session !== false,
+  );
+  const earlier = offer.workspaces.filter(
+    (workspace) => workspace.in_last_session === false,
+  );
+
   return (
     <section
       data-testid="resume-card"
       aria-labelledby="resume-card-title"
-      className="rounded-xl border border-primary/30 bg-primary/5 p-5"
+      className="border-y border-primary/25 bg-primary/[0.025] px-4 py-5 sm:px-5"
     >
-      <div className="flex flex-wrap items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15">
-          <RotateCcw className="h-4 w-4 text-primary" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 id="resume-card-title" className="font-display text-base font-semibold">
-            Resume all sessions
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="min-w-0">
+          <SectionLabel className="text-primary/80">
+            Previous session
+          </SectionLabel>
+          <h3
+            id="resume-card-title"
+            className="mt-2 text-lg font-semibold tracking-tight text-foreground"
+          >
+            Continue where you left off
           </h3>
-          <p className="text-sm text-muted-foreground">
-            Pick up where you left off{when && <span> · last open {when}</span>}
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            {resumeSummary(offer)}
+            {when && <span> Last open {when}.</span>}
           </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Button
+            variant="subtle"
+            data-testid="resume-dismiss"
+            disabled={busy}
+            onClick={onDismiss}
+            title="Forget these workspaces and configure a new one"
+          >
+            Start fresh
+          </Button>
+          <Button
+            variant="primary"
+            data-testid="resume-all"
+            disabled={busy || !offer.available}
+            onClick={onResume}
+            className="px-4"
+          >
+            {busy ? "Resuming…" : "Resume all sessions"}
+          </Button>
         </div>
       </div>
 
-      {/*
-        Keyed by session id, not by folder: two workspaces may point at the same
-        folder on purpose, and a duplicated React key renders one of them
-        unpredictably.
-      */}
-      <ul className="mt-4 space-y-2">
+      <ul className="mt-4 border-b border-border/60">
         {coming.map((space, index) => (
-          <WorkspaceRow key={space.session_id || `${space.folder}#${index}`} space={space} />
+          <WorkspaceRow
+            key={space.session_id || `${space.folder}#${index}`}
+            space={space}
+          />
         ))}
       </ul>
 
-      <p className="mt-3 text-xs text-muted-foreground">{resumeSummary(offer)}</p>
-
       {earlier.length > 0 && (
-        <div className="mt-4" data-testid="resume-earlier">
-          <p className="text-xs font-medium text-muted-foreground">
-            Also remembered, from earlier sessions
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Resuming does not reopen these — open one from the folder picker when
+        <details className="mt-4" data-testid="resume-earlier">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+            Also remembered from earlier sessions ({earlier.length})
+          </summary>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            Resuming does not reopen these. Open one from the folder picker when
             you want it back.
           </p>
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-2 border-b border-border/60">
             {earlier.map((space, index) => (
               <WorkspaceRow
                 key={space.session_id || `${space.folder}#${index}`}
@@ -219,31 +220,8 @@ export function ResumeCard({ offer, busy, onResume, onDismiss }: ResumeCardProps
               />
             ))}
           </ul>
-        </div>
+        </details>
       )}
-
-      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-        <button
-          type="button"
-          data-testid="resume-dismiss"
-          className="btn-ghost"
-          disabled={busy}
-          onClick={onDismiss}
-          title="Forget these workspaces and start from the wizard"
-        >
-          Start fresh
-        </button>
-        <button
-          type="button"
-          data-testid="resume-all"
-          className="btn-primary disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={busy || !offer.available}
-          onClick={onResume}
-        >
-          <RotateCcw className="h-4 w-4" />
-          Resume all sessions
-        </button>
-      </div>
     </section>
   );
 }

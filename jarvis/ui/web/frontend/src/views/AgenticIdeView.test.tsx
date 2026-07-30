@@ -350,40 +350,71 @@ describe("Agentic IDE — before the first read lands", () => {
 });
 
 describe("Agentic IDE launcher", () => {
-  it("blocks the one action until a folder is picked", async () => {
+  async function chooseFolder(): Promise<void> {
+    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
+  }
+
+  async function openLayout(): Promise<void> {
+    await chooseFolder();
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue to layout/i }),
+    );
+  }
+
+  async function openAgents(): Promise<void> {
+    await openLayout();
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue to agents/i }),
+    );
+  }
+
+  it("keeps later decisions locked until a folder is picked", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
-    const open = screen.getByRole("button", {
-      name: /open workspace/i,
+    const next = screen.getByRole("button", {
+      name: /continue to layout/i,
     }) as HTMLButtonElement;
-    expect(open.disabled).toBe(true);
+    expect(next.disabled).toBe(true);
+    expect(
+      (screen.getByTestId("launcher-step-layout") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
 
-    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
-    await waitFor(() => expect(open.disabled).toBe(false));
+    await chooseFolder();
+    await waitFor(() => expect(next.disabled).toBe(false));
   });
 
-  /**
-   * The three decisions are on ONE screen, so opening is: pick a folder, press
-   * the button. The count and the call-signs are already answered with
-   * defaults, and both are on screen while the folder is being chosen — which
-   * is what let the wizard's Back/Next pair and its confirmation step go.
-   */
-  it("opens the workspace from one screen, with no step to walk", async () => {
+  it("walks through folder, layout, agents and review before opening", async () => {
     vi.mocked(api.startIdeSession).mockResolvedValue(
       stateWith(sessionWith(["Mika", "Nova"])),
     );
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
-    // Visible before anything has been chosen, with the call-signs pre-filled
-    // from the pool the backend suggested.
+    expect(
+      screen.getByRole("heading", { name: /choose the project folder/i }),
+    ).toBeTruthy();
+    expect(screen.queryByDisplayValue("Mika")).toBeNull();
+
+    await openLayout();
+    expect(
+      screen.getByRole("heading", { name: /shape the workspace/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("spinbutton", { name: /number of terminals/i }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue to agents/i }),
+    );
     expect(await screen.findByDisplayValue("Mika")).toBeTruthy();
     expect(screen.getByDisplayValue("Nova")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^next$/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^back$/i })).toBeNull();
 
-    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
+    expect(
+      screen.getByRole("heading", { name: /review before opening/i }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
     await waitFor(() =>
@@ -396,17 +427,21 @@ describe("Agentic IDE launcher", () => {
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
   });
 
-  it("keeps a half-made plan when the folder is changed afterwards", async () => {
-    // What the wizard charged two Back presses for. The plan lives in the view,
-    // not in the panel that renders it, so re-deciding the folder cannot cost
-    // the call-signs someone has already typed.
+  it("keeps a half-made plan across backward navigation", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openAgents();
 
     fireEvent.change(await screen.findByLabelText("Call-sign for terminal 1"), {
       target: { value: "Scout" },
     });
-    fireEvent.click(await screen.findByRole("button", { name: /project/i }));
+    fireEvent.click(screen.getByTestId("launcher-step-folder"));
+
+    const path = screen.getByTestId("folder-path-input");
+    fireEvent.change(path, { target: { value: "/work/another" } });
+    fireEvent.keyDown(path, { key: "Enter" });
+
+    fireEvent.click(screen.getByTestId("launcher-step-agents"));
 
     expect(screen.getByDisplayValue("Scout")).toBeTruthy();
   });
@@ -437,8 +472,7 @@ describe("Agentic IDE launcher", () => {
     try {
       render(<AgenticIdeView />);
       await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
-      // No steps to walk to reach the count: it sits on the same screen as the
-      // folder list, which is what these arrangement assertions render against.
+      await openLayout();
       fireEvent.change(
         await screen.findByRole("spinbutton", {
           name: /number of terminals/i,
@@ -492,9 +526,13 @@ describe("Agentic IDE launcher", () => {
   it("builds the requested number of terminal plans", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openLayout();
     fireEvent.change(
       await screen.findByRole("spinbutton", { name: /number of terminals/i }),
       { target: { value: "10" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue to agents/i }),
     );
 
     expect(screen.getByLabelText("Call-sign for terminal 10")).toBeTruthy();

@@ -1,43 +1,17 @@
 /**
- * Opening a workspace — one screen.
+ * The staged workspace launcher.
  *
- * ## Why this stopped being a wizard
- *
- * Opening a workspace is three decisions: which folder, how many terminals, and
- * which coding agent runs in each. They used to be four steps with Back/Next
- * between them and a fifth screen that showed the three answers back and asked
- * for one more click.
- *
- * A wizard is the right shape when a step's answer changes what the NEXT step
- * may ask. None of these do. The count does not depend on the folder, the agents
- * do not depend on the count, and nothing depends on the confirmation screen at
- * all. What the steps bought was hiding: three quiet decisions became three
- * full-screen episodes, each padded out with a heading, a sentence of guidance
- * and a pair of navigation buttons, so the interface spent its space on
- * scaffolding around the decisions rather than on the decisions.
- *
- * They also cost changes of mind. Realising at the agent step that you wanted a
- * different folder was two Back presses and losing the plan on the way.
- * Everything here is visible together and stays live: pick a different folder
- * with the terminals already named and the names stay.
- *
- * ## What each half is for
- *
- * Left is WHERE — the folder browser, which needs a tall column because it is a
- * list you scroll. Right is WHAT — the number of terminals, the arrangement they
- * will land in, and one row per terminal. That split is also why the panel with
- * the scrolling list is on the left: reading order puts the decision that
- * everything else describes first, and the right column is the one that grows
- * with the count.
- *
- * The single primary action lives in the header, next to a one-line summary of
- * all three answers. That line is the confirmation step, and it costs no click.
+ * Folder, layout, terminal assignments and review are separate decisions. The
+ * values live in AgenticIdeView rather than in the active step, so moving back
+ * never throws work away. Visually this is one continuous work surface: steps
+ * are separated by typography and rules, not by stacking cards inside cards.
  */
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FolderPicker } from "./FolderPicker";
 import { ResumeCard } from "./ResumeCard";
-import { Button, Field, Notice, Panel, Select, SectionLabel } from "./controls";
+import { Button, Field, Notice, Select, SectionLabel } from "./controls";
 import { CountStepper, CountTrack, WorkspaceShape } from "./WorkspaceShape";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type {
@@ -50,17 +24,12 @@ import type {
 export interface PlannedTerminal {
   agent: string;
   name: string;
-  /**
-   * Which subscription of `agent` this pane opens on, or undefined for the
-   * active one. Per pane rather than per workspace on purpose: that is what lets
-   * two seats of the same plan run side by side in one folder — which is the
-   * entire reason for holding two.
-   */
+  /** Which subscription of `agent` this pane opens on. */
   account?: string;
 }
 
 export interface WorkspaceLauncherProps {
-  /** True while this is opening an ADDITIONAL workspace beside running ones. */
+  /** True while this is opening an additional workspace beside running ones. */
   addingNew: boolean;
   /** A request is in flight — every control that starts one is disabled. */
   busy: boolean;
@@ -101,6 +70,31 @@ export interface WorkspaceLauncherProps {
   onStart: () => void;
 }
 
+type LauncherStep = 0 | 1 | 2 | 3;
+
+const STEPS = [
+  {
+    label: "Folder",
+    title: "Choose the project folder",
+    hint: "Everything the agents do stays inside this folder.",
+  },
+  {
+    label: "Layout",
+    title: "Shape the workspace",
+    hint: "Choose how many independent terminal panes should open.",
+  },
+  {
+    label: "Agents",
+    title: "Assign the terminals",
+    hint: "Name each pane and choose the coding agent that runs there.",
+  },
+  {
+    label: "Review",
+    title: "Review before opening",
+    hint: "Nothing starts until you open the workspace.",
+  },
+] as const;
+
 export function WorkspaceLauncher({
   addingNew,
   busy,
@@ -125,22 +119,33 @@ export function WorkspaceLauncher({
   onDismissOffer,
   onStart,
 }: WorkspaceLauncherProps) {
-  const ready =
-    Boolean(folder) &&
+  const [step, setStep] = useState<LauncherStep>(0);
+  const planReady =
     planned.length > 0 &&
     planned.every((pane) => pane.name.trim() && pane.agent);
-  const canStart = ready && !busy;
+  const ready = Boolean(folder) && planReady;
 
-  /*
-   * Ctrl/Cmd + Enter opens, from anywhere on the screen.
-   *
-   * Not plain Enter: the folder path field uses it to mean "go to this path",
-   * and the call-sign fields are ordinary text inputs where Enter would be a
-   * surprise. A modified chord has no such collision and is what every terminal
-   * on this screen already teaches.
-   */
+  const setPane = (index: number, patch: Partial<PlannedTerminal>) =>
+    onPlanned((previous) =>
+      previous.map((pane, i) => (i === index ? { ...pane, ...patch } : pane)),
+    );
+
+  const canLeaveCurrent =
+    (step === 0 && Boolean(folder)) ||
+    (step === 1 && count > 0) ||
+    (step === 2 && planReady) ||
+    step === 3;
+
+  const canVisit = (target: LauncherStep) => {
+    if (target <= step) return true;
+    if (!folder) return false;
+    if (target <= 2) return true;
+    return planReady;
+  };
+
+  /* The launch chord is intentionally limited to the review step. */
   useEffect(() => {
-    if (!canStart) return;
+    if (step !== 3 || !ready || busy) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();
@@ -148,111 +153,205 @@ export function WorkspaceLauncher({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canStart, onStart]);
+  }, [busy, onStart, ready, step]);
 
-  const setPane = (index: number, patch: Partial<PlannedTerminal>) =>
-    onPlanned((previous) =>
-      previous.map((pane, i) => (i === index ? { ...pane, ...patch } : pane)),
-    );
+  const active = STEPS[step];
 
   return (
     <div
       data-testid="workspace-launcher"
-      className="flex h-full min-h-0 flex-col"
+      className="flex h-full min-h-0 flex-col font-display"
     >
-      <Header
-        addingNew={addingNew}
-        folder={folder}
-        planned={planned}
-        agents={agents}
-        canStart={canStart}
-        busy={busy}
-        onStart={onStart}
-      />
+      <header className="shrink-0 border-b border-border/70 px-5 py-5 sm:px-8">
+        <div className="mx-auto flex w-full max-w-6xl items-start justify-between gap-6">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
+              {addingNew ? "Additional workspace" : "New workspace"}
+              <span className="px-2 text-muted-foreground/50">/</span>
+              Step {step + 1} of {STEPS.length}
+            </p>
+            <h2
+              id="workspace-launcher-title"
+              className="mt-2 text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+            >
+              {active.title}
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {active.hint}
+              {addingNew && step === 0
+                ? " Your open workspaces keep running."
+                : ""}
+            </p>
+          </div>
+          {folder && (
+            <code
+              className="hidden max-w-[36%] truncate pt-1 font-mono text-[11px] text-muted-foreground xl:block"
+              title={folder}
+            >
+              {folder}
+            </code>
+          )}
+        </div>
+      </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
-        <div className="flex flex-col gap-3 px-4 pb-4">
-          {!terminalAvailable && (
-            <Notice tone="error">
-              <span>
-                This machine has no usable terminal backend, so agent panes
-                cannot run here — <code className="font-mono">pywinpty</code> on
-                Windows, <code className="font-mono">ptyprocess</code> on macOS
-                and Linux. Both ship with the desktop extra.
-              </span>
-            </Notice>
+        <div className="mx-auto w-full max-w-6xl px-5 pb-7 sm:px-8">
+          {(offer || !terminalAvailable || nothingInstalled) && (
+            <div className="space-y-4 pt-5">
+              {!terminalAvailable && (
+                <Notice tone="error">
+                  <span>
+                    This machine has no usable terminal backend, so agent panes
+                    cannot run here —{" "}
+                    <code className="font-mono">pywinpty</code> on Windows,{" "}
+                    <code className="font-mono">ptyprocess</code> on macOS and
+                    Linux. Both ship with the desktop extra.
+                  </span>
+                </Notice>
+              )}
+
+              {nothingInstalled && (
+                <Notice tone="warning">
+                  <span>
+                    No coding-agent CLI was found on this machine’s PATH.
+                    Install one and it is picked up automatically.
+                  </span>
+                  <Button
+                    variant="subtle"
+                    className="h-6 px-2 text-amber-200/90"
+                    onClick={onOpenClis}
+                  >
+                    Open CLIs
+                  </Button>
+                </Notice>
+              )}
+
+              {offer && (
+                <ResumeCard
+                  offer={offer}
+                  busy={busy}
+                  onResume={onResume}
+                  onDismiss={onDismissOffer}
+                />
+              )}
+            </div>
           )}
 
-          {nothingInstalled && (
-            <Notice tone="warning">
-              <span>
-                No coding-agent CLI was found on this machine’s PATH. Install one
-                and it is picked up automatically.
-              </span>
-              <Button
-                variant="subtle"
-                className="h-6 px-2 text-amber-200/90"
-                onClick={onOpenClis}
-              >
-                Open CLIs
-              </Button>
-            </Notice>
-          )}
-
-          {offer && (
-            <ResumeCard
-              offer={offer}
-              busy={busy}
-              onResume={onResume}
-              onDismiss={onDismissOffer}
+          <div className="grid min-h-0 gap-7 py-6 lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-10">
+            <StepNavigation
+              step={step}
+              folder={folder}
+              count={count}
+              planned={planned}
+              canVisit={canVisit}
+              onStep={setStep}
             />
-          )}
 
-          {/*
-            Two columns that become one on a narrow window. The folder column is
-            given slightly less than half: it holds one list, while the right
-            column holds the arrangement AND a row per terminal.
-          */}
-          <div className="grid min-h-0 items-start gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,9fr)]">
-            <Panel title="Folder" className="min-h-0">
-              <FolderPicker
-                selected={folder}
-                onSelect={onSelectFolder}
-                onSelectRecent={onSelectRecent}
-              />
-            </Panel>
+            <section
+              className="min-w-0"
+              aria-labelledby="workspace-launcher-title"
+            >
+              {step === 0 && (
+                <div className="flex min-h-[28rem] flex-col border-y border-border/70">
+                  <FolderPicker
+                    selected={folder}
+                    onSelect={onSelectFolder}
+                    onSelectRecent={onSelectRecent}
+                  />
+                </div>
+              )}
 
-            <div className="flex min-w-0 flex-col gap-3">
-              <Panel
-                title="Terminals"
-                aside={
-                  <CountStepper
+              {step === 1 && (
+                <div>
+                  <div className="flex items-end justify-between gap-5 border-b border-border/70 pb-5">
+                    <div>
+                      <SectionLabel>Terminal panes</SectionLabel>
+                      <p className="mt-2 font-mono text-4xl font-medium tabular-nums text-foreground">
+                        {count.toString().padStart(2, "0")}
+                      </p>
+                    </div>
+                    <CountStepper
+                      count={count}
+                      max={maxTerminals}
+                      onChange={onCount}
+                    />
+                  </div>
+                  <WorkspaceShape
+                    count={count}
+                    names={suggestedNames}
+                    workspaceWidthPx={workspaceWidthPx}
+                    workspaceHeightPx={workspaceHeightPx}
+                  />
+                  <CountTrack
                     count={count}
                     max={maxTerminals}
                     onChange={onCount}
                   />
-                }
-              >
-                <WorkspaceShape
-                  count={count}
-                  names={suggestedNames}
-                  workspaceWidthPx={workspaceWidthPx}
-                  workspaceHeightPx={workspaceHeightPx}
-                />
-                <CountTrack
-                  count={count}
-                  max={maxTerminals}
-                  onChange={onCount}
-                />
-              </Panel>
+                </div>
+              )}
 
-              <PanePlan
-                planned={planned}
-                agents={agents}
-                accountsFor={accountsFor}
-                onChange={setPane}
-              />
-            </div>
+              {step === 2 && (
+                <PanePlan
+                  planned={planned}
+                  agents={agents}
+                  accountsFor={accountsFor}
+                  onChange={setPane}
+                />
+              )}
+
+              {step === 3 && folder && (
+                <WorkspaceReview
+                  folder={folder}
+                  planned={planned}
+                  agents={agents}
+                />
+              )}
+
+              <footer className="mt-7 flex min-h-10 items-center justify-between border-t border-border/70 pt-5">
+                {step > 0 ? (
+                  <Button
+                    variant="subtle"
+                    onClick={() => setStep((step - 1) as LauncherStep)}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Back
+                  </Button>
+                ) : (
+                  <span />
+                )}
+
+                {step < 3 ? (
+                  <Button
+                    variant="primary"
+                    disabled={!canLeaveCurrent}
+                    onClick={() => setStep((step + 1) as LauncherStep)}
+                    className="px-4"
+                  >
+                    {step === 0
+                      ? "Continue to layout"
+                      : step === 1
+                        ? "Continue to agents"
+                        : "Review workspace"}
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    disabled={!ready || busy}
+                    onClick={onStart}
+                    className="min-w-40 px-4"
+                  >
+                    {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {busy ? "Opening…" : "Open workspace"}
+                    {!busy && (
+                      <kbd className="ml-1 hidden font-mono text-[10px] font-normal opacity-60 sm:inline">
+                        ⌘↵
+                      </kbd>
+                    )}
+                  </Button>
+                )}
+              </footer>
+            </section>
           </div>
         </div>
       </div>
@@ -260,110 +359,77 @@ export function WorkspaceLauncher({
   );
 }
 
-/**
- * The screen's one heading, its one-line summary, and its one primary action.
- *
- * The summary is what the old fourth step was: folder, count, and the agents in
- * play, read back before anything starts. Here it is a line rather than a screen
- * — the same information, none of the ceremony, and it stays true while the
- * choices underneath it change instead of being a snapshot taken at step four.
- */
-function Header({
-  addingNew,
+function StepNavigation({
+  step,
   folder,
+  count,
   planned,
-  agents,
-  canStart,
-  busy,
-  onStart,
+  canVisit,
+  onStep,
 }: {
-  addingNew: boolean;
+  step: LauncherStep;
   folder: string | null;
+  count: number;
   planned: PlannedTerminal[];
-  agents: AgentStatus[];
-  canStart: boolean;
-  busy: boolean;
-  onStart: () => void;
+  canVisit: (target: LauncherStep) => boolean;
+  onStep: (step: LauncherStep) => void;
 }) {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-      <div className="min-w-0">
-        <h2 className="font-display text-base font-semibold leading-tight">
-          {addingNew ? "Open another project" : "Open a project"}
-        </h2>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {folder ? (
-            <Summary folder={folder} planned={planned} agents={agents} />
-          ) : addingNew ? (
-            "The workspaces you already have keep running."
-          ) : (
-            "Coding agents run in named terminals inside the folder you pick."
-          )}
-        </p>
-      </div>
+  const summaries = useMemo(
+    () => [
+      folder ? leafName(folder) : "Not chosen",
+      `${count} terminal${count === 1 ? "" : "s"}`,
+      `${planned.length} assigned`,
+      "Check and open",
+    ],
+    [count, folder, planned.length],
+  );
 
-      <Button
-        variant="primary"
-        disabled={!canStart}
-        onClick={onStart}
-        className="px-4"
-      >
-        {busy ? "Opening…" : "Open workspace"}
-        {/*
-          The chord is shown on the button rather than explained in a line of
-          prose underneath it — that is where someone looks for it, and it costs
-          no space anyone was using.
-        */}
-        <kbd className="ml-1 hidden font-mono text-[10px] font-normal opacity-60 sm:inline">
-          ⌘↵
-        </kbd>
-      </Button>
-    </header>
+  return (
+    <nav aria-label="Workspace setup" className="min-w-0">
+      <ol className="grid grid-cols-4 border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
+        {STEPS.map((item, index) => {
+          const target = index as LauncherStep;
+          const selected = target === step;
+          const enabled = canVisit(target);
+          return (
+            <li key={item.label}>
+              <button
+                type="button"
+                data-testid={`launcher-step-${item.label.toLowerCase()}`}
+                aria-current={selected ? "step" : undefined}
+                disabled={!enabled}
+                onClick={() => onStep(target)}
+                className={cn(
+                  "group relative w-full min-w-0 px-2 py-3 text-left transition-colors lg:px-0 lg:py-4",
+                  "disabled:cursor-not-allowed disabled:opacity-35",
+                  selected ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute bottom-[-1px] left-0 right-0 h-0.5 lg:bottom-0 lg:left-auto lg:right-[-25px] lg:top-0 lg:h-auto lg:w-0.5",
+                    selected ? "bg-primary" : "bg-transparent",
+                  )}
+                />
+                <span className="block font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                  0{index + 1}
+                </span>
+                <span className="mt-1 block truncate text-sm font-medium">
+                  {item.label}
+                </span>
+                <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground lg:block">
+                  {summaries[index]}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 
-/** Folder, count and agents in one line — the confirmation step, uncharged. */
-function Summary({
-  folder,
-  planned,
-  agents,
-}: {
-  folder: string;
-  planned: PlannedTerminal[];
-  agents: AgentStatus[];
-}) {
-  const nameOf = (id: string) =>
-    agents.find((agent) => agent.name === id)?.display_name ?? id;
-  // Named in the order they first appear, so the line reads like the grid does.
-  const used: string[] = [];
-  for (const pane of planned) {
-    const label = nameOf(pane.agent);
-    if (!used.includes(label)) used.push(label);
-  }
-  return (
-    <>
-      <span className="font-mono text-foreground">{folder}</span>
-      <span className="px-1.5 opacity-50">·</span>
-      {planned.length} terminal{planned.length === 1 ? "" : "s"}
-      {used.length > 0 && (
-        <>
-          <span className="px-1.5 opacity-50">·</span>
-          {used.join(", ")}
-        </>
-      )}
-    </>
-  );
-}
-
-/**
- * One row per terminal: its call-sign, its coding agent, and — only when the
- * user actually holds several — which subscription it opens on.
- *
- * A table rather than a stack of bordered cards. Twelve cards is twelve frames
- * drawn around three controls each; twelve rows under one set of column labels
- * is the same information with the repetition carried by alignment instead of
- * by outlines.
- */
+/** One row per terminal, aligned as a table rather than framed as cards. */
 function PanePlan({
   planned,
   agents,
@@ -376,25 +442,29 @@ function PanePlan({
   onChange: (index: number, patch: Partial<PlannedTerminal>) => void;
 }) {
   return (
-    <Panel
-      title="Who runs where"
-      aside={
-        <span className="text-[11px] text-muted-foreground">
-          Say “what is {planned[1]?.name || planned[0]?.name || "T2"} doing?”
-        </span>
-      }
-    >
-      <div className="max-h-[22rem] overflow-y-auto scrollbar-jarvis">
-        <table className="w-full border-separate border-spacing-0">
-          <thead className="sticky top-0 z-10 bg-card">
-            <tr>
-              <th className="w-8 px-3 py-1.5 text-left">
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-3 pb-4">
+        <div>
+          <SectionLabel>Terminal assignments</SectionLabel>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Call-signs are what you say aloud when addressing a pane.
+          </p>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          “What is {planned[1]?.name || planned[0]?.name || "T2"} doing?”
+        </p>
+      </div>
+      <div className="max-h-[28rem] overflow-y-auto scrollbar-jarvis border-y border-border/70">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
+            <tr className="border-b border-border/70">
+              <th className="w-12 px-3 py-2 text-left">
                 <SectionLabel>#</SectionLabel>
               </th>
-              <th className="px-1 py-1.5 text-left">
+              <th className="px-2 py-2 text-left">
                 <SectionLabel>Call-sign</SectionLabel>
               </th>
-              <th className="px-1 py-1.5 text-left">
+              <th className="px-2 py-2 text-left">
                 <SectionLabel>Agent</SectionLabel>
               </th>
             </tr>
@@ -403,42 +473,41 @@ function PanePlan({
             {planned.map((pane, index) => {
               const accounts = accountsFor(pane.agent);
               return (
-                <tr key={index} className="group">
-                  <td className="px-3 py-1 align-middle font-mono text-xs tabular-nums text-muted-foreground">
-                    {index + 1}
+                <tr
+                  key={index}
+                  className="border-b border-border/50 last:border-b-0"
+                >
+                  <td className="px-3 py-2 align-middle font-mono text-xs tabular-nums text-muted-foreground">
+                    {(index + 1).toString().padStart(2, "0")}
                   </td>
-                  <td className="px-1 py-1 align-middle">
+                  <td className="px-2 py-2 align-middle">
                     <Field
                       value={pane.name}
                       onChange={(event) =>
                         onChange(index, { name: event.target.value })
                       }
                       aria-label={`Call-sign for terminal ${index + 1}`}
-                      className="w-28 font-mono"
+                      className="w-full min-w-24 font-mono sm:w-40"
                       spellCheck={false}
                     />
                   </td>
-                  <td className="px-1 py-1 align-middle">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                  <td className="px-2 py-2 align-middle">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Select
                         value={pane.agent}
                         aria-label={`Agent for terminal ${index + 1}`}
                         onChange={(event) =>
                           onChange(index, {
                             agent: event.target.value,
-                            // The account belongs to the OLD CLI — an id from
-                            // one CLI means nothing to the other.
                             account: undefined,
                           })
                         }
-                        className="w-40"
+                        className="w-44"
                       >
                         {agents.map((agent) => (
                           <option
                             key={agent.name}
                             value={agent.name}
-                            /* Kept in the list but unselectable, so a missing
-                               CLI is visible rather than silently absent. */
                             disabled={!agent.installed}
                           >
                             {agent.display_name}
@@ -446,13 +515,6 @@ function PanePlan({
                           </option>
                         ))}
                       </Select>
-                      {/*
-                        Renders NOTHING with a single login, which is almost
-                        everybody: a control that answers a question the user
-                        does not have is noise. It appears the moment a second
-                        seat is registered, and then it is per pane, so one
-                        folder can hold panes on both plans at once.
-                      */}
                       {accounts.length >= 2 && (
                         <Select
                           value={pane.account ?? ""}
@@ -462,7 +524,7 @@ function PanePlan({
                               account: event.target.value || undefined,
                             })
                           }
-                          className="w-36 text-xs"
+                          className="w-40 text-xs"
                         >
                           <option value="">Active account</option>
                           {accounts.map((account) => (
@@ -481,15 +543,73 @@ function PanePlan({
           </tbody>
         </table>
       </div>
-      <p
-        className={cn(
-          "border-t border-border/70 px-3 py-2 text-[11px] text-muted-foreground",
-        )}
-      >
-        Terminals are numbered by position, so a call-sign is what you say out
-        loud. Coding mode turns on when the workspace opens, and off again from
-        the toolbar.
-      </p>
-    </Panel>
+    </div>
   );
+}
+
+function WorkspaceReview({
+  folder,
+  planned,
+  agents,
+}: {
+  folder: string;
+  planned: PlannedTerminal[];
+  agents: AgentStatus[];
+}) {
+  const displayName = (agentId: string) =>
+    agents.find((agent) => agent.name === agentId)?.display_name ?? agentId;
+
+  return (
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
+      <div className="min-w-0">
+        <SectionLabel>Workspace</SectionLabel>
+        <h4 className="mt-3 truncate text-2xl font-semibold tracking-tight text-foreground">
+          {leafName(folder)}
+        </h4>
+        <code className="mt-2 block break-all font-mono text-xs leading-relaxed text-muted-foreground">
+          {folder}
+        </code>
+
+        <dl className="mt-7 border-y border-border/70">
+          <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
+            <dt className="text-muted-foreground">Terminal panes</dt>
+            <dd className="font-mono tabular-nums text-foreground">
+              {planned.length}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-5 py-3 text-sm">
+            <dt className="text-muted-foreground">Coding mode</dt>
+            <dd className="text-foreground">Turns on when opened</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="min-w-0">
+        <SectionLabel>Terminal plan</SectionLabel>
+        <ol className="mt-3 border-t border-border/70">
+          {planned.map((pane, index) => (
+            <li
+              key={`${pane.name}-${index}`}
+              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border/50 py-2.5 text-sm"
+            >
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                {(index + 1).toString().padStart(2, "0")}
+              </span>
+              <span className="truncate font-mono text-foreground">
+                {pane.name}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                {displayName(pane.agent)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function leafName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }

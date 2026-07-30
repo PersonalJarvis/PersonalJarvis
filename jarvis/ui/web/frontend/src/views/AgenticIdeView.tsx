@@ -423,12 +423,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   /*
    * The plan is built when the count changes rather than held in sync with it.
    *
-   * It is also built once the agent sweep lands, which is the case the launcher
-   * created: with everything on one screen the terminal rows are visible from
-   * the first paint, so the plan has to exist before the user touches anything.
-   * A wizard could defer this to the moment the agent step was entered; there
-   * is no such moment any more. Guarded on length, so it can never overwrite
-   * choices already made.
+   * It is also built once the agent sweep lands so the staged launcher already
+   * has useful defaults when the user reaches Agents. Guarding on length keeps
+   * backward navigation from overwriting choices already made.
    */
   useEffect(() => {
     // Not before the sweep lands. `suggested` is empty until it does, so an
