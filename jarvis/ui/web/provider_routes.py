@@ -3281,11 +3281,12 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
 
 @router.post("/stt/switch")
 async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Persist the active STT provider in ``jarvis.toml``.
+    """Switch the active STT provider without restarting the app.
 
-    The SpeechPipeline constructs STT once because loading a Whisper model is
-    expensive. The selection therefore applies after the next voice or app
-    restart and the response reports ``restart_required: true``.
+    A running SpeechPipeline constructs the replacement first, then swaps the
+    voice recognizer and invalidates the prompt-free dictation cache as one
+    cut-over. An in-flight transcription keeps its old provider reference and
+    finishes normally; the next transcription uses the new provider.
     """
     spec = get_spec(body.provider)
     if spec is None:
@@ -3316,43 +3317,86 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if not_installed:
         raise HTTPException(status_code=409, detail=not_installed)
 
+    cfg = _resolve_cfg(request)
+    stt_cfg = getattr(cfg, "stt", None) if cfg is not None else None
+    if stt_cfg is None:
+        raise HTTPException(status_code=503, detail="STT configuration is unavailable.")
+
+    # Pin the checkpoint the local card promised and downloaded. Cloud
+    # providers keep their model in [stt.models] and leave this value alone.
+    from jarvis.speech.local_models import get_local_provider
+
+    local_entry = get_local_provider(body.provider)
+    local_model = (
+        local_entry.model_id
+        if local_entry is not None and local_entry.runtime == "faster-whisper"
+        else None
+    )
+    old_provider = str(getattr(stt_cfg, "provider", "") or "")
+    old_model = str(getattr(stt_cfg, "model", "") or "")
+
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    setter = getattr(pipeline, "set_stt_provider", None)
+    live_switched = False
+    if pipeline is not None:
+        if not callable(setter):
+            raise HTTPException(
+                status_code=503,
+                detail="The active speech pipeline cannot switch STT providers live.",
+            )
+        try:
+            live_switched = bool(setter(body.provider, model=local_model))
+        except Exception as exc:  # noqa: BLE001 — keep the old provider alive
+            log.error("STT live switch raised unexpectedly: %s", exc, exc_info=True)
+            live_switched = False
+        if not live_switched:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Provider '{body.provider}' could not be activated live. "
+                    "The previous STT provider is still active."
+                ),
+            )
+    else:
+        # Voice is not running (headless / disabled), so there is no stale live
+        # object to replace. The next pipeline construction reads this value;
+        # an application restart is neither needed nor useful.
+        try:
+            stt_cfg.provider = body.provider
+            if local_model is not None:
+                stt_cfg.model = local_model
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory STT provider update skipped: %s", exc)
+
+    persisted = False
     if body.persist:
         try:
             from jarvis.core.config_writer import set_stt_provider
 
             set_stt_provider(body.provider)
-            # Pin the checkpoint the card promised and the download fetched.
-            # Without this, activating the local card would inherit whatever
-            # [stt].model happened to hold (its default is a DIFFERENT Whisper
-            # size), so the user would run a model they never chose — and one
-            # that may not be downloaded at all.
-            from jarvis.speech.local_models import get_local_provider
-
-            local_entry = get_local_provider(body.provider)
-            if local_entry is not None and local_entry.runtime == "faster-whisper":
+            if local_model is not None:
                 from jarvis.core.config_writer import set_stt_model
 
-                set_stt_model(local_entry.model_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
+                set_stt_model(local_model)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — roll live state back below
+            # Do not leave the card, live recognizer, and durable config naming
+            # three different providers when the atomic writer rejects a save.
+            try:
+                if live_switched and callable(setter):
+                    setter(old_provider, model=old_model)
+                else:
+                    stt_cfg.provider = old_provider
+                    stt_cfg.model = old_model
+            except Exception as rollback_exc:  # noqa: BLE001
+                log.error(
+                    "STT live-switch rollback failed after persistence error: %s",
+                    rollback_exc,
+                    exc_info=True,
+                )
             raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
+                status_code=500, detail=f"STT provider save failed: {exc}"
             ) from exc
-
-    cfg = _resolve_cfg(request)
-    if cfg is not None and getattr(cfg, "stt", None) is not None:
-        try:
-            cfg.stt.provider = body.provider  # type: ignore[attr-defined]
-            # Same pin in memory, so a live restart of the speech pipeline picks
-            # up the checkpoint without waiting for a config re-read.
-            from jarvis.speech.local_models import get_local_provider
-
-            entry = get_local_provider(body.provider)
-            if entry is not None and entry.runtime == "faster-whisper":
-                cfg.stt.model = entry.model_id  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
-            log.debug("In-memory STT provider update skipped: %s", exc)
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
@@ -3360,8 +3404,9 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist,
-        "restart_required": True,
+        "persisted": persisted,
+        "live_switched": live_switched,
+        "restart_required": False,
     }
 
 
