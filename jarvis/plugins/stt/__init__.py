@@ -291,13 +291,17 @@ def resolve_keyed_stt_fallback(
 
 
 def _load_provider_class(name: str) -> type | None:
-    """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``)."""
-    eps = importlib_metadata.entry_points()
-    selected = (
-        eps.select(group=ENTRY_POINT_GROUP)
-        if hasattr(eps, "select")
-        else eps.get(ENTRY_POINT_GROUP, [])  # type: ignore[attr-defined]
-    )
+    """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``).
+
+    The catalogue read is cached process-wide (``jarvis.core.entry_points``)
+    because this is a hot path on the event loop: the cross-family chain calls
+    this once per candidate it probes, and an uncached read is a sweep over
+    every installed distribution — the call at the bottom of a captured 16.5 s
+    loop stall.
+    """
+    from jarvis.core.entry_points import entry_points_for
+
+    selected = entry_points_for(ENTRY_POINT_GROUP)
     for ep in selected:
         if ep.name == name:
             try:

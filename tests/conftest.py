@@ -145,6 +145,24 @@ def _reset_config_caches():
     clear_config_cache()
 
 
+@pytest.fixture(autouse=True)
+def _reset_entry_point_cache():
+    """Start every test with a cold entry-point catalogue.
+
+    Same reasoning as the config caches above: ``jarvis.core.entry_points``
+    remembers the installed plugin catalogue for the life of the process, which
+    is safe in production (a new entry-point needs a restart anyway) and unsafe
+    across tests — a suite that monkeypatches ``importlib.metadata.entry_points``
+    to fake a plugin set would otherwise be answered from whatever an earlier
+    test happened to read from the real installation.
+    """
+    from jarvis.core.entry_points import invalidate
+
+    invalidate()
+    yield
+    invalidate()
+
+
 @pytest_asyncio.fixture
 async def fresh_bus():
     """Fresh EventBus for each test."""
