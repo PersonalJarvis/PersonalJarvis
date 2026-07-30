@@ -132,4 +132,180 @@ describe("watchUiStalls", () => {
     stop();
     expect(state.disconnected).toBe(1);
   });
+
+  describe("long animation frames", () => {
+    /** A long animation frame, as Chromium reports one. */
+    function loaf(
+      duration: number,
+      extra: Partial<{
+        startTime: number;
+        renderStart: number;
+        styleAndLayoutStart: number;
+        blockingDuration: number;
+        scripts: unknown[];
+      }> = {},
+    ): PerformanceEntry {
+      return {
+        entryType: "long-animation-frame",
+        name: "long-animation-frame",
+        startTime: 0,
+        duration,
+        ...extra,
+      } as never;
+    }
+
+    it("names the function and file that blocked the thread", () => {
+      // The whole reason this path exists: `longtask` could only ever say
+      // "unknown/window", which named nothing and left the bug unfixable.
+      const state = installObserver();
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      state.cb?.({
+        getEntries: () => [
+          loaf(2400, {
+            scripts: [
+              {
+                duration: 120,
+                sourceFunctionName: "tick",
+                sourceURL: "http://127.0.0.1:47821/assets/small-abc.js",
+              },
+              {
+                duration: 2200,
+                sourceFunctionName: "handlePaneOutput",
+                sourceURL: "http://127.0.0.1:47821/assets/AgenticTerminal-xY9.js?v=2",
+                invokerType: "event-listener",
+                forcedStyleAndLayoutDuration: 310,
+              },
+            ],
+          }),
+        ],
+      });
+
+      const detail = report.mock.calls[0][0].detail;
+      // The worst script wins, not merely the first one reported.
+      expect(detail).toContain("script=handlePaneOutput@AgenticTerminal-xY9.js");
+      expect(detail).toContain("2200ms");
+      expect(detail).toContain("via=event-listener");
+      expect(detail).toContain("forced-layout=310ms");
+      expect(detail).toContain("+1more");
+      // The query string is not part of the file's identity.
+      expect(detail).not.toContain("?v=2");
+    });
+
+    it("splits the frame into work, render and layout", () => {
+      // With several terminal panes mounted, "one handler ran long" and "layout
+      // re-ran over a huge DOM" feel identical to the user but need opposite
+      // fixes — so the phase split is the point, not a decoration.
+      const state = installObserver();
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      state.cb?.({
+        getEntries: () => [
+          loaf(3000, {
+            startTime: 1000,
+            renderStart: 3200,
+            styleAndLayoutStart: 3500,
+            blockingDuration: 2950,
+          }),
+        ],
+      });
+
+      const detail = report.mock.calls[0][0].detail;
+      expect(detail).toContain("work=2200ms"); // 3200 - 1000
+      expect(detail).toContain("render=300ms"); // 3500 - 3200
+      expect(detail).toContain("layout=500ms"); // (1000 + 3000) - 3500
+      expect(detail).toContain("blocking=2950ms");
+    });
+
+    it("never sends the invoker string, which can carry DOM ids", () => {
+      const state = installObserver();
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      state.cb?.({
+        getEntries: () => [
+          loaf(2000, {
+            scripts: [
+              {
+                duration: 2000,
+                sourceFunctionName: "onData",
+                sourceURL: "/assets/x.js",
+                invokerType: "event-listener",
+                // A real terminal's uuid arrives here; it is page content.
+                invoker: "DIV#agentic-terminal-59c1e52e-679d-483b.onmessage",
+              },
+            ],
+          }),
+        ],
+      });
+
+      const detail = report.mock.calls[0][0].detail;
+      expect(detail).not.toContain("59c1e52e");
+      expect(detail).not.toContain("agentic-terminal");
+      expect(detail.length).toBeLessThanOrEqual(200);
+    });
+
+    it("prefers the attributed entry when both types fire for one block", () => {
+      const state = installObserver();
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      // The long task is LONGER, so a naive "worst first" would pick it and
+      // throw the attribution away.
+      state.cb?.({
+        getEntries: () => [
+          entry(5000, [{ name: "unknown", containerType: "window" }]),
+          loaf(4000, {
+            scripts: [{ duration: 3900, sourceFunctionName: "reflowAll", sourceURL: "/a/p.js" }],
+          }),
+        ],
+      });
+
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report.mock.calls[0][0].detail).toContain("script=reflowAll@p.js");
+      expect(report.mock.calls[0][0].blocked_ms).toBe(4000);
+    });
+
+    it("survives a frame with no scripts at all", () => {
+      // A frame blocked purely by layout or GC reports no scripts.
+      const state = installObserver();
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      state.cb?.({ getEntries: () => [loaf(1500)] });
+
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(typeof report.mock.calls[0][0].detail).toBe("string");
+    });
+
+    it("still watches long tasks where animation frames are unsupported", () => {
+      // Older WebView builds have `longtask` but not `long-animation-frame`;
+      // losing the reporter entirely there would be a regression.
+      const state: { cb: ObserverCallback | null; observed: string[] } = {
+        cb: null,
+        observed: [],
+      };
+      class PartialObserver {
+        constructor(fn: ObserverCallback) {
+          state.cb = fn;
+        }
+        observe(options: { type: string }) {
+          if (options.type === "long-animation-frame") {
+            throw new TypeError("unsupported entry type");
+          }
+          state.observed.push(options.type);
+        }
+        disconnect() {}
+      }
+      vi.stubGlobal("PerformanceObserver", PartialObserver);
+      const report = vi.fn();
+      watchUiStalls(report);
+
+      expect(state.observed).toEqual(["longtask"]);
+      state.cb?.({ getEntries: () => [entry(2000)] });
+      expect(report).toHaveBeenCalledTimes(1);
+    });
+  });
 });
