@@ -1606,6 +1606,7 @@ export function AgenticGrid({
                     ? term.account_label
                     : null
                 }
+                promptCount={term.prompts_sent}
                 appearance={appearance}
                 fontSize={fontSize}
                 focused={target === term.name}
@@ -1687,7 +1688,6 @@ export function AgenticGrid({
                   // with it. Marking a pane on right-click was too easy to
                   // trigger by accident, and letting the event through would
                   // open the app-wide Cut/Copy/Paste menu over an overlay that
-                promptCount={term.prompts_sent}
                   // has no text to copy. Left-click marks; right-click is inert.
                   onContextMenu={(event) => {
                     event.preventDefault();
