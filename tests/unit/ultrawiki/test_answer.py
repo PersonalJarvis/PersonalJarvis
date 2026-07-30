@@ -90,6 +90,33 @@ async def test_answer_uses_cross_family_chain_and_returns_valid_citations(
     assert "Output language: es" in request.messages[0].content
 
 
+async def test_answer_normalizes_grouped_citations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain_mod = __import__(
+        "jarvis.memory.wiki.provider_chain", fromlist=["unused"]
+    )
+    monkeypatch.setattr(
+        chain_mod,
+        "credential_ready_wiki_providers",
+        lambda **_kwargs: {"fake"},
+    )
+
+    async def fake_complete(**kwargs):
+        aggregated = SimpleNamespace(text="Two sources agree [1, 2].")
+        assert kwargs["validate"](aggregated) is None
+        return aggregated, "fake"
+
+    monkeypatch.setattr(chain_mod, "complete_with_fallback", fake_complete)
+
+    result = await answer_question(
+        cfg(), "When is the ferry?", [hit(), hit()], registry=FakeRegistry()
+    )
+
+    assert result.answer == "Two sources agree [1] [2]."
+    assert result.citations == (1, 2)
+
+
 async def test_answer_rejects_uncited_provider_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
