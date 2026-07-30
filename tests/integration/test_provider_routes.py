@@ -119,10 +119,8 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "codex" in ids
         assert "openclaw" not in ids
         assert "gemini-flash-tts" in ids, "Gemini Flash TTS must be in the catalog"
-        assert "faster-whisper" not in ids, (
-            "local faster-whisper STT was removed as a user-selectable provider "
-            "in v1.0.1 (install-detection + model-list defects); cloud STT only"
-        )
+        assert "faster-whisper" in ids, "Local Whisper must be selectable for keyless STT"
+        assert "nemotron-local" in ids, "Local Nemotron must be selectable for keyless STT"
         assert "elevenlabs" in ids, "ElevenLabs is a selectable premium TTS provider"
         assert "ollama-local" not in ids, "Ollama was removed on 2026-04-21"
 
