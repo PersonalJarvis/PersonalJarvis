@@ -1628,7 +1628,7 @@ function CodexAuthWidget({
     if (!loginPolling || loginReady) return;
     let stopped = false;
     const deadline = Date.now() + 5 * 60_000;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: number | null = null;
 
     const poll = () => {
       if (stopped) return;
