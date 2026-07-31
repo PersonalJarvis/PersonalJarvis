@@ -78,6 +78,11 @@ _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 class ProcessTree(Protocol):
     """One spawned process and everything it goes on to start."""
 
+    @property
+    def supports_containment(self) -> bool:
+        """Whether this live container can enforce tree termination."""
+        ...
+
     def assign(self, pid: int) -> None:
         """Put a freshly spawned process under this container's control."""
 
@@ -93,6 +98,10 @@ class _NoContainment:
     """
 
     __slots__ = ("_name",)
+
+    @property
+    def supports_containment(self) -> bool:
+        return False
 
     def __init__(self, name: str) -> None:
         self._name = name
@@ -113,6 +122,10 @@ class _WindowsJob:
     """A Win32 Job Object that kills its members when the handle closes."""
 
     __slots__ = ("_kernel32", "_handle", "_closed", "_name")
+
+    @property
+    def supports_containment(self) -> bool:
+        return not self._closed
 
     def __init__(self, name: str) -> None:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -232,6 +245,10 @@ class _PosixProcessGroup:
     """
 
     __slots__ = ("_pgids", "_closed", "_name")
+
+    @property
+    def supports_containment(self) -> bool:
+        return not self._closed
 
     def __init__(self, name: str) -> None:
         self._pgids: set[int] = set()

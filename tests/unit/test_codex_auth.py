@@ -11,7 +11,11 @@ version probe are seams that the tests stub; the auth file is a real temp file.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -242,6 +246,169 @@ def test_start_login_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatch)
         svc.start_login()
 
 
+def test_guarded_login_handoff_runs_real_guardian(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The service and guardian transfer one real cross-process profile lock."""
+    import jarvis.codex_auth as codex_mod
+    from jarvis.core.exclusive_process_lock import (
+        ExclusiveProcessLock,
+        ExclusiveProcessLockError,
+    )
+    from jarvis.core.private_directory import ensure_owner_only_directory
+
+    profile = tmp_path / "profile"
+    coordination = tmp_path / "coordination"
+    guard_directory = coordination / "login"
+    ensure_owner_only_directory(profile, create=True)
+    ensure_owner_only_directory(coordination, create=True)
+    ensure_owner_only_directory(guard_directory, create=True)
+    lock_path = coordination / "owner.lock"
+    parent_lock = ExclusiveProcessLock.acquire(
+        lock_path,
+        protected_directory=profile,
+    )
+    binary = Path(sys.executable).resolve(strict=True)
+    service = CodexAuthService(
+        str(binary),
+        codex_home=profile,
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        log_dir=guard_directory,
+        visible_login=False,
+        lifetime_lock_path=lock_path,
+        login_guard_directory=guard_directory,
+        login_guard_handoff=parent_lock.close,
+        trusted_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: str(binary))
+    if sys.platform == "win32":
+        monkeypatch.setattr(
+            codex_mod,
+            "_NEW_CONSOLE_FLAGS",
+            codex_mod.NO_WINDOW_CREATIONFLAGS,
+        )
+
+    process = None
+    try:
+        process = service.start_login()
+        assert parent_lock.closed is True
+        assert process.wait() == 0
+        with pytest.raises(ExclusiveProcessLockError) as caught:
+            ExclusiveProcessLock.acquire(
+                lock_path,
+                protected_directory=profile,
+            )
+        assert caught.value.reason == "busy"
+    finally:
+        if process is not None:
+            process.release_profile_lock()
+        elif not parent_lock.closed:
+            parent_lock.close()
+
+    reacquired = ExclusiveProcessLock.acquire(
+        lock_path,
+        protected_directory=profile,
+    )
+    reacquired.close()
+
+
+def test_guarded_windows_login_closes_job_when_guardian_exits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as codex_mod
+    import jarvis.core.process_tree as process_tree_module
+
+    guardian_exited = threading.Event()
+    job_closed = threading.Event()
+    events: list[str] = []
+
+    class FakeProcess:
+        pid = 9321
+
+        def poll(self) -> int | None:
+            return 74 if guardian_exited.is_set() else None
+
+        def wait(self, timeout: float | None = None) -> int:
+            if not guardian_exited.wait(timeout):
+                raise subprocess.TimeoutExpired(["guardian"], timeout)
+            return 74
+
+        def terminate(self) -> None:
+            guardian_exited.set()
+
+    class FakeProcessTree:
+        supports_containment = True
+
+        def __init__(self) -> None:
+            self.assigned: list[int] = []
+            self.close_calls = 0
+
+        def assign(self, pid: int) -> None:
+            events.append("assign")
+            self.assigned.append(pid)
+
+        def close(self) -> None:
+            self.close_calls += 1
+            job_closed.set()
+
+    process = FakeProcess()
+    process_tree = FakeProcessTree()
+    captured: dict[str, object] = {}
+
+    def spawn(command: list[str], **kwargs: object) -> FakeProcess:
+        events.append("spawn")
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return process
+
+    def handoff(*_args: object, **_kwargs: object) -> None:
+        events.append("handoff")
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "win32")
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", spawn)
+    monkeypatch.setattr(
+        process_tree_module,
+        "make_process_tree",
+        lambda _name: process_tree,
+    )
+    monkeypatch.setattr(
+        codex_mod._GuardedCodexLoginProcess,
+        "establish_handoff",
+        staticmethod(handoff),
+    )
+    service = CodexAuthService(
+        "codex.exe",
+        lifetime_lock_path=tmp_path / "owner.lock",
+        login_guard_handoff=lambda: None,
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "codex.exe")
+    monkeypatch.setattr(
+        service,
+        "_guarded_login_command",
+        lambda _binary: (
+            ["guardian.exe"],
+            tmp_path / "login.ack",
+            tmp_path / "login.release",
+        ),
+    )
+
+    wrapper = service.start_login()
+    assert isinstance(wrapper, codex_mod._GuardedCodexLoginProcess)
+    assert events == ["spawn", "assign", "handoff"]
+    assert process_tree.assigned == [process.pid]
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert int(kwargs["creationflags"]) & codex_mod._CREATE_BREAKAWAY_FROM_JOB
+
+    guardian_exited.set()
+    assert job_closed.wait(1.0)
+    assert wrapper.wait() == 74
+    assert process_tree.close_calls == 1
+
+
 def test_start_login_posix_detaches_and_redirects_stdio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -295,6 +462,281 @@ def test_start_login_windows_uses_visible_console(
     svc.start_login()
     assert "creationflags" in captured["kwargs"]
     assert captured["kwargs"].get("stdout") is not sp.DEVNULL
+
+
+def test_dedicated_login_pins_file_store_log_dir_and_scrubs_api_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    captured: dict = {}
+
+    class _FakeProc:
+        pid = 10
+
+    def _fake_popen(cmd, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FakeProc()
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "win32")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-login")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://billing-sink.invalid")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "must-not-reach-login")
+    monkeypatch.setenv("HTTPS_PROXY", "http://credential-proxy.invalid")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "must-not-reach-login")
+    monkeypatch.setenv("LD_PRELOAD", "must-not-reach-login")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/host/keyring")
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
+    home = tmp_path / "dedicated-home"
+    log_dir = tmp_path / "isolated-logs"
+    service = CodexAuthService(
+        "codex",
+        codex_home=home,
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        log_dir=log_dir,
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "codex")
+
+    service.start_login()
+
+    assert captured["cmd"] == [
+        "codex",
+        "-c",
+        'cli_auth_credentials_store="file"',
+        "-c",
+        f"log_dir={json.dumps(str(log_dir))}",
+        "login",
+    ]
+    environment = captured["kwargs"]["env"]
+    assert environment["CODEX_HOME"] == str(home)
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "AZURE_OPENAI_API_KEY",
+        "HTTPS_PROXY",
+        "AWS_SESSION_TOKEN",
+        "LD_PRELOAD",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ):
+        assert name not in environment
+
+
+def test_visible_linux_login_uses_a_waiting_desktop_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    captured: dict = {}
+
+    class _FakeProc:
+        pid = 11
+
+    def _fake_popen(cmd, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FakeProc()
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":9")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-9")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/9/bus")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/9")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-codex")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://must-not-reach-codex.invalid")
+    monkeypatch.setenv("HTTPS_PROXY", "http://must-not-reach-codex.invalid")
+    monkeypatch.setattr(
+        codex_mod.shutil,
+        "which",
+        lambda name: "/usr/bin/gnome-terminal" if name == "gnome-terminal" else None,
+    )
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
+    service = CodexAuthService(
+        "codex",
+        codex_home=tmp_path / "home",
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        visible_login=True,
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "/usr/bin/codex")
+
+    service.start_login()
+
+    assert captured["cmd"][:3] == [
+        str(Path("/usr/bin/gnome-terminal").resolve()),
+        "--wait",
+        "--",
+    ]
+    wrapper = captured["cmd"][3:]
+    assert wrapper[0] == str(Path(codex_mod.sys.executable).resolve())
+    assert wrapper[1:4] == ["-I", "-S", "-c"]
+    child_environment = json.loads(wrapper[5])
+    assert wrapper[6:] == [
+        "/usr/bin/codex",
+        "-c",
+        'cli_auth_credentials_store="file"',
+        "login",
+    ]
+    assert child_environment["CODEX_HOME"] == str(tmp_path / "home")
+    for name in (
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_RUNTIME_DIR",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "HTTPS_PROXY",
+    ):
+        assert name not in child_environment
+    assert captured["kwargs"]["start_new_session"] is True
+    assert captured["kwargs"].get("stdout") is not codex_mod.subprocess.DEVNULL
+    launcher_environment = captured["kwargs"]["env"]
+    assert launcher_environment["DISPLAY"] == ":9"
+    assert launcher_environment["WAYLAND_DISPLAY"] == "wayland-9"
+    assert launcher_environment["DBUS_SESSION_BUS_ADDRESS"].endswith("/bus")
+    assert launcher_environment["XDG_RUNTIME_DIR"] == "/run/user/9"
+    assert "OPENAI_API_KEY" not in launcher_environment
+    assert "HTTPS_PROXY" not in launcher_environment
+
+
+def test_visible_linux_login_resolves_waiting_terminal_alternative(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    terminal = tmp_path / "gnome-terminal"
+    alternative = tmp_path / "x-terminal-emulator"
+    terminal.write_bytes(b"")
+    alternative.write_bytes(b"")
+    original_resolve = Path.resolve
+
+    def resolve(path: Path, *args, **kwargs):  # noqa: ANN002, ANN003
+        if path == alternative:
+            return terminal
+        return original_resolve(path, *args, **kwargs)
+
+    captured: dict[str, object] = {}
+
+    class _FakeProc:
+        pid = 13
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    monkeypatch.setattr(codex_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        codex_mod.shutil,
+        "which",
+        lambda name: str(alternative) if name == "x-terminal-emulator" else None,
+    )
+    monkeypatch.setattr(
+        codex_mod.subprocess,
+        "Popen",
+        lambda command, **kwargs: (
+            captured.update(command=command, kwargs=kwargs) or _FakeProc()
+        ),
+    )
+    service = CodexAuthService(
+        "/usr/bin/codex",
+        codex_home=tmp_path / "home",
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        visible_login=True,
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "/usr/bin/codex")
+
+    service.start_login()
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[:3] == [str(terminal), "--wait", "--"]
+
+
+def test_visible_macos_login_opens_terminal_and_scrubs_shell_api_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    captured: dict = {}
+
+    class _FakeProc:
+        pid = 12
+
+    def _fake_popen(cmd, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FakeProc()
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "darwin")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-codex")
+    monkeypatch.setenv("HTTPS_PROXY", "http://must-not-reach-codex.invalid")
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
+    home = tmp_path / "dedicated home"
+    service = CodexAuthService(
+        "/usr/local/bin/codex",
+        codex_home=home,
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        visible_login=True,
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "/usr/local/bin/codex")
+
+    service.start_login()
+
+    assert captured["cmd"][:2] == ["/usr/bin/osascript", "-e"]
+    script = captured["cmd"][2]
+    assert 'tell application "Terminal"' in script
+    assert "repeat while busy of loginTab" in script
+    assert "os.execve" in script
+    assert "OPENAI_API_KEY" not in script
+    assert "HTTPS_PROXY" not in script
+    assert "CODEX_HOME" in script
+    assert home.name in script
+    assert "OPENAI_API_KEY" not in captured["kwargs"]["env"]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("Logged in using ChatGPT\n", (True, "chatgpt")),
+        ("Logged in using an API key\n", (True, "api_key")),
+        ("user@example.com\n", (False, "unknown")),
+    ],
+)
+def test_login_status_accepts_only_exact_pii_free_mode_strings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    output: str,
+    expected: tuple[bool, str],
+) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    captured: dict = {}
+
+    class _Result:
+        returncode = 0
+        stdout = output
+        stderr = ""
+
+    def _fake_run(argv, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(codex_mod.subprocess, "run", _fake_run)
+    service = CodexAuthService(
+        "codex",
+        codex_home=tmp_path / "home",
+        force_file_auth_store=True,
+        isolate_openai_environment=True,
+        log_dir=tmp_path / "logs",
+    )
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "codex")
+
+    assert service.login_status() == expected
+    assert captured["argv"][-2:] == ["login", "status"]
+    assert 'cli_auth_credentials_store="file"' in captured["argv"]
 
 
 def test_logout_returns_false_when_binary_missing(monkeypatch: pytest.MonkeyPatch) -> None:

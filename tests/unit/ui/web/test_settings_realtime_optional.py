@@ -29,5 +29,13 @@ def test_realtime_available_helper_resolves_when_module_present(monkeypatch) -> 
 
     stub = types.ModuleType("jarvis.realtime.factory")
     stub.realtime_available_provider = lambda cfg: "openai-realtime"  # type: ignore[attr-defined]
+    stub.realtime_requires_webrtc_offer = lambda cfg: True  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "jarvis.realtime.factory", stub)
     assert settings_routes._realtime_available_provider(object()) == "openai-realtime"
+    assert settings_routes._realtime_requires_webrtc_offer(object()) is True
+
+
+def test_realtime_webrtc_helper_degrades_when_module_stripped(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "jarvis.realtime.factory", None)
+    monkeypatch.setitem(sys.modules, "jarvis.realtime", None)
+    assert settings_routes._realtime_requires_webrtc_offer(object()) is False

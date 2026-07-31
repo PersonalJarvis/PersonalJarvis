@@ -6,6 +6,7 @@ import { useEventStore } from "@/store/events";
 type VoiceModeResp = {
   mode: string;
   realtime_available: boolean;
+  requires_webrtc_offer: boolean;
   active_provider: string | null;
   // Sidebar-footer display fields: pretty provider name + the model an idle
   // realtime session would use (configured pin or catalog default).
@@ -87,9 +88,10 @@ export function useVoiceMode() {
   return {
     mode: q.data?.mode ?? "pipeline",
     realtimeAvailable: q.data?.realtime_available ?? false,
+    requiresWebRtcOffer: q.data?.requires_webrtc_offer ?? false,
     // Distinguishes "the server SAID no realtime key" from "we never heard
     // back" (timeout/loading). Without it a failed status fetch showed the
-    // false claim "Realtime needs an API key" and looked like a locked
+    // false claim "Realtime needs provider setup" and looked like a locked
     // toggle on a machine that merely had a slow/broken backend moment.
     statusKnown: q.isSuccess,
     activeProvider: q.data?.active_provider ?? null,

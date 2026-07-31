@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.plugins.realtime.codex_subscription import (
+    CodexSubscriptionRealtimeProvider,
+)
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
 from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 from jarvis.realtime.protocol import RealtimeProvider
@@ -27,6 +30,18 @@ def test_provider_is_structurally_conformant(provider_cls, provider_id, input_ra
     assert provider.credential_candidates
 
 
+def test_subscription_provider_is_structurally_conformant_without_api_key() -> None:
+    provider = CodexSubscriptionRealtimeProvider()
+
+    assert isinstance(provider, RealtimeProvider)
+    assert provider.supports_realtime is True
+    assert provider.name == "codex-subscription-realtime"
+    assert provider.input_sample_rate == 24_000
+    assert provider.output_sample_rate == 24_000
+    assert provider.credential_candidates == ()
+    assert provider.requires_webrtc_offer is True
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_cls",
@@ -41,6 +56,7 @@ async def test_keyless_capability_probe_is_false(provider_cls):
     [
         Path("jarvis/plugins/realtime/openai_realtime.py"),
         Path("jarvis/plugins/realtime/gemini_live.py"),
+        Path("jarvis/plugins/realtime/codex_subscription.py"),
     ],
 )
 def test_plugin_module_imports_no_jarvis_modules(path: Path):

@@ -50,19 +50,25 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 def _realtime_available_provider(cfg: object) -> str | None:
     """Reachable realtime provider name for ``cfg``, or ``None``.
 
-    The realtime voice engine (``jarvis.realtime``) is an optional module that is
-    stripped from public distribution snapshots (distribution-denylist) while it
-    is still internal. Import it lazily and treat its absence as "no realtime
-    available", so the settings router still IMPORTS (the server boots) and the
-    ``/voice-mode`` endpoint degrades honestly instead of taking the whole app
-    down. When the module is present (the full/local build) this delegates to it
-    unchanged.
+    Realtime ships as a public optional capability. Import it lazily so a
+    minimal or headless install without the module still boots and reports the
+    feature as unavailable instead of taking the settings API down. When the
+    module is installed, delegate provider resolution unchanged.
     """
     try:
         from jarvis.realtime.factory import realtime_available_provider
-    except ImportError:
+    except ImportError:  # Optional realtime support degrades to no available provider.
         return None
     return realtime_available_provider(cfg)
+
+
+def _realtime_requires_webrtc_offer(cfg: object) -> bool:
+    """Whether the resolved adapter needs browser SDP, or false when absent."""
+    try:
+        from jarvis.realtime.factory import realtime_requires_webrtc_offer
+    except ImportError:  # Optional subscription transport degrades to no WebRTC requirement.
+        return False
+    return realtime_requires_webrtc_offer(cfg)
 
 
 class ReplyLanguageBody(BaseModel):
@@ -142,9 +148,9 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
 
 
 # ---------------------------------------------------------------------------
-# Voice mode: pipeline (the classic STT→Brain→TTS pipeline) vs realtime (the
-# browser-based OpenAI/Gemini full-duplex realtime engine). GET current mode +
-# whether realtime is actually reachable (needs an OpenAI key); PUT to switch.
+# Voice mode: pipeline (the classic STT→Brain→TTS pipeline) vs realtime (a
+# full-duplex provider transport, including subscription-authenticated Codex).
+# GET reports the current mode and provider readiness; PUT switches it.
 # Persisted to jarvis.toml [voice].mode via config_writer.set_voice_mode
 # (Task 1); the persist is best-effort so a locked/read-only toml never blocks
 # the live in-memory switch that already succeeded. See
@@ -204,7 +210,13 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # session factory uses, so this never disagrees with what a realtime
     # session would actually build (Gemini-only users now get `true` too,
     # not just OpenAI — Feature A2).
-    prov = _realtime_available_provider(cfg)
+    # External-login adapters may need a bounded CLI status probe. Keep that
+    # subprocess off the event loop so a settings poll cannot punch a hole in
+    # live Realtime audio playback.
+    prov = await asyncio.to_thread(_realtime_available_provider, cfg)
+    requires_webrtc_offer = await asyncio.to_thread(
+        _realtime_requires_webrtc_offer, cfg
+    )
     prov_label, prov_model = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
@@ -212,6 +224,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     return {
         "mode": mode,
         "realtime_available": prov is not None,
+        "requires_webrtc_offer": requires_webrtc_offer,
         "active_provider": prov,
         # Sidebar-footer display fields: the pretty provider name + the model
         # an idle realtime session would use (configured pin or catalog
@@ -236,10 +249,16 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
 
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
 
-    # A3: never pin the boot default to an unreachable engine — selecting
-    # realtime with no key in ANY family is a 400, not a silent dead switch.
-    if body.mode == "realtime" and _realtime_available_provider(cfg) is None:
-        raise HTTPException(status_code=400, detail="no realtime provider key configured")
+    # A3: never pin the boot default to an unreachable engine. A provider may
+    # use an API key or an external subscription login, so readiness — not a
+    # particular credential shape — is the boundary.
+    if body.mode == "realtime" and await asyncio.to_thread(
+        _realtime_available_provider, cfg
+    ) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="no realtime provider is configured and ready",
+        )
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:

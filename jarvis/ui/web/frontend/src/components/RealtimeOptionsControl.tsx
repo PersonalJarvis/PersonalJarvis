@@ -25,10 +25,9 @@ const PROVIDER_DEFAULT = "";
  * than the shared search-heavy `BrainModelSelector`.
  *
  * The model stays a plain `<select>` (a handful of curated entries). The
- * voice is a richer expanding picker with a per-voice audio preview
- * (`POST /api/providers/{id}/realtime-voice-preview`) so a voice can be
- * HEARD before it is pinned — auditioning must not write config or restart a
- * live realtime session; only clicking a name saves.
+ * voice is a richer expanding picker. Providers with a standalone sampler
+ * expose per-voice audio previews; offer-only transports remain selectable
+ * without showing a preview button that cannot work.
  *
  * Renders only inside a realtime provider card (`tier === "realtime"`), gated
  * on the card already having a stored credential — see `ApiKeysView.tsx`.
@@ -47,6 +46,7 @@ export function RealtimeOptionsControl({
   const [voices, setVoices] = useState<RealtimeOptionInfo[]>([]);
   const [model, setModel] = useState<string>(PROVIDER_DEFAULT);
   const [voice, setVoice] = useState<string>(PROVIDER_DEFAULT);
+  const [previewAvailable, setPreviewAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingField, setSavingField] = useState<"model" | "voice" | null>(null);
 
@@ -63,6 +63,7 @@ export function RealtimeOptionsControl({
         setVoices(Array.isArray(r?.voices) ? r.voices : []);
         setModel(r?.current_model || PROVIDER_DEFAULT);
         setVoice(r?.current_voice || PROVIDER_DEFAULT);
+        setPreviewAvailable(r?.preview_available === true);
       })
       .catch(() => {
         // Best-effort — the row degrades to empty dropdowns rather than
@@ -141,6 +142,7 @@ export function RealtimeOptionsControl({
         model={model}
         options={voices}
         saving={savingField === "voice"}
+        previewAvailable={previewAvailable}
         onChange={(next) => void handleChange("voice", next)}
       />
     </div>
@@ -190,10 +192,9 @@ function RealtimeSelectRow({
 }
 
 /**
- * Voice row: current pick + preview button, expanding into the full voice
- * list where EVERY voice can be auditioned (play/stop) without saving —
- * clicking a name is what saves. The sample language is switchable DE/EN/ES,
- * seeded from the UI language (mirrors the TTS VoicePicker).
+ * Voice row: current pick, expanding into the full selectable voice list.
+ * When the backend advertises a sampler, every voice can be auditioned without
+ * saving and the sample language follows the same DE/EN/ES control as TTS.
  */
 function RealtimeVoiceRow({
   providerId,
@@ -202,6 +203,7 @@ function RealtimeVoiceRow({
   model,
   options,
   saving,
+  previewAvailable,
   onChange,
 }: {
   providerId: string;
@@ -210,6 +212,7 @@ function RealtimeVoiceRow({
   model: string;
   options: RealtimeOptionInfo[];
   saving: boolean;
+  previewAvailable: boolean;
   onChange: (value: string) => void;
 }) {
   const t = useT();
@@ -336,7 +339,7 @@ function RealtimeVoiceRow({
         {/* The provider-default pick ("") resolves server-side — there is no
             single voice to honestly sample, so the trigger-row preview only
             renders for a concrete voice. */}
-        {value && (
+        {previewAvailable && value && (
           <PreviewButton
             active={previewingId === value}
             loading={loadingId === value}
@@ -349,31 +352,33 @@ function RealtimeVoiceRow({
       {/* Inline-expanding voice list with per-voice audition. */}
       {open && (
         <div className="overflow-hidden rounded-md border border-border bg-popover">
-          <div
-            className="flex items-center justify-end gap-1 border-b border-border px-2.5 py-1"
-            role="group"
-            aria-label={t("apikeys_voice.preview_language")}
-          >
-            <span className="text-[10px] text-muted-foreground">
-              {t("apikeys_voice.preview_in")}
-            </span>
-            {(["de", "en", "es"] as const).map((lng) => (
-              <button
-                key={lng}
-                type="button"
-                onClick={() => setPreviewLang(lng)}
-                aria-pressed={previewLang === lng}
-                className={cn(
-                  "rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide transition-colors",
-                  previewLang === lng
-                    ? "border-primary/40 bg-primary/20 text-primary"
-                    : "border-border bg-muted text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {lng}
-              </button>
-            ))}
-          </div>
+          {previewAvailable && (
+            <div
+              className="flex items-center justify-end gap-1 border-b border-border px-2.5 py-1"
+              role="group"
+              aria-label={t("apikeys_voice.preview_language")}
+            >
+              <span className="text-[10px] text-muted-foreground">
+                {t("apikeys_voice.preview_in")}
+              </span>
+              {(["de", "en", "es"] as const).map((lng) => (
+                <button
+                  key={lng}
+                  type="button"
+                  onClick={() => setPreviewLang(lng)}
+                  aria-pressed={previewLang === lng}
+                  className={cn(
+                    "rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide transition-colors",
+                    previewLang === lng
+                      ? "border-primary/40 bg-primary/20 text-primary"
+                      : "border-border bg-muted text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {lng}
+                </button>
+              ))}
+            </div>
+          )}
           <ul className="max-h-56 overflow-y-auto p-1 scrollbar-jarvis">
             <li>
               <div
@@ -409,13 +414,15 @@ function RealtimeVoiceRow({
                       isPinned && "bg-primary/20",
                     )}
                   >
-                    <PreviewButton
-                      active={previewingId === v.id}
-                      loading={loadingId === v.id}
-                      onClick={() => void preview(v.id)}
-                      label={t("apikeys_voice.preview")}
-                      className="ml-1"
-                    />
+                    {previewAvailable && (
+                      <PreviewButton
+                        active={previewingId === v.id}
+                        loading={loadingId === v.id}
+                        onClick={() => void preview(v.id)}
+                        label={t("apikeys_voice.preview")}
+                        className="ml-1"
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() => pick(v.id)}

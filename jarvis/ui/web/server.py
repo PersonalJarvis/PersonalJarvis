@@ -3385,17 +3385,29 @@ class WebServer:
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
 
-        if self._server is None:
-            return
-        self._server.should_exit = True
-        if self._serve_task is not None:
-            try:
-                await asyncio.wait_for(self._serve_task, timeout=5.0)
-            except TimeoutError:
-                logger.warning("uvicorn shutdown timeout — force-cancel")
-                self._serve_task.cancel()
+        if self._server is not None:
+            self._server.should_exit = True
+            if self._serve_task is not None:
+                try:
+                    await asyncio.wait_for(self._serve_task, timeout=5.0)
+                except TimeoutError:
+                    logger.warning("uvicorn shutdown timeout — force-cancel")
+                    self._serve_task.cancel()
         self._server = None
         self._serve_task = None
+
+        # Browser/desktop realtime owners must release their ephemeral threads
+        # before their shared process is reaped. Keep this unconditional: a
+        # failed startup can complete the Codex handshake before uvicorn marks
+        # itself running, and that process still needs bounded teardown.
+        try:
+            from jarvis.codex_app_server import close_shared_codex_app_servers
+
+            await close_shared_codex_app_servers()
+        except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
+            logger.opt(exception=exc).warning(
+                "Codex subscription app-server cleanup failed"
+            )
 
     @property
     def running(self) -> bool:

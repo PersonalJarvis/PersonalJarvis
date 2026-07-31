@@ -1082,6 +1082,7 @@ class OpenAIRealtimeProvider:
     # This is account/quota metadata, not a provider-name feature gate.
     credential_family = "openai"
     supports_realtime = True
+    implicit_usage_fallback_allowed = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates = (

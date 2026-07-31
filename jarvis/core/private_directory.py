@@ -48,12 +48,12 @@ def _ensure_posix_owner_only_directory(path: Path, *, create: bool) -> None:
             # An existing path is accepted only after the independent lstat
             # checks below; this must never become an implicit permission repair.
             pass
-        except OSError:
+        except OSError:  # Platform security setup failure is translated by the fail-closed helper.
             _fail()
 
     try:
         metadata = path.lstat()
-    except OSError:
+    except OSError:  # Metadata failure is translated by the fail-closed helper.
         _fail()
 
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):

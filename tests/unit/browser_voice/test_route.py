@@ -14,8 +14,10 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 import jarvis.browser_voice.route as route_mod
-from jarvis.browser_voice.route import browser_voice_ws
+import jarvis.realtime.offer_broker as offer_broker_mod
+from jarvis.browser_voice.route import browser_voice_ws, realtime_transport_ws
 from jarvis.core.bus import EventBus
+from jarvis.realtime.offer_broker import RealtimeTransportOfferBroker
 from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
 from jarvis.sessions.recorder import SessionRecorder
@@ -28,6 +30,7 @@ from tests.fakes.fake_realtime import (
 
 _VALID_TOKEN = "registered-session-token"  # noqa: S105 -- synthetic test token
 _INVALID_TOKEN = "invalid-token"  # noqa: S105 -- synthetic test token
+_BROKER_TOKEN = "desktop-broker-capability"  # noqa: S105 -- synthetic test token
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +101,37 @@ class _FakeWS:
         self.closed = (code, reason)
 
 
+class _QueueWS(_FakeWS):
+    """Fake socket that can stay connected while the provider answers."""
+
+    def __init__(self, incoming, *, state, **kwargs) -> None:
+        super().__init__([], state=state, **kwargs)
+        self._queue: asyncio.Queue[dict] = asyncio.Queue()
+        for message in incoming:
+            self._queue.put_nowait(message)
+
+    async def receive(self) -> dict:
+        return await self._queue.get()
+
+    def feed(self, message: dict) -> None:
+        self._queue.put_nowait(message)
+
+
+async def _wait_for_json(
+    ws: _FakeWS, message_type: str, *, offer_id: str | None = None
+) -> dict:
+    async def _wait() -> dict:
+        while True:
+            for message in ws.sent_json:
+                if message.get("type") == message_type and (
+                    offer_id is None or message.get("offer_id") == offer_id
+                ):
+                    return message
+            await asyncio.sleep(0)
+
+    return await asyncio.wait_for(_wait(), timeout=1.0)
+
+
 def _state(session, cfg=None):
     # Default cfg explicitly opts into the classic bridge (Task 7 inverted the
     # gate to default-OFF; these tests exercise the classic dispatch/session
@@ -108,7 +142,18 @@ def _state(session, cfg=None):
         config=cfg if cfg is not None else default_cfg,
         bus=None,
         browser_voice_session_factory=lambda **kw: session,
+        realtime_transport_broker_token=_BROKER_TOKEN,
     )
+
+
+def _broker_auth_message() -> dict[str, str]:
+    return {
+        "type": "websocket.receive",
+        "text": (
+            '{"type":"authenticate","desktop_capability":'
+            f'"{_BROKER_TOKEN}"}}'
+        ),
+    }
 
 
 def test_classic_fallback_language_uses_canonical_default_and_pin() -> None:
@@ -210,6 +255,189 @@ async def test_loopback_route_rejects_supplied_invalid_token() -> None:
 
     assert ws.closed == (4401, "unauthorized")
     assert rec.ended is False
+
+
+async def test_realtime_transport_rejects_missing_token_before_offer_registration(
+    monkeypatch,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _FakeWS([], state=_state(_RecSession(), cfg=cfg), token="")
+
+    await realtime_transport_ws(ws)
+
+    assert ws.closed == (4401, "unauthorized")
+    assert await broker.pending_count() == 0
+
+
+async def test_realtime_transport_rejects_invalid_desktop_capability(
+    monkeypatch,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _FakeWS(
+        [
+            {
+                "type": "websocket.receive",
+                "text": (
+                    '{"type":"authenticate",'
+                    '"desktop_capability":"wrong-capability"}'
+                ),
+            }
+        ],
+        state=_state(_RecSession(), cfg=cfg),
+    )
+
+    await realtime_transport_ws(ws)
+
+    assert ws.closed == (4401, "invalid desktop capability")
+    assert await broker.pending_count() == 0
+
+
+async def test_realtime_transport_rejects_remote_offer_hijack_even_with_valid_token(
+    monkeypatch,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _FakeWS(
+        [
+            {
+                "type": "websocket.receive",
+                "text": (
+                    '{"type":"offer","offer_id":"remote-hijack",'
+                    '"webrtc_offer_sdp":"v=0\\r\\no=remote"}'
+                ),
+            }
+        ],
+        state=_state(_RecSession(), cfg=cfg),
+        client_host="203.0.113.8",
+        token=_VALID_TOKEN,
+    )
+    # Neither forwarded headers nor Origin can override the actual ASGI peer.
+    ws.scope["headers"].extend(
+        [
+            (b"x-forwarded-for", b"127.0.0.1"),
+            (b"origin", b"http://127.0.0.1"),
+        ]
+    )
+
+    await realtime_transport_ws(ws)
+
+    assert ws.closed == (4403, "local desktop transport required")
+    assert await broker.pending_count() == 0
+
+
+@pytest.mark.parametrize("client_host", ["127.0.0.1", "::1"])
+async def test_realtime_transport_keeps_answer_live_then_releases_fresh_offers(
+    monkeypatch,
+    client_host: str,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _QueueWS(
+        [
+            _broker_auth_message(),
+            {
+                "type": "websocket.receive",
+                "text": (
+                    '{"type":"offer","offer_id":"offer-1",'
+                    '"webrtc_offer_sdp":"v=0\\r\\no=first"}'
+                ),
+            }
+        ],
+        state=_state(_RecSession(), cfg=cfg),
+        client_host=client_host,
+    )
+    route_task = asyncio.create_task(realtime_transport_ws(ws))
+
+    first_lease = await broker.acquire(timeout_s=1.0)
+    assert first_lease is not None
+    assert await first_lease.answer("v=0\r\no=first-answer") is True
+    assert await _wait_for_json(ws, "answer", offer_id="offer-1") == {
+        "type": "answer",
+        "offer_id": "offer-1",
+        "webrtc_answer_sdp": "v=0\r\no=first-answer",
+    }
+    await first_lease.release()
+    await _wait_for_json(ws, "release", offer_id="offer-1")
+
+    ws.feed(
+        {
+            "type": "websocket.receive",
+            "text": (
+                '{"type":"offer","offer_id":"offer-2",'
+                '"webrtc_offer_sdp":"v=0\\r\\no=second"}'
+            ),
+        }
+    )
+    second_lease = await broker.acquire(timeout_s=1.0)
+    assert second_lease is not None
+    assert second_lease.offer_sdp == "v=0\r\no=second"
+    assert await second_lease.answer("v=0\r\no=second-answer") is True
+    await second_lease.release()
+    await _wait_for_json(ws, "release", offer_id="offer-2")
+
+    ws.feed({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(route_task, timeout=1.0)
+
+    assert ws.accepted is True
+    assert await broker.pending_count() == 0
+
+
+async def test_realtime_transport_disconnect_after_answer_cancels_live_lease(
+    monkeypatch,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _QueueWS(
+        [
+            _broker_auth_message(),
+            {
+                "type": "websocket.receive",
+                "text": (
+                    '{"type":"offer","offer_id":"offer-1",'
+                    '"webrtc_offer_sdp":"v=0\\r\\no=first"}'
+                ),
+            }
+        ],
+        state=_state(_RecSession(), cfg=cfg),
+    )
+    route_task = asyncio.create_task(realtime_transport_ws(ws))
+    lease = await broker.acquire(timeout_s=1.0)
+    assert lease is not None
+    assert await lease.answer("v=0\r\no=answer") is True
+    await _wait_for_json(ws, "answer", offer_id="offer-1")
+
+    ws.feed({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(route_task, timeout=1.0)
+
+    assert await lease.answer("v=0\r\no=late") is False
+    assert await broker.pending_count() == 0
 
 
 async def test_route_drops_stale_frames_when_provider_is_backpressured(

@@ -12,6 +12,7 @@ from jarvis.realtime.factory import (
     _resolve_realtime_provider,
     build_realtime_session,
     realtime_available_provider,
+    realtime_requires_webrtc_offer,
 )
 
 
@@ -32,6 +33,7 @@ class _BaseProvider:
 
 class _OpenAIProvider(_BaseProvider):
     name = "openai-realtime"
+    credential_family = "openai"
     credential_candidates = (("openai_api_key", "OPENAI_API_KEY"),)
 
 
@@ -45,10 +47,27 @@ class _AcmeProvider(_BaseProvider):
     credential_candidates = (("acme_api_key", "ACME_API_KEY"),)
 
 
+class _SubscriptionProvider(_BaseProvider):
+    name = "codex-subscription-realtime"
+    credential_family = "openai-chatgpt-subscription"
+    credential_candidates = ()
+    requires_webrtc_offer = True
+    implicit_usage_fallback_allowed = False
+    login_ready = False
+
+    def __init__(self):
+        super().__init__(api_key="external-login")
+
+    @classmethod
+    def external_login_ready(cls):
+        return cls.login_ready
+
+
 _PLUGINS = {
     "openai-realtime": _OpenAIProvider,
     "gemini-live": _GeminiProvider,
     "acme-realtime": _AcmeProvider,
+    "codex-subscription-realtime": _SubscriptionProvider,
 }
 
 
@@ -67,11 +86,14 @@ def _cfg(mode: str = "realtime", provider: str = "openai-realtime") -> SimpleNam
     )
 
 
-def _fake_registry(monkeypatch, keys: set[str]) -> None:
+def _fake_registry(
+    monkeypatch, keys: set[str], *, subscription_login: bool = False
+) -> None:
     import jarvis.realtime.factory as factory
 
     monkeypatch.setattr(factory, "list_plugins", lambda _group: list(_PLUGINS))
     monkeypatch.setattr(factory, "load", lambda _group, name, protocol=None: _PLUGINS[name])
+    _SubscriptionProvider.login_ready = subscription_login
 
     def _get_secret(candidates):
         slot = candidates[0][0]
@@ -117,6 +139,60 @@ def test_explicit_fallback_order_precedes_other_installed_plugins(monkeypatch):
         "openai-realtime",
         "gemini-live",
     ]
+
+
+def test_external_login_provider_is_candidate_without_a_fake_api_key(monkeypatch):
+    _fake_registry(monkeypatch, set(), subscription_login=True)
+    config = _cfg(provider="codex-subscription-realtime")
+
+    providers = _provider_candidates(config)
+
+    assert [provider.name for provider in providers] == [
+        "codex-subscription-realtime"
+    ]
+    assert providers[0].credential_family == "openai-chatgpt-subscription"
+
+
+def test_subscription_primary_never_uses_ambient_api_fallback(
+    monkeypatch,
+):
+    _fake_registry(monkeypatch, {"openai"}, subscription_login=False)
+    config = _cfg(provider="codex-subscription-realtime")
+
+    assert _provider_candidates(config) == []
+
+
+def test_subscription_and_api_credentials_remain_distinct_fallbacks(monkeypatch):
+    _fake_registry(monkeypatch, {"openai"}, subscription_login=True)
+    config = _cfg(provider="codex-subscription-realtime")
+    config.brain.realtime.fallback_provider = "openai-realtime"
+
+    providers = _provider_candidates(config)
+
+    assert [provider.name for provider in providers] == [
+        "codex-subscription-realtime",
+        "openai-realtime",
+    ]
+    assert [provider.credential_family for provider in providers] == [
+        "openai-chatgpt-subscription",
+        "openai",
+    ]
+    assert realtime_requires_webrtc_offer(config) is True
+
+
+def test_api_provider_does_not_request_unneeded_browser_sdp(monkeypatch):
+    _fake_registry(monkeypatch, {"openai"}, subscription_login=True)
+    config = _cfg(provider="openai-realtime")
+
+    assert realtime_requires_webrtc_offer(config) is False
+
+
+def test_logged_in_subscription_is_never_an_ambient_candidate(monkeypatch):
+    _fake_registry(monkeypatch, set(), subscription_login=True)
+    config = _cfg(provider="openai-realtime")
+
+    assert _provider_candidates(config) == []
+    assert realtime_available_provider(config) is None
 
 
 def test_pipeline_mode_never_builds_realtime_session(monkeypatch):

@@ -38,11 +38,12 @@ async def _silent_sampler(*_args, **_kwargs) -> tuple[bytes, int]:
     return b"\x01\x02" * 240, 24_000
 
 
-def test_every_cataloged_realtime_provider_has_a_preview_sampler() -> None:
-    """Adding a realtime provider means adding its sampler too (parity)."""
+def test_every_preview_sampler_has_a_cataloged_realtime_provider() -> None:
+    """A sampler may not exist without a catalog; offer-only providers may omit one."""
     from jarvis.brain.model_catalog import REALTIME_VOICES
 
-    assert set(REALTIME_VOICES) == set(provider_routes._REALTIME_PREVIEW_SAMPLERS)
+    assert set(provider_routes._REALTIME_PREVIEW_SAMPLERS) <= set(REALTIME_VOICES)
+    assert "codex-subscription-realtime" not in provider_routes._REALTIME_PREVIEW_SAMPLERS
 
 
 def test_unknown_provider_is_404() -> None:

@@ -89,10 +89,20 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
     reached a real provider instead would make this a connectivity test of the
     machine it runs on.
     """
+    from jarvis import codex_app_server
     from jarvis.dictation import polish_probe
     from jarvis.ui.web import provider_routes
 
     monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
+
+    async def _subscription_ready(_binary_path=None):
+        return True
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_login_ready",
+        _subscription_ready,
+    )
     # On-device cards ask the disk whether engine + weights are really there.
     # On a machine that never installed them that is an honest "needs setup" —
     # true, and not what this test is about.

@@ -174,7 +174,7 @@ export function useTierHealth(
  * The Pipeline|Realtime segmented switch. Feature A (supersedes D1): clicking
  * a segment still switches the local view (`onSelect`), and ALSO persists
  * `[voice].mode` — Pipeline unconditionally (always reachable), Realtime only
- * when `realtimeAvailable` (a key is present for some realtime family);
+ * when `realtimeAvailable` (subscription login or API access is ready);
  * otherwise the click just switches the view so the user can add a key from
  * the Realtime tab without silently pinning the boot default to a dead
  * engine.
@@ -186,7 +186,7 @@ export function useTierHealth(
  *   only rolls back if the persist fails.
  * - The segment currently being VIEWED but not live gets a subtle outline
  *   only (no fill) — it's a transient look, not "on".
- * - Realtime with no key configured anywhere (`!realtimeAvailable`) reads
+ * - Realtime with no provider access (`!realtimeAvailable`) reads
  *   muted; it stays clickable (opens the Realtime tab so the user can add one)
  *   but never gets the fill.
  * - The explanatory copy lives in `VoiceEngineContext` inside the provider
@@ -202,7 +202,7 @@ export function EngineModeSwitch({
   mode: VoiceEngineMode;
   /** The live `[voice].mode` value — determines the filled/active segment. */
   liveMode: string;
-  /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
+  /** Whether some realtime provider has usable subscription or API access. */
   realtimeAvailable: boolean;
   onSelect: (mode: VoiceEngineMode) => void;
   /** Persists `[voice].mode` — gated per the rule above. */
@@ -353,7 +353,7 @@ export function VoiceEngineContext({
     mode === "realtime" && !realtimeAvailable
       ? t(
           statusKnown
-            ? "apikeys_view.mode_needs_key"
+            ? "apikeys_view.mode_needs_credentials"
             : "apikeys_view.mode_status_unknown",
         )
       : mode === "realtime"
@@ -709,10 +709,15 @@ export function ProviderCard({
   // provider + cause, so it answers "what is wrong" without a second lookup.
   const cardErrorDetail = health?.detail?.trim() || "";
 
-  // Codex is filtered out of the Brain tier (`brain_switchable=false`) and is
-  // selected from the Subagent section. This branch stays for older payloads or
-  // tests that still mount a Codex descriptor directly.
-  const isCodex = descriptor.auth_mode === "codex";
+  // The legacy Codex Brain card has stricter readiness rules than other
+  // Codex-auth surfaces. Subscription Realtime uses the same login widget but
+  // must remain activatable without an API key.
+  const isCodexAuth = descriptor.auth_mode === "codex";
+  const isCodexBrain = isCodexAuth && descriptor.tier === "brain";
+  const isSubscriptionLoginOnly =
+    isCodexAuth &&
+    descriptor.billing === "subscription" &&
+    descriptor.secret_keys.length === 0;
   const isBrainSwitchable =
     descriptor.tier !== "brain" || descriptor.brain_switchable !== false;
 
@@ -759,7 +764,7 @@ export function ProviderCard({
       );
       return;
     }
-    if (isCodex && !descriptor.codex_brain_ready) {
+    if (isCodexBrain && !descriptor.codex_brain_ready) {
       // The card is "connected" via OAuth, but a chat brain needs an OpenAI key.
       // Guide honestly instead of switching and failing on the first turn.
       pushToast("warning", t("apikeys_codex.brain_needs_openai_key"));
@@ -769,7 +774,9 @@ export function ProviderCard({
       pushToast(
         "warning",
         descriptor.auth_mode === "codex"
-          ? t("apikeys_codex.needs_codex_full").replace("{0}", descriptor.label)
+          ? isSubscriptionLoginOnly
+            ? t("apikeys_codex.subscription_login_required")
+            : t("apikeys_codex.needs_codex_full").replace("{0}", descriptor.label)
           : descriptor.auth_mode === "antigravity"
             ? t("apikeys_antigravity.needs_login_full").replace("{0}", descriptor.label)
             : t("apikeys_codex.needs_key_full").replace("{0}", descriptor.label),
@@ -831,7 +838,16 @@ export function ProviderCard({
         // cheap here (a handful of tokens) and the only honest signal.
         void verifyPolishProvider();
       } else {
-        const result = await switchRealtimeProvider(descriptor.id);
+        if (
+          descriptor.experimental &&
+          !window.confirm(t("apikeys_view.experimental_subscription_consent"))
+        ) {
+          return;
+        }
+        const result = await switchRealtimeProvider(
+          descriptor.id,
+          descriptor.experimental === true,
+        );
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
@@ -861,7 +877,7 @@ export function ProviderCard({
   // (belt and suspenders).
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     // Codex is connection-only — a card click must never trigger a brain switch.
-    if (isCodex) return;
+    if (isCodexBrain) return;
     if (!isBrainSwitchable) return;
     const target = e.target as HTMLElement | null;
     if (
@@ -941,6 +957,14 @@ export function ProviderCard({
                 {t("apikeys_view.recommended")}
               </span>
             )}
+            {descriptor.experimental && (
+              <span
+                data-testid={`provider-experimental-${descriptor.id}`}
+                className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300"
+              >
+                {t("apikeys_view.experimental")}
+              </span>
+            )}
             {descriptor.caution && (
               <span
                 className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -976,17 +1000,19 @@ export function ProviderCard({
 
         <ActiveControl
           descriptor={
-            isCodex
+            isCodexBrain
               ? { ...descriptor, configured: Boolean(descriptor.codex_brain_ready) }
               : descriptor
           }
           activating={activating}
           onActivate={activate}
-          disabled={!isBrainSwitchable || (isCodex && !descriptor.codex_brain_ready)}
+          disabled={
+            !isBrainSwitchable || (isCodexBrain && !descriptor.codex_brain_ready)
+          }
           disabledReason={
             !isBrainSwitchable
               ? `Available for ${agentsBrand(assistantName)} only`
-              : isCodex && !descriptor.codex_brain_ready
+              : isCodexBrain && !descriptor.codex_brain_ready
                 ? t("apikeys_codex.brain_needs_openai_key")
                 : undefined
           }
@@ -1268,13 +1294,14 @@ export function ActiveControl({
   disabled?: boolean;
   disabledReason?: string;
 }) {
+  const t = useT();
   const labelTitle = descriptor.active
     ? "This provider is active"
     : disabled
       ? disabledReason ?? "Provider cannot be activated"
       : descriptor.configured
         ? "Activate this provider"
-        : "Set an API key first";
+        : t("apikeys_view.needs_credentials");
 
   return (
     <label
@@ -1497,9 +1524,21 @@ export function AuthWidget({
   onChanged: () => void;
   onSavedActivate?: () => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-2">
       <ProviderBillingBadge billing={descriptor.billing} />
+      {descriptor.experimental && (
+        <div
+          data-testid={`provider-experimental-note-${descriptor.id}`}
+          className="rounded-md border border-violet-500/30 bg-violet-500/[0.06] px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+        >
+          <p>{t("apikeys_view.subscription_realtime_description")}</p>
+          <p className="mt-1">
+            {t("apikeys_view.experimental_subscription_fallback")}
+          </p>
+        </div>
+      )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       {descriptor.supports_base_url && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
@@ -1568,12 +1607,30 @@ function CodexAuthWidget({
   const pushToast = useEventStore((s) => s.pushToast);
   const status = descriptor.codex_status;
   const installCommand = descriptor.install_hint ?? "npm i -g @openai/codex";
+  const subscriptionOnly = descriptor.secret_keys.length === 0;
+  const loginReady = Boolean(
+    status?.connected && (!subscriptionOnly || status.mode === "chatgpt"),
+  );
+  const subscriptionStatusKey = !status
+    ? "apikeys_codex.status_loading"
+    : status.reason_code === "ready"
+      ? "apikeys_codex.status_ready"
+      : status.reason_code === "lifecycle_unavailable"
+        ? "apikeys_codex.status_lifecycle_unavailable"
+      : status.reason_code === "setup_invalid"
+        ? "apikeys_codex.status_setup_invalid"
+        : status.reason_code === "not_installed" || !status.installed
+          ? "apikeys_codex.status_not_installed"
+          : "apikeys_codex.status_login_required";
 
   async function handleCopy() {
     setPending("copy");
     try {
       const copied = await robustCopy(installCommand);
-      pushToast(copied ? "success" : "warning", copied ? "Install command copied" : installCommand);
+      pushToast(
+        copied ? "success" : "warning",
+        copied ? t("apikeys_codex.install_command_copied") : installCommand,
+      );
     } finally {
       setPending(null);
     }
@@ -1582,7 +1639,7 @@ function CodexAuthWidget({
   async function handleLogin() {
     setPending("login");
     try {
-      await startCodexLogin();
+      await startCodexLogin(subscriptionOnly);
       pushToast("info", t("apikeys_codex.login_started"));
       // `codex login` opens the browser OAuth flow; it only completes once the
       // user clicks through (seconds later). Poll a few times so the card flips
@@ -1601,7 +1658,7 @@ function CodexAuthWidget({
   async function handleLogout() {
     setPending("logout");
     try {
-      await codexLogout();
+      await codexLogout(subscriptionOnly);
       pushToast("info", t("apikeys_codex.disconnected"));
       onChanged();
     } catch (e) {
@@ -1615,7 +1672,7 @@ function CodexAuthWidget({
   // No connect button (no second invitation), no API-key field (the key lives on
   // the separate "OpenAI" provider). Activation as the worker happens in the
   // Subagent list below.
-  if (status?.connected) {
+  if (loginReady && status) {
     return (
       <div className="space-y-3">
         <div
@@ -1624,7 +1681,9 @@ function CodexAuthWidget({
         >
           <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
           <span className="min-w-0 break-words text-foreground">
-            {status.message ?? "Connected via ChatGPT."}
+            {subscriptionOnly
+              ? t("apikeys_codex.connected_chatgpt")
+              : status.message ?? t("apikeys_codex.connected_chatgpt")}
           </span>
           {status.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
@@ -1638,7 +1697,7 @@ function CodexAuthWidget({
             className="ml-auto"
           >
             <LogOut className="h-3.5 w-3.5" />
-            Disconnect
+            {t("apikeys_codex.disconnect")}
           </Button>
         </div>
       </div>
@@ -1650,7 +1709,11 @@ function CodexAuthWidget({
     <div className="space-y-3">
       <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2">
-          <span>{status?.message ?? t("apikeys_codex.status_loading")}</span>
+          <span>
+            {subscriptionOnly
+              ? t(subscriptionStatusKey)
+              : status?.message ?? t("apikeys_codex.status_loading")}
+          </span>
           {status?.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
           )}
@@ -1664,7 +1727,7 @@ function CodexAuthWidget({
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
             {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            Copy command
+            {t("apikeys_codex.copy_command")}
           </Button>
         </div>
       )}
@@ -1672,12 +1735,12 @@ function CodexAuthWidget({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
           <LogIn className="h-3.5 w-3.5" />
-          Connect with ChatGPT
+          {t("apikeys_codex.connect_chatgpt")}
         </Button>
         <Button size="sm" variant="outline" asChild>
           <a href="https://help.openai.com/en/articles/11381614" target="_blank" rel="noreferrer">
             <Terminal className="h-3.5 w-3.5" />
-            Install Codex
+            {t("apikeys_codex.install_codex")}
           </a>
         </Button>
       </div>

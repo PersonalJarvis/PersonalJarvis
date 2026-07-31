@@ -19,6 +19,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 import { ProviderCard } from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
+import { useI18nStore, type UiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 interface Call {
@@ -88,6 +89,38 @@ function dictationCard(over: Partial<ProviderDescriptor> = {}): ProviderDescript
     optional: true,
     polish_family: "openai",
     alt_credential: null,
+    ...over,
+  };
+}
+
+function codexRealtimeCard(
+  over: Partial<ProviderDescriptor> = {},
+): ProviderDescriptor {
+  return {
+    id: "codex-subscription-realtime",
+    label: "ChatGPT subscription (Codex)",
+    tier: "realtime",
+    auth_mode: "codex",
+    secret_keys: [],
+    secrets_set: {},
+    dashboard_url: null,
+    login_cli: ["codex", "login"],
+    install_hint: "npm i -g @openai/codex",
+    credential_path_hint: null,
+    configured: true,
+    active: false,
+    cli_installed: true,
+    credential_help: "Uses the ChatGPT plan signed in through Codex.",
+    signup_url: "https://chatgpt.com",
+    billing: "subscription",
+    experimental: true,
+    alt_credential: null,
+    codex_status: {
+      installed: true,
+      connected: true,
+      mode: "chatgpt",
+      message: "Connected with ChatGPT.",
+    },
     ...over,
   };
 }
@@ -175,6 +208,7 @@ describe("ProviderCard — dictation polish activation", () => {
 describe("ProviderCard — a switched-to polish provider proves it works", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    useI18nStore.getState().setUi("en", { push: false });
     useEventStore.setState({ toasts: [] });
   });
 
@@ -268,5 +302,195 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
     // The switch stands and reports success; the dead probe raises no alarm.
     expect(toastsOf("success").length).toBe(1);
     expect(toastsOf("warning")).toEqual([]);
+  });
+});
+
+describe("ProviderCard: ChatGPT subscription Realtime", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEventStore.setState({ toasts: [] });
+    useI18nStore.getState().setUi("en", { push: false });
+  });
+
+  afterEach(() => cleanup());
+
+  it("shows login setup without rendering an API key field", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Sign in required.",
+        },
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Connect with ChatGPT" })).toBeTruthy();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(
+      screen.getByTestId("provider-experimental-codex-subscription-realtime"),
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("provider-experimental-note-codex-subscription-realtime"),
+    ).toBeTruthy();
+  });
+
+  it("uses the isolated subscription login instead of the normal Codex profile", async () => {
+    const calls = installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Sign in required.",
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect with ChatGPT" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (candidate) =>
+            candidate.method === "POST" &&
+            candidate.url === "/api/codex/subscription-voice/login",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("disconnects only the isolated subscription voice login", async () => {
+    const calls = installFetchMock();
+    renderCard(codexRealtimeCard());
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (candidate) =>
+            candidate.method === "POST" &&
+            candidate.url === "/api/codex/subscription-voice/logout",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it.each([
+    ["de", "Über dein ChatGPT-Abo verbunden.", "Trennen"], // i18n-allow: German UI fixture.
+    ["es", "Conectado mediante tu suscripción de ChatGPT.", "Desconectar"],
+  ] as const)(
+    "localizes the connected subscription controls in %s",
+    async (language, connectedLabel, disconnectLabel) => {
+      installFetchMock();
+      useI18nStore.getState().setUi(language as UiLanguage, { push: false });
+      renderCard(
+        codexRealtimeCard({
+          codex_status: {
+            installed: true,
+            connected: true,
+            mode: "chatgpt",
+            message: "Backend English must stay hidden.",
+            reason_code: "ready",
+          },
+        }),
+      );
+
+      await waitFor(() => expect(screen.getByText(connectedLabel)).toBeTruthy());
+      expect(screen.getByRole("button", { name: disconnectLabel })).toBeTruthy();
+      expect(screen.queryByText("Backend English must stay hidden.")).toBeNull();
+    },
+  );
+
+  it("asks for a ChatGPT subscription login without suggesting an API key", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Sign in required.",
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    expect(toastsOf("warning")).toEqual([
+      "This voice provider needs a ChatGPT subscription login. Connect with ChatGPT below.",
+    ]);
+    expect(toastsOf("warning")[0]).not.toContain("API key");
+  });
+
+  it.each([
+    [
+      "de",
+      "Nutzt den über Codex verbundenen ChatGPT-Tarif. Ein API-Key ist nicht nötig.", // i18n-allow: German UI fixture.
+    ],
+    [
+      "es",
+      "Usa el plan de ChatGPT conectado mediante Codex. No necesita una clave API.",
+    ],
+  ] as const)(
+    "uses localized setup guidance in %s instead of backend English",
+    async (language, expected) => {
+      installFetchMock();
+      useI18nStore.getState().setUi(language as UiLanguage, { push: false });
+      renderCard(
+        codexRealtimeCard({
+          credential_help: "Backend English credential help must stay hidden.",
+        }),
+      );
+
+      await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
+      expect(
+        screen.queryByText("Backend English credential help must stay hidden."),
+      ).toBeNull();
+    },
+  );
+
+  it("activates through the Realtime switch without the Brain API-key guard", async () => {
+    const calls = installFetchMock();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderCard(codexRealtimeCard());
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() => {
+      const call = calls.find(
+        (candidate) =>
+          candidate.method === "POST" && candidate.url === "/api/realtime/switch",
+      );
+      expect(call).toBeTruthy();
+      expect(JSON.parse(call?.body ?? "{}")).toMatchObject({
+        provider: "codex-subscription-realtime",
+        persist: true,
+        accept_experimental: true,
+      });
+    });
+  });
+
+  it("does not activate until the user accepts the experimental boundary", async () => {
+    const calls = installFetchMock();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderCard(codexRealtimeCard());
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() => expect(window.confirm).toHaveBeenCalledOnce());
+    expect(
+      calls.some(
+        (candidate) =>
+          candidate.method === "POST" && candidate.url === "/api/realtime/switch",
+      ),
+    ).toBe(false);
   });
 });

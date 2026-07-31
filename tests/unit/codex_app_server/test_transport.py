@@ -1,0 +1,2113 @@
+"""Unit tests for the persistent Codex app-server JSONL transport.
+
+Every subprocess, pipe, auth result, and process-tree container is a local fake.
+The suite never reads a Codex auth file, starts the CLI, or touches the network.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import sys
+import threading
+from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+import jarvis.codex_app_server as transport
+from jarvis.codex_app_server import (
+    CodexAppServerCapability,
+    CodexAppServerClient,
+    CodexAppServerDisconnected,
+    CodexAppServerRPCError,
+    CodexAppServerTimeout,
+    CodexNotificationOverflow,
+    CodexSubscriptionUnavailable,
+)
+
+
+class FakeProcessTree:
+    supports_containment = True
+
+    def __init__(self) -> None:
+        self.assigned: list[int] = []
+        self.closed = False
+
+    def assign(self, pid: int) -> None:
+        self.assigned.append(pid)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeProfileProcessLock:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def fileno(self) -> int:
+        if self.closed:
+            raise ValueError("closed")
+        return 91
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        FakeProfileProcessLock,
+    )
+    monkeypatch.setattr(transport, "_subscription_login_in_flight", False)
+    monkeypatch.setattr(transport, "_subscription_login_process", None)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
+    monkeypatch.setattr(transport, "_subscription_active_transports", set())
+    monkeypatch.setattr(transport, "_subscription_transport_process_lock", None)
+    monkeypatch.setattr(transport, "_subscription_mutation_process_lock", None)
+
+
+class FakeStdin:
+    def __init__(self, process: FakeProcess) -> None:
+        self.process = process
+        self.messages: list[dict[str, Any]] = []
+        self.closed = False
+        self.drain_calls = 0
+
+    def write(self, payload: bytes) -> None:
+        assert payload.endswith(b"\n")
+        for line in payload.splitlines():
+            message = json.loads(line.decode("utf-8"))
+            self.messages.append(message)
+            self.process.on_client_message(message)
+
+    async def drain(self) -> None:
+        self.drain_calls += 1
+        await asyncio.sleep(0)
+
+    def close(self) -> None:
+        self.closed = True
+        self.process.finish(0)
+
+
+class FakeProcess:
+    _next_pid = 4100
+
+    def __init__(
+        self,
+        responder: Callable[[FakeProcess, dict[str, Any]], None] | None = None,
+        config_result: dict[str, Any] | None = None,
+    ) -> None:
+        type(self)._next_pid += 1
+        self.pid = type(self)._next_pid
+        self.returncode: int | None = None
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        self.stdin = FakeStdin(self)
+        self._waited = asyncio.Event()
+        self._responder = responder or _default_responder
+        self._config_result = config_result or {
+            "config": {},
+            "layers": [{"name": "sessionFlags", "config": {}}],
+        }
+
+    def on_client_message(self, message: dict[str, Any]) -> None:
+        if message.get("method") == "config/read" and isinstance(
+            message.get("id"), int
+        ):
+            _respond(self, message["id"], self._config_result)
+            return
+        if message.get("method") == "configRequirements/read" and isinstance(
+            message.get("id"), int
+        ):
+            _respond(self, message["id"], {"requirements": None})
+            return
+        self._responder(self, message)
+
+    def emit(self, message: dict[str, Any]) -> None:
+        self.stdout.feed_data(json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n")
+
+    def emit_stderr(self, text: str) -> None:
+        self.stderr.feed_data(text.encode("utf-8") + b"\n")
+
+    def finish(self, returncode: int) -> None:
+        if self.returncode is not None:
+            return
+        self.returncode = returncode
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self._waited.set()
+
+    def terminate(self) -> None:
+        self.finish(-15)
+
+    def kill(self) -> None:
+        self.finish(-9)
+
+    async def wait(self) -> int:
+        await self._waited.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+
+def _respond(process: FakeProcess, request_id: int, result: Any) -> None:
+    asyncio.get_running_loop().call_soon(process.emit, {"id": request_id, "result": result})
+
+
+def _respond_handshake(process: FakeProcess, message: dict[str, Any]) -> bool:
+    request_id = message.get("id")
+    if not isinstance(request_id, int):
+        return False
+    if message.get("method") == "initialize":
+        _respond(process, request_id, {"userAgent": "fake"})
+        return True
+    if message.get("method") == "account/read":
+        _respond(
+            process,
+            request_id,
+            {
+                "account": {
+                    "type": "chatgpt",
+                    "email": "not-consumed@example.invalid",
+                    "planType": "plus",
+                },
+                "requiresOpenaiAuth": True,
+            },
+        )
+        return True
+    return False
+
+
+def _default_responder(process: FakeProcess, message: dict[str, Any]) -> None:
+    if _respond_handshake(process, message):
+        return
+    request_id = message.get("id")
+    if not isinstance(request_id, int):
+        return
+    method = message.get("method")
+    if method == "thread/start":
+        _respond(process, request_id, {"thread": {"id": "thread-1"}})
+    else:
+        _respond(process, request_id, {})
+
+
+class SpawnHarness:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        responders: list[Callable[[FakeProcess, dict[str, Any]], None] | None] | None = None,
+        probe_responders: list[
+            Callable[[FakeProcess, dict[str, Any]], None] | None
+        ]
+        | None = None,
+        *,
+        audit_effective_config: bool = False,
+        mcp_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.all_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.all_processes: list[FakeProcess] = []
+        self.processes: list[FakeProcess] = []
+        self.probe_processes: list[FakeProcess] = []
+        self.all_trees: list[FakeProcessTree] = []
+        self.trees: list[FakeProcessTree] = []
+        self.probe_trees: list[FakeProcessTree] = []
+        self._responders = list(responders or [])
+        self._probe_responders = list(probe_responders or [])
+        self._pending_tree: FakeProcessTree | None = None
+        self._spawn_count = 0
+        self.codex_home = Path("C:/isolated-jarvis-codex-voice-test")
+
+        capability = CodexAppServerCapability(
+            available=True,
+            chatgpt_authenticated=True,
+            binary_path="codex-test",
+            version="codex-test 1.0",
+            reason="ready",
+        )
+        monkeypatch.setattr(transport, "_read_codex_capability", lambda _binary: capability)
+
+        def make_tree(_name: str) -> FakeProcessTree:
+            tree = FakeProcessTree()
+            self.all_trees.append(tree)
+            self._pending_tree = tree
+            return tree
+
+        async def spawn(*args: Any, **kwargs: Any) -> FakeProcess:
+            self._spawn_count += 1
+            self.all_calls.append((args, kwargs))
+            responder = self._responders.pop(0) if self._responders else None
+            session_config: dict[str, Any] = {}
+            user_config = {
+                "mcp_servers": {
+                    server_id: {"enabled": True} for server_id in mcp_ids
+                }
+            }
+            process = FakeProcess(
+                responder,
+                config_result={
+                    "config": {},
+                    "layers": [
+                        {"name": "sessionFlags", "config": session_config},
+                        {"name": "user", "config": user_config},
+                    ],
+                },
+            )
+            self.all_processes.append(process)
+            tree = self._pending_tree
+            assert tree is not None
+            self._pending_tree = None
+            self.calls.append((args, kwargs))
+            self.processes.append(process)
+            self.trees.append(tree)
+            return process
+
+        monkeypatch.setattr(transport, "make_process_tree", make_tree)
+        monkeypatch.setattr(transport.asyncio, "create_subprocess_exec", spawn)
+        monkeypatch.setattr(
+            transport,
+            "_validated_subscription_home",
+            lambda **_kwargs: self.codex_home,
+        )
+        if not audit_effective_config:
+            monkeypatch.setattr(
+                CodexAppServerClient,
+                "_audit_effective_config",
+                lambda *_args, **_kwargs: None,
+            )
+            monkeypatch.setattr(
+                CodexAppServerClient,
+                "_audit_thread_start_response",
+                lambda *_args, **_kwargs: None,
+            )
+
+
+@pytest.mark.asyncio
+async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    selected_home = tmp_path / "selected-codex-account"
+    monkeypatch.setenv("CODEX_HOME", str(selected_home))
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("CODEX_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("CODEX_OPENAI_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("JARVIS_REALTIME_OPENAI_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("JARVIS_AGENT_OPENAI_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-child")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-reach-child")
+    monkeypatch.setenv("HTTPS_PROXY", "http://must-not-reach-child.invalid")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/test/bus")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/test")
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+
+    assert harness.calls == []
+    assert client.running is False
+
+    await client.ensure_started()
+
+    assert len(harness.calls) == 1
+    assert client.ready is True
+    argv, kwargs = harness.calls[0]
+    assert argv[:5] == (
+        "codex-test",
+        "app-server",
+        "--strict-config",
+        "--enable",
+        "realtime_conversation",
+    )
+    argv_text = "\n".join(str(value) for value in argv)
+    assert "skills.include_instructions=false" in argv_text
+    assert "skills.bundled.enabled=false" in argv_text
+    disabled_features = {
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--disable"
+    }
+    assert "memories" in disabled_features
+    assert "memories.use_memories=false" in argv_text
+    assert 'cli_auth_credentials_store="file"' in argv
+    assert 'experimental_realtime_ws_base_url="https://api.openai.com/v1"' in argv
+    assert (
+        'experimental_realtime_webrtc_call_base_url='
+        '"https://chatgpt.com/backend-api/codex"'
+    ) in argv
+    child_env = kwargs["env"]
+    for name in transport._OPENAI_BILLING_ENV_NAMES:
+        assert name not in child_env
+    for name in ("ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "HTTPS_PROXY"):
+        assert name not in child_env
+    assert child_env["CODEX_HOME"] == str(harness.codex_home)
+    assert child_env["CODEX_HOME"] != str(selected_home)
+    assert "DBUS_SESSION_BUS_ADDRESS" not in child_env
+    assert "XDG_RUNTIME_DIR" not in child_env
+    assert child_env["RUST_LOG"] == "warn"
+    assert child_env["RUST_BACKTRACE"] == "0"
+    assert child_env["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] == "1"
+    assert kwargs["creationflags"] & transport.NO_WINDOW_CREATIONFLAGS
+
+    process = harness.processes[0]
+    assert process.stdin.messages[0]["method"] == "initialize"
+    assert process.stdin.messages[0]["params"]["capabilities"] == {
+        "experimentalApi": True,
+        "mcpServerOpenaiFormElicitation": False,
+        "requestAttestation": False,
+    }
+    assert process.stdin.messages[1] == {"method": "initialized"}
+    assert process.stdin.messages[2]["method"] == "account/read"
+    assert process.stdin.messages[2]["params"] == {"refreshToken": False}
+    assert process.stdin.messages[3]["method"] == "configRequirements/read"
+    assert process.stdin.messages[4]["method"] == "config/read"
+    assert harness.probe_processes == []
+    assert harness.trees[0].assigned == [process.pid]
+
+    await client.close()
+
+    assert harness.trees[0].closed is True
+    assert process.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_posix_child_inherits_the_profile_lock_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+
+    await client.ensure_started()
+
+    assert harness.calls[0][1]["pass_fds"] == (91,)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_missing_process_containment_before_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    tree = FakeProcessTree()
+    tree.supports_containment = False
+    monkeypatch.setattr(transport, "make_process_tree", lambda _name: tree)
+
+    async def unexpected_spawn(*_args: Any, **_kwargs: Any) -> FakeProcess:
+        pytest.fail("an uncontained Codex process must never be spawned")
+
+    monkeypatch.setattr(
+        transport.asyncio,
+        "create_subprocess_exec",
+        unexpected_spawn,
+    )
+    client = CodexAppServerClient()
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="containment is unavailable"):
+        await client.ensure_started()
+
+    assert harness.all_calls == []
+    assert tree.closed is True
+    assert client.running is False
+
+
+@pytest.mark.asyncio
+async def test_containment_assignment_failure_kills_child_and_closes_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+
+    class FailingAssignmentTree(FakeProcessTree):
+        def assign(self, pid: int) -> None:
+            super().assign(pid)
+            raise OSError("job assignment failed")
+
+    tree = FailingAssignmentTree()
+
+    def make_tree(_name: str) -> FakeProcessTree:
+        harness.all_trees.append(tree)
+        harness._pending_tree = tree
+        return tree
+
+    monkeypatch.setattr(transport, "make_process_tree", make_tree)
+    client = CodexAppServerClient()
+
+    with pytest.raises(
+        CodexSubscriptionUnavailable,
+        match="containment could not be established",
+    ):
+        await client.ensure_started()
+
+    assert len(harness.all_processes) == 1
+    assert tree.assigned == [harness.all_processes[0].pid]
+    assert tree.closed is True
+    assert harness.all_processes[0].returncode == -9
+    assert client.running is False
+
+
+@pytest.mark.asyncio
+async def test_server_reported_api_key_account_fails_before_any_work_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        if message.get("method") == "initialize":
+            _respond(process, request_id, {})
+        elif message.get("method") == "account/read":
+            _respond(
+                process,
+                request_id,
+                {
+                    "account": {"type": "apiKey"},
+                    "requiresOpenaiAuth": True,
+                },
+            )
+
+    harness = SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+
+    with pytest.raises(CodexSubscriptionUnavailable):
+        await client.request("thread/start", {})
+
+    methods = [item.get("method") for item in harness.processes[0].stdin.messages]
+    assert methods == ["initialize", "initialized", "account/read"]
+    assert harness.trees[0].closed is True
+    assert client.running is False
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_first_requests_wait_for_one_complete_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_seen = asyncio.Event()
+    initialize_request: list[tuple[FakeProcess, int]] = []
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        method = message.get("method")
+        if method == "initialize":
+            initialize_request.append((process, request_id))
+            initialize_seen.set()
+        elif method == "account/read":
+            _respond(
+                process,
+                request_id,
+                {
+                    "account": {"type": "chatgpt", "email": None, "planType": "plus"},
+                    "requiresOpenaiAuth": True,
+                },
+            )
+        elif method in {"test/first", "test/second"}:
+            _respond(process, request_id, {"method": method})
+
+    harness = SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+    first = asyncio.create_task(client.request("test/first"))
+    second = asyncio.create_task(client.request("test/second"))
+
+    await asyncio.wait_for(initialize_seen.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    process = harness.processes[0]
+    assert client.running is True
+    assert client.ready is False
+    assert [item["method"] for item in process.stdin.messages] == ["initialize"]
+
+    init_process, init_id = initialize_request[0]
+    init_process.emit({"id": init_id, "result": {}})
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert first_result == {"method": "test/first"}
+    assert second_result == {"method": "test/second"}
+    methods = [item["method"] for item in process.stdin.messages]
+    assert methods.count("initialize") == 1
+    assert methods[:3] == ["initialize", "initialized", "account/read"]
+    assert methods[3:5] == ["configRequirements/read", "config/read"]
+    assert set(methods[5:]) == {"test/first", "test/second"}
+    assert len(harness.processes) == 1
+    assert client.ready is True
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_route_out_of_order_responses_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held_requests: list[tuple[FakeProcess, dict[str, Any]]] = []
+    requests_ready = asyncio.Event()
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        if "id" in message:
+            held_requests.append((process, message))
+            if len(held_requests) >= 2:
+                requests_ready.set()
+
+    SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+    await client.ensure_started()
+
+    first = asyncio.create_task(client.request("test/first"))
+    second = asyncio.create_task(client.request("test/second"))
+    await asyncio.wait_for(requests_ready.wait(), timeout=1.0)
+
+    second_process, second_message = held_requests[1]
+    first_process, first_message = held_requests[0]
+    second_process.emit({"id": second_message["id"], "result": {"order": 2}})
+    first_process.emit({"id": first_message["id"], "result": {"order": 1}})
+
+    assert await first == {"order": 1}
+    assert await second == {"order": 2}
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_subscribes_before_request_and_returns_answer_sdp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        method = message.get("method")
+        if method == "thread/start":
+            _respond(process, request_id, {"thread": {"id": "voice-thread"}})
+        elif method == "thread/realtime/start":
+            # Notifications deliberately arrive before the request response.
+            process.emit(
+                {
+                    "method": "thread/realtime/started",
+                    "params": {
+                        "threadId": "voice-thread",
+                        "realtimeSessionId": "rt-1",
+                    },
+                }
+            )
+            process.emit(
+                {
+                    "method": "thread/realtime/sdp",
+                    "params": {"threadId": "voice-thread", "sdp": "answer-sdp"},
+                }
+            )
+            _respond(process, request_id, {})
+
+    harness = SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+    thread = await client.thread_start(base_instructions="Answer directly.")
+    assert thread == {"thread": {"id": "voice-thread"}}
+
+    full_stream = client.subscribe("voice-thread")
+    result = await client.realtime_start(
+        "voice-thread",
+        offer_sdp="offer-sdp",
+        model="explicit-realtime-model",
+        include_startup_context=False,
+        client_managed_handoffs=True,
+    )
+
+    assert result.response == {}
+    assert result.answer_sdp == "answer-sdp"
+    assert (await full_stream.get(0.1)).method == "thread/realtime/started"
+    assert (await full_stream.get(0.1)).method == "thread/realtime/sdp"
+
+    messages = harness.processes[0].stdin.messages
+    thread_params = next(
+        item["params"] for item in messages if item.get("method") == "thread/start"
+    )
+    assert thread_params["approvalPolicy"] == "never"
+    assert thread_params["sandbox"] == "read-only"
+    assert thread_params["environments"] == []
+    assert thread_params["dynamicTools"] is None
+    assert thread_params["ephemeral"] is True
+    assert Path(thread_params["cwd"]).name.startswith("jarvis-codex-voice-")
+
+    realtime_params = next(
+        item["params"] for item in messages if item.get("method") == "thread/realtime/start"
+    )
+    assert realtime_params["transport"] == {"type": "webrtc", "sdp": "offer-sdp"}
+    assert realtime_params["model"] == "explicit-realtime-model"
+    assert realtime_params["includeStartupContext"] is False
+    assert realtime_params["clientManagedHandoffs"] is True
+
+    full_stream.close()
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_audio_append_uses_protocol_chunk_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+
+    await client.realtime_append_audio(
+        "thread-a",
+        data="AAEC",
+        sample_rate=24_000,
+        num_channels=1,
+        samples_per_channel=2,
+        item_id="audio-1",
+    )
+
+    message = next(
+        item
+        for item in harness.processes[0].stdin.messages
+        if item.get("method") == "thread/realtime/appendAudio"
+    )
+    assert message["params"] == {
+        "threadId": "thread-a",
+        "audio": {
+            "data": "AAEC",
+            "sampleRate": 24_000,
+            "numChannels": 1,
+            "samplesPerChannel": 2,
+            "itemId": "audio-1",
+        },
+    }
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_queue_overflow_fails_fast_without_silent_audio_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    subscription = client.subscribe("audio-thread", max_queue_size=1)
+    process = harness.processes[0]
+
+    process.emit(
+        {
+            "method": "thread/realtime/outputAudio/delta",
+            "params": {"threadId": "audio-thread", "delta": "first"},
+        }
+    )
+    process.emit(
+        {
+            "method": "thread/realtime/outputAudio/delta",
+            "params": {"threadId": "audio-thread", "delta": "second"},
+        }
+    )
+
+    with pytest.raises(CodexNotificationOverflow):
+        await subscription.get(timeout_s=0.2)
+    assert "audio-thread" not in client._subscriptions
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_server_initiated_actions_are_denied_without_logging_params(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    process = harness.processes[0]
+    caplog.set_level("DEBUG", logger=transport.__name__)
+
+    process.emit(
+        {
+            "id": "approval-1",
+            "method": "item/commandExecution/requestApproval",
+            "params": {"command": "contains-private-prompt"},
+        }
+    )
+    process.emit(
+        {
+            "id": "tool-1",
+            "method": "item/tool/call",
+            "params": {"arguments": {"secret": "contains-private-prompt"}},
+        }
+    )
+    process.emit(
+        {
+            "id": "unknown-1",
+            "method": "unknown/request",
+            "params": {"private": "contains-private-prompt"},
+        }
+    )
+    process.emit_stderr("account@example.com bearer-secret contains-private-prompt")
+    await asyncio.sleep(0.02)
+
+    responses = {item.get("id"): item for item in process.stdin.messages}
+    assert responses["approval-1"]["result"] == {"decision": "decline"}
+    assert responses["tool-1"]["result"] == {"contentItems": [], "success": False}
+    assert responses["unknown-1"]["error"]["code"] == -32000
+    assert "contains-private-prompt" not in caplog.text
+    assert "account@example.com" not in caplog.text
+    assert "content redacted" in caplog.text
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_timeout_is_bounded_and_rpc_error_message_is_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held: list[tuple[FakeProcess, dict[str, Any]]] = []
+    second_request_ready = asyncio.Event()
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        if "id" in message:
+            held.append((process, message))
+            if len(held) >= 2:
+                second_request_ready.set()
+
+    SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient(request_timeout_s=0.01)
+    await client.ensure_started()
+
+    with pytest.raises(CodexAppServerTimeout):
+        await client.request("test/timeout")
+    assert client._pending == {}
+
+    error_task = asyncio.create_task(client.request("test/error", timeout_s=1.0))
+    await asyncio.wait_for(second_request_ready.wait(), timeout=1.0)
+    process, message = held[-1]
+    process.emit(
+        {
+            "id": message["id"],
+            "error": {"code": 418, "message": "account@example.com bearer-secret"},
+        }
+    )
+    with pytest.raises(CodexAppServerRPCError) as exc_info:
+        await error_task
+    assert exc_info.value.code == 418
+    assert "account@example.com" not in str(exc_info.value)
+    assert "bearer-secret" not in str(exc_info.value)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_process_death_fails_pending_and_subscribers_then_next_request_restarts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held: list[tuple[FakeProcess, dict[str, Any]]] = []
+    request_ready = asyncio.Event()
+
+    def first_responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        if "id" in message:
+            held.append((process, message))
+            request_ready.set()
+
+    harness = SpawnHarness(monkeypatch, [first_responder, None])
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    subscription = client.subscribe("thread-death")
+    pending = asyncio.create_task(client.request("test/pending", timeout_s=1.0))
+    await asyncio.wait_for(request_ready.wait(), timeout=1.0)
+
+    harness.processes[0].finish(9)
+    with pytest.raises(CodexAppServerDisconnected):
+        await pending
+    with pytest.raises(CodexAppServerDisconnected):
+        await subscription.get(0.1)
+
+    assert await client.request("test/after-restart") == {}
+    assert len(harness.processes) == 2
+    assert harness.trees[0].closed is True
+    await client.close()
+
+
+def test_capability_reads_only_the_dedicated_file_backed_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        constructor: tuple[object, dict[str, object]] | None = None
+        login_result = (False, "unknown")
+
+        def __init__(self, binary: str | None, **kwargs: object) -> None:
+            type(self).constructor = (binary, kwargs)
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-test 1.0"
+
+        def login_status(self) -> tuple[bool, str]:
+            return type(self).login_result
+
+    home = tmp_path / "dedicated-profile"
+    home.mkdir()
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(transport, "codex_subscription_home", lambda: home)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: home,
+    )
+    capability = transport._read_codex_capability(None)
+    assert capability.available is True
+    assert capability.chatgpt_authenticated is False
+    assert "subscription-voice login" in capability.reason
+    assert FakeAuthService.constructor is not None
+    _binary, kwargs = FakeAuthService.constructor
+    assert kwargs["codex_home"] == home
+    assert kwargs["force_file_auth_store"] is True
+    assert kwargs["isolate_openai_environment"] is True
+
+    # Opaque invalid bytes deliberately prove the snapshot checks only safe
+    # CLI status and never parses or decodes token contents itself.
+    (home / "auth.json").write_bytes(b"not-json-and-never-read")
+    FakeAuthService.login_result = (True, "chatgpt")
+    capability = transport._read_codex_capability(None)
+    assert capability.available is True
+    assert capability.chatgpt_authenticated is True
+
+
+def test_capability_revalidates_profile_after_login_status_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+        def login_status(self) -> tuple[bool, str]:
+            return True, "chatgpt"
+
+    validations = 0
+
+    def validate_home(**_kwargs: object) -> Path:
+        nonlocal validations
+        validations += 1
+        if validations == 2:
+            raise CodexSubscriptionUnavailable("profile changed during status")
+        return tmp_path
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(transport, "_validated_subscription_home", validate_home)
+
+    capability = transport._read_codex_capability(None)
+
+    assert validations == 2
+    assert capability.available is False
+    assert capability.chatgpt_authenticated is False
+    assert capability.reason == "profile changed during status"
+
+
+def test_missing_dedicated_profile_is_a_login_required_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+
+    def missing_profile(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionProfileMissing("profile missing")
+
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        missing_profile,
+    )
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.available is False
+    assert capability.version == "codex-cli 0.146.0"
+    assert capability.reason_code == "login_required"
+
+
+def test_public_auth_snapshot_uses_live_state_without_cli_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = CodexAppServerClient("codex-test")
+    client._process = SimpleNamespace(returncode=None)  # type: ignore[assignment]
+    client._ready = True
+    client._trusted_binary_path = "trusted-codex-test"
+    owner_loop = asyncio.new_event_loop()
+    monkeypatch.setattr(
+        transport,
+        "_shared_clients",
+        {("codex-test", owner_loop): client},
+    )
+    monkeypatch.setattr(transport, "_subscription_active_transports", {id(client)})
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: pytest.fail("live status must not spawn a Codex CLI probe"),
+    )
+
+    capability = transport.codex_subscription_auth_snapshot(None)
+    owner_loop.close()
+
+    assert capability.available is True
+    assert capability.chatgpt_authenticated is True
+    assert capability.binary_path == "trusted-codex-test"
+    assert capability.reason_code == "ready"
+
+
+def test_public_auth_snapshot_holds_profile_owner_for_entire_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    process_lock = FakeProfileProcessLock()
+    reads: list[str | None] = []
+    results: list[CodexAppServerCapability] = []
+
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        lambda: process_lock,
+    )
+
+    def slow_probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        assert transport._subscription_profile_mutating is True
+        assert transport._subscription_mutation_process_lock is process_lock
+        assert process_lock.closed is False
+        started.set()
+        assert release.wait(timeout=2.0)
+        return CodexAppServerCapability(
+            available=True,
+            chatgpt_authenticated=True,
+            binary_path="codex-test",
+            version="codex-cli 0.146.0",
+            reason="ready",
+            reason_code="ready",
+        )
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    worker = threading.Thread(
+        target=lambda: results.append(
+            transport.codex_subscription_auth_snapshot("codex-test")
+        )
+    )
+    worker.start()
+    assert started.wait(timeout=1.0)
+
+    concurrent = transport.codex_subscription_auth_snapshot("codex-test")
+
+    assert concurrent.reason_code == "setup_invalid"
+    assert reads == ["codex-test"]
+    assert process_lock.closed is False
+    release.set()
+    worker.join(timeout=2.0)
+
+    assert worker.is_alive() is False
+    assert results[0].reason_code == "ready"
+    assert process_lock.closed is True
+    assert transport._subscription_profile_mutating is False
+    assert transport._subscription_mutation_process_lock is None
+
+
+@pytest.mark.asyncio
+async def test_capability_worker_keeps_profile_reserved_until_it_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_probe(_binary: str | None) -> CodexAppServerCapability:
+        started.set()
+        assert release.wait(timeout=2.0)
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=None,
+            version=None,
+            reason="not connected",
+        )
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
+    monkeypatch.setattr(transport, "_subscription_active_transports", set())
+    client = CodexAppServerClient()
+    start_task = asyncio.create_task(client.ensure_started())
+
+    assert await asyncio.to_thread(started.wait, 1.0)
+    await asyncio.sleep(0.05)
+    assert start_task.done() is False
+    assert id(client) in transport._subscription_active_transports
+
+    release.set()
+    with pytest.raises(CodexSubscriptionUnavailable, match="not connected"):
+        await asyncio.wait_for(start_task, timeout=1.0)
+    assert id(client) not in transport._subscription_active_transports
+
+
+@pytest.mark.asyncio
+async def test_advisory_file_status_still_reaches_live_account_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: CodexAppServerCapability(
+            available=True,
+            chatgpt_authenticated=False,
+            binary_path="codex-test",
+            version="codex-test 1.0",
+            reason="auth file absent",
+        ),
+    )
+    client = CodexAppServerClient()
+
+    await client.ensure_started()
+
+    assert client.ready is True
+    assert any(
+        message.get("method") == "account/read"
+        for process in harness.all_processes
+        for message in process.stdin.messages
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_shared_client_ignores_active_codex_account_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.agent_accounts as accounts
+
+    monkeypatch.setattr(
+        accounts,
+        "active_account",
+        lambda _platform: pytest.fail("active Codex accounts must not be read"),
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-profile"))
+    await transport.close_shared_codex_app_servers()
+
+    client = transport.get_shared_codex_app_server("codex-test")
+
+    assert client._binary_path == "codex-test"
+    assert client._child_environment == {}
+    await transport.close_shared_codex_app_servers()
+
+
+@pytest.mark.asyncio
+async def test_shared_clients_are_scoped_to_their_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    SpawnHarness(monkeypatch)
+    await transport.close_shared_codex_app_servers()
+    current = transport.get_shared_codex_app_server("codex-test")
+
+    async def acquire_on_foreign_loop() -> int:
+        loop = asyncio.get_running_loop()
+        client = transport.get_shared_codex_app_server("codex-test")
+        identifier = id(client)
+        await client.close()
+        with transport._shared_clients_lock:
+            transport._shared_clients.pop(("codex-test", loop), None)
+        return identifier
+
+    foreign_identifier = await asyncio.to_thread(
+        lambda: asyncio.run(acquire_on_foreign_loop())
+    )
+
+    assert foreign_identifier != id(current)
+    await transport.close_shared_codex_app_servers()
+
+
+@pytest.mark.asyncio
+async def test_client_rejects_use_from_a_foreign_event_loop() -> None:
+    client = CodexAppServerClient()
+    client._owner_loop = asyncio.get_running_loop()
+
+    async def close_on_foreign_loop() -> BaseException | None:
+        try:
+            await client.close()
+        except BaseException as exc:  # noqa: BLE001 - return for parent assertion
+            return exc
+        return None
+
+    error = await asyncio.to_thread(lambda: asyncio.run(close_on_foreign_loop()))
+
+    assert isinstance(error, CodexSubscriptionUnavailable)
+    assert "cannot cross event loops" in str(error)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_second_client_cannot_share_the_subscription_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    first = CodexAppServerClient()
+    second = CodexAppServerClient()
+
+    await first.ensure_started()
+    with pytest.raises(CodexSubscriptionUnavailable, match="another client"):
+        await second.ensure_started()
+
+    assert len(harness.processes) == 1
+    await first.close()
+    await second.ensure_started()
+    assert len(harness.processes) == 2
+    await second.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_holds_process_lock_until_close_and_blocks_logout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    SpawnHarness(monkeypatch)
+    profile_lock = FakeProfileProcessLock()
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        lambda: profile_lock,
+    )
+    client = CodexAppServerClient()
+
+    await client.ensure_started()
+    assert profile_lock.closed is False
+    with pytest.raises(CodexSubscriptionUnavailable, match="still active"):
+        transport.logout_codex_subscription()
+
+    await client.close()
+    assert profile_lock.closed is True
+
+
+def test_dedicated_profile_rejects_agents_and_other_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path)
+    home = transport._prepare_subscription_login_home()
+    (home / "AGENTS.md").write_text("Hostile instructions", encoding="utf-8")
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="configuration"):
+        transport._validated_subscription_home(create=False, require_marker=True)
+
+
+@pytest.mark.asyncio
+async def test_startup_refuses_nonempty_user_mcp_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(
+        monkeypatch,
+        mcp_ids=("hostile.server", "second"),
+        audit_effective_config=True,
+    )
+    client = CodexAppServerClient()
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="non-empty"):
+        await client.ensure_started()
+
+    assert len(harness.all_calls) == 1
+    assert harness.processes[0].returncode is not None
+    await client.close()
+
+
+def _safe_audit_result(
+    client: CodexAppServerClient,
+) -> dict[str, Any]:
+    provider_id = client._transport_provider_id
+    version = "sha256:test-session-flags"
+    session = {
+        "analytics": {"enabled": False},
+        "approval_policy": "never",
+        "cli_auth_credentials_store": "file",
+        "chatgpt_base_url": transport._OFFICIAL_CHATGPT_BASE,
+        "experimental_compact_prompt_file": client._compact_prompt_file(),
+        "experimental_realtime_start_instructions": "",
+        "experimental_realtime_webrtc_call_base_url": (
+            transport._OFFICIAL_CHATGPT_CODEX_BASE
+        ),
+        "experimental_realtime_ws_backend_prompt": "",
+        "experimental_realtime_ws_base_url": (
+            transport._OFFICIAL_OPENAI_REALTIME_BASE
+        ),
+        "features": {
+            **{
+                feature: False
+                for feature in transport._DISABLED_APP_SERVER_FEATURES
+            },
+            "realtime_conversation": True,
+        },
+        "history": {"persistence": "none"},
+        "include_apps_instructions": False,
+        "include_collaboration_mode_instructions": False,
+        "include_environment_context": False,
+        "include_permissions_instructions": False,
+        "log_dir": client._log_dir(),
+        "memories": {
+            "dedicated_tools": False,
+            "generate_memories": False,
+            "use_memories": False,
+        },
+        "model_catalog_json": client._model_catalog_file(),
+        "model_instructions_file": client._safe_instructions_file(),
+        "model_provider": provider_id,
+        "model_providers": {
+            provider_id: {
+                "base_url": client._provider_sink_base_url(),
+                "name": "OpenAI ChatGPT subscription voice",
+                "request_max_retries": 0,
+                "requires_openai_auth": True,
+                "stream_max_retries": 0,
+                "supports_standalone_web_search": False,
+                "supports_websockets": False,
+                "wire_api": "responses",
+            }
+        },
+        "notify": [],
+        "openai_base_url": transport._OFFICIAL_OPENAI_API_BASE,
+        "orchestrator": {
+            "mcp": {"enabled": False},
+            "skills": {"enabled": False},
+        },
+        "otel": {
+            "exporter": "none",
+            "log_user_prompt": False,
+            "metrics_exporter": "none",
+            "trace_exporter": "none",
+        },
+        "project_doc_max_bytes": 0,
+        "sandbox_mode": "read-only",
+        "sqlite_home": client._sqlite_home(),
+        "skills": {
+            "bundled": {"enabled": False},
+            "include_instructions": False,
+        },
+        "tools": {"web_search": False},
+    }
+    if sys.platform == "win32":
+        session["windows"] = {"sandbox": "unelevated"}
+
+    def leaf_paths(value: Any, prefix: tuple[str, ...] = ()) -> list[str]:
+        if isinstance(value, dict):
+            paths: list[str] = []
+            for key, child in value.items():
+                paths.extend(leaf_paths(child, (*prefix, str(key))))
+            return paths
+        if value == []:
+            return []
+        return [".".join(prefix)]
+
+    origin = {
+        "name": {"type": "sessionFlags"},
+        "version": version,
+    }
+    return {
+        "config": {
+            "analytics": {"enabled": False},
+            "approval_policy": "never",
+            "model_provider": provider_id,
+            "sandbox_mode": "read-only",
+        },
+        "layers": [
+            {
+                "name": {"type": "sessionFlags"},
+                "version": version,
+                "config": session,
+            },
+            {
+                "name": {"type": "user", "file": "C:/isolated/config.toml"},
+                "version": "sha256:empty",
+                "config": {},
+            },
+        ],
+        "origins": {path: dict(origin) for path in leaf_paths(session)},
+    }
+
+
+def test_effective_config_audit_requires_empty_host_layers_and_session_origins() -> None:
+    client = CodexAppServerClient()
+    client._workspace = transport._create_safe_transport_workspace()
+    client._sink_base_url = "http://127.0.0.1:43123/v1"
+    try:
+        result = _safe_audit_result(client)
+        client._audit_effective_config(result)
+
+        result["layers"][1]["config"] = {"mcp_servers": {"hostile": {}}}
+        with pytest.raises(CodexSubscriptionUnavailable, match="non-empty"):
+            client._audit_effective_config(result)
+
+        result["layers"][1]["config"] = {}
+        result["origins"]["approval_policy"] = {
+            "name": {"type": "user", "file": "C:/hostile/config.toml"},
+            "version": "sha256:hostile",
+        }
+        with pytest.raises(CodexSubscriptionUnavailable, match="unapproved"):
+            client._audit_effective_config(result)
+    finally:
+        shutil.rmtree(client._workspace.root, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_dedicated_home_is_revalidated_before_thread_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    validations = 0
+
+    def validate_home(**_kwargs: object) -> Path:
+        nonlocal validations
+        validations += 1
+        if validations >= 3:
+            raise CodexSubscriptionUnavailable(
+                "The dedicated Codex voice profile contains configuration."
+            )
+        return harness.codex_home
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", validate_home)
+    client = CodexAppServerClient()
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="configuration"):
+        await client.thread_start()
+
+    assert not any(
+        message.get("method") == "thread/start"
+        for message in harness.processes[0].stdin.messages
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_account_is_rechecked_immediately_before_every_thread_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_reads = 0
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        nonlocal account_reads
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        method = message.get("method")
+        if method == "initialize":
+            _respond(process, request_id, {})
+        elif method == "account/read":
+            account_reads += 1
+            account_type = "chatgpt" if account_reads <= 2 else "apiKey"
+            _respond(
+                process,
+                request_id,
+                {
+                    "account": {
+                        "type": account_type,
+                        "planType": "plus" if account_type == "chatgpt" else None,
+                    },
+                    "requiresOpenaiAuth": True,
+                },
+            )
+        elif method == "thread/start":
+            _respond(process, request_id, {"thread": {"id": "thread-1"}})
+
+    harness = SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+
+    await client.thread_start()
+    with pytest.raises(CodexSubscriptionUnavailable):
+        await client.thread_start()
+
+    methods = [item.get("method") for item in harness.processes[0].stdin.messages]
+    assert methods.count("account/read") == 3
+    assert methods.count("thread/start") == 1
+
+
+def test_config_requirements_must_be_absent() -> None:
+    CodexAppServerClient._audit_config_requirements({"requirements": None})
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="managed"):
+        CodexAppServerClient._audit_config_requirements(
+            {"requirements": {"network": {"enabled": True}}}
+        )
+
+
+def test_thread_start_response_is_audited_as_read_only_and_ephemeral() -> None:
+    client = CodexAppServerClient()
+    client._workspace = transport._create_safe_transport_workspace()
+    try:
+        cwd = client._safe_thread_cwd()
+        result = {
+            "approvalPolicy": "never",
+            "cwd": cwd,
+            "instructionSources": [],
+            "model": "gpt-5.1-codex",
+            "modelProvider": client._transport_provider_id,
+            "sandbox": {"type": "readOnly", "networkAccess": False},
+            "thread": {
+                "cwd": cwd,
+                "ephemeral": True,
+                "id": "thread-safe",
+                "modelProvider": client._transport_provider_id,
+            },
+        }
+        client._audit_thread_start_response(result)
+
+        result["instructionSources"] = ["C:/hostile/AGENTS.md"]
+        with pytest.raises(CodexSubscriptionUnavailable, match="unsafe"):
+            client._audit_thread_start_response(result)
+
+        result["instructionSources"] = []
+        result["sandbox"] = {"type": "readOnly", "networkAccess": True}
+        with pytest.raises(CodexSubscriptionUnavailable, match="unsafe"):
+            client._audit_thread_start_response(result)
+    finally:
+        shutil.rmtree(client._workspace.root, ignore_errors=True)
+
+
+@pytest.mark.parametrize("plan", ["free", "go", "plus", "pro", "prolite"])
+@pytest.mark.asyncio
+async def test_personal_chatgpt_plan_is_accepted(plan: str) -> None:
+    client = CodexAppServerClient()
+
+    async def account_read(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "account": {"type": "chatgpt", "planType": plan},
+            "requiresOpenaiAuth": True,
+        }
+
+    client._request_live = account_read  # type: ignore[method-assign]
+    await client._verify_live_chatgpt_account()
+
+
+@pytest.mark.parametrize("plan", [None, "team", "business", "enterprise", "edu"])
+@pytest.mark.asyncio
+async def test_managed_or_unknown_chatgpt_plan_is_refused(plan: str | None) -> None:
+    client = CodexAppServerClient()
+
+    async def account_read(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "account": {"type": "chatgpt", "planType": plan},
+            "requiresOpenaiAuth": True,
+        }
+
+    client._request_live = account_read  # type: ignore[method-assign]
+    with pytest.raises(CodexSubscriptionUnavailable, match="personal"):
+        await client._verify_live_chatgpt_account()
+
+
+@pytest.mark.asyncio
+async def test_account_requires_the_openai_authenticated_provider() -> None:
+    client = CodexAppServerClient()
+
+    async def account_read(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "account": {"type": "chatgpt", "planType": "plus"},
+            "requiresOpenaiAuth": False,
+        }
+
+    client._request_live = account_read  # type: ignore[method-assign]
+    with pytest.raises(CodexSubscriptionUnavailable, match="authentication"):
+        await client._verify_live_chatgpt_account()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_forces_handoff_and_startup_context_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+
+    await client.realtime_start(
+        "thread-1",
+        prompt="hostile prompt",
+        include_startup_context=True,
+        client_managed_handoffs=False,
+    )
+    params = next(
+        frame["params"]
+        for frame in harness.processes[0].stdin.messages
+        if frame.get("method") == "thread/realtime/start"
+    )
+    assert params["prompt"] == ""
+    assert params["includeStartupContext"] is False
+    assert params["clientManagedHandoffs"] is True
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="Custom"):
+        await client.realtime_start("thread-1", extra={"unsafe": True})
+    await client.close()
+
+
+def test_native_codex_version_and_hash_are_both_required(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"official-test-binary")
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                "approved-hash",
+            )
+        },
+    )
+    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "approved-hash")
+
+    assert (
+        transport._trusted_native_codex_binary(
+            str(binary), transport._SUPPORTED_CODEX_VERSION
+        )
+        == str(binary.resolve())
+    )
+    with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
+        transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
+
+    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "wrong-hash")
+    with pytest.raises(CodexSubscriptionUnavailable, match="approved build"):
+        transport._trusted_native_codex_binary(
+            str(binary), transport._SUPPORTED_CODEX_VERSION
+        )
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_subscription_transport_refuses_posix_without_parent_death_containment(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> None:
+    monkeypatch.setattr(transport.sys, "platform", platform)
+
+    with pytest.raises(
+        transport.CodexSubscriptionContainmentUnavailable,
+        match="kill-on-parent-exit",
+    ):
+        transport._trusted_native_codex_binary(
+            "/unused/codex",
+            transport._SUPPORTED_CODEX_VERSION,
+        )
+
+
+def test_dedicated_profile_rejects_hardlinked_auth_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    home = transport._prepare_subscription_login_home()
+    outside = tmp_path / "outside-auth.json"
+    outside.write_text("{}", encoding="utf-8")
+    os.link(outside, home / "auth.json")
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="linked credential"):
+        transport._validated_subscription_home(create=False, require_marker=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows credential DACL contract")
+def test_dedicated_profile_rejects_permissive_windows_auth_acl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import ntsecuritycon
+    import win32api
+    import win32con
+    import win32security
+
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    home = transport._prepare_subscription_login_home()
+    auth = home / "auth.json"
+    auth.write_text("{}", encoding="utf-8")
+
+    token = win32security.OpenProcessToken(
+        win32api.GetCurrentProcess(),
+        win32con.TOKEN_QUERY,
+    )
+    current_user = win32security.GetTokenInformation(
+        token,
+        win32security.TokenUser,
+    )[0]
+    everyone = win32security.CreateWellKnownSid(win32security.WinWorldSid, None)
+    dacl = win32security.ACL()
+    dacl.AddAccessAllowedAce(
+        win32security.ACL_REVISION,
+        ntsecuritycon.FILE_ALL_ACCESS,
+        current_user,
+    )
+    dacl.AddAccessAllowedAce(
+        win32security.ACL_REVISION,
+        ntsecuritycon.FILE_GENERIC_READ,
+        everyone,
+    )
+    win32security.SetNamedSecurityInfo(
+        str(auth),
+        win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION
+        | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None,
+        None,
+        dacl,
+        None,
+    )
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="not owner-only"):
+        transport._validated_subscription_home(create=False, require_marker=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows workspace DACL contract")
+def test_transport_workspace_has_exact_owner_only_windows_dacl() -> None:
+    import ntsecuritycon
+    import win32api
+    import win32con
+    import win32security
+
+    workspace = transport._create_safe_transport_workspace()
+    try:
+        descriptor = win32security.GetNamedSecurityInfo(
+            str(workspace.root),
+            win32security.SE_FILE_OBJECT,
+            win32security.OWNER_SECURITY_INFORMATION
+            | win32security.DACL_SECURITY_INFORMATION,
+        )
+        token = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(),
+            win32con.TOKEN_QUERY,
+        )
+        current_user = win32security.GetTokenInformation(
+            token,
+            win32security.TokenUser,
+        )[0]
+        owner = descriptor.GetSecurityDescriptorOwner()
+        dacl = descriptor.GetSecurityDescriptorDacl()
+        control, _revision = descriptor.GetSecurityDescriptorControl()
+
+        assert win32security.ConvertSidToStringSid(owner) == (
+            win32security.ConvertSidToStringSid(current_user)
+        )
+        assert control & win32security.SE_DACL_PROTECTED
+        assert dacl is not None and dacl.GetAceCount() == 1
+        ace_type, ace_flags = dacl.GetAce(0)[0]
+        access_mask = dacl.GetAce(0)[1]
+        trustee = dacl.GetAce(0)[2]
+        assert (ace_type, ace_flags) == (
+            win32security.ACCESS_ALLOWED_ACE_TYPE,
+            win32security.OBJECT_INHERIT_ACE
+            | win32security.CONTAINER_INHERIT_ACE,
+        )
+        assert access_mask == ntsecuritycon.FILE_ALL_ACCESS
+        assert win32security.ConvertSidToStringSid(trustee) == (
+            win32security.ConvertSidToStringSid(current_user)
+        )
+    finally:
+        shutil.rmtree(workspace.root, ignore_errors=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX workspace mode contract")
+def test_transport_workspace_has_owner_only_posix_mode() -> None:
+    workspace = transport._create_safe_transport_workspace()
+    try:
+        metadata = workspace.root.stat()
+        assert metadata.st_uid == os.geteuid()
+        assert metadata.st_mode & 0o777 == 0o700
+    finally:
+        shutil.rmtree(workspace.root, ignore_errors=True)
+
+
+def test_headless_linux_login_degrades_honestly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="headless Linux"):
+        transport.start_codex_subscription_login()
+
+
+def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                "approved",
+            )
+        },
+    )
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"official binary")
+    hash_calls: list[Path] = []
+
+    def hash_binary(path: Path) -> str:
+        canonical = Path(path).resolve()
+        hash_calls.append(canonical)
+        return "approved" if canonical == binary.resolve() else "wrong"
+
+    monkeypatch.setattr(transport, "_sha256_file", hash_binary)
+    home = transport._prepare_subscription_login_home()
+    (home / "installation_id").write_text(
+        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        encoding="utf-8",
+    )
+    runtime = home / "tmp" / "arg0" / "codex-arg0Ab12Cd"
+    runtime.mkdir(parents=True)
+    if os.name == "posix":
+        os.chmod(runtime.parent, 0o700)
+    (runtime / ".lock").write_bytes(b"")
+    wrapper = f'@echo off\n"{binary}" --codex-run-as-apply-patch %*\n'
+    (runtime / "apply_patch.bat").write_text(wrapper, encoding="utf-8")
+    (runtime / "applypatch.bat").write_text(wrapper, encoding="utf-8")
+
+    assert (
+        transport._validated_subscription_home(
+            create=False,
+            require_marker=True,
+            trusted_binary_path=str(binary.resolve()),
+        )
+        == home
+    )
+    assert hash_calls == [binary.resolve()]
+
+    (runtime / "apply_patch.bat").write_text(
+        '@echo off\n"C:\\untrusted.exe" --codex-run-as-apply-patch %*\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(CodexSubscriptionUnavailable, match="untrusted runtime"):
+        transport._validated_subscription_home(
+            create=False,
+            require_marker=True,
+            trusted_binary_path=str(binary.resolve()),
+        )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX umask semantics")
+def test_installation_id_created_under_umask_077_is_accepted(tmp_path: Path) -> None:
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    installation_id = home / "installation_id"
+    installation_id.write_text(
+        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        encoding="utf-8",
+    )
+    installation_id.chmod(0o600)
+
+    transport._validate_codex_runtime_state(home)
+
+
+def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("linux", "x86_64"): (
+                "linux-x64",
+                "x86_64-unknown-linux-musl",
+                "codex",
+                "approved",
+            )
+        },
+    )
+    binary = tmp_path / "codex"
+    binary.write_bytes(b"official binary")
+    monkeypatch.setattr(
+        transport,
+        "_sha256_file",
+        lambda path: "approved" if Path(path).resolve() == binary.resolve() else "wrong",
+    )
+    home = transport._prepare_subscription_login_home()
+    (home / "installation_id").write_text(
+        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        encoding="utf-8",
+    )
+    if os.name == "posix":
+        os.chmod(home / "installation_id", 0o644)
+    runtime = home / "tmp" / "arg0" / "codex-arg0Ab12Cd"
+    runtime.mkdir(parents=True)
+    if os.name == "posix":
+        os.chmod(runtime.parent, 0o700)
+    (runtime / ".lock").write_bytes(b"")
+    aliases = {
+        "apply_patch",
+        "applypatch",
+        "codex-execve-wrapper",
+        "codex-linux-sandbox",
+    }
+    try:
+        for alias in aliases:
+            os.symlink(binary, runtime / alias)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {type(exc).__name__}")
+
+    assert (
+        transport._validated_subscription_home(
+            create=False,
+            require_marker=True,
+            trusted_binary_path=str(binary.resolve()),
+        )
+        == home
+    )
+    (runtime / "unexpected").write_text("unsafe", encoding="utf-8")
+    with pytest.raises(CodexSubscriptionUnavailable, match="unexpected runtime"):
+        transport._validated_subscription_home(
+            create=False,
+            require_marker=True,
+            trusted_binary_path=str(binary.resolve()),
+        )
+
+
+def test_subscription_login_guard_covers_process_and_reaper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+
+    cleanup_targets: list[Callable[[], None]] = []
+    processes: list[object] = []
+
+    class FakeProcess:
+        pid = 731
+
+        def wait(self) -> int:
+            return 0
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start_login(self) -> FakeProcess:
+            process = FakeProcess()
+            processes.append(process)
+            return process
+
+    home = tmp_path / "profile"
+    home.mkdir()
+    profile_lock = FakeProfileProcessLock()
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        lambda: profile_lock,
+    )
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_launch_subscription_login_reaper",
+        cleanup_targets.append,
+    )
+    monkeypatch.setattr(transport, "_prepare_subscription_login_home", lambda: home)
+    capability_reads: list[str | None] = []
+
+    def read_capability(binary: str | None) -> CodexAppServerCapability:
+        capability_reads.append(binary)
+        authenticated = len(capability_reads) > 1
+        return CodexAppServerCapability(
+            available=True,
+            chatgpt_authenticated=authenticated,
+            binary_path="codex-test",
+            version="codex-cli 0.146.0",
+            reason="ready",
+            reason_code="ready" if authenticated else "login_required",
+        )
+
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        read_capability,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: home,
+    )
+    monkeypatch.setattr(transport, "_subscription_login_in_flight", False)
+    monkeypatch.setattr(transport, "_subscription_login_process", None)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
+    monkeypatch.setattr(transport, "_subscription_active_transports", set())
+
+    first = transport.start_codex_subscription_login()
+    assert first is processes[0]
+    assert capability_reads == [None]
+    assert profile_lock.closed is False
+    with pytest.raises(CodexSubscriptionUnavailable, match="already in progress"):
+        transport.start_codex_subscription_login()
+    with pytest.raises(CodexSubscriptionUnavailable, match="login is in progress"):
+        transport.logout_codex_subscription()
+
+    cleanup_targets[0]()
+    assert capability_reads == [None, "codex-test"]
+    assert profile_lock.closed is True
+    assert transport._subscription_login_in_flight is False
+    assert transport._subscription_login_process is None
+
+
+def test_subscription_login_spawn_failure_releases_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start_login(self) -> None:
+            raise RuntimeError("terminal unavailable")
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_prepare_subscription_login_home",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: CodexAppServerCapability(
+            True,
+            False,
+            "codex-test",
+            "codex-cli 0.146.0",
+            "ready",
+        ),
+    )
+    monkeypatch.setattr(transport, "_subscription_login_in_flight", False)
+    monkeypatch.setattr(transport, "_subscription_login_process", None)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
+    monkeypatch.setattr(transport, "_subscription_active_transports", set())
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="terminal unavailable"):
+        transport.start_codex_subscription_login()
+    assert transport._subscription_login_in_flight is False
+
+
+def test_subscription_logout_is_idempotent_and_deletes_only_dedicated_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.core.paths as paths
+
+    monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(transport, "_subscription_login_in_flight", False)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
+    monkeypatch.setattr(transport, "_subscription_active_transports", set())
+    profile_locks: list[FakeProfileProcessLock] = []
+
+    def acquire_lock() -> FakeProfileProcessLock:
+        lock = FakeProfileProcessLock()
+        profile_locks.append(lock)
+        return lock
+
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        acquire_lock,
+    )
+
+    assert transport.logout_codex_subscription() == (True, None)
+    assert profile_locks[-1].closed is True
+
+    home = transport._prepare_subscription_login_home()
+    auth = home / "auth.json"
+    auth.write_text("opaque credentials", encoding="utf-8")
+    assert transport.logout_codex_subscription("missing-codex") == (True, None)
+    assert profile_locks[-1].closed is True
+    assert not auth.exists()
+    assert (home / transport._SUBSCRIPTION_PROFILE_MARKER).exists()
+
+
+@pytest.mark.asyncio
+async def test_atomic_logout_transfers_live_transport_lock_without_a_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    SpawnHarness(monkeypatch)
+    await transport.close_shared_codex_app_servers()
+    profile_lock = FakeProfileProcessLock()
+    monkeypatch.setattr(
+        transport,
+        "_acquire_subscription_process_lock",
+        lambda: profile_lock,
+    )
+    client = transport.get_shared_codex_app_server("codex-test")
+    await client.ensure_started()
+    observations: list[str] = []
+
+    def delete_auth() -> tuple[bool, None]:
+        assert transport._subscription_profile_mutating is True
+        assert transport._subscription_active_transports == set()
+        assert transport._subscription_mutation_process_lock is profile_lock
+        assert profile_lock.closed is False
+        observations.append("deleted")
+        return True, None
+
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        delete_auth,
+    )
+
+    result = await transport.disconnect_and_logout_codex_subscription()
+
+    assert result == (True, None)
+    assert observations == ["deleted"]
+    assert profile_lock.closed is True
+    assert transport._subscription_profile_mutating is False

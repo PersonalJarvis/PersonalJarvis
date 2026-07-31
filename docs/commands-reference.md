@@ -43,10 +43,10 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 
 ## `realtime-switch` — Switch realtime voice provider
 
-Switch which realtime voice engine (speech-to-speech) is active, e.g. openai-realtime or gemini-live.
+Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, openai-realtime; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: codex-subscription-realtime, gemini-live, openai-realtime; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, codex-subscription-realtime, elevenlabs, faster-whisper, gemini, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"

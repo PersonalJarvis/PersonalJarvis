@@ -7648,12 +7648,19 @@ class SpeechPipeline:
         echo cancellation. The browser surface provides full duplex with Web
         Audio echo cancellation.
         """
+        allow_classic_fallback = True
         try:
             from jarvis.realtime.desktop import (
                 DesktopRealtimeBargeInDetector,
                 DesktopRealtimePlayback,
             )
-            from jarvis.realtime.factory import build_realtime_session
+            from jarvis.realtime.factory import (
+                build_realtime_session,
+                realtime_implicit_usage_fallback_allowed,
+            )
+            allow_classic_fallback = realtime_implicit_usage_fallback_allowed(
+                self._config
+            )
         except ImportError as exc:
             log.warning("Realtime desktop stack is unavailable: %s", exc)
             return None
@@ -8112,7 +8119,11 @@ class SpeechPipeline:
         # pipeline. Every genuine hangup path below overwrites it. The marker
         # keeps ``RealtimeVoiceSession.end`` from announcing a session end that
         # never happened — the pipeline's own teardown owns that.
-        reason = HANGUP_DESKTOP_FALLBACK
+        reason = (
+            HANGUP_DESKTOP_FALLBACK
+            if allow_classic_fallback
+            else HANGUP_ERROR
+        )
         session: Any | None = None
         microphone_task: asyncio.Task[Any] | None = None
         try:
@@ -8249,7 +8260,17 @@ class SpeechPipeline:
                 build_ms = (time.monotonic() - build_started_at) * 1000.0
                 log.info("Realtime desktop session assembled in %.0f ms.", build_ms)
                 if session is None:
-                    return None
+                    if allow_classic_fallback:
+                        return None
+                    log.warning(
+                        "Selected realtime access is unavailable; automatic "
+                        "usage-billed classic fallback is disabled."
+                    )
+                    reason = HANGUP_ERROR
+                    return HANGUP_ERROR
+                allow_classic_fallback = bool(
+                    getattr(session, "allow_classic_fallback", True)
+                )
                 handshake_started_at = time.monotonic()
                 handshake_task = asyncio.create_task(
                     session.handle_control(
@@ -8336,7 +8357,14 @@ class SpeechPipeline:
                     return HANGUP_ERROR
                 # A startup/early provider failure has committed no semantic
                 # user turn, so classic may safely replay the retained opening.
-                return None
+                if allow_classic_fallback:
+                    return None
+                reason = HANGUP_ERROR
+                log.warning(
+                    "Realtime provider failed before a committed turn; "
+                    "automatic usage-billed classic fallback is disabled."
+                )
+                return HANGUP_ERROR
         except asyncio.CancelledError:
             reason = "shutdown"
             raise
@@ -8349,7 +8377,14 @@ class SpeechPipeline:
                     "audio replay through classic voice."
                 )
                 return HANGUP_ERROR
-            return None
+            if allow_classic_fallback:
+                return None
+            reason = HANGUP_ERROR
+            log.warning(
+                "Realtime startup failed; automatic usage-billed classic "
+                "fallback is disabled."
+            )
+            return HANGUP_ERROR
         finally:
             if getattr(self, "_active_realtime_handle", None) is session:
                 self._active_realtime_handle = None

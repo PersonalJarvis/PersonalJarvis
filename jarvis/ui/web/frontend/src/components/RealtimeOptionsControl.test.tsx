@@ -38,6 +38,7 @@ const OPTIONS = {
   ],
   current_model: "",
   current_voice: "",
+  preview_available: true,
 };
 
 // jsdom implements neither media playback nor object URLs — stub the pieces
@@ -261,5 +262,40 @@ describe("RealtimeOptionsControl", () => {
         model: "",
       }),
     );
+  });
+
+  it("keeps subscription voices selectable without rendering a broken preview", async () => {
+    getRealtimeOptions.mockResolvedValue({
+      provider: "codex-subscription-realtime",
+      models: [{ id: "gpt-realtime-1.5", label: "GPT Realtime 1.5" }],
+      voices: [
+        { id: "cove", label: "Cove" },
+        { id: "juniper", label: "Juniper" },
+      ],
+      current_model: "gpt-realtime-1.5",
+      current_voice: "cove",
+      preview_available: false,
+    });
+    saveRealtimeOptions.mockResolvedValue({
+      ok: true,
+      provider: "codex-subscription-realtime",
+      model: "gpt-realtime-1.5",
+      voice: "juniper",
+      restart_required: false,
+    });
+
+    render(<RealtimeOptionsControl providerId="codex-subscription-realtime" />);
+    await openVoicePanel();
+
+    expect(screen.queryByLabelText("apikeys_voice.preview")).toBeNull();
+    expect(screen.queryByText("de")).toBeNull();
+    fireEvent.click(screen.getByText("Juniper"));
+    await waitFor(() =>
+      expect(saveRealtimeOptions).toHaveBeenCalledWith(
+        "codex-subscription-realtime",
+        { voice: "juniper" },
+      ),
+    );
+    expect(fetchRealtimeVoicePreview).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@ import { useT } from "@/i18n";
 /**
  * Provider-neutral Realtime voice toggle inside the Settings view. It flips
  * ``mode`` between the classic wake-word/STT/TTS pipeline and full-duplex
- * Realtime voice. A missing Realtime key blocks turning the mode on, but never
+ * Realtime voice. Missing provider access blocks turning the mode on, but never
  * traps a stale Realtime setting: users can always switch back to Pipeline.
  *
  * Uses the in-house `useT()` i18n hook (see src/i18n/index.ts) rather than

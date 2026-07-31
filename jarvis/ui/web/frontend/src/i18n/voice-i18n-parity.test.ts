@@ -110,3 +110,50 @@ describe("voice section tab labels", () => {
     });
   }
 });
+
+describe("subscription Realtime voice copy", () => {
+  const KEYS = [
+    "sidebar.realtime_unavailable",
+    "apikeys_view.mode_needs_credentials",
+    "apikeys_view.needs_credentials",
+    "apikeys_view.experimental",
+    "apikeys_view.subscription_realtime_description",
+    "apikeys_view.experimental_subscription_fallback",
+    "apikeys_view.experimental_subscription_consent",
+    "provider_billing.api",
+    "provider_billing.subscription",
+    "provider_billing.subscription_or_api",
+    "provider_billing.local",
+    "settings_view.realtime_voice.title",
+    "settings_view.realtime_voice.description",
+    "settings_view.realtime_voice.unavailable",
+    "apikeys_codex.status_ready",
+    "apikeys_codex.status_login_required",
+    "apikeys_codex.status_not_installed",
+    "apikeys_codex.status_lifecycle_unavailable",
+    "apikeys_codex.status_setup_invalid",
+    "apikeys_codex.install_command_copied",
+    "apikeys_codex.connected_chatgpt",
+    "apikeys_codex.disconnect",
+    "apikeys_codex.copy_command",
+    "apikeys_codex.connect_chatgpt",
+    "apikeys_codex.install_codex",
+    "apikeys_codex.subscription_login_required",
+  ] as const;
+
+  function valueAt(loc: Loc, path: string): unknown {
+    let current: unknown = loc;
+    for (const part of path.split(".")) current = (current as Loc)[part];
+    return current;
+  }
+
+  for (const [lang, loc] of [["en", en], ...LOCALES] as const) {
+    it(`${lang}: has complete subscription Realtime guidance`, () => {
+      for (const key of KEYS) {
+        const value = valueAt(loc as Loc, key);
+        expect(typeof value, key).toBe("string");
+        expect((value as string).trim().length, key).toBeGreaterThan(0);
+      }
+    });
+  }
+});
