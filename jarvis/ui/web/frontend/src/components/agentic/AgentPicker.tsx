@@ -84,7 +84,11 @@ export function AgentPickerMenu({
         aria-label={ariaLabel}
         data-testid={testId}
         className={cn(
-          "absolute z-50 w-60 rounded-lg border border-border bg-card p-1 shadow-xl",
+          // Scrolls rather than growing past the window: the list is every CLI
+          // the backend registered, and that is six entries on a machine with
+          // the usual set installed — more than fits under a button near the
+          // top of a laptop screen.
+          "absolute z-50 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
           className,
         )}
         onMouseDown={(e) => e.stopPropagation()}
