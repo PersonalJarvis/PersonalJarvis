@@ -79,6 +79,7 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 
 from . import prompt_history, recap_engine, resume_store
+from .activity import NO_READING, Reading, has_been_tasked, observed
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -935,6 +936,21 @@ class Terminal:
     # looks, never a single one), cleared on every spawn. Never persisted — it
     # describes the process now running in the pane.
     idle_seen: bool = False
+    # What this pane is DOING, as the activity sweep last observed it: working,
+    # waiting, asking, starting, exited, failed (see `.activity`). Empty until
+    # the first sweep has looked at this pane, and for a plain terminal, which
+    # runs no agent and therefore has no job to be in the middle of.
+    #
+    # Stamped here rather than kept inside the sweep because whether a screen is
+    # MOVING can only be seen across two looks, and everything else that wants
+    # the answer — the workspace state, the pane list's poll — is a request
+    # handler with exactly one look. `activity_at` is when the observation was
+    # taken (so a reader can tell a live reading from one left behind by a sweep
+    # that has since died), `activity_since` when the pane entered this state
+    # (so "waiting" can be shown with how long it has been waiting).
+    activity: str = ""
+    activity_at: float = 0.0
+    activity_since: float = 0.0
     # Monotonic identity for the process currently occupying this pane. The
     # notification watcher outlives PTYs, so it uses this to discard the old
     # process's screen fingerprint before interpreting a replacement process.
@@ -1029,6 +1045,7 @@ class Terminal:
         # by the /recaps poll, which is the caller that knows a human is
         # actually looking at this workspace.
         summary = recap_engine.recap_for(self, lines=lines)
+        reading = self.reading()
         return {
             "key": self.key,
             "name": self.name,
@@ -1076,6 +1093,15 @@ class Terminal:
             # see .recap for why it is computed on read.
             "recap": summary.headline,
             "recap_detail": summary.detail,
+            # Is this pane's agent still on the job, or has it stopped? See
+            # `.reading` — the one question the pane list could not answer, and
+            # the reason it used to say "live" at a terminal that had been
+            # finished for twenty minutes. Empty for a plain shell.
+            "activity": reading.activity,
+            "activity_since": reading.since,
+            # Whether a still screen means "finished" or "never asked for
+            # anything" — the same picture, and not the same news.
+            "tasked": has_been_tasked(self),
             "resumed": self.resumed,
             # Continued its old conversation and has had no instruction since —
             # the pane a restart left standing still. Carried in the ordinary
@@ -1089,6 +1115,22 @@ class Terminal:
             "account": self.account,
             "account_label": account_label(self.account),
         }
+
+    def reading(self) -> Reading:
+        """Is this pane's agent working, or has it stopped — and since when?
+
+        One place, because two clients ask: the workspace state (what a pane
+        opens with) and the pane-list poll (what it says from then on), and a
+        pane described as working by one and finished by the other is worse than
+        either answer alone.
+
+        A plain terminal reads as nothing at all. It is a shell prompt, not an
+        agent: it stands still for its whole life, so every word this vocabulary
+        has would be a claim about a job it was never given.
+        """
+        if not accepts_prompts(self.agent):
+            return NO_READING
+        return observed(self)
 
     def to_snapshot(self) -> resume_store.SnapshotTerminal:
         """This pane as the resume store remembers it."""

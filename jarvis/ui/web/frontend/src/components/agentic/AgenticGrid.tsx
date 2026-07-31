@@ -50,10 +50,10 @@ import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore } from "@/store/events";
 import {
   AgenticTerminal,
-  PaneStatusPill,
   type PaneStatus,
   type SplitDirection,
 } from "./AgenticTerminal";
+import { PaneActivityPill } from "./PaneActivityPill";
 import {
   AgentPickerMenu,
   offersAgentChoice,
@@ -670,6 +670,24 @@ export function AgenticGrid({
       window.clearInterval(timer);
     };
   }, [session.id, pollRecaps]);
+
+  /*
+   * Is this pane's agent still working, or has it stopped?
+   *
+   * The same two sources as the recap beside it, for the same reason: the
+   * workspace state carries an opening value so a pane never renders a blank
+   * badge, and the five-second poll keeps it true from then on. Both come
+   * straight from the pane — nothing is derived here, or two views of one
+   * terminal would disagree about whether it is busy.
+   */
+  const activityOf = (term: TerminalState) => {
+    const row = recaps[term.name];
+    return {
+      activity: row?.activity ?? term.activity ?? "",
+      since: row?.activity_since ?? term.activity_since ?? 0,
+      tasked: row?.tasked ?? term.tasked ?? false,
+    };
+  };
 
   /*
    * The three things a user may do about a pane's recap.
@@ -1885,9 +1903,13 @@ export function AgenticGrid({
                     <span className="min-w-0 flex-1 truncate text-xs font-semibold">
                       {term.display_name || term.name}
                     </span>
-                    <PaneStatusPill
+                    {/* Not "live". Every pane in this list is live, all day —
+                        what the user is scanning for is which of them still
+                        owes them something. See ./PaneActivityPill. */}
+                    <PaneActivityPill
                       status={state?.status ?? "connecting"}
                       detail={state?.detail}
+                      {...activityOf(term)}
                     />
                   </span>
                   {headline && (
@@ -1932,10 +1954,12 @@ export function AgenticGrid({
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
         className={cn(
-          "relative",
-          // The chat stage is a centred column — one conversation-sized card
-          // rather than a surface stretched across a widescreen window.
-          chatView ? "mx-auto h-full w-full max-w-[1100px]" : "w-full",
+          "relative w-full",
+          // The chat stage fills everything between the rail and the voice
+          // column. It started as a centred, capped column; the maintainer
+          // wants the terminal at full size (2026-07-31), and the calm framing
+          // comes from the rail and the card border, not from margins.
+          chatView && "h-full",
         )}
         style={{ height: chatView ? undefined : canvasHeight || undefined }}
       >
@@ -2305,6 +2329,7 @@ export function AgenticGrid({
                 <button
                   key={term.key}
                   type="button"
+                  data-testid={`prompt-target-${term.name}`}
                   onClick={() => setTarget(term.name)}
                   aria-pressed={target === term.name}
                   className={cn(
@@ -2315,7 +2340,11 @@ export function AgenticGrid({
                   )}
                 >
                   <span className="font-medium">{term.name}</span>
-                  <PaneStatusPill status={state?.status ?? "connecting"} detail={state?.detail} />
+                  <PaneActivityPill
+                    status={state?.status ?? "connecting"}
+                    detail={state?.detail}
+                    {...activityOf(term)}
+                  />
                 </button>
               );
             })}

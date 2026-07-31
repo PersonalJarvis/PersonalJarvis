@@ -185,7 +185,6 @@ vi.mock("./AgenticTerminal", () => ({
     </div>
     );
   },
-  PaneStatusPill: () => <span>live</span>,
 }));
 
 import { AgenticGrid } from "./AgenticGrid";
@@ -823,7 +822,7 @@ describe("selecting several terminals", () => {
       session: sessionWith([["Nova", 0]]),
     });
     renderGrid();
-    fireEvent.click(screen.getByRole("button", { name: /Nova live/i }));
+    fireEvent.click(screen.getByTestId("prompt-target-Nova"));
     fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));
     fireEvent.click(screen.getByTestId("close-selected-terminals"));

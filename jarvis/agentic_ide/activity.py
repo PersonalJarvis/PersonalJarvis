@@ -76,13 +76,30 @@ optimistic, which is the one case where this is wrong in the user's favour
 rather than silent. A CLI that genuinely draws nothing at all while it works —
 none of the four measured — would be reported early. A plain shell pane is not
 an agent and is left out entirely by the caller.
+
+## Who reads this, and why it is stamped on the pane
+
+Two callers, one reading. The notification sweep (:mod:`.notifications`) is the
+one that can actually SEE movement — it compares this sweep's fingerprint with
+the last one — and it runs every couple of seconds for as long as a workspace is
+open. Everything else that wants to know what a pane is doing (the workspace
+state, the recap poll behind the pane list) is a request handler with a single
+look and no history, and a single look cannot tell a still screen from a moving
+one.
+
+So the sweep :func:`stamp`\\ s what it observed onto the pane and the request
+handlers read it back (:func:`observed`). A stamp older than
+:data:`STAMP_FRESH_S` is not trusted: that is not a stale reading, it is
+evidence that nothing is watching this pane at all — the sweep never started, or
+its task died — and the caller gets a fresh single-look answer instead of a word
+that stopped being true minutes ago.
 """
 
 from __future__ import annotations
 
 import hashlib
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
@@ -260,15 +277,107 @@ def is_settled(activity: str) -> bool:
     return activity in SETTLED
 
 
+#: How long a stamped reading is trusted by a caller that did not take it.
+#:
+#: The sweep behind it runs every two seconds
+#: (``notifications.SWEEP_INTERVAL_S``), so three sweeps of slack absorbs a busy
+#: event loop while keeping the "nothing is watching" case honest — see the
+#: module docstring.
+STAMP_FRESH_S = 6.0
+
+
+class Reading(NamedTuple):
+    """What a pane is doing, and when it started doing it.
+
+    ``since`` is 0 for an answer derived from one look, which has no way of
+    knowing how long the pane has been in this state — never a claim that it
+    started at the epoch.
+
+    The empty activity is a real answer and means "this vocabulary does not
+    describe this pane" — see :data:`NO_READING`.
+    """
+
+    activity: Activity | Literal[""]
+    since: float
+
+
+#: The answer for a pane that has no job to be in the middle of: a plain shell,
+#: which runs no agent at all.
+#:
+#: Its own value rather than ``waiting``, because every word here is a claim
+#: about a JOB — and "waiting" on a shell prompt would read as an agent that has
+#: finished one. A caller that gets this shows whatever it showed before this
+#: feature existed.
+NO_READING = Reading("", 0.0)
+
+
+def stamp(term: Any, activity: Activity, *, now: float) -> None:
+    """Publish what this sweep observed, for readers that cannot observe.
+
+    Only the transition is timed: re-stamping the same word every two seconds
+    must not keep resetting "since", or a pane that has been waiting for twenty
+    minutes would always look like it just stopped.
+    """
+    if getattr(term, "activity", "") != activity:
+        term.activity_since = now
+    term.activity = activity
+    term.activity_at = now
+
+
+def observed(term: Any, *, now: float | None = None) -> Reading:
+    """What ``term`` is doing, for a caller with no history of its own.
+
+    The sweep's reading while there is a fresh one, and a single-look answer
+    otherwise. Duck-typed like the rest of this module: a pane that has never
+    been stamped answers from the look, not with an ``AttributeError``.
+    """
+    moment = time.time() if now is None else now
+    word = str(getattr(term, "activity", "") or "")
+    at = float(getattr(term, "activity_at", 0.0) or 0.0)
+    if word and 0 <= moment - at <= STAMP_FRESH_S:
+        since = float(getattr(term, "activity_since", 0.0) or 0.0)
+        return Reading(word, since)  # type: ignore[arg-type]
+    return Reading(read_activity(term, now=moment), 0.0)
+
+
+def has_been_tasked(term: Any) -> bool:
+    """Has anybody ever given this pane an instruction?
+
+    Two proofs, because a pane can be driven two ways and both count. A
+    timestamp from the moment something was submitted into it — by Jarvis or by
+    a person pressing Enter — and the counter of prompts Jarvis has sent, which
+    is the half that survives into a restored workspace where the timestamp does
+    not. A pane typed into by hand before a restart therefore starts its next
+    life unproven, and is described as merely idle rather than as finished: a
+    missing claim, rather than an invented one.
+
+    It is what separates "this agent finished the job" from "this terminal has
+    never been asked for anything", which are the same STILL SCREEN and must not
+    be the same word.
+    """
+    if getattr(term, "last_submit_at", None):
+        return True
+    try:
+        return int(getattr(term, "prompts_sent", 0) or 0) > 0
+    except (TypeError, ValueError):  # a test double may carry anything
+        return False
+
+
 __all__ = [
     "ASK_FRAGMENTS",
+    "NO_READING",
     "SETTLED",
+    "STAMP_FRESH_S",
     "STILL_S",
     "TAIL_ROWS",
     "Activity",
+    "Reading",
+    "has_been_tasked",
     "is_settled",
+    "observed",
     "read_activity",
     "screen_digest",
     "shows_question",
+    "stamp",
     "visible_rows",
 ]

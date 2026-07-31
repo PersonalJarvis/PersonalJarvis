@@ -49,9 +49,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import {
-  AlertCircle,
   Check,
-  Circle,
   Columns2,
   Loader2,
   Maximize2,
@@ -1723,50 +1721,10 @@ function PaneAction({
   );
 }
 
-/** Small status pill reused by the grid toolbar. */
-export function PaneStatusPill({
-  status,
-  detail,
-}: {
-  status: PaneStatus;
-  detail?: string;
-}) {
-  if (status === "live") {
-    return (
-      <span
-        className="flex items-center gap-1 text-[11px] text-emerald-400"
-        title={detail}
-      >
-        <Circle className="h-2 w-2 fill-current" />
-        live
-      </span>
-    );
-  }
-  if (status === "error") {
-    return (
-      <span
-        className="flex items-center gap-1 text-[11px] text-destructive"
-        title={detail}
-      >
-        <AlertCircle className="h-3 w-3" />
-        error
-      </span>
-    );
-  }
-  if (status === "exited") {
-    return (
-      <span className="text-[11px] text-muted-foreground" title={detail}>
-        exited
-      </span>
-    );
-  }
-  return (
-    <span
-      className="flex items-center gap-1 text-[11px] text-muted-foreground"
-      title={detail}
-    >
-      <Loader2 className="h-3 w-3 animate-spin" />
-      starting
-    </span>
-  );
-}
+/*
+ * The pane badge used to live here and reported the SOCKET: "live" for any pane
+ * with a working pipe, which is nearly all of them nearly all of the time. It
+ * moved to ./PaneActivityPill, which answers the question people were actually
+ * reading it for — is this agent still working — and still reports the pipe in
+ * the three cases where the pipe is the news.
+ */

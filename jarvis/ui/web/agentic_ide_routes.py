@@ -72,6 +72,7 @@ from jarvis.agentic_ide import (
     recents,
     resume_store,
 )
+from jarvis.agentic_ide.activity import has_been_tasked
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.fleet_actions import (
@@ -882,6 +883,33 @@ class TerminalRecap(BaseModel):
         description=(
             "When the model wrote it, or when the user did. 0 for the "
             "transcript-derived recap, which is recomputed on every read."
+        ),
+    )
+    activity: str = Field(
+        default="",
+        description=(
+            "Whether this pane's agent is still on the job: 'working' (its "
+            "screen is moving), 'waiting' (alive and standing still), 'asking' "
+            "(standing still with a question on screen), 'starting', 'exited' "
+            "or 'failed'. Read from the terminal itself rather than from "
+            "anything a particular CLI prints, so it holds for every coding CLI "
+            "a pane can run, including ones added later. Empty for a plain "
+            "terminal, which runs no agent."
+        ),
+    )
+    activity_since: float = Field(
+        default=0.0,
+        description=(
+            "When the pane entered that state (epoch seconds), so 'waiting' can "
+            "be shown with how long it has been waiting. 0 when unknown."
+        ),
+    )
+    tasked: bool = Field(
+        default=False,
+        description=(
+            "Has this pane ever been given an instruction? It is what separates "
+            "an agent that FINISHED from a terminal nobody has asked for "
+            "anything — the same still screen, and not the same news."
         ),
     )
 
@@ -1957,6 +1985,7 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
     into describing the same pane differently — the drift class §5 calls out,
     on a payload that is read four times a minute.
     """
+    reading = term.reading()
     return TerminalRecap(
         key=term.key,
         name=term.name,
@@ -1968,6 +1997,12 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
         writer=summary.writer,
         note=summary.note,
         generated_at=summary.generated_at,
+        # This poll is what keeps the pane list current, so it carries what the
+        # pane is DOING as well as what it is doing it about. Both come from the
+        # pane itself; neither is recomputed here, or the two would drift.
+        activity=reading.activity,
+        activity_since=reading.since,
+        tasked=has_been_tasked(term),
     )
 
 

@@ -61,7 +61,6 @@ vi.mock("@/components/agentic/AgenticTerminal", () => ({
   AgenticTerminal: ({ name }: { name: string }) => (
     <div data-testid={`pane-${name}`}>{name}</div>
   ),
-  PaneStatusPill: () => <span>live</span>,
 }));
 
 vi.mock("@/lib/agenticIdeApi", () => ({
