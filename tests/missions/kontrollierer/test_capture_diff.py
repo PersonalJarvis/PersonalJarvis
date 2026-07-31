@@ -37,7 +37,9 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
         check=False,
         capture_output=True,
         text=True,
-        timeout=15.0,
+        # Worktree materialization can exceed 15 seconds while other mission
+        # or release sessions briefly hold the shared repository lock.
+        timeout=60.0,
     )
 
 
