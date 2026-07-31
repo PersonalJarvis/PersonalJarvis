@@ -25,7 +25,6 @@ Wired into the WebServer in ``server.py::_build_app`` via
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
 import threading
@@ -84,42 +83,6 @@ async def _realtime_transport_offer_ready(required: bool) -> bool | None:
         return False
     broker = get_realtime_transport_offer_broker()
     return await broker.pending_count() > 0
-
-
-async def _embedded_realtime_capabilities(
-    request: Request, required: bool
-) -> tuple[bool | None, bool | None, bool | None]:
-    """Read only non-secret WebRTC capability flags from the desktop WebView."""
-    if not required:
-        return None, None, None
-    desktop = getattr(request.app.state, "desktop_app", None)
-    window = getattr(desktop, "_window", None)
-    if window is None:
-        return None, None, None
-    script = (
-        "JSON.stringify({"
-        "embedded:Boolean(window.__JARVIS_EMBEDDED_DESKTOP),"
-        "brokerToken:Boolean(window.__JARVIS_REALTIME_BROKER_TOKEN),"
-        "webrtc:typeof window.RTCPeerConnection==='function'"
-        "})"
-    )
-    try:
-        raw = await asyncio.wait_for(
-            asyncio.to_thread(window.evaluate_js, script), timeout=1.0
-        )
-        payload = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(payload, dict):
-            return None, None, None
-        return (
-            bool(payload.get("embedded")),
-            bool(payload.get("brokerToken")),
-            bool(payload.get("webrtc")),
-        )
-    except (TimeoutError, TypeError, ValueError):
-        return None, None, None
-    except Exception as exc:  # noqa: BLE001 - diagnostics never break mode status
-        log.debug("Embedded Realtime capability probe failed: %s", exc)
-        return None, None, None
 
 
 class ReplyLanguageBody(BaseModel):
@@ -271,11 +234,6 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     transport_offer_ready = await _realtime_transport_offer_ready(
         requires_webrtc_offer
     )
-    (
-        transport_client_embedded,
-        transport_client_capability,
-        transport_client_webrtc,
-    ) = await _embedded_realtime_capabilities(request, requires_webrtc_offer)
     transport_offer_detail: str | None = None
     if requires_webrtc_offer:
         transport_offer_detail = str(
@@ -296,9 +254,6 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "requires_webrtc_offer": requires_webrtc_offer,
         "transport_offer_ready": transport_offer_ready,
         "transport_offer_detail": transport_offer_detail,
-        "transport_client_embedded": transport_client_embedded,
-        "transport_client_capability": transport_client_capability,
-        "transport_client_webrtc": transport_client_webrtc,
         "active_provider": prov,
         # Sidebar-footer display fields: the pretty provider name + the model
         # an idle realtime session would use (configured pin or catalog

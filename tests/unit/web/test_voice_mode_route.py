@@ -81,9 +81,6 @@ def test_get_voice_mode(monkeypatch):
     assert body["requires_webrtc_offer"] is False
     assert body["transport_offer_ready"] is None
     assert body["transport_offer_detail"] is None
-    assert body["transport_client_embedded"] is None
-    assert body["transport_client_capability"] is None
-    assert body["transport_client_webrtc"] is None
     assert body["active_provider"] == "openai-realtime"
     # Sidebar display fields: registry label + the catalog-default model (no
     # pin configured in this app fixture).
@@ -115,14 +112,6 @@ def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
         _offer_ready,
     )
 
-    async def _client_capabilities(_request, _required: bool):
-        return True, True, True
-
-    monkeypatch.setattr(
-        settings_routes,
-        "_embedded_realtime_capabilities",
-        _client_capabilities,
-    )
 
     body = TestClient(_app(mode="realtime")).get("/api/settings/voice-mode").json()
 
@@ -130,9 +119,6 @@ def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
     assert body["requires_webrtc_offer"] is True
     assert body["transport_offer_ready"] is True
     assert body["transport_offer_detail"] == "Embedded desktop WebRTC offer is ready."
-    assert body["transport_client_embedded"] is True
-    assert body["transport_client_capability"] is True
-    assert body["transport_client_webrtc"] is True
 
 
 def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
