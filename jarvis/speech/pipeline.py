@@ -1110,6 +1110,20 @@ def accept_recognition_reading(*, language: str, probability: float) -> str:
 # back, which is a far better answer than a silent minute of waiting.
 _DICTATION_FINAL_DEAD_PIECES = 2
 
+# The floor a final-pass transcript must reach, in spoken tokens per second of
+# VOICED audio, before it is believed to cover its window. Even slow, careful
+# dictation runs well above one word per second while actually speaking (pauses
+# are excluded — only the voiced runs count), so a window that comes back below
+# this is missing speech, not hearing a slow speaker. gpt-4o-class recognizers
+# have a reproducible failure mode behind it: audio with a sustained
+# mid-recording pause is transcribed up to the pause and everything after it is
+# silently dropped (live 2026-07-31 — an 11.6 s recording with a breath after
+# the first sentence came back as that sentence alone, twice in a row). The
+# verdict is judged on ENERGY versus token count, never on what the text says
+# (AP-27's lesson); the repair re-reads the window split at its pauses and the
+# longer reading wins.
+_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S = 1.0
+
 # How far the live probe backs off after a failed transcription, and the ceiling
 # it backs off to. A provider refusing calls — the everyday case is a rate limit,
 # HTTP 429 — used to be answered by asking again at the same interval a second
@@ -9422,6 +9436,10 @@ class SpeechPipeline:
         stt_latency_ms = 0.0
         stt_calls = 0
         final_window_count = 0
+        # Windows whose transcript stopped at a mid-recording pause and were
+        # recovered by re-reading their speech runs. Reported in the audit so
+        # "the provider keeps dropping my second sentence" is measurable.
+        truncation_repairs = 0
 
         def _append_unique(values: list[str], value: object) -> None:
             text = str(value or "").strip()
@@ -9941,6 +9959,71 @@ class SpeechPipeline:
                 await asyncio.sleep(delay)
             return "", False
 
+        async def _repair_truncated_read(
+            piece: bytes, text: str, *, ask_for: str | None
+        ) -> str:
+            """``text`` for ``piece``, with a pause-dropped tail read back in.
+
+            A recognizer handed audio with a sustained mid-recording pause can
+            stop at the pause and silently drop everything after it — the
+            transcript arrives fluent, punctuated, and half the length of what
+            was said. Detected here on energy alone: when the piece holds more
+            than one speech run and the transcript's token count is far below
+            what its VOICED seconds must have contained
+            (``_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S``), the piece is
+            re-read as its individual runs and the merged result replaces the
+            original only when it actually carries more speech.
+
+            The runs are told the language the long window just detected
+            rather than asked to detect it themselves — a short clip guessing
+            its language is the translation trap the long windows exist to
+            avoid. A run that cannot be read keeps the original transcript: a
+            dropped middle is worse than the dropped tail it would repair.
+            """
+            nonlocal truncation_repairs
+            from jarvis.dictation.merge import (
+                merge_transcripts,
+                transcript_token_count,
+            )
+            from jarvis.dictation.segment import speech_runs
+
+            runs = speech_runs(
+                piece,
+                session_peak=session_peak,
+                bytes_per_second=bytes_per_second,
+            )
+            if len(runs) < 2:
+                return text
+            voiced_s = sum(end - start for start, end in runs) / bytes_per_second
+            tokens = transcript_token_count(text)
+            if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
+                return text
+            log.warning(
+                "final dictation window looks truncated (%d tokens for %.1fs "
+                "of speech in %d runs) — re-reading it split at its pauses.",
+                tokens,
+                voiced_s,
+                len(runs),
+            )
+            run_ask = language if (not ask_for or ask_for == "auto") else ask_for
+            parts: list[str] = []
+            for start, end in runs:
+                run_piece = piece[start:end]
+                if len(run_piece) < min_bytes:
+                    continue
+                run_text, run_read = await _read_piece(
+                    run_piece, ask_for=run_ask or None
+                )
+                if not run_read:
+                    return text
+                if run_text:
+                    parts.append(run_text)
+            merged = merge_transcripts(parts)
+            if transcript_token_count(merged) > tokens:
+                truncation_repairs += 1
+                return merged
+            return text
+
         async def _final_quality_text(audio: bytes) -> str:
             """Re-read the WHOLE recording in long, overlapping windows.
 
@@ -10022,6 +10105,9 @@ class SpeechPipeline:
                 if was_read:
                     dead_streak = 0
                     if text:
+                        text = await _repair_truncated_read(
+                            piece, text, ask_for=ask_for
+                        )
                         parts.append(text)
                 else:
                     dead_streak += 1
@@ -10087,6 +10173,9 @@ class SpeechPipeline:
                 text, piece_read = await _read_piece(piece)
                 if piece_read:
                     if text:
+                        text = await _repair_truncated_read(
+                            piece, text, ask_for=None
+                        )
                         parts.append(text)
                     dead_streak = 0
                 else:
@@ -10322,6 +10411,7 @@ class SpeechPipeline:
                 stt_audit=(
                     f"final_pass:{final_pass_status}",
                     f"final_windows:{final_window_count}",
+                    f"truncation_repairs:{truncation_repairs}",
                     f"code_switching:{'on' if code_switching else 'off'}",
                     f"capture_restarts:{capture_restart_count}",
                     *audio_preprocessing.audit(),
