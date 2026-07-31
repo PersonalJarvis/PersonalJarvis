@@ -2229,6 +2229,53 @@ describe("chat view", () => {
     }
   });
 
+  it("uses the live task recap as the rail title and follows it with the agent logo", async () => {
+    const mixed = sessionWith([
+      ["Mika", 0],
+      ["Nova", 1],
+    ]);
+    mixed.terminals[1] = {
+      ...mixed.terminals[1],
+      agent: "codex",
+      display_name: "Codex",
+    };
+    vi.mocked(api.fetchTerminalRecaps).mockResolvedValue({
+      workspace_id: "ide_test",
+      terminals: [
+        {
+          key: "nova",
+          name: "Nova",
+          status: "live",
+          recap: "Fix provider selection priority",
+          recap_detail: "Correct the fallback order used by the provider picker.",
+        },
+      ],
+    });
+
+    renderGrid(mixed);
+    toChat();
+
+    const title = await screen.findByTestId("chat-rail-title-Nova");
+    expect(title.textContent).toBe("Fix provider selection priority");
+    const mark = title.nextElementSibling;
+    expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
+    expect(mark?.querySelector("img")?.getAttribute("src")).toBe(
+      "/provider-logos/openai.svg",
+    );
+  });
+
+  it("uses the last prompt as the title while a recap is not available", () => {
+    const session = sessionWith([["Mika", 0]]);
+    session.terminals[0].last_prompt = "Analyze transcription omissions";
+
+    renderGrid(session);
+    toChat();
+
+    expect(screen.getByTestId("chat-rail-title-Mika").textContent).toBe(
+      "Analyze transcription omissions",
+    );
+  });
+
   it("keeps the very same pane elements across a switch and back", () => {
     renderGrid(FOUR);
     const before = screen.getByTestId("pane-Nova");

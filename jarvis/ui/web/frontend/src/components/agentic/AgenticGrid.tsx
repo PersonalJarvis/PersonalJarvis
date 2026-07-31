@@ -53,6 +53,7 @@ import {
   type PaneStatus,
   type SplitDirection,
 } from "./AgenticTerminal";
+import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
 import {
   AgentPickerMenu,
@@ -1868,6 +1869,10 @@ export function AgenticGrid({
             {session.terminals.map((term) => {
               const state = statuses[term.name];
               const headline = recaps[term.name]?.recap ?? term.recap;
+              const title =
+                headline?.trim() ||
+                term.last_prompt?.trim() ||
+                `${term.display_name || term.name} session`;
               const marked = selectedTerminals.has(term.name);
               const active = chatSelected === term.name;
               return (
@@ -1875,6 +1880,7 @@ export function AgenticGrid({
                   key={term.key}
                   type="button"
                   data-testid={`chat-rail-${term.name}`}
+                  aria-label={`${title}, ${term.display_name || term.agent}`}
                   aria-pressed={selectionMode ? marked : active}
                   onClick={() =>
                     // Selection mode borrows the rail: in chat view the grid's
@@ -1902,8 +1908,20 @@ export function AgenticGrid({
                         )}
                       />
                     )}
-                    <span className="min-w-0 flex-1 truncate text-xs font-semibold">
-                      {term.display_name || term.name}
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <span
+                        data-testid={`chat-rail-title-${term.name}`}
+                        className="min-w-0 truncate text-xs font-semibold"
+                        title={title}
+                      >
+                        {title}
+                      </span>
+                      <AgentMark
+                        agent={term.agent}
+                        label={term.display_name || term.agent}
+                        size="sm"
+                        className="h-5 w-5 rounded-[4px]"
+                      />
                     </span>
                     {/* Not "live". Every pane in this list is live, all day —
                         what the user is scanning for is which of them still
@@ -1914,11 +1932,6 @@ export function AgenticGrid({
                       {...activityOf(term)}
                     />
                   </span>
-                  {headline && (
-                    <span className="mt-1 block truncate text-[11px] leading-snug text-muted-foreground">
-                      {headline}
-                    </span>
-                  )}
                 </button>
               );
             })}
