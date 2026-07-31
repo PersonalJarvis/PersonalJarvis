@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sys
 import threading
 from collections.abc import AsyncIterator, Iterator
-from typing import Any
+from pathlib import Path
+from typing import Any, Final
 
 import numpy as np
 
@@ -153,6 +155,32 @@ def _multilingual_equivalent(model: str) -> str | None:
     return None
 
 
+def _is_english_only(model: str) -> bool:
+    """True when ``model`` is a checkpoint that only ever produces English."""
+    return _multilingual_equivalent(model) is not None
+
+
+#: The per-call ``language`` value that REQUESTS detection. Spelled out here (and
+#: in every other STT plugin) because plugins may not import from ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the model detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English;
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
+
 def _cpu_safe_compute_type(compute_type: str) -> str:
     """Downgrade CUDA-only compute types to a CPU-compatible one.
 
@@ -162,6 +190,119 @@ def _cpu_safe_compute_type(compute_type: str) -> str:
     if compute_type in ("float16", "int8_float16"):
         return "int8"
     return compute_type
+
+
+#: Package directories that ship the CUDA runtime DLLs ctranslate2 links
+#: against, relative to a site-packages root. ``torch`` carries a complete set
+#: (``cublas64_12.dll``, ``cudnn64_9.dll``, ...) and the standalone
+#: ``nvidia-*-cu12`` wheels carry them one subdirectory deeper, so a host with
+#: either is covered without depending on either.
+_CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, ...], ...]] = (
+    ("torch", "lib"),
+    ("nvidia", "cublas", "bin"),
+    ("nvidia", "cudnn", "bin"),
+)
+
+#: Loaded explicitly, in dependency order, once a directory holding them is
+#: found. Adding that directory to the search path is NOT enough on its own —
+#: measured: ctranslate2 still raised "Library cublas64_12.dll is not found or
+#: cannot be loaded" with the directory added, and succeeded once these were
+#: loaded by name. cuDNN is optional here (only some compute types reach it), so
+#: a miss on it never blocks the rest.
+_CUDA_DLL_PRELOAD: Final[tuple[str, ...]] = (
+    "cublasLt64_12.dll",  # cublas depends on it — must come first
+    "cublas64_12.dll",
+    "cudnn64_9.dll",
+)
+
+#: Set once the libraries are actually in the process, so repeated model builds
+#: do not re-walk site-packages.
+_cuda_dll_path_prepared = False
+
+
+def ensure_cuda_libraries_findable() -> None:
+    """Load the CUDA runtime DLLs ctranslate2 needs, on Windows. No-op elsewhere.
+
+    This does NOT decide, promise, or probe whether the GPU is usable (AP-25) —
+    it only removes a way for the question to be answered wrongly. The existing
+    ``cuda -> cpu`` self-heal in :meth:`FasterWhisperProvider._ensure_model`
+    remains the verdict, and a machine where this changes nothing lands there
+    exactly as before.
+
+    Why it is needed at all: on Windows ``cublas64_12.dll`` is resolved through
+    the DLL search path, and a pip-installed ``torch`` keeps its copy inside its
+    OWN package directory, which is not on that path. ctranslate2 then fails
+    with ``Library cublas64_12.dll is not found or cannot be loaded`` on a
+    machine that demonstrably has a working CUDA stack — measured on an RTX 5070
+    Ti with the same runtime reporting CUDA available. The configured GPU device
+    fell back to the CPU on every load: honest behaviour, wrong outcome. The
+    local recogniser ran at ~1.1x realtime, an 8 s dictation segment taking a
+    full 8 s, where the same model on the GPU runs at ~7.9x and that segment
+    takes 1.05 s (measured 2026-07-30, large-v3/int8_float16).
+
+    Both halves are load-bearing and were separated by measurement:
+    ``add_dll_directory`` alone did NOT fix it (the failure reproduced with the
+    directory added), and loading the libraries by name did — the directory
+    entry is what then lets their own dependencies resolve.
+
+    Deliberately does NOT import torch: only the spec's location is needed.
+    Importing it would cost seconds on a lazy path and collide with
+    :func:`inference_only_import_shield`, which stubs that exact module while
+    ctranslate2 loads.
+
+    Never raises. Every failure mode — not Windows, no such package, no DLLs in
+    it — is an ordinary state on some install and leaves the process untouched.
+    """
+    global _cuda_dll_path_prepared
+    if _cuda_dll_path_prepared:
+        return
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if add_dll_directory is None:
+        # POSIX resolves shared libraries through the loader's own search path,
+        # where a pip-installed CUDA runtime already lands. Nothing to do.
+        _cuda_dll_path_prepared = True
+        return
+    import ctypes
+    import importlib.util
+
+    for parts in _CUDA_DLL_PACKAGE_DIRS:
+        try:
+            spec = importlib.util.find_spec(parts[0])
+        except (ImportError, ValueError):
+            # ValueError is what find_spec raises for a module stubbed as None
+            # in sys.modules — exactly what the import shield does to torch.
+            # Leaving the flag unset means a later build tries again.
+            continue
+        origin = getattr(spec, "origin", None) if spec is not None else None
+        if not origin:
+            continue
+        directory = Path(origin).parent.joinpath(*parts[1:])
+        if not directory.is_dir() or not any(directory.glob("cublas64_*.dll")):
+            continue
+        with contextlib.suppress(OSError):
+            # Lets the loaded libraries find their own dependencies by name.
+            add_dll_directory(str(directory))
+        loaded = []
+        for name in _CUDA_DLL_PRELOAD:
+            library = directory / name
+            if not library.is_file():
+                continue
+            try:
+                ctypes.WinDLL(str(library))
+            except OSError as exc:
+                log.debug("could not load %s: %s", library, exc)
+                continue
+            loaded.append(name)
+        if not any(name.startswith("cublas64") for name in loaded):
+            continue  # the one that actually blocks ctranslate2 is still missing
+        log.info(
+            "CUDA runtime libraries loaded from %s (%s) — the GPU device is now "
+            "reachable. Whether it works is still decided by the model build.",
+            directory,
+            ", ".join(loaded),
+        )
+        _cuda_dll_path_prepared = True
+        return
 
 
 def _new_whisper_model(
@@ -185,6 +326,10 @@ def _new_whisper_model(
     internal cross-thread contention. Only the wake model sets this (it coexists
     with torch on the always-on loop); the utterance STT keeps auto threads.
     """
+    if device != "cpu":
+        # Before the engine loads, not after it failed: the load is where the
+        # DLL is resolved, and a miss there costs the GPU for the whole session.
+        ensure_cuda_libraries_findable()
     with inference_only_import_shield():
         from faster_whisper import WhisperModel
 
@@ -294,6 +439,19 @@ class FasterWhisperProvider:
         # OpenMP deadlock that hung the always-on wake transcribe (see
         # ``_new_whisper_model``); set only on the wake model.
         cpu_threads: int = 0,
+        # Whisper's temperature-fallback LADDER. The default re-decodes a window
+        # up to 6 times when a transcript looks degenerate, which is right for
+        # an utterance but ruinous for the ALWAYS-ON wake ear: one window
+        # measured 7.7 s on a fast box — inside the 8 s abandon cap, and past it
+        # on weaker hardware, where the timeout drops the model and forces a
+        # cold rebuild (extended deafness, the "I have to say it three times"
+        # mechanism). A single float pins one greedy pass.
+        #
+        # Deliberately a CONSTRUCTOR option, never a ``transcribe_pcm`` kwarg:
+        # the wake poll's call site has no ``TypeError`` escape, so an unknown
+        # kwarg would become ``recover()`` on every second poll — permanent
+        # deafness on any third-party STT provider.
+        temperature: float | list[float] | tuple[float, ...] | None = None,
     ) -> None:
         self._model_name = model
         self._device = device
@@ -339,6 +497,7 @@ class FasterWhisperProvider:
         self._initial_prompt = initial_prompt
         self._no_speech_threshold = no_speech_threshold
         self._cpu_threads = int(cpu_threads)
+        self._temperature = temperature
         self._model: Any = None  # lazy
         # Serialize the actual ctranslate2 inference. ``transcribe_pcm`` runs
         # ``model.transcribe`` in a worker thread (asyncio.to_thread), and the
@@ -350,6 +509,9 @@ class FasterWhisperProvider:
         # 2026-06-29) or return garbage. This lock makes the model call mutually
         # exclusive per instance so the two callers serialize instead of racing.
         self._infer_lock = threading.Lock()
+        # One-shot latch for the "auto-detect on an English-only model" warning
+        # below, so a long dictation cannot fill the log with the same line.
+        self._warned_english_only_autodetect = False
         # True once ``warm_up`` completed (model constructed + one priming
         # inference). Boot-time consumers (the rolling-whisper wake poll loop,
         # the heavy-backend gate) wait on this instead of poking the model
@@ -368,6 +530,11 @@ class FasterWhisperProvider:
     def is_warm(self) -> bool:
         """True when the model is constructed AND primed (safe to poll)."""
         return self._warm
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective local checkpoint used for transcription telemetry."""
+        return self._model_name
 
     @property
     def bias_prompt(self) -> str | None:
@@ -560,6 +727,19 @@ class FasterWhisperProvider:
             ignore_initial_prompt,
         )
 
+    def _warn_english_only_autodetect(self) -> None:
+        """Warn ONCE that this model cannot honour an auto-detect request."""
+        if getattr(self, "_warned_english_only_autodetect", False):
+            return
+        self._warned_english_only_autodetect = True
+        log.warning(
+            "STT model %r is English-only, so this auto-detect request can only "
+            "produce English. Set the recognition language to 'auto' (which picks "
+            "a multilingual model) or choose a multilingual model to transcribe "
+            "other languages.",
+            self._model_name,
+        )
+
     def _transcribe_sync(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
@@ -570,8 +750,20 @@ class FasterWhisperProvider:
             # A resample would be needed here — but we expect 16 kHz from capture
             raise ValueError(f"Expected 16 kHz, got {sample_rate} Hz")
 
-        # Per-call override takes precedence over self._language
-        effective_lang = language if language is not None else self._language
+        # Per-call override takes precedence over self._language. ``"auto"`` is
+        # an explicit REQUEST to detect, not an absent argument: it must clear a
+        # configured pin for THIS call, never inherit it. Without that, dictation
+        # in auto mode silently transcribed every language as whatever
+        # ``[stt].language`` happened to be (live bug 2026-07-28: German spoken,
+        # English written, because the recognition language was pinned to "en").
+        effective_lang = _detect_or(language, self._language)
+        if effective_lang is None and _is_english_only(self._model_name):
+            # A deliberate "en" pin keeps the fast English-only checkpoint (see
+            # __init__), so a later auto-detect call can still land on a model
+            # that only knows English. Say so once instead of quietly mangling
+            # the speech — the honest fix is a multilingual model or an "auto"
+            # recognition language.
+            self._warn_english_only_autodetect()
 
         # NON-BLOCKING acquire across BOTH the transcribe() call and the lazy
         # generator materialization (``list(segments_iter)`` runs the actual
@@ -591,12 +783,18 @@ class FasterWhisperProvider:
             self._ensure_model()  # rebuild a fresh model if recover() cleared it
             model = self._model
             assert model is not None
+            # Only pass ``temperature`` when pinned, so the default keeps
+            # faster-whisper's own ladder for utterance transcription.
+            decode_opts: dict[str, Any] = {}
+            if self._temperature is not None:
+                decode_opts["temperature"] = self._temperature
             segments_iter, info = model.transcribe(
                 audio_np,
                 language=effective_lang,
                 beam_size=self._beam_size,
                 vad_filter=self._vad_filter,
                 condition_on_previous_text=False,
+                **decode_opts,
                 # Echo-confirm support: the caller may run one UNPRIMED pass
                 # over the same audio to tell a genuine wake from the prompt
                 # echoing back on noise (2026-07-02 ghost activations).
@@ -630,12 +828,27 @@ class FasterWhisperProvider:
         else:
             confidence = 0.0
 
+        # The cleanup filter runs here, on the joined text only. Two things it
+        # deliberately does NOT touch:
+        #
+        # * ``seg_dicts`` keeps every segment exactly as decoded. Those carry
+        #   timings and per-segment probabilities for the flight recorder, and
+        #   re-aligning them to an edited string is not possible without
+        #   guessing where the edits landed.
+        # * ``raw_text`` keeps the joined string as decoded, because this ONE
+        #   instance is shared with the rolling-whisper wake poll loop and the
+        #   dictation lane. Wake verification has to judge what the recognizer
+        #   actually emitted, and dictation owns the user's filler switch —
+        #   both read ``raw_text`` and are unaffected by anything below.
+        from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
         return Transcript(
-            text=text,
+            text=clean_stt_text(text, language=info.language),
             language=info.language,
             confidence=confidence,
             is_partial=False,
             segments=seg_dicts,
+            raw_text=text,
         )
 
     async def stream_transcribe(

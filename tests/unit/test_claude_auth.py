@@ -8,6 +8,7 @@ depends on a real ``claude`` install or the user's real credentials.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -18,8 +19,10 @@ from jarvis.claude_auth import (
     ClaudeAuthService,
     ClaudeCliAuthSnapshot,
     _account_from_claude_json,
+    _is_default_config_dir,
     _parse_cli_auth_status,
     _subscription_label,
+    claude_account_identity,
 )
 
 
@@ -69,8 +72,8 @@ def _service(
 
 
 def test_account_from_claude_json_reads_email() -> None:
-    data = {"oauthAccount": {"emailAddress": "ruben@example.com", "displayName": "Ruben"}}
-    assert _account_from_claude_json(data) == ("ruben@example.com", "Ruben")
+    data = {"oauthAccount": {"emailAddress": "alex@example.com", "displayName": "Alex"}}
+    assert _account_from_claude_json(data) == ("alex@example.com", "Alex")
 
 
 @pytest.mark.parametrize("bad", [None, {}, {"oauthAccount": 5}])
@@ -118,16 +121,16 @@ def test_status_subscription_with_email(tmp_path, monkeypatch) -> None:
         tmp_path,
         monkeypatch,
         creds={"claudeAiOauth": {"accessToken": "sk-ant-oat01-x", "subscriptionType": "max"}},
-        claude_json={"oauthAccount": {"emailAddress": "ruben@example.com"}},
+        claude_json={"oauthAccount": {"emailAddress": "alex@example.com"}},
     )
     st = svc.status()
     assert st.installed is True
     assert st.connected is True
     assert st.mode == "subscription"
-    assert st.user_email == "ruben@example.com"
+    assert st.user_email == "alex@example.com"
     assert st.subscription_type == "max"
     assert st.account_label == "Claude Max"
-    assert "ruben@example.com" in st.message
+    assert "alex@example.com" in st.message
 
 
 def test_status_uses_native_cli_login_when_no_credentials_file(
@@ -255,7 +258,7 @@ def test_status_surfaces_api_key_present_even_under_subscription(
         tmp_path,
         monkeypatch,
         creds={"claudeAiOauth": {"accessToken": "sk-ant-oat01-x", "subscriptionType": "max"}},
-        claude_json={"oauthAccount": {"emailAddress": "ruben@example.com"}},
+        claude_json={"oauthAccount": {"emailAddress": "alex@example.com"}},
         api_key_present=True,
     )
     st = svc.status()
@@ -349,7 +352,7 @@ def test_to_dict_has_wire_fields(tmp_path, monkeypatch) -> None:
         tmp_path,
         monkeypatch,
         creds={"claudeAiOauth": {"accessToken": "sk-ant-oat01-x", "subscriptionType": "max"}},
-        claude_json={"oauthAccount": {"emailAddress": "ruben@example.com"}},
+        claude_json={"oauthAccount": {"emailAddress": "alex@example.com"}},
     )
     d = svc.status().to_dict()
     for key in (
@@ -373,7 +376,7 @@ def test_status_never_logs_secret(tmp_path, monkeypatch, caplog) -> None:
         tmp_path,
         monkeypatch,
         creds={"claudeAiOauth": {"accessToken": "sk-ant-oat01-SECRET", "subscriptionType": "max"}},
-        claude_json={"oauthAccount": {"emailAddress": "ruben@example.com"}},
+        claude_json={"oauthAccount": {"emailAddress": "alex@example.com"}},
     )
     with caplog.at_level("DEBUG"):
         svc.status()
@@ -408,6 +411,42 @@ def test_start_login_uses_modern_auth_command(monkeypatch) -> None:
         "--claudeai",
     ]
     assert captured["kwargs"] == {"title": "Claude sign-in"}
+
+
+def test_login_argv_targets_the_accounts_email_when_the_cli_can(monkeypatch) -> None:
+    """`--email` aims the browser flow at the seat being signed in.
+
+    Without it, a browser holding a live claude.com session silently
+    re-authorizes THAT account — two subscription rows on one plan.
+    """
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(
+        svc,
+        "_auth_login_help",
+        lambda _binary: "Options:\n  --claudeai\n  --email <email>  Pre-populate",
+    )
+    assert svc._login_argv("/opt/claude", email="work@example.com") == [
+        "/opt/claude",
+        "auth",
+        "login",
+        "--claudeai",
+        "--email",
+        "work@example.com",
+    ]
+
+
+def test_login_argv_omits_email_when_the_cli_does_not_advertise_it(monkeypatch) -> None:
+    """A release with `auth login` but no `--email` must not be handed the flag."""
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(
+        svc, "_auth_login_help", lambda _binary: "Options:\n  --claudeai"
+    )
+    assert svc._login_argv("/opt/claude", email="work@example.com") == [
+        "/opt/claude",
+        "auth",
+        "login",
+        "--claudeai",
+    ]
 
 
 def test_start_login_old_cli_uses_bare_first_run(monkeypatch) -> None:
@@ -551,3 +590,96 @@ def test_logout_uses_cli_native_credential_store(
 
     assert svc.logout_blocking() == (True, None)
     assert calls == [["/opt/claude", "auth", "logout"]]
+
+
+# -- identity resolution: the freshest file wins -------------------------
+# 2026-07-27: the switcher showed one subscription's email while every pane
+# actually ran on another. Two files can name the account for the default
+# config dir, and the abandoned one was preferred purely because it came first
+# in a hand-written list — it had not been touched in ten days.
+
+
+def _write_identity(path: Path, email: str, *, mtime: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"oauthAccount": {"emailAddress": email}}), encoding="utf-8"
+    )
+    os.utime(path, (mtime, mtime))
+
+
+def test_identity_prefers_the_freshest_file_not_the_first_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead in-dir copy must not outrank the file the CLI keeps current."""
+    home = tmp_path / "home"
+    config_dir = home / ".claude"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    _write_identity(config_dir / ".claude.json", "abandoned@example.com", mtime=1_000_000)
+    _write_identity(home / ".claude.json", "current@example.com", mtime=2_000_000)
+
+    email, _name = claude_account_identity(config_dir)
+    assert email == "current@example.com"
+
+
+def test_identity_still_reads_an_in_dir_file_when_it_is_the_fresh_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rule is "freshest", not "always the home file" — it works both ways."""
+    home = tmp_path / "home"
+    config_dir = home / ".claude"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    _write_identity(config_dir / ".claude.json", "current@example.com", mtime=2_000_000)
+    _write_identity(home / ".claude.json", "abandoned@example.com", mtime=1_000_000)
+
+    email, _name = claude_account_identity(config_dir)
+    assert email == "current@example.com"
+
+
+def test_a_custom_config_dir_never_borrows_the_default_accounts_email(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An added account showing the default login's email is the core defect.
+
+    Every row would name the same person, which is exactly how a user ends up
+    switching to a subscription they are not actually on.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    _write_identity(home / ".claude.json", "default@example.com", mtime=9_000_000)
+
+    custom = tmp_path / "accounts" / "second-seat"
+    custom.mkdir(parents=True)
+
+    email, name = claude_account_identity(custom)
+    assert email is None and name is None
+
+
+def test_a_custom_config_dir_reports_its_own_email(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    _write_identity(home / ".claude.json", "default@example.com", mtime=9_000_000)
+
+    custom = tmp_path / "accounts" / "second-seat"
+    _write_identity(custom / ".claude.json", "second@example.com", mtime=1_000)
+
+    email, _name = claude_account_identity(custom)
+    assert email == "second@example.com"
+
+
+def test_the_default_dir_is_recognised_without_a_hardcoded_separator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Built from Path.home(), so the home fallback is not Windows-only.
+
+    A hand-written "~/.claude" string is a per-OS guess about the separator;
+    this repo ships the same behaviour on macOS and Linux (CLAUDE.md §3).
+    """
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    assert _is_default_config_dir(home / ".claude") is True
+    assert _is_default_config_dir(tmp_path / "elsewhere") is False

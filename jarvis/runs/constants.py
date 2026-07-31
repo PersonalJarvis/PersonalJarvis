@@ -69,6 +69,94 @@ TRANSCRIPT_ROLES: Final[tuple[str, ...]] = (
     ROLE_USER, ROLE_JARVIS, ROLE_SYSTEM, ROLE_TOOL, ROLE_ERROR,
 )
 
+# --- Raw-event lanes (the developer event stream) ---------------------
+# The Run Inspector's raw stream shows EVERY persisted bus event of a turn.
+# A flat list of 200 rows is unreadable, so each event kind is assigned one
+# lane the UI can colour and filter by. An unknown kind degrades to
+# EVENT_CAT_SYSTEM — never an error (BUG-008 string contract).
+EVENT_CAT_LIFECYCLE: Final[str] = "lifecycle"  # session/turn boundaries, wake, state
+EVENT_CAT_SPEECH: Final[str] = "speech"        # STT in, TTS out, audio marks
+EVENT_CAT_BRAIN: Final[str] = "brain"          # provider/model/tokens/routing
+EVENT_CAT_TOOL: Final[str] = "tool"            # tool + CLI calls and their approval
+EVENT_CAT_AGENT: Final[str] = "agent"          # Jarvis-Agent / harness / mission
+EVENT_CAT_VISION: Final[str] = "vision"        # Computer-Use observe/plan/act/verify
+EVENT_CAT_LATENCY: Final[str] = "latency"      # measured spans
+EVENT_CAT_ERROR: Final[str] = "error"          # errors, denials, budget stops
+EVENT_CAT_SYSTEM: Final[str] = "system"        # everything else
+
+RUN_EVENT_CATEGORIES: Final[tuple[str, ...]] = (
+    EVENT_CAT_LIFECYCLE, EVENT_CAT_SPEECH, EVENT_CAT_BRAIN, EVENT_CAT_TOOL,
+    EVENT_CAT_AGENT, EVENT_CAT_VISION, EVENT_CAT_LATENCY, EVENT_CAT_ERROR,
+    EVENT_CAT_SYSTEM,
+)
+
+# kind -> lane. Kinds absent here fall back to EVENT_CAT_SYSTEM.
+EVENT_CATEGORY_BY_KIND: Final[dict[str, str]] = {
+    # lifecycle
+    "VoiceSessionStarted": EVENT_CAT_LIFECYCLE,
+    "VoiceSessionEnded": EVENT_CAT_LIFECYCLE,
+    "VoiceTurnStarted": EVENT_CAT_LIFECYCLE,
+    "VoiceTurnCompleted": EVENT_CAT_LIFECYCLE,
+    "RealtimeSessionReady": EVENT_CAT_LIFECYCLE,
+    "WakeWordDetected": EVENT_CAT_LIFECYCLE,
+    "HotkeyPressed": EVENT_CAT_LIFECYCLE,
+    "ListeningStarted": EVENT_CAT_LIFECYCLE,
+    "SystemStateChanged": EVENT_CAT_LIFECYCLE,
+    # speech
+    "TranscriptFinal": EVENT_CAT_SPEECH,
+    "TranscriptionUpdate": EVENT_CAT_SPEECH,
+    "UtteranceCaptured": EVENT_CAT_SPEECH,
+    "SpeechSpoken": EVENT_CAT_SPEECH,
+    "ResponseGenerated": EVENT_CAT_SPEECH,
+    "AudioOutFirst": EVENT_CAT_SPEECH,
+    # brain
+    "IntentClassified": EVENT_CAT_BRAIN,
+    "BrainTurnStarted": EVENT_CAT_BRAIN,
+    "BrainTurnCompleted": EVENT_CAT_BRAIN,
+    "BrainTTFT": EVENT_CAT_BRAIN,
+    "BrainProviderSwitched": EVENT_CAT_BRAIN,
+    "FrontierModelSwitched": EVENT_CAT_BRAIN,
+    "BrainToolsChanged": EVENT_CAT_BRAIN,
+    # tool
+    "ActionProposed": EVENT_CAT_TOOL,
+    "ActionApprovalRequired": EVENT_CAT_TOOL,
+    "ActionApproved": EVENT_CAT_TOOL,
+    "ActionExecuted": EVENT_CAT_TOOL,
+    "ToolCallStarted": EVENT_CAT_TOOL,
+    "ToolCallCompleted": EVENT_CAT_TOOL,
+    "CliInvoked": EVENT_CAT_TOOL,
+    "CliInvocationFinished": EVENT_CAT_TOOL,
+    # agent
+    "JarvisAgentTaskStarted": EVENT_CAT_AGENT,
+    "JarvisAgentReviewTriggered": EVENT_CAT_AGENT,
+    "JarvisAgentTaskCompleted": EVENT_CAT_AGENT,
+    "JarvisAgentAnnouncement": EVENT_CAT_AGENT,
+    "HarnessDispatched": EVENT_CAT_AGENT,
+    "HarnessCompleted": EVENT_CAT_AGENT,
+    "MissionCompleted": EVENT_CAT_AGENT,
+    # vision / Computer-Use
+    "ObservationCaptured": EVENT_CAT_VISION,
+    "VisionInjected": EVENT_CAT_VISION,
+    "ActionPlanned": EVENT_CAT_VISION,
+    "ActionVerified": EVENT_CAT_VISION,
+    "CUStepProfiled": EVENT_CAT_VISION,
+    "CUControlStarted": EVENT_CAT_VISION,
+    "CUControlEnded": EVENT_CAT_VISION,
+    # latency
+    "LatencySpan": EVENT_CAT_LATENCY,
+    # error
+    "ErrorOccurred": EVENT_CAT_ERROR,
+    "ActionDenied": EVENT_CAT_ERROR,
+    "BudgetWarning": EVENT_CAT_ERROR,
+    "BudgetExceeded": EVENT_CAT_ERROR,
+    "TaskCancelled": EVENT_CAT_ERROR,
+}
+
+# Hard cap on raw events surfaced per turn. A long Computer-Use turn can emit
+# thousands of steps; the payload stays bounded and the UI states plainly that
+# it truncated (never a silent cut).
+MAX_RAW_EVENTS_PER_TURN: Final[int] = 500
+
 __all__ = [
     "SLO_OK", "SLO_WARN", "SLO_BREACH", "SLO_STATUSES",
     "DECISION_TIER", "DECISION_ROUTE", "DECISION_RISK",
@@ -78,4 +166,9 @@ __all__ = [
     "OUTCOME_SUCCESS", "OUTCOME_PARTIAL", "OUTCOME_FAILED", "RUN_OUTCOMES",
     "ROLE_USER", "ROLE_JARVIS", "ROLE_SYSTEM", "ROLE_TOOL", "ROLE_ERROR",
     "TRANSCRIPT_ROLES",
+    "EVENT_CAT_LIFECYCLE", "EVENT_CAT_SPEECH", "EVENT_CAT_BRAIN",
+    "EVENT_CAT_TOOL", "EVENT_CAT_AGENT", "EVENT_CAT_VISION",
+    "EVENT_CAT_LATENCY", "EVENT_CAT_ERROR", "EVENT_CAT_SYSTEM",
+    "RUN_EVENT_CATEGORIES", "EVENT_CATEGORY_BY_KIND",
+    "MAX_RAW_EVENTS_PER_TURN",
 ]

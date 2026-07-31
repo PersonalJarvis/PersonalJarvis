@@ -1,8 +1,9 @@
 """Rewrite locale JSON files with clean UTF-8."""
 import json
 import os
+from pathlib import Path
 
-BASE = "C:/Users/Administrator/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src/i18n/locales"
+BASE = Path(__file__).resolve().parents[1] / "jarvis/ui/web/frontend/src/i18n/locales"
 
 # Single source of truth - English. Keys are mirrored in de.json and es.json.
 EN = {

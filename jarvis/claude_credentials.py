@@ -92,16 +92,22 @@ class ClaudeOAuthSnapshot:
     subscription_type: str | None = None
     config_dir: Path | None = None
     expires_s: float | None = None  # epoch seconds; None == no expiry recorded
+    #: A refresh token sits beside the bearer, so an ``"expired"`` login renews
+    #: itself the next time the CLI runs — "expired" then means "stale between
+    #: sessions", not "signed out". Status readers may report such a login as
+    #: signed in; token INJECTORS must not, because the stale bearer itself is
+    #: still a guaranteed 401 (only the CLI can redeem the refresh token).
+    refresh_token_present: bool = False
 
 
 def _parse_oauth_file(
     path: Path,
-) -> tuple[str, str | None, float | None] | None:
+) -> tuple[str, str | None, float | None, bool] | None:
     """Tolerant parse of one ``.credentials.json``.
 
-    Returns ``(access_token, subscription_type, expires_s)`` for a present
-    ``sk-ant-oat`` bearer, else ``None``. Only OAuth bearers count — a classic
-    API key in the bearer slot is not a subscription login.
+    Returns ``(access_token, subscription_type, expires_s, refresh_present)``
+    for a present ``sk-ant-oat`` bearer, else ``None``. Only OAuth bearers
+    count — a classic API key in the bearer slot is not a subscription login.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -120,7 +126,45 @@ def _parse_oauth_file(
     if isinstance(expires_at, (int, float)) and expires_at > 0:
         # `claude` writes epoch milliseconds; tolerate seconds defensively.
         expires_s = expires_at / 1000.0 if expires_at > 1e12 else float(expires_at)
-    return token, sub_type, expires_s
+    refresh = oauth.get("refreshToken")
+    refresh_present = isinstance(refresh, str) and bool(refresh.strip())
+    return token, sub_type, expires_s, refresh_present
+
+
+def claude_login_in(
+    config_dir: Path, *, now_fn: Callable[[], float] = time.time
+) -> ClaudeOAuthSnapshot:
+    """The login stored in ONE specific config dir, without cross-dir search.
+
+    The multi-account switcher (:mod:`jarvis.agent_accounts`) asks a different
+    question than :func:`freshest_claude_oauth`: not "where is the live login on
+    this machine" but "is THIS account signed in". Answering that with the
+    cross-dir scan would report a neighbouring account's healthy login as if it
+    belonged to the directory being asked about, and the UI would show a green
+    card for an account that cannot run anything.
+
+    Never raises; an unreadable or absent file is ``"absent"``.
+    """
+    parsed = _parse_oauth_file(config_dir / ".credentials.json")
+    if parsed is None:
+        return ClaudeOAuthSnapshot(status="absent", config_dir=config_dir)
+    token, sub_type, expires_s, refresh_present = parsed
+    if expires_s is not None and expires_s <= now_fn() + OAUTH_EXPIRY_SLACK_S:
+        return ClaudeOAuthSnapshot(
+            status="expired",
+            subscription_type=sub_type,
+            config_dir=config_dir,
+            expires_s=expires_s,
+            refresh_token_present=refresh_present,
+        )
+    return ClaudeOAuthSnapshot(
+        status="valid",
+        access_token=token,
+        subscription_type=sub_type,
+        config_dir=config_dir,
+        expires_s=expires_s,
+        refresh_token_present=refresh_present,
+    )
 
 
 def freshest_claude_oauth(*, now_fn: Callable[[], float] = time.time) -> ClaudeOAuthSnapshot:
@@ -143,7 +187,7 @@ def freshest_claude_oauth(*, now_fn: Callable[[], float] = time.time) -> ClaudeO
         parsed = _parse_oauth_file(config_dir / ".credentials.json")
         if parsed is None:
             continue
-        token, sub_type, expires_s = parsed
+        token, sub_type, expires_s, refresh_present = parsed
         if expires_s is None or expires_s > horizon:
             sort_key = float("inf") if expires_s is None else expires_s
             if best_valid is None or sort_key > best_valid[0]:
@@ -155,6 +199,7 @@ def freshest_claude_oauth(*, now_fn: Callable[[], float] = time.time) -> ClaudeO
                         subscription_type=sub_type,
                         config_dir=config_dir,
                         expires_s=expires_s,
+                        refresh_token_present=refresh_present,
                     ),
                 )
         elif best_expired is None or expires_s > best_expired[0]:
@@ -165,6 +210,7 @@ def freshest_claude_oauth(*, now_fn: Callable[[], float] = time.time) -> ClaudeO
                     subscription_type=sub_type,
                     config_dir=config_dir,
                     expires_s=expires_s,
+                    refresh_token_present=refresh_present,
                 ),
             )
     if best_valid is not None:
@@ -178,5 +224,6 @@ __all__ = [
     "OAUTH_EXPIRY_SLACK_S",
     "ClaudeOAuthSnapshot",
     "claude_config_dirs",
+    "claude_login_in",
     "freshest_claude_oauth",
 ]

@@ -23,9 +23,9 @@ from jarvis.missions.events import MissionApproved
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 
 _LONG_ANSWER = (
-    "To relocate to San Francisco you need a work visa, housing secured early, "
-    "a US bank account, and an SSN as soon as you arrive. Budget for a high cost "
-    "of living and start the visa process months ahead of the move."
+    "To launch a technical conference you need a venue, a published schedule, "
+    "confirmed speakers, tested registration, and attendee support ready before "
+    "opening day."
 )
 
 
@@ -99,12 +99,12 @@ async def test_approve_materialises_report_for_text_answer(orch: Kontrollierer) 
     orch._task_answers[mission_id] = [_LONG_ANSWER]
 
     await orch._approve_mission(
-        mission_id, _FakePlan("a relocation guide"), prompt="Relocate to San Francisco"
+        mission_id, _FakePlan("a conference launch guide"), prompt="Launch a technical conference"
     )
 
     reports = list(mdir.rglob("artifacts/files/*.md"))
     assert reports, "approve must materialise a report for a text-answer mission"
-    assert "work visa" in reports[0].read_text(encoding="utf-8")
+    assert "published schedule" in reports[0].read_text(encoding="utf-8")
 
 
 async def test_approve_no_duplicate_report_when_file_deliverable_exists(
@@ -187,7 +187,7 @@ async def test_approve_mirrors_materialised_report_to_user_folder(
     o._task_answers[mission_id] = [_LONG_ANSWER]
 
     await o._approve_mission(
-        mission_id, _FakePlan(), prompt="Relocate to San Francisco"
+        mission_id, _FakePlan(), prompt="Launch a technical conference"
     )
 
     reports = list(mdir.rglob("artifacts/files/*.md"))

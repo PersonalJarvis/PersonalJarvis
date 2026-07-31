@@ -37,6 +37,11 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
     AudioOutFirst,
+    DictationCompleted,
+    DictationRefused,
+    DictationStarted,
+    DictationTranscribing,
+    DictationTranscript,
     JarvisAgentBackgroundCompleted,
     ListeningStarted,
     OrbResetRequested,
@@ -74,6 +79,51 @@ SALUTE_DURATION_S = 1.1
 # IDLE, without a SPEAKING state in between (e.g. an STT silence timeout):
 # the user should still see the mascot briefly instead of it vanishing instantly.
 GRACE_HIDE_DURATION_S = 1.5
+
+# Hard ceiling on how long a dictation may keep the bar lit without a
+# ``DictationCompleted``. The pipeline caps a recording at ``dictation.
+# max_seconds`` (300 s default, and a configured 0 falls back to that same
+# default, so the cap can never be switched off); this is that ceiling plus a
+# generous transcription margin. It exists ONLY as a fail-safe: if the
+# completion event is lost — a crashed session, a dropped subscriber, a
+# surface swap mid-dictation — the bar must still come down on its own rather
+# than stay lit with no visible cause and no way back. A deadline expires; a
+# latch you forget to clear does not.
+DICTATION_MAX_VISIBLE_S = 360.0
+
+# How long a refused dictation stays on screen before the surface goes back to
+# whatever it was doing. Long enough to be noticed and read on a surface that
+# renders the sentence (the mascot's bubble), short enough that it never becomes
+# a state the user has to dismiss — this is an answer to a keypress, not a
+# notification. It must also comfortably outlast a repeated keypress so holding
+# the shortcut down does not strobe the surface.
+DICTATION_REFUSAL_DWELL_S = 3.0
+
+# Shown when a refusal arrives with no sentence in it. A refusal event with an
+# empty ``detail`` is a contract violation upstream, but the user still pressed
+# a key and still deserves to see that the key was heard and declined, so the
+# surface says the one thing that is true without the detail.
+DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
+
+# How long the bar stays up after a dictation that came back with NOTHING —
+# silence, or a provider that refused. Short, and deliberately not zero: the
+# recording look was on screen a moment ago, so vanishing without a beat is
+# indistinguishable from "the shortcut did nothing", which is the exact
+# failure shape the dictation lane exists to end.
+DICTATION_NOTHING_BACK_DWELL_S = 1.5
+
+# How long an outcome that needs ACTING on stays up (the OS blocked the paste
+# and the text is on the clipboard; a custom paste chord was sent to an app
+# that may not bind it). Long enough to read a full sentence.
+DICTATION_OUTCOME_DWELL_S = 4.0
+
+# Outcomes the bar has nothing to add to: the words reached the field the user
+# is already looking at (``inserted``), the app's own input (``chat``), or the
+# user called the dictation off themselves (``cancelled``). Nothing is in
+# flight and nothing needs saying, so the bar stands down AT ONCE — see
+# ``_on_dictation_completed``. Every other outcome carries either a sentence to
+# act on or the news that nothing came back, and gets a dwell.
+DICTATION_QUIET_OUTCOMES: tuple[str, ...] = ("inserted", "chat", "cancelled")
 
 # Long enough to cover an entire THINKING/SPEAKING phase. The transcript
 # bubble is explicitly hidden when the state leaves voice mode (→ IDLE/ERROR).
@@ -189,6 +239,19 @@ class OrbBusBridge:
         self._hide_on_idle = hide_on_idle
         self._hangup_task: asyncio.Task | None = None
         self._completion_task: asyncio.Task | None = None
+        # Dictation lane (separate from every voice state — see
+        # _on_dictation_started): True while a dictation is painting the bar.
+        self._dictation_active = False
+        # True once recording stopped and the transcription is running, so a
+        # late partial transcript cannot drag the bar back to the mic look.
+        self._dictation_transcribing = False
+        self._dictation_standdown_task: asyncio.Task | None = None
+        # Expiring fail-safe, armed on DictationStarted and cancelled on
+        # DictationCompleted. If the completion event never arrives (a crashed
+        # session, a dropped subscriber) the bar would otherwise stay lit
+        # forever with no way back — the "it never goes away and I can't tell
+        # why" failure class. A deadline cannot stick the way a latch can.
+        self._dictation_failsafe_task: asyncio.Task | None = None
         self._rng = random.Random()
         self._listening_transcript_text = ""
         # True while the pipeline is mid-completion-buffer (paused on an
@@ -292,6 +355,29 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
+            # Dictation is a SEPARATE lane from the voice states: it raises no
+            # SystemStateChanged, so the four voice modes stay exactly as they
+            # are and dictation gets its own coarse modes instead of borrowing
+            # one. The full lifecycle, in order:
+            #   DictationStarted      → the bar RISES, listening look, live level
+            #   DictationTranscript   → the live text in the bubble
+            #   DictationTranscribing → recording stopped, working look
+            #   DictationCompleted    → outcome, then stand down and close
+            #   DictationRefused      → (instead of all of the above) the reason,
+            #                           briefly, then hand the surface back
+            # The reveal hangs off ``DictationStarted`` and nothing else: the
+            # first transcript costs a partial interval plus an STT round-trip
+            # and never arrives at all for a short press, so a transcript-driven
+            # reveal meant the bar came up late or not at all.
+            self._bus.subscribe(DictationStarted, self._on_dictation_started)
+            self._bus.subscribe(DictationTranscript, self._on_dictation_transcript)
+            self._bus.subscribe(DictationTranscribing, self._on_dictation_transcribing)
+            self._bus.subscribe(DictationCompleted, self._on_dictation_completed)
+            # ...and the fifth outcome: the dictation never started at all. A
+            # refusal is the ONE dictation event with no visual of its own
+            # before this subscription existed, which is precisely why pressing
+            # the shortcut could do nothing at all — see _on_dictation_refused.
+            self._bus.subscribe(DictationRefused, self._on_dictation_refused)
             # Boot visibility gate: a genuine voice-ready signal releases the
             # hidden Jarvis Bar. Degraded UI-only ready signals do not.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
@@ -454,6 +540,17 @@ class OrbBusBridge:
         preview without forging an authoritative session state.
         """
         if event.active:
+            if self._dictation_active:
+                # A candidate is an UNVERIFIED, retractable preview; a running
+                # dictation is a real thing the user started. Letting the
+                # preview repaint over it makes the dictation bar flicker into
+                # the wake look and back. The authoritative signals
+                # (WakeWordDetected / VoiceSessionStarted) are deliberately NOT
+                # gated, so a genuine session still takes the bar — and the
+                # dictation lane cannot deafen the preview for good because it
+                # carries its own expiring fail-safe.
+                log.debug("OrbBridge wake preview skipped: a dictation owns the bar")
+                return
             # Incoming speech candidate — cancel any pending idle hide and pop
             # the bar. _last_state untouched (see docstring).
             if not self._wake_candidate_active:
@@ -532,6 +629,14 @@ class OrbBusBridge:
         """
         log.info("OrbBridge._on_session_started: session=%s", event.session_id)
         self._voice_session_active = True
+        # A real session outranks the dictation lane. Releasing it here means a
+        # dictation flag that somehow survived its own completion cannot follow
+        # the user into the next voice turn (stray mic-level routing, a
+        # suppressed wake preview) — the session is the authoritative owner.
+        self._dictation_active = False
+        self._dictation_transcribing = False
+        self._cancel_dictation_failsafe()
+        self._cancel_dictation_standdown()
         prev_state = self._last_state
         self._suppress_show_until_session = False
         was_preview = self._wake_candidate_active
@@ -640,12 +745,6 @@ class OrbBusBridge:
         # orb is clickable, so the loop is always captured in time.
         self._remember_loop()
         state = event.new_state
-        if state == "LISTENING":
-            # An authoritative supervisor edge can arrive after a late bridge
-            # attach even if VoiceSessionStarted itself was missed.
-            self._voice_session_active = True
-        elif state in {"IDLE", "ERROR", "PAUSED"}:
-            self._voice_session_active = False
         if state != "IDLE":
             # Any authoritative non-idle state supersedes a visual-only wake
             # preview. Keeping the latch beyond this edge could let a late mic
@@ -671,6 +770,23 @@ class OrbBusBridge:
                 state,
             )
             return
+        # The live-session mirror is updated only for states that survived the
+        # suppression latch above, and deliberately so. A stray LISTENING from
+        # an in-flight turn after a hangup is, by this handler's own definition,
+        # NOT a live session — but it used to set this flag anyway, and nothing
+        # ever cleared it again on a configuration where the session machine
+        # never returns to IDLE by itself (``session_idle_timeout_s = 0`` with no
+        # hangup key). The flag then permanently outranked the dictation lane,
+        # so every dictation reveal after that point was dropped with only a
+        # ``log.debug`` behind it: the shortcut did nothing, visibly or
+        # otherwise, until the app was restarted. Suppressed states must not
+        # resurrect the mirror any more than they resurrect the mascot.
+        if state == "LISTENING":
+            # An authoritative supervisor edge can arrive after a late bridge
+            # attach even if VoiceSessionStarted itself was missed.
+            self._voice_session_active = True
+        elif state in {"IDLE", "ERROR", "PAUSED"}:
+            self._voice_session_active = False
         # No-op if this isn't a real transition (the supervisor should already
         # filter this, but defensive programming)
         if state == self._last_state:
@@ -881,6 +997,388 @@ class OrbBusBridge:
         elif state in ("THINKING", "SPEAKING"):
             self._show_listening_transcript(self._last_response_text or THINKING_BUBBLE_TEXT)
 
+    def _show_dictation_mode(self, mode: str) -> None:
+        """Drive the current surface into a dictation coarse mode.
+
+        Every surface this app ships renders both dictation modes natively: the
+        JarvisBar as the equalizer and the orbital core, the mascot orb as a
+        mic-driven halo and a steady work pulse (``overlay.mode_energy``). So on
+        every display style a dictation is actually visible, which is the whole
+        point of the feature.
+
+        The fallback below is for a surface this bridge does not own — an older
+        or third-party one that only knows the four voice modes. For such a
+        surface the honest equivalent of "recording" is its listening look,
+        which on the mascot carries no destructive affordance (it has no
+        close-X — only drag and the four-click mute gesture), so falling back
+        cannot arm one.
+
+        It only works because a surface reports the rejection SYNCHRONOUSLY, on
+        this thread. A surface that queues the call onto its own UI thread and
+        validates there returns "successfully" and drops the mode later, where
+        no exception can reach us — the failure that left the mascot showing
+        nothing at all. ``OrbOverlay.show`` validates before it queues for
+        exactly this reason.
+
+        A surface that rejects both modes is left alone: a missing visual is
+        cosmetic, and it must never break the bus.
+        """
+        try:
+            self._orb.show(mode=mode)
+            return
+        except Exception as exc:  # noqa: BLE001 — a surface hiccup is cosmetic
+            log.debug("OrbBridge dictation mode %r not supported: %s", mode, exc)
+        try:
+            self._orb.show(mode="listen")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OrbBridge dictation fallback show suppressed: %s", exc)
+
+    async def _on_dictation_started(self, event: DictationStarted) -> None:
+        """The dictation key went down — raise the bar NOW.
+
+        This is the whole point of the event: the bar must rise at key-down
+        speed, exactly like it does on a wake word, instead of waiting for the
+        first partial transcript (a partial interval plus an STT round-trip —
+        and for a short press no partial ever arrives, so the bar never came up
+        at all).
+
+        Mirrors ``_on_session_started`` minus every voice-state mutation:
+        ``_last_state`` stays whatever it is, because dictation is not a voice
+        turn and must not forge one. Deliberately NOT gated on
+        ``_last_state == "IDLE"`` either — dictation never drives that label, so
+        a stale value left by a missed IDLE edge would block every dictation bar
+        with no visible cause (the BUG-037 failure shape). The authoritative
+        ``_voice_session_active`` flag (set and cleared by the session lifecycle
+        events) is the only thing that outranks a dictation, and the whole lane
+        uses that same guard so its four handlers cannot disagree.
+
+        The boot startup gate still applies: a surface that has not been
+        released by ``VoiceBootStatus`` stores the mode and stays withdrawn,
+        exactly as it does for a wake word (AP-26).
+        """
+        if self._voice_session_active:
+            log.debug("OrbBridge dictation reveal skipped: a voice session owns the bar")
+            return
+        log.info("OrbBridge._on_dictation_started: target=%s", getattr(event, "target", ""))
+        self._cancel_dictation_standdown()
+        self._dictation_active = True
+        self._dictation_transcribing = False
+        # A fresh input affordance supersedes stale output recency from a
+        # preceding turn, and the mic envelope must start from silence so the
+        # bars only ever show what is said AFTER the bar is visible.
+        self._last_tts_level_t = 0.0
+        self._clear_input_level()
+        self._cancel_idle_scheduler()
+        self._show_dictation_mode("dictate")
+        self._show_listening_transcript("")
+        self._arm_dictation_failsafe()
+
+    async def _on_dictation_transcript(self, event: DictationTranscript) -> None:
+        """Show the live dictation text on the bar.
+
+        Dictation runs in its own lane — it never raises SystemStateChanged, so
+        none of the voice-state handling above sees it and none of the four
+        voice modes change meaning. It gets its own coarse modes, which the
+        renderer paints as the equalizer while recording (the mic level is being
+        fed, so the bars actually move) and as the orbital core while the text
+        is being produced.
+
+        A live voice session ALWAYS wins: dictation cannot start while one is
+        running, but a race at the boundary must not repaint a real turn.
+
+        The reveal itself belongs to ``_on_dictation_started``; this handler
+        only re-asserts the recording look for a dictation that is genuinely
+        still recording. Once ``DictationTranscribing`` has arrived it must NOT
+        drag the bar back to the mic look — a final partial can land after the
+        key is released.
+
+        Same guard as the rest of the lane (``_voice_session_active`` only, not
+        ``_last_state``) so the four dictation handlers can never disagree about
+        who owns the bar.
+        """
+        if self._voice_session_active:
+            return
+        if getattr(event, "is_final", False):
+            # The completion handler owns the end of a dictation — it knows the
+            # outcome and whether anything needs saying.
+            return
+        text = (event.text or "").strip()
+        if not self._dictation_transcribing:
+            self._show_dictation_mode("dictate")
+            if not self._dictation_active:
+                # A transcript with no preceding DictationStarted (an older
+                # pipeline, a lost event): this reveal has to arm the fail-safe
+                # itself, or a lane opened here would have nothing bounding it.
+                self._dictation_active = True
+                self._arm_dictation_failsafe()
+        self._show_listening_transcript(text)
+
+    async def _on_dictation_transcribing(self, _event: DictationTranscribing) -> None:
+        """Recording stopped, the transcription is running — show the work.
+
+        The mic feed has ended here, so leaving the equalizer up would claim the
+        bar is still listening when it is not. The dedicated
+        ``dictate_transcribing`` mode renders the orbital core instead, and
+        keeps the click surface inert exactly like the recording mode does.
+        """
+        if not self._dictation_active or self._voice_session_active:
+            return
+        self._dictation_transcribing = True
+        self._show_dictation_mode("dictate_transcribing")
+
+    async def _on_dictation_completed(self, event: DictationCompleted) -> None:
+        """Dictation finished — leave the working look AT ONCE, then stand down.
+
+        The thinking core represents work in flight. By the time this event
+        arrives there is none: the transcription is done and the text has
+        already been pasted into the user's field. Leaving
+        ``dictate_transcribing`` up for the dwell is what made the bar keep
+        "thinking" for one and a half seconds AFTER the words had visibly
+        landed — a claim about the app's state that the screen already
+        contradicted (reported 2026-07-29). So the mode is resolved here, by
+        the outcome, and never left over from the previous phase:
+
+        * The words arrived (``inserted`` / ``chat``) or the user cancelled →
+          nothing is left to say and the text speaks for itself, so the bar
+          goes down immediately.
+        * ``detail`` is set → something needs ACTING on (the OS blocked the
+          paste; a custom chord was sent to an app that may ignore it). The
+          notice look says "here is what happened" instead of "still working",
+          and it stays up long enough to read.
+        * Nothing came back at all (``empty`` / ``failed``) → the same notice
+          look, briefly. A dictation that vanishes in silence is
+          indistinguishable from a dead shortcut.
+        """
+        if not getattr(self, "_dictation_active", False):
+            return
+        self._dictation_active = False
+        self._dictation_transcribing = False
+        self._cancel_dictation_failsafe()
+        detail = (event.detail or "").strip()
+        outcome = (event.outcome or "").strip()
+        delivered = not detail and outcome in DICTATION_QUIET_OUTCOMES
+        # A delivered dictation gets NO echo bubble: the words are already in
+        # the field the user is looking at, and a bubble raised for one frame
+        # before the stand-down clears it is a flicker, not a receipt.
+        self._show_listening_transcript("" if delivered else (detail or (event.text or "").strip()))
+        # Whatever raised the bar must be able to lower it. This guard is
+        # deliberately the SAME one ``_on_dictation_started`` uses — an
+        # asymmetric pair (raise on any state, lower only from IDLE) would leave
+        # the bar lit whenever ``_last_state`` was stale, which is a real
+        # possibility because dictation never touches the voice state machine.
+        if self._voice_session_active:
+            return
+        if delivered:
+            delay = 0.0
+        else:
+            self._show_notice_mode()
+            delay = (
+                DICTATION_OUTCOME_DWELL_S if detail else DICTATION_NOTHING_BACK_DWELL_S
+            )
+        try:
+            self._schedule_dictation_standdown(delay)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("OrbBridge dictation stand-down suppressed: %s", exc)
+
+    async def _on_dictation_refused(self, event: DictationRefused) -> None:
+        """The dictation shortcut was pressed and DECLINED — say so on screen.
+
+        This is the whole reported bug. Every refusal used to end as a
+        ``log.info`` in a file the desktop app cannot open (CLAUDE.md §9: the
+        window is a WebView with no dev tools), so on the maintainer's
+        configuration — one wake word, ``session_idle_timeout_s = 0``, no hangup
+        key — a voice conversation stayed open all day and from then on EVERY
+        press of the dictation key was refused in complete silence. Nothing on
+        the bar, no sound, no toast: indistinguishable from a dead shortcut.
+
+        Deliberately NOT gated on ``_voice_session_active``, unlike the rest of
+        the lane. The single most common refusal reason IS a live voice session
+        (``voice_session_active``), so that guard would swallow exactly the
+        message this event exists to deliver and reproduce the invisible refusal
+        one layer up. It is also why the stand-down below RESTORES the session's
+        look instead of standing the surface down to idle: a refusal is normally
+        raised while a conversation legitimately owns the surface, and taking
+        that conversation off screen to report a declined keypress would trade
+        one invisible state for another.
+        """
+        reason = (event.reason or "").strip() or "unspecified"
+        detail = (event.detail or "").strip() or DICTATION_REFUSAL_FALLBACK_TEXT
+        log.info("OrbBridge._on_dictation_refused: reason=%s — %s", reason, detail)
+        # Nothing is recording: a refusal means the session never opened. Drop
+        # the lane's latches and both of its timers so a stale one can neither
+        # fight this notice nor close the surface out from under it.
+        self._dictation_active = False
+        self._dictation_transcribing = False
+        self._cancel_dictation_failsafe()
+        self._cancel_dictation_standdown()
+        self._show_notice_mode()
+        self._show_listening_transcript(detail)
+        self._schedule_notice_standdown(DICTATION_REFUSAL_DWELL_S)
+
+    def _show_notice_mode(self) -> None:
+        """Drive the current surface into its brief "that did not happen" look.
+
+        Unlike ``_show_dictation_mode`` there is deliberately NO degradation to
+        the listening look for a surface that rejects the mode. A listening look
+        on a REFUSED dictation is not an approximation, it is the opposite of
+        the truth: it would claim the microphone is recording at the exact
+        moment nothing is. Such a surface is simply left as it was and still
+        receives the sentence through the transcript line.
+
+        Like the dictation modes, this relies on the surface validating
+        SYNCHRONOUSLY (``OrbOverlay.show`` raises before it queues); a surface
+        that validates on its own UI thread returns successfully and drops the
+        mode where no exception can reach us.
+        """
+        try:
+            self._orb.show(mode="notice")
+        except Exception as exc:  # noqa: BLE001 — a missing look is cosmetic
+            log.debug("OrbBridge notice mode unsupported by this surface: %s", exc)
+
+    def _current_voice_mode(self) -> str:
+        """The coarse mode the voice lane would be painting right now.
+
+        Mirrors ``_on_state``'s mapping exactly, SPEAKING included — that
+        handler also paints ``think`` there, because the surface decides for
+        itself when real audio takes the equalizer over (``AudioOutFirst`` /
+        ``renderer.visual_mode``), not the state label.
+        """
+        state = self._last_state
+        if state in ("LISTENING", "WAITING_FOR_COMPLETION"):
+            return "listen"
+        if state in ("THINKING", "SPEAKING"):
+            return "think"
+        return "idle"
+
+    def _schedule_notice_standdown(self, delay_s: float) -> None:
+        """Clear a notice after its dwell and put the surface back where it was.
+
+        Reuses the dictation stand-down slot on purpose, so the two can never
+        both be pending: a refusal ends any dictation lane, and a real dictation
+        starting afterwards cancels the notice through the same
+        ``_cancel_dictation_standdown`` every other handler already calls.
+
+        The restore is the part that differs from the dictation stand-down. That
+        one always returns the surface to idle, which is right when a dictation
+        it revealed has finished. A notice is usually raised OVER something —
+        most often the live voice session that caused the refusal — so it must
+        hand the surface back rather than close it.
+        """
+        self._cancel_dictation_standdown()
+
+        async def _standdown() -> None:
+            try:
+                await asyncio.sleep(delay_s)
+            except asyncio.CancelledError:
+                return
+            if self._dictation_active:
+                # A real dictation started inside the dwell and owns the
+                # surface now — its own lane will stand it down.
+                return
+            self._show_listening_transcript("")
+            restore = self._current_voice_mode() if self._voice_session_active else "idle"
+            try:
+                if restore == "idle" and self._hide_on_idle:
+                    self._orb.hide()
+                else:
+                    self._orb.show(mode=restore)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OrbBridge notice stand-down repaint suppressed: %s", exc)
+
+        self._dictation_standdown_task = asyncio.create_task(
+            _standdown(), name="orb-notice-standdown"
+        )
+
+    def _cancel_dictation_standdown(self) -> None:
+        """Drop a pending stand-down so a new dictation is not closed by the
+        previous one's timer (press → release → press again inside the dwell)."""
+        task = getattr(self, "_dictation_standdown_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._dictation_standdown_task = None
+
+    def _cancel_dictation_failsafe(self) -> None:
+        task = getattr(self, "_dictation_failsafe_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._dictation_failsafe_task = None
+
+    def _arm_dictation_failsafe(self) -> None:
+        """Guarantee the dictation bar comes down even if nothing tells it to.
+
+        ``DictationCompleted`` normally ends the lane. This is the backstop for
+        when it does not arrive at all — the session crashed before publishing,
+        a subscriber was dropped, the surface was swapped mid-dictation. Without
+        it the bar would sit there lit forever with no visible cause and no way
+        back, which is the single worst failure shape this codebase has (the bar
+        is the only proof the app is alive). The deadline is far longer than any
+        real dictation, so it can never cut a genuine one short.
+        """
+        self._cancel_dictation_failsafe()
+
+        async def _expire() -> None:
+            try:
+                await asyncio.sleep(DICTATION_MAX_VISIBLE_S)
+            except asyncio.CancelledError:
+                return
+            if not self._dictation_active:
+                return
+            log.warning(
+                "OrbBridge dictation fail-safe fired after %.0fs — no completion "
+                "event arrived; standing the bar down.",
+                DICTATION_MAX_VISIBLE_S,
+            )
+            self._dictation_active = False
+            self._dictation_transcribing = False
+            if self._voice_session_active:
+                # A session took over and owns the bar — nothing to clean up.
+                return
+            # Stand down directly rather than through _schedule_dictation_
+            # standdown: that path also refuses when ``_last_state`` is not
+            # IDLE, and a stale state left by a missed edge is exactly the
+            # situation this fail-safe exists for.
+            self._show_listening_transcript("")
+            try:
+                if self._hide_on_idle:
+                    self._orb.hide()
+                else:
+                    self._orb.show(mode="idle")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OrbBridge dictation fail-safe repaint suppressed: %s", exc)
+
+        self._dictation_failsafe_task = asyncio.create_task(
+            _expire(), name="orb-dictation-failsafe"
+        )
+
+    def _schedule_dictation_standdown(self, delay_s: float) -> None:
+        """Return the bar to its resting look after a dictation."""
+        self._cancel_dictation_standdown()
+
+        async def _standdown() -> None:
+            try:
+                await asyncio.sleep(delay_s)
+            except asyncio.CancelledError:
+                return
+            # A NEW dictation or a real voice session has taken the bar in the
+            # meantime — it owns the look now. Deliberately NOT gated on
+            # ``_last_state``: dictation never touches the voice state machine,
+            # so a stale label there would strand the bar in the dictation look
+            # with nothing left to clear it (see _on_dictation_completed).
+            if self._dictation_active or self._voice_session_active:
+                return
+            self._show_listening_transcript("")
+            try:
+                if self._hide_on_idle:
+                    self._orb.hide()
+                else:
+                    self._orb.show(mode="idle")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OrbBridge dictation idle repaint suppressed: %s", exc)
+
+        self._dictation_standdown_task = asyncio.create_task(
+            _standdown(), name="orb-dictation-standdown"
+        )
+
     def _show_listening_transcript(self, text: str) -> None:
         show_transcript = getattr(self._orb, "show_listening_transcript", None)
         if not callable(show_transcript):
@@ -1045,7 +1543,13 @@ class OrbBusBridge:
         only when (a) NO TTS output is currently playing — Jarvis's voice owns
         the bars while it speaks, and the state label is unreliable because
         continue-listening flips to LISTENING mid-playback — and (b) the coarse
-        state is LISTENING. Works for whichever surface is current."""
+        state is LISTENING, a wake candidate is previewing, or a dictation is
+        recording. Works for whichever surface is current.
+
+        The dictation clause is what makes the level indicator move while you
+        dictate: the dictation session feeds the very same ``mic_level`` channel,
+        but it never enters a voice state, so without it every sample was
+        dropped and the equalizer stood still on a visible bar."""
         if time.monotonic() - self._last_tts_level_t < self._TTS_OWNS_BARS_S:
             return  # TTS is making sound → it drives the bars, not the silent mic
         candidate_listening = self._wake_candidate_active and self._last_state in {
@@ -1053,7 +1557,11 @@ class OrbBusBridge:
             "ERROR",
             "PAUSED",
         }
-        if self._last_state != "LISTENING" and not candidate_listening:
+        if (
+            self._last_state != "LISTENING"
+            and not candidate_listening
+            and not self._dictation_active
+        ):
             return
         try:
             self._orb.set_level(level)

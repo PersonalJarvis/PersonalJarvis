@@ -26,9 +26,9 @@ from jarvis.brain.cu_gate import (
     llm_computer_use_allowed,
 )
 from jarvis.brain.spawn_gate import (
-    SPAWN_BLOCKED_MODEL_FEEDBACK,
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
+    spawn_blocked_feedback,
 )
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
 from jarvis.core.turn_language import resolve_output_language, resolve_turn_language
@@ -159,7 +159,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße Ruben Lütke" as a task and spawned a Phase-6  # i18n-allow: forensic quote of the actual German utterance that triggered this bug
+# interpreted "Ich heiße Alex" as a task and spawned a Phase-6  # i18n-allow: German fixture
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
@@ -927,7 +927,7 @@ class ToolUseLoop:
                     tool_result_payload = {
                         "success": False,
                         "output": None,
-                        "error": SPAWN_BLOCKED_MODEL_FEEDBACK,
+                        "error": spawn_blocked_feedback(user_utterance),
                     }
                 elif (
                     tool_name in CU_VEHICLE_TOOL_NAMES

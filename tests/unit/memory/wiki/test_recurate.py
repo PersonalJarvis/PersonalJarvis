@@ -39,13 +39,13 @@ PROFILE_BODY = (
     "---\n"
     "type: entity\n"
     "entity_kind: person\n"
-    "slug: ruben\n"
-    "aliases: [Ruben]\n"
+    "slug: alex\n"
+    "aliases: [Alex]\n"
     "created: 2026-06-01\n"
     "updated: 2026-06-01\n"
     "---\n"
     "\n"
-    "# Ruben\n"
+    "# Alex\n"
     "\n"
     "## Summary\n"
     "\n"
@@ -119,7 +119,7 @@ def _config() -> JarvisConfig:
         ),
         memory=MemoryConfig(
             wiki=WikiMemoryConfig(
-                session_rollup=SessionRollupConfig(user_entity_slug="ruben"),
+                session_rollup=SessionRollupConfig(user_entity_slug="alex"),
             )
         ),
     )
@@ -132,7 +132,7 @@ async def stack(tmp_path: Path):
         (vault_root / sub).mkdir(parents=True)
     (vault_root / "schema.md").write_text("# stub schema\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    profile = vault_root / "entities" / "ruben.md"
+    profile = vault_root / "entities" / "alex.md"
     profile.write_text(PROFILE_BODY, encoding="utf-8")
     # Age past the writer's 30s concurrent-edit lock so an immediate apply
     # is not skipped as a recent manual edit.
@@ -157,7 +157,7 @@ def _cleanup_json() -> str:
     return json.dumps(
         [
             {
-                "target": "entities/ruben.md",
+                "target": "entities/alex.md",
                 "operation": "update",
                 "new_body": CLEANED_PROFILE,
                 "reason": "drop world-knowledge trivia",
@@ -180,9 +180,12 @@ async def test_dry_run_proposes_but_writes_nothing(stack) -> None:
     assert report.error == ""
     assert report.applied is False
     assert report.backup_path is None
-    assert [str(u.target_path) for u in report.proposals] == ["entities/ruben.md"]
+    # as_posix(), not str(): the assertion is about WHICH page was proposed, not
+    # about the host's path separator. str() yields backslashes on Windows and
+    # failed there while passing on POSIX.
+    assert [u.target_path.as_posix() for u in report.proposals] == ["entities/alex.md"]
     # Dry-run must leave the vault byte-identical.
-    on_disk = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    on_disk = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
     assert on_disk == PROFILE_BODY
 
 
@@ -203,7 +206,7 @@ async def test_apply_snapshots_then_writes_cleaned_profile(
     assert report.error == ""
     assert report.applied is True
     assert report.backup_path is not None and report.backup_path.is_file()
-    on_disk = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    on_disk = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
     assert "The Eiffel Tower" not in on_disk
     assert "- Enjoys great coffee." in on_disk
 
@@ -241,7 +244,7 @@ async def test_unsafe_target_falls_through_to_next_provider(stack) -> None:
 @pytest.mark.asyncio
 async def test_missing_profile_reports_error(stack) -> None:
     vault_root, curator = stack
-    (vault_root / "entities" / "ruben.md").unlink()
+    (vault_root / "entities" / "alex.md").unlink()
 
     report = await recurate_profile(
         vault_root=vault_root,
@@ -251,5 +254,5 @@ async def test_missing_profile_reports_error(stack) -> None:
         apply=False,
     )
 
-    assert report.error == "profile page not found: entities/ruben.md"
+    assert report.error == "profile page not found: entities/alex.md"
     assert report.proposals == []

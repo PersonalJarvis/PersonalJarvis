@@ -13,7 +13,7 @@ title: "Concept: Router-Discipline"
 slug: router-discipline
 diataxis: explanation
 status: active
-owner: harald
+owner: project-maintainers
 last_reviewed: 2026-04-28
 phase: 5
 ---
@@ -29,7 +29,7 @@ title: "How-To: Add a new Brain provider"
 slug: add-brain-provider
 diataxis: howto
 status: active
-owner: harald
+owner: project-maintainers
 last_reviewed: 2026-04-28
 phase: 4
 audience: developer
@@ -125,8 +125,8 @@ docs land in history via ``git rm``.)
 ### ``owner`` (string)
 
 Who is responsible for the correctness of the doc? In Personal Jarvis
-currently always ``harald``. Future-proof: later several owners can be set
-via a list (``owner: [harald, claude]``); for now a single string.
+currently always ``project-maintainers``. Future-proof: later several owners can be set
+via a list (``owner: [project-maintainers, claude]``); for now a single string.
 
 ### ``last_reviewed`` (ISO date YYYY-MM-DD)
 
@@ -312,7 +312,7 @@ title: "ADR-0009: Self-Healing Worker-Critic"
 slug: adr-0009-self-healing
 diataxis: adr
 status: active             # or accepted / superseded / deprecated
-owner: harald
+owner: project-maintainers
 last_reviewed: 2026-04-28
 phase: 6
 related:
@@ -339,7 +339,7 @@ two status sets.
 ## Migrating existing docs
 
 Current Jarvis docs (``docs/adr/0001-..0012-*.md``, ``docs/phase*-*.md``,
-``Latenz/*.md``, ``Jarvis Long-Term Memory/*.md``) follow heterogeneous
+``notes/*.md``, ``research/*.md``) follow heterogeneous
 patterns. **A big-bang migration is an anti-pattern** — existing files
 stay as they are until they get touched anyway. From now on:
 

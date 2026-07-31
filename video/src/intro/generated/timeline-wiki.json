@@ -160,7 +160,7 @@
         {
           "id": "recall_q",
           "kind": "command",
-          "text": "What's BridgeMind again?",
+          "text": "What's ExampleHub again?",
           "file": "vo-wiki/recall_q.mp3",
           "localStart": 99,
           "dur": 42

@@ -110,6 +110,35 @@ if [ -f "$danger_gate" ]; then
     fi
 fi
 
+# --- 3c) DEAD CONFIG SWITCH gate (FAIL-CLOSED) ---------------------------------
+# Every field on a config model must be read by some shipped code. A switch the
+# user can set that nothing reads is a lie told by the settings screen — a whole
+# [jarvis_agents] section and both [phase6.safety] flags shipped that way. The
+# known backlog is recorded in dead-config-switches-baseline.json, so this only
+# fails on a NEW one. Static + stdlib-only (~4 s).
+deadcfg_gate="scripts/ci/check_config_switches_wired.py"
+if [ -f "$deadcfg_gate" ]; then
+    "$PY" "$deadcfg_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        deadcfg_hit=1
+    fi
+fi
+
+# --- 3d) SILENT EXCEPTION gate (FAIL-CLOSED, ratchet) --------------------------
+# An except block that neither logs, nor re-raises, nor explains itself makes a
+# failure invisible — the largest single source of "it only half works" here.
+# Per-file baseline in silent-handlers-baseline.json; fails only when a file
+# GAINS one. Static + stdlib-only (~3 s).
+silentexc_gate="scripts/ci/check_silent_exception_handlers.py"
+if [ -f "$silentexc_gate" ]; then
+    "$PY" "$silentexc_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        silentexc_hit=1
+    fi
+fi
+
 # --- 4) CLI DOCGEN drift gate (FAIL-CLOSED) -----------------------------------
 # docs/jarvis-cli-reference.md is generated from the curated command tree; this
 # fails the push if a command was added/changed without regenerating it. Static
@@ -198,6 +227,20 @@ if [ -f "$dist_gate" ]; then
     fi
 fi
 
+# --- 5d) BRAND-LOGO gate (FAIL-CLOSED) ----------------------------------------
+# The bundled plugin marks come from outside the project, and an SVG is
+# executable content — a script or a remote reference would run on render.
+# Also catches a mark with no provenance row (a licence gap nobody can
+# reconstruct later) and a wordmark squeezed into a 40 px square (unreadable).
+# rc 1 = confirmed finding; any other rc fails OPEN. Stdlib only, sub-second.
+brandlogo_gate="scripts/ci/check_brand_logos.py"
+if [ -f "$brandlogo_gate" ]; then
+    "$PY" "$brandlogo_gate" </dev/null
+    if [ "$?" -eq 1 ]; then
+        status=1
+    fi
+fi
+
 # --- 6) REQUIREMENTS SYNC gate (FAIL-CLOSED) ----------------------------------
 # requirements.in (source for the hash-pinned requirements.txt lockfile) must
 # mirror pyproject.toml [project].dependencies exactly. When they drift, an
@@ -270,6 +313,18 @@ if [ "$status" -ne 0 ]; then
     if [ "${danger_meta_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: DANGER METADATA gate (destructive route without x-jarvis-dangerous)."
         echo "  Add openapi_extra={\"x-jarvis-dangerous\": True} to the route decorator."
+    fi
+    if [ "${deadcfg_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: DEAD CONFIG SWITCH gate (a new config field nothing reads)."
+        echo "  The settings screen and jarvis.toml would promise behaviour that does"
+        echo "  not exist. Wire the field up, or remove it. Triage:"
+        echo "    python scripts/ci/check_config_switches_wired.py --report"
+    fi
+    if [ "${silentexc_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: SILENT EXCEPTION gate (a new except that says nothing)."
+        echo "  Log it (feature name + what was skipped), re-raise it, or write a"
+        echo "  comment on the except line saying why silence is right here."
+        echo "  Then:  python scripts/ci/check_silent_exception_handlers.py --update"
     fi
     if [ "${docgen_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: CLI DOCGEN drift (jarvis-cli-reference.md out of date)."

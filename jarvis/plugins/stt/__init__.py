@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterable
 from functools import lru_cache
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -44,19 +45,64 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-# Cross-family probe order when the configured cloud STT has no usable key: the
-# family the maintainer ships first, then the common BYO-key alternatives. Only a
-# family that BOTH has a key AND is registered as a `jarvis.stt` entry-point is
-# ever chosen (a keyed-but-unregistered name is skipped, so we never promise an
-# STT we cannot build). Every entry here now HAS a plugin (groq-api, openrouter-
-# stt, openai-api, gemini-api); the dead `deepgram*` names were removed so the
-# resolver can never cross to a non-existent provider. This mirrors the TTS
-# factory's `_TTS_CROSS_FAMILY_ORDER`; it is what lets a fresh downloader whose
-# only key is (say) an OpenAI or Gemini key get working voice input instead of
-# dead-ending on local faster-whisper the base install never shipped.
+# Cross-family probe order when the configured cloud STT has no usable key.
+# OpenRouter leads because its shared Brain key commonly needs no second setup;
+# OpenAI and Gemini follow, while Groq is deliberately the LAST cloud option.
+# Live German dictation showed materially worse transcription quality on Groq,
+# so availability must not make it the preferred takeover. Only a family that
+# BOTH has a key AND is registered as a `jarvis.stt` entry-point is ever chosen
+# (a keyed-but-unregistered name is skipped, so we never promise an STT we cannot
+# build). The key-free local engine remains the final floor below every cloud
+# family when it is installed.
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "groq-api", "openrouter-stt", "openai-api", "gemini-api",
+    "openrouter-stt", "openai-api", "gemini-api", "groq-api",
 )
+
+# Constructor kwargs the factory offers but no provider is required to accept.
+# A plugin that predates one of them raises TypeError, and the build retries
+# with every one of them dropped rather than falling all the way through to the
+# local engine a base install does not ship. Anything NOT listed here (the
+# language, the team-proxy endpoint/key) is load-bearing and never dropped.
+_OPTIONAL_PROVIDER_KWARGS: tuple[str, ...] = (
+    "prompt", "timeout_s", "model", "temperature",
+)
+
+
+def resolve_stt_model(stt_cfg: Any, provider_name: str) -> str:
+    """The model id to hand ``provider_name``; ``""`` for "your own default".
+
+    ``[stt].model`` is a faster-whisper CHECKPOINT name (``large-v3-turbo``),
+    and a checkpoint name means nothing to a hosted API. One global value
+    forwarded to whichever provider is selected would therefore post
+    ``large-v3-turbo`` to Groq on a fresh install — so the cloud pick lives in
+    its own per-provider slot, ``[stt].models.<provider id>``, written by the
+    model picker and read here.
+
+    Precedence:
+
+    1. **The per-provider pin**, when this install has one.
+    2. **``""``** otherwise: the plugin's own default, i.e. exactly what every
+       install did before per-provider pins existed.
+
+    ``[stt].model`` is deliberately NOT a fallback here. It reaches the local
+    engine through :func:`_build_local_fallback`, which is the one consumer a
+    checkpoint name is the right kind of string for; letting it leak into this
+    answer would hand ``large-v3-turbo`` to a hosted API or to the on-device
+    Nemotron recognizer, neither of which has ever heard of it.
+
+    Never raises: a config object that carries none of this (a test double, a
+    stale install) answers ``""``, which is a working value everywhere.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return ""
+    try:
+        pins = getattr(stt_cfg, "models", None) or {}
+        pinned = str(pins.get(name, "") or "").strip() if hasattr(pins, "get") else ""
+    except Exception as exc:  # noqa: BLE001 — a malformed pin is not worth a build
+        logger.debug("STT per-provider model pin unreadable ({}); using defaults.", exc)
+        pinned = ""
+    return pinned
 
 
 def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
@@ -129,14 +175,171 @@ def _resolve_keyed_stt_provider(primary_name: str) -> str:
     return primary_name
 
 
-def _load_provider_class(name: str) -> type | None:
-    """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``)."""
-    eps = importlib_metadata.entry_points()
-    selected = (
-        eps.select(group=ENTRY_POINT_GROUP)
-        if hasattr(eps, "select")
-        else eps.get(ENTRY_POINT_GROUP, [])  # type: ignore[attr-defined]
+#: Class attribute a recognizer plugin sets to declare that it transcribes on
+#: THIS machine. The capability the plugin answers for ITSELF (AP-21) — and the
+#: seam a second on-device engine plugs into, because the dictation polish
+#: pass's privacy floor keys on the answer and getting it wrong in the "cloud"
+#: direction uploads text from somebody who chose a local recognizer to stop
+#: exactly that.
+_ON_DEVICE_ATTR = "runs_on_device"
+
+#: The on-device engines this repo ships, for the case where the provider class
+#: does not declare the attribute above. A NAME list is what AP-21 warns about,
+#: so it is asked only for our OWN plugins (whose behaviour we know without
+#: importing them) and never used to judge a stranger's.
+_SHIPPED_ON_DEVICE_PROVIDERS: frozenset[str] = frozenset(
+    {"faster-whisper", "nemotron-local"}
+)
+
+
+@lru_cache(maxsize=32)
+def provider_runs_on_device(provider_name: str) -> bool:
+    """Whether the recognizer ``provider_name`` transcribes on THIS machine.
+
+    The privacy question — do the user's words leave this computer — asked in
+    three steps, cheapest first:
+
+    1. A provider with a CLOUD credential slot is remote by definition: a
+       remote account is what that key pays for. No import, no guessing.
+    2. Otherwise, one of the on-device engines this repo ships answers ``True``
+       straight away. A name comparison, kept for our own plugins only, so the
+       common case costs nothing.
+    3. Anything else is asked of the PLUGIN: a provider class that sets
+       ``runs_on_device = True`` is believed, whatever it is called. Declaring
+       it is all a second on-device recognizer has to do — every consumer of
+       this function, the polish privacy floor included, follows.
+
+    A stranger's plugin that declares nothing answers ``False``. That is the
+    honest answer rather than the safe one — we cannot prove somebody else's
+    recognizer is local — and it is what the code already assumed before this
+    function existed. A caller for whom the mistake is expensive fails closed
+    on its own side (:func:`jarvis.dictation.polish_client.stt_runs_on_device`).
+
+    Cached per name: the answer cannot change while the process runs, and step
+    3 imports the plugin module to read the attribute.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return False
+    if name in _STT_SECRET_CANDIDATES:
+        return False
+    if name in _SHIPPED_ON_DEVICE_PROVIDERS:
+        return True
+    return bool(getattr(_load_provider_class(name), _ON_DEVICE_ATTR, False))
+
+
+def stt_family_id(provider_name: str) -> str:
+    """The CREDENTIAL family a provider id belongs to.
+
+    "Family" is defined by the credential slot, never by the provider NAME
+    (AP-21). What makes a fallback worthless is landing on a provider that draws
+    on the SAME key as the one that just answered 429 / 402 / 401: a depleted or
+    rejected credential is not rescued by a sibling id that reads the same
+    keyring entry. Two ids that resolve the same primary secret are therefore
+    ONE family, however differently they are spelled — which is exactly the
+    trap ``openrouter`` (brain) vs ``openrouter-stt`` (STT) would set for a
+    naive name comparison.
+
+    An engine that transcribes on this machine is the ``local`` family — it has
+    no credential to exhaust — and which engines those are is decided by
+    :func:`provider_runs_on_device`, not by a name written down here.
+
+    Unknown / third-party ids (absent from ``_STT_SECRET_CANDIDATES`` and
+    declaring no on-device capability) are each their own family: we cannot
+    prove they share a credential with anything, and excluding them would
+    silently drop a provider that works.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return ""
+    candidates = _STT_SECRET_CANDIDATES.get(name)
+    if candidates:
+        return candidates[0][0]
+    if provider_runs_on_device(name):
+        return "local"
+    return name
+
+
+def resolve_keyed_stt_fallback(
+    current_id: str,
+    *,
+    exclude_family: str | Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Cloud STT providers to cross to when ``current_id`` fails at CALL time.
+
+    The runtime half of AP-22. ``_resolve_keyed_stt_provider`` above decides at
+    BUILD time and only when a key is entirely MISSING; a provider that has a
+    key and then returns 429 / 402 / 401 mid-session was, until this existed,
+    the end of the transcription — even with three other keyed families sitting
+    unused. Mirrors the TTS tier's ``resolve_keyed_fallback``
+    (``jarvis/plugins/tts/__init__.py``), which the TTS plugins have called from
+    their real error handlers for months.
+
+    Returns provider ids, in the shipped cross-family order, that are ALL of:
+
+    * from a different family than ``current_id`` (and than every entry in
+      ``exclude_family`` — pass the families a session already burned so a long
+      dictation does not walk back into one that is still rate-limited);
+    * one entry per family, never two ids drawing on the same credential;
+    * backed by a credential this host actually holds, AND registered as a
+      ``jarvis.stt`` entry-point — we never promise a provider we cannot build.
+
+    ``exclude_family`` accepts a single value or an iterable, and each value may
+    be a provider id or a family id from :func:`stt_family_id`.
+
+    An empty tuple is the honest answer, not an error: this user has exactly one
+    keyed STT family and the caller must degrade the way it always has (an
+    honest message, or the key-free local floor via ``_build_local_fallback`` /
+    ``jarvis.speech.stt_fallback.alternate_provider_names``, which is the one
+    option no quota can take away). The local engine is deliberately NOT in this
+    chain — it is a floor, not a family, and it is absent on a base install.
+
+    Names only, nothing built: constructing an alternate here would put a model
+    load on whatever path called us (AP-26). The caller builds the one it needs
+    via ``build_named_stt_provider`` and keeps it. The caller also owns the
+    user-facing message; this function stays quiet so a per-failure call cannot
+    turn into log spam.
+    """
+    excluded = {stt_family_id(current_id)}
+    if isinstance(exclude_family, str):
+        exclude_family = (exclude_family,)
+    for name in exclude_family:
+        family = stt_family_id(str(name))
+        if family:
+            excluded.add(family)
+    excluded.discard("")
+
+    chain: list[str] = []
+    seen: set[str] = set()
+    for cand in _STT_CROSS_FAMILY_ORDER:
+        family = stt_family_id(cand)
+        if family in excluded or family in seen:
+            continue
+        if not _stt_family_has_key(cand) or _load_provider_class(cand) is None:
+            continue
+        seen.add(family)
+        chain.append(cand)
+    logger.debug(
+        "STT runtime fallback for {!r} (excluding {}): {}",
+        current_id,
+        sorted(excluded),
+        ", ".join(chain) or "<none — this host has one keyed STT family>",
     )
+    return tuple(chain)
+
+
+def _load_provider_class(name: str) -> type | None:
+    """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``).
+
+    The catalogue read is cached process-wide (``jarvis.core.entry_points``)
+    because this is a hot path on the event loop: the cross-family chain calls
+    this once per candidate it probes, and an uncached read is a sweep over
+    every installed distribution — the call at the bottom of a captured 16.5 s
+    loop stall.
+    """
+    from jarvis.core.entry_points import entry_points_for
+
+    selected = entry_points_for(ENTRY_POINT_GROUP)
     for ep in selected:
         if ep.name == name:
             try:
@@ -156,6 +359,26 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     no entry-point or raises on construction.
     """
     provider_name = (getattr(stt_cfg, "provider", "") or "").strip()
+    # The mirror image of the cross-family rule below: a user who deliberately
+    # SELECTED the on-device engine can still arrive on a host where it is not
+    # installed — a fresh machine, a rebuilt venv, a base install that carried
+    # the config over. Building it anyway yields a provider that raises on the
+    # first utterance, which reads to the user as "voice input is broken" with
+    # no cause. Cross to a cloud family this host holds a key for instead
+    # (AP-22); with no key anywhere the local path stands and
+    # ``_maybe_hint_no_working_stt`` states the dead-end honestly.
+    if provider_name == "faster-whisper" and not _faster_whisper_installed():
+        alternatives = [
+            name for name in available_stt_provider_names() if name != "faster-whisper"
+        ]
+        if alternatives:
+            logger.warning(
+                "Local STT is selected but the faster-whisper engine is not "
+                "installed on this host; using {!r} instead. Install the local "
+                "engine from the API-Keys view to switch back.",
+                alternatives[0],
+            )
+            provider_name = alternatives[0]
     # Open-source AP-22: when the configured cloud STT has no usable key, cross to
     # a cloud STT family the user DOES have a key for BEFORE dropping to local
     # faster-whisper (which is not installed on a base/headless host). The
@@ -190,6 +413,41 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             kwargs["language"] = language
         if bias_prompt:
             kwargs["prompt"] = bias_prompt
+        # The model the USER picked. Until this line existed, the STT model
+        # picker wrote a value nothing read: every cloud plugin transcribed on
+        # its own hardcoded default, so choosing a genuinely multilingual model
+        # in the app changed exactly nothing (AP-31).
+        chosen_model = resolve_stt_model(stt_cfg, provider_name)
+        if chosen_model:
+            kwargs["model"] = chosen_model
+        # Reproducibility. A transcription is a measurement, so the same audio
+        # must come back the same way twice; the providers whose model rejects
+        # the field drop it themselves (jarvis.plugins.stt.capabilities).
+        temperature = getattr(stt_cfg, "temperature", None)
+        try:
+            if temperature is not None:
+                kwargs["temperature"] = float(temperature)
+        except (TypeError, ValueError):
+            logger.debug(
+                "STT temperature {!r} is not a number; using the provider default.",
+                temperature,
+            )
+        # Per-request timeout. Forwarded only when the config actually carries
+        # one, so every provider keeps its own documented default otherwise. It
+        # matters most for Gemini: google-genai FORCES ``timeout=None`` on its
+        # HTTP client unless it is told otherwise, and its call runs in an
+        # uncancellable thread — so without a value arriving here there is no
+        # layer left that could bound the request (the pipeline's ``wait_for``
+        # stops waiting, it cannot stop the thread).
+        timeout_s = getattr(stt_cfg, "timeout_s", None)
+        try:
+            if timeout_s is not None and float(timeout_s) > 0:
+                kwargs["timeout_s"] = float(timeout_s)
+        except (TypeError, ValueError):
+            logger.debug(
+                "STT timeout_s {!r} is not a number; using the provider default.",
+                timeout_s,
+            )
         # Team-proxy mode (2026-06-20 spec §4): route the cloud STT through the
         # key proxy with the per-user token instead of the real vendor key. Only
         # groq-api (the cloud STT exposing `endpoint` + `api_key` constructor
@@ -204,6 +462,22 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
                 kwargs["endpoint"] = ep.base_url.rstrip("/") + "/audio/transcriptions"
                 if ep.credential:
                     kwargs["api_key"] = ep.credential
+        # An on-device recognizer gets only the options that mean something to
+        # it. ``prompt`` (decoder bias) and ``timeout_s`` (per-REQUEST ceiling)
+        # are shaped for a cloud call; passing them to a local engine hits the
+        # TypeError retry below, which works but logs a misleading "this plugin
+        # is out of date" warning about a plugin that is perfectly current.
+        # Capability-gated via the plugin's own declaration, not its name
+        # (AP-21). The user's STT dictionary still applies to these providers
+        # through its post-transcription corrections.
+        if provider_runs_on_device(provider_name):
+            # ``temperature`` joins the cloud-only set for the same reason:
+            # the on-device recognizers this repo ships configure their own
+            # decoding, and offering it only earns the misleading "this plugin
+            # is out of date" warning from the TypeError retry below. A model
+            # PIN is not stripped — that is an explicit per-provider choice.
+            for cloud_only in ("prompt", "timeout_s", "temperature"):
+                kwargs.pop(cloud_only, None)
         if not _stt_has_credential(provider_name, kwargs):
             logger.warning(
                 "STT provider {!r} has no usable credential; falling back to the "
@@ -215,23 +489,32 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
         try:
             instance = cls(**kwargs) if kwargs else cls()
             logger.info(
-                "STT provider resolved via entry-point: {} (class {}, bias_prompt={} chars)",
+                "STT provider resolved via entry-point: {} (class {}, model={}, "
+                "temperature={}, bias_prompt={} chars)",
                 provider_name,
                 cls.__name__,
+                kwargs.get("model") or "<provider default>",
+                kwargs.get("temperature", "<provider default>"),
                 len(bias_prompt),
             )
             return instance
         except TypeError as exc:
-            # The provider class refused one of our kwargs — most likely because
-            # it predates the bias_prompt addition. Retry without it so a stale
-            # third-party plugin still loads. (faster-whisper local path is
-            # handled below as the explicit fallback.)
-            if "prompt" in kwargs:
-                kwargs.pop("prompt", None)
+            # The provider class refused one of our OPTIONAL kwargs — most
+            # likely a third-party plugin that predates ``prompt`` or
+            # ``timeout_s``. Retry with all of them dropped (we cannot tell from
+            # a TypeError WHICH one offended) so a stale plugin still loads;
+            # only ``language`` and the proxy pair are load-bearing.
+            # (faster-whisper local path is handled below as the explicit
+            # fallback.)
+            refused = [k for k in _OPTIONAL_PROVIDER_KWARGS if k in kwargs]
+            if refused:
+                for key in refused:
+                    kwargs.pop(key, None)
                 logger.warning(
-                    "STT provider {!r} does not accept bias_prompt yet ({}); "
-                    "retrying without it.",
+                    "STT provider {!r} does not accept {} yet ({}); retrying "
+                    "without those.",
                     provider_name,
+                    " / ".join(refused),
                     exc,
                 )
                 try:
@@ -257,6 +540,53 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
 
     # Local fallback (also the explicit "faster-whisper" path).
     return _build_local_fallback(stt_cfg, language)
+
+
+def available_stt_provider_names() -> list[str]:
+    """Every provider this host could actually transcribe with, right now.
+
+    "Could" is a CREDENTIAL + INSTALL question, never a config one: the answer
+    is the menu the runtime fallback chain picks from when the configured
+    provider starts failing (``jarvis.speech.stt_fallback``), so a name in here
+    has to be one that would really work. Cloud families come in the
+    cross-family order, the key-free local engine last and only when it is
+    installed.
+    """
+    names: list[str] = []
+    for name in _STT_CROSS_FAMILY_ORDER:
+        if _stt_family_has_key(name) and _load_provider_class(name) is not None:
+            names.append(name)
+    if _faster_whisper_installed():
+        names.append("faster-whisper")
+    return names
+
+
+def build_named_stt_provider(name: str, stt_cfg: Any) -> Any:
+    """Build the provider called ``name`` using ``stt_cfg`` for everything else.
+
+    Language, bias prompt, dictionary vocabulary and the team-proxy handling all
+    have to match what the configured provider got — a fallback that quietly
+    drops the user's vocabulary would transcribe their words differently the
+    moment it took over. So this reuses :func:`build_stt_from_config` on a copy
+    of the config rather than re-deriving any of it.
+    """
+    try:
+        patched = stt_cfg.model_copy(update={"provider": name})
+    except AttributeError:
+        # Not a pydantic model (test doubles); a tiny view is enough.
+        patched = _StttConfigView(stt_cfg, name)
+    return build_stt_from_config(patched)
+
+
+class _StttConfigView:
+    """Read-only ``stt_cfg`` with ``provider`` swapped — for non-pydantic doubles."""
+
+    def __init__(self, inner: Any, provider: str) -> None:
+        self._inner = inner
+        self.provider = provider
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
 
 
 # One-time gate so the "no working STT" hint is logged at most once per process
@@ -812,6 +1142,20 @@ def build_wake_whisper(
         # stream). NOTE: transcription wake still cannot reach KWS-instant
         # latency — the definitive fix remains a neural KWS model (AP-25).
         cpu_threads=2,
+        # ONE greedy pass per wake window — drop Whisper's 6-step temperature
+        # fallback ladder here. The ladder only re-decodes transcripts that
+        # already look degenerate, which the phrase matcher and the
+        # ``no_speech_prob``/RMS gates reject anyway, while a genuine wake is
+        # decided on the first pass. Unbounded it made a single window cost up
+        # to 7.7 s on a FAST box (measured) — past the 8 s abandon cap on weaker
+        # hardware, where the timeout drops the model and forces a cold rebuild,
+        # extending the deaf gap. Bounding the work changes no gate and no
+        # transcript rule, so AP-27 is untouched. ``without_timestamps`` is
+        # deliberately NOT set alongside it: collapsing the window to a single
+        # segment would change what ``_reliable_wake_transcript``'s per-segment
+        # ``no_speech_prob`` check sees, i.e. shift the ghost/recall coupling on
+        # the very engine AP-27 was written for.
+        temperature=0.0,
     )
 
 
@@ -874,9 +1218,15 @@ def start_wake_model_prefetch(
 
 
 __all__ = [
+    "available_stt_provider_names",
+    "build_named_stt_provider",
     "build_stt_from_config",
     "build_wake_whisper",
     "mark_wake_gpu_bad",
+    "provider_runs_on_device",
+    "resolve_keyed_stt_fallback",
+    "resolve_stt_model",
     "start_wake_model_prefetch",
+    "stt_family_id",
     "wake_gpu_probe_cached",
 ]

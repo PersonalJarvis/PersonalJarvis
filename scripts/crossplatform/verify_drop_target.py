@@ -10,6 +10,8 @@ works at the OS level:
      the live-overlay window type).
   4. A ``<<Drop>>`` event runs the full chain through the process-global bridge
      to the registered handler.
+  5. The bridge's RETURN leg carries the intake's verdict back, which is what
+     the bar's visible drop confirmation is driven by.
 
 Run in CI on a real ``macos-latest`` runner this is the autonomous macOS proof
 that cannot be produced on a Windows dev box (no macOS container exists). Exits
@@ -106,7 +108,21 @@ def main() -> int:
         print("FAIL: the <<Drop>> chain did not reach the handler.")
         return 4
 
-    print("OK: drag-drop works on this OS (load + parse + register + chain).")
+    # 5. the return leg — without it the bar cannot confirm a drop, which is
+    # how a silently-discarded drop stayed invisible for so long.
+    verdicts: list[bool] = []
+    db.set_drop_result_sink(verdicts.append)
+    delivered = db.report_drop_result(True)
+    db.set_drop_result_sink(None)
+    print(f"result leg -> delivered={delivered} verdicts={verdicts}")
+    if not delivered or verdicts != [True]:
+        print("FAIL: the drop verdict did not reach the overlay sink.")
+        return 5
+
+    print(
+        "OK: drag-drop works on this OS "
+        "(load + parse + register + chain + verdict)."
+    )
     return 0
 
 

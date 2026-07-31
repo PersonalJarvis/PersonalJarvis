@@ -41,12 +41,29 @@ log = logging.getLogger(__name__)
 #: populated per drop: a file drop → (paths, ""), a text/URL drop → ([], text).
 OnDrop = Callable[[list[str], str], None]
 
+#: ``on_drag_state(active)`` — True while a drag hovers the widget, False when
+#: it leaves or lands. A surface that also treats a click as a command uses this
+#: to stand its click handling down for the duration.
+#:
+#: This exists because of a real regression, not for symmetry: on a frameless
+#: color-key topmost Tk window, tkdnd's activity produces SYNTHETIC press/release
+#: events, and during a genuine drop the pointer IS over the window — so the
+#: overlay's own "is the pointer really here?" phantom-click guard cannot tell
+#: that pair apart from a deliberate click on the close-X. Dropping a file
+#: hung up the call (BUG-JB-DROP). The drag state is the missing signal.
+OnDragState = Callable[[bool], None]
+
 
 @runtime_checkable
 class DropTarget(Protocol):
     """Registers OS drag-drop on a Tk widget. ``register`` never raises."""
 
-    def register(self, widget: Any, on_drop: OnDrop) -> bool:
+    def register(
+        self,
+        widget: Any,
+        on_drop: OnDrop,
+        on_drag_state: OnDragState | None = None,
+    ) -> bool:
         """Wire ``on_drop`` to drops on ``widget``; True if actually registered."""
         ...
 
@@ -86,7 +103,12 @@ def _parse_dnd_files(data: str) -> list[str]:
 class NullDropTarget:
     """No-op target — overlay drop is unavailable on this host (logged once)."""
 
-    def register(self, widget: Any, on_drop: OnDrop) -> bool:  # noqa: ARG002
+    def register(
+        self,
+        widget: Any,  # noqa: ARG002
+        on_drop: OnDrop,  # noqa: ARG002
+        on_drag_state: OnDragState | None = None,  # noqa: ARG002
+    ) -> bool:
         log.debug("Overlay drop target unavailable (tkdnd absent) — no-op.")
         return False
 
@@ -99,11 +121,26 @@ class TkDnDDropTarget:
     degrades to ``False`` — the overlay keeps working, drop is simply off.
     """
 
-    def register(self, widget: Any, on_drop: OnDrop) -> bool:
+    def register(
+        self,
+        widget: Any,
+        on_drop: OnDrop,
+        on_drag_state: OnDragState | None = None,
+    ) -> bool:
         try:
             import os
 
             from tkinterdnd2 import COPY, DND_FILES, DND_TEXT, TkinterDnD  # lazy (HN-7)
+
+            def _drag_state(active: bool) -> None:
+                # The surface's click handling depends on this, so a broken
+                # callback must not also break the drop it is reporting.
+                if on_drag_state is None:
+                    return
+                try:
+                    on_drag_state(active)
+                except Exception:  # noqa: BLE001 — advisory signal, never fatal
+                    log.debug("overlay drag-state callback failed", exc_info=True)
 
             root = widget.winfo_toplevel()
             # Load the tkdnd Tcl package into the EXISTING root — no new Tk root
@@ -132,14 +169,20 @@ class TkDnDDropTarget:
                 # delivering drag events to this frameless/topmost/color-key window.
                 action = str(getattr(event, "action", "") or COPY)
                 _highlight(True)
+                _drag_state(True)
                 log.info("overlay DRAG over bar (tkdnd delivering) action=%s", action)
                 return action
 
             def _leave(_event: Any) -> None:
                 _highlight(False)
+                _drag_state(False)
 
             def _on_drop(event: Any) -> None:
                 _highlight(False)
+                # Reported BEFORE the payload is handled: the synthetic
+                # press/release the drop itself produces arrives around now, and
+                # the surface has to be stood down for it, not after it.
+                _drag_state(False)
                 try:
                     data = str(getattr(event, "data", "") or "")
                     paths = _parse_dnd_files(data)
@@ -195,6 +238,8 @@ def make_drop_target() -> DropTarget:
 __all__ = [
     "DropTarget",
     "NullDropTarget",
+    "OnDragState",
+    "OnDrop",
     "TkDnDDropTarget",
     "make_drop_target",
 ]

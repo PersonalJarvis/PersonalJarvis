@@ -8,8 +8,6 @@ in-process without touching disk.
 """
 from __future__ import annotations
 
-import pytest
-
 from jarvis.core.bus import EventBus
 from jarvis.core.events import MessageSent
 from jarvis.state.chat_store import ChatStore
@@ -58,6 +56,22 @@ async def test_list_threads_newest_first_with_preview(tmp_path) -> None:
     assert old["updated_at_ns"] >= old["created_at_ns"]
 
 
+async def test_history_filter_hides_drafts_and_assistant_only_residue(tmp_path) -> None:
+    s = ChatStore(bus=EventBus(), db_path=_db(tmp_path))
+    await s.create_thread(title="New Chat", thread_id="draft")
+    await s.add_message(thread_id="orphan", role="assistant", text="internal reply")
+    await s.add_message(thread_id="blank", role="user", text="   ")
+    await s.add_message(thread_id="real", role="user", text="visible conversation")
+
+    assert {r["thread_id"] for r in s.list_threads()} == {
+        "blank",
+        "draft",
+        "orphan",
+        "real",
+    }
+    assert [r["thread_id"] for r in s.list_threads(include_empty=False)] == ["real"]
+
+
 async def test_title_derived_from_first_user_message(tmp_path) -> None:
     s = ChatStore(bus=EventBus(), db_path=_db(tmp_path))
     await s.add_message(
@@ -86,6 +100,26 @@ async def test_add_message_publishes_message_sent(tmp_path) -> None:
     s = ChatStore(bus=bus, db_path=_db(tmp_path))
     await s.add_message(thread_id="t", role="user", text="ping")
     assert any(e.text == "ping" and e.thread_id == "t" for e in seen)
+
+
+async def test_add_message_can_persist_an_already_published_event(tmp_path) -> None:
+    bus = EventBus()
+    seen: list[MessageSent] = []
+
+    async def _collect(e: MessageSent) -> None:
+        seen.append(e)
+
+    bus.subscribe(MessageSent, _collect)
+    s = ChatStore(bus=bus, db_path=_db(tmp_path))
+    await s.add_message(
+        thread_id="t",
+        role="user",
+        text="persist once",
+        publish_event=False,
+    )
+
+    assert s.get_thread("t")["messages"][0]["text"] == "persist once"
+    assert seen == []
 
 
 async def test_delete_thread(tmp_path) -> None:

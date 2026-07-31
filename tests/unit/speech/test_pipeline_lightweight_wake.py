@@ -55,10 +55,13 @@ def test_lightweight_mode_instantiates_no_faster_whisper() -> None:
     )
     assert pipe._stt is None
     assert pipe._whisper_wake is None
-    # The utterance STT is wrapped by the user-dictionary corrector; the
-    # resolved provider underneath must still be the configured Groq cloud STT.
+    # The utterance STT is wrapped by the user-dictionary corrector and, under
+    # it, by the runtime fallback chain; the resolved provider must still be the
+    # configured Groq cloud STT, and the label must still NAME it rather than
+    # naming a wrapper — the log line that reports which provider transcribed is
+    # the first thing anyone reads when a provider starts failing.
     assert type(pipe._utterance_stt).__name__ == "DictionaryCorrectingSTT"
-    assert pipe._utterance_stt.provider_label == "GroqWhisperAPI"
+    assert pipe._utterance_stt.provider_label == "groq-api"
 
 
 def test_heavy_mode_keeps_faster_whisper_by_default() -> None:

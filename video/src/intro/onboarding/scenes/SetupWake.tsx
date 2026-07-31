@@ -34,7 +34,7 @@ export const SetupWake: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <Sequence from={userAt} layout="none">
-            <SpokenCommand text="Hey Ruben" speaker="user" size={26} compact />
+            <SpokenCommand text="Hey Nova" speaker="user" size={26} compact />
           </Sequence>
           <Sequence from={replyAt} layout="none">
             <SpokenCommand text="Yes? I'm listening." speaker="jarvis" size={26} compact jarvisSrc="jarvis-logo.png" />

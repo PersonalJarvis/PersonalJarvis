@@ -36,7 +36,7 @@ def test_secret_bodies_are_detected(body: str) -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        "Ruben prefers a multi-provider brain and bilingual replies.",
+        "Alex prefers a multi-provider brain and bilingual replies.",
         "The project shipped v0.2.0 on 2026-06-09 to the public repo.",
         "Note: the password is written on a sticky note in the drawer.",
         "He uses GPT and Gemini; the API design favours streaming.",

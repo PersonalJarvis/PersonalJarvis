@@ -1,169 +1,184 @@
 ---
 title: "Start Your First Chat"
 slug: start-your-first-chat
-summary: "Send a first message, attach useful context, and understand how the conversation is saved."
+summary: "Send a first message, dictate a draft, add bounded context, and reopen what the app saved."
 section: "Start here"
 section_order: 1
 order: 5
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
-tags: [chat, conversations, attachments, history, context]
-related: [chats, start-your-first-voice-conversation, sessions-and-run-inspector]
+tags: [chat, conversations, attachments, dictation, history, context]
+related: [chats, dictation, outputs-and-files, sessions-and-run-inspector]
 ---
 
-Use **Chats** when you want an answer now and a conversation you can build on.
-In this tutorial, you will send a request, add useful context, and see exactly
-what the current app saves when you leave the conversation.
+Use **Chats** for quick answers and follow-ups. This tutorial sends text, turns
+speech into a draft, adds harmless context, and reopens what was saved.
 
-The basic flow is short: send a message, watch the status, read the reply, and
-find the text conversation in **History**. The live chat shows both sides of
-the conversation. The saved text thread is more limited: it currently keeps
-assistant and system replies, but not the text you typed.
+The live conversation and saved thread are not identical. The current text-
+thread path restores assistant and system messages, but not the prompts you
+typed. Dropped context and thinking details are also temporary.
 
 ## Before You Start
 
-- Finish first-run setup and open the main app.
-- Open **API Keys**, choose the **Brain** tab, and test at least one provider
-  until it shows **Works**. A provider is the service that answers your
-  request.
-- Choose a harmless example topic, such as planning a meal or organizing a
-  study session.
+- Complete first-run setup and open the main app.
+- Under **API Keys & Providers > Brain**, select **Test** on a local or
+  connected provider. Continue when it says **Works**.
+- For the chat microphone, choose a ready **Voice input** provider and mic.
+- Use a harmless example, such as planning a quiet weekend.
 
-> [!warning] Never put a password, API key, access token, recovery code, or
-> other credential in a chat or attached file. Enter credentials only in the
-> protected fields in **API Keys** or the connection screen for that service.
+> [!warning] Never put a password, provider credential, access token, recovery
+> code, or private key in chat or an attached file. Use only the protected
+> credential fields for the service concerned.
 
-## Start the Conversation
+## Send the First Message
 
-1. **Open Chats.** Select **Chats** in the sidebar. The view contains the
-   **History** list and a message field. If voice is still getting ready, you
-   can already use text chat once the app is connected.
+1. Select **Chats**. **Getting ready** means voice is warming while text may
+   already work. **Starting...** or **Offline** means the live connection is not
+   ready.
 
-2. **Open an empty chat view.** Select **New chat**. The messages on screen
-   clear. Jarvis creates a saved text thread when you send the first message,
-   so an untouched empty view does not add an entry to History. **New chat**
-   does not currently clear the Brain's recent in-memory context, so make the
-   first prompt self-contained when you change topics.
+2. Select **New chat**. An untouched empty chat is not saved. The first sent
+   message creates its text thread.
 
-3. **Send one clear request.** Type a request such as `Create a simple
-   three-step plan for a quiet weekend.` Press **Enter** or choose the
-   paper-plane button labeled **Send**. Use **Shift+Enter** to add a new line
-   without sending.
+3. Enter `Create a simple three-step plan for a quiet weekend.` Press **Enter**
+   or select **Send**. Use **Shift+Enter** for a new line without sending.
 
-4. **Watch for the visible result.** Your message appears in the conversation.
-   While Jarvis works, the status area may show thinking or a short progress
-   step. The completed answer then appears below the assistant name.
+4. Confirm your message appears. The status shows **Thinking** or the current
+   step. The reply appears under your configured assistant name. A collapsible
+   **Thought for...** may summarize observed steps; it is not saved history.
 
-5. **Ask a follow-up.** Send `Make the second step suitable for rainy weather.`
-   Jarvis uses its recent in-memory context, so you do not need to repeat the
-   original plan during this run. The first sent message creates the text
-   thread. Completed assistant or system replies are added to its saved
-   transcript.
+5. Send `Make the second step suitable for rainy weather.` The running Brain
+   uses its recent context, so this follow-up can refer to the earlier plan.
 
-## Add Useful Context
+**New chat** clears the screen, not the Brain's recent in-memory context. Use a
+self-contained new prompt, or restart first when strict separation matters.
 
-You can drop a file, image, PDF, selected text, or link before your next
-message. Chats does not currently have a keyboard-accessible attachment picker.
+## Use the Chat Microphone
 
-1. Drag the item over the assistant bar, mascot, or lower-right drop target. A
-   recognized drag expands the target and shows **Drop to brief** followed by
-   your assistant's name.
-2. Release the item and look for **Added to conversation**.
-3. Send a request that says what to do with it, such as `Summarize the attached
-   notes in five bullets.` Jarvis does not answer the drop by itself; it waits
-   for this real request.
+The microphone beside **Send** transcribes into this composer. It neither begins
+a voice conversation nor sends automatically.
 
-- Supported text files are decoded as UTF-8. Jarvis keeps at most about 8,000
-  characters from each text item and 12,000 characters across the context note.
-- Jarvis tries to extract text from a PDF. If extraction is unavailable or the
-  PDF is unreadable, it keeps only basic file details.
-- An image is sent with the next real request. A Brain provider with image
-  support can inspect it; a text-only provider receives only the context note.
-- Other file types contribute their name, media type, and size, not their full
-  contents. A dragged link is added as text and is not fetched by the drop.
-- The files in one drop can total up to 25 MB. The smaller text-context limits
-  above still apply.
+1. Put the caret in the message box, then select **Dictate**.
+2. Speak during **Listening... speak now**. Interim words append to existing
+   text.
+3. Select **Stop dictation**. Review and edit the final transcript.
+4. Select **Send** only when the draft says what you intend.
 
-> [!note] A dropped item lives in the running Brain's memory, not in a saved
-> attachment library or transcript. An image is used once, with your next
-> request. Opening a saved conversation replaces remembered dropped text with
-> that conversation's saved messages, and restarting clears all dropped
-> context. Attach the source again when you need it later.
+Do not confuse this button with system-wide **Dictation**:
 
-## Reopen the Chat
+| Chat microphone | System-wide Dictation |
+|---|---|
+| Started from the Chats composer | Started from **Voice > Dictation** or a configured shortcut |
+| Produces a draft here | Inserts text at the focused field in this or another app |
+| Waits for you to select **Send** before the Brain sees it | Types or copies text; it never asks the Brain to answer |
+| Stops from the composer | Has history, recovery, statistics, language, polish, and translation settings |
 
-1. Select **New chat** to clear the visible conversation.
-2. Find the newest **Text** entry under **History**. Entries are grouped as
-   **Today**, **Yesterday**, or **Earlier**.
-3. Select the text conversation. Its saved assistant or system replies return,
-   and Jarvis uses those saved messages as context for the next turn.
+System-wide Dictation can also land in the focused chat field. It remains a
+draft until sent. See [Dictate Into Any App](dictation).
 
-**Current saving limitation:** typed prompts are not written to saved text
-threads. Dropped context, progress steps, and thought disclosures are not saved
-there either. After reopening, your prompt is missing and the title usually
-remains **New Chat**. Repeat essential details before continuing and keep
-important source instructions in your own notes. Text threads are stored
-locally; the app removes threads that have been inactive for more than 365 days
-when it starts.
+## Add a File or Other Context
 
-You can also select a **Voice** entry to read its transcript. On a desktop with
-voice available, **Speak in this conversation** starts a voice session with the
-saved transcript as context. In other modes, Jarvis shows **Voice isn't
-available in this mode**. If you type after opening a voice entry, Jarvis starts
-a new text thread instead of changing the original voice record.
+Chats has no attachment picker. Drag a file, image, PDF, selected text, or link
+over the floating bar, mascot, or lower-right target. After **Drop to brief**
+shows your assistant's name, release it and wait for **Added to conversation**.
+Then send an instruction such as `Summarize the attached notes in five bullets.`
+
+The intake is deliberately bounded:
+
+- One drop can contain at most 25 MB in total.
+- Text is decoded as UTF-8 and shortened to about 8,000 characters per item and
+  12,000 overall.
+- PDFs use best-effort text extraction. If that fails, only file details are
+  available.
+- Images wait for the next request. A vision-capable Brain can inspect them;
+  text-only providers receive the note.
+- Other formats contribute name, media type, and size. A dragged link is added
+  as text; the drop does not fetch its page.
+
+Dropped material stays in the running Brain, not a saved attachment library.
+Images are used once with the next request. Resuming a saved conversation or
+restarting clears this temporary context, so attach it again when needed.
+
+The active Brain or fallback may receive the prompt, extracted text, and image
+bytes. A local drop is not necessarily local processing. See [Privacy and Local
+Data](privacy-and-local-data).
+
+## Save and Resume the Conversation
+
+The first message creates a local thread. **History** groups entries under
+**Today**, **Yesterday**, and **Earlier**. Open the newest **Text** entry to
+resume; its saved messages replace recent Brain context.
+
+> [!note] Typed prompts are not currently written into saved text threads.
+> Dropped context, pre-acknowledgments, thinking progress, and thought summaries
+> are also absent. After reopening, repeat the goal and any essential limits.
+> The title may remain **New Chat** because the missing first prompt normally
+> supplies the automatic title.
+
+Assistant replies and system diagnostics are restored. Local text threads are
+pruned at startup after 365 inactive days. **Delete** removes a text thread;
+Chats does not offer it for voice sessions.
+
+History also lists **Voice** sessions. Opening one restores its transcript;
+typing creates a new text thread with that context. **Speak in this
+conversation** starts voice from saved turns when available.
+
+## Providers, Outputs, and Sessions
+
+The sidebar shows the active Brain and model. If it fails, another compatible
+configured family may be tried. If none answers, thinking ends with a system
+diagnostic. Test provider health under **API Keys & Providers** before retrying.
+
+A short answer stays in Chats. Delegated files appear under **Outputs**.
+Dragging an output card starts a chat turn with its task status and summary,
+not the generated files. **Sessions and Run Inspector** holds detailed run or
+voice evidence.
 
 ## How It Fits Together
 
-1. **Chats receives your request.** Typing and dictation send text through the
-   same chat path. Opening a saved conversation first replaces the Brain's
-   recent context with that conversation's saved messages.
-2. **The Brain provider prepares the answer.** It can use recent messages and
-   any context you just dropped. If the preferred provider fails, Jarvis tries
-   other reachable Brain providers available to this installation. If none can
-   answer, it reports that the Brain is unavailable.
-3. **Tools and safety checks can join the turn.** A request may call a tool or
-   ask for confirmation before an action. A simple answer returns directly to
-   the chat.
-4. **Longer work can move to Jarvis-Agents.** You follow that work separately,
-   and generated files appear in **Outputs**. Dragging an Outputs card to the
-   assistant adds the card's task details, status, and available summary as a
-   new chat turn. It does not attach the generated files themselves.
-5. **History and run details serve different needs.** History is the quick way to
-   reopen saved text replies and voice conversations. **Transcription** and
-   **Run Inspector** show a more detailed voice transcript or run trace when
-   you need to understand how a result was produced.
+1. The composer turns typed or chat-mic text into one user request only after
+   **Send**.
+2. The Brain receives recent in-memory context plus any current dropped
+   material. Provider fallback can change who processes that request.
+3. Tools may add progress or request approval. Delegated files stay outside the
+   transcript.
+4. The live UI shows the complete current exchange. The local text thread saves
+   only the currently supported message roles.
+5. Resuming seeds the Brain from saved messages; starting voice seeds the voice
+   path from the same normalized transcript.
 
 ## Check That It Works
 
-1. Start a new chat and send `Reply only with: chat is ready.`
-2. Confirm that your message and a matching reply appear in the conversation.
-3. Select **New chat**, then open the newest **Text** entry from **History**.
-
-The live chat is working when both messages appear before you leave it. Saving
-is working when the reply returns after reopening. The test prompt does not
-return because typed prompts are not currently stored in text threads.
+1. Select **New chat** and send `Reply only with: chat is ready.`
+2. Confirm both your prompt and **chat is ready** appear, with no thinking
+   indicator left running.
+3. Select **New chat**, open the newest **Text** entry, and confirm the assistant
+   reply returns. The typed test prompt is expected to be absent.
+4. Select **Dictate**, say a harmless short sentence, stop, and confirm it is an
+   editable draft that is not sent until you choose **Send**.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| The message field says **Starting…** or **Offline** | The app is still connecting, or its connection is unavailable | Wait for startup to finish. If it stays offline, restart the app normally and check the status again. |
-| Your message appears but no answer arrives, or the thinking status stops | A Brain provider or requested tool may be unavailable or may have timed out | Open **API Keys**, test the Brain providers, and activate one that shows **Works**. Then send one short, text-only request. |
-| Dropping an item produces no answer | A drop adds context silently; it does not send a request | Keep the file total below 25 MB, wait for **Added to conversation**, then type what Jarvis should do with it. |
-| Your prompt is missing after reopening a text chat | The current text-thread path stores the reply but not the typed prompt | Repeat the important context and keep a separate copy of instructions you need later. |
-| A new chat refers to the previous topic | **New chat** cleared the screen but not the Brain's in-memory context | Begin with a self-contained prompt that says you are changing topics. Restart the app first when strict separation matters. |
+| Composer says **Starting...** or **Offline** | The live connection is warming or unavailable | Wait for startup; if it remains offline, restart the app and check again |
+| Your message appears but no reply arrives | A Brain, tool, or provider request failed or timed out | Test the Brain cards, then retry one short text-only request |
+| Chat microphone records nothing | The microphone, permission, speech pipeline, or Voice input provider is unavailable | Check **Settings > Audio devices**, permissions, and the **Voice input** provider |
+| Dictated words appear but no answer starts | Dictation creates text; it does not send a Brain request | Edit the draft and select **Send** |
+| A drop produces no answer | Context was added silently, as designed | Wait for **Added to conversation**, then type what to do with it |
+| Prompt or attachment is missing after resume | That material is outside the saved text-thread roles | Reattach the source and restate essential instructions |
+| New chat mentions the old topic | Visible reset did not clear in-memory Brain history | Use a self-contained prompt or restart for a strict boundary |
 
 ## Next Steps
 
-- Read [Chats](chats) to organize, continue, and delete text conversations and
-  understand conversation context in more detail.
+- Read [Chats](chats) for daily history, deletion, voice continuation, and
+  context boundaries.
+- Read [Dictate Into Any App](dictation) for shortcuts, insertion recovery,
+  transcript history, and privacy choices.
 - Follow [Start Your First Voice Conversation](start-your-first-voice-conversation)
-  to move from typing to microphone input safely.
-- Use [Sessions and Run Inspector](sessions-and-run-inspector) when you need a
-  voice transcript or a closer look at how a run behaved.
-- Read [Outputs and Files](outputs-and-files) to find, preview, and reopen files
-  created by longer Jarvis-Agent work.
+  when you want a spoken exchange rather than an editable text draft.
+- Use [Outputs and Files](outputs-and-files) and [Sessions and Run Inspector](sessions-and-run-inspector)
+  to inspect delegated files and detailed run evidence.

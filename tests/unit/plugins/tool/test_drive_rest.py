@@ -27,7 +27,7 @@ async def test_list_files_builds_query_and_uses_bearer():
                         "mimeType": "application/vnd.ms-excel",
                         "modifiedTime": "2026-07-20T10:00:00Z",
                         "webViewLink": "https://drive.google.com/file/d/f1/view",
-                        "owners": [{"displayName": "Ruben", "emailAddress": "r@x.com"}],
+                        "owners": [{"displayName": "Alex", "emailAddress": "r@x.com"}],
                     }
                 ]
             },
@@ -50,7 +50,7 @@ async def test_list_files_builds_query_and_uses_bearer():
         "modifiedTime": "2026-07-20T10:00:00Z",
         "size": None,
         "url": "https://drive.google.com/file/d/f1/view",
-        "owner": "Ruben",
+        "owner": "Alex",
     }
     assert out["count"] == 1
 

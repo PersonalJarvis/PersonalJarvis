@@ -94,7 +94,7 @@ const TELEPHONY_STATUS_LIVE = {
   configured: true,
   enabled: true,
   account_sid_masked: "AC••••••cdef",
-  phone_number: "+4930123456789",
+  phone_number: "+1202555010289",
   public_base_url: "https://jarvis.example.com",
   webhook_url: "https://jarvis.example.com/api/telephony/voice",
   auth_token_set: true,
@@ -109,7 +109,7 @@ const TELEPHONY_STATUS_LIVE = {
 const TELEPHONY_CONFIG_LIVE = {
   enabled: true,
   account_sid: "AC0123456789abcdef0123456789abcdef",
-  phone_number: "+4930123456789",
+  phone_number: "+1202555010289",
   public_base_url: "https://jarvis.example.com",
   greeting: "",
   language_code: "de-DE",
@@ -155,7 +155,7 @@ describe("ApiKeysView — embedded Telephony tier", () => {
       expect(screen.getByTestId("status-tts-voice").textContent).toBe("Charon");
     });
     expect(screen.getByTestId("status-phone-number").textContent).toBe(
-      "+4930123456789",
+      "+1202555010289",
     );
   });
 

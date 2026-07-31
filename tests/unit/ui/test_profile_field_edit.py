@@ -26,7 +26,7 @@ from jarvis.ui.web.profile_routes import router
 INITIAL = """\
 ---
 identity:
-  name: Ruben
+  name: Alex
   preferred_address: Chef
   languages:
     - English
@@ -110,7 +110,7 @@ def test_set_emits_profile_updated(ctx) -> None:
 
 def test_set_same_value_reports_no_change(ctx) -> None:
     res = _patch(ctx.client, cluster="identity", field="name",
-                 operation="set", value="Ruben")
+                 operation="set", value="Alex")
     assert res.status_code == 200
     assert res.json()["changed"] is False
 

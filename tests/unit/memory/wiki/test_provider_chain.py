@@ -118,13 +118,40 @@ def test_keyless_codex_subscription_keeps_the_wiki_working(
     monkeypatch.setattr(
         codex_auth,
         "CodexAuthService",
-        lambda: NS(status=lambda: NS(installed=True, connected=True)),
+        lambda: NS(
+            status=lambda: NS(installed=True, connected=True, mode="chatgpt")
+        ),
     )
     ready = credential_ready_wiki_providers(
         available={"codex"},
         config=object(),
     )
     assert ready == {"codex"}  # ChatGPT login counts, no API key needed
+
+
+def test_disconnected_claude_subscription_is_excluded_from_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace as NS
+
+    import jarvis.claude_auth as claude_auth
+    from jarvis.core import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "resolve_provider_endpoint",
+        lambda provider, config: NS(credential=None),
+    )
+    monkeypatch.setattr(
+        claude_auth,
+        "ClaudeAuthService",
+        lambda: NS(status=lambda: NS(installed=True, connected=False)),
+    )
+    ready = credential_ready_wiki_providers(
+        available={"claude-cli"},
+        config=object(),
+    )
+    assert ready == set()
 
 
 def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(

@@ -35,7 +35,9 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
+from jarvis.core.config import RECOGNITION_LANGUAGE_CHOICES
 from jarvis.memory.wiki.integration import get_running_curator
+from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -417,14 +419,19 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
 # STT recognition language — the language Whisper TRANSCRIBES the user's voice
 # into. Distinct from BOTH the UI language (what the user sees) and the reply
 # language (what Jarvis answers in). ``auto`` lets Whisper detect the spoken
-# language per utterance (the bilingual default); a concrete code forces it.
+# language per utterance (the default); a concrete code forces it.
 # This had NO UI/REST control before — the recognition language was stranded in
 # jarvis.toml, so a user whose voice was mis-recognized had no way to fix it
 # (forensic 2026-06-28: German spoken, English-only model, "Can't you me" garbage).
 # Applies on the next voice bootstrap (a restart); the STT provider is built once.
+#
+# The accepted set is EVERY language the recogniser understands, shared with
+# dictation through one constant (AP-4): what Jarvis can hear is a wider question
+# than the three locales it speaks back in, and capping it at those three locked
+# out every other speaker on earth (CLAUDE.md §3).
 # ----------------------------------------------------------------------
 
-_STT_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+_STT_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
 
 
 class SttLanguageBody(BaseModel):
@@ -477,16 +484,43 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.stt.language update skipped: %s", exc)
 
-    applied_live = _live_apply_wake_plan(request, log_tag="stt-language")
+    # TWO different things have to change, and only one of them used to.
+    # ``_live_apply_wake_plan`` re-arms the WAKE detector; the recogniser that
+    # transcribes what you actually SAY is a separate object built once at
+    # startup. Reporting the wake result as "applied" meant the route answered
+    # "done" while every following utterance was still transcribed in the old
+    # language until the app was restarted.
+    applied_wake = _live_apply_wake_plan(request, log_tag="stt-language")
+    applied_recognizer = _live_apply_stt_language(request, lang)
 
     return {
         "ok": True,
         "language": lang,
         "persisted": persisted,
-        "applied_live": applied_live,
-        # Only ask for a restart when we could NOT live-apply (no running pipeline).
-        "restart_required": not applied_live,
+        "applied_live": applied_recognizer,
+        # Only ask for a restart when the RECOGNISER could not be swapped — that
+        # is the part the user is actually waiting on.
+        "restart_required": not applied_recognizer,
+        "wake_reloaded": applied_wake,
     }
+
+
+def _live_apply_stt_language(request: Request, language: str) -> bool:
+    """Swap the running recogniser to ``language``. False when there is none.
+
+    False is the honest answer on a headless host or before the voice pipeline
+    has started — the value is persisted either way and applies on the next
+    start, which is what ``restart_required`` tells the caller.
+    """
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    setter = getattr(pipeline, "set_stt_language", None)
+    if not callable(setter):
+        return False
+    try:
+        return bool(setter(language))
+    except Exception as exc:  # noqa: BLE001 — a settings click must never 500
+        log.warning("stt-language live switch failed: %s", exc)
+        return False
 
 
 def _live_apply_wake_plan(request: Request, *, log_tag: str) -> bool:
@@ -732,7 +766,10 @@ def _local_speech_ready() -> bool:
 # everywhere without dropping to a shell — the §3 "recoverable in-app"
 # contract. The spec is pinned to the [local-voice] extra in pyproject.toml so
 # the two never drift.
-_LOCAL_SPEECH_PACKAGE = "faster-whisper>=1.0"
+# Aliased, not re-typed: the local-provider catalog owns this string next to the
+# models it powers, so the wake-word install and the voice-input install can
+# never end up asking pip for two different engines.
+_LOCAL_SPEECH_PACKAGE = FASTER_WHISPER_PACKAGE
 
 _local_speech_install_lock = threading.Lock()
 # state ∈ {"idle", "running", "done", "error"}; message is the last pip detail.
@@ -970,6 +1007,37 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning("wake-word live-apply failed (persisted; applies on restart): %s", exc)
 
+    # Out-of-vocabulary check AT SAVE TIME. The probe already existed but its
+    # only caller was the self-test button, so a user whose phrase is missing
+    # from the model's lexicon had a wake that can NEVER fire and found out by
+    # chance. Reported, never enforced: the probe fails open, the union of
+    # installed models may still hear the phrase, and blocking a save on a
+    # lexicon guess is exactly the AP-27 trap (a spelling rule deciding whether
+    # a wake word is allowed to exist).
+    phrase_in_vocab: bool | None = None
+    if plan.engine == "vosk_kws":
+        try:
+            from jarvis.speech.wake_constants import resolve_vosk_model_path
+
+            model_path = resolve_vosk_model_path(_wake_lang)
+            if model_path:
+                from jarvis.plugins.wake.vosk_kws_provider import (
+                    vosk_model_supports_phrase,
+                )
+
+                phrase_in_vocab = await asyncio.to_thread(
+                    vosk_model_supports_phrase, model_path, body.phrase
+                )
+                if phrase_in_vocab is False:
+                    log.info(
+                        "wake-word saved but %r is not in the %s model's "
+                        "vocabulary — that phrase cannot fire on this engine.",
+                        body.phrase,
+                        _wake_lang,
+                    )
+        except Exception:  # noqa: BLE001 — a probe hiccup must never fail a save
+            phrase_in_vocab = None
+
     return {
         "ok": True,
         "phrase": body.phrase,
@@ -979,6 +1047,10 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         # False when no local model matches the user's word: the wake word is off
         # and the Call shortcut is the activation.
         "wake_available": plan.wake_available,
+        # None = not applicable / not probed. False is a WARNING, not a
+        # rejection: the phrase saved, but this engine's lexicon has no entry
+        # for it, so the UI should say so instead of leaving the user guessing.
+        "phrase_in_vocab": phrase_in_vocab,
         "message": plan.message,
         "persisted": persisted,
         # When live-applied, the running pipeline already swapped the detector;
@@ -1212,20 +1284,50 @@ async def wake_mic_level(request: Request) -> dict[str, object]:
     }
 
 
-# Curated safe combos for the voice-keybind UI quick-picks. They avoid
-# OS-critical shortcuts and work across the supported desktop platforms.
+# Curated safe combos for the voice-keybind UI quick-picks. Every entry passes
+# ``validate_hotkey`` on win32, darwin AND linux, and avoids the OS-critical
+# chords. ``f3+f4`` used to be in this list and was removed: it is the shipped
+# Call combo, so it collided with an existing binding every single time and the
+# quick-pick could never be saved.
 _KEYBIND_SUGGESTIONS = [
     "ctrl+right_alt+j",
     "ctrl+right_alt+k",
     "ctrl+right_alt+space",
     "ctrl+shift+space",
-    "f3+f4",
+    "ctrl+shift+d",
+    "ctrl+shift+j",
+    "ctrl+alt+d",
 ]
 
 
+def _available_suggestions(bound: dict[str, str]) -> list[str]:
+    """Quick-picks minus everything that would be rejected on save.
+
+    The collision rule lives in ONE place —
+    ``jarvis.trigger.hotkey.combos_collide`` — and this list must be filtered
+    by exactly that function, never by a hand-rolled token comparison. A raw
+    token comparison here would leave a quick-pick in the list that the save
+    route then refuses (``ctrl+left_alt+…`` and ``ctrl+right_alt+…`` are the
+    same registration), which is a guaranteed 400 the moment the user clicks
+    it. The server owns the rule, so the server owns the list.
+    """
+    from jarvis.trigger.hotkey import combos_collide
+
+    taken = [c for c in bound.values() if c and c.strip()]
+    return [
+        suggestion
+        for suggestion in _KEYBIND_SUGGESTIONS
+        if not any(combos_collide(suggestion, other) for other in taken)
+    ]
+
+
 # ---------------------------------------------------------------------------
-# Voice keybinds (editable): Call / Hangup. GET both actions plus defaults;
-# PUT one action at a time. Persisted to jarvis.toml [trigger] AND live-applied
+# Voice keybinds (editable): every action in config_writer.KEYBIND_ACTIONS —
+# Call, Hangup, push-to-talk dictation and hands-free dictation. GET returns all
+# of them plus their defaults; PUT changes one action at a time. The action list
+# is never restated here; it is read from KEYBIND_ACTIONS / KEYBIND_TOML_KEY so
+# a new action reaches this route, the CLI and the UI in one edit.
+# Persisted to jarvis.toml [trigger] AND live-applied
 # to the running voice pipeline (set_keybinds → HotkeyTrigger.rearm), so a
 # change takes effect immediately without a restart; a headless/down pipeline
 # falls back to "applies on next start".
@@ -1246,7 +1348,11 @@ def _keybind_values(trig: object) -> dict[str, str]:
 
 
 class KeybindBody(BaseModel):
-    action: str = Field(..., description="call | hangup")
+    action: str = Field(
+        ...,
+        description="One of config_writer.KEYBIND_ACTIONS "
+        "(call | hangup | dictate | dictate_toggle)",
+    )
     hotkey: str = Field(..., max_length=64)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
@@ -1254,6 +1360,8 @@ class KeybindBody(BaseModel):
 @router.get("/keybinds")
 async def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
+    from jarvis.core.config_writer import KEYBIND_TOML_KEY
+    from jarvis.trigger.hotkey import mouse_hotkeys_available
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1262,10 +1370,25 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     # (headless / not yet started). With a running pipeline, saves apply live.
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
+    current = _keybind_values(trig)
+    # Can THIS host fire a mouse-button shortcut at all? Asked of the one
+    # capability probe, never of a platform name (AP-21/AP-23): it is false on
+    # Wayland, on macOS without pyobjc Quartz and on Linux without the opt-in
+    # pynput extra. Without this field the picker offered mouse buttons
+    # everywhere and they silently never fired on those hosts; with it the UI
+    # hides the cluster and prints the probe's own English sentence.
+    mouse_ok, mouse_reason = mouse_hotkeys_available()
     return {
-        "keybinds": _keybind_values(trig),
-        "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup},
-        "suggestions": list(_KEYBIND_SUGGESTIONS),
+        "keybinds": current,
+        # DERIVED, never a hand-written dict. A literal map here is the AP-4
+        # trap in its purest form: a new action lands in KEYBIND_ACTIONS, the
+        # UI renders its row, and the row's "reset to default" reads undefined
+        # because one of the four layers was never told.
+        "defaults": {
+            action: str(getattr(d, field, "")) for action, field in KEYBIND_TOML_KEY.items()
+        },
+        "suggestions": _available_suggestions(current),
+        "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
         "restart_required": restart_required,
     }
 
@@ -1273,7 +1396,13 @@ async def get_keybinds(request: Request) -> dict[str, object]:
 @router.put("/keybinds")
 async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
-    from jarvis.trigger.hotkey import validate_hotkey
+    from jarvis.trigger.hotkey import (
+        MOUSE_BUTTON_TOKENS,
+        combos_collide,
+        mouse_hotkeys_available,
+        normalized_combo_tokens,
+        validate_hotkey,
+    )
 
     action = body.action.strip().lower()
     if action not in KEYBIND_ACTIONS:
@@ -1283,42 +1412,79 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
 
+    # Everything the save accepts but the user should still know about. Sent
+    # back with the response so the UI can show it without a second request.
+    cautions: list[str] = []
+
     if hotkey:
         # The backend is the authority — a browser key-capture cannot be
         # trusted to filter OS-critical / unusable combos (AltGr detection is
         # unreliable there).
-        ok, reason = validate_hotkey(hotkey)
+        verdict = validate_hotkey(hotkey)
+        ok, reason = verdict.ok, verdict.reason
         if not ok:
             raise HTTPException(status_code=400, detail=reason)
+        cautions.extend(getattr(verdict, "cautions", ()) or ())
 
-        # Collision check: one chord can't both answer and hang up. Exact
-        # equality is not enough — the polling hotkey backend matches a combo
-        # as soon as its keys are down, so a key-set SUBSET of another
-        # action's combo fires both (call=f1 + hangup=f1+f2 → F1+F2 triggers
-        # call AND hangup). Reject any subset/superset relation between the
-        # key sets, in both directions.
-        new_keys = {p.strip() for p in hotkey.split("+") if p.strip()}
+        # A mouse button is only offerable where the host can actually watch
+        # the buttons globally. Asked of the ONE capability probe, never of a
+        # platform name (AP-21/AP-23): accepting a shortcut that can never
+        # fire here — Wayland, macOS without pyobjc Quartz, Linux without the
+        # pynput extra — is the silent dishonesty this project refuses. The
+        # tokens are read from the NORMALIZED combo so the alias spellings
+        # (``mouse_back`` → ``mouse_x1``) are caught too.
+        if normalized_combo_tokens(hotkey) & MOUSE_BUTTON_TOKENS:
+            mouse_ok, mouse_reason = mouse_hotkeys_available()
+            if not mouse_ok:
+                raise HTTPException(status_code=400, detail=mouse_reason)
+
+        # Collision check: one chord can't both answer and hang up. Delegated
+        # to ``combos_collide`` — the ONE place that knows two shortcuts are
+        # the same registration. Comparing RAW tokens here (what this route
+        # used to do) accepted ``ctrl+left_alt+j`` alongside
+        # ``ctrl+right_alt+j``: both normalize to the same chord, so the
+        # second registration lost the race and that action silently never
+        # fired. The rule itself is unchanged — identical sets collide, and so
+        # does any subset/superset pair, because the polling backend matches a
+        # combo as soon as its keys are down (call=f1 + hangup=f1+f2 → F1+F2
+        # triggers both). An unbound other action never collides.
+        # Two DIFFERENT actions on the SAME registration is the one case
+        # nothing downstream can resolve: the backend sees one chord and no
+        # rule can say which action the user meant. That stays refused.
+        #
+        # An overlap where one combo merely CONTAINS the other is a different
+        # thing, and refusing it broke the maintainer's stated requirement that
+        # any combination be usable: a modifier-only chord like ctrl+alt is a
+        # subset of nearly every other shortcut, so the rule rejected almost
+        # every one of them. The consequence is real but it is the user's to
+        # accept, so it is now reported as a caution and the save goes through.
+        mine = normalized_combo_tokens(hotkey)
         for other_action, other_combo in _keybind_values(trig).items():
-            if other_action == action:
+            if other_action == action or not other_combo.strip():
                 continue
-            other_keys = {
-                p.strip() for p in other_combo.strip().lower().split("+") if p.strip()
-            }
-            if not other_keys:
-                # The other action is itself unbound (Clear button) — an
-                # empty key-set is a subset of every combo, so without this
-                # guard EVERY save would be rejected as "overlapping" the
-                # moment any one action is cleared.
+            theirs = normalized_combo_tokens(other_combo)
+            if not combos_collide(hotkey, other_combo):
                 continue
-            if new_keys <= other_keys or other_keys <= new_keys:
+            if mine == theirs:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"'{hotkey}' overlaps with '{other_action}' "
-                        f"('{other_combo.strip().lower()}') — pressing one would "
-                        "trigger both. Pick keys that don't contain each other."
+                        f"'{hotkey}' is already the shortcut for "
+                        f"'{other_action}' ('{other_combo.strip().lower()}') — "
+                        "the two are the same key press, so nothing could tell "
+                        "them apart. Clear that one first, or pick other keys."
                     ),
                 )
+            wider, narrow = (
+                (other_combo.strip().lower(), hotkey)
+                if mine < theirs
+                else (hotkey, other_combo.strip().lower())
+            )
+            cautions.append(
+                f"'{narrow}' is contained in '{wider}' ('{other_action}'), so "
+                f"pressing '{wider}' triggers both. Clear one of them if that "
+                "is not what you want."
+            )
     # else: hotkey == "" is an explicit "unbind this action" request (Settings
     # Clear button) — skip validate_hotkey (that rule exists for "still
     # recording", not "cleared on purpose") and skip the collision check
@@ -1364,6 +1530,10 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         # needed. Otherwise it takes effect on the next voice start.
         "applied_live": applied_live,
         "restart_required": not applied_live,
+        # Accepted, but worth knowing: a modifier-only chord that also fires
+        # inside longer ones, an OS shortcut the system may take first, or an
+        # overlap with another action. Sentences, ready to show.
+        "cautions": cautions,
     }
 
 
@@ -1835,6 +2005,93 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
             status_code=503, detail="no desktop window to restart"
         )
     return {"ok": True, "restarting": True}
+
+
+@router.get("/input-isolation", summary="Can other apps type into this window?")
+async def get_input_isolation() -> dict[str, object]:
+    """Report whether outside input software can reach this app's window.
+
+    Third-party dictation and speech-to-text tools, text expanders, clipboard
+    managers, and password-manager auto-type all inject synthetic keystrokes
+    into the focused window and locate the field through the OS accessibility
+    tree. Windows blocks BOTH for any window owned by a higher-integrity
+    process — so while this app runs elevated they appear to do nothing here
+    while still working in every other app, with no error anywhere (Windows
+    does not report a UIPI drop to the sender).
+
+    Deliberately cheap, uncached, and unauthenticated-safe: it reads only this
+    process's own privilege state, so the desktop UI can poll it on mount.
+    """
+    from jarvis.platform.input_isolation import describe_input_isolation
+
+    return describe_input_isolation().to_dict()
+
+
+@router.post(
+    "/restart-unelevated",
+    summary="Restart the app without administrator rights",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def restart_unelevated(request: Request, force: bool = False) -> dict[str, object]:
+    """Restart the desktop app stripped of its administrator rights.
+
+    The repair for the condition ``GET /input-isolation`` reports: elevation
+    survives every ordinary in-app restart, so a plain restart cannot escape it.
+    This relaunches through the elevated token's filtered companion token, which
+    lands the fresh window at the same privilege level as any normally-started
+    app — and back within reach of the user's dictation software.
+
+    Refuses with 409 when the app is not elevated (nothing to repair) or when
+    privileges cannot be dropped on this account, and in that case the app stays
+    UP: a restart that never returns is worse than the problem being fixed.
+    Honours the same running-mission guard as ``/restart-app``.
+    """
+    from jarvis.platform.input_isolation import describe_input_isolation
+
+    report = describe_input_isolation()
+    if not report.can_restart_unelevated:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "not_elevated"
+                if not report.blocked
+                else "cannot_drop_privileges",
+                "report": report.to_dict(),
+            },
+        )
+
+    if not force:
+        kontrollierer = getattr(request.app.state, "kontrollierer", None)
+        list_running = getattr(kontrollierer, "running_mission_ids", None)
+        running = list(list_running()) if callable(list_running) else []
+        if running:
+            manager = getattr(request.app.state, "mission_manager", None)
+            try:
+                missions = await asyncio.wait_for(
+                    _running_mission_summaries(manager, running), timeout=2.0
+                )
+            except TimeoutError:
+                missions = [{"id": mid, "title": ""} for mid in running]
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "missions_running", "missions": missions},
+            )
+
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "request_unelevated_restart", None)
+    if not callable(fn):
+        raise HTTPException(
+            status_code=503, detail="self-restart unavailable on this host"
+        )
+    # Same off-pool dispatch as /restart-app: a restart must survive a default
+    # thread pool exhausted by hung threads.
+    scheduled, detail = await _run_off_pool(fn)
+    if not scheduled:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "deescalation_failed", "message": detail},
+        )
+    return {"ok": True, "restarting": True, "unelevated": True}
 
 
 class OpenExternalBody(BaseModel):

@@ -20,6 +20,27 @@ log = logging.getLogger("jarvis.realtime.desktop")
 # Silero frames are fixed 512 samples at the 16 kHz capture rate.
 _VAD_FRAME_S = VAD_FRAME_SAMPLES / 16_000.0
 
+# Jitter buffer: how much provider audio is banked before a turn starts playing.
+#
+# A realtime provider does not deliver its audio at a steady rate — it bursts,
+# then goes quiet while it generates the next span. ``_note_audio_flow`` logged
+# those quiet spans on 2026-07-27 as "the provider sent no audio for this span"
+# at 405-686 ms, which the device buffer alone could not cover, so the speaker
+# ran dry mid-sentence. Holding the first chunks back builds a reserve that the
+# player eats through during such a pause instead of falling silent; the reserve
+# refills on the provider's next burst.
+#
+# This is the mirror image of DEFAULT_OUTPUT_BUFFER_S in jarvis.audio.player,
+# and the two cover different failures: audio banked HERE needs the event loop
+# to reach the device, so it helps against a slow PROVIDER; audio already inside
+# PortAudio plays without this process, so that is what covers an event-loop
+# stall. Both are needed.
+DEFAULT_PREBUFFER_MS = 180
+# Ceiling on how long the reserve may be waited for, so this can only ever
+# delay the first word by this much — a provider that trickles its audio out
+# in real time starts speaking on time with whatever it has delivered.
+DEFAULT_PREBUFFER_TIMEOUT_MS = 240
+
 
 class DesktopRealtimeBargeInDetector:
     """Detect deliberate desktop barge-in on the existing microphone stream.
@@ -436,6 +457,10 @@ class DesktopRealtimePlayback:
     The bounded queue applies backpressure when an output device is slower than
     the provider. A turn-complete marker drains naturally; barge-in or teardown
     stops the device immediately and discards queued audio.
+
+    Each turn opens with a jitter buffer (``prebuffer_ms``) so a provider that
+    pauses mid-reply eats a reserve instead of the speaker (see
+    ``DEFAULT_PREBUFFER_MS``).
     """
 
     def __init__(
@@ -445,11 +470,15 @@ class DesktopRealtimePlayback:
         sample_rate: int = 24_000,
         max_queue_chunks: int = 200,
         finish_timeout_s: float = 120.0,
+        prebuffer_ms: int = DEFAULT_PREBUFFER_MS,
+        prebuffer_timeout_ms: int = DEFAULT_PREBUFFER_TIMEOUT_MS,
     ) -> None:
         self._player = player
         self._sample_rate = int(sample_rate)
         self._max_queue_chunks = max(1, int(max_queue_chunks))
         self._finish_timeout_s = max(1.0, float(finish_timeout_s))
+        self._prebuffer_s = max(0.0, float(prebuffer_ms) / 1000.0)
+        self._prebuffer_timeout_s = max(0.0, float(prebuffer_timeout_ms) / 1000.0)
         self._queue: asyncio.Queue[AudioChunk | None] | None = None
         self._task: asyncio.Task[None] | None = None
         self._closed = False
@@ -578,10 +607,42 @@ class DesktopRealtimePlayback:
         self._task = None
         return queue, task
 
-    @staticmethod
     async def _chunks(
+        self,
         queue: asyncio.Queue[AudioChunk | None],
     ) -> AsyncIterator[AudioChunk]:
+        """Yield the turn's audio, opening with the jitter buffer.
+
+        Nothing is dropped or reordered: the banked chunks are handed on in
+        arrival order, the reserve simply starts playback that much later so a
+        provider pause has something to eat. The wait is bounded twice over —
+        by ``prebuffer_timeout_ms`` and by the end-of-turn sentinel — so a reply
+        shorter than the reserve still plays immediately.
+        """
+        banked: list[AudioChunk] = []
+        ended = False
+        target_bytes = int(self._sample_rate * 2 * self._prebuffer_s)
+        if target_bytes > 0:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._prebuffer_timeout_s
+            banked_bytes = 0
+            while banked_bytes < target_bytes:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    chunk = await asyncio.wait_for(queue.get(), remaining)
+                except TimeoutError:
+                    break
+                if chunk is None:
+                    ended = True
+                    break
+                banked.append(chunk)
+                banked_bytes += len(chunk.pcm)
+        for chunk in banked:
+            yield chunk
+        if ended:
+            return
         while True:
             chunk = await queue.get()
             if chunk is None:

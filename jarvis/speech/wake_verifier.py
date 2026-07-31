@@ -110,7 +110,13 @@ async def verify_wake_with_stt(
     stt: _SupportsTranscribePCM,
     pcm_bytes: bytes,
     sample_rate: int = 16_000,
-    language: str | None = "de",
+    # None = let the provider auto-detect. This default used to be "de", which
+    # every caller that omitted the argument silently inherited — so a wake was
+    # verified by asserting the audio is German regardless of who was speaking.
+    # A wrong pin garbles the transcript the matcher then has to satisfy;
+    # auto-detect is the honest fallback. Callers that KNOW the language (the
+    # pipeline resolves it through ``resolve_wake_language``) still pass it.
+    language: str | None = None,
     matcher: Any | None = None,
 ) -> tuple[bool, str | None]:
     """Transcribe ``pcm_bytes`` and confirm the configured wake phrase.
@@ -164,7 +170,14 @@ async def verify_wake_with_stt(
         # None (not "") = STT OUTAGE: lets the caller degrade open on a dead
         # provider (AP-22) while a genuine empty transcription stays "".
         return False, None
-    text = (getattr(transcript, "text", "") or "").strip()
+    # ``raw_text`` first, like the rolling-whisper verifier: wake has to judge
+    # what the recognizer EMITTED. A provider-cleaned string would be a
+    # different sentence than the one the audio checks were measured against,
+    # and the prefix match would then be answering about text nobody spoke
+    # (AP-27).
+    text = (
+        getattr(transcript, "raw_text", "") or getattr(transcript, "text", "") or ""
+    ).strip()
     matched = transcript_has_hey_prefix(text, matcher)
     log.info(
         "wake-verify transcript=%r matched=%s",

@@ -145,9 +145,9 @@ def _concept(slug: str, summary: str) -> str:
 
 
 PROFILE_WITH_LENA = (
-    "---\ntype: entity\nentity_kind: person\nslug: ruben\n"
-    "aliases: [Ruben, the user]\ncreated: 2026-05-14\nupdated: 2026-06-10\n---\n\n"
-    "# Ruben\n\n## Summary\n\nThe project owner.\n\n## Identity\n\n"
+    "---\ntype: entity\nentity_kind: person\nslug: alex\n"
+    "aliases: [Alex, the user]\ncreated: 2026-05-14\nupdated: 2026-06-10\n---\n\n"
+    "# Alex\n\n## Summary\n\nThe project owner.\n\n## Identity\n\n"
     "## Preferences\n\n## Work style\n\n## Values\n\n"
     "## Relationships\n\n- [[entities/lena|Lena]] — friend, veterinarian\n\n"
     "## Active projects\n\n## Decisions\n\n## Sources\n\n- seed\n- conversation\n"
@@ -171,10 +171,10 @@ async def stack(tmp_path: Path):
     (vault_root / "schema.md").write_text("# stub\n", encoding="utf-8")
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    (vault_root / "entities" / "ruben.md").write_text(
-        "---\ntype: entity\nentity_kind: person\nslug: ruben\n"
-        "aliases: [Ruben, the user]\ncreated: 2026-05-14\nupdated: 2026-05-30\n---\n\n"
-        "# Ruben\n\n## Summary\n\nThe project owner.\n\n## Sources\n\n- seed\n",
+    (vault_root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nentity_kind: person\nslug: alex\n"
+        "aliases: [Alex, the user]\ncreated: 2026-05-14\nupdated: 2026-05-30\n---\n\n"
+        "# Alex\n\n## Summary\n\nThe project owner.\n\n## Sources\n\n- seed\n",
         encoding="utf-8",
     )
 
@@ -233,7 +233,7 @@ async def stack(tmp_path: Path):
     # D4 skeleton, as bootstrap would do it — then age again so the first
     # conversation's profile update is not blocked by the 30s edit lock.
     _age_vault(vault_root)
-    await ensure_profile_skeleton(vault_root=vault_root, slug="ruben", curator=curator)
+    await ensure_profile_skeleton(vault_root=vault_root, slug="alex", curator=curator)
     _age_vault(vault_root)
 
     yield vault_root, bus, brain, journal, scheduler, bridge
@@ -273,7 +273,7 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
         {"fact": "Lena is a friend of the user and works as a veterinarian.",
          "kind": "person", "subjects": ["lena"]},
         {"fact": "The user is friends with Lena.",
-         "kind": "identity", "subjects": ["ruben", "lena"]},
+         "kind": "identity", "subjects": ["alex", "lena"]},
         {"fact": "Lena moved to Hamburg last month.",
          "kind": "event", "subjects": ["lena"]},
     ]))
@@ -289,10 +289,10 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
          "new_body": _entity("lena",
                              ["Lena works as a veterinarian.",
                               "Lena lives in Hamburg."],
-                             ["[[entities/ruben|Ruben]] — friend"]),
+                             ["[[entities/alex|Alex]] — friend"]),
          "reason": "new person"},
         {"candidate_id": cid_profile, "decision": "update",
-         "target": "entities/ruben.md",
+         "target": "entities/alex.md",
          "new_body": PROFILE_WITH_LENA,
          "reason": "link the friend into the profile"},
         {"candidate_id": cid_move, "decision": "add",
@@ -305,7 +305,7 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
 
     lena_page = vault_root / "entities" / "lena.md"
     assert lena_page.is_file(), "the friend page must appear"
-    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    profile = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
     assert "[[entities/lena|Lena]]" in profile, "profile links into the graph"
     assert (vault_root / "concepts" / "lena-in-hamburg.md").is_file()
     assert journal.backlog_count() == 0
@@ -369,7 +369,7 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     _age_vault(vault_root)
     brain.extractor_responses.append(_facts_json([
         {"fact": "The user's OpenAI key is sk-proj-AbCdEf0123456789AbCdEf0123456789.",
-         "kind": "other", "subjects": ["ruben"]},
+         "kind": "other", "subjects": ["alex"]},
     ]))
     audit_before = journal.capture_summary()
     await bus.publish(TranscriptFinal(
@@ -385,11 +385,11 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     await bus.publish(ResponseGenerated(text="Noted.", language="en"))
     for _ in range(100):
         audit_after = journal.capture_summary()
-        if audit_after["total"] > audit_before["total"]:
+        if audit_after["failed"] > audit_before["failed"]:
             break
         await asyncio.sleep(0.02)
     else:
-        raise AssertionError("secret-bearing turn was not audited")
+        raise AssertionError("secret-bearing turn was not rejected and audited")
 
     assert not (vault_root / "concepts" / "api-key-note.md").exists(), (
         "secret-shaped body must never reach disk"

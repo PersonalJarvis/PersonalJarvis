@@ -6,12 +6,61 @@ degrades to a UI fallback instead of an HTTP 500 — see jarvis/runs/constants.p
 and the BUG-008 history."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis.sessions.models import VoiceSessionRow
 
 
+class RawEvent(BaseModel):
+    """One persisted bus event, verbatim — the developer's ground truth.
+
+    Everything else in this module is a *derivation*; this is the source those
+    derivations were built from. Surfacing it means a developer can always ask
+    "but what actually happened?" and get the recorded answer instead of a
+    summary. ``payload`` is the already-redacted dict the recorder persisted
+    (whitelist-filtered at capture time — see recorder._payload_for), so no new
+    privacy surface is opened by showing it."""
+    model_config = ConfigDict(extra="ignore")
+    seq: int = 0                # store sequence — stable chronological order
+    kind: str
+    category: str = "system"    # see RUN_EVENT_CATEGORIES — a UI lane
+    ts_ms: int = 0
+    offset_ms: int = 0          # relative to the turn's start
+    summary: str = ""           # one-line human reading of the payload
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunEnvironment(BaseModel):
+    """How this run was configured — the "which Jarvis am I looking at" header.
+
+    A forensic report is unusable without it: the same utterance behaves
+    differently in realtime vs. pipeline mode, on a different provider, or with
+    a different wake source. Every field is READ from the recorded run, never
+    from the host's live config (which may have changed since)."""
+    model_config = ConfigDict(extra="ignore")
+    voice_mode: str = ""            # realtime | pipeline
+    surface: str = ""               # desktop | web | channel surface
+    wake_source: str = ""           # voice | hotkey | channel:<name>
+    wake_keyword: str = ""
+    language: str = ""
+    hangup_reason: str = ""
+    providers: list[str] = Field(default_factory=list)
+    models: list[str] = Field(default_factory=list)
+    tiers: list[str] = Field(default_factory=list)
+    voices: list[str] = Field(default_factory=list)
+    input_sample_rate: int | None = None
+    output_sample_rate: int | None = None
+
+
 class TraceEvent(BaseModel):
+    """Compact timeline row (kind + offset + one-line summary).
+
+    Superseded on the wire by ``RawEvent``, which carries the same information
+    plus the verbatim payload and a UI lane — a run no longer ships both, so a
+    long Computer-Use turn is not serialized twice. Kept as a public helper
+    (``analyzer.build_timeline``) for callers that only want the light shape."""
     model_config = ConfigDict(extra="ignore")
     kind: str
     offset_ms: int = 0          # relative to the turn's start
@@ -114,13 +163,22 @@ class RunTurn(BaseModel):
     think_ms: int = 0
     speak_ms: int = 0
     transcript: list[TranscriptLine] = Field(default_factory=list)
-    timeline: list[TraceEvent] = Field(default_factory=list)
     latency: list[LatencyEntry] = Field(default_factory=list)
     decision_path: list[DecisionStep] = Field(default_factory=list)
     tools: list[ToolCall] = Field(default_factory=list)
     errors: list[ErrorEntry] = Field(default_factory=list)
     extras: TurnExtras = Field(default_factory=TurnExtras)
     activity: RunActivity = Field(default_factory=RunActivity)  # what THIS turn triggered
+    # The raw, verbatim event stream of this turn + its per-lane histogram.
+    # ``events_truncated`` is set when the turn exceeded MAX_RAW_EVENTS_PER_TURN
+    # so the UI can say so instead of implying it showed everything.
+    events: list[RawEvent] = Field(default_factory=list)
+    event_counts: dict[str, int] = Field(default_factory=dict)
+    events_truncated: bool = False
+    # False when NO usage was recorded for this turn (realtime turns billed at
+    # session level emit no BrainTurnCompleted). Lets the UI distinguish
+    # "cost zero" from "not measured" instead of printing a misleading 0.
+    usage_recorded: bool = False
 
 
 class RunAnalytics(BaseModel):
@@ -161,9 +219,15 @@ class Run(BaseModel):
     missions: list[MissionRef] = Field(default_factory=list)
     activity: RunActivity = Field(default_factory=RunActivity)
     analytics: RunAnalytics = Field(default_factory=RunAnalytics)
+    environment: RunEnvironment = Field(default_factory=RunEnvironment)
+    # Session-scoped events (those the recorder stored without a turn id) plus
+    # the run-wide event-kind histogram.
+    session_events: list[RawEvent] = Field(default_factory=list)
+    event_counts: dict[str, int] = Field(default_factory=dict)
 
 
 __all__ = [
+    "RawEvent", "RunEnvironment",
     "TraceEvent", "TranscriptLine", "ToolCall", "LatencyEntry", "DecisionStep",
     "ErrorEntry", "TurnExtras", "MissionRef", "RunActivity", "RunTurn",
     "RunAnalytics", "RunListItem", "Run",

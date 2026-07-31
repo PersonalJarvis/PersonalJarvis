@@ -70,7 +70,7 @@ function installFetchMock(routes: Record<string, () => RouteResult>) {
 }
 
 const PROFILE_OK = {
-  user: { name: "Ruben", meta: {}, path: "data/workspace/USER.md" },
+  user: { name: "Alex", meta: {}, path: "data/workspace/USER.md" },
   people: [],
   reviews_count: 0,
 };
@@ -178,7 +178,7 @@ describe("ProfileView — open knowledge matrix (no concealment)", () => {
     // The hero leads with a conversational, named headline — not a
     // classification strip.
     await waitFor(() => {
-      expect(screen.getByText("A fresh page, Ruben.")).toBeDefined();
+      expect(screen.getByText("A fresh page, Alex.")).toBeDefined();
     });
 
     // The secrecy signals are gone.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowUp, Bot, CreditCard, FlaskConical, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
+import { PromptWriterCard } from "@/components/PromptWriterCard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -22,6 +23,7 @@ import {
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -237,6 +239,12 @@ export function JarvisAgentSection({
           users come back for, so it must not hide below the provider cards. */}
       <SubagentModelCard status={bridge} onSaved={reload} />
 
+      {/* Who writes the Agentic-IDE briefs. Sits next to the model pin because
+          it is the same kind of decision — which model does work on the user's
+          behalf — and because the two columns below are exactly the choice it
+          is about: a subscription login on the left, an API key on the right. */}
+      <PromptWriterCard />
+
       {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
           compatibility fallback and are labelled honestly on the relevant card. */}
       <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -304,6 +312,13 @@ export function JarvisAgentSection({
           ))}
         </div>
       </div>
+
+      {/* Below the two columns rather than inside one: this is a second axis.
+          The cards above answer "which provider powers the agent"; this answers
+          "which of YOUR seats on that provider", and a card holding two Claude
+          Max logins does not belong in a column of one-login-per-provider
+          cards. */}
+      <AgentAccountsPanel />
     </section>
   );
 }
@@ -1097,7 +1112,7 @@ function ClaudeConnectionCard({
   // of the two ever shows "active".
   const isActive = Boolean(row?.is_active_brain) && status?.mode === "subscription";
   // A subscription login shows the signed-in account + tier ("Connected as
-  // ruben@… · Claude Max"); not connected shows how to sign in. The API-key
+  // alex@… · Claude Max"); not connected shows how to sign in. The API-key
   // alternative now lives on its own card below, not here.
   const detail = connected
     ? status?.user_email

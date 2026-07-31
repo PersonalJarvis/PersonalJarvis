@@ -127,7 +127,7 @@ class CallContactTool:
     name: str = "call-contact"
     description: str = (
         "Place a real outbound phone call to a saved contact and speak to them "
-        "live. Use this when the user says 'ruf Christoph an' / 'call Laura'. "
+        "live. Use this when the user says 'ruf Christoph an' / 'call Casey'. "
         "Resolve the person by name; an optional message becomes what you say "
         "first when they pick up. Only works for contacts that have a phone "
         "number saved and when telephony is configured."
@@ -152,7 +152,7 @@ class CallContactTool:
     }
     input_examples: list[dict[str, Any]] = [
         {"name": "Christoph"},
-        {"name": "Laura", "message": "Hi Laura, are we still on for Friday?"},
+        {"name": "Casey", "message": "Hi Casey, are we still on for Friday?"},
     ]
 
     def __init__(

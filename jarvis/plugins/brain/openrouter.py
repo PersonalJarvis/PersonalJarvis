@@ -6,6 +6,7 @@ Model names are namespaced ("anthropic/claude-opus-4.7", "openai/gpt-5").
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from jarvis.core import config as cfg
@@ -98,7 +99,16 @@ class OpenRouterBrain:
             # retry once without it; unrelated errors propagate unchanged.
             if "reasoning" not in str(exc).lower():
                 raise
-            async for delta in stream_complete(client, self._model, req):
+            # Drop the hint from the REQUEST too, not just the gateway object:
+            # ``stream_complete`` rebuilds the native ``reasoning_effort``
+            # kwarg from ``req`` whenever no gateway directive is present, so
+            # passing the original request re-sends the very opt-out the
+            # upstream just refused — under its other name (live 2026-07-26:
+            # two identical 400s per delegated voice turn against
+            # google/gemini-3.5-flash, whose endpoint requires reasoning).
+            async for delta in stream_complete(
+                client, self._model, replace(req, reasoning_effort=None)
+            ):
                 yield delta
             return
         yield first

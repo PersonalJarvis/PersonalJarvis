@@ -70,9 +70,22 @@ def test_api_critic_falls_back_to_any_keyed_api_provider(monkeypatch):
     assert prov == "gemini"
 
 
-def test_api_critic_none_when_no_api_key(monkeypatch):
+def test_api_critic_falls_to_local_when_no_api_key(monkeypatch):
+    """Local-first mandate 2026-07-25: ZERO cloud keys no longer means NO
+    critic — the walk lands on the keyless local family (last in the
+    preference order), which is viable without any credential."""
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: None)
     prov, model = _resolve_api_critic_provider("antigravity", None)
+    assert prov == "ollama"
+
+
+def test_api_critic_none_when_even_locals_are_excluded(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: None)
+    prov, model = _resolve_api_critic_provider(
+        "antigravity",
+        None,
+        excluded_providers={"ollama", "local-openai"},
+    )
     assert prov is None
 
 

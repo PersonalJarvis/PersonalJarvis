@@ -119,7 +119,7 @@ async def _run_outbound_fake() -> int:
     from tests.fakes.fake_telephony_stack import FakeBrain, FakeSTT, FakeTTS
 
     sink = _Collector()
-    opening = "Guten Tag, hier ist Jarvis. Ich rufe im Auftrag von Ruben an."
+    opening = "Guten Tag, hier ist Jarvis. Ich rufe im Auftrag von Alex an."
     reply = "Alles klar, ich richte es aus. Vielen Dank!"
     session = TelephonyCallSession(
         call_sid="PROBE-OUT",

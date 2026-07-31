@@ -60,7 +60,12 @@ _BINARY_CANDIDATES: tuple[str, ...] = ("claude", "claude.cmd", "claude.exe")
 # TTL auth probe on later calls. A failed version probe is cached too, so an
 # absent/hanging Claude install never re-pays that timeout.
 _VERSION_CACHE: dict[str, str | None] = {}
-_AUTH_LOGIN_CACHE: dict[str, bool] = {}
+#: ``auth login --help`` output per binary, or ``None`` where the subcommand
+#: does not exist. The TEXT is cached rather than a boolean because it answers
+#: two capability questions: whether ``auth login`` exists at all, and whether
+#: it takes ``--email`` (older releases with the subcommand but not the flag
+#: would abort on an unknown option).
+_AUTH_LOGIN_CACHE: dict[str, str | None] = {}
 _AUTH_LOGOUT_CACHE: dict[str, bool] = {}
 _AUTH_STATUS_CACHE: dict[
     tuple[str, str, str, str, str], tuple[float, ClaudeCliAuthSnapshot | None]
@@ -142,6 +147,94 @@ def _subscription_label(sub_type: str | None) -> str:
     if normalized == "pro":
         return "Claude Pro"
     return f"Claude {sub_type}"
+
+
+def subscription_label(sub_type: str | None) -> str:
+    """Public alias of the tier label, for the multi-account switcher."""
+    return _subscription_label(sub_type)
+
+
+def _is_default_config_dir(config_dir: Path) -> bool:
+    """Whether *config_dir* is the CLI's own ``~/.claude`` default location.
+
+    Built with ``Path.home()`` rather than a hand-written ``"~/.claude"`` string
+    so the comparison holds on every OS, and compared through ``os.path.normcase``
+    so a differently-cased Windows path still recognises its own default.
+    """
+    try:
+        default = Path.home() / ".claude"
+    except (OSError, ValueError, RuntimeError):  # pragma: no cover - exotic home
+        return False
+    if config_dir == default:
+        return True
+    try:
+        return os.path.normcase(str(config_dir)) == os.path.normcase(str(default))
+    except (OSError, ValueError):  # pragma: no cover - unrepresentable path
+        return False
+
+
+def _identity_candidates(config_dir: Path) -> list[Path]:
+    """Every ``.claude.json`` that may legitimately describe *config_dir*'s login.
+
+    For a CUSTOM config dir that is exactly one file — the one inside it. The
+    home-level ``~/.claude.json`` belongs to the default login and must never be
+    consulted for an added account, or every account borrows the default's email
+    and the switcher shows the same person on every row.
+    """
+    candidates = [config_dir / ".claude.json"]
+    if _is_default_config_dir(config_dir):
+        try:
+            candidates.append(Path.home() / ".claude.json")
+        except (OSError, ValueError, RuntimeError):  # pragma: no cover
+            pass
+    return candidates
+
+
+def _mtime_or_none(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def claude_account_identity(config_dir: Path) -> tuple[str | None, str | None]:
+    """``(email, display name)`` of the login kept in *config_dir* — display only.
+
+    Two files can carry an identity for the default config dir: ``~/.claude.json``
+    (where the CLI actually keeps it) and ``~/.claude/.claude.json`` (written by
+    some releases). Which one is live is a property of the installed CLI, not
+    something this module can assume — so the FRESHEST readable one wins, the
+    same "most recently refreshed file is the truth" rule
+    :func:`~jarvis.claude_credentials.freshest_claude_oauth` already applies to
+    the credentials themselves.
+
+    Preferring a fixed order instead is the 2026-07-27 defect: an abandoned
+    ``~/.claude/.claude.json`` from an earlier release kept naming the account
+    that had signed in ten days before, so the switcher confidently showed one
+    subscription's email while every pane actually ran on another — visible only
+    as an unexplained usage figure.
+
+    Note there is deliberately no "identity older than its credentials is stale"
+    rule. It reads as an obvious extra safeguard and is wrong: the CLI refreshes
+    the bearer in place indefinitely while never rewriting the identity, so on
+    any long-lived account the identity is legitimately the older file, and such
+    a rule would blank the email on exactly the accounts that are working.
+
+    Never raises and never returns a secret.
+    """
+    best: tuple[float, str | None, str | None] | None = None
+    for candidate in _identity_candidates(config_dir):
+        email, name = _account_from_claude_json(_read_json(candidate))
+        if not (email or name):
+            continue
+        mtime = _mtime_or_none(candidate)
+        if mtime is None:  # pragma: no cover - readable file that cannot be stat'd
+            mtime = 0.0
+        if best is None or mtime > best[0]:
+            best = (mtime, email, name)
+    if best is None:
+        return None, None
+    return best[1], best[2]
 
 
 @dataclass(frozen=True)
@@ -428,8 +521,8 @@ class ClaudeAuthService:
         _AUTH_STATUS_CACHE[cache_key] = (now, snapshot)
         return snapshot
 
-    def _supports_auth_login(self, binary: str) -> bool:
-        """Whether this installed CLI exposes the modern ``auth login`` command."""
+    def _auth_login_help(self, binary: str) -> str | None:
+        """``auth login --help`` output, or ``None`` where the command is absent."""
         if binary in _AUTH_LOGIN_CACHE:
             return _AUTH_LOGIN_CACHE[binary]
         try:
@@ -442,11 +535,15 @@ class ClaudeAuthService:
                 text=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-            supported = proc.returncode == 0
+            help_text = (proc.stdout or "") if proc.returncode == 0 else None
         except (OSError, subprocess.SubprocessError):
-            supported = False
-        _AUTH_LOGIN_CACHE[binary] = supported
-        return supported
+            help_text = None
+        _AUTH_LOGIN_CACHE[binary] = help_text
+        return help_text
+
+    def _supports_auth_login(self, binary: str) -> bool:
+        """Whether this installed CLI exposes the modern ``auth login`` command."""
+        return self._auth_login_help(binary) is not None
 
     def _supports_auth_logout(self, binary: str) -> bool:
         """Whether the CLI can remove its own platform-native credentials."""
@@ -468,11 +565,24 @@ class ClaudeAuthService:
         _AUTH_LOGOUT_CACHE[binary] = supported
         return supported
 
-    def _login_argv(self, binary: str) -> list[str]:
-        """Capability-selected login argv, with a first-run fallback for old CLIs."""
+    def _login_argv(self, binary: str, *, email: str | None = None) -> list[str]:
+        """Capability-selected login argv, with a first-run fallback for old CLIs.
+
+        ``email`` names the account this sign-in is FOR. Passed through only
+        when the installed CLI advertises ``--email``: the OAuth page then
+        targets that account instead of silently re-authorizing whichever one
+        the browser is already signed in with at claude.com — which is how two
+        subscription rows ended up on the same plan (2026-07-27).
+        """
         prefix = self._cli_argv_prefix(binary)
         if self._supports_auth_login(binary):
-            return [*prefix, "auth", "login", "--claudeai"]
+            argv = [*prefix, "auth", "login", "--claudeai"]
+            # Gated on the flag being ADVERTISED: a release with the subcommand
+            # but not the option would abort on it, and a failed login argv
+            # reads to the user as a rejected account.
+            if email and "--email" in (self._auth_login_help(binary) or ""):
+                argv += ["--email", email]
+            return argv
         # Older Claude Code releases have no auth subcommand. A bare interactive
         # start is their documented first-run login flow; passing ``/login`` as
         # a positional argv value incorrectly treats it as an initial prompt.
@@ -497,21 +607,32 @@ class ClaudeAuthService:
     def _identity_path(self, config_dir: Path | None) -> Path:
         """The ``.claude.json`` identity file that belongs to *config_dir*.
 
-        With the default ``~/.claude`` config dir the CLI keeps the identity
-        as the SIBLING ``~/.claude.json``; with a custom ``CLAUDE_CONFIG_DIR``
-        it lives INSIDE that dir. Falls back to the default-location seam so
-        the card still shows an email when the custom dir has no identity file.
+        Two files can hold it for the default config dir — ``~/.claude.json``
+        and ``~/.claude/.claude.json`` — and which one the installed CLI keeps
+        current is not knowable here, so the FRESHEST readable one wins rather
+        than a fixed preference (2026-07-27: an abandoned in-dir copy named the
+        previous occupant of the directory for ten days).
+
+        A CUSTOM config dir never falls back to ``~/.claude.json``. That
+        fallback existed so the card "still shows an email", but the email it
+        shows then belongs to the DEFAULT login, not to the directory being
+        described — naming the wrong subscription with full confidence. No
+        email is the honest answer there.
         """
-        if config_dir is not None and config_dir != Path(
-            os.path.expanduser("~/.claude")
-        ):
-            candidate = config_dir / ".claude.json"
-            try:
-                if candidate.is_file():
-                    return candidate
-            except OSError:
-                pass
-        return self._claude_json_path()
+        home_identity = self._claude_json_path()
+        if config_dir is None:
+            return home_identity
+        candidates = [config_dir / ".claude.json"]
+        if _is_default_config_dir(config_dir):
+            candidates.append(home_identity)
+        freshest = max(
+            (c for c in candidates if _mtime_or_none(c) is not None),
+            key=lambda c: _mtime_or_none(c) or 0.0,
+            default=None,
+        )
+        # No readable candidate: hand back the in-dir path so the caller's read
+        # simply comes up empty, rather than borrowing a neighbour's identity.
+        return freshest if freshest is not None else candidates[0]
 
     # -- public API ------------------------------------------------------
 

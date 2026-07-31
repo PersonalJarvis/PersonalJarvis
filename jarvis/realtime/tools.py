@@ -15,9 +15,9 @@ from jarvis.brain.cu_gate import (
     llm_computer_use_allowed,
 )
 from jarvis.brain.spawn_gate import (
-    SPAWN_BLOCKED_MODEL_FEEDBACK,
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
+    spawn_blocked_feedback,
 )
 from jarvis.brain.tool_use_loop import (
     _is_instructional_question,
@@ -410,7 +410,7 @@ class RealtimeToolBridge:
             # spoken turn asks for one (or confirms an offer one turn later).
             # Deterministic — prompt-side discouragement failed repeatedly.
             # See jarvis/brain/spawn_gate.py.
-            message = SPAWN_BLOCKED_MODEL_FEEDBACK
+            message = spawn_blocked_feedback(user_text)
         elif name in CU_VEHICLE_TOOL_NAMES and not llm_computer_use_allowed(
             user_text
         ):

@@ -241,7 +241,7 @@ async def test_turn_and_end_events_reach_the_bus():
 
 async def test_brain_end_call_sentinel_ends_call_after_speaking():
     sink = _Sink()
-    brain = FakeBrain("Auf Wiedersehen, Ruben. [[END_CALL]]")
+    brain = FakeBrain("Auf Wiedersehen, Alex. [[END_CALL]]")
     tts = FakeTTS(ms_per_char=2)
     session = _make_session(
         sink,

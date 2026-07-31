@@ -361,7 +361,7 @@ async def test_context_bleed_utterance_falls_back_to_verbatim_turn() -> None:
     Forensic 2026-06-20: under a full provider collapse the turn ran on a
     degraded fallback model fed a long prior context. For the spoken turn
     "Mask it up" it called spawn_worker carrying a PREVIOUS request
-    ("emigrate to Melbourne") in both the utterance and action args — the
+    ("prepare an unrelated product launch") in both the utterance and action args — the
     worker then built an entirely foreign task. ctx.user_utterance is the
     ground truth for this turn; when the brain's utterance shares no content
     word with it, the verbatim turn wins and the (equally bled) action/target
@@ -377,9 +377,9 @@ async def test_context_bleed_utterance_falls_back_to_verbatim_turn() -> None:
     )
     await tool.execute(
         {
-            "utterance": "research everything I need to emigrate to Melbourne",
-            "action": "prepare a detailed Melbourne emigration report",
-            "target": "Melbourne emigration checklist",
+            "utterance": "research everything I need for an unrelated product launch",
+            "action": "prepare a detailed unrelated product launch report",
+            "target": "unrelated product launch checklist",
         },
         ctx,
     )
@@ -387,7 +387,7 @@ async def test_context_bleed_utterance_falls_back_to_verbatim_turn() -> None:
 
     prompt = mgr.dispatch_calls[0]["prompt"]
     assert "Mask it up" in prompt
-    assert "Melbourne" not in prompt
+    assert "unrelated product launch" not in prompt
 
 
 @pytest.mark.asyncio

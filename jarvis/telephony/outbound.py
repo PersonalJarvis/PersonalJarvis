@@ -76,7 +76,7 @@ def place_call(
     This is **Contract 2** (frozen — Chunk B codes against this exact signature).
 
     Args:
-        to: The raw destination number in E.164 (e.g. ``+4915112345678``). The
+        to: The raw destination number in E.164 (e.g. ``+12025550101``). The
             engine is contact-agnostic — it never resolves a name.
         opening: Optional first line Jarvis speaks once the callee answers. It is
             delivered to the session through the voice webhook (URL query ->
@@ -102,7 +102,7 @@ def place_call(
 
     if not _E164_RE.match(to):
         raise TelephonyProvisionError(
-            f"Outbound 'to' must be an E.164 number, e.g. +4915112345678; got {to!r}."
+            f"Outbound 'to' must be an E.164 number, e.g. +12025550101; got {to!r}."
         )
     if not _E164_RE.match(from_number):
         raise TelephonyProvisionError(

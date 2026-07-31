@@ -555,6 +555,12 @@ class VoskKwsProvider:
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
+        # Guards the model CACHE, never an inference (AP-24 is about sharing a
+        # live engine; this only serialises the one-time load). Two verify
+        # threads can reach _ensure_model for the same not-yet-loaded sibling
+        # model concurrently and both build it — 68-92 MB and ~0.7-0.9 s each,
+        # one of which is then dropped on the floor.
+        self._model_load_lock = threading.Lock()
         # Set once ``start()`` has attempted every model load — the honest
         # "warm" floor even when a broken model directory never loads.
         self._load_attempted = False
@@ -607,13 +613,27 @@ class VoskKwsProvider:
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
         self._stat_suppressed_shape_competition = 0
+        # Rate limiter for the verify-suppression log. Every rejection used to
+        # be DEBUG-only, so a dropped GENUINE wake left no production trace at
+        # all: the log could not tell "never heard" from "heard, verified,
+        # rejected at conf 0.88". Surfacing the first few and then every Nth
+        # keeps that diagnosable without turning a candidate storm into a log
+        # flood (same shape as the existing backpressure warning).
+        self._suppress_log_count = 0
 
     # -- lifecycle -----------------------------------------------------------
 
     def _ensure_model(self, path: str | None = None) -> Any:
         key = path or self._model_path
         model = self._models.get(key)
-        if model is None:
+        if model is not None:
+            return model
+        # Double-checked: the fast path above stays lock-free (it runs on every
+        # verify recognizer build), and only the rare actual load serialises.
+        with self._model_load_lock:
+            model = self._models.get(key)
+            if model is not None:
+                return model
             from vosk import Model, SetLogLevel  # lazy: keep base import light
 
             SetLogLevel(-1)
@@ -684,8 +704,13 @@ class VoskKwsProvider:
                 return stack.pop()
         return self._build_verify_rec(path, kind, prewarm=False)
 
-    def _replenish_stock(self) -> None:
-        """Top the prewarmed stock back up to target (worker thread only)."""
+    def _replenish_stock(self, target: int | None = None) -> None:
+        """Top the prewarmed stock back up to target (worker thread only).
+
+        ``target`` bounds the depth for THIS pass; boot uses depth 1 so it does
+        not await the full stock (see ``start``).
+        """
+        limit = self._stock_target if target is None else target
         kinds = ("grammar", "free") if self._competition_grammar is None else (
             "grammar", "free", _COMPETITION_KIND,
         )
@@ -694,7 +719,7 @@ class VoskKwsProvider:
                 key = (path, kind)
                 while True:
                     with self._stock_lock:
-                        if len(self._rec_stock.setdefault(key, [])) >= self._stock_target:
+                        if len(self._rec_stock.setdefault(key, [])) >= limit:
                             break
                     try:
                         rec = self._build_verify_rec(path, kind, prewarm=True)
@@ -781,7 +806,15 @@ class VoskKwsProvider:
 
         await asyncio.gather(*(_load_one(path) for path in self._model_paths))
         self._load_attempted = True
-        await asyncio.to_thread(self._replenish_stock)
+        # Await DEPTH ONE per (model, kind) — enough for the first wake's verify
+        # pair to run warm — then top the rest up in the background. Awaiting
+        # the full stock meant boot paid 2 models x 3 kinds x 2 = 12 recognizer
+        # builds, each with its own 0.3 s prewarm decode, before voice became
+        # usable (AP-26: nothing heavier than necessary on the way to
+        # voice-usable). A taker that finds the stock dry already degrades
+        # gracefully to a cold build, so the background remainder is free.
+        await asyncio.to_thread(self._replenish_stock, 1)
+        self._kick_replenish()
 
     async def stop(self) -> None:
         # Invalidate any in-flight early check and retract a shown candidate
@@ -913,6 +946,46 @@ class VoskKwsProvider:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
 
+    def _log_suppression(self, reason: str, *args: Any) -> None:
+        """Report a verify rejection at INFO for the first few, then every 20th.
+
+        A suppressed candidate is the ONLY evidence that distinguishes a wake
+        that was never heard from one that was heard and thrown away — the
+        difference a "sometimes it does not react" report turns on. Diagnostics
+        only: never reads back into a decision, and never logs transcript TEXT
+        beyond what the caller already passes.
+        """
+        self._suppress_log_count += 1
+        n = self._suppress_log_count
+        if n <= 5 or n % 20 == 0:
+            log.info("vosk-kws: verify SUPPRESSED (#%d) — " + reason, n, *args)
+        else:
+            log.debug("vosk-kws: verify SUPPRESSED — " + reason, *args)
+
+    def _grammar_hit_all(
+        self, recs: dict[str, Any], pcm: bytes
+    ) -> tuple[bool, float, str] | None:
+        """Feed one chunk to EVERY model's grammar; the first hit wins.
+
+        Exists so ``detect()`` can pay ONE thread hop per chunk instead of
+        running N native decodes inline on the voice event loop. The iteration
+        order and the first-hit-wins rule are identical to the previous inline
+        loops, so the decision is unchanged; only where it executes moves.
+
+        AP-24-safe: the caller awaits this hop, so each recognizer still has
+        exactly one caller at a time — this is serialised work moved off the
+        loop, never a shared engine called concurrently.
+        """
+        hit: tuple[bool, float] | None = None
+        hit_path = ""
+        for path, rec in recs.items():
+            found = self._grammar_hit(rec, pcm)
+            if found is not None and hit is None:
+                hit, hit_path = found, path
+        if hit is None:
+            return None
+        return (hit[0], hit[1], hit_path)
+
     def _verify_candidate(
         self, window: np.ndarray, model_path: str | None = None
     ) -> bool:
@@ -1029,17 +1102,16 @@ class VoskKwsProvider:
                 if w.get("word") in self._grammar_words
             ]
             if self._phrase.lower() not in gres.get("text", "") or not gwords:
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
-                    "%r (heard %r)",
+                self._log_suppression(
+                    "re-score did not re-hear %r (heard %r)",
                     self._phrase, gres.get("text", "")[:60],
                 )
                 return False
             conf = min(w.get("conf", 0.0) for w in gwords)
             if conf < self._min_final_conf:
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
-                    "for %r", conf, self._min_final_conf, self._phrase,
+                self._log_suppression(
+                    "re-score conf %.2f < %.2f for %r",
+                    conf, self._min_final_conf, self._phrase,
                 )
                 return False
             start_s = min(w.get("start", 0.0) for w in gwords)
@@ -1054,18 +1126,40 @@ class VoskKwsProvider:
             rms = float(np.sqrt(np.mean(segment * segment) + 1e-12)) if len(segment) else 0.0
             if rms < self._match_min_rms:
                 self._stat_gated_rms += 1
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — span rms %.4f < %.4f "
-                    "(silence can never fire)", rms, self._match_min_rms,
+                self._log_suppression(
+                    "span rms %.4f < %.4f (silence can never fire)",
+                    rms, self._match_min_rms,
                 )
                 return False
 
-            # localise the (already-decoded) free words to the phrase span
+            # localise the (already-decoded) free words to the phrase span.
+            # The SPELLING path keeps the ±0.3 s slack: a sound-alike rendering
+            # of the phrase can straddle the grammar's own boundaries.
             local_words = [
                 w for w in fres.get("result", [])
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
             free_local = " ".join(w.get("word", "") for w in local_words)
+            # OPEN (2026-07-25, measured): a wake spoken in ONE breath with the
+            # command is materially less likely to fire than an isolated call.
+            # A command word starting inside the trailing 0.3 s slack is counted
+            # into the candidate and pushes the token count over the phrase's
+            # own, which disables the shape path outright (_SHAPE_TOKEN_SLACK is
+            # 0) — and for an out-of-vocabulary name the spelling path cannot
+            # cover that gap, so BOTH confirm routes fail at once.
+            #
+            # Narrowing the shape window to [span_a, end_s] fixes that case and
+            # was TRIED — but it also costs precision, because the token-count
+            # bound relies on surrounding words being counted: on the room-speech
+            # fixture the narrower window admits 2 words instead of 3, lands ON
+            # the phrase's token count, and ACCEPTS (verified: it breaks
+            # test_free_words_outside_the_span_cannot_confirm plus two
+            # storm/suppression guards).
+            #
+            # So this is a real latency/recall-vs-precision trade, not a free
+            # win, and it must be calibrated against the recorded corpora
+            # (250/1650 windows) rather than a fixture — same gate as the
+            # _SHAPE_MAX_VOICED_S_PER_TOKEN bump. Do not narrow it on a hunch.
         except Exception as exc:  # noqa: BLE001 — polarity via fail_open
             log.warning(
                 "vosk-kws: verify failed (%s) — %s.",
@@ -1171,9 +1265,39 @@ class VoskKwsProvider:
         Only the keyword yielded after the full verify pass may cross into the
         pipeline or become visible in the overlay.
         """
+        # The always-on ear gets RESERVED capacity. asyncio's default executor
+        # is shared with every other to_thread call site in the app (mission
+        # workers, wiki indexing, git worktrees, TTS); when those saturate it,
+        # wake inference queues behind them, the detector drifts behind real
+        # time and the fan-out's drop-oldest policy then destroys audio.
+        #
+        # Sized 2, never 1: a single worker owned by a wedged native inference
+        # would deafen the ear permanently (AP-24 — a timeout bounds a hang, it
+        # never recovers it). The pool lives exactly as long as this detect()
+        # session, so a wake-plan reload rebuilds it.
+        infer_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="vosk-wake-infer"
+        )
+        loop = asyncio.get_running_loop()
+
+        async def _in_pool(fn: Callable[..., Any], *args: Any) -> Any:
+            return await loop.run_in_executor(infer_pool, fn, *args)
+
+        try:
+            async for keyword in self._detect_inner(chunks, _in_pool):
+                yield keyword
+        finally:
+            infer_pool.shutdown(wait=False)
+
+    async def _detect_inner(
+        self,
+        chunks: AsyncIterator[AudioChunk],
+        _in_pool: Callable[..., Awaitable[Any]],
+    ) -> AsyncIterator[str]:
+        """The detection loop proper; ``_in_pool`` runs native decode work."""
         for path in self._model_paths:
             try:
-                await asyncio.to_thread(self._ensure_model, path)
+                await _in_pool(self._ensure_model, path)
             except Exception as exc:  # noqa: BLE001 — skip a broken model
                 log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
         # One streaming grammar per installed model — a phrase whose language
@@ -1215,9 +1339,9 @@ class VoskKwsProvider:
                     # enough; do not spend stage-one or verifier work yet.
                     continue
                 # Keep every model's stream fed during the tail wait so their
-                # decode state stays aligned with the ring.
-                for r in recs.values():
-                    self._grammar_hit(r, pcm)
+                # decode state stays aligned with the ring. The verdict is
+                # irrelevant here — the latched candidate already won the slot.
+                await _in_pool(self._grammar_hit_all, recs, pcm)
                 # A POSITIVE early check is already authoritative for this
                 # candidate (later audio belongs to the session and cannot
                 # revoke it — see _run_early_check). Waiting out the rest of
@@ -1238,16 +1362,13 @@ class VoskKwsProvider:
                 is_final, conf, hit_path = pending
                 pending = None
             else:
-                # Feed EVERY model; first hit wins the candidate slot.
-                hit: tuple[bool, float] | None = None
-                hit_path = ""
-                for path, r in recs.items():
-                    h = self._grammar_hit(r, pcm)
-                    if h is not None and hit is None:
-                        hit, hit_path = h, path
-                if hit is None:
+                # Feed EVERY model; first hit wins the candidate slot. One
+                # thread hop for all N models keeps the loop free to drain the
+                # microphone fan-out (see _grammar_hit_all).
+                found = await _in_pool(self._grammar_hit_all, recs, pcm)
+                if found is None:
                     continue
-                is_final, conf = hit
+                is_final, conf, hit_path = found
                 now = time.time()
                 if now - last_fire_t < self._cooldown_s:
                     self._stat_suppressed_cooldown += 1

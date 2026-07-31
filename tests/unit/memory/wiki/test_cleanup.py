@@ -18,7 +18,7 @@ from jarvis.memory.wiki.cleanup import (
     is_truncated_body,
 )
 
-RELATED = "\n## Related\n\n- [[entities/ruben]]\n"
+RELATED = "\n## Related\n\n- [[entities/alex]]\n"
 
 
 def _session(date_id: str, body: str, *, related: bool = True) -> str:
@@ -40,9 +40,9 @@ def vault(tmp_path: Path) -> Path:
     for sub in ("entities", "concepts", "projects", "sessions",
                 "_archive/sessions", "attachments"):
         (root / sub).mkdir(parents=True)
-    # A real entity page so [[entities/ruben]] resolves.
-    (root / "entities" / "ruben.md").write_text(
-        "---\ntype: entity\nslug: ruben\n---\n\n# Ruben\n\nThe user.\n",
+    # A real entity page so [[entities/alex]] resolves.
+    (root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\n---\n\n# Alex\n\nThe user.\n",
         encoding="utf-8",
     )
     return root
@@ -60,7 +60,7 @@ def test_is_truncated_body_matches_real_shapes() -> None:
 def test_dangling_targets_flag_apps_keep_entities(vault: Path) -> None:
     raw = _session(
         "2026-05-27-tzqvlsv",
-        "He used [[Snipping Tool]] and pinged [[entities/ruben]].",
+        "He used [[Snipping Tool]] and pinged [[entities/alex]].",
     )
     assert dangling_link_targets(raw, vault) == ["Snipping Tool"]
 
@@ -103,7 +103,7 @@ def test_clean_vault_removes_all_junk_and_keeps_clean_page(vault: Path) -> None:
     assert clean.exists()
     assert "[[Snipping Tool]]" not in surviving
     assert "Snipping Tool" in surviving
-    assert "[[entities/ruben]]" in surviving  # real link untouched
+    assert "[[entities/alex]]" in surviving  # real link untouched
     # A backup was written and contains the now-deleted leak page.
     assert report.backup_path and report.backup_path.is_file()
     with tarfile.open(report.backup_path, "r:gz") as tar:
@@ -121,7 +121,7 @@ def test_alias_form_dangling_link_keeps_display_text(vault: Path) -> None:
     clean_vault(vault, apply=True, backup_dir=vault.parent / "wiki-backups")
     surviving = page.read_text(encoding="utf-8")
     assert "[[Ghost App" not in surviving
-    assert "]]" not in surviving.replace("[[entities/ruben]]", "")
+    assert "]]" not in surviving.replace("[[entities/alex]]", "")
     assert "he opened the app to check mail." in surviving.lower()
 
 

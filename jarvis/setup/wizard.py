@@ -158,6 +158,18 @@ SECRETS: list[SecretSpec] = [
         section="brain",
     ),
     SecretSpec(
+        key="zai_api_key",
+        env_fallback="ZAI_API_KEY",
+        label="Z.ai API Key (GLM Coding Plan)",
+        help_url="https://z.ai/model-api",
+        required_for=(
+            "GLM panes in the Agentic IDE — they run the Claude Code CLI "
+            "against Z.ai's endpoint, so this key is what makes them GLM "
+            "rather than Anthropic"
+        ),
+        section="brain",
+    ),
+    SecretSpec(
         key="gemini_api_key",
         env_fallback="GEMINI_API_KEY",
         label="Google AI Studio / Gemini API Key",
@@ -172,6 +184,17 @@ SECRETS: list[SecretSpec] = [
         help_url="https://console.x.ai/",
         required_for="Grok Brain and xAI TTS",
         section="brain",
+    ),
+    # Optional key for the generic local OpenAI-compatible provider (vLLM
+    # --api-key, proxied LM Studio, ...). App-only: local servers usually need
+    # no key, so it must not lengthen first-run onboarding.
+    SecretSpec(
+        key="local_openai_api_key",
+        env_fallback="LOCAL_OPENAI_API_KEY",
+        label="Local OpenAI-compatible server key (optional)",
+        help_url="https://huggingface.co/docs/transformers/main/serving",
+        required_for="Local server brain (only if your server enforces a key)",
+        prompt=False,
     ),
     # Scoped Realtime credentials. They are app-only fields in the Realtime tab,
     # not extra first-run questions. Generic credentials remain compatibility
@@ -337,7 +360,7 @@ SECRETS: list[SecretSpec] = [
         # never prompted — the secrets overview still shows "already stored".
         prompt=False,
     ),
-    # === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
+    # === F-FRIENDS [F1] · feature/friends-section · maintainer-2026-04-30 ===
     # Phase F1 — Telegram-channel bot token. The user creates a bot via
     # @BotFather, gets a token like ``123456:ABC-DEF...``, and enters it
     # here. ``getMe`` validation happens in TelegramChannel.start().
@@ -424,6 +447,60 @@ SECRETS: list[SecretSpec] = [
         label="Asana OAuth Client Secret",
         help_url="https://app.asana.com/0/my-apps",
         required_for="Marketplace plugin (Asana) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    # UltraWiki (semantic memory mode) — app-only slots configured from the
+    # UltraWiki settings section, never in the first-run wizard. The Postgres
+    # connection string is a credential (AP-12) and rides the same chain.
+    SecretSpec(
+        key="ultrawiki_db_url",
+        env_fallback="ULTRAWIKI_DB_URL",
+        label="UltraWiki Postgres Connection String",
+        help_url="https://supabase.com/docs/guides/database/connecting-to-postgres",
+        required_for="UltraWiki cloud/self-hosted store (Supabase, AWS RDS, Google Cloud SQL, own server)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="voyage_api_key",
+        env_fallback="VOYAGE_API_KEY",
+        label="Voyage AI API Key",
+        help_url="https://dash.voyageai.com/api-keys",
+        required_for="UltraWiki embeddings / reranking (Voyage)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="cohere_api_key",
+        env_fallback="COHERE_API_KEY",
+        label="Cohere API Key",
+        help_url="https://dashboard.cohere.com/api-keys",
+        required_for="UltraWiki embeddings / reranking (Cohere)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="mistral_api_key",
+        env_fallback="MISTRAL_API_KEY",
+        label="Mistral API Key",
+        help_url="https://console.mistral.ai/api-keys",
+        required_for="UltraWiki embeddings (Mistral)",
+        optional=True,
+        prompt=False,
+    ),
+    # Drives the guided Supabase link flow in the UltraWiki storage card: the
+    # token is read-only plumbing (list projects, read the pooler host) and is
+    # never what the store connects with — that stays 'ultrawiki_db_url'. It
+    # belongs in this allowlist because the same slot is already used by the
+    # Supabase CLI integration, and without the entry the app's own secrets
+    # route would refuse to save a token the user just pasted.
+    SecretSpec(
+        key="supabase_access_token",
+        env_fallback="SUPABASE_ACCESS_TOKEN",
+        label="Supabase Personal Access Token",
+        help_url="https://supabase.com/dashboard/account/tokens",
+        required_for="UltraWiki Supabase store (guided link) and the Supabase CLI",
         optional=True,
         prompt=False,
     ),
@@ -581,8 +658,62 @@ def _api_keys_intro() -> None:
     _console.print(Panel(body, border_style="brand", padding=(1, 2)))
 
 
+def _ollama_reachable(timeout_s: float = 1.0) -> bool:
+    """One quick ``/api/version`` probe against the local Ollama default.
+
+    Interactive-wizard-only (never on the boot path, AP-26). Honors
+    OLLAMA_HOST via the plugin's own root resolution so wizard and runtime
+    can never disagree about where the server lives.
+    """
+    try:
+        import httpx
+
+        from jarvis.plugins.brain.ollama import default_server_root
+
+        resp = httpx.get(f"{default_server_root()}/api/version", timeout=timeout_s)
+        return resp.status_code == 200
+    except Exception:  # noqa: BLE001 — no local server is a normal state
+        return False
+
+
+def _offer_local_brain() -> bool:
+    """First-sixty-seconds local path: when a local Ollama already answers,
+    offer to run WITHOUT any API key before a single key question is asked.
+
+    Returns True when the user accepted (brain.primary pinned to ollama) —
+    the key sections still render afterwards (cloud keys stay optional
+    upgrades), so accepting never hides anything.
+    """
+    if not _ollama_reachable():
+        return False
+    _console.print()
+    _console.print(
+        Panel(
+            "[ok]Ollama detected on this machine.[/] Jarvis can run its brain "
+            "[brand.bold]fully local — no API key, nothing leaves this "
+            "computer[/]. Cloud keys below stay optional upgrades.",
+            border_style="ok",
+            padding=(1, 2),
+        )
+    )
+    answer = _ask("  Use the local Ollama as the brain? [Y/n]", default="y")
+    if answer.strip().lower() not in ("y", "yes", "j", "ja", "s", "si", "sí"):
+        return False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_brain_primary("ollama")
+        _console.print("  [ok]→ Brain set to Ollama (local). No key needed.[/]")
+        return True
+    except Exception as exc:  # noqa: BLE001 — a config hiccup must not kill setup
+        _console.print(f"  [bad]⚠ Could not persist the choice ({exc}) — "
+                       "you can switch to Ollama any time under Settings → API Keys.[/]")
+        return False
+
+
 def step_api_keys() -> dict[str, str]:
     _api_keys_intro()
+    _offer_local_brain()
 
     stored: dict[str, str] = {}
     for section in _SECTIONS:

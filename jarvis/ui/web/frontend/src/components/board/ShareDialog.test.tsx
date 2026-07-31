@@ -82,8 +82,8 @@ describe("ShareDialog", () => {
   it("persists the X handle to localStorage and renders it on the card", () => {
     render(<ShareDialog open onOpenChange={() => {}} stats={STATS} />);
     const input = screen.getByTestId("share-handle-input") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "@ruben" } });
-    expect(localStorage.getItem("board.share.handle")).toBe("ruben");
-    expect(screen.getAllByText(/@ruben/).length).toBeGreaterThan(0);
+    fireEvent.change(input, { target: { value: "@alex" } });
+    expect(localStorage.getItem("board.share.handle")).toBe("alex");
+    expect(screen.getAllByText(/@alex/).length).toBeGreaterThan(0);
   });
 });

@@ -118,6 +118,14 @@ ROUTER_TOOLS = frozenset({
     # explicitly store a fact ("merk dir: …") rather than relying on the
     # aggressive-mode VoiceFactBridge heuristic.
     "wiki-ingest",
+    # UltraWiki semantic search (2026-07-25): fused keyword+vector retrieval
+    # with citations over the UltraWiki store — the pull primitive for the
+    # semantic memory mode. Read-only, honest-degradation ladder (disabled
+    # mode steers to the classic wiki-* tools). Direct safe-gated read,
+    # never a spawn; mission workers reach it only through the ADR-0025
+    # broker once the ADR-0030 gate is live (AP-5/AP-14). See ADR-0011
+    # amendment "UltraWiki Search".
+    "ultrawiki-search",
     # CLI-Integration (2026-05-24): virtual loader that expands to one
     # ``cli_<name>`` tool per connected & usable CLI (gcloud, gh, docker, …).
     # This is the MCP/plugin model for command-line tools: only connected
@@ -151,6 +159,11 @@ ROUTER_TOOLS = frozenset({
     # as gmail — Vercel's catalog rest_wrapper transport produced zero MCP tools,
     # so it must be router-visible directly. Read-only; never a spawn (AP-5/AP-14).
     "vercel",
+    # Home Assistant Marketplace plugin (2026-07-25): native REST tool, same
+    # rationale as gmail — no usable MCP surface, so it must be router-visible
+    # directly or a connected smart home is not callable by voice. A direct
+    # gated action (risk_tier "ask"), never a spawn (AP-5/AP-14).
+    "home_assistant",
     # Google Calendar Marketplace plugin (2026-06-27): native bridge tool whose
     # bot logic is a Node script (calendar_bot.mjs). Same rationale as gmail — no
     # MCP server block, so it must be router-visible directly; otherwise a
@@ -492,6 +505,18 @@ def _load_tools_for_tier(
                 from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
 
                 inst = WikiIngestTool(curator_resolver=get_running_curator)
+            elif ep.name == "ultrawiki-search":
+                # UltraWiki search: resolver-not-instance — the
+                # UltraWikiService is built by the WebServer AFTER the brain
+                # (mirrors wiki-ingest's lazy curator). Loads even while the
+                # mode is disabled; execute() then answers with the honest
+                # steer-to-wiki error, keeping the tool surface stable
+                # across mode toggles (awareness-recall precedent).
+                from jarvis.plugins.tool.ultrawiki_search import (
+                    build_ultrawiki_service_resolver,
+                )
+
+                inst = cls(service_resolver=build_ultrawiki_service_resolver())
             elif ep.name == "update-profile":
                 # Profile-write tool: mutate the SAME live UserProfile instance
                 # the BrainManager renders from (factory passes one instance to
@@ -773,7 +798,10 @@ def _phase2_full_brain(
         config.safety, extra_patterns_fn=make_cli_patterns_fn(),
     )
     approval = ApprovalWorkflow(bus)
-    executor = ToolExecutor(bus, evaluator, approval)
+    executor = ToolExecutor(
+        bus, evaluator, approval,
+        default_timeout_s=config.safety.tool_approval_timeout_s,
+    )
 
     # HarnessManager for the internal harness fast path (computer-use /
     # local-action). NB: dispatch-to-harness is no longer an
@@ -1325,16 +1353,33 @@ def _phase2_full_brain(
                 # fallback only (see _resolve_wiki_vault_root).
                 vault_path = _resolve_wiki_vault_root(config)
                 search = VaultSearch(vault_path)
+                from jarvis.brain.wiki_context import (  # noqa: PLC0415 — sibling import, kept local like the class import above
+                    DEFAULT_ULTRA_LATENCY_BUDGET_MS,
+                )
+
                 manager._wiki_injector = WikiContextInjector(
                     search=search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
                     latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 80),
                     min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 4),
+                    relevance_gate=bool(getattr(wiki_cfg, "relevance_gate", True)),
+                    min_coverage=float(getattr(wiki_cfg, "min_coverage", 0.5)),
+                    min_relative_score=float(
+                        getattr(wiki_cfg, "min_relative_score", 0.35)
+                    ),
+                    ultra_latency_budget_ms=int(
+                        getattr(
+                            wiki_cfg,
+                            "ultra_latency_budget_ms",
+                            DEFAULT_ULTRA_LATENCY_BUDGET_MS,
+                        )
+                    ),
                 )
                 log.info(
-                    "WikiContextInjector active (vault=%s, budget=%dms)",
+                    "WikiContextInjector active (vault=%s, budget=%dms, gate=%s)",
                     vault_path,
                     getattr(wiki_cfg, "latency_budget_ms", 80),
+                    "on" if getattr(wiki_cfg, "relevance_gate", True) else "off",
                 )
             except ImportError:
                 # Agent B's search module not yet merged — fallback to no-op.
@@ -1408,7 +1453,10 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
         config.safety, extra_patterns_fn=make_cli_patterns_fn(),
     )
     approval = ApprovalWorkflow(bus)
-    executor = ToolExecutor(bus, evaluator, approval)
+    executor = ToolExecutor(
+        bus, evaluator, approval,
+        default_timeout_s=config.safety.tool_approval_timeout_s,
+    )
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",

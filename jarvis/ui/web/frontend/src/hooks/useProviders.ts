@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
-export type ProviderTier = "brain" | "tts" | "stt" | "realtime" | "computer-use";
+// Mirror of provider_spec.Tier. "dictation" is the odd one out and deliberately
+// so: it is the OPTIONAL tier that tidies dictated text, and a missing key there
+// costs nothing — the dictation is delivered exactly as it was recognized. Every
+// other tier is load-bearing for the feature it powers.
+export type ProviderTier =
+  | "brain"
+  | "tts"
+  | "stt"
+  | "realtime"
+  | "computer-use"
+  | "dictation";
 /** How using a provider is billed — mirror of provider_spec.Billing. */
 export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
 
@@ -16,6 +26,22 @@ export interface AltCredential {
   credential_help: string;
   dashboard_url: string | null;
   credential_path_hint: string | null;
+}
+
+/**
+ * On-disk truth about a provider that runs locally — mirror of
+ * `jarvis.speech.local_models.LocalModelStatus`. The engine (the pip package
+ * doing inference) and the model (its weights) are tracked separately because
+ * they fail separately and need different fixes: install versus download.
+ */
+export interface LocalRuntimeStatus {
+  runtime: string;
+  engine_installed: boolean;
+  model_present: boolean;
+  model_label: string;
+  ready: boolean;
+  /** One honest sentence for the card — render it verbatim. */
+  detail: string;
 }
 
 export interface ProviderDescriptor {
@@ -63,8 +89,43 @@ export interface ProviderDescriptor {
    *  badge with this text as its tooltip (e.g. NVIDIA NIM's slow free tier).
    *  Presentation hint only. null/absent = no caution. */
   caution?: string | null;
+  /**
+   * The card is nice to have, not required — renders an "Optional" chip and
+   * keeps the tier off the "needs setup" dot. Presentation only: it never gates
+   * a code path (AP-21), it just stops an optional tier from painting a
+   * permanent amber warning onto an install that is working perfectly well
+   * without it. Absent on older payloads, which read as "required".
+   */
+  optional?: boolean;
+  /**
+   * Dictation-polish cards only: the value `[dictation].polish_provider`
+   * actually stores ("groq"), which is NOT this card's `id` ("groq-polish") —
+   * a bare "groq" would collide with the brain card, so the tier carries a
+   * suffix the config vocabulary knows nothing about. Pinning this tier must
+   * send THIS field: `resolve_polish_chain` ignores a family id it does not
+   * recognise and falls back to the auto order, so a client that sent `id`
+   * stored a value that looked saved and silently did nothing.
+   * null/absent on every other card.
+   */
+  polish_family?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
+  /**
+   * On-device cards only: whether the inference engine and its weights are
+   * REALLY on this machine. A local provider has no key to check, so without
+   * this a local card would render as ready the moment it exists — the defect
+   * that got the previous local Whisper card removed. `ready` is the only field
+   * a caller should gate on; the two booleans behind it explain WHICH half is
+   * missing so the card can offer the right next step. null on cloud cards.
+   */
+  local_runtime?: LocalRuntimeStatus | null;
+  /** Local/self-hosted cards: whether the card exposes an editable server URL
+   *  (persisted via PUT /api/providers/{id}/base-url). */
+  supports_base_url?: boolean;
+  /** Placeholder while no override is stored; null = the user must set one. */
+  default_base_url?: string | null;
+  /** The stored server-URL override; null = the vendor default is in effect. */
+  base_url?: string | null;
   /**
    * Codex only: legacy credential readiness kept in /api/providers for older
    * UI consumers. The current UI does not render Codex as a switchable Brain;
@@ -191,12 +252,14 @@ export function useProviders() {
     const onStt = () => void refetch();
     const onRealtime = () => void refetch();
     const onComputerUse = () => void refetch();
+    const onDictationPolish = () => void refetch();
     window.addEventListener("jarvis:secret-configured", onSecret);
     window.addEventListener("jarvis:brain-switched", onBrain);
     window.addEventListener("jarvis:tts-switched", onTts);
     window.addEventListener("jarvis:stt-switched", onStt);
     window.addEventListener("jarvis:realtime-switched", onRealtime);
     window.addEventListener("jarvis:computer-use-switched", onComputerUse);
+    window.addEventListener("jarvis:dictation-polish-switched", onDictationPolish);
     return () => {
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
@@ -204,6 +267,10 @@ export function useProviders() {
       window.removeEventListener("jarvis:stt-switched", onStt);
       window.removeEventListener("jarvis:realtime-switched", onRealtime);
       window.removeEventListener("jarvis:computer-use-switched", onComputerUse);
+      window.removeEventListener(
+        "jarvis:dictation-polish-switched",
+        onDictationPolish,
+      );
     };
   }, [refetch]);
 
@@ -336,6 +403,7 @@ export function useSectionHealth() {
       "jarvis:stt-switched",
       "jarvis:realtime-switched",
       "jarvis:computer-use-switched",
+      "jarvis:dictation-polish-switched",
       "jarvis:subagent-switched",
       "jarvis:agent-switched",
       "jarvis:provider-tested",
@@ -369,6 +437,7 @@ const SECTION_HEALTH_EVENT_SECTIONS: Record<string, string> = {
   "jarvis:stt-switched": "stt",
   "jarvis:realtime-switched": "realtime",
   "jarvis:computer-use-switched": "computer-use",
+  "jarvis:dictation-polish-switched": "dictation",
   "jarvis:subagent-switched": "subagents",
   "jarvis:agent-switched": "subagents",
 };
@@ -419,6 +488,26 @@ export async function deleteSecret(key: string): Promise<void> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
+}
+
+export async function saveProviderBaseUrl(
+  providerId: string,
+  baseUrl: string | null,
+): Promise<string | null> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/base-url`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail?.detail ?? `base-url ${res.status}`);
+  }
+  const data = (await res.json()) as { base_url: string | null };
+  return data.base_url ?? null;
 }
 
 export async function startCodexLogin(): Promise<void> {
@@ -592,6 +681,50 @@ export async function switchTtsProvider(
  * bootstrap (model load is expensive), so the switch only takes effect
  * on the next voice restart.
  */
+/** Progress of an on-device provider's engine install + model download. */
+export interface LocalInstallProgress {
+  state: "idle" | "running" | "done" | "error";
+  ready: boolean;
+  message: string;
+  engine_installed?: boolean;
+  model_present?: boolean;
+  model_label?: string;
+  download_size?: string;
+}
+
+/**
+ * Kick off the install of a local provider's engine and model. Returns as soon
+ * as the work is handed to a background thread — the download runs for minutes,
+ * so the caller polls `localInstallStatus` instead of awaiting it.
+ */
+export async function startLocalInstall(
+  providerId: string,
+): Promise<LocalInstallProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/local-install`,
+    { method: "POST" },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
+/** Poll install progress; `ready` reflects the on-disk probe, not the run. */
+export async function localInstallStatus(
+  providerId: string,
+): Promise<LocalInstallProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/local-install/status`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
 export async function switchSttProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
@@ -649,6 +782,36 @@ export async function switchComputerUseProvider(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as PipelineSwitchResult;
+}
+
+/**
+ * Pins the model family that cleans up dictated text
+ * (`[dictation].polish_provider`).
+ *
+ * There is no `/api/dictation/switch`: the polish tier has no live client to
+ * rebuild, so the pin is an ordinary dictation setting and goes through the one
+ * route that owns that block. The next dictation reads it — nothing has to
+ * restart. `"auto"` (the default) is not a provider at all; it lets the
+ * key-aware chain pick whichever family the user actually holds a credential
+ * for and cross to another one when that family is depleted (AP-22), which is
+ * why activating a card here is a *narrowing* choice, not a prerequisite.
+ *
+ * Takes a polish FAMILY id ("openai"), never a card id ("openai-polish") — the
+ * two vocabularies differ, and only the family half means anything to the
+ * chain. Callers holding a card read `descriptor.polish_family`.
+ */
+export async function switchDictationPolishProvider(
+  familyId: string,
+): Promise<void> {
+  const res = await fetch("/api/dictation/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ polish_provider: familyId, persist: true }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
 }
 
 /**
@@ -794,6 +957,12 @@ export interface BrainModelsResult {
   fetched_at: number;
   // What the picker writes: "model" (brain/stt/cartesia) or "voice" (most TTS).
   selects?: "model" | "voice";
+  /**
+   * Why a `curated` list is being shown instead of the provider's own ("no
+   * Gemini API key saved yet"). Optional: only the UltraWiki slot catalog
+   * fills it in today. Shown verbatim under the picker.
+   */
+  reason?: string;
 }
 
 /** Lists the available models for a brain provider for the picker dropdown. */

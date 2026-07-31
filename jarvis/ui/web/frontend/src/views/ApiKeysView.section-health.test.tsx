@@ -65,6 +65,11 @@ const SECTION_HEALTH = {
     "computer-use": { status: "ok", reason: "ok", detail: "OpenRouter: ok", subject_id: "openrouter" },
     tts: { status: "ok", reason: "ok", detail: "Gemini Flash: ok", subject_id: "gemini-flash-tts" },
     stt: { status: "error", reason: "bad_key", detail: "Groq STT: key invalid", subject_id: "groq-api" },
+    // The optional wording tier with nothing configured. The backend answers
+    // "ok" with a reason of not_configured_optional rather than needs_setup —
+    // an optional feature must never grow a permanent amber dot on an install
+    // that works perfectly well without it.
+    dictation: { status: "ok", reason: "not_configured_optional", detail: "No wording model configured", subject_id: null },
     realtime: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
     subagents: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
     advanced: { status: "unknown", reason: "unknown", detail: "", subject_id: null },
@@ -186,6 +191,17 @@ describe("ApiKeysView — section-health tab indicators", () => {
     await waitFor(() => screen.getByRole("tab", { name: /Brain/i }));
     const ttsTab = screen.getByRole("tab", { name: /^Voice Output$/i });
     expect(ttsTab.getAttribute("title")).toBeNull();
+  });
+
+  it("leaves the optional wording tab without a dot when no key is set", async () => {
+    installFetchMock(baseRoutes());
+    render(<ApiKeysView />);
+    await waitFor(() => screen.getByRole("tab", { name: /Brain/i }));
+    // Same assertion shape as the healthy-tab case above: no status suffix in
+    // the accessible name, no tooltip. An unset optional key is a choice, not
+    // an unfinished setup step.
+    const dictationTab = screen.getByRole("tab", { name: /^Wording$/i });
+    expect(dictationTab.getAttribute("title")).toBeNull();
   });
 
   it("drills the error onto the exact failing card with the cause in plain text", async () => {

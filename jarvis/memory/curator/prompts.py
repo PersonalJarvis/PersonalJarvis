@@ -3,7 +3,7 @@
 Key design decisions in the prompt:
 
 1. **Subject disambiguation is at the very top** — the LLM sees it before
-   thinking about anything else. Includes a concrete Laura example that
+   thinking about anything else. Includes a concrete Alex example that
    explicitly rules out the "naive-mem0" anti-pattern.
 
 2. **Do-Not-Record list** is enforced as a hard negative in the prompt —
@@ -63,13 +63,13 @@ the subject is `user`. If the user mentions a name, that name is a
 
 ## Examples — this must NOT be confused:
 
-**Input:** User says "My girlfriend Laura works at X."
+**Input:** User says "My colleague Alex works at X."
 **Output:**
-- `{"subject": "person:Laura", "cluster": "identity", "field": "name", "value": "Laura", "relationship": "partner", "confidence": 1.0, ...}`
-- NEVER `{"subject": "user", "field": "name", "value": "Laura"}` — that would be a serious mistake!
+- `{"subject": "person:Alex", "cluster": "identity", "field": "name", "value": "Alex", "relationship": "colleague", "confidence": 1.0, ...}`
+- NEVER `{"subject": "user", "field": "name", "value": "Alex"}` — that would be a serious mistake!
 
-**Input:** User says "My name is Ruben."
-**Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "Ruben", ...}`
+**Input:** User says "My name is Alex."
+**Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "Alex", ...}`
 
 **Input:** User says "My colleague Paul hates emojis."
 **Output:** An observation about Paul (subject=person:Paul), NOT about the user.
@@ -137,8 +137,8 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
     """Renders the user prompt for extraction.
 
     We provide the LLM with context about already-known entities so that it
-    can disambiguate more reliably. If it already knows, e.g., "The user is
-    called Ruben, Laura is his girlfriend", it will not make the mistake shown
+    can disambiguate more reliably. If it already knows, e.g., "The user works
+    with Alex", it will not make the mistake shown
     in the Golden-Rule example.
     """
     ctx_lines = []

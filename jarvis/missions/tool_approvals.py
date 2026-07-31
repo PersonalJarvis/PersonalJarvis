@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from dataclasses import asdict, dataclass
 from uuid import UUID
+
+from loguru import logger
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
@@ -174,4 +177,116 @@ class MissionToolApprovalCoordinator:
             )
 
 
-__all__ = ["MissionToolApprovalCoordinator", "PendingMissionToolApproval"]
+class MissionToolAutoApprover:
+    """Answers approval gates for tools pre-authorized to one mission (ADR-0031).
+
+    Modeled on ``jarvis.tasks.approval_bridge.TaskAutoApprover``: on a matching
+    ``ActionApprovalRequired`` it publishes ``ActionApproved`` onto the bus —
+    this ANSWERS the gate, it never bypasses it, so the full
+    Proposed → ApprovalRequired → Approved → Executed audit chain is preserved
+    and the ``MissionToolApprovalCoordinator``'s pending entry clears through
+    its normal ``_on_resolved`` subscription.
+
+    Arming is owned by the ``WorkerToolBroker``: one arm per issued grant
+    (keyed ``mission_id`` + a non-secret grant key), disarmed on every
+    revocation path, so auto-approval lives exactly as long as a grant. The
+    armed set is already triple-filtered upstream (registry ``worker_allowed ∧
+    ¬dangerous`` → broker denylist → ``granted ∩ [phase6.safety]
+    auto_approve_tool_families``); this class re-checks fail-closed anyway.
+
+    Thread-safety: ``arm``/``disarm`` are called from broker code paths that
+    may run off the event loop (reaper via the HTTP thread, ``__del__``
+    finalizers), so the grant map is guarded by a ``threading.Lock``. The bus
+    handler runs on the loop and only reads under the same lock.
+    """
+
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+        self._mutex = threading.Lock()
+        # mission_id -> grant_key -> auto-approvable tool names for that grant.
+        self._grants: dict[str, dict[str, frozenset[str]]] = {}
+        bus.subscribe(ActionApprovalRequired, self._on_approval_required)
+
+    def arm(
+        self,
+        mission_id: str,
+        grant_key: str,
+        tool_names: frozenset[str],
+    ) -> None:
+        """Pre-authorize ``tool_names`` while the grant ``grant_key`` is live.
+
+        An empty set is a valid no-op arm (keeps arm/disarm symmetric for
+        grants whose intersection with the allowlist is empty).
+        """
+        mission = str(mission_id or "").strip()
+        if not mission:
+            return
+        with self._mutex:
+            self._grants.setdefault(mission, {})[grant_key] = frozenset(tool_names)
+
+    def disarm(self, mission_id: str, grant_key: str) -> None:
+        mission = str(mission_id or "").strip()
+        with self._mutex:
+            grants = self._grants.get(mission)
+            if grants is None:
+                return
+            grants.pop(grant_key, None)
+            if not grants:
+                self._grants.pop(mission, None)
+
+    async def _on_approval_required(self, event: ActionApprovalRequired) -> None:
+        mission_id = str(event.mission_id or "").strip()
+        if not mission_id:
+            return
+        # Never a "block" answer; approve both gate reasons — the plausibility
+        # guard is a voice-context heuristic (transcript confidence / wake
+        # age) that carries no signal for an unattended worker whose
+        # "utterance" is the mission task text.
+        if event.risk_tier not in ("ask", "monitor"):
+            return
+        if event.reason not in ("risk_tier", "plausibility"):
+            return
+        with self._mutex:
+            grant_sets = tuple(self._grants.get(mission_id, {}).values())
+        granted: frozenset[str] = frozenset().union(*grant_sets) if grant_sets else frozenset()
+        if not granted:
+            return
+        tool_name = event.tool_name
+        # Defense in depth: even an armed name must still pass the broker
+        # denylist (catalog drift between arm and call).
+        from jarvis.missions.workers.worker_tool_broker import worker_tool_name_allowed
+
+        if not worker_tool_name_allowed(tool_name):
+            return
+        if not self._tool_is_granted(tool_name, granted):
+            return
+        approved_by = f"mission-grant:{mission_id[:13]}"
+        logger.info(
+            "MissionToolAutoApprover: approving {} for mission {} ({})",
+            tool_name,
+            mission_id,
+            event.reason,
+        )
+        await self._bus.publish(
+            ActionApproved(
+                trace_id=event.trace_id,
+                tool_name=tool_name,
+                approved_by=approved_by,
+            )
+        )
+
+    @staticmethod
+    def _tool_is_granted(tool_name: str, granted: frozenset[str]) -> bool:
+        """Exact name, or the MCP ``server/`` prefix (mirror of
+        ``TaskAutoApprover._tool_is_granted``)."""
+        if tool_name in granted:
+            return True
+        prefix = tool_name.split("/", 1)[0]
+        return prefix in granted
+
+
+__all__ = [
+    "MissionToolApprovalCoordinator",
+    "MissionToolAutoApprover",
+    "PendingMissionToolApproval",
+]

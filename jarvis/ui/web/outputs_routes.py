@@ -1,7 +1,8 @@
 """REST-API for the Outputs view (`/api/outputs`).
 
-Lists the per-mission work directories under `<repo_parent>/sub-agents-outputs/`,
-optionally enriched with mission status from the Phase-6 `missions.db`. Read-only.
+Lists the per-mission work directories across the canonical and retained legacy
+output roots, optionally enriched with mission status from the Phase-6
+`missions.db`. Read-only.
 
 Why a thin filesystem endpoint and not a frontend rewrite to `/api/missions`:
 the Outputs view was built around the on-disk work directory layout (slug,
@@ -117,6 +118,36 @@ def _outputs_root(request: Request) -> Path:
     here = Path(__file__).resolve()
     repo_root = here.parent.parent.parent.parent
     return resolve_outputs_root(repo_root)
+
+
+def _outputs_roots(request: Request) -> tuple[Path, ...]:
+    """Return output roots in read precedence order.
+
+    The mission stack writes to one canonical root but exposes all compatible
+    read roots on app state so retained pre-rename sessions remain visible.
+    Route-only test apps and partial boots keep the historical single-root
+    behavior.
+    """
+    cached = getattr(request.app.state, "outputs_roots", None)
+    if cached:
+        return tuple(Path(root) for root in cached)
+    return (_outputs_root(request),)
+
+
+def _resolve_output_dir(request: Request, slug: str) -> Path:
+    """Resolve a session directory across all readable roots, safely."""
+    invalid_slug = False
+    for candidate_root in _outputs_roots(request):
+        root = candidate_root.resolve()
+        target = (root / slug).resolve()
+        if not target.is_relative_to(root):
+            invalid_slug = True
+            continue
+        if target.is_dir():
+            return target
+    if invalid_slug:
+        raise HTTPException(status_code=400, detail="invalid slug")
+    raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
 
 
 def _parse_slug(name: str) -> dict[str, Any]:
@@ -451,19 +482,28 @@ async def list_outputs(request: Request) -> OutputsResponse:
     (None otherwise) — the frontend needs it to POST
     `/api/missions/{id}/cancel` for the hold-to-abort affordance.
     """
-    root = _outputs_root(request)
-    if not root.is_dir():
-        return OutputsResponse(sessions=[])
+    entries_by_name: dict[str, Path] = {}
+    read_errors: list[OSError] = []
+    readable_root_found = False
+    for root in _outputs_roots(request):
+        if not root.is_dir():
+            continue
+        try:
+            root_entries = [path for path in root.iterdir() if path.is_dir()]
+        except OSError as exc:
+            logger.warning("outputs: listdir failed for %s: %s", root, exc)
+            read_errors.append(exc)
+            continue
+        readable_root_found = True
+        for entry in root_entries:
+            # Roots are ordered canonical-first. A duplicate slug therefore
+            # resolves to the current canonical copy on every detail endpoint.
+            entries_by_name.setdefault(entry.name, entry)
 
-    try:
-        entries = sorted(
-            (p for p in root.iterdir() if p.is_dir()),
-            key=lambda p: p.name,
-            reverse=True,
-        )
-    except OSError as exc:
-        logger.warning("outputs: listdir failed for %s: %s", root, exc)
+    if not readable_root_found and read_errors:
+        exc = read_errors[0]
         raise HTTPException(status_code=500, detail=f"Outputs root not readable: {exc}") from exc
+    entries = sorted(entries_by_name.values(), key=lambda path: path.name, reverse=True)
 
     sessions: list[dict[str, Any]] = []
     # Map dir-name → mission-id prefix derived from the dir-name itself.
@@ -623,10 +663,7 @@ async def get_output_plan(slug: str, request: Request) -> dict[str, Any]:
     treats that as "no plan available" and the user sees the session metadata
     plus the "open in Explorer" button.
     """
-    root = _outputs_root(request)
-    target = root / slug
-    if not target.is_dir():
-        raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
+    _resolve_output_dir(request, slug)
     return {"plan": None, "steps": []}
 
 
@@ -689,12 +726,7 @@ def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:
     never confirming a scaffolding file exists) on any violation. Used by the
     download/view/reveal/open-native routes.
     """
-    root = _outputs_root(request).resolve()
-    base = (root / slug).resolve()
-    try:
-        base.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="invalid slug") from exc
+    base = _resolve_output_dir(request, slug)
     target = (base / path).resolve()
     try:
         rel_parts = target.relative_to(base).parts
@@ -771,14 +803,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
           ]
         }
     """
-    root = _outputs_root(request).resolve()
-    target = (root / slug).resolve()
-    try:
-        target.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="invalid slug") from exc
-    if not target.is_dir():
-        raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
+    target = _resolve_output_dir(request, slug)
 
     files: list[dict[str, Any]] = []
     try:
@@ -836,12 +861,7 @@ async def get_output_artifact_raw(slug: str, path: str, request: Request) -> dic
     listing endpoint; calling this on a non-text file returns a base64
     placeholder rather than raw bytes (UI can't render anyway).
     """
-    root = _outputs_root(request).resolve()
-    base = (root / slug).resolve()
-    try:
-        base.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="invalid slug") from exc
+    base = _resolve_output_dir(request, slug)
     target = (base / path).resolve()
     try:
         rel_parts = target.relative_to(base).parts
@@ -1189,14 +1209,7 @@ async def open_output(slug: str, request: Request) -> dict[str, Any]:
     Best-effort, non-blocking — frontend ignores errors. Restricts the path
     inside `outputs_root` so a crafted slug can't open arbitrary folders.
     """
-    root = _outputs_root(request).resolve()
-    target = (root / slug).resolve()
-    try:
-        target.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="invalid slug") from exc
-    if not target.is_dir():
-        raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
+    target = _resolve_output_dir(request, slug)
 
     from jarvis.platform import open_path
 

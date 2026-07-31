@@ -18,7 +18,7 @@ export const CreatorIntro: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
             Hey — I'm
           </Subtitle>
           <Title delay={10} size={62}>
-            Ruben's AI assistant
+            Your AI assistant
           </Title>
           <Kicker delay={18}>Made in Germany</Kicker>
         </div>

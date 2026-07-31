@@ -32,7 +32,7 @@ POSITIVE_CASES = [
     ),
     pytest.param("Soll ich den Termin verschieben?", id="shall-i-question"),  # i18n-allow
     pytest.param("Es ist warm draussen.", id="weather-fact"),  # i18n-allow
-    pytest.param("Goodbye, Ruben.", id="hangup-contract"),
+    pytest.param("Goodbye, Alex.", id="hangup-contract"),
 ]
 
 
@@ -404,7 +404,7 @@ def test_empty_input_returns_empty() -> None:
 
 
 def test_sir_anrede_is_removed() -> None:  # i18n-allow
-    """A1: 'Sir' as a salutation is scrubbed — mandate A1 (Ruben instead of Sir)."""
+    """A1: 'Sir' as a salutation is scrubbed — mandate A1 (a name instead of Sir)."""
     text = "Sir, ich starte die Analyse."  # i18n-allow
     result = scrub_for_voice(text)
     low = result.cleaned.lower()
@@ -761,9 +761,9 @@ def test_openclaw_subagenten_plural_also_scrubbed() -> None:
 def test_scrub_strips_end_call_sentinel() -> None:
     from jarvis.speech.hangup import END_CALL_SIGNAL
 
-    result = scrub_for_voice(f"Bis später, Ruben. {END_CALL_SIGNAL}", language="de")  # i18n-allow
+    result = scrub_for_voice(f"Bis später, Alex. {END_CALL_SIGNAL}", language="de")  # i18n-allow
     assert END_CALL_SIGNAL not in result.cleaned
-    assert result.cleaned.strip() == "Bis später, Ruben."  # i18n-allow
+    assert result.cleaned.strip() == "Bis später, Alex."  # i18n-allow
     assert "stripped_end_signal" in result.actions
 
 

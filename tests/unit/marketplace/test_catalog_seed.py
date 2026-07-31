@@ -21,6 +21,26 @@ def test_package_seed_exists_and_is_valid() -> None:
     assert {"github", "notion", "linear"} <= ids
 
 
+def test_every_seed_category_is_declared_in_the_display_order() -> None:
+    """`category` is a free string so a taxonomy change cannot break a user's
+    local catalog on upgrade. This is what still catches a typo in the seed."""
+    from jarvis.marketplace.catalog import CATEGORY_ORDER
+
+    used = {p.category for p in _seed().plugins}
+    assert used <= set(CATEGORY_ORDER), (
+        f"seed categories missing from CATEGORY_ORDER: {sorted(used - set(CATEGORY_ORDER))}"
+    )
+
+
+def test_every_seed_plugin_states_its_longevity_note_when_limited() -> None:
+    """A `provider_limited` card must say HOW often the user has to come back —
+    the badge alone would be a warning without an answer."""
+    limited = [p for p in _seed().plugins if p.longevity == "provider_limited"]
+    assert limited, "the Google family is provider-limited; this test would be vacuous"
+    for plugin in limited:
+        assert plugin.longevity_note, f"{plugin.id} is provider_limited without a note"
+
+
 def test_developer_connectors_use_hosted_mcp_without_local_runtimes() -> None:
     catalog = _seed()
     github = catalog.by_id("github")
@@ -51,17 +71,63 @@ def test_falls_back_to_seed_when_no_data_override(monkeypatch, tmp_path) -> None
     clear_cache()
 
 
-def test_data_override_wins_when_present(monkeypatch, tmp_path) -> None:
+def test_override_keeps_connection_details_but_not_presentation(
+    monkeypatch, tmp_path
+) -> None:
+    """The user's own OAuth client survives; the product's own copy does not.
+
+    A local catalog may legitimately carry a user's own OAuth client id. It
+    must NOT freeze the card's category, wording or logo, or a taxonomy change
+    would land on fresh installs only.
+    """
     clear_cache()
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    seed_slack = next(item for item in seed["plugins"] if item["id"] == "slack")
+    local_slack = json.loads(json.dumps(seed_slack))
+    local_slack["description"] = "stale local wording"
+    local_slack["category"] = "Retired Category"
+    local_slack["auth"]["client_id"] = "1234.my-own-slack-client"
     override = tmp_path / "plugin_catalog.json"
     override.write_text(
-        json.dumps({"version": 9, "schema_version": "ovr", "plugins": []}),
+        json.dumps({"version": 9, "schema_version": "ovr", "plugins": [local_slack]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
-    cat = load_catalog()
-    assert cat.version == 9
-    assert cat.plugins == []
+
+    slack = load_catalog().by_id("slack")
+
+    assert slack.auth.client_id == "1234.my-own-slack-client"
+    assert slack.description == seed_slack["description"]
+    assert slack.category == seed_slack["category"]
+    clear_cache()
+
+
+def test_stale_override_still_receives_plugins_added_to_the_seed(
+    monkeypatch, tmp_path
+) -> None:
+    """A new seed connector must reach installs that already have a data/ override.
+
+    Before the merge the override replaced the seed wholesale, so a plugin
+    added to the shipped catalog appeared only on FRESH installs while every
+    existing machine — including the one it was developed on — kept serving its
+    frozen list. The tests stayed green because they read the seed directly.
+    """
+    clear_cache()
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    stale = [item for item in seed["plugins"] if item["id"] == "github"]
+    override = tmp_path / "plugin_catalog.json"
+    override.write_text(
+        json.dumps({"version": 1, "schema_version": "old", "plugins": stale}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    ids = {p.id for p in load_catalog().plugins}
+
+    assert "github" in ids, "the override's own entry must survive"
+    assert {p["id"] for p in seed["plugins"]} <= ids, (
+        "every seed plugin must surface through a stale override"
+    )
     clear_cache()
 
 

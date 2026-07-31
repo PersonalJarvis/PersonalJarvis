@@ -22,6 +22,7 @@ from jarvis.core.turn_language import (
     detect_text_language,
     normalize_language_tag,
     resolve_output_language,
+    resolve_transcript_language,
     resolve_turn_language,
 )
 
@@ -214,3 +215,54 @@ def test_conversation_language_used_as_default_for_ambiguous_substantive() -> No
     assert resolve_output_language(
         "auto", None, "Spotify Netflix Berlin", conversation_language="de"
     ) == "de"
+
+
+# ---------------------------------------------------------------------------
+# resolve_transcript_language — whose word list may DELETE tokens (2026-07-30)
+# ---------------------------------------------------------------------------
+#
+# Stricter than resolve_turn_language on purpose: that one picks the language we
+# answer IN, where a wrong guess merely sounds odd. This one picks the language
+# whose filler/phonetic tables are run OVER what the user said, where a wrong
+# guess removes words and reports success. So it never invents a default — an
+# unplaceable tag resolves to "unknown", meaning "run no rules at all".
+
+
+def test_a_wrong_provider_tag_loses_to_the_text() -> None:
+    # The live shape: a cloud Whisper endpoint answering "English" for German
+    # speech. Trusting the tag ran the English filler list over the sentence and
+    # deleted the preposition "um" out of its middle.
+    assert resolve_transcript_language(
+        "English", "Kümmere dich um das Update"  # i18n-allow: fixture under test
+    ) == "de"
+
+
+def test_a_pinned_tag_echoed_back_loses_to_the_text() -> None:
+    # `[stt].language = "de"` makes the provider echo "german" for speech in any
+    # language at all (forensic 2026-06-10).
+    assert resolve_transcript_language("german", "Please open the report") == "en"
+
+
+def test_an_agreeing_tag_stands_as_a_code() -> None:
+    assert resolve_transcript_language("German", "Mach bitte das Licht an") == "de"
+
+
+def test_an_unplaceable_tag_stays_unknown_rather_than_guessing() -> None:
+    # detect_text_language only knows de/en/es, so letting it overrule a French
+    # tag would relabel French as whichever of the three it scored highest on and
+    # then run THAT language's rules over it. "unknown" = run nothing.
+    assert resolve_transcript_language("French", "Je pense que c'est bien") == "unknown"
+
+
+def test_ambiguous_text_leaves_the_tag_standing() -> None:
+    assert resolve_transcript_language("English", "Spotify Berlin") == "en"
+
+
+def test_no_tag_at_all_is_answered_from_the_text() -> None:
+    for tag in ("", None, "auto", "unknown"):
+        assert resolve_transcript_language(tag, "Mach bitte das Licht an") == "de"
+
+
+def test_no_text_at_all_falls_back_to_the_tag() -> None:
+    assert resolve_transcript_language("German", "") == "de"
+    assert resolve_transcript_language("", "") == "unknown"

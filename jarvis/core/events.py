@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from .protocols import HarnessResult, HarnessTask, RiskTier, Transcript
@@ -108,20 +108,233 @@ class TranscriptionUpdate(Event):
 
 @dataclass(frozen=True, slots=True)
 class DictationTranscript(Event):
-    """Live transcript from the chat composer's mic-dictation button.
+    """Live transcript of a dictation, as it is recognized.
 
     Deliberately a SEPARATE event from ``TranscriptionUpdate`` (which rides the
-    live voice critical path). Dictation only fills the chat text input — it
-    never reaches the brain — so keeping it on its own event name means the
-    frontend can route it straight to the textarea without ever confusing it
-    with a real voice turn, and the voice hot-path event stays untouched.
+    live voice critical path). Dictation never reaches the brain, so keeping it
+    on its own event name means the frontend can route it straight to a text
+    field without ever confusing it with a real voice turn, and the voice
+    hot-path event stays untouched.
 
     ``is_final=False`` interim hypotheses overwrite the live tail; the single
-    ``is_final=True`` is appended to the input box and ends the dictation.
+    ``is_final=True`` ends the dictation.
     """
 
     text: str = ""
     is_final: bool = False
+    #: Where the pipeline has decided this transcript belongs, already resolved
+    #: (never ``auto``): ``insert`` = typed into the foreign application in
+    #: front, ``chat`` = handed to Jarvis's own window.
+    #:
+    #: The UI needs this, and needs it on the event rather than by asking: the
+    #: event fires on BOTH routes, so a UI that inserted on every final
+    #: transcript would write a dictation meant for another program into
+    #: whatever Jarvis field last had focus — invisibly, in a section the user
+    #: is not even looking at. Empty on an older backend, which reads as "do not
+    #: insert in-app" and leaves that install exactly as it behaved before.
+    target: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DictationCompleted(Event):
+    """A dictation finished — what was produced and where it ended up.
+
+    Separate from ``DictationTranscript`` (which is the live text feed) because
+    this carries the OUTCOME, and the outcome is the part the user must not be
+    left guessing about: ``inserted`` means it is in their text field,
+    ``clipboard_only`` means the OS blocked the paste and the text is one
+    Ctrl+V away, ``unavailable`` means neither worked. The UI and the Jarvis Bar
+    both surface ``detail`` verbatim, so it is a complete, user-facing sentence.
+    """
+
+    #: What was inserted (after cleanup).
+    text: str = ""
+    #: The transcript exactly as the STT returned it, before cleanup.
+    raw_text: str = ""
+    #: One of ``jarvis.dictation.outcomes.DICTATION_OUTCOMES``. That tuple is
+    #: the single vocabulary for this value; it is imported rather than
+    #: restated here because listing it twice is exactly how the five layers
+    #: that carry an outcome drifted apart before (AP-4 / BUG-008).
+    outcome: str = ""
+    #: User-facing explanation; empty when nothing needs explaining.
+    detail: str = ""
+    #: e.g. ``clipboard+ctrl_v`` / ``type`` — empty when nothing was inserted.
+    method: str = ""
+    language: str = ""
+    duration_s: float = 0.0
+    removed_words: int = 0
+    #: Why transcription failed, when it did (a provider error, a missing key,
+    #: a wedged engine). ``None`` on every path that did not fail. This is what
+    #: makes ``outcome="failed"`` distinguishable from ``outcome="empty"``:
+    #: before it existed, a provider 401 and plain silence looked identical.
+    error: str | None = None
+    #: What the generative polish pass did to ``text``. One of
+    #: ``jarvis.dictation.polish.POLISH_STATUSES`` — that tuple is the single
+    #: vocabulary for this value, imported rather than restated here for the
+    #: same reason ``outcome`` is (AP-4 / BUG-008). ``""`` on a completion the
+    #: pass never ran for at all (a hangup, a crash before delivery), which is
+    #: deliberately distinct from ``"off"`` (the user switched it off) and from
+    #: ``"unavailable"`` (nobody on this host holds a key for it).
+    #:
+    #: This is carried on the EVENT and not only in the history because the
+    #: user-visible claim "these are the words you said" changes when the pass
+    #: applies: a surface that shows the polished text without being able to say
+    #: it was polished cannot offer the raw text back.
+    #:
+    #: ``"translated"`` is the one status that also changes what ``language``
+    #: above describes: it stays the language that was SPOKEN (the one
+    #: ``raw_text`` is in), while ``text`` arrives in
+    #: ``[dictation].translate_target``. The two fields belong to the two texts,
+    #: which is why neither is rewritten to match the other.
+    polish_status: str = ""
+    #: The credential family that answered (``groq``/``gemini``/...), empty when
+    #: none was asked. A family id, never a model id — the model is a detail of
+    #: the family and changes without the user doing anything.
+    polish_provider: str = ""
+    #: Wall-clock cost of the pass, including a fallback hop and a rejected
+    #: answer. It is the number that decides whether the feature is worth its
+    #: place in the delivery path, so it is reported on every status, not only
+    #: on ``applied``.
+    polish_latency_ms: int = 0
+    #: STT provider ids that produced text during this dictation, in first-use
+    #: order. More than one means the runtime fallback crossed families.
+    stt_providers: tuple[str, ...] = ()
+    #: Effective/requested model ids corresponding to the successful STT calls.
+    #: Kept as a set-like ordered tuple because a fallback may use more than one.
+    stt_models: tuple[str, ...] = ()
+    #: Language tags reported by the recognizer's final windows. The transcript
+    #: remains the source of truth; these are diagnostics, never a language lock.
+    detected_languages: tuple[str, ...] = ()
+    #: Aggregate wall-clock time spent awaiting STT for this dictation.
+    stt_latency_ms: int = 0
+    #: Number of logical STT uploads, including previews and final attempts.
+    #: A provider's internal request-shape downgrade is deliberately not
+    #: observable at this layer.
+    stt_calls: int = 0
+    #: Stable reason codes observed during STT, with duplicates removed.
+    stt_errors: tuple[str, ...] = ()
+    #: Compact audit facts such as final-pass status, window count, and audio
+    #: preprocessing decisions. English machine data, no transcript content.
+    stt_audit: tuple[str, ...] = ()
+    #: Stable PCM rate delivered to STT after any capture-side resampling.
+    audio_sample_rate_hz: int = 0
+    #: Whole-recording normalized RMS in the same 0..1 convention as VAD.
+    audio_rms: float = 0.0
+    #: Share of PCM16 samples at (or immediately below) full scale.
+    audio_clipping_ratio: float = 0.0
+    #: Discontinuities inferred from capture timestamps / queue overflow counts.
+    audio_dropouts: int = 0
+    #: Approximate duration missing across timestamp-detected discontinuities.
+    audio_dropout_ms: int = 0
+
+
+#: Every reason a dictation start can be refused. Declared ONCE here, next to
+#: the event that carries it, because this value crosses the pipeline, the bus,
+#: the REST/WS surface and the UI — the exact shape of drift that has bitten
+#: this repo four times (AP-4 / BUG-008). Consumers import this tuple instead
+#: of restating the strings.
+#:
+#: ``microphone_unavailable``
+#:     The local capture gate is closed — the desktop app is not visible, or
+#:     microphone permission has not been granted.
+#: ``no_stt``
+#:     No speech-to-text provider is wired, so nothing could transcribe.
+#: ``already_running``
+#:     A dictation is already recording (or a handover is in flight); the
+#:     second start is a no-op.
+#: ``handover_failed``
+#:     A live voice conversation owned the microphone, the dictation asked it to
+#:     hang up, and the microphone did not come back — the teardown raised, ran
+#:     past its bound, or the key was released while it was still running. This
+#:     is the ONLY outcome of a collision with a voice session: an explicit
+#:     dictation key press is a deliberate user action and now WINS over a
+#:     conversation somebody left open, so a plain "a session is running" is no
+#:     longer a refusal at all.
+#: ``voice_session_active``
+#:     LEGACY. A voice conversation (wake word or push-to-talk) owned the
+#:     microphone and the dictation gave up instead of taking over. No longer
+#:     published — kept in the vocabulary because an older backend can still
+#:     send it to a newer UI, and a consumer that dropped the token would then
+#:     render an unknown-reason blank.
+#: ``pipeline_not_running``
+#:     The speech pipeline has no running event loop to host the session.
+#:
+#: The last three belong to the "insert the last dictation again" key rather
+#: than to a recording. It starts nothing, so it can never be refused for a
+#: microphone reason — but it CAN do nothing at all, and a key that does
+#: nothing in silence is the exact failure this vocabulary exists to prevent.
+#:
+#: ``nothing_to_paste``
+#:     The history holds no dictation to re-insert (nothing recorded yet, or
+#:     every entry was discarded).
+#: ``history_disabled``
+#:     ``[dictation].history_enabled`` is off, so no transcript was kept and
+#:     there is nothing this key could paste. Recoverable in the settings.
+#: ``paste_unavailable``
+#:     The text could not be typed into the focused window — Wayland, a
+#:     headless host, an elevated window in front, macOS secure input. The
+#:     detail says where the text ended up instead (usually the clipboard).
+DICTATION_REFUSAL_REASONS: Final[tuple[str, ...]] = (
+    "microphone_unavailable",
+    "no_stt",
+    "already_running",
+    "handover_failed",
+    "voice_session_active",
+    "pipeline_not_running",
+    "nothing_to_paste",
+    "history_disabled",
+    "paste_unavailable",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DictationStarted(Event):
+    """A dictation turn has begun — the counterpart of ``DictationCompleted``.
+
+    Published the moment ``start_dictation()`` commits, BEFORE the first audio
+    frame is captured, so a UI surface can show "listening" at key-down speed
+    instead of waiting for the first partial transcript (which costs a partial
+    interval plus an STT round-trip, and never arrives at all for a short
+    press).
+
+    ``target`` is the RAW target the caller asked for (``auto`` | ``insert`` |
+    ``chat``); ``auto`` is deliberately resolved when the recording ENDS, not
+    here, so the value carried by this event is the request, not the verdict.
+    """
+
+    target: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DictationTranscribing(Event):
+    """Recording stopped; the final transcription is now running.
+
+    Published when the microphone lease is released — the key was let go, the
+    hands-free toggle stopped it, the duration cap expired, or a REST/WS stop
+    arrived — and before the closing transcription call. It is the honest
+    "no longer listening, not yet finished" phase: a UI surface switches from
+    a level meter to a working indicator here, and ``DictationCompleted``
+    always follows.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class DictationRefused(Event):
+    """A dictation could NOT start, and the user is owed an explanation.
+
+    Every refusal used to be a ``log.info`` in a file the desktop app cannot
+    show (CLAUDE.md §9: the app is a WebView with no dev tools), so pressing
+    the dictation shortcut with a closed microphone gate, no STT provider, or
+    a live voice session did *nothing* at all. This event makes each refusal
+    observable on the bus so the caller can say why the key did nothing.
+
+    ``reason`` is a stable token from ``DICTATION_REFUSAL_REASONS``; ``detail``
+    is a complete, user-facing English sentence, matching the contract of
+    ``DictationCompleted.detail``.
+    """
+
+    reason: str = ""
+    detail: str = ""
 
 
 # ----------------------------------------------------------------------
@@ -322,7 +535,7 @@ class ProfileUpdated(Event):
     The UI may render this as a badge "Jarvis learned X about you" —
     transparency is part of the design (the user should never be surprised).
     """
-    subject: str = ""           # "user" | "person:laura" | "soul"
+    subject: str = ""           # "user" | "person:casey" | "soul"
     cluster: str = ""           # identity | communication | work_style | ...
     field: str = ""             # z.B. "humor_types" oder "observation"
     operation: str = "set"      # set | append | observation
@@ -384,6 +597,112 @@ class NavigateSidebar(Event):
     parity test.
     """
     section: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeTerminalsAdded(Event):
+    """Panes were added to the Agentic-IDE workspace from outside its view.
+
+    The workspace view loads its state once when it mounts, which is enough as
+    long as it is the only thing that can add a pane. Voice and the CLI can too
+    ("open five more Claude Code terminals"), and without this event those panes
+    exist in the registry while the open view keeps showing the old grid.
+
+    The frontend (``useWebSocket.ts``) turns it into a window event the workspace
+    view listens for and re-runs its own fetch — the same shape as
+    ``SecretConfigured``. ``names`` is carried so a client can tell the user what
+    appeared without a second request; ``folder`` identifies the workspace, since
+    a stale event from a session that has since been replaced must not be acted
+    on.
+    """
+    session_id: str = ""
+    names: tuple[str, ...] = ()
+    agent: str = ""
+    folder: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeTerminalsClosed(Event):
+    """Panes were closed outside the Agentic-IDE workspace view."""
+
+    session_id: str = ""
+    names: tuple[str, ...] = ()
+    folder: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeWorkspaceChanged(Event):
+    """A workspace itself was opened, reopened, switched to, or closed.
+
+    The pane-level events above cover changes INSIDE a grid. This is the layer
+    above them, and it was missing: opening a workspace, restoring one after a
+    restart, switching tabs and closing a tab all happened in the registry with
+    nothing said out loud. Any client that was not the one making the change —
+    a second window, a browser tab, the app's own view after the backend
+    restored a workspace in the background — kept rendering a grid the backend
+    no longer had, and the panes of that grid then knocked at a workspace that
+    was not there. Nothing recovered by itself; the user had to reload.
+
+    ``reason`` is one of ``opened`` / ``restored`` / ``activated`` / ``closed``,
+    so a client can tell "your tab was switched" from "everything is gone"
+    without guessing from the payload. Clients re-read the authoritative state
+    on any of them — the event is a trigger, never the source of truth.
+    """
+    session_id: str = ""
+    reason: str = ""
+    folder: str = ""
+    name: str = ""
+    open_workspaces: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdePromptSent(Event):
+    """A prompt was typed into one pane by Jarvis rather than by the user.
+
+    The only thing that made a voice-driven prompt visible used to be the
+    agent's own echo travelling back over that pane's terminal socket. When
+    anything on that path was late or missing, the user watched an unchanged
+    screen and concluded the instruction had gone nowhere — with no second
+    signal anywhere in the app to say otherwise.
+
+    So the fact is announced in its own right. ``submitted`` carries the honest
+    three-way answer from ``send_prompt``: true (it went), false (it is sitting
+    in the pane's input box), null (never seen to arrive). ``preview`` is a
+    short excerpt, never the whole brief — this is a notification, not a copy
+    of the prompt.
+    """
+    session_id: str = ""
+    terminal: str = ""
+    agent: str = ""
+    submitted: bool | None = None
+    preview: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AgenticIdeCodingModeChanged(Event):
+    """The focused coding mode was switched on or off.
+
+    Coding mode is not a property of the workspace view — it changes how Jarvis
+    answers EVERY turn, on every screen. So the one surface that must never be
+    wrong about it is the app shell, and the shell does not mount the workspace
+    view. Without this event the global indicator would only learn about a
+    switch by being on the screen where the switch happened, which is precisely
+    the screen where it is not needed.
+
+    Carries the EFFECTIVE mode, not merely the flag: ``enabled`` is true only
+    when a workspace is actually open AND its focus mode is on — the same
+    predicate the routing side asks. A client must be able to render the badge
+    straight from this payload without re-deriving that rule and drifting away
+    from it.
+
+    ``folder`` and ``workspace`` let a client name the workspace the mode
+    belongs to; both are empty when the mode went off.
+    """
+
+    session_id: str = ""
+    enabled: bool = False
+    folder: str = ""
+    workspace: str = ""
 
 
 # ----------------------------------------------------------------------
@@ -637,8 +956,58 @@ class VisionInjected(Event):
     call. Telemetry for cost tracking, flight recorder, and debugging.
     """
     screenshot_hash: str = ""
-    bytes_size: int = 0                 # Groesse des PNG-Rohdatenblocks
+    bytes_size: int = 0                 # size of the raw PNG data block
     capture_age_ms: int = 0             # age of the observation at inject time
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenCaptureAnnounced(Event):
+    """A one-off Screen Context capture is about to happen.
+
+    Published BEFORE any pixels are grabbed, so the on-screen bar (and any
+    other subscriber) can show the capture indicator while there is still
+    something to indicate. Announcing afterwards would leave a window in which
+    a capture happened with no visible sign — which is the one thing this
+    feature must never do.
+
+    ``target_kind`` is ``"monitor"`` or ``"window"``; ``target_label`` is a
+    privacy-safe generic surface label and never contains app or window titles.
+    """
+    target_kind: str = "monitor"
+    target_label: str = ""
+    #: Why this surface: cursor_monitor | bar_monitor | primary_monitor | ...
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenCaptureGrabbed(Event):
+    """Raw pixels were grabbed for a one-off Screen Context request.
+
+    Published immediately after the platform capture returns, before redaction
+    and encoding. Carries dimensions only: pixels and captured text never enter
+    the event bus. A later privacy recheck may still discard the frame.
+    """
+
+    width: int = 0
+    height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenCaptureCompleted(Event):
+    """A Screen Context capture finished — the receipt.
+
+    Carries only metadata, never pixels and never captured text: this event
+    reaches the flight recorder, and a recorder that stores screen content
+    would quietly defeat the feature's retention promise.
+    """
+    target_kind: str = "monitor"
+    target_label: str = ""
+    width: int = 0
+    height: int = 0
+    bytes_size: int = 0
+    redaction_count: int = 0
+    degradation_count: int = 0
+    ui_text_source: str = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1339,7 +1708,7 @@ class WikiPageChanged(Event):
     forwards this event to the frontend so React Query caches can be
     invalidated immediately.
 
-    ``path`` is the vault-relative POSIX path (e.g. ``"entities/harald.md"``)
+    ``path`` is the vault-relative POSIX path (e.g. ``"entities/morgan.md"``)
     so the frontend can use the string as-is regardless of the host
     operating system path separator.
 

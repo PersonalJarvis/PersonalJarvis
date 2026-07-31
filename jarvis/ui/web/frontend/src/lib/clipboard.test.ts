@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { robustCopy, saveOrDownload } from "./clipboard";
+import { robustCopy, robustPaste, saveOrDownload } from "./clipboard";
 
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
@@ -166,5 +166,83 @@ describe("saveOrDownload", () => {
     expect(saved).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("robustPaste", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    restoreProperty(navigator, "clipboard", originalClipboard);
+  });
+
+  function stubReadText(readText: () => Promise<string>) {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+  }
+
+  function stubRest(response: { ok: boolean; body?: unknown }) {
+    const fetchMock = vi.fn(async () => ({
+      ok: response.ok,
+      status: response.ok ? 200 : 404,
+      json: async () => response.body,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("reads through the desktop route first", async () => {
+    const readText = vi.fn(async () => "from the browser");
+    stubReadText(readText);
+    stubRest({ ok: true, body: { text: "from the desktop" } });
+
+    await expect(robustPaste()).resolves.toBe("from the desktop");
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("is not blocked by a clipboard permission prompt that never settles", async () => {
+    // The regression this ordering exists for: inside the desktop WebView,
+    // navigator.clipboard.readText() stays pending forever — neither resolved
+    // nor rejected — so awaiting it first made right-click Paste look dead.
+    stubReadText(() => new Promise<string>(() => {}));
+    stubRest({ ok: true, body: { text: "pasted anyway" } });
+
+    await expect(robustPaste()).resolves.toBe("pasted anyway");
+  });
+
+  it("falls back to the browser when the desktop route is absent", async () => {
+    stubReadText(async () => "from the browser");
+    stubRest({ ok: false });
+
+    await expect(robustPaste()).resolves.toBe("from the browser");
+  });
+
+  it("reports a genuinely empty clipboard as empty, not as a failure", async () => {
+    stubReadText(async () => "should not be consulted");
+    stubRest({ ok: true, body: { text: "" } });
+
+    await expect(robustPaste()).resolves.toBe("");
+  });
+
+  it("gives up on a browser read that never settles", async () => {
+    vi.useFakeTimers();
+    stubReadText(() => new Promise<string>(() => {}));
+    stubRest({ ok: false });
+
+    const pending = robustPaste();
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it("returns null when no path can read the clipboard", async () => {
+    stubReadText(async () => {
+      throw new Error("NotAllowedError");
+    });
+    stubRest({ ok: false });
+
+    await expect(robustPaste()).resolves.toBeNull();
   });
 });

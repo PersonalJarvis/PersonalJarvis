@@ -12,6 +12,12 @@ State → look:
                sparks counter-orbiting on tilted ellipses (synthetic,
                ignores level). Replaced the old travelling sine wave,
                which read as a generic-AI visual.
+- ``dictate``              → the equalizer, driven by the dictation mic level.
+- ``dictate_transcribing`` → the orbital core: recording has stopped and the
+               transcription is running, so there IS something to represent.
+- ``notice``  → a breathing red cross in an opened pill: something the user
+               asked for did not happen. The bar carries no text, so this look
+               IS the message on this surface.
 
 Gold only appears during activity; idle dots stay muted.
 """
@@ -22,6 +28,16 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+# The coarse-mode vocabulary lives in ONE dependency-free module so the
+# numpy/PIL-free IPC proxy can import the same tuple instead of hand-copying it
+# (AP-4). ``MODES`` is re-exported here because every surface already validates
+# against ``renderer.MODES``.
+from jarvis.ui.jarvisbar.modes import (  # noqa: F401 — re-exported as renderer.MODES
+    DICTATION_MODES,
+    MODES,
+    NOTICE_MODES,
+)
 
 COLOR_KEY_RGB = (255, 0, 255)
 
@@ -51,6 +67,150 @@ CLOSE_X = (228, 110, 96)
 # at a glance they are muted (the pill border turns this colour whenever the
 # voice mic is muted FOR JARVIS, even at rest). Tune freely — purely cosmetic.
 MUTED_RED = (220, 80, 72)
+# Drop confirmation tick: a calm green that reads as "landed" against the dark
+# pill without competing with the gold activity accent.
+DROP_OK_GREEN = (126, 200, 133)
+
+# --- drag-drop feedback on the bar -------------------------------------------
+# Dropping a file onto the bar used to give NOTHING back: the window went from
+# 60% to 100% opacity while the drag hovered, and after the release there was
+# no signal at all — so a user could not tell an accepted drop from one the bar
+# silently discarded. These four states drive the visible answer, and every
+# dimension below is a FRACTION of the live pill size, so the feedback scales
+# with the monitor's DPI and the user's "Bar size" slider exactly like the mic
+# glyph does. Nothing here is measured in fixed pixels.
+DROP_STATE_NONE = "none"
+DROP_STATE_ARMED = "armed"        # a droppable payload hovers the bar
+DROP_STATE_OK = "ok"              # it landed and became context
+DROP_STATE_REJECTED = "rejected"  # nothing usable was in it
+DROP_STATES = (
+    DROP_STATE_NONE, DROP_STATE_ARMED, DROP_STATE_OK, DROP_STATE_REJECTED
+)
+
+# Confirmation timeline (seconds): the glyph strokes itself on, holds long
+# enough to be read without a second glance, then fades. Total is deliberately
+# short — this is an acknowledgement, not a notification the user must dismiss.
+DROP_CONFIRM_DRAW_S = 0.24
+DROP_CONFIRM_HOLD_S = 0.80
+DROP_CONFIRM_FADE_S = 0.36
+DROP_CONFIRM_TOTAL_S = DROP_CONFIRM_DRAW_S + DROP_CONFIRM_HOLD_S + DROP_CONFIRM_FADE_S
+# Rim pulse while a payload hovers: the drop zone is small and frameless, so
+# the rim breathing brightly is what tells the user WHERE to let go.
+DROP_ARM_PULSE_RAD_S = 5.0
+
+# Glyph geometry, all relative to the live pill height.
+_DROP_GLYPH_W = 0.13   # stroke thickness / pill height
+# The tick's three corner points (x, y) as pill-height fractions from centre.
+_DROP_TICK_POINTS = ((-0.34, 0.02), (-0.11, 0.24), (0.38, -0.26))
+_DROP_CROSS_R = 0.24   # half-diagonal of the "nothing usable" cross / pill height
+
+
+def drop_confirm_phase(elapsed_s: float) -> tuple[float, float]:
+    """``(stroke_fraction, alpha)`` of the post-drop glyph at ``elapsed_s``.
+
+    ``stroke_fraction`` runs 0 → 1 while the glyph draws itself on, then stays
+    at 1. ``alpha`` is 1 until the hold expires and eases to 0 over the fade.
+    Past ``DROP_CONFIRM_TOTAL_S`` both are 0, which is the surface's signal to
+    drop the confirmation state and let the bar settle back to normal.
+
+    Pure and monotonic in ``elapsed_s`` so the whole animation is unit-testable
+    without a display.
+    """
+    if elapsed_s < 0.0:
+        return (0.0, 0.0)
+    if elapsed_s < DROP_CONFIRM_DRAW_S:
+        # Ease-out so the stroke lands softly instead of snapping to its end.
+        u = elapsed_s / DROP_CONFIRM_DRAW_S
+        return (1.0 - (1.0 - u) ** 2, 1.0)
+    if elapsed_s < DROP_CONFIRM_DRAW_S + DROP_CONFIRM_HOLD_S:
+        return (1.0, 1.0)
+    if elapsed_s < DROP_CONFIRM_TOTAL_S:
+        held = elapsed_s - DROP_CONFIRM_DRAW_S - DROP_CONFIRM_HOLD_S
+        return (1.0, max(0.0, 1.0 - held / DROP_CONFIRM_FADE_S))
+    return (0.0, 0.0)
+
+
+def tick_polyline(
+    cx: float, cy: float, ph: float, fraction: float
+) -> list[tuple[float, float]]:
+    """The confirmation tick's points, revealed up to ``fraction`` of its length.
+
+    Returns absolute coordinates around ``(cx, cy)``, sized from the LIVE pill
+    height ``ph`` — so the tick is the same shape on a 4K monitor, a laptop
+    screen, and at any "Bar size" setting. ``fraction <= 0`` yields fewer than
+    two points (nothing to draw yet); ``fraction >= 1`` yields the whole tick.
+    """
+    pts = [(cx + dx * ph, cy + dy * ph) for dx, dy in _DROP_TICK_POINTS]
+    if fraction >= 1.0:
+        return pts
+    if fraction <= 0.0:
+        return pts[:1]
+    segments = [
+        math.dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1)
+    ]
+    total = sum(segments)
+    if total <= 0.0:
+        return pts[:1]
+    remaining = total * fraction
+    out = [pts[0]]
+    for i, seg in enumerate(segments):
+        if remaining >= seg:
+            out.append(pts[i + 1])
+            remaining -= seg
+            continue
+        u = remaining / seg if seg > 0 else 0.0
+        x0, y0 = pts[i]
+        x1, y1 = pts[i + 1]
+        out.append((x0 + (x1 - x0) * u, y0 + (y1 - y0) * u))
+        break
+    return out
+
+
+def drop_rim_color(
+    t: float, base: tuple[int, int, int], state: str
+) -> tuple[int, int, int]:
+    """Pill rim colour for the current drop state (pure).
+
+    ``armed`` breathes the rim toward white so the small frameless drop zone
+    announces itself; ``ok`` / ``rejected`` hold the verdict colour for as long
+    as the glyph is up; ``none`` returns ``base`` untouched, which keeps every
+    non-drop frame byte-identical to before this feature existed.
+    """
+    if state == DROP_STATE_ARMED:
+        pulse = 0.5 + 0.5 * math.sin(t * DROP_ARM_PULSE_RAD_S)
+        return _lerp_rgb(base, (255, 255, 255), 0.25 + 0.45 * pulse)
+    if state == DROP_STATE_OK:
+        return DROP_OK_GREEN
+    if state == DROP_STATE_REJECTED:
+        return MUTED_RED
+    return base
+
+
+# --- the `notice` look: "what you asked for did not happen" -------------------
+# The bar has no text, so a refusal has exactly one way to reach the user here:
+# a look distinct from every other one. It reuses the drop-verdict cross (same
+# glyph, same supersampled drawing, same red) because that mark already means
+# "no" on this surface — inventing a second negative symbol would only make two
+# things the user has to learn. The rim goes red for the same reason the muted
+# rim does: it is legible from the corner of the eye at the resting pill size.
+#
+# The pulse is what separates a notice from a frozen frame. A static cross on a
+# bar that is normally animated reads as "the bar has hung"; a slow breath reads
+# as a deliberate message. Amplitude is small on purpose — this is an answer to
+# a keypress, not an alarm.
+NOTICE_PULSE_RAD_S = 3.4
+NOTICE_ALPHA_MIN = 0.55
+
+
+def notice_alpha(t: float) -> float:
+    """Glyph alpha of the ``notice`` look at time ``t`` (pure, in [MIN, 1.0]).
+
+    Pure and bounded so the breath is unit-testable without a display, and so a
+    surface can never render the notice fully transparent (an invisible "your
+    key press did nothing" message is the bug this look exists to fix).
+    """
+    pulse = 0.5 + 0.5 * math.sin(t * NOTICE_PULSE_RAD_S)
+    return NOTICE_ALPHA_MIN + (1.0 - NOTICE_ALPHA_MIN) * pulse
 
 # Size factors. ``_SCALE`` is the overall shrink (1.0 was the original, far too
 # big). ``_W`` / ``_H`` then stretch width / height independently on top of it:
@@ -287,7 +447,8 @@ _N_DOTS = 7  # dots in the standby row
 _DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
 _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 
-MODES = ("idle", "listen", "speak", "think")
+# MODES / DICTATION_MODES are imported at the top of this module — see the note
+# there. Nothing in this package may restate them (test_mode_parity.py).
 
 # A level sample is trusted only this long. The feeders (mic ~30-100 ms
 # cadence, TTS ~60 ms blocks) stream continuously while sound exists; when a
@@ -344,7 +505,9 @@ def evenly_spaced(cx: float, span: float, n: int) -> list[float]:
     return [x0 + i * step for i in range(n)]
 
 
-def target_pill_size(mode: str, hovered: bool, muted: bool = False) -> tuple[int, int]:
+def target_pill_size(
+    mode: str, hovered: bool, muted: bool = False, drop_open: bool = False
+) -> tuple[int, int]:
     """Pick the pill's target (w, h): ACTIVE while a session is live, OPEN on
     hover (to show controls), COLLAPSED at rest. Only a live session is 2x —
     matching 'bigger only while in the conversation'.
@@ -353,10 +516,29 @@ def target_pill_size(mode: str, hovered: bool, muted: bool = False) -> tuple[int
     pill (where the red rim is a hairline and the mic glyph is hidden), the
     muted bar stays at the OPEN size so the slashed-mic + red rim stay visible.
     A muted user is otherwise trapped — they can't unmute by voice (Jarvis is
-    deaf while muted), so the click target must always be on screen."""
-    if mode in ("listen", "speak", "think"):
+    deaf while muted), so the click target must always be on screen.
+
+    ``drop_open`` opens the pill for the same reason during a drag-drop: the
+    resting pill is ~37x6 px on a 1440p monitor (and ~22x4 at the smallest "Bar
+    size"), which is both a punishing target to release a file on and far too
+    small to render a legible tick in. Opening on the first drag-enter turns
+    the sliver into a real landing zone and gives the confirmation room to
+    show.
+
+    The dictation modes are ACTIVE too. Callers pass either the EFFECTIVE mode
+    (``render``, where a dictation mode has already resolved to ``speak`` /
+    ``think``) or the COARSE mode (the Qt surface's hover-footprint probe) — so
+    listing them keeps the hit-box the user can hover in step with the pill the
+    renderer actually draws during a dictation.
+
+    ``notice`` opens the pill for the same reason a drop verdict does, and no
+    further: the resting pill is a ~37x6 px sliver with no room to draw a
+    legible mark in, while the 2x ACTIVE size would make a passing message look
+    like a live session. OPEN is the size at which the answer is readable and
+    still unmistakably not a conversation."""
+    if mode in ("listen", "speak", "think") or mode in DICTATION_MODES:
         return ACTIVE_W, ACTIVE_H
-    if hovered or muted:
+    if hovered or muted or drop_open or mode in NOTICE_MODES:
         return OPEN_W, OPEN_H
     return COLLAPSED_W, COLLAPSED_H
 
@@ -416,9 +598,34 @@ def visual_mode(
 
     ``hold_s`` bridges the short gaps between words/sentences so the bars don't
     flap back on every micro-pause.
+
+    Dictation runs outside the voice state machine entirely and has two modes
+    of its own, both resolved BEFORE the audio-activity branches so neither can
+    be overruled by a stale level sample:
+
+    - ``dictate`` (the user is speaking into the dictation mic) always renders
+      as the equalizer. A SPEAKING dictation must never show the thinking core:
+      the mic level is being fed, so a silent pause mid-sentence shows still
+      bars rather than falling through and pretending to think.
+    - ``dictate_transcribing`` (the key was released, the transcription is
+      running) renders as the orbital core. Here there genuinely IS work in
+      flight to represent, and the mic feed has stopped — showing the equalizer
+      would claim the bar is still listening when it is not.
+
+    ``notice`` is resolved first and passes through unchanged. It is the one
+    look that must survive EVERY other signal: it is raised precisely when
+    something did not happen, and a stale level sample or an in-flight playback
+    must never be able to repaint it as listening or speaking — that would
+    replace the answer to the user's key press with a lie about the microphone.
     """
+    if coarse_mode in NOTICE_MODES:
+        return coarse_mode
     if coarse_mode == "idle":
         return "idle"
+    if coarse_mode == "dictate":
+        return "speak"
+    if coarse_mode == "dictate_transcribing":
+        return "think"
     if playback_active or seconds_since_audible < hold_s:
         return "speak"
     if coarse_mode == "think":
@@ -621,12 +828,32 @@ class JarvisBarRenderer:
         ext_level: float,
         hovered: bool = False,
         muted: bool = False,
+        drop_state: str = DROP_STATE_NONE,
+        drop_elapsed: float = 0.0,
     ) -> Image.Image:
         active = mode in ("listen", "speak")
+        # "That did not happen" — see NOTICE_MODES. Held separately from the
+        # active/idle split because it is neither: nothing is running, but the
+        # pill is not at rest either.
+        notice = mode in NOTICE_MODES
+        # Drag-drop feedback. ``drop_state`` is what the surface currently sees
+        # (a hovering payload, or the verdict of one that landed) and
+        # ``drop_elapsed`` how long the verdict has been up; the glyph's own
+        # timeline lives in the pure ``drop_confirm_phase``.
+        confirming = drop_state in (DROP_STATE_OK, DROP_STATE_REJECTED)
+        tick_frac, tick_alpha = (
+            drop_confirm_phase(drop_elapsed) if confirming else (0.0, 0.0)
+        )
+        # A finished confirmation is treated as no drop at all, so a surface
+        # that is slow to clear the state can never pin the pill open.
+        if confirming and tick_alpha <= 0.0:
+            drop_state, confirming = DROP_STATE_NONE, False
+        drop_open = drop_state != DROP_STATE_NONE
         # Ease the pill toward its target size: ACTIVE (2x) while a session is
-        # live, OPEN on hover (controls) OR while muted (keep the mute cue +
-        # unmute target visible), COLLAPSED at rest.
-        tw, th = target_pill_size(mode, hovered, muted)
+        # live, OPEN on hover (controls), while muted (keep the mute cue +
+        # unmute target visible) OR during a drop (landing zone + tick room),
+        # COLLAPSED at rest.
+        tw, th = target_pill_size(mode, hovered, muted, drop_open)
         # Snappy grow/shrink: 0.5 reaches the target in ~4 frames (~70 ms) so the
         # bar pops to full size almost immediately on "Hey Jarvis" instead of
         # crawling there over a third of a second.
@@ -655,8 +882,17 @@ class JarvisBarRenderer:
         cy = pill_center_y(ph)  # bottom-anchored: grows upward, idle stays put
         # The rim turns red whenever the mic is muted FOR JARVIS — drawn on
         # EVERY frame (even idle/standby, no hover) so the muted cue is visible
-        # at a glance without having to reveal the controls.
+        # at a glance without having to reveal the controls. A drop in flight
+        # takes the rim over for its duration: it is the one cue visible from
+        # the corner of the eye while the user's attention is on the file they
+        # are dragging.
         outline_color = MUTED_RED if muted else PILL_BORDER
+        outline_color = drop_rim_color(t, outline_color, drop_state)
+        if notice and not confirming:
+            # A refusal outranks the resting/muted rim: it is transient and it
+            # is the reason the pill opened. A drop verdict in flight still
+            # wins, because the user is looking at the payload they just let go.
+            outline_color = MUTED_RED
         d.rounded_rectangle(
             [cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2],
             radius=ph / 2,
@@ -668,7 +904,28 @@ class JarvisBarRenderer:
         # Hover splits the bar into controls: LEFT X (hang up, only while a
         # session is live) + RIGHT mic (toggle voice mute for Jarvis).
         x_right = cx + 0.33 * pw  # pulled in so the mic glyph never clips the rim
-        if hovered:
+        if confirming:
+            # The verdict owns the pill alone. Equalizer bars or the orbital
+            # core behind a tick would be mush at this pill height — and the
+            # whole point of the glyph is that it reads in one glance.
+            self._draw_drop_glyph(
+                img,
+                cx,
+                cy,
+                ph,
+                fraction=tick_frac,
+                alpha=tick_alpha,
+                ok=drop_state == DROP_STATE_OK,
+            )
+        elif notice:
+            # The message owns the pill alone — deliberately ABOVE the hover
+            # branch. Hovering must not swap a "that did not happen" answer for
+            # the mic/close-X controls: the user would be left with controls and
+            # no idea why they pressed a key and nothing occurred.
+            self._draw_drop_glyph(
+                img, cx, cy, ph, fraction=1.0, alpha=notice_alpha(t), ok=False
+            )
+        elif hovered:
             x_left = cx - 0.42 * pw
             active_sess = mode in ("listen", "speak", "think")
             # Keep the speech indicator VISIBLE while interacting — narrow bars
@@ -762,6 +1019,61 @@ class JarvisBarRenderer:
         if muted:
             s = p * 0.28
             ld.line([(x - s, y + s), (x + s, y - s)], fill=color, width=w)
+
+        small = layer.resize(img.size, Image.Resampling.LANCZOS)
+        img.paste(small, (0, 0), small)
+
+    def _draw_drop_glyph(
+        self,
+        img: Image.Image,
+        cx: float,
+        cy: float,
+        ph: float,
+        *,
+        fraction: float,
+        alpha: float,
+        ok: bool,
+    ) -> None:
+        """The post-drop verdict: a tick that lands, or a cross that says no.
+
+        Supersampled (4x → LANCZOS) like the mic glyph — the pill is ~16 px
+        tall at the signed-off size, where a 2 px stroke drawn directly turns
+        into a staircase. Every dimension derives from ``ph`` (the LIVE, eased
+        pill height), so the glyph tracks the monitor's DPI, the user's "Bar
+        size" slider and the open/close easing without a single fixed pixel.
+
+        ``fraction`` reveals the tick progressively (it strokes itself on);
+        ``alpha`` fades the whole glyph out at the end of the confirmation.
+        """
+        if alpha <= 0.0:
+            return
+        ss = 4
+        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        a = max(0, min(255, round(255 * alpha)))
+        color = (*(DROP_OK_GREEN if ok else MUTED_RED), a)
+        w = max(1, round(ph * _DROP_GLYPH_W * ss))
+
+        if ok:
+            points = tick_polyline(cx, cy, ph, fraction)
+            if len(points) >= 2:
+                ld.line(
+                    [(x * ss, y * ss) for x, y in points],
+                    fill=color,
+                    width=w,
+                    joint="curve",
+                )
+        else:
+            # "Nothing usable in that" — a plain cross, drawn whole (there is
+            # no progressive reveal to sell: the answer is immediate).
+            r = ph * _DROP_CROSS_R
+            for (x0, y0), (x1, y1) in (
+                ((cx - r, cy - r), (cx + r, cy + r)),
+                ((cx - r, cy + r), (cx + r, cy - r)),
+            ):
+                ld.line(
+                    [(x0 * ss, y0 * ss), (x1 * ss, y1 * ss)], fill=color, width=w
+                )
 
         small = layer.resize(img.size, Image.Resampling.LANCZOS)
         img.paste(small, (0, 0), small)

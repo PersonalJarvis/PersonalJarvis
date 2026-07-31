@@ -31,7 +31,7 @@ export const VoiceChat: React.FC = () => {
           }}
         >
           <Sequence from={36} layout="none">
-            <SpokenCommand text="Hey Ruben, what’s on my plate today?" speaker="user" size={40} />
+            <SpokenCommand text="Hey Nova, what’s on my plate today?" speaker="user" size={40} />
           </Sequence>
           <Sequence from={104} layout="none">
             <SpokenCommand

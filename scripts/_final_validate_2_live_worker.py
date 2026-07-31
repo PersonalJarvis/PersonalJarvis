@@ -17,7 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
-REPO = Path(r"C:\Users\Administrator\Desktop\Personal Jarvis")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 import keyring  # noqa: E402

@@ -377,10 +377,19 @@ async def stream_complete(
         # Usage info (OpenAI delivers this in the last chunk)
         usage = getattr(chunk, "usage", None)
         if usage is not None:
-            yield BrainDelta(usage={
+            usage_payload = {
                 "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
                 "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-            })
+            }
+            # Cache hits were invisible on this path (2026-07-28 cost audit:
+            # 84% of tool-loop tokens ran through OpenAI-protocol gateways) —
+            # without the protocol's cache_hit_tokens key nobody can measure
+            # whether a prompt-cache change works or what a turn really cost.
+            details = getattr(usage, "prompt_tokens_details", None)
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+            if cached > 0:
+                usage_payload["cache_hit_tokens"] = cached
+            yield BrainDelta(usage=usage_payload)
 
 
 _UNSUPPORTED_ERROR_MARKERS = (
@@ -428,6 +437,59 @@ def _rejection_confidence(exc: Exception, parameter: str) -> str | None:
     return "message" if parameter in message else None
 
 
+#: An endpoint may REQUIRE internal reasoning and refuse every attempt to turn
+#: it off. That is a different complaint from "unsupported parameter": the knob
+#: is understood, its OFF value is refused — so it carries none of the markers
+#: above, names no parameter, and every degradation path here is blind to it by
+#: construction. Field-found on OpenRouter's ``google/gemini-3.5-flash``
+#: (2026-07-26): "Reasoning is mandatory for this endpoint and cannot be
+#: disabled" dropped the first provider out of every delegated voice turn.
+_REASONING_MANDATORY_MARKERS = (
+    "cannot be disabled",
+    "can not be disabled",
+    "cannot be turned off",
+    "is mandatory",
+    "is required",
+)
+
+
+def _rejects_disabling_reasoning(exc: Exception) -> bool:
+    """Whether an API error refuses to let reasoning be switched OFF."""
+    _, _, message = _error_metadata(exc)
+    if "reasoning" not in message:
+        return False
+    return any(marker in message for marker in _REASONING_MANDATORY_MARKERS)
+
+
+def _without_reasoning_opt_out(kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    """*kwargs* with every "turn reasoning off" directive removed.
+
+    Both spellings go in ONE step — the native ``reasoning_effort="none"`` and
+    a gateway's ``reasoning={"enabled": False}`` object. Dropping one and
+    retrying re-sends the other and earns the identical rejection, which is
+    what made a live turn pay two HTTP 400s before moving on. Unrelated
+    ``extra_body`` entries (a gateway's own routing knobs) are preserved.
+    Returns ``None`` when the request asks for no opt-out at all — a graded
+    effort like ``"medium"`` is not an opt-out and has nothing to give up.
+    """
+    adapted = dict(kwargs)
+    changed = False
+    if adapted.get("reasoning_effort") == "none":
+        adapted.pop("reasoning_effort", None)
+        changed = True
+    extra_body = adapted.get("extra_body")
+    if isinstance(extra_body, dict):
+        directive = extra_body.get("reasoning")
+        if isinstance(directive, dict) and directive.get("enabled") is False:
+            trimmed = {k: v for k, v in extra_body.items() if k != "reasoning"}
+            if trimmed:
+                adapted["extra_body"] = trimmed
+            else:
+                adapted.pop("extra_body", None)
+            changed = True
+    return adapted if changed else None
+
+
 def _explicitly_rejects_parameter(exc: Exception, parameter: str) -> bool:
     """Whether an API error explicitly rejects one request parameter.
 
@@ -460,6 +522,8 @@ def _apply_adaptation(kwargs: dict[str, Any], field: str) -> dict[str, Any] | No
         adapted = dict(kwargs)
         adapted["reasoning_effort"] = "minimal"
         return adapted
+    if field == "reasoning:mandatory":
+        return _without_reasoning_opt_out(kwargs)
     if field in kwargs:
         adapted = dict(kwargs)
         adapted.pop(field, None)
@@ -506,6 +570,18 @@ def _compatible_retry_kwargs(
                 code == "unsupported_parameter" or default_only
             )
             return retry_kwargs, "temperature", cacheable
+
+    # An endpoint that REQUIRES reasoning refuses the OFF value without ever
+    # calling any parameter "unsupported", so the graded degradation below
+    # cannot see it. Checked first, and it clears BOTH spellings of "off" at
+    # once: recovering one at a time re-sends the other and earns the same
+    # rejection. Cacheable on the message alone — "reasoning ... cannot be
+    # disabled" is an unambiguous statement about the endpoint, in the same
+    # class as the server's own "use max_completion_tokens" hint above.
+    if "reasoning:mandatory" not in adaptations and _rejects_disabling_reasoning(exc):
+        retry_kwargs = _without_reasoning_opt_out(kwargs)
+        if retry_kwargs is not None:
+            return retry_kwargs, "reasoning:mandatory", True
 
     # Reasoning effort degrades in two steps: a model that knows the knob but
     # not the value "none" (o-series, gpt-5 base) still honors "minimal" —
@@ -595,6 +671,11 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
                 log.info(
                     "provider rejected reasoning_effort='none' — retrying "
                     "with the lowest supported effort 'minimal'."
+                )
+            elif field == "reasoning:mandatory":
+                log.info(
+                    "endpoint requires internal reasoning — retrying without "
+                    "the opt-out; this model cannot serve the low-latency hint."
                 )
             else:
                 log.info(

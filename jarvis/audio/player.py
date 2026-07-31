@@ -43,21 +43,75 @@ log = logging.getLogger("jarvis.audio.player")
 _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else OSError
 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
+# Start playout as soon as a small, click-safe prefix is available. Later writes
+# stay larger to preserve low CPU overhead and underrun resistance. With a
+# 20 ms provider stream this removes 80 ms from time-to-first-audio while the
+# persistent PortAudio stream keeps the waveform continuous across batches.
+TTS_FIRST_WRITE_BUFFER_MS = 40
 TTS_WRITE_BUFFER_MS = 120
 _MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
+_ONE_SHOT_CANCEL_JOIN_TIMEOUT_S = 0.5
+
+# How much audio the OUTPUT DEVICE is asked to hold (PortAudio's ``latency``).
+#
+# This buffer is the only thing that keeps speech continuous while NOTHING in
+# this process is able to move audio: during an event-loop stall the playback
+# task cannot run, so whatever already sits inside PortAudio is all that will
+# be heard. Audio banked in an asyncio queue does not help there — moving it
+# needs the very loop that is stalled.
+#
+# Live forensic 2026-07-27 (realtime voice, gemini-live): mid-reply holes of
+# 400-800 ms, attributed by ``RealtimeSession._note_audio_flow``. Half of them
+# read "this process's event loop stalled 311-375 ms in the same window" — a
+# PTY spawn storm from the Agentic IDE, synchronous CLI auth probes, embedding
+# work. Against the previous 200 ms buffer every one of those stalls became an
+# audible pause mid-sentence.
+#
+# 400 ms covers the measured stalls with margin and costs nothing elsewhere:
+# barge-in calls ``stop()``, whose ``Pa_AbortStream`` DISCARDS the buffer (so a
+# deeper buffer never speaks past an interruption); the realtime echo guard
+# reads the stream's REPORTED latency instead of assuming a value; and a
+# deeper buffer only bounds how far AHEAD the writer may run — it does not
+# pre-fill, so the first word still starts on the first write.
+DEFAULT_OUTPUT_BUFFER_S = 0.4
+# Below ~100 ms USB headsets underrun (Wave-2 diagnosis 2026-05-16); above 2 s
+# the UI's speaking animation would visibly lead the voice, because the level
+# tap is fed at write time rather than at playout time.
+_MIN_OUTPUT_BUFFER_S = 0.1
+_MAX_OUTPUT_BUFFER_S = 2.0
 # Feed-dry stall de-click (live forensic 2026-07-21 08:40: the realtime
 # provider paused audio delivery 1850 ms mid-sentence; the device buffer
 # drained and PortAudio cut the waveform at speech amplitude — audible as a
 # choppy mid-sentence pause with a click/crackle at both edges). The missing
 # audio cannot be conjured locally, but the gap's EDGES can be smoothed:
-# when the chunk feed stays dry longer than FEED_STALL_FADE_S, append a
+# when the chunk feed stays dry longer than the stall window, append a
 # short ramp from the last written sample down to zero, and ramp the first
-# resumed block back in. The timeout must undercut the device-buffer drain
-# (a completed 120 ms write leaves at least ~that much buffered), so the
-# ramp reaches PortAudio before the buffer runs empty; a healthy burst-fed
+# resumed block back in. The window must undercut the device-buffer drain so
+# the ramp reaches PortAudio before the buffer runs empty; a healthy burst-fed
 # stream never waits this long between chunks.
+#
+# It is derived from the ACTIVE device buffer (``_feed_stall_window_s``), not
+# fixed: ramping while the device still holds hundreds of milliseconds would
+# insert an audible dip into speech that was never going to break. This floor
+# applies to a shallow buffer; a deeper one waits proportionally longer.
 FEED_STALL_FADE_S = 0.08
+# Headroom left between the stall window and the device-buffer drain: one
+# ``TTS_WRITE_BUFFER_MS`` batch, which is what a flush has to push through.
+_STALL_FADE_HEADROOM_S = TTS_WRITE_BUFFER_MS / 1000.0
 STALL_EDGE_FADE_MS = 12.0
+
+
+def _clamp_output_buffer_s(value: float | None) -> float:
+    """Bound a requested output-buffer depth to a safe, audible range."""
+    if value is None:
+        return DEFAULT_OUTPUT_BUFFER_S
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_OUTPUT_BUFFER_S
+    if not math.isfinite(seconds):
+        return DEFAULT_OUTPUT_BUFFER_S
+    return min(_MAX_OUTPUT_BUFFER_S, max(_MIN_OUTPUT_BUFFER_S, seconds))
 
 
 class _PlaybackSuperseded(RuntimeError):
@@ -414,6 +468,7 @@ class AudioPlayer:
         bus: Any = None,
         volume: float = 1.0,
         device_priority: Sequence[str] | None = None,
+        buffer_s: float | None = None,
     ) -> None:
         # User-configured device-name priority ([audio].output_device_priority).
         # Consulted BEFORE the generic _HEADSET_PRIORITY default when resolving
@@ -431,6 +486,10 @@ class AudioPlayer:
         # boost + soft limiter so 100% is a real loudness lift, not just unity.
         # Clamped so a stray config/runtime value can never invert or over-range.
         self._volume = clamp_volume(volume)
+        # How deep the device buffer is opened. See DEFAULT_OUTPUT_BUFFER_S:
+        # it is the process's only defense against an event-loop stall eating
+        # a hole out of the middle of a spoken answer.
+        self._output_buffer_s = _clamp_output_buffer_s(buffer_s)
         self._device_logged = False  # logged once on the first play call
         # Optional bus reference. When set, play_chunks() publishes
         # AudioOutFirst on the first audible sample so UI subscribers
@@ -445,6 +504,11 @@ class AudioPlayer:
         # from a running event loop. stop() deliberately stays outside the
         # lock so barge-in can preempt a held playback.
         self._play_lock: asyncio.Lock | None = None
+        # A cancelled ``to_thread`` worker that ignored PortAudio abort keeps
+        # this player fail-closed. No later producer may open a second native
+        # stream until that exact worker exits (AP-24-style native isolation).
+        self._poisoned_worker: asyncio.Task[None] | None = None
+        self._unclean_stream: sd.OutputStream | None = None
         # Persistent OutputStream across play_chunks() calls. The streaming-
         # TTS pipeline calls play_chunks() once per sentence; without a
         # persistent stream every sentence boundary triggered a fresh
@@ -513,12 +577,62 @@ class AudioPlayer:
             self._play_lock = asyncio.Lock()
         return self._play_lock
 
+    def _native_playback_poisoned(self) -> bool:
+        worker = getattr(self, "_poisoned_worker", None)
+        return (
+            (worker is not None and not worker.done())
+            or getattr(self, "_unclean_stream", None) is not None
+        )
+
+    def _mark_native_playback_poisoned(self, worker: asyncio.Task[None]) -> None:
+        self._poisoned_worker = worker
+
+        def _recover(done: asyncio.Task[None]) -> None:
+            try:
+                done.exception()
+            except asyncio.CancelledError:
+                pass
+            if getattr(self, "_poisoned_worker", None) is done:
+                self._poisoned_worker = None
+                if getattr(self, "_unclean_stream", None) is None:
+                    log.info("Native one-shot audio worker exited; playback recovered.")
+                else:
+                    log.error(
+                        "Native audio worker exited but its stream did not close; "
+                        "this player remains fail-closed."
+                    )
+
+        worker.add_done_callback(_recover)
+
     def _get_stream_state_lock(self) -> threading.Lock:
         lock = getattr(self, "_stream_state_lock", None)
         if lock is None:
             lock = threading.Lock()
             self._stream_state_lock = lock
         return lock
+
+    def _output_buffer_seconds(self) -> float:
+        """Device-buffer depth this player opens streams with.
+
+        ``getattr`` default: ``__new__``-built instances (test fixtures,
+        hot-reload) skip ``__init__`` and must still open a stream.
+        """
+        return _clamp_output_buffer_s(
+            getattr(self, "_output_buffer_s", DEFAULT_OUTPUT_BUFFER_S)
+        )
+
+    def _feed_stall_window_s(self) -> float:
+        """How long a dry chunk feed may last before the gap is de-clicked.
+
+        Scales with the device buffer: ramping the waveform down while the
+        device still holds hundreds of milliseconds would carve an audible dip
+        out of speech that was never going to break. One write batch of
+        headroom is kept so the ramp still reaches PortAudio in time.
+        """
+        return max(
+            FEED_STALL_FADE_S,
+            self._output_buffer_seconds() - _STALL_FADE_HEADROOM_S,
+        )
 
     @property
     def output_latency_s(self) -> float:
@@ -643,20 +757,118 @@ class AudioPlayer:
         stream produces no clicks. For streaming TTS playback see
         ``play_chunks``, which keeps a persistent stream open.
         """
+        if self._native_playback_poisoned():
+            log.error("One-shot playback skipped: native audio worker is still wedged.")
+            return
         self._log_device_once()
         rate = sample_rate or self._sample_rate
         pcm = _apply_edge_fades(pcm, rate)
         async with self._get_play_lock():
-            await asyncio.to_thread(self._play_blob, pcm, rate)
+            if self._native_playback_poisoned():
+                log.error(
+                    "One-shot playback skipped after lock wait: native audio "
+                    "worker is still wedged."
+                )
+                return
+            playback_generation = getattr(self, "_playback_generation", 0)
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    self._play_blob,
+                    pcm,
+                    rate,
+                    playback_generation,
+                )
+            )
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # A timeout/caller cancellation cannot stop ``to_thread``.
+                # Abort the registered native stream and JOIN the worker while
+                # still holding the async playback lock; otherwise a later TTS
+                # call could open a second PortAudio stream beside the orphan.
+                self.abort_active()
+                # Mark BEFORE awaiting cleanup: a second Task.cancel() may
+                # interrupt any await, but it must never reopen the overlap race.
+                self._mark_native_playback_poisoned(worker)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(worker),
+                        timeout=_ONE_SHOT_CANCEL_JOIN_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    log.error(
+                        "Native one-shot audio worker ignored abort for %.1fs; "
+                        "this player is fail-closed until that worker exits.",
+                        _ONE_SHOT_CANCEL_JOIN_TIMEOUT_S,
+                    )
+                except Exception as exc:  # noqa: BLE001 - preserve cancellation
+                    log.debug("Cancelled one-shot playback unwound (%s).", exc)
+                raise
+            except _PlaybackSuperseded:  # stop() won; its generation owns cleanup
+                return
 
-    def _play_blob(self, pcm: bytes, source_rate: int) -> None:
-        """Sync: open stream, write blob, close stream."""
+    def _play_blob(
+        self, pcm: bytes, source_rate: int, playback_generation: int
+    ) -> None:
+        """Sync: open, register, write, and close one cancellation-safe stream."""
         arr = np.frombuffer(pcm, dtype=np.int16)
+        state_lock = self._get_stream_state_lock()
+        with state_lock:
+            if getattr(self, "_playback_generation", 0) != playback_generation:
+                raise _PlaybackSuperseded
+            # ``play_chunks`` intentionally keeps its stream open between
+            # sentences. The async playback lock guarantees it is idle here;
+            # retire it before opening the one-shot stream so two native
+            # outputs never coexist.
+            old_stream = self._active_stream
+            self._active_stream = None
+            self._active_source_rate = None
+            self._active_device_rate = None
+        if old_stream is not None:
+            if self._close_output_stream(old_stream) is False:
+                with state_lock:
+                    self._unclean_stream = old_stream
+                raise _PlaybackSuperseded
+
         stream, device_rate = self._open_output_stream(source_rate)
+        with state_lock:
+            superseded = (
+                getattr(self, "_playback_generation", 0) != playback_generation
+            )
+            if not superseded:
+                self._active_stream = stream
+                self._active_source_rate = source_rate
+                self._active_device_rate = device_rate
+        if superseded:
+            if self._close_output_stream(stream) is False:
+                with state_lock:
+                    self._unclean_stream = stream
+            raise _PlaybackSuperseded
         try:
-            self._write_samples(stream, arr, source_rate, device_rate)
+            self._write_samples(
+                stream,
+                arr,
+                source_rate,
+                device_rate,
+                playback_generation=playback_generation,
+            )
         finally:
-            self._close_output_stream(stream)
+            should_close = False
+            with state_lock:
+                if self._active_stream is stream:
+                    self._active_stream = None
+                    self._active_source_rate = None
+                    self._active_device_rate = None
+                    should_close = True
+            # ``abort_active`` already closes a cancelled stream. Avoid a
+            # second native close while still joining the worker deterministically.
+            if should_close:
+                closed = self._close_output_stream(stream)
+                with state_lock:
+                    if closed is not False and getattr(self, "_unclean_stream", None) is stream:
+                        self._unclean_stream = None
+                    elif closed is False:
+                        self._unclean_stream = stream
 
     def _open_output_stream(self, source_rate: int) -> tuple[sd.OutputStream, int]:
         """Open a persistent ``sd.OutputStream`` (float32 stereo or mono).
@@ -718,14 +930,15 @@ class AudioPlayer:
         last_exc: BaseException | None = None
         for target_rate in candidates:
             try:
-                # latency=0.2 reserves a real 200 ms PortAudio buffer.
-                # The string keyword "high" is a DEVICE HINT — on USB
+                # An explicit float reserves a REAL buffer of that many
+                # seconds. The string keyword "high" is a DEVICE HINT — on USB
                 # headsets like the AB13X it resolves to ~10 ms, far too
                 # small to absorb inter-sentence pipeline gaps. The Wave 2
                 # diagnosis on 2026-05-16 attributed audible "crackling +
-                # slowdown" to this 10 ms drain. 0.2 s matches the buffer
-                # depth used by LiveKit-Agents / Pipecat / RealtimeTTS for
-                # TTS-streaming on WASAPI shared mode.
+                # slowdown" to this 10 ms drain. The depth itself is
+                # DEFAULT_OUTPUT_BUFFER_S — see the constant for why it has to
+                # cover this process's worst event-loop stall, not just the
+                # device's own jitter.
                 # Guarded against the hot-swap watcher's PortAudio re-init
                 # window (BUG-102): a stream born between _terminate and
                 # _initialize is a native fault.
@@ -736,7 +949,7 @@ class AudioPlayer:
                         channels=stream_channels,
                         dtype="float32",
                         blocksize=0,
-                        latency=0.2,
+                        latency=self._output_buffer_seconds(),
                     )
                     stream.start()
                 self._stream_channels = stream_channels
@@ -895,7 +1108,7 @@ class AudioPlayer:
                     out.shape[0] / device_rate,
                 )
 
-    def _close_output_stream(self, stream: sd.OutputStream) -> None:
+    def _close_output_stream(self, stream: sd.OutputStream) -> bool:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""
         try:
             stream.stop()
@@ -905,6 +1118,8 @@ class AudioPlayer:
             stream.close()
         except Exception:  # noqa: BLE001
             log.debug("Output stream close failed", exc_info=True)
+            return False
+        return True
 
     async def play_chunks(
         self,
@@ -945,6 +1160,9 @@ class AudioPlayer:
         No edge fades on chunks: the stream stays open and chunks are
         appended seamlessly → no discontinuity, no clicks.
         """
+        if self._native_playback_poisoned():
+            log.error("Streaming playback skipped: native audio worker is still wedged.")
+            return False
         self._log_device_once()
         stream_state_lock = self._get_stream_state_lock()
         with stream_state_lock:
@@ -997,6 +1215,12 @@ class AudioPlayer:
                 yield _c
 
         async with self._get_play_lock():
+            if self._native_playback_poisoned():
+                log.error(
+                    "Streaming playback skipped after lock wait: native audio "
+                    "worker is still wedged."
+                )
+                return False
             # Staleness gate: re-check at the last moment before any audio is
             # written. A preamble whose synthesis / lock-wait was overtaken by
             # the main answer is dropped here rather than queued behind it.
@@ -1044,14 +1268,20 @@ class AudioPlayer:
             pending = bytearray()
             pending_rate: int | None = None
             first_audio_published = False
+            wrote_audio = False
             last_flushed_sample = 0
 
             async def _flush_pending(*, final: bool = False) -> bool:
                 nonlocal pending, pending_rate, first_audio_published
-                nonlocal last_flushed_sample
+                nonlocal last_flushed_sample, wrote_audio
                 if not pending or pending_rate is None:
                     return True
-                min_bytes = int(pending_rate * TTS_WRITE_BUFFER_MS / 1000) * 2
+                target_ms = (
+                    TTS_WRITE_BUFFER_MS
+                    if wrote_audio
+                    else TTS_FIRST_WRITE_BUFFER_MS
+                )
+                min_bytes = int(pending_rate * target_ms / 1000) * 2
                 if not final and len(pending) < min_bytes:
                     return True
                 if should_play is not None and not should_play():
@@ -1092,6 +1322,8 @@ class AudioPlayer:
                     dev_rate,
                     playback_generation=playback_generation,
                 )
+                if arr.size:
+                    wrote_audio = True
                 with stream_state_lock:
                     playback_superseded = (
                         getattr(self, "_playback_generation", 0)
@@ -1144,6 +1376,7 @@ class AudioPlayer:
             feed = _from_first().__aiter__()
             next_pull: asyncio.Task[AudioChunk] | None = None
             resume_fade_in = False
+            stall_window_s = self._feed_stall_window_s()
             try:
                 while True:
                     if next_pull is None:
@@ -1153,7 +1386,7 @@ class AudioPlayer:
                         timeout=(
                             None
                             if resume_fade_in or pending_rate is None
-                            else FEED_STALL_FADE_S
+                            else stall_window_s
                         ),
                     )
                     if not done:
@@ -1223,8 +1456,14 @@ class AudioPlayer:
                 log.debug("abort_active: stream.abort() failed: %s", exc)
             try:
                 stream.close()
-            except Exception:  # noqa: BLE001, S110
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("abort_active: stream.close() failed: %s", exc)
+                # Preserve ownership so the worker's ``finally`` retries the
+                # close after the blocked write unwinds. Until that succeeds,
+                # poison prevents every producer from opening another stream.
+                with self._get_stream_state_lock():
+                    self._active_stream = stream
+                    self._unclean_stream = stream
 
     def stop(self) -> None:
         """Abort ongoing playback (e.g. for barge-in).

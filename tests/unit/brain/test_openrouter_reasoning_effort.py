@@ -107,6 +107,41 @@ async def test_rejected_reasoning_parameter_retries_without_it(
 
 
 @pytest.mark.asyncio
+async def test_retry_also_drops_the_native_reasoning_knob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fail-open retry must not re-send the opt-out under its other name.
+
+    ``stream_complete`` derives the native ``reasoning_effort`` kwarg from the
+    REQUEST whenever no gateway directive is present. Retrying with the same
+    request therefore restored exactly what the upstream had just refused, and
+    the "fail open" path earned a second identical 400 (live 2026-07-26:
+    "Reasoning is mandatory for this endpoint and cannot be disabled", twice
+    per delegated voice turn, before the provider dropped out of the chain).
+    """
+    seen_efforts: list[Any] = []
+
+    async def fake_stream_complete(
+        client: Any, model: str, req: BrainRequest, *, extra_body: Any = None, **_: Any
+    ) -> AsyncIterator[BrainDelta]:
+        seen_efforts.append(getattr(req, "reasoning_effort", None))
+        if extra_body is not None:
+            raise RuntimeError("400: reasoning is mandatory and cannot be disabled")
+        yield BrainDelta(content="fallback ok")
+
+    monkeypatch.setattr(openrouter_mod, "stream_complete", fake_stream_complete)
+    brain = _brain(monkeypatch)
+
+    deltas = [d async for d in brain.complete(_req(reasoning_effort="none"))]
+
+    assert seen_efforts == ["none", None], (
+        "the retry must carry no opt-out at all — neither the gateway object "
+        "nor the native kwarg the base layer rebuilds from the request"
+    )
+    assert any(d.content == "fallback ok" for d in deltas)
+
+
+@pytest.mark.asyncio
 async def test_unrelated_error_propagates_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

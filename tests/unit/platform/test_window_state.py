@@ -161,11 +161,35 @@ def test_list_windows_linux_parses_wmctrl(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
     monkeypatch.setattr(
         subprocess, "run",
-        lambda *a, **k: _cp(0, stdout="0x01 0 host My Editor — file.py\n0x02 0 host Terminal\n"),
+        lambda *a, **k: _cp(
+            0,
+            stdout=(
+                "0x01 0 101 host My Editor — file.py\n"
+                "0x02 0 202 host Terminal\n"
+            ),
+        ),
     )
-    titles = [w.title for w in ws.list_windows()]
+    windows = ws.list_windows()
+    titles = [w.title for w in windows]
     assert "My Editor — file.py" in titles
     assert "Terminal" in titles
+    assert [window.pid for window in windows] == [101, 202]
+
+
+def test_list_windows_linux_retains_untitled_window_for_privacy(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ws, "is_wayland", lambda: False)
+    monkeypatch.setattr(ws, "display_present", lambda: True)
+    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _cp(0, stdout="0x03 0 303 host\n"),
+    )
+
+    windows = ws.list_windows()
+
+    assert windows == [WindowInfo(title="", handle=3, pid=303)]
 
 
 def test_list_windows_macos_parses_quartz_catalog(monkeypatch):
@@ -179,6 +203,7 @@ def test_list_windows_macos_parses_quartz_catalog(monkeypatch):
                 "kCGWindowLayer": 0,
                 "kCGWindowName": "Safari — Apple",
                 "kCGWindowNumber": 2,
+                "kCGWindowOwnerPID": 222,
                 "kCGWindowIsOnscreen": False,
             },
             {"kCGWindowLayer": 8, "kCGWindowName": "Overlay", "kCGWindowNumber": 3},
@@ -190,6 +215,25 @@ def test_list_windows_macos_parses_quartz_catalog(monkeypatch):
     assert "Overlay" not in titles
     safari = next(window for window in ws.list_windows() if window.title == "Safari — Apple")
     assert safari.minimized is False, "another Space is not the same as minimized"
+    assert safari.pid == 222
+
+
+def test_list_windows_macos_retains_untitled_window_for_privacy(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowLayer": 0,
+            "kCGWindowName": "",
+            "kCGWindowNumber": 9,
+            "kCGWindowOwnerPID": 303,
+        }],
+    )
+
+    windows = ws.list_windows()
+
+    assert windows == [WindowInfo(title="", handle=9, pid=303)]
 
 
 def test_list_windows_macos_reads_ax_minimized_instead_of_onscreen_flag(monkeypatch):
@@ -244,7 +288,7 @@ def test_list_windows_linux_decodes_non_utf8_locale_titles(monkeypatch):
     def _fake_run(*args, **kwargs):
         if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
             raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="0x01 0 host café — 日本語.txt\n")
+        return _cp(0, stdout="0x01 0 303 host café — 日本語.txt\n")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
     titles = [w.title for w in ws.list_windows()]

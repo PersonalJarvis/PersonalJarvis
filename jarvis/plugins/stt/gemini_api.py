@@ -57,6 +57,27 @@ from typing import Any
 # override it in the STT model field. Kept in step with the Gemini brain default.
 DEFAULT_MODEL = "gemini-3-flash-preview"
 
+#: The per-call ``language`` value that REQUESTS detection instead of a pinned
+#: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the model detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English
+      (live bug 2026-07-28);
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
 # The transcription directive. Tight on purpose: a generative model must be told
 # to emit ONLY the verbatim words, or it wraps the transcript in commentary. The
 # output cleanup below is a light safety net, not a content filter (AP-27): it
@@ -83,6 +104,10 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: What the model returned BEFORE the cleanup filter ran. Read by the two
+    #: callers that must not get an edited string - the dictation lane (which
+    #: owns the user's filler switch) and wake verification.
+    raw_text: str = ""
 
 
 class GeminiSTT:
@@ -116,17 +141,26 @@ class GeminiSTT:
         # triggers a config load on the boot critical path (AP-26).
         self._api_key = (api_key or "").strip() or None
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
         self._language = language if language and language != "auto" else None
         # A bias/vocabulary hint (proper nouns). Appended to the instruction so
         # the model favours those spellings; never treated as required content.
         self._prompt = (prompt or "").strip() or None
         self._temperature = temperature
+        # Wired into the SDK client below — see ``_http_options``. It used to be
+        # assigned here and read by nothing at all, which meant this provider had
+        # NO timeout at any layer.
         self._timeout_s = timeout_s
         self._client = client
 
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
@@ -144,7 +178,7 @@ class GeminiSTT:
         wav_bytes = _wrap_pcm_as_wav(
             b"".join(pcm_pieces), sample_rate=sample_rate, channels=channels
         )
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(wav_bytes, language=self._language)
 
     async def stream_transcribe(
         self, audio: AsyncIterator[Any]
@@ -164,18 +198,16 @@ class GeminiSTT:
         The speech pipeline delivers a full VAD-segmented utterance as raw int16
         PCM (mono, 16 kHz by default). We wrap it in a WAV container and send it
         as a single inline-audio request.
+
+        ``language="auto"`` forces per-utterance detection for THIS call even
+        when a language is configured — see :func:`_detect_or`.
         """
         if not pcm_bytes:
             return Transcript(text="", language="unknown", confidence=0.0)
         wav_bytes = _wrap_pcm_as_wav(pcm_bytes, sample_rate=sample_rate, channels=1)
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(wav_bytes)
-            finally:
-                self._language = previous
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(
+            wav_bytes, language=_detect_or(language, self._language)
+        )
 
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
@@ -192,6 +224,30 @@ class GeminiSTT:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _http_options(self) -> dict[str, int]:
+        """Transport options for the google-genai client — the request timeout.
+
+        This is the ONLY thing standing between a stalled Gemini request and a
+        permanently stuck lane. google-genai does not merely lack a default
+        timeout, it actively FORCES ``timeout=None`` onto its own HTTP client
+        when the caller passes no ``http_options`` (``_api_client.py``:
+        ``if 'timeout' not in args: args['timeout'] = None``), which also
+        overrides httpx's own defaults. And ``generate_content`` is synchronous,
+        so it runs in ``asyncio.to_thread`` — a thread nothing can cancel, so no
+        ``wait_for`` above this line can actually stop the call; it only stops
+        WAITING for it while the thread leaks. A Gemini-only user could hang the
+        dictation lane forever with the microphone already closed.
+
+        ``HttpOptions.timeout`` is in MILLISECONDS, not seconds — verified
+        against the installed google-genai (its ``get_timeout_in_seconds``
+        divides by 1000), and the field description says so. Getting that wrong
+        by 1000x is the whole reason this is a named, unit-tested method instead
+        of an inline literal. The floor of one second keeps a nonsensical
+        configured value (0, negative) from becoming "time out instantly", which
+        would brick the provider rather than bound it.
+        """
+        return {"timeout": int(max(1.0, float(self._timeout_s)) * 1000)}
 
     def _ensure_client(self) -> Any:
         """Return the google-genai client, building it lazily from the key.
@@ -224,20 +280,29 @@ class GeminiSTT:
                 "Gemini STT needs the 'google-genai' package (installed with the "
                 "'[full]' extra). Install it, or use a different STT provider."
             ) from exc
-        self._client = genai.Client(api_key=key)
+        # A plain dict is an accepted ``HttpOptionsDict`` at runtime; the local
+        # ``Any`` keeps that fact from needing a types import the plugin must
+        # not make (the SDK is absent on a base install).
+        http_options: Any = self._http_options()
+        self._client = genai.Client(api_key=key, http_options=http_options)
         return self._client
 
-    def _build_contents(self, wav_bytes: bytes) -> list[dict[str, Any]]:
+    def _build_contents(
+        self, wav_bytes: bytes, *, language: str | None = None
+    ) -> list[dict[str, Any]]:
         """Build the raw-dict ``contents`` payload (no google-genai types import).
 
         The SDK accepts a plain dict with an ``inline_data`` part whose ``data``
         is a base64 string — the exact shape the Gemini brain uses for images —
         so building it here keeps the module import-clean and unit-testable with
         a fake client.
+
+        A ``language`` of None leaves the sentence out entirely, which is what
+        asks the model to transcribe whatever language it actually hears.
         """
         instruction = _TRANSCRIBE_INSTRUCTION
-        if self._language:
-            instruction += f" The spoken language is '{self._language}'."
+        if language:
+            instruction += f" The spoken language is '{language}'."
         if self._prompt:
             instruction += (
                 f" Expected vocabulary and proper nouns (favour these spellings): "
@@ -251,24 +316,77 @@ class GeminiSTT:
         }
         return [{"role": "user", "parts": [audio_part, {"text": instruction}]}]
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
+    async def _post_transcription(
+        self, wav_bytes: bytes, *, language: str | None = None
+    ) -> Transcript:
         client = self._ensure_client()
-        contents = self._build_contents(wav_bytes)
+        contents = self._build_contents(wav_bytes, language=language)
         # ``config`` as a plain dict is accepted by google-genai; temperature 0.0
         # keeps the transcription as deterministic as a generative model allows.
         config = {"temperature": self._temperature}
-        try:
+
+        async def _generate(model: str) -> Any:
             # google-genai's ``generate_content`` is synchronous, so run it off
             # the event loop (same pattern as the Gemini Flash TTS plugin).
-            response = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 client.models.generate_content,
-                model=self._model,
+                model=model,
                 contents=contents,
                 config=config,
             )
+
+        model = self._model
+        try:
+            response = await _generate(model)
         except Exception as exc:  # noqa: BLE001 — degrade honestly (AP-22)
-            raise RuntimeError(f"Gemini STT request failed: {exc}") from exc
-        return _response_to_transcript(response, self._language)
+            # Imported here, not at module top, to keep the plugin
+            # ``jarvis.*``-free at import time (the entry-point purity contract)
+            # — the same lazy seam the credential lookup uses. This runs only on
+            # an already-failed request.
+            from jarvis.plugins.stt.capabilities import (
+                is_model_rejection,
+                log_model_fallback,
+            )
+            from jarvis.plugins.stt.errors import STTHTTPError, status_from_exception
+
+            failure: BaseException = exc
+            # A model this account cannot call is a CONFIGURATION problem, not a
+            # reason to lose the utterance: fall back to the default model once
+            # and say so, exactly like the OpenAI-shaped plugins. A failure of
+            # the FALLBACK is reported through the same classification path
+            # below — a raw SDK error escaping here would cost the caller the
+            # status code its retry ladder runs on.
+            if model != DEFAULT_MODEL and is_model_rejection(str(exc), model):
+                log_model_fallback("Gemini", model, DEFAULT_MODEL, str(exc))
+                try:
+                    transcript = _response_to_transcript(
+                        await _generate(DEFAULT_MODEL), language
+                    )
+                    self._last_used_model = DEFAULT_MODEL
+                    return transcript
+                except Exception as retry_exc:  # noqa: BLE001 — classify, never leak
+                    failure = retry_exc
+
+            message = f"Gemini STT request failed: {failure}"
+            # The SDK raises its own ``APIError``, which carries the HTTP status
+            # as ``.code``. Flattening that into a bare RuntimeError threw away
+            # the one fact the caller needs to tell a retryable 429 from a
+            # hopeless 401 — so the retry ladder never ran for a Gemini user and
+            # a bursty rate limit ate the turn. We cannot import the SDK's error
+            # type (google-genai is absent on a base install), hence the
+            # duck-typed lookup. A transport error / timeout has no status and
+            # stays a plain RuntimeError: inventing one would be a lie.
+            status = status_from_exception(failure)
+            if status is None:
+                raise RuntimeError(message) from failure
+            raise STTHTTPError(
+                message,
+                status=status,
+                headers=getattr(getattr(failure, "response", None), "headers", None),
+            ) from failure
+        transcript = _response_to_transcript(response, language)
+        self._last_used_model = model
+        return transcript
 
 
 # ----------------------------------------------------------------------
@@ -289,21 +407,6 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
     return buf.getvalue()
 
 
-def _clean_transcript(text: str) -> str:
-    """Light cleanup of generative preamble artifacts — never a content filter.
-
-    A generative model occasionally wraps the transcript in matched quotes even
-    when told not to. Strip ONE matched pair of surrounding quotes. This is
-    word-agnostic and never inspects the transcript for any specific phrase
-    (AP-27): it only removes an outer quote pair, so recognized speech is
-    preserved verbatim.
-    """
-    cleaned = text.strip()
-    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
-        cleaned = cleaned[1:-1].strip()
-    return cleaned
-
-
 def _response_to_transcript(response: Any, language: str | None) -> Transcript:
     """Parse a google-genai response into a Transcript.
 
@@ -311,14 +414,29 @@ def _response_to_transcript(response: Any, language: str | None) -> Transcript:
     timings or confidence, so confidence is a plain presence signal (1.0 for
     non-empty text, else 0.0) and segments stay empty — the same convention the
     OpenRouter plugin uses when segments are absent.
+
+    The text is filtered on the way in. This plugin used to carry its own
+    two-line version of that (strip one matched quote pair, which a generative
+    model adds even when told not to); the shared filter does the same and adds
+    the artifacts every recognizer produces — repetition loops, hesitation
+    sounds, stutters, NFD umlauts. It stays word-agnostic: nothing is rejected
+    for what it says (AP-27). The untouched string stays on ``raw_text``.
     """
-    text = _clean_transcript(str(getattr(response, "text", None) or ""))
+    raw = str(getattr(response, "text", None) or "").strip()
+    tag = language or "unknown"
+    # Local import so the module top stays ``jarvis.*``-free (entry-point
+    # purity), the same seam the error mapper already uses.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
     return Transcript(
-        text=text,
-        language=language or "unknown",
-        confidence=1.0 if text else 0.0,
+        text=clean_stt_text(raw, language=tag),
+        language=tag,
+        # Presence on the RAW text: a cleanup that emptied the string is a
+        # filter defect, not silence.
+        confidence=1.0 if raw else 0.0,
         is_partial=False,
         segments=(),
+        raw_text=raw,
     )
 
 

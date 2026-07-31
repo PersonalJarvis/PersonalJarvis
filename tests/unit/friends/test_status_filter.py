@@ -1,4 +1,4 @@
-# === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
+# === F-FRIENDS [F4] · feature/friends-section · maintainer-2026-05-01 ===
 """Unit tests for :class:`jarvis.friends.status_filter.StatusFilter`.
 
 Branch-portable: the real bus events (VoiceSessionStarted, MissionStarted,

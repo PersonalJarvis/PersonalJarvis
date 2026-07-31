@@ -20,7 +20,7 @@ The search engine is also consumed by Agent C for context-injection, which is wh
 1. **Unit tests for `VaultSearch`** (in `tests/unit/memory/test_wiki_search.py`) and for **`WikiRecallTool`** (in `tests/unit/plugins/test_wiki_recall_tool.py`) all pass.
 2. **Pre-flight unit-test suite stays at its baseline failure count** — see §6 of the overview.
 3. **`python -m jarvis --plugins | findstr wiki-recall`** lists the tool.
-4. **Live voice demo (executed by review agent in Wave 2):** with a wiki note titled `Alex.md` containing the text "born 1985", saying "Hey Jarvis, what year was Alex born?" triggers a `wiki-recall` call (visible in `data/jarvis_desktop.log`) and the brain answers with "1985" present in the TTS output.
+4. **Live voice demo (executed by review agent in Wave 2):** with a wiki note titled `Alex.md` containing the text "likes hiking", saying "Hey Jarvis, what activity does Alex enjoy?" triggers a `wiki-recall` call (visible in `data/jarvis_desktop.log`) and the brain answers with "hiking" present in the TTS output.
 5. **Tool latency p95 < 300 ms** for a vault with 100 notes (measured by your own smoke test).
 
 ---
@@ -170,7 +170,7 @@ If `cfg.wiki_integration` is missing at construction time, default to `Path("wik
 - **Don't call out to an LLM inside `VaultSearch.search`.** This must be pure file-system + regex. Latency is in the voice critical path.
 - **Don't add new dependencies** (no `whoosh`, `tantivy`, etc.). Plain `pathlib` + `re` + optional `yaml` (already in deps).
 - **Don't index `.obsidian/`** — those are config files, not content.
-- **Don't return paths absolute in `ToolResult.output`** — render them relative to `vault_root` so the brain sees `10-notes/Alex.md`, not `C:\Users\...\Alex.md`.
+- **Don't return paths absolute in `ToolResult.output`** — render them relative to `vault_root` so the brain sees `10-notes/Alex.md`, not `<USER_HOME>\Alex.md`.
 - **Don't fail on a malformed YAML frontmatter** — skip the frontmatter, search the rest, log a single `DEBUG` line.
 - **Don't add `"wiki-recall"` to a `SUB_TOOLS` frozenset.** The router tier is the only one that gets self-modification-class tools. Recall is router-tier-only.
 - **Don't echo the user's query into log lines at INFO level** — privacy. Use `DEBUG` for the query, `INFO` for hit-count summary.

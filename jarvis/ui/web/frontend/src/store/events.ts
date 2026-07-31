@@ -36,7 +36,16 @@ export type SectionId =
   | "contacts"
   | "feedback"
   | "agent-instructions"
-  | "dictionary";
+  | "dictionary"
+  | "dictation"
+  // The three tabs added by the merged voice section. "dictation" (default
+  // landing) and "dictionary" keep their original ids on purpose — renaming
+  // them would break the Command-Registry ui_section binding and every existing
+  // voice deep-link for no gain.
+  | "voice-shortcuts"
+  | "voice-language"
+  | "voice-api-keys"
+  | "agentic-ide";
 
 export const SECTION_IDS = [
   "chats",
@@ -65,6 +74,14 @@ export const SECTION_IDS = [
   "feedback",
   "agent-instructions",
   "dictionary",
+  "dictation",
+  // `satisfies` only catches array entries that are missing from the union,
+  // never a union member missing from the array — these three have to be added
+  // by hand as well (docs/BUGS.md, the recurring enum-drift class).
+  "voice-shortcuts",
+  "voice-language",
+  "voice-api-keys",
+  "agentic-ide",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -102,6 +119,14 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   dictionary: "Dictionary",
+  dictation: "Dictation",
+  // Plain English, deliberately NOT the "{name} Voice" brand: these labels are
+  // read back by the voice-navigation toast, which does not interpolate the
+  // assistant name. Naming the sub-section is also the more useful readback.
+  "voice-shortcuts": "Voice Shortcuts",
+  "voice-language": "Dictation Language",
+  "voice-api-keys": "Voice Input Keys",
+  "agentic-ide": "Agentic IDE",
 };
 
 export interface EventItem {
@@ -173,6 +198,27 @@ export interface CliConnectCoach {
   statusCommand: string | null;       // e.g. "gh auth status" — optional, for a manual recheck
 }
 
+/**
+ * Whether Jarvis is currently an Agentic IDE, for any surface that must say so.
+ *
+ * `active` mirrors the backend predicate `agentic_ide.session.coding_mode_active`
+ * exactly — a workspace is open AND its focused coding mode is on. It is the
+ * whole reason this is one flag and not two booleans a component combines
+ * itself: the assistant behaves differently only when BOTH hold, so a surface
+ * that re-derives the rule can end up telling the user something the assistant
+ * does not agree with.
+ *
+ * `hasWorkspace` is separate because it drives VISIBILITY, not state: with no
+ * workspace open at all there is nothing to report, and a permanent "coding
+ * mode off" chip would be noise for everyone who never opens the IDE.
+ */
+export interface CodingModeState {
+  active: boolean;
+  hasWorkspace: boolean;
+  /** Label of the workspace the mode belongs to; "" when the mode is off. */
+  workspace: string;
+}
+
 interface EventStore {
   events: EventItem[];
   voiceState: VoiceState;
@@ -218,6 +264,11 @@ interface EventStore {
   // "claude-opus-4-8"). Seeded from /api/brain/status on mount and refreshed on
   // a provider switch. Empty until the first status fetch resolves.
   brainModel: string;
+  // Whether Jarvis is currently an Agentic IDE — see CodingModeState. Lives in
+  // the store rather than in the one component that renders it because the mode
+  // changes how the assistant answers on EVERY screen, so any surface may need
+  // to reflect it. Kept in sync by useCodingMode(), called once in App.tsx.
+  codingMode: CodingModeState;
   // How the assistant refers to itself (resolved name: derived from the wake
   // phrase with its prefix stripped, else the neutral "Assistant" default —
   // [persona].name was removed 2026-06-20). Seeded once at app start by
@@ -273,6 +324,7 @@ interface EventStore {
   finishThinking: (messageId: string) => void;
   setBrainProvider: (p: string) => void;
   setBrainModel: (m: string) => void;
+  setCodingMode: (m: CodingModeState) => void;
   setAssistantName: (name: string) => void;
   setDictating: (b: boolean) => void;
   setDictationInterim: (text: string) => void;
@@ -313,6 +365,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   thinkingStartedTs: null,
   thinkingTraces: {},
   brainProvider: "unknown",
+  codingMode: { active: false, hasWorkspace: false, workspace: "" },
   brainModel: "",
   assistantName: readCachedAssistantName(),
   dictating: false,
@@ -446,6 +499,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
 
   setBrainProvider: (p) => set({ brainProvider: p }),
   setBrainModel: (m) => set({ brainModel: m }),
+  setCodingMode: (m) => set({ codingMode: m }),
 
   setAssistantName: (name) => set({ assistantName: name }),
 

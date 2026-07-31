@@ -99,39 +99,15 @@ def _resolve_run_cu_loop():
             sys.platform,
         )
         engine = "v2"
-    if engine == "v2":
-        from jarvis.cu.engine import run_cu_loop as _loop  # noqa: PLC0415
+    # One engine, one import. The frozen loops (screenshot_only_loop.py and its
+    # _stable / _june13 snapshots) are deliberately NOT reachable from here:
+    # every value above normalizes to v2, so a branch per engine would be code
+    # that can never run while reading as if the choice were live. They remain
+    # in the tree as forensic restore points (see cu-restore-points/ and each
+    # file's header) and are imported only by tests.
+    from jarvis.cu.engine import run_cu_loop as _loop  # noqa: PLC0415
 
-        _log.debug("[cu] ENGINE = v2 (rebuilt perceive->act->verify engine)")
-        return _loop
-    if engine == "june13":
-        from jarvis.harness.screenshot_only_loop_june13 import (  # noqa: PLC0415
-            run_cu_loop as _loop,
-        )
-        _log.info(
-            "[cu] ENGINE = june13 (frozen 2026-06-10 / 352a784f). "
-            "Revert with [computer_use].engine = v2.",
-        )
-        return _loop
-    if engine == "stable":
-        # Frozen pre-Wave-1 snapshot — the known-good fallback the user flips to if
-        # the new verification work misbehaves. See cu-restore-points/ + the
-        # screenshot_only_loop_stable.py header.
-        from jarvis.harness.screenshot_only_loop_stable import (  # noqa: PLC0415
-            run_cu_loop as _loop,
-        )
-        _log.info(
-            "[cu] ENGINE = stable (frozen pre-Wave-1 snapshot). "
-            "Revert with [computer_use].engine = v2.",
-        )
-        return _loop
-    from jarvis.harness.screenshot_only_loop import (  # noqa: PLC0415
-        run_cu_loop as _loop,
-    )
-    _log.info(
-        "[cu] ENGINE = current (legacy maintained loop). "
-        "The default engine is v2 ([computer_use].engine = v2).",
-    )
+    _log.debug("[cu] ENGINE = v2 (rebuilt perceive->act->verify engine)")
     return _loop
 
 

@@ -36,7 +36,7 @@ class _ExecOK:
 
     async def execute(self, tool: Any, args: dict[str, Any], **_: Any) -> ToolResult:
         self.calls.append(args)
-        return ToolResult(success=True, output="- log.md\n- entities/ruben.md")
+        return ToolResult(success=True, output="- log.md\n- entities/alex.md")
 
 
 class _GreedyBrain:
@@ -57,7 +57,7 @@ class _GreedyBrain:
             )
             yield BrainDelta(finish_reason="tool_use")
             return
-        yield BrainDelta(content="Your wiki holds log.md and entities/ruben.md.")
+        yield BrainDelta(content="Your wiki holds log.md and entities/alex.md.")
         yield BrainDelta(finish_reason="stop")
 
 

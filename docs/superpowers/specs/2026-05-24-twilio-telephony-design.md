@@ -82,7 +82,7 @@ Base path `/api/telephony`. All JSON. Backend implements; frontend consumes.
     "configured": true,                // account_sid + phone_number + auth_token all present
     "enabled": true,
     "account_sid_masked": "AC••••••1234",
-    "phone_number": "+49301234567",
+    "phone_number": "+12025550102",
     "public_base_url": "https://jarvis.example.com",
     "webhook_url": "https://jarvis.example.com/api/telephony/voice",
     "auth_token_set": true,

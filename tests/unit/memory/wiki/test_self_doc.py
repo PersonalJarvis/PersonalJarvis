@@ -37,8 +37,8 @@ async def stack(tmp_path: Path):
     (vault_root / "schema.md").write_text("# stub\n", encoding="utf-8")
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    (vault_root / "entities" / "ruben.md").write_text(
-        "---\ntype: entity\nslug: ruben\n---\n\n# Ruben\n\n## Summary\n\nThe user.\n",
+    (vault_root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\n---\n\n# Alex\n\n## Summary\n\nThe user.\n",
         encoding="utf-8",
     )
 

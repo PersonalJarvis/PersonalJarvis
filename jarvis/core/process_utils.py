@@ -1,4 +1,9 @@
-"""Cross-platform helpers for spawning subprocesses without flashing console windows.
+"""Cross-platform helpers for the Windows quirks a ``pythonw`` desktop app hits.
+
+Two unrelated ones live here: spawning subprocesses without flashing console
+windows (``NO_WINDOW_CREATIONFLAGS``, below) and stopping Windows from replacing
+an unresponsive window with an opaque ghost (``disable_windows_app_ghosting``).
+Both are no-ops off Windows.
 
 Background:
     The desktop app runs under ``pythonw.exe`` (no attached console). When a
@@ -70,4 +75,55 @@ def resolve_executable(name: str) -> str:
     return name
 
 
-__all__ = ["NO_WINDOW_CREATIONFLAGS", "resolve_executable"]
+_ghosting_disabled = False
+
+
+def disable_windows_app_ghosting() -> bool:
+    """Stop Windows swapping an unresponsive window for an opaque ghost.
+
+    When a top-level window stops pumping messages for roughly five seconds,
+    Windows hides it and puts a stand-in window of class ``Ghost`` at the exact
+    same rectangle, painted by the DWM rather than by the app. That stand-in is
+    an ordinary window: it does **not** inherit ``WS_EX_LAYERED``, so the Jarvis
+    Bar's magenta colour key is never applied to it, and the full window
+    rectangle lands on screen as an opaque BLACK box around the pill.
+
+    Reaching this does not require the app to be broken. The bar paints from a
+    Tk loop, and that loop stops pumping whenever *another* thread holds the GIL
+    through a long CPU-bound stretch — a slow config load on the backend thread
+    is enough. The user sees a black rectangle around their bar and nothing else
+    wrong, which reads as a rendering bug rather than as a stall.
+
+    ``DisableProcessWindowsGhosting`` is process-wide and cannot be undone. That
+    is the right trade for this app: a frameless click-through overlay gains
+    nothing from a ghost — there is no title bar to grey out and no close button
+    to offer — while the desktop window keeps its own Restart control, the tray
+    icon, and Task Manager as ways out of a hang.
+
+    Idempotent and never raises. Returns ``True`` when ghosting is off for this
+    process, ``False`` on a platform that has no such behaviour (macOS, Linux)
+    or when the call could not be made.
+    """
+    global _ghosting_disabled
+    if _ghosting_disabled:
+        return True
+    if sys.platform != "win32":
+        # No equivalent exists: macOS shows a spinning cursor and Linux WMs
+        # offer their own "not responding" prompt, neither of which repaints
+        # the window's own pixels.
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 — Windows-only, keep it off the import floor
+
+        ctypes.windll.user32.DisableProcessWindowsGhosting()
+    except Exception:  # noqa: BLE001 — cosmetic hardening; never block a UI boot
+        return False
+    _ghosting_disabled = True
+    return True
+
+
+__all__ = [
+    "NO_WINDOW_CREATIONFLAGS",
+    "disable_windows_app_ghosting",
+    "resolve_executable",
+]

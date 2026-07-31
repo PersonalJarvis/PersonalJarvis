@@ -1,4 +1,4 @@
-﻿"""Conductor-Smoke-Tests: Store CRUD + alle drei Handler + Runner + Seed-YAML."""
+"""Conductor-Smoke-Tests: Store CRUD + alle drei Handler + Runner + Seed-YAML."""
 from __future__ import annotations
 
 import asyncio
@@ -311,9 +311,9 @@ async def test_agent_handler_template_expansion(
     from conductor.jobs.agent import _expand_template
     out = _expand_template(
         "Hallo {{input.name}}, analysiere {{input.topic}}",
-        {"name": "Ruben", "topic": "K8s"},
+        {"name": "Alex", "topic": "K8s"},
     )
-    assert out == "Hallo Ruben, analysiere K8s"
+    assert out == "Hallo Alex, analysiere K8s"
 
 
 # ---------------------------------------------------------------------

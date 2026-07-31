@@ -87,6 +87,7 @@ def test_registry_drives_the_restricted_worker_command_surface() -> None:
         "wake-word-get",
         "audio-devices-list",
         "wiki-ingest",
+        "ultrawiki-ask",
         "session-latest-turn",
         "tools-list",
         "missions-list",
@@ -103,20 +104,91 @@ def test_config_command_is_rejected_from_worker_inventory() -> None:
         WorkerCapabilityInventory.build(app_commands=("brain-switch",))
 
 
-def test_worker_knowledge_surface_is_wiki_only() -> None:
+def test_worker_knowledge_surface_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All gates off → the wiki triple plus the always-on research pair
+    (ADR-0030). Control surfaces and the excluded tools stay out."""
+    from jarvis.missions.workers import capabilities
+
+    monkeypatch.setattr(capabilities, "_awareness_recall_available", lambda: False)
+    monkeypatch.setattr(capabilities, "_ultrawiki_worker_tool_available", lambda: False)
     tools = set(restricted_worker_knowledge_tools())
 
-    assert tools == {"wiki-list", "wiki-recall", "wiki-page-read"}
+    assert tools == {
+        "wiki-list",
+        "wiki-recall",
+        "wiki-page-read",
+        "search_web",
+        "contact-lookup",
+    }
     assert "computer_use" not in tools
     assert "run_shell" not in tools
+    # Deliberate ADR-0030 exclusions: live-desktop read, unattended write.
+    assert "awareness-snapshot" not in tools
+    assert "contact-upsert" not in tools
     assert not any(name.startswith("cli_") for name in tools)
+
+
+def test_awareness_gate_adds_session_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.missions.workers import capabilities
+
+    monkeypatch.setattr(capabilities, "_awareness_recall_available", lambda: True)
+    monkeypatch.setattr(capabilities, "_ultrawiki_worker_tool_available", lambda: False)
+
+    assert "awareness-recall" in restricted_worker_knowledge_tools()
+
+
+def test_ultrawiki_gate_requires_mode_and_live_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ultrawiki-search grant is honest: only when UltraWiki mode is ON
+    and the service is live does the name enter a grant — a phantom tool
+    must never reach a worker (ADR-0030)."""
+    from types import SimpleNamespace
+
+    from jarvis.core import runtime_refs
+    from jarvis.missions.workers import capabilities
+
+    # Test environment: no live service (and default mode off) → closed.
+    assert capabilities._ultrawiki_worker_tool_available() is False
+    assert "ultrawiki-search" not in restricted_worker_knowledge_tools()
+
+    # Mode enabled + live service on the web-app state → granted.
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(enabled=True))
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda *a, **k: cfg)
+    monkeypatch.setattr(
+        runtime_refs,
+        "get_web_app",
+        lambda: SimpleNamespace(state=SimpleNamespace(ultrawiki=object())),
+    )
+    assert capabilities._ultrawiki_worker_tool_available() is True
+    assert "ultrawiki-search" in restricted_worker_knowledge_tools()
+
+    # Mode enabled but the service is absent → still closed.
+    monkeypatch.setattr(runtime_refs, "get_web_app", lambda: None)
+    assert capabilities._ultrawiki_worker_tool_available() is False
+
+
+def test_every_granted_knowledge_tool_passes_the_broker_denylist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.missions.workers import capabilities
+    from jarvis.missions.workers.worker_tool_broker import worker_tool_name_allowed
+
+    monkeypatch.setattr(capabilities, "_awareness_recall_available", lambda: True)
+    monkeypatch.setattr(capabilities, "_ultrawiki_worker_tool_available", lambda: True)
+
+    for name in restricted_worker_knowledge_tools():
+        assert worker_tool_name_allowed(name), name
 
 
 def test_mission_inventory_combines_wiki_reads_with_relevant_connectors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jarvis.missions import init as missions_init
+    from jarvis.missions.workers import capabilities
 
+    monkeypatch.setattr(capabilities, "_awareness_recall_available", lambda: False)
+    monkeypatch.setattr(capabilities, "_ultrawiki_worker_tool_available", lambda: False)
     monkeypatch.setattr(
         missions_init,
         "_assemble_worker_mcp_servers",
@@ -136,6 +208,8 @@ def test_mission_inventory_combines_wiki_reads_with_relevant_connectors(
         "wiki-list",
         "wiki-recall",
         "wiki-page-read",
+        "search_web",
+        "contact-lookup",
         "gmail",
     }
 

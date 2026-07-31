@@ -115,6 +115,42 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "ActionDenied",
         "ErrorOccurred",
         "LatencySpan",
+        # Developer forensics, wave 2 (2026-07-25). The Run Inspector is the
+        # developer's window into HOW a turn was handled, and the three most
+        # asked questions there — "which provider actually answered and why did
+        # it change?", "what did the Computer-Use loop see and do?", "what did
+        # the sub-agent run?" — were unanswerable because their events were
+        # never persisted. All of these are low-frequency (per turn, per CU
+        # step, per mission), never per audio frame; the genuinely chatty
+        # streams (TerminalOutput, CliInstallProgress, HarnessProgress) stay
+        # excluded on purpose, and the read side caps a turn at
+        # MAX_RAW_EVENTS_PER_TURN.
+        "HotkeyPressed",
+        "UtteranceCaptured",
+        # The key-aware fallback chain (AP-22) is invisible without this pair.
+        "BrainProviderSwitched",
+        "FrontierModelSwitched",
+        "BrainToolsChanged",
+        "ActionApprovalRequired",
+        "CliInvoked",
+        "CliInvocationFinished",
+        "JarvisAgentReviewTriggered",
+        "JarvisAgentAnnouncement",
+        "HarnessDispatched",
+        "HarnessCompleted",
+        "MissionCompleted",
+        # Computer-Use observe -> plan -> act -> verify loop.
+        "ObservationCaptured",
+        "VisionInjected",
+        "ActionPlanned",
+        "ActionVerified",
+        "CUStepProfiled",
+        "CUControlStarted",
+        "CUControlEnded",
+        # Cost / kill-switch stops that silently end a turn.
+        "BudgetWarning",
+        "BudgetExceeded",
+        "TaskCancelled",
     }
 )
 
@@ -174,6 +210,18 @@ class _SessionState:
     total_tokens_in: int = 0
     total_tokens_out: int = 0
     providers_used: set[str] = field(default_factory=set)
+    # Next free turn index. Explicit (provider-numbered) turns and recorder-
+    # invented auto turns used to draw from two independent counters —
+    # ``event.turn_index`` and ``turn_count`` — which collide as soon as both
+    # kinds occur in one session: two rows shared an idx and ``get_turns``
+    # (ORDER BY idx) returned them in arbitrary order, so the view numbered
+    # "Turn 3" twice. One monotonic allocator keeps the ordering honest.
+    next_idx: int = 0
+    # True once the pipeline has published a VoiceTurnStarted for this session
+    # — i.e. the turn boundaries are owned by an explicit lifecycle (realtime).
+    # A final transcript arriving with no open turn is then a real utterance
+    # whose VoiceTurnStarted never reached us, not a classic-pipeline partial.
+    explicit_turn_lifecycle: bool = False
     current_turn: _TurnState | None = None
     # The most recently FINALIZED turn of this session. A surface-TTS fallback
     # confirms playback only after its audio fully drained, so its honest
@@ -480,10 +528,17 @@ class SessionRecorder:
 
     def _on_turn_started(self, event: VoiceTurnStarted) -> None:
         assert self._state is not None
+        self._state.explicit_turn_lifecycle = True
+        current = self._state.current_turn
+        if current is not None and current.turn_id == event.turn_id:
+            # Same turn announced twice (the realtime layer announces a turn it
+            # had opened silently for an out-of-band readback once real user
+            # input claims it). Re-allocating an index here would move the row.
+            return
         # If a previous turn wasn't cleanly finalized — auto-close
-        if self._state.current_turn and not self._state.current_turn.finalized:
+        if current and not current.finalized:
             self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
-        idx = event.turn_index if event.turn_index >= 0 else self._state.turn_count
+        idx = self._allocate_idx(event.turn_index)
         ts_ms = event.timestamp_ns // 1_000_000
         self._state.current_turn = _TurnState(
             turn_id=event.turn_id,
@@ -536,6 +591,19 @@ class SessionRecorder:
             t.voice_provider = str(getattr(event, "voice_provider", None) or "")
         self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
 
+    def _allocate_idx(self, preferred: int = -1) -> int:
+        """Hand out a turn index that no earlier turn of this session holds.
+
+        The pipeline's own numbering is honoured whenever it is still ahead of
+        ours (so a provider-numbered gap stays visible); anything at or behind
+        the high-water mark is bumped past it.
+        """
+        assert self._state is not None
+        idx = preferred if preferred >= 0 else self._state.next_idx
+        idx = max(idx, self._state.next_idx)
+        self._state.next_idx = idx + 1
+        return idx
+
     def _ensure_turn_open(self, ts_ms: int) -> None:
         """If the pipeline doesn't send a VoiceTurnStarted — invent one ourselves.
 
@@ -547,15 +615,16 @@ class SessionRecorder:
             return  # turn still running
         self._auto_turn_counter += 1
         auto_id = f"{self._state.session_id}-auto-{self._auto_turn_counter}"
+        idx = self._allocate_idx()
         self._state.current_turn = _TurnState(
             turn_id=auto_id,
-            idx=self._state.turn_count,
+            idx=idx,
             started_ms=ts_ms,
         )
         self._store.upsert_turn(
             turn_id=auto_id,
             session_id=self._state.session_id,
-            idx=self._state.turn_count,
+            idx=idx,
             started_ms=ts_ms,
         )
 
@@ -658,14 +727,55 @@ class SessionRecorder:
             self._state.current_turn.transcript_final_ms = ts_ms
 
     def _on_transcription_update(self, event: TranscriptionUpdate) -> None:
-        """Use Realtime's final transcript as its thinking-phase anchor."""
+        """Use Realtime's final transcript as its thinking-phase anchor.
+
+        A realtime provider publishes the whole-utterance SNAPSHOT on every
+        final, so overwriting an open explicit turn is correct — the later
+        snapshot contains the earlier one.
+
+        A final that arrives with NO open turn is a different thing entirely: a
+        real utterance whose ``VoiceTurnStarted`` never reached us. That happens
+        whenever the realtime layer opened the turn silently for an out-of-band
+        readback (it withholds the announcement while ``_external_update`` is
+        set) and, less often, when the bus abandons this wildcard subscriber on
+        its 5 s timeout. Returning here dropped the utterance from the
+        transcript altogether AND under-counted the session's turns — the
+        session showed "2 turns" for a conversation that had three
+        (forensic 2026-07-27; e.g. 07-17 19:21:03 "Wie viel Kilometer sind es
+        im Schnitt?" never appeared anywhere).  <!-- i18n-allow: quoted user utterance -->
+        The classic path already invents a turn in exactly this situation
+        (``_on_transcript_final`` -> ``_ensure_turn_open``); realtime now does
+        the same.
+        """
         if not event.is_final or self._state is None:
             return
         t = self._state.current_turn
-        if t is None or t.finalized or not t.uses_explicit_lifecycle:
+        if t is not None and not t.finalized:
+            if not t.uses_explicit_lifecycle:
+                # Classic pipeline: TranscriptFinal owns user_text, and a
+                # partial snapshot must not overwrite it.
+                return
+            t.user_text = event.text
+            t.transcript_final_ms = event.timestamp_ns // 1_000_000
             return
-        t.user_text = event.text
-        t.transcript_final_ms = event.timestamp_ns // 1_000_000
+        text = str(event.text or "").strip()
+        if not text or not self._state.explicit_turn_lifecycle:
+            return
+        ts_ms = event.timestamp_ns // 1_000_000
+        self._ensure_turn_open(ts_ms)
+        recovered = self._state.current_turn
+        if recovered is None:
+            return
+        recovered.user_text = event.text
+        recovered.user_lang = self._state.language
+        recovered.transcript_final_ms = ts_ms
+        log.info(
+            "SessionRecorder: recovered an unannounced realtime turn "
+            "(session=%s turn=%s) — a final transcript arrived with no open "
+            "turn",
+            self._state.session_id,
+            recovered.turn_id,
+        )
 
     def _on_system_state(self, event: SystemStateChanged) -> None:
         """Track THINKING/SPEAKING boundaries for think_ms + speak_ms.
@@ -1035,6 +1145,51 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "error_type",    # ErrorOccurred
         "message",       # ErrorOccurred
         "recoverable",   # ErrorOccurred (bool — _payload_for skips None, keeps False)
+        # --- Developer forensics, wave 2 (2026-07-25) -------------------
+        # Field names only; _payload_for pulls them by hasattr, so an event
+        # class that lacks one is simply skipped. Nothing here is a credential:
+        # secrets ride on SecretConfigured, which is NOT a recorded kind, and
+        # every *_preview field is redacted + length-capped by its publisher.
+        "combo",              # HotkeyPressed
+        "audio_ref",          # UtteranceCaptured (content hash, not audio)
+        "from_provider",      # BrainProviderSwitched — the fallback chain
+        "to_provider",
+        "old_model",          # FrontierModelSwitched
+        "new_model",
+        "system_prompt_preview",  # BrainTurnStarted — which persona/prompt ran
+        "harness",            # HarnessDispatched / HarnessCompleted
+        "mission_id",         # MissionCompleted / CUControl*
+        "status",             # MissionCompleted
+        "summary",            # JarvisAgentTaskCompleted
+        "summary_en",         # MissionCompleted
+        "result_uri",
+        "iteration",          # JarvisAgentReviewTriggered (critic loop)
+        "utterance",          # JarvisAgentTaskStarted — the delegated task
+        "depth",
+        "max_duration_s",
+        "cost_estimate_usd",  # JarvisAgentTaskCompleted
+        "full_log_len",
+        "action",             # JarvisAgentAnnouncement (also set from args below)
+        "target",
+        "cli_name",           # CliInvoked / CliInvocationFinished
+        "caller",
+        "command_preview",
+        "exit_code",
+        "source",             # ObservationCaptured
+        "window_title",
+        "node_count",
+        "screenshot_hash",
+        "bytes_size",         # VisionInjected
+        "capture_age_ms",
+        "action_kind",        # ActionPlanned / ActionVerified
+        "target_hint",
+        "step_idx",           # CUStepProfiled
+        "engine",
+        "cache_read_tokens",
+        "scope",              # BudgetWarning / BudgetExceeded
+        "spent_eur",
+        "limit_eur",
+        "task_id",            # TaskCancelled
     }
     payload: dict[str, Any] = {}
     for k in fields_whitelist:

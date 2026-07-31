@@ -113,27 +113,75 @@ _LANG_OUTPUT_VERB = re.compile(
     re.IGNORECASE,
 )
 _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
+#: How far from the spoken language word an ingredient may sit and still belong
+#: to the same command. Real switches are compact — a spoken
+#: "stell auf Englisch um" / "antworte ab jetzt auf Englisch" /  # i18n-allow: quoted input examples
+#: "respond in German" all fit inside ~35 characters — so this is generous for
+#: anything a user actually says, while far too tight to assemble a command out
+#: of words that merely co-occur somewhere in a dictated paragraph.
+_LANG_WINDOW_CHARS = 60
+_SENTENCE_END_RE = re.compile(r"[.!?]")
+
+
+def _command_window(t: str, start: int, end: int) -> str:
+    """The span around a language word that one switch command could occupy.
+
+    Bounded twice, because either bound alone is too weak: the sentence
+    boundary stops an ingredient in a NEIGHBOURING sentence from counting, and
+    the character window stops one that shares a single, very long dictated
+    sentence with it. See ``_match_language_switch`` for the failure both exist
+    to prevent.
+    """
+    left, right = t[:start], t[end:]
+    boundary = max(left.rfind("."), left.rfind("!"), left.rfind("?"))
+    lo = max(boundary + 1, start - _LANG_WINDOW_CHARS)
+    ahead = _SENTENCE_END_RE.search(right)
+    hi = end + min(ahead.start() if ahead else len(right), _LANG_WINDOW_CHARS)
+    return t[lo:hi]
+
+
+def _language_words(t: str) -> list[tuple[int, int, str]]:
+    """Every spoken language word, in the order the utterance says them.
+
+    ``finditer`` rather than one ``search`` per alias: a language word may be
+    said more than once, and only ONE of those places may be the one carrying
+    the command.
+    """
+    hits: list[tuple[int, int, str]] = []
+    for word, code in _LANG_ALIASES.items():
+        for m in re.finditer(rf"\b{re.escape(word)}\b", t):
+            hits.append((m.start(), m.end(), code))
+    hits.sort()
+    return hits
 
 
 def _match_language_switch(t: str) -> str | None:
-    # Pick the language that appears EARLIEST in the utterance, not the first
-    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve  # i18n-allow: quoted German input example
-    # to de (the first spoken language), not en just because "englisch" happens
-    # to sit earlier in _LANG_ALIASES (forensic 2026-06-27).
-    best: tuple[int, str] | None = None
-    for word, c in _LANG_ALIASES.items():
-        m = re.search(rf"\b{re.escape(word)}\b", t)
-        if m is not None and (best is None or m.start() < best[0]):
-            best = (m.start(), c)
-    if best is None:
-        return None
-    code = best[1]
-    if _LANG_CHANGE_VERB.search(t):
-        return code
-    if _LANG_IMPERATIVE_SPEAK.search(t):
-        return code
-    if _LANG_OUTPUT_VERB.search(t) and _LANG_PREP.search(t):
-        return code
+    """The reply language this utterance switches to, or ``None``.
+
+    Every ingredient is looked for in the WINDOW around the language word, not
+    in the whole utterance. Searching globally is what made this gate claim a
+    turn it had no business in (live 2026-07-28 20:34): a dictated paragraph
+    asking two coding agents for work contained the word for "automatically"
+    (the user DESCRIBING a bug — text is not inserted automatically), the verb
+    "stellen" 408 characters later (from "Rückfragen stellen", i.e. to ASK  # i18n-allow: quoted transcript tokens
+    questions) and a preposition somewhere before both. Three unrelated
+    clauses assembled into a language command, the gate answered the turn at
+    once, and the Agentic-IDE delivery path further down ``generate()`` was
+    never reached — so no agent was briefed while the user was told they were.
+
+    The EARLIEST qualifying language still wins, so an utterance naming two
+    languages keeps resolving to the first one spoken (forensic 2026-06-27) —
+    but a language word with no command around it is now skipped rather than
+    deciding the turn.
+    """
+    for start, end, code in _language_words(t):
+        window = _command_window(t, start, end)
+        if _LANG_CHANGE_VERB.search(window):
+            return code
+        if _LANG_IMPERATIVE_SPEAK.search(window):
+            return code
+        if _LANG_OUTPUT_VERB.search(window) and _LANG_PREP.search(window):
+            return code
     return None
 
 

@@ -2,6 +2,7 @@
 import re
 import os
 from collections import defaultdict
+from pathlib import Path
 
 GERMAN_INDICATORS = [
     " der ", " die ", " das ", " den ", " dem ", " des ",
@@ -67,7 +68,7 @@ STRING_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 TEMPLATE_RE = re.compile(r'`([^`]+)`')
 
 def main():
-    base = "C:/Users/Administrator/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
+    base = str(Path(__file__).resolve().parents[1] / "jarvis/ui/web/frontend/src")
     results = defaultdict(list)
     total = 0
 

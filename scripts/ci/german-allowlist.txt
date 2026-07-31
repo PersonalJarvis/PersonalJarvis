@@ -137,6 +137,19 @@ tests/unit/voice/test_action_phrases.py
 jarvis/brain/local_action_gate.py
 jarvis/missions/stream_evidence.py
 
+# --- Personal-memory relevance gate, VOCABULARY ONLY (reason 3: the German
+#     tokens a classifier must literally contain to match German utterances).
+#     Deliberately split from jarvis/brain/wiki_relevance.py so the LOGIC file
+#     stays fully checked — only the token tuples are exempt, and any future
+#     German prose in the gate itself is still caught ---
+jarvis/brain/wiki_relevance_vocab.py
+
+# --- Relevance-gate tests: the German/Spanish utterances and vault fixtures
+#     ARE the content under test (reason 4) — the tallest-tower regression
+#     only means anything in the language it was reported in ---
+tests/unit/brain/test_wiki_relevance.py
+tests/unit/brain/test_wiki_context_relevance.py
+
 # --- Screen-narration guard test: the German voice fixtures and the assertions
 #     on the German persona/system-prompt content are the behaviour under test ---
 tests/unit/brain/test_screen_narration_guard.py
@@ -362,3 +375,49 @@ docs/superpowers/specs/2026-07-06-interim-ack-redesign-design.md
 # --- TTS evaluation corpus: the German sentences ARE the evaluation data the
 #     speech synthesis is scored on (product-surface test fixtures, reason 4) ---
 jarvis/speech/tts_eval/corpus.py
+
+# --- Skill-routing golden set: every `text:` value is a simulated user
+#     utterance, i.e. the speech input the matcher is scored on. The file has
+#     no prose to translate — a future entry is, by construction, another
+#     fixture utterance, so this is not a "narrow it later" exemption (reason
+#     4, same shape as tts_eval/corpus.py above). The harness and tests that
+#     READ this file are NOT exempt and stay English-checked. ---
+tests/fixtures/skill_routing/golden.yaml
+
+# --- Agentic-IDE addressing classifiers: these four modules decide whether an
+#     utterance addresses a named terminal ("sag Nova, sie soll …"), which file
+#     it points at, and how to compose the prompt. To do that they must contain
+#     the German addressing verbs, imperatives, pronouns, and filler words
+#     LITERALLY — the vocabulary IS the matcher (reason 3, same shape as the
+#     wake/STT vocabularies). Translating a token here does not translate a
+#     sentence, it breaks German addressing outright. Each file is a token
+#     table plus English prose ABOUT the tables; a future entry is by
+#     construction another vocabulary token, so this is not a "narrow it later"
+#     exemption. Every OTHER agentic_ide module stays English-checked. ---
+jarvis/agentic_ide/clarify.py
+jarvis/agentic_ide/intent.py
+jarvis/agentic_ide/file_index.py
+jarvis/agentic_ide/prompt_composer.py
+
+# --- Their tests: every German string is a simulated user utterance fed to the
+#     classifiers above — the speech input the matcher is scored on, i.e. the
+#     content under test (reason 4, same shape as tts_eval/corpus.py). The whole
+#     directory is listed rather than each file: it exists to score the
+#     addressing classifiers, so a future test there is by construction another
+#     batch of utterances. The two brain-side fast-path tests below hold the
+#     same fixtures and are listed individually — tests/unit/brain/ at large
+#     stays English-checked. ---
+tests/unit/agentic_ide/*
+tests/unit/brain/test_agentic_ide_spawn_fast_path.py
+tests/unit/brain/test_agentic_ide_clarify_fast_path.py
+
+# --- Generated command reference: every German fragment in it is a quoted
+#     SPOKEN EXAMPLE copied out of a Command-Registry description ("'Mika soll
+#     ...'", "'sag Mika ...'"), i.e. the input vocabulary a voice command has to
+#     match (reason 3). The file is written by
+#     scripts/ci/gen_commands_reference.py, so an inline i18n-allow is
+#     impossible: the next regeneration would drop it. Nobody hand-writes prose
+#     here, so this is not a "narrow it later" exemption — the SOURCE
+#     (jarvis/commands/registry.py) stays English-checked, which is where a real
+#     German leak would have to be fixed. ---
+docs/commands-reference.md

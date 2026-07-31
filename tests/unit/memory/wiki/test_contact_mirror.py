@@ -47,7 +47,7 @@ async def test_sync_unknown_slug_is_noop(env):
 
 async def test_sync_twice_second_is_noop(env):
     vault, store, mirror = env
-    contact = store.put(name="Laura")
+    contact = store.put(name="Casey")
     assert await mirror.sync(contact.slug) is True
     assert await mirror.sync(contact.slug) is False  # block unchanged → no write
 
@@ -86,7 +86,7 @@ async def test_archive_missing_page_is_noop(env):
 async def test_reconcile_heals_missing_and_is_idempotent(env):
     vault, store, mirror = env
     store.put(name="Christoph Meyer")
-    store.put(name="Laura")
+    store.put(name="Casey")
     assert await mirror.reconcile_all() == 2
     assert await mirror.reconcile_all() == 0
 
@@ -95,15 +95,15 @@ async def test_on_contact_changed_routes_actions(env):
     vault, store, mirror = env
     from jarvis.core.events import ContactChanged
 
-    contact = store.put(name="Laura")
+    contact = store.put(name="Casey")
     await mirror.on_contact_changed(
-        ContactChanged(action="created", slug=contact.slug, name="Laura")
+        ContactChanged(action="created", slug=contact.slug, name="Casey")
     )
     page = vault / "people" / f"{contact.slug}.md"
     assert page.exists()
     store.delete(contact.slug)
     await mirror.on_contact_changed(
-        ContactChanged(action="deleted", slug=contact.slug, name="Laura")
+        ContactChanged(action="deleted", slug=contact.slug, name="Casey")
     )
     assert not page.exists()
 
@@ -124,7 +124,7 @@ async def test_skip_due_to_recent_edit_retries_once(tmp_path):
         store=store,
         retry_delay_s=0.3,
     )
-    contact = store.put(name="Laura", note="v1")
+    contact = store.put(name="Casey", note="v1")
     assert await mirror.sync(contact.slug) is True
     store.update(contact.slug, note="v2")
     assert await mirror.sync(contact.slug) is True  # skipped → waits → retried

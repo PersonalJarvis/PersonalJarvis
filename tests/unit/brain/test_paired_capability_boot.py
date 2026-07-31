@@ -20,5 +20,5 @@ def test_boot_registers_paired_gmail_capability():
     )
     n = register_paired_capabilities(reg, [gmail])
     assert n == 1
-    resolved = reg.resolve_intent("schick eine Mail an Harald aus meinem Postfach")  # i18n-allow
+    resolved = reg.resolve_intent("schick eine Mail an Morgan aus meinem Postfach")  # i18n-allow
     assert resolved is not None

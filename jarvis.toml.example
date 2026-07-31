@@ -46,8 +46,26 @@ sensitivity = 0.5            # 0.5..1 (values below 0.5 are lifted — the wake 
 [stt]
 provider = "groq-api"        # groq-api | openai-api | openrouter-stt | gemini-api | faster-whisper (local)
 device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
-language = "auto"            # "de" | "en" | "auto"
+language = "auto"            # auto, or a weak ISO-639 preference such as "fr"
 bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns
+temperature = 0.0            # deterministic when the selected model supports it
+
+# Cloud model pins are provider-specific; an omitted pin uses that plugin's
+# default. Configure these in the app's model picker in normal use.
+[stt.models]
+# openai-api = "gpt-4o-transcribe"
+# openrouter-stt = "openai/gpt-4o-transcribe"
+
+# ── Dictation quality ──
+[dictation]
+# Short segments update the live preview. Delivery comes from a second pass
+# over the complete recording in long overlapping windows.
+final_quality_pass = true
+final_window_seconds = 25.0
+final_overlap_seconds = 1.5
+# Auto-detect each final window so language changes remain in the spoken
+# language. Turn this off only to apply the preference as a hard monolingual pin.
+code_switching = true
 
 # ── Text-to-Speech ──
 # Cloud default = Gemini Flash TTS (reuses your GEMINI_API_KEY). Alternatives:
@@ -121,7 +139,7 @@ commands = ["format *", "rm -rf /", "del /f /s /q C:\\", "shutdown /p", "reg del
 [audio]
 input_device = "auto"        # "auto" | shortest-unique device-name token (e.g. "PRO X")
 output_device = "auto"
-echo_cancellation = true
+echo_cancellation = true       # requested; raw PortAudio reports unavailable honestly
 sample_rate = 16000          # mandatory 16 kHz (AP-L-16)
 
 # ── UI / tray ──
@@ -157,3 +175,23 @@ enabled = true
 # Phase-5/6 features (vision, computer_use, admin, missions, board, telephony)
 # default to enabled = false in code. Enable them individually once configured;
 # see jarvis/core/config.py for every available section and its defaults.
+
+# -- Mission workers: tool pre-authorization (ADR-0031) --
+# Tools listed here are auto-approved for a mission's OWN supervisor-granted
+# calls (the gate is answered on the event bus with a full audit trail, never
+# bypassed). Entries are exact tool names, or an MCP server family written
+# with a trailing slash (e.g. "github/"). Prefer exact names: a family prefix
+# silently authorizes every future tool that server adds. Keep messaging /
+# mail / social-send tools OUT unless you explicitly accept unattended sends.
+# Set worker_tool_auto_approve = false to restore "every ask-tier call waits
+# for a human" behavior.
+[phase6.safety]
+worker_tool_auto_approve = true
+auto_approve_tool_families = [
+  "search_web",
+  "wiki-list",
+  "wiki-recall",
+  "wiki-page-read",
+  "wiki-ingest",
+  "session-latest-turn",
+]

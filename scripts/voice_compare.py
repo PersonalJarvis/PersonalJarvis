@@ -100,7 +100,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         "hangup",
         "Das war's, danke.",  # i18n-allow
         "That's all, thanks.",
-        "Exact hangup contract: „Auf Wiedersehen, Ruben.\"",  # i18n-allow
+        "Exact hangup contract: „Auf Wiedersehen, Alex.\"",  # i18n-allow
     ),
 )
 

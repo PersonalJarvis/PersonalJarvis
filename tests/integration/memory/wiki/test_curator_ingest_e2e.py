@@ -114,9 +114,9 @@ async def test_ingest_creates_pages_writes_log_and_backup(real_stack):
 
     fake_updates = [
         PageUpdate(
-            target_path=vault_root / "entities" / "ruben.md",
+            target_path=vault_root / "entities" / "alex.md",
             operation="create",
-            new_body=_entity_body("ruben", "Profile body for Ruben."),
+            new_body=_entity_body("alex", "Profile body for Alex."),
             reason="new fact about the user",
         ),
         PageUpdate(
@@ -136,19 +136,19 @@ async def test_ingest_creates_pages_writes_log_and_backup(real_stack):
     # Pages written.
     assert len(result.applied) == 2
     written = {p.name for p in result.applied}
-    assert written == {"ruben.md", "wiki-project.md"}
+    assert written == {"alex.md", "wiki-project.md"}
 
     # Files actually on disk + parseable.
-    assert (vault_root / "entities" / "ruben.md").is_file()
+    assert (vault_root / "entities" / "alex.md").is_file()
     assert (vault_root / "entities" / "wiki-project.md").is_file()
-    ruben_content = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
-    assert "Profile body for Ruben." in ruben_content
-    assert "type: entity" in ruben_content
+    alex_content = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
+    assert "Profile body for Alex." in alex_content
+    assert "type: entity" in alex_content
 
     # Log entry appended with wikilink-formatted page refs.
     log_content = (vault_root / "log.md").read_text(encoding="utf-8")
     assert "ingest | cli-ingest:demo.md" in log_content
-    assert "[[entities/ruben]]" in log_content
+    assert "[[entities/alex]]" in log_content
     assert "[[entities/wiki-project]]" in log_content
 
     # Backup tarball exists (one per apply, not per page).
@@ -156,7 +156,7 @@ async def test_ingest_creates_pages_writes_log_and_backup(real_stack):
     assert len(backups) == 1
 
     assert [(event.slug, event.path, event.kind) for event in events] == [
-        ("ruben", "entities/ruben.md", "created"),
+        ("alex", "entities/alex.md", "created"),
         ("wiki-project", "entities/wiki-project.md", "created"),
     ]
 

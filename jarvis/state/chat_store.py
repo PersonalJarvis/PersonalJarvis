@@ -140,12 +140,17 @@ class ChatStore:
                 self._conn = None
 
     # ------- Queries (sync, reads are idempotent) ---------------------
-    def list_threads(self) -> list[dict[str, Any]]:
+    def list_threads(self, *, include_empty: bool = True) -> list[dict[str, Any]]:
         """All threads, most-recently-active first.
 
         Recency uses the largest message ``rowid`` per thread (monotonic with
         insertion across all threads), so it is deterministic regardless of
         clock granularity. Empty threads sort last by creation order.
+
+        Conversation-history surfaces pass ``include_empty=False``. For text
+        chats, a conversation starts with a user turn: rows with no persisted
+        user message are either unsent drafts or legacy assistant-only residue
+        and must not masquerade as real text conversations.
         """
         conn = self._ensure_conn()
         with self._lock:
@@ -159,14 +164,26 @@ class ChatStore:
                     t.updated_at_ns  AS updated_at_ns,
                     (SELECT COUNT(*) FROM chat_messages m
                         WHERE m.thread_id = t.thread_id) AS message_count,
+                    (SELECT COUNT(*) FROM chat_messages m
+                        WHERE m.thread_id = t.thread_id
+                          AND m.role = 'user'
+                          AND TRIM(m.text) != ''
+                    ) AS user_message_count,
                     (SELECT m.text FROM chat_messages m
                         WHERE m.thread_id = t.thread_id AND m.role = 'user'
                         ORDER BY m.rowid LIMIT 1) AS preview,
                     (SELECT MAX(m.rowid) FROM chat_messages m
                         WHERE m.thread_id = t.thread_id) AS last_seq
                 FROM chat_threads t
+                WHERE ? = 1 OR EXISTS (
+                    SELECT 1 FROM chat_messages visible
+                    WHERE visible.thread_id = t.thread_id
+                      AND visible.role = 'user'
+                      AND TRIM(visible.text) != ''
+                )
                 ORDER BY (last_seq IS NULL), last_seq DESC, t.rowid DESC
-                """
+                """,
+                (1 if include_empty else 0,),
             ).fetchall()
         return [
             {
@@ -176,6 +193,7 @@ class ChatStore:
                 "created_at_ns": r["created_at_ns"],
                 "updated_at_ns": r["updated_at_ns"],
                 "message_count": r["message_count"],
+                "user_message_count": r["user_message_count"],
                 "preview": r["preview"] or "",
             }
             for r in rows
@@ -261,7 +279,12 @@ class ChatStore:
         await self.create_thread(title=title, thread_id=thread_id, kind=kind)
 
     async def add_message(
-        self, *, thread_id: str, role: str, text: str
+        self,
+        *,
+        thread_id: str,
+        role: str,
+        text: str,
+        publish_event: bool = True,
     ) -> ChatMessage:
         await self.ensure_thread(thread_id)
         msg = ChatMessage(
@@ -294,14 +317,15 @@ class ChatStore:
                         "UPDATE chat_threads SET title = ? WHERE thread_id = ?",
                         (_derive_title(text), thread_id),
                     )
-        await self._bus.publish(
-            MessageSent(
-                source_layer="chat",
-                thread_id=thread_id,
-                role=role,
-                text=text,
+        if publish_event:
+            await self._bus.publish(
+                MessageSent(
+                    source_layer="chat",
+                    thread_id=thread_id,
+                    role=role,
+                    text=text,
+                )
             )
-        )
         return msg
 
     async def delete_thread(self, thread_id: str) -> bool:

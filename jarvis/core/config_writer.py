@@ -29,7 +29,7 @@ from pathlib import Path
 import tomlkit
 from tomlkit import TOMLDocument
 
-from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT
+from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT, clear_config_cache
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +75,23 @@ _STT_PROVIDER_ENV = "JARVIS__STT__PROVIDER"
 # setters therefore clear/sync this layer too, not just TOML + config-soll.  # i18n-allow
 _STT_MODEL_ENV = "JARVIS__STT__MODEL"
 _STT_LANGUAGE_ENV = "JARVIS__STT__LANGUAGE"
+
+
+def set_agentic_ide_prompt_writer(
+    value: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[agentic_ide] prompt_writer`` — who writes Agentic IDE task briefs.
+
+    One layer only, deliberately. The brain-provider setters above also mirror
+    into the drift-guard soll file and a User-scope ENV var because a *provider*  # i18n-allow
+    switch that survived only in TOML kept getting rolled back by a parallel
+    session. This setting has no soll entry and no ENV override reading it, so a  # i18n-allow
+    second layer would be a lie about where the value lives.
+
+    Raises ``FileNotFoundError`` if the TOML config file does not exist — a
+    broken setup we do not silently mask.
+    """
+    _patch_table(path, "agentic_ide", "prompt_writer", value)
 
 
 def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -287,6 +304,72 @@ def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_worker_model_drift_soll(model)  # i18n-allow
 
 
+def migrate_worker_tier_table(*, path: Path = DEFAULT_CONFIG_FILE) -> bool:
+    """One-time boot heal for the [brain.sub_jarvis] / [brain.worker] split-brain.
+
+    Both tables feed the SAME config field (``BrainConfig.worker`` via
+    ``AliasChoices``), so a file carrying both is a latent conflict: the
+    canonical ``[brain.worker]`` wins at load time while the legacy table
+    silently rots (live case 2026-07-25: ``provider = "antigravity"`` vs
+    ``"openai-codex"``, with the whole ``fallback_*`` chain stranded in the
+    dead table). This migration makes the file match what the loader
+    already resolves:
+
+      * both tables present  -> copy legacy-ONLY keys (e.g. the ``fallback_*``
+        chain) into ``[brain.worker]``, then drop ``[brain.sub_jarvis]``;
+        keys present in both keep the canonical worker value.
+      * only the legacy table -> its keys move to ``[brain.worker]`` verbatim.
+      * no legacy table       -> no-op (a cheap string probe skips the parse).
+
+    Returns True when the file was rewritten. Best-effort by design: a
+    missing file, unparsable TOML, or a write failure (read-only flag /
+    drift-guard EPERM) degrades to a logged no-op — boot must never break
+    on this heal. Reading old files keeps working either way through the
+    ``AliasChoices`` read-compat alias, which stays.
+    """
+    try:
+        if path == DEFAULT_CONFIG_FILE:
+            from jarvis.core.config import resolve_config_path  # noqa: PLC0415
+
+            path = resolve_config_path()
+        if not path.exists():
+            return False
+        with _WRITE_LOCK:
+            raw = path.read_text(encoding="utf-8")
+            had_bom = raw.startswith(_BOM)
+            if had_bom:
+                raw = raw[len(_BOM) :]
+            # Fast path: steady-state boots pay one file read, no TOML parse.
+            if "sub_jarvis" not in raw:
+                return False
+            doc: TOMLDocument = tomlkit.parse(raw)
+            brain = doc.get("brain")
+            if brain is None or "sub_jarvis" not in brain:
+                return False
+            legacy = brain["sub_jarvis"]
+            worker = brain.get("worker")
+            if worker is None:
+                worker = tomlkit.table()
+                brain["worker"] = worker
+            if isinstance(legacy, dict):
+                for key in legacy:
+                    if key not in worker:
+                        worker[key] = legacy[key]
+            del brain["sub_jarvis"]
+            out = tomlkit.dumps(doc)
+            if had_bom:
+                out = _BOM + out
+            _atomic_write(path, out)
+        log.info(
+            "Merged legacy [brain.sub_jarvis] into canonical [brain.worker] (%s).",
+            path,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — boot heal must never raise
+        log.warning("Worker-tier TOML migration skipped: %s", exc)
+        return False
+
+
 # Back-compat alias — callers that imported set_sub_jarvis_model still work.
 set_sub_jarvis_model = set_worker_model
 
@@ -330,8 +413,16 @@ def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     drift-guard reverts it within 5 minutes. Layers 2 + 3 are best-effort
     (cloud-first) and never break the TOML write.
     """
-    # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
-    _patch_table(path, "stt", "provider", name)
+    # Layer 1 — universal, runs on every platform. The marker lands in the
+    # same atomic write and makes this explicit user choice authoritative over
+    # a stale provider override inherited by a later desktop process.
+    _patch_table(
+        path,
+        "stt",
+        "provider",
+        name,
+        extra={"provider_user_selected": True},
+    )
     # Layers 2 + 3 — best-effort, never raise.
     _sync_stt_provider_drift_soll(name)  # i18n-allow
 
@@ -424,12 +515,72 @@ def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync %s to the User environment: %s", _STT_MODEL_ENV, exc)
 
 
+def set_stt_provider_model(
+    provider: str, model: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> dict[str, str]:
+    """Pin ONE provider's transcription model (``[stt.models].<provider>``).
+
+    Returns the full mapping after the write, so a caller can update the live
+    config object without re-reading the file.
+
+    Why per provider rather than the single ``[stt] model``: that key holds a
+    faster-whisper CHECKPOINT name, which means nothing to a hosted API. One
+    global value therefore could not be forwarded to a cloud recognizer without
+    a fresh install posting ``large-v3-turbo`` to Groq — so the picker's choice
+    reached no provider at all and the dropdown changed nothing (AP-31).
+
+    Two layers, not three: the mapping is a TOML sub-table, and the ENV
+    override this repo uses for single-word keys (``JARVIS__STT__MODEL``) has
+    no shape that could carry it. The ``config-soll`` sync is what keeps the  # i18n-allow
+    drift guard from reverting the pin, which is the layer that actually
+    mattered for the single-word keys anyway.
+
+    An empty ``model`` REMOVES the pin, which is how a user goes back to the
+    provider's own default without hand-editing anything.
+    """
+    key = str(provider or "").strip()
+    if not key:
+        raise ValueError("A provider id is required to pin an STT model.")
+    value = str(model or "").strip()
+    path = _ensure_writable_config_path(path)
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("stt")
+        if section is None:
+            section = tomlkit.table()
+            doc["stt"] = section
+        models = section.get("models")
+        if models is None:
+            models = tomlkit.table()
+            section["models"] = models
+        if value:
+            models[key] = value
+        else:
+            models.pop(key, None)
+        merged = {str(k): str(v) for k, v in models.items()}
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    try:
+        _update_config_soll_section("stt", {"models": merged})  # i18n-allow
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync stt.models to config-soll.json: %s", exc)  # i18n-allow
+    return merged
+
+
 def set_stt_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set the STT recognition language (``[stt] language``).
 
-    One of ``auto`` | ``de`` | ``en`` | ``es`` (validated by the caller). ``auto``
-    lets Whisper detect the spoken language per utterance (the bilingual default);
-    a concrete code forces that language. Takes effect on the next SpeechPipeline
+    ``auto`` or any code in ``RECOGNITION_LANGUAGES`` (validated by the caller).
+    ``auto`` lets the recogniser detect the spoken language per utterance (the
+    default); a concrete code forces that language. Takes effect on the next SpeechPipeline
     bootstrap (a voice restart): the STT provider is instantiated once at pipeline
     start. Persisted across all THREE layers (TOML + config-soll + ENV): the stt  # i18n-allow
     block is drift-guard pinned, and the single-word ``JARVIS__STT__LANGUAGE`` ENV
@@ -487,11 +638,162 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup")
+KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle", "paste_last")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
+    # Push-to-talk dictation: HOLD to speak, release to insert the transcript
+    # into whatever text field has focus. Ships bound to a curated combo (see
+    # TriggerConfig.hotkey_dictate for the reasoning and the collision proof).
+    # An empty value means "dictation has no shortcut", which stays a valid
+    # state, not a broken one: the bar, the UI and `jarvis api dictation start`
+    # all still work (and are the documented Wayland path).
+    "dictate": "hotkey_dictate",
+    # Hands-free dictation: press once to start, press again to stop. A
+    # separate action rather than a mode flag, so a user can arm a hold key and
+    # a toggle key at the same time.
+    "dictate_toggle": "hotkey_dictate_toggle",
+    # Insert the most recent dictation again — the recovery key for a paste
+    # that landed nowhere. Needs no microphone and no speech-to-text; it reads
+    # the local history, because a successful paste restores the previous
+    # clipboard content and therefore takes the transcript back off the
+    # clipboard within a second.
+    "paste_last": "hotkey_paste_last",
 }
+
+#: One-time marker under ``[trigger]`` recording that the dictation-shortcut
+#: backfill below has already run on this install. It is deliberately NOT a
+#: user setting; see :func:`migrate_dictation_hotkey_defaults`.
+DICTATION_HOTKEY_MIGRATION_KEY = "dictation_hotkeys_migrated"
+
+#: The keys the backfill may touch, in the order it reports them.
+_DICTATION_HOTKEY_FIELDS = ("hotkey_dictate", "hotkey_dictate_toggle")
+
+
+def _combo_key_set(combo: object) -> set[str]:
+    """Key SET of a combo — the unit the keybind collision rule compares."""
+    return {p.strip() for p in str(combo or "").strip().lower().split("+") if p.strip()}
+
+
+def migrate_dictation_hotkey_defaults(*, path: Path = DEFAULT_CONFIG_FILE) -> bool:
+    """One-time backfill of the dictation shortcuts. Runs exactly once, ever.
+
+    The problem it fixes (BUG-010 config drift). ``hotkey_dictate`` shipped as
+    ``""`` for a while, so every install from that period has ``hotkey_dictate
+    = ""`` written into its ``jarvis.toml``. A persisted empty string beats the
+    code default, so when the default became a real combo those installs kept
+    reading "no key assigned" — while ``hotkey_dictate_toggle``, which was
+    never persisted because it did not exist yet, WAS armed from the new
+    default. Same feature, two different answers, decided by which key happened
+    to be in the file.
+
+    Why ``""`` is not simply treated as "use the default": that would make the
+    Clear button impossible. An unbound shortcut is a state the user is
+    entitled to, and it has to survive restarts. So the two cases are told
+    apart by a MARKER rather than by the value:
+
+    * marker absent  -> this install has never been through the migration, so
+      an empty value is stale rather than chosen: write the current default.
+    * marker present -> every empty value from here on was chosen by the user
+      and is left alone forever.
+
+    The marker is written the first time the migration has a stale value to
+    consider, and never otherwise: this function is reached from
+    ``load_config``, so a config file that has nothing to heal must come back
+    from a load byte-identical. The OTHER writer of the marker is
+    :func:`set_keybind` — an explicit save of a dictation shortcut, empty or
+    not, is proof the user has seen the value and chosen it, so it stamps the
+    marker too. Between them, an install where the keys are simply ABSENT is
+    never rewritten by a boot, and a Clear performed there is still permanent.
+
+    A default is skipped (while the marker is still written) when its key set
+    is a subset or superset of another shortcut already in the file: the
+    polling hotkey backend fires on subsets, so backfilling there would hand
+    the user two shortcuts that trigger each other. Better an unbound row the
+    user can fill in than a config the keybind route itself would refuse to
+    save.
+
+    Returns True when the file was rewritten. Best-effort by design: a missing
+    file, unparsable TOML or a failed write degrades to a logged no-op — a boot
+    heal must never break a boot.
+    """
+    try:
+        if path == DEFAULT_CONFIG_FILE:
+            from jarvis.core.config import resolve_config_path  # noqa: PLC0415
+
+            path = resolve_config_path()
+        if not path.exists():
+            # Nothing persisted yet, so nothing can be stale: a fresh install
+            # gets the code defaults, and the marker is written the first time
+            # anything else touches the file.
+            return False
+        with _WRITE_LOCK:
+            raw = path.read_text(encoding="utf-8")
+            had_bom = raw.startswith(_BOM)
+            if had_bom:
+                raw = raw[len(_BOM) :]
+            # Fast path: healed installs pay one file read, never a TOML parse.
+            if DICTATION_HOTKEY_MIGRATION_KEY in raw:
+                return False
+
+            from jarvis.core.config import TriggerConfig  # noqa: PLC0415
+
+            shipped = TriggerConfig()
+            doc: TOMLDocument = tomlkit.parse(raw)
+            trigger = doc.get("trigger")
+            if trigger is None:
+                # Nothing under [trigger] is persisted, so nothing can be
+                # stale: the code defaults already apply and there is nothing
+                # to heal. Returning without a write is what keeps a plain
+                # ``load_config`` from mutating a file it only had to read.
+                return False
+
+            backfilled: list[str] = []
+            considered = False
+            for field in _DICTATION_HOTKEY_FIELDS:
+                default = str(getattr(shipped, field, "") or "")
+                if not default:
+                    continue
+                current = trigger.get(field)
+                if current is None or str(current).strip():
+                    # Absent (the code default already applies) or already set
+                    # by the user — either way, not this migration's business.
+                    continue
+                considered = True
+                keys = _combo_key_set(default)
+                taken = [
+                    _combo_key_set(trigger.get(other))
+                    for other in KEYBIND_TOML_KEY.values()
+                    if other != field and trigger.get(other) is not None
+                ]
+                if any(other and (keys <= other or other <= keys) for other in taken):
+                    log.info(
+                        "Dictation shortcut %s left unbound: the shipped default "
+                        "%r overlaps a shortcut this install already uses.",
+                        field,
+                        default,
+                    )
+                    continue
+                trigger[field] = default
+                backfilled.append(field)
+
+            if not considered:
+                return False
+
+            trigger[DICTATION_HOTKEY_MIGRATION_KEY] = True
+            out = tomlkit.dumps(doc)
+            if had_bom:
+                out = _BOM + out
+            _atomic_write(path, out)
+        log.info(
+            "Dictation shortcut migration applied to %s (backfilled: %s).",
+            path,
+            ", ".join(backfilled) or "nothing",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — a boot heal must never raise
+        log.warning("Dictation shortcut migration skipped: %s", exc)
+        return False
 
 
 def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -503,12 +805,160 @@ def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -
     apply). Takes effect on the next SpeechPipeline bootstrap (a Jarvis restart):
     bindings are armed once at pipeline start via ``TriggerConfig.resolve_hotkeys``
     plus the ``hotkey_hangup`` read at the call sites.
+
+    Saving a DICTATION shortcut also stamps the one-time migration marker (see
+    :func:`migrate_dictation_hotkey_defaults`). An explicit save — including
+    clearing the row — is proof the user has seen this shortcut and chosen its
+    value, so the backfill must never reach it afterwards. Without the stamp,
+    Clear would work until the next restart and then quietly undo itself.
     """
     try:
         key = KEYBIND_TOML_KEY[action]
     except KeyError:
         raise ValueError(f"unknown keybind action: {action!r}") from None
+    if key in _DICTATION_HOTKEY_FIELDS:
+        _patch_table(
+            path,
+            "trigger",
+            key,
+            hotkey,
+            extra={DICTATION_HOTKEY_MIGRATION_KEY: True},
+        )
+        return
     _patch_table(path, "trigger", key, hotkey)
+
+
+#: Dictation settings that may be changed through the API. The value is both
+#: the ``[dictation]`` TOML key and the ``DictationConfig`` field name; keep in
+#: sync with the model and with the TS type in the frontend's dictation hook.
+DICTATION_SETTING_KEYS = (
+    "mode",
+    "target",
+    "insert_method",
+    "paste_chord",
+    "paste_delay_ms",
+    "paste_delay_after_ms",
+    "restore_clipboard",
+    "remove_fillers",
+    "filler_max_removed_fraction",
+    "max_seconds",
+    "partial_interval_s",
+    "segment_seconds",
+    "final_quality_pass",
+    "final_window_seconds",
+    "final_overlap_seconds",
+    "code_switching",
+    "history_enabled",
+    "history_max_entries",
+    "history_retention_days",
+    "language",
+    "keep_failed_audio",
+    "audio_retention_days",
+    "audio_max_files",
+    # The polish pass. Persisted through the same PUT as everything else — the
+    # feature adds no route of its own, so a key missing from this tuple is a
+    # setting the user can switch in the UI and lose on the next restart.
+    "polish",
+    "polish_provider",
+    "polish_model",
+    "polish_timeout_ms",
+    "polish_max_input_chars",
+    "polish_min_words",
+    "polish_max_output_tokens",
+    "polish_temperature",
+    "polish_drift_max_shrink",
+    "polish_drift_max_growth",
+    "polish_style",
+    # The translate pass. Same rule as the polish keys above: a key missing here
+    # is a switch the UI appears to save and loses on the next restart.
+    "translate",
+    "translate_target",
+    "translate_drift_max_shrink",
+    "translate_drift_max_growth",
+)
+
+
+def set_dictation_setting(
+    key: str,
+    value: str | bool | int | float,
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one ``[dictation]`` key in jarvis.toml.
+
+    Toml-only, like the other ``[trigger]``/``[dictation]`` writers: these keys
+    are not part of the drift-guard's reference snapshot, so a plain atomic
+    write is enough and the BUG-010 three-layer rule does not apply. The
+    caller validates the value against ``DictationConfig`` first — this writer
+    only refuses unknown KEYS, so a typo can never invent a config field.
+    """
+    if key not in DICTATION_SETTING_KEYS:
+        raise ValueError(f"unknown dictation setting: {key!r}")
+    _patch_table(path, "dictation", key, value)
+
+
+#: Keys ``[screen_context]`` accepts. An allowlist rather than a passthrough:
+#: a typo must never invent a config field that silently does nothing (AP-31),
+#: and a privacy feature is the last place to accept "whatever was posted".
+SCREEN_CONTEXT_SETTING_KEYS: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "denylist",
+        "sensitive_patterns",
+        "include_default_patterns",
+        "max_text_chars",
+        "ttl_s",
+        "ocr_enabled",
+    }
+)
+
+
+def set_screen_context_setting(
+    key: str,
+    value: str | bool | int | float | list,
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one ``[screen_context]`` key in jarvis.toml.
+
+    Same shape as :func:`set_dictation_setting`: TOML-only atomic write, keys
+    validated against an allowlist, values validated by the caller against
+    ``ScreenContextConfig``. These keys are not part of the drift-guard's
+    reference snapshot, so the BUG-010 three-layer rule does not apply.
+    """
+    set_screen_context_settings({key: value}, path=path)
+
+
+def set_screen_context_settings(
+    values: dict[str, str | bool | int | float | list],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist a validated Screen Context patch in one atomic replacement."""
+    unknown = set(values).difference(SCREEN_CONTEXT_SETTING_KEYS)
+    if unknown:
+        raise ValueError(
+            f"unknown screen_context setting(s): {sorted(unknown)!r}"
+        )
+    if not values:
+        return
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("screen_context")
+        if section is None:
+            section = tomlkit.table()
+            doc["screen_context"] = section
+        for key, value in values.items():
+            section[key] = value
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
 
 
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -647,6 +1097,84 @@ def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     until then.
     """
     _patch_table(path, "wiki_integration", "vault_root", vault_root)
+
+
+#: Closed list of ``[ultrawiki]`` slot keys the settings surface may write.
+#: ``enabled`` has its own dedicated setter (the mode switch is a deliberate,
+#: separate act); credentials NEVER go here — the Postgres connection string
+#: lives in the secret chain under ``ultrawiki_db_url`` (AP-12).
+ULTRAWIKI_SLOT_KEYS = (
+    "db_backend",
+    # Which named storage preset the user picked (sqlite / supabase / neon /
+    # postgres). Presentation over ``db_backend``: it decides the card's help
+    # text, dashboard link and connect flow, never how the store opens.
+    "storage_provider",
+    "embedding_provider",
+    "embedding_model",
+    "distill_provider",
+    "distill_model",
+    "rerank_provider",
+    "rerank_model",
+    # Ranking knobs of the read path (design: UltraWiki ranking pipeline).
+    "rerank_min_score",
+    "rrf_keyword_weight",
+    "rrf_vector_weight",
+    "recency_half_life_days",
+    "ollama_endpoint",
+)
+
+#: Slot keys whose value is a NUMBER, not a string. They are written as TOML
+#: floats so a hand-read jarvis.toml shows ``rerank_min_score = 4.0`` rather
+#: than a quoted string that only happens to parse.
+ULTRAWIKI_NUMERIC_SLOT_KEYS = frozenset(
+    {
+        "rerank_min_score",
+        "rrf_keyword_weight",
+        "rrf_vector_weight",
+        "recency_half_life_days",
+    }
+)
+
+
+def set_ultrawiki_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the UltraWiki mode switch to ``[ultrawiki] enabled``.
+
+    The either-or Wiki mode switch (design D-5): True = UltraWiki captures and
+    answers, False = the normal wiki does. Switching is non-destructive in both
+    directions (D-9) — this writes one flag and never deletes data. TOML-only
+    by design: ``ultrawiki`` is NOT tracked in the drift-guard's reference
+    snapshot, so a plain atomic write is never reverted (same rationale as
+    :func:`set_wiki_vault_root`). The UltraWiki routes apply the change live;
+    this persists the boot default.
+    """
+    _patch_table(path, "ultrawiki", "enabled", bool(enabled))
+
+
+def set_ultrawiki_slot(key: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist one flat ``[ultrawiki]`` capability-slot key.
+
+    ``key`` must come from the closed :data:`ULTRAWIKI_SLOT_KEYS` list — the
+    storage-backend selector plus the provider/model slots. Values are plain
+    strings; empty string is the documented "unconfigured" sentinel. Secrets
+    are refused by construction: the Postgres connection string rides the
+    secret chain under ``ultrawiki_db_url`` (AP-12), never the TOML. TOML-only,
+    same drift-guard rationale as :func:`set_ultrawiki_enabled`.
+    """
+    if key not in ULTRAWIKI_SLOT_KEYS:
+        raise ValueError(
+            f"unknown [ultrawiki] slot key {key!r} "
+            f"(allowed: {', '.join(ULTRAWIKI_SLOT_KEYS)})"
+        )
+    if key in ULTRAWIKI_NUMERIC_SLOT_KEYS:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"[ultrawiki] {key} must be a number, got {value!r}"
+            ) from exc
+        _patch_table(path, "ultrawiki", key, numeric)
+        return
+    _patch_table(path, "ultrawiki", key, str(value))
 
 
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1170,12 +1698,48 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "",
         "language_code": "auto",
     },
+    "piper-local": {
+        # ``language_code`` is the load-bearing key here, not the voices. A Piper
+        # voice is MONOLINGUAL: the plugin is handed the turn's resolved language
+        # and picks the matching installed voice per turn. Inheriting a
+        # predecessor's pinned "de-DE" would therefore hard-wire every answer to
+        # the German voice, including the ones the resolver decided to speak in
+        # English or Spanish — the runtime-language doctrine broken by a leftover
+        # config value rather than by any code. "auto" keeps the decision where
+        # it belongs.
+        #
+        # The voices are the two the installer actually fetches
+        # (PIPER_DEFAULT_VOICES in jarvis/speech/local_models.py). They are named
+        # rather than left blank so switching away from a cloud provider does not
+        # leave "Charon" sitting in the block: the resolver tolerates an unknown
+        # name, but the settings screen would keep showing a voice this provider
+        # cannot speak with. There is no [tts].model concept for Piper.
+        "model": "",
+        "voice_de": "vits-piper-de_DE-thorsten-medium",
+        "voice_en": "vits-piper-en_US-ryan-medium",
+        "language_code": "auto",
+    },
 }
 
 # Per-provider voice allowlist — when the existing voice does not match the
 # new provider, we overwrite with the provider default. Kept in sync with
 # `jarvis/plugins/tts/__init__.py`.
 _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
+    # Every catalogued local Piper voice, not only the two the installer fetches
+    # by default. Without this entry a switch to Piper would reset the voice to
+    # the default pair every time, silently undoing a user who downloaded Ramona
+    # or Amy and chose them — the allowlist is what tells the writer "this value
+    # is already valid for this provider, keep it".
+    "piper-local": frozenset(
+        {
+            "vits-piper-de_DE-thorsten-medium",
+            "vits-piper-de_DE-ramona-low",
+            "vits-piper-en_US-ryan-medium",
+            "vits-piper-en_US-amy-medium",
+            "vits-piper-es_ES-davefx-medium",
+            "vits-piper-es_ES-sharvard-medium",
+        }
+    ),
     "gemini-flash-tts": frozenset(
         {
             "Charon",
@@ -1364,6 +1928,62 @@ def set_brain_provider_model(
     )
 
 
+def set_provider_base_url(
+    provider: str, base_url: str | None, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist (or clear) ``[brain.providers.<provider>].base_url``.
+
+    Backs the API-Keys card's server-URL field for local/self-hosted providers
+    (``PUT /api/providers/{id}/base-url``). ``None``/"" writes an EMPTY string
+    rather than deleting the key — "" is falsy everywhere the override is read
+    (``resolve_provider_endpoint``), and keeping the key present means the
+    drift-guard baseline layer and the TOML always agree (BUG-010 class). Atomic
+    discipline as every setter here (AP-7); tomlkit quotes hyphenated provider
+    ids (``[brain.providers."local-openai"]``) on its own.
+    """
+    path = _ensure_writable_config_path(path)
+    cleaned = (base_url or "").strip()
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        providers = brain.get("providers")
+        if providers is None:
+            # Super-table flag via the factory (see set_brain_provider_model).
+            providers = tomlkit.table(True)
+            brain["providers"] = providers
+        block = providers.get(provider)
+        if block is None:
+            block = tomlkit.table()
+            providers[provider] = block
+        block["base_url"] = cleaned
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    # Best-effort drift-guard baseline sync (never raises, never blocks the write).
+    try:
+        _update_config_soll_section(  # i18n-allow
+            f"brain.providers.{provider}", {"base_url": cleaned}
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync brain.providers.%s base_url to config-soll.json: %s",  # i18n-allow
+            provider,
+            exc,
+        )
+
+
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Patch ``[integrations.twilio]`` with the given non-secret fields.
 
@@ -1405,14 +2025,28 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
         _atomic_write(path, out)
 
 
-def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]) -> None:
+def _patch_table(
+    path: Path,
+    table: str,
+    key: str,
+    value: str | bool | int | float | list[str],
+    *,
+    extra: dict[str, str | bool | int | float | list[str]] | None = None,
+) -> None:
     """Set ``[table] key = value`` in the TOML file.
 
     Creates the table if it is absent. Preserves comments and formatting via
     tomlkit, including the optional BOM (see module docstring). ``value`` may be
     a ``str``, a ``bool`` (serialised as ``true``/``false`` — used by the
-    autostart toggle), or a ``list[str]`` (serialised as a TOML array — used by
-    ``[team_proxy] local_providers``).
+    autostart toggle), an ``int``/``float`` (the dictation delays and caps), or
+    a ``list[str]`` (serialised as a TOML array — used by ``[team_proxy]
+    local_providers``).
+
+    ``extra`` writes further keys into the SAME table in the SAME atomic write.
+    It exists for values that must land together or not at all — the dictation
+    migration marker beside the shortcut it vouches for; two separate writes
+    could be interrupted between them and leave a shortcut the backfill would
+    then overwrite again.
     """
     path = _ensure_writable_config_path(path)
 
@@ -1427,6 +2061,8 @@ def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]
             section = tomlkit.table()
             doc[table] = section
         section[key] = value
+        for extra_key, extra_value in (extra or {}).items():
+            section[extra_key] = extra_value
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out
@@ -1663,6 +2299,14 @@ def _atomic_write(path: Path, content: str) -> None:
         if was_read_only and path.exists():
             current_mode = path.stat().st_mode
             os.chmod(path, current_mode & ~stat.S_IWRITE)
+        # Announce the write rather than leaving the reader to notice it. The
+        # parsed-TOML cache does check the file's identity, but a rewrite
+        # landing inside one filesystem timestamp tick that happens to keep the
+        # byte count — flipping a flag is exactly that — would be invisible to
+        # it, and serving a stale config after a save is the BUG-010 class of
+        # failure this module exists to prevent. In ``finally`` because a
+        # replace that raised may still have gone through.
+        clear_config_cache()
 
 
 def _write_unique_temp(path: Path, content: str) -> Path:

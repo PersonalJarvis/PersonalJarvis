@@ -46,6 +46,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "marketplace",
         "docs",
         "frontier",
+        "ide",
     }
 )
 

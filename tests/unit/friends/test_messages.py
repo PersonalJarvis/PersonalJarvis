@@ -1,4 +1,4 @@
-# === F-FRIENDS [F3] · feature/friends-section · ruben-2026-05-01 ===
+# === F-FRIENDS [F3] · feature/friends-section · maintainer-2026-05-01 ===
 """Unit tests for :class:`jarvis.friends.messages.DirectMessageStore`."""
 from __future__ import annotations
 

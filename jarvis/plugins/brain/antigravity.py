@@ -135,19 +135,53 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     return "\n".join(lines)
 
 
-def _build_argv(cli: GoogleCli, prompt: str, model: str) -> list[str]:
+# Reasoning effort sent alongside an explicit ``--model`` on the agy CLI. The
+# binary REQUIRES the pair: passing a model without an effort aborts the run.
+_DEFAULT_AGY_EFFORT = "medium"
+# The levels agy accepts (``agy --help``: low|medium|high). A request asking to
+# disable thinking maps to the lowest level agy offers, since it has no "off".
+_AGY_EFFORTS = frozenset({"low", "medium", "high"})
+
+
+def _agy_effort(req: BrainRequest | None) -> str:
+    """Effort flag for an agy run, derived from the caller's own hint."""
+    requested = str(getattr(req, "reasoning_effort", "") or "").strip().lower()
+    if requested == "none":
+        return "low"
+    return requested if requested in _AGY_EFFORTS else _DEFAULT_AGY_EFFORT
+
+
+def _build_argv(
+    cli: GoogleCli, prompt: str, model: str, effort: str = _DEFAULT_AGY_EFFORT
+) -> list[str]:
     """Build the headless argv for the resolved CLI — flags differ per binary.
 
-    * ``agy`` (Antigravity CLI 1.0.9): ``--print <prompt> --model <id>``. It has
-      neither ``--approval-mode`` nor ``-o json`` (live ``agy --help`` 2026-06-20);
-      output is plain text, which ``_parse_cli_answer`` handles via its raw
-      fallback. A read-only conversational answer needs no tool permissions.
+    * ``agy`` (Antigravity CLI): ``--print <prompt> --model <id> --effort <level>``.
+      It has neither ``--approval-mode`` nor ``-o json`` (live ``agy --help``
+      2026-06-20); output is plain text, which ``_parse_cli_answer`` handles via
+      its raw fallback. A read-only conversational answer needs no tool
+      permissions.
+
+      ``--effort`` is NOT optional next to ``--model``: a newer agy aborts with
+      ``invalid model selection (--model "..." --effort ""): ... requires
+      --effort`` and writes that line to stdout, where a caller happily reads it
+      as the answer (live 2026-07-26 — the Agentic IDE composer shipped it as a
+      composed prompt). Sending the pair is what keeps the model choice usable
+      at all on current agy.
     * ``gemini`` (Gemini CLI): read-only ``--approval-mode plan`` + ``--skip-trust``
       (so the throwaway workdir is trusted and the sandbox policy is not loaded —
       forensic 2026-06-20) + ``-o json``.
     """
     if cli.kind == "agy":
-        return [*cli.argv_prefix, "--print", prompt, "--model", model]
+        return [
+            *cli.argv_prefix,
+            "--print",
+            prompt,
+            "--model",
+            model,
+            "--effort",
+            effort,
+        ]
     return [
         *cli.argv_prefix,
         "-p",
@@ -190,6 +224,27 @@ class AntigravityBrain:
             budget = 0.0
         self._cli_timeout_s = budget if budget > 0 else _CLI_TIMEOUT_S
 
+    @staticmethod
+    def subscription_connected() -> bool:
+        """Whether this provider's Google subscription login is usable now.
+
+        The subscription resolver asks the provider class rather than importing
+        an auth service per family, so each brain answers for itself. Only a
+        personal OAuth login counts: an API key configured for this family bills
+        per token, which is precisely what a subscription caller is avoiding.
+        Never raises — a failed probe means "not connected", never a broken turn.
+        """
+        try:
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            status = GoogleCliAuthService().status()
+            return bool(
+                getattr(status, "connected", False)
+                and getattr(status, "mode", "") == "oauth-personal"
+            )
+        except Exception:  # noqa: BLE001 - a probe degrades, never raises
+            return False
+
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
 
@@ -215,7 +270,7 @@ class AntigravityBrain:
             )
 
         prompt = self._render_prompt(req)
-        argv = _build_argv(cli, prompt, self._model)
+        argv = _build_argv(cli, prompt, self._model, _agy_effort(req))
         # agy is a TUI tool: over a plain pipe it emits 0 bytes (the brain then
         # sees "no answer"). It must be driven over a real pseudo-terminal. The
         # Gemini CLI writes clean JSON to a pipe, so it keeps the fast path.

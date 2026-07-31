@@ -94,10 +94,10 @@ def test_codex_desktop_launch_is_credited() -> None:
 
 # --- codex: informational answer is spoken back (THE 019ec761 fix) ----------
 def test_codex_informational_answer_is_spoken_back() -> None:
-    stream = _codex_agent("I recommend Melbourne for its culture and coffee scene.")
+    stream = _codex_agent("I recommend Example City for its culture and coffee scene.")
     answer = readonly_answer("", stream, prompt=INFO_PROMPT)
     assert answer is not None
-    assert "Melbourne" in answer
+    assert "Example City" in answer
 
 
 def test_codex_honest_refusal_is_surfaced() -> None:

@@ -654,7 +654,15 @@ class TestListModels:
     def test_every_catalog_provider_has_a_curated_family(self) -> None:
         from jarvis.brain.model_catalog import CURATED_MODELS
 
+        from jarvis.brain.app_control import LOCAL_PROVIDERS
+
         for provider in CATALOG_PROVIDERS:
+            if provider in LOCAL_PROVIDERS:
+                # Local providers deliberately have NO curated list: their
+                # catalog is whatever the user's own server holds, and a
+                # fake fallback would advertise models nobody pulled.
+                assert not CURATED_MODELS.get(provider)
+                continue
             assert CURATED_MODELS.get(provider), f"{provider} needs a curated list"
             # Curated ids must survive the brain-model filter (no media/embeds).
             assert filter_brain_models(CURATED_MODELS[provider]) == CURATED_MODELS[provider]
@@ -669,6 +677,10 @@ class TestListModels:
             "openrouter",
             "grok",
             "nvidia",
+            # Keyless local providers (2026-07-25): live catalog = the models
+            # the user's own server holds (/api/tags resp. /v1/models).
+            "ollama",
+            "local-openai",
         }
 
 

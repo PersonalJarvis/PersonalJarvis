@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Settings,
   Mic,
@@ -7,7 +7,6 @@ import {
   Languages,
   ChevronDown,
   Check,
-  X,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
@@ -21,25 +20,15 @@ import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
+import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
+import { ScreenContextGroup } from "@/views/settings/ScreenContextGroup";
 import {
   useWakeWord,
   useLocalSpeechInstall,
   type WakeWordSaveResult,
 } from "@/hooks/useWakeWord";
-import {
-  useKeybinds,
-  chordToCombo,
-  codeToKeyToken,
-  composeCombo,
-  comboTokens,
-  validateCombo,
-  type ComboValidation,
-  type KeybindAction,
-  type KeybindsConfig,
-  type KeybindSaveResult,
-} from "@/hooks/useHotkey";
-import { KeyboardMap } from "@/views/settings/KeyboardMap";
-import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
+import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
+import { KeybindRow } from "@/views/settings/KeybindRow";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
@@ -99,17 +88,43 @@ export function SettingsView() {
         title={t("settings_view.title")}
         subtitle={t("settings_view.subtitle")}
       />
+      {/* Each group is fault-isolated. The panels are independent, each backed
+          by its own route, so one of them throwing must cost the user that one
+          panel — not the ability to change any setting at all. */}
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        <LanguagesGroup />
-        <AppSettingsGroup />
-        <PermissionsPanel />
-        <RealtimeVoiceGroup />
-        <SystemPromptGroup />
-        <WakeWordPanel />
-        <SilenceWindowGroup />
-        <VolumeGroup />
-        <AudioDevicesGroup />
-        <KeybindsPanel />
+        <SettingsGroupBoundary group="languages">
+          <LanguagesGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="app">
+          <AppSettingsGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="permissions">
+          <PermissionsPanel />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="screen-context">
+          <ScreenContextGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="realtime-voice">
+          <RealtimeVoiceGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="system-prompt">
+          <SystemPromptGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="wake-word">
+          <WakeWordPanel />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="silence-window">
+          <SilenceWindowGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="volume">
+          <VolumeGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="audio-devices">
+          <AudioDevicesGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="keybinds">
+          <KeybindsPanel />
+        </SettingsGroupBoundary>
 
         <ul className="mt-2 space-y-2">
           {rows.map((r) => (
@@ -117,7 +132,9 @@ export function SettingsView() {
           ))}
         </ul>
 
-        <OverlayTaskbarGroup />
+        <SettingsGroupBoundary group="overlay-taskbar">
+          <OverlayTaskbarGroup />
+        </SettingsGroupBoundary>
       </div>
     </div>
   );
@@ -289,7 +306,11 @@ function WakeWordPanel() {
   // Hydrate the form once the GET resolves (and whenever the config changes).
   useEffect(() => {
     if (!config) return;
-    setPhrase(config.phrase);
+    // Every field defaults. The panel derives `phrase.trim()` on the next
+    // render, so a backend that omits the field (older build, degraded route)
+    // would throw out of the render path and take the whole view with it —
+    // the same version-skew failure the keybind rows hit.
+    setPhrase(config.phrase ?? "");
     setEngine(config.engine || "auto");
     setCustomModelPath(config.custom_model_path ?? "");
     // ?? "auto" keeps the dropdown controlled even if an older backend omits it.
@@ -729,59 +750,30 @@ function WakeWordPanel() {
   );
 }
 
-/** Pretty-print a combo string ("ctrl+right_alt+j" → "Ctrl + Right-Alt + J"). */
-function formatCombo(combo: string): string {
-  const labels: Record<string, string> = {
-    ctrl: "Ctrl",
-    control: "Ctrl",
-    right_ctrl: "Right-Ctrl",
-    alt: "Alt",
-    left_alt: "Left-Alt",
-    right_alt: "Right-Alt",
-    altgr: "AltGr",
-    shift: "Shift",
-    win: "Win",
-    space: "Space",
-    // Navigation / editing cluster + numpad operators (the backend key names).
-    up: "↑",
-    down: "↓",
-    left: "←",
-    right: "→",
-    insert: "Insert",
-    delete: "Delete",
-    home: "Home",
-    end: "End",
-    page_up: "PageUp",
-    page_down: "PageDown",
-    enter: "Enter",
-    tab: "Tab",
-    backspace: "Backspace",
-    add_key: "Num +",
-    subtract_key: "Num −",
-    multiply_key: "Num *",
-    divide_key: "Num /",
-    decimal_key: "Num .",
-  };
-  // Numpad digits render as "Num 3" rather than "NUMPAD_3".
-  const numpad = (p: string) =>
-    /^numpad_[0-9]$/.test(p) ? "Num " + p.slice(7) : null;
-  return combo
-    .split("+")
-    .map((p) => labels[p] ?? numpad(p) ?? p.toUpperCase())
-    .join(" + ");
-}
-
 const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
   { action: "call", labelKey: "settings_view.keybinds.call_label" },
   { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
 ];
 
 /**
- * Editable Call and Hangup keybinds, one row each. The user clicks Record and
- * presses a combination (captured via eventToCombo), or resets to default,
- * then saves. The backend validator is the authority — an unsafe combo or a
- * collision with the other action is rejected with a reason shown as a toast.
- * A successful save surfaces a restart-required hint.
+ * Editable Call and Hangup keybinds, one row each — the two keys that start
+ * and end a conversation. The user clicks Record and presses a combination, or
+ * resets to default, then saves. The backend validator is the authority — an
+ * unsafe combo or a collision with another action is rejected with a reason
+ * shown as a toast. A successful save surfaces a restart-required hint.
+ *
+ * NO dictation row lives here. Dictation is a different act — it never reaches
+ * the brain, it types into whatever window is in front, and it now has three
+ * shortcuts of its own (hold, hands-free, paste again). Those belong together
+ * on ONE surface, and that surface is the voice section's Shortcuts tab. This
+ * panel is deliberately NOT synced with it: the two answer different questions,
+ * and a row duplicated across both would let a user change the same key in two
+ * places and see two different truths.
+ *
+ * The row component itself is shared, so the recorder, the live validation and
+ * the collision check behave identically in both places — the collision check
+ * in particular still spans EVERY action, dictation included, because the
+ * backend keeps serving the whole set. Fewer rows here, never less data.
  */
 export function KeybindsPanel() {
   const t = useT();
@@ -813,384 +805,6 @@ export function KeybindsPanel() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// The keyboard family (Mac vs PC modifier labels) is fixed for the session.
-const _KB_PLATFORM = detectKeyboardPlatform();
-
-// Each action's i18n label key — used to mark a key "already used by <action>".
-const _ACTION_LABEL_KEY: Record<KeybindAction, string> = {
-  call: "settings_view.keybinds.call_label",
-  hangup: "settings_view.keybinds.hangup_label",
-};
-
-/** The combo rendered as keycap chips ("Ctrl + F5" → [Ctrl] + [F5]). */
-function ComboChips({ combo }: { combo: string }) {
-  const parts = formatCombo(combo).split(" + ");
-  return (
-    <>
-      {parts.map((p, i) => (
-        <Fragment key={`${p}-${i}`}>
-          {i > 0 && <span className="text-muted-foreground/50">+</span>}
-          <kbd className="rounded border border-border bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] leading-none text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.35)]">
-            {p}
-          </kbd>
-        </Fragment>
-      ))}
-    </>
-  );
-}
-
-/** The localized live-validation message for the combo being built, or null. */
-function validationText(
-  v: ComboValidation,
-  t: (key: string) => string,
-): string | null {
-  if (v.status !== "error" && v.status !== "warning") return null;
-  if (v.reason === "collision") {
-    return t("settings_view.keybinds.validation.collision")
-      .replace("{action}", v.conflict.action)
-      .replace("{combo}", formatCombo(v.conflict.combo));
-  }
-  return t(`settings_view.keybinds.validation.${v.reason}`);
-}
-
-function KeybindRow({
-  action,
-  label,
-  config,
-  loading,
-  onSave,
-}: {
-  action: KeybindAction;
-  label: string;
-  config: KeybindsConfig | null;
-  loading: boolean;
-  onSave: (a: KeybindAction, h: string) => Promise<KeybindSaveResult>;
-}) {
-  const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const current = config?.keybinds[action] ?? "";
-  const def = config?.defaults[action];
-
-  const [combo, setCombo] = useState("");
-  const [capturing, setCapturing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  // Physical codes currently held — mirrored from the recorder so the on-screen
-  // keyboard lights up live as the user presses keys.
-  const [pressedCodes, setPressedCodes] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (config) setCombo(config.keybinds[action]);
-  }, [config, action]);
-
-  // Tokens already bound to the OTHER actions → marked "used" on the keyboard so
-  // the user can pick a free key (their keys "can't be free", as reported).
-  const boundTokens = useMemo(() => {
-    const out: Record<string, string> = {};
-    if (!config) return out;
-    for (const [act, c] of Object.entries(config.keybinds)) {
-      if (act === action) continue;
-      const lbl = t(_ACTION_LABEL_KEY[act as KeybindAction]);
-      for (const tok of comboTokens(c)) out[tok] = lbl;
-    }
-    return out;
-  }, [config, action, t]);
-
-  // The OTHER actions' combos keyed by their translated label, so a collision
-  // message names the action exactly the way the UI labels it.
-  const otherCombos = useMemo(() => {
-    const out: Record<string, string> = {};
-    if (!config) return out;
-    for (const [act, c] of Object.entries(config.keybinds)) {
-      if (act !== action) out[t(_ACTION_LABEL_KEY[act as KeybindAction])] = c;
-    }
-    return out;
-  }, [config, action, t]);
-
-  // Live validation — every backend rule surfaces HERE, while the user builds
-  // the combo, instead of as a cryptic post-Save error toast (the reported
-  // "I picked Arrow Up and got a weird error message" experience).
-  const validation = useMemo(
-    () => validateCombo(combo, otherCombos),
-    [combo, otherCombos],
-  );
-  const invalid = validation.status === "error";
-  const validationMsg = validationText(validation, t);
-
-  // Click-to-assign: toggle a key in/out of the combo without a physical press.
-  // Functional update — toggles dispatched before the next render must each
-  // build on the previous one, not on a stale closure combo (last-click-wins).
-  function onToggleToken(token: string) {
-    setCombo((prev) => {
-      const tokens = comboTokens(prev);
-      if (tokens.has(token)) tokens.delete(token);
-      else tokens.add(token);
-      return composeCombo(tokens);
-    });
-    setSaved(false);
-  }
-
-  // While capturing, listen on `window` (capture phase) instead of on a single
-  // button. Three reasons:
-  //   1. Focus: clicking the "Record" button puts focus on THAT button, so a
-  //      key listener living only on the display field never fired — the combo
-  //      was silently dropped. A window listener catches the chord no matter
-  //      which control has focus.
-  //   2. Chord: a held set accumulates every non-modifier key, so several keys
-  //      pressed together (WASD, F7+F8, I+Y) — which the global-hotkeys backend
-  //      registers natively (the Call default is f3+f4) — all land in the combo
-  //      instead of only the first one.
-  //   3. Commit on FULL release, not on the first keyup. We track every
-  //      physically-held key (incl. modifiers, by `event.code`) and only commit
-  //      once the user has let go of everything. Committing on the first keyup
-  //      ended the recording the instant any one key lifted, so a human pressing
-  //      a chord (whose key releases are never perfectly simultaneous, and whose
-  //      presses roll in one after another) only ever got the first key — the
-  //      reported "press several, only one is recorded" bug. Now the rule is the
-  //      natural one: "hold your keys, then let go".
-  // preventDefault on both edges also stops the keystrokes from leaking into
-  // the rest of the app while recording (the "everything lags" symptom).
-  // What Escape restores: the SAVED value (the server truth), falling back to
-  // the combo as of recording start when nothing is saved yet. Kept in a ref so
-  // the capture effect (deps: [capturing]) always reads the live value — a
-  // mid-recording save refetches the config, and restoring a stale snapshot
-  // would silently diverge the field from what the server actually has.
-  const currentRef = useRef(current);
-  currentRef.current = current;
-  const comboBeforeCapture = useRef(combo);
-
-  useEffect(() => {
-    if (!capturing) return;
-    comboBeforeCapture.current = combo; // fallback when nothing is saved yet
-    setPressedCodes(new Set()); // fresh highlight state for this gesture
-    const held = new Set<string>(); // non-modifier key tokens seen this gesture
-    const pressed = new Set<string>(); // physical event.codes currently down
-    let pending: string | null = null; // fullest chord captured so far
-    let idle: ReturnType<typeof setTimeout> | undefined; // fallback-commit timer
-
-    function commit() {
-      if (pending) {
-        setCombo(pending);
-        setSaved(false);
-        setCapturing(false);
-      }
-    }
-
-    function onKeyDown(e: KeyboardEvent) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") {
-        if (idle) clearTimeout(idle); // cancel a pending fallback commit
-        // Undo the live preview: back to the saved value (server truth).
-        setCombo(currentRef.current || comboBeforeCapture.current);
-        setCapturing(false);
-        return;
-      }
-      pressed.add(e.code);
-      setPressedCodes(new Set(pressed)); // live keyboard highlight
-      const tok = codeToKeyToken(e.code);
-      if (tok) held.add(tok);
-      const next = chordToCombo(e, held);
-      if (next) {
-        pending = next;
-        setCombo(next); // live preview as the chord grows
-        setSaved(false);
-      }
-      // Fallback: some keys — function keys especially, and any key whose
-      // release lands while the window is losing focus — do NOT reliably
-      // deliver a keyup. Without this the "commit on full release" path below
-      // would hang forever ("F5+F6 never records"). Re-arm an idle timer on
-      // every keydown; once the user stops pressing for ~900 ms, commit the
-      // chord we have even if a keyup never came.
-      if (idle) clearTimeout(idle);
-      idle = setTimeout(commit, 900);
-    }
-
-    function onKeyUp(e: KeyboardEvent) {
-      e.preventDefault();
-      e.stopPropagation();
-      pressed.delete(e.code);
-      setPressedCodes(new Set(pressed)); // live keyboard highlight
-      // Fast path: commit the instant EVERY key is released. `pending` holds
-      // the fullest chord seen during the gesture, so the release order never
-      // matters and early-lifted keys are not lost.
-      if (pressed.size === 0 && pending) {
-        if (idle) clearTimeout(idle);
-        commit();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    return () => {
-      if (idle) clearTimeout(idle);
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-    };
-  }, [capturing]);
-
-  // Clear the live highlight on the falling edge of capturing, so reopening the
-  // picker never flashes the previous chord's keys before the first new press.
-  useEffect(() => {
-    if (!capturing) setPressedCodes(new Set());
-  }, [capturing]);
-
-  async function onSaveClick() {
-    const trimmed = combo.trim().toLowerCase();
-    if (!trimmed) return;
-    setSaving(true);
-    setSaved(false);
-    try {
-      const res = await onSave(action, trimmed);
-      setSaved(res.restart_required);
-      // The save concludes the recording session. Leaving the recorder open
-      // kept a stale pre-recording snapshot around that a later Esc would
-      // "restore" — silently diverging the field from the saved value.
-      setCapturing(false);
-      pushToast("success", t("settings_view.keybinds.saved"));
-    } catch (e) {
-      // Backend rejected the combo (unsafe / collision) — show its reason.
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Immediate, one-click unbind — no staging step, mirroring the "Reset to
-  // default" link's immediacy. Bypasses onSaveClick's trimmed-empty guard,
-  // which exists to stop an in-progress recording from saving nothing.
-  async function onClearClick() {
-    setSaving(true);
-    try {
-      const res = await onSave(action, "");
-      setCombo("");
-      setCapturing(false);
-      setSaved(res.restart_required);
-      pushToast("success", t("settings_view.keybinds.cleared"));
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const dirty = !!config && combo.trim().toLowerCase() !== current;
-  const showReset = !!def && combo.trim().toLowerCase() !== def;
-
-  return (
-    <div className="rounded-md border border-border/60 bg-background/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-foreground">{label}</span>
-        {showReset && (
-          <button
-            type="button"
-            className="text-[11px] text-muted-foreground underline hover:text-foreground"
-            onClick={() => {
-              if (def) {
-                setCombo(def);
-                setSaved(false);
-              }
-            }}
-          >
-            {t("settings_view.keybinds.reset")}
-          </button>
-        )}
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          data-testid={`combo-field-${action}`}
-          onClick={() => setCapturing((c) => !c)}
-          disabled={loading}
-          className={`flex min-h-[34px] flex-1 flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
-            capturing
-              ? "border-primary bg-primary/10"
-              : "border-input bg-background"
-          }`}
-        >
-          {capturing && (
-            <span className="relative mr-1 flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-            </span>
-          )}
-          {combo ? (
-            <ComboChips combo={combo} />
-          ) : (
-            <span className="text-muted-foreground">
-              {capturing
-                ? t("settings_view.keybinds.recording")
-                : loading
-                  ? "—"
-                  : t("settings_view.keybinds.unbound")}
-            </span>
-          )}
-        </button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setCapturing((c) => !c)}
-          disabled={loading}
-        >
-          {capturing
-            ? t("settings_view.keybinds.stop")
-            : t("settings_view.keybinds.record")}
-        </Button>
-        <Button
-          size="sm"
-          onClick={onSaveClick}
-          disabled={saving || loading || !dirty || invalid}
-        >
-          {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          data-testid={`clear-keybind-${action}`}
-          aria-label={t("settings_view.keybinds.clear")}
-          title={t("settings_view.keybinds.clear")}
-          onClick={onClearClick}
-          disabled={saving || loading || !current}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      {/* ONE stable status line: the validation message when there is one,
-          the recording hint otherwise. Two separately appearing lines made the
-          keyboard below jump vertically on every combo click. */}
-      {(capturing || validationMsg) && (
-        <p
-          data-testid={validationMsg ? `keybind-validation-${action}` : undefined}
-          className={`mt-2 text-[11px] ${
-            validationMsg
-              ? validation.status === "error"
-                ? "text-destructive"
-                : "text-amber-400"
-              : "text-muted-foreground"
-          }`}
-        >
-          {validationMsg ?? t("settings_view.keybinds.recording_hint")}
-        </p>
-      )}
-      {capturing && (
-        <KeyboardMap
-          pressedCodes={pressedCodes}
-          selectedTokens={comboTokens(combo)}
-          boundTokens={boundTokens}
-          platform={_KB_PLATFORM}
-          onToggleToken={onToggleToken}
-        />
-      )}
-      {saved && (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          {t("settings_view.keybinds.restart_required")}
-        </p>
-      )}
     </div>
   );
 }

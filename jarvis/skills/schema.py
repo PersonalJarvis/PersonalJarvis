@@ -122,6 +122,17 @@ class SkillFrontmatter(BaseModel):
     # skills are dispatched as background worker briefs.
     when_to_use: str | None = None
     execution: Literal["inline", "mission"] = "inline"
+    # Deterministic auto-fire override (2026-07-25). "auto" — the default, and
+    # what every skill authored before this field has — means the derived class
+    # in jarvis/skills/autofire_policy.py decides. That default is deliberate:
+    # a pure opt-in field would leave every one of the maintainer's installed
+    # skills unable to fire while the release notes claimed the problem was
+    # solved, which is the AP-27 shape (a precision default that silently zeroes
+    # recall). "never" opts out of the deterministic relevance layer only —
+    # author-written triggers keep working. "always" promotes a tool-backed
+    # skill into the weaker band, and can NEVER promote a dispatching one; no
+    # configuration may authorize a matcher to start a background process.
+    auto_fire: Literal["auto", "always", "never"] = "auto"
 
     @field_validator("name")
     @classmethod
@@ -289,6 +300,38 @@ class SkillInvoked(Event):
     """
     skill_name: str = ""
     source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SkillMatchEvaluated(Event):
+    """Every skill-match evaluation, including the ones that matched NOTHING.
+
+    ``SkillInvoked`` answers "did a skill fire?". This answers the question that
+    was actually unanswerable: "why did nothing fire?" Emitted on every turn —
+    no match, weak match, and vetoed match alike — because a decision that
+    leaves no trace is exactly what made "my skill never triggers" impossible
+    to diagnose. Today each veto is a ``log.info`` nobody reads.
+
+    Carries the utterance HASH, never the text: the durable sink is the flight
+    recorder on disk, and a public-release scrub must not have to chase spoken
+    content through it. The readable 80-char preview stays in the in-memory ring
+    (:mod:`jarvis.skills.match_log`).
+
+    ``vetoed_by`` is a member of ``jarvis.skills.guards.VETO_REASONS`` or "".
+    """
+    utterance_hash: str = ""
+    lang: str = ""
+    source: str = "none"        # trigger | relevance | none
+    band: str = "none"          # fire | narrow | none
+    winner: str = ""
+    autofire_class: str = ""    # instruction | tool_backed | dispatching
+    vetoed_by: str = ""
+    fired: bool = False
+    shadow: bool = False
+    elapsed_us: int = 0
+    #: ``(skill_name, rounded_score)`` for the top candidates — enough to see a
+    #: near-miss without carrying the whole ranking onto the bus.
+    candidates: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

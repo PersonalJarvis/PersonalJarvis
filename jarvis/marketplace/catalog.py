@@ -21,12 +21,35 @@ class _BaseAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class InstanceUrlSpec(_BaseAuth):
+    """A per-user base address, for services the user hosts themselves.
+
+    Home Assistant, Jellyfin, Nextcloud, Paperless and Immich have no fixed
+    public endpoint: the address IS user data, so the catalog can only describe
+    the field, never fill it. When present, the connect dialog asks for the
+    address alongside the token and `validation_endpoint` is treated as a path
+    RELATIVE to it.
+    """
+
+    label: str
+    placeholder: str
+    # Appended to the entered address to check the credential works. Kept
+    # separate from the address so a user pasting a trailing slash, a path, or
+    # the full URL of some page still validates.
+    validation_path: str = "/"
+    help_md: str | None = None
+
+
 class PatPasteAuth(_BaseAuth):
     mode: Literal["pat_paste"]
     token_creation_url: str
     token_prefix: str
     validation_endpoint: str
     instruction_md: str
+    # Set for self-hosted services: the user supplies the address, so
+    # `validation_endpoint` above is ignored in favour of
+    # `instance_url.validation_path` appended to what they entered.
+    instance_url: InstanceUrlSpec | None = None
     # How to present the pasted token when validating + wiring downstream:
     #   bearer        -> Authorization: Bearer <token>  (GitHub/Vercel/Supabase)
     #   bot           -> Authorization: Bot <token>      (Discord)
@@ -92,20 +115,63 @@ AuthConfig = Annotated[
 ]
 
 
-Category = Literal["Developer", "Productivity", "Communication"]
+# Display order for the Plugins view, served to the frontend alongside the
+# catalog. `category` is deliberately a plain string, NOT a Literal: the value
+# crosses Python -> JSON -> TS -> the section grouping, and pinning it in every
+# layer is the multi-layer drift class this repo has paid for four times
+# (docs/anti-drift-three-layer.md). With the order declared here and the
+# frontend appending anything it does not recognize, adding a category is a
+# backend-only change. `test_catalog_seed` asserts every category the shipped
+# seed uses appears below, so a typo is still caught — just not by breaking a
+# user's local catalog on upgrade.
+CATEGORY_ORDER: tuple[str, ...] = (
+    "Home & Devices",
+    "Lists & Tasks",
+    "Calendar & Mail",
+    "Messaging",
+    "Knowledge & Reading",
+    "Media & Creativity",
+    "Files & Photos",
+    "Developer",
+)
+
+
+# How long a connection survives once made — the honest answer to "this must
+# never expire", surfaced on the card BEFORE the user connects.
+#   permanent        - the credential has no expiry mechanism at all
+#   self_renewing    - it expires, but background refresh keeps it alive
+#                      indefinitely (the common OAuth case)
+#   provider_limited - the provider forces re-authorization on a schedule we
+#                      cannot extend; `longevity_note` must say how often
+Longevity = Literal["permanent", "self_renewing", "provider_limited"]
 
 
 class PluginSpec(_BaseAuth):
     id: str
     display_name: str
     description: str
-    category: Category
+    category: str
     logo_slug: str
     logo_color: str | None = None
     # When set, the frontend uses this URL instead of the simpleicons CDN.
     # Use for brands whose original logo is multicolor (e.g. Slack's hash).
     logo_url: str | None = None
     featured: bool = False
+    # Honest connection lifetime, rendered as a badge on the card. Defaulted so
+    # every already-shipped entry stays valid; each catalog entry should still
+    # state it explicitly rather than inherit the default.
+    longevity: Longevity = "self_renewing"
+    # One plain sentence shown next to the badge — mandatory in spirit for
+    # `provider_limited` ("Google requires re-approval every 7 days while the
+    # OAuth app is in Testing mode"), optional otherwise.
+    longevity_note: str | None = None
+    # Which `<family>_oauth_client_id` secret pair overrides this plugin's
+    # catalog client, for providers where the downloader must register their
+    # own OAuth app. Lives here so a new plugin stays a catalog-only change:
+    # this replaced a hand-maintained map that was duplicated in the connect
+    # helper AND the frontend, where a missing entry silently removed the
+    # "use your own OAuth client" affordance.
+    oauth_client_family: str | None = None
     auth: AuthConfig
     # Installer/transport metadata for the eventual MCP-spawn wave. The route
     # layer does not consume this today, but the catalog already carries it,

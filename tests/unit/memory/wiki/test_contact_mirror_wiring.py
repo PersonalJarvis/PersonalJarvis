@@ -74,6 +74,6 @@ async def test_cleanup_detaches_everything(tmp_path):
         store=store,
     )
     cleanup()
-    contact = store.put(name="Laura")
+    contact = store.put(name="Casey")
     await asyncio.sleep(0.1)
     assert not (vault / "people" / f"{contact.slug}.md").exists()

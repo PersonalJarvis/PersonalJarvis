@@ -66,14 +66,19 @@ def get_spec(provider_id: str) -> Any:
 SWITCHABLE_TIERS: frozenset[str] = frozenset({"brain", "tts", "stt", "subagent"})
 
 # Local providers allowed to stay active in the airgapped privacy profile.
-# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
-# "faster-whisper" STT dictation provider was removed from the user-selectable
-# catalog (see provider_spec.py). With no local provider left, the airgapped
-# profile admits no provider switch — an honest state, not a regression:
-# airgapped means "local only", and there is currently no local provider to
-# switch TO. (Wake still runs its own local Whisper off this list.) Lives HERE
-# (not in provider_routes) so every switch path shares the one lock.
-LOCAL_PROVIDERS: frozenset[str] = frozenset()
+# SPEC-DERIVED since 2026-07-25 (local-first mandate): every provider card
+# declaring ``auth_mode == "none"`` is local by definition — ollama and
+# local-openai today, future local STT/TTS cards automatically — never a
+# hand-maintained name list (AP-21/22). (Wake still runs its own local
+# Whisper off this list.) Lives HERE (not in provider_routes) so every
+# switch path shares the one lock.
+def _spec_local_providers() -> frozenset[str]:
+    from jarvis.ui.web.provider_spec import PROVIDERS
+
+    return frozenset(s.id for s in PROVIDERS if s.auth_mode == "none")
+
+
+LOCAL_PROVIDERS: frozenset[str] = _spec_local_providers()
 
 # Maps a provider id to the credential-manager *provider slot* used by
 # ``cfg.get_provider_secret`` — needed where one key backs several provider ids
@@ -99,12 +104,11 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "codex": "codex",
 }
 
-# Local providers that need no credential at all. Empty since v1.0.1: the only
-# entry, the local "faster-whisper" STT dictation provider, was removed from the
-# user-selectable catalog (see provider_spec.py). is_credential_present() still
-# reports auth_mode=="none" providers as configured, so a future local provider
-# needs no change here.
-_NO_CREDENTIAL_PROVIDERS: frozenset[str] = frozenset()
+# Local providers that need no credential at all — the same spec-derived set
+# as LOCAL_PROVIDERS (auth_mode "none" IS the definition of "no credential").
+# is_credential_present() independently reports auth_mode=="none" providers as
+# configured, so the two can never disagree.
+_NO_CREDENTIAL_PROVIDERS: frozenset[str] = LOCAL_PROVIDERS
 
 # A stored secret must be at least this long before we reveal a 3+3 preview.
 # Below it, 6 revealed characters would expose too large a fraction of the key,
@@ -181,6 +185,32 @@ def masked_secret_preview(provider_id: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Credential presence (single source of truth — also used by provider_routes)
 # ----------------------------------------------------------------------
+
+
+def local_readiness_error(spec: ProviderSpec) -> str | None:
+    """Why an on-device provider cannot run yet — or ``None`` when it can.
+
+    Returns ``None`` for every cloud provider too, so a caller can apply it
+    unconditionally: locality is decided by the local-model catalog, never by a
+    provider name (AP-21).
+
+    This exists because "needs no credential" and "is usable" are different
+    facts that an ``auth_mode == "none"`` check silently conflates. An on-device
+    provider needs its engine installed and its weights downloaded, and neither
+    is implied by the absence of an API key — the exact conflation that let a
+    local recogniser present itself as ready on a machine where nothing had been
+    installed.
+    """
+    try:
+        from jarvis.speech.local_models import local_status
+
+        state = local_status(getattr(spec, "id", "") or "")
+    except Exception as exc:  # noqa: BLE001 — an unavailable probe blocks nothing
+        log.debug("Local readiness probe failed (%s); treating as not local.", exc)
+        return None
+    if state is None or state.ready:
+        return None
+    return state.detail
 
 
 def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
@@ -464,6 +494,19 @@ async def apply_provider_switch(
                 f"{spec.label} is not configured — its API key is missing. "
                 "Add it in the Settings tab first, then switch."
             ),
+        }
+    # The on-device equivalent of the check above, and it has to be its own
+    # step: ``is_credential_present`` answers True for every keyless provider by
+    # definition, so without this an engine that was never installed would sail
+    # through here and only fail later, silently, on the first utterance.
+    # Enforced at this one lock so the voice gate, the CLI and the brain tool
+    # are covered, not just the REST route.
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        return {
+            "ok": False,
+            "error_kind": "not_installed",
+            "error": not_installed,
         }
 
     if tier == "brain":

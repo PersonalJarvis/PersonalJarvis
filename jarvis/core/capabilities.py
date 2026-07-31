@@ -292,6 +292,16 @@ class CapabilityRegistry:
                     return True
         return False
 
+    #: Prompt-render budget. Every MCP tool and CLI registers a capability,
+    #: so an unbounded render duplicated the whole tool surface inside the
+    #: system prompt on every turn (2026-07-28 cost audit) while every
+    #: neighbouring prompt section carries a budget. Overflow is announced
+    #: with an "… and N more" tail — never a silent hard slice, because this
+    #: block also anchors the "never invent tools" rule and the evidence
+    #: gate.
+    _RENDER_MAX_ENTRIES = 40
+    _RENDER_MAX_DESCRIPTION_CHARS = 160
+
     def render_for_prompt(self, lang: Literal["de", "en"] = "de") -> str:
         """Render the registered capabilities as a bullet list for the system
         prompt, replacing the old hard-coded ``NUTZE: search_web`` block.
@@ -304,7 +314,22 @@ class CapabilityRegistry:
         caps = self.all()
         if not caps:
             return "No capabilities registered."
-        lines = [f"• {cap.id} — {cap.description}" for cap in caps]
+        shown = caps[: self._RENDER_MAX_ENTRIES]
+        lines = []
+        for cap in shown:
+            description = str(cap.description or "")
+            if len(description) > self._RENDER_MAX_DESCRIPTION_CHARS:
+                description = (
+                    description[: self._RENDER_MAX_DESCRIPTION_CHARS - 1] + "…"
+                )
+            lines.append(f"• {cap.id} — {description}")
+        hidden = len(caps) - len(shown)
+        if hidden > 0:
+            hidden_ids = ", ".join(cap.id for cap in caps[len(shown) :])
+            lines.append(
+                f"… and {hidden} more capabilities (available, just not "
+                f"described here): {hidden_ids}"
+            )
         return "\n".join(lines)
 
 

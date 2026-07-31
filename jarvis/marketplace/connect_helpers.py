@@ -41,6 +41,11 @@ _PLACEHOLDER_MARKERS: tuple[str, ...] = (
 # (per the catalog hint "shares the Google client with Drive"); slack and asana
 # each get their own. DCR plugins (notion/linear/cloudflare) register their client
 # dynamically and are intentionally absent — they have no static client to supply.
+#
+# The catalog's `oauth_client_family` field is now authoritative; this table is
+# the compatibility fallback for a user's `data/` override written before that
+# field existed. Do NOT add new plugins here — put the family in the catalog
+# entry, which is the whole point of moving it there.
 _OAUTH_CLIENT_FAMILY: dict[str, str] = {
     "gmail": "google",
     "google_drive": "google",
@@ -48,6 +53,24 @@ _OAUTH_CLIENT_FAMILY: dict[str, str] = {
     "slack": "slack",
     "asana": "asana",
 }
+
+
+def oauth_client_family(plugin_id: str) -> str | None:
+    """Return the BYO-OAuth-client secret family for a plugin, or ``None``.
+
+    Catalog field first, legacy table second. One resolver so the connect
+    route, the refresh scheduler and the frontend cannot drift apart.
+    """
+    try:
+        from jarvis.marketplace.catalog_data import load_catalog
+
+        spec = load_catalog().by_id(plugin_id)
+    except Exception:  # noqa: BLE001 - a broken catalog must not break refresh
+        spec = None
+    declared = getattr(spec, "oauth_client_family", None) if spec else None
+    if declared:
+        return str(declared)
+    return _OAUTH_CLIENT_FAMILY.get(plugin_id)
 
 
 def is_placeholder_client_id(value: str | None) -> bool:
@@ -75,7 +98,7 @@ def resolve_pkce_client(
     the catalog value (``or`` fallback), so a placeholder catalog client still
     builds a handler and the scheduler can honestly flag needs_reauth.
     """
-    family = _OAUTH_CLIENT_FAMILY.get(plugin_id)
+    family = oauth_client_family(plugin_id)
     if family is None:
         return catalog_client_id, catalog_client_secret
     from jarvis.core.config import get_secret

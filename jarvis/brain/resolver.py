@@ -31,12 +31,14 @@ Cache strategy: singleton cache, invalidated on ``ConfigReloaded`` event
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
 from jarvis.brain.provider_registry import BrainProviderRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from jarvis.core.bus import EventBus
     from jarvis.core.config import JarvisConfig
     from jarvis.core.protocols import Brain
@@ -149,6 +151,395 @@ def resolve_frontier_brain(
     )
 
 
+def frontier_brain_candidates(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Iterator[Brain]:
+    """Instantiable frontier brains along the fallback chain, one per family.
+
+    ``resolve_frontier_brain`` answers "give me ONE brain" and crosses families
+    only when a stage cannot be *instantiated*. That gate misses the ordinary
+    depleted-key case: most providers construct their client happily without
+    checking the balance and only fail at CALL time (429/402). A caller that
+    wants the cross-family promise of AP-22 to hold at call time iterates this
+    instead: try the first candidate, and when the request itself fails, move
+    to the next FAMILY — a second model behind the same depleted key would
+    just fail the same way, so each provider appears at most once.
+
+    Lazy on purpose: a candidate is instantiated only when the caller reaches
+    it, and the shared cache keeps repeated walks free. Yields nothing when no
+    stage can be instantiated — the caller's "no provider" path, not an error.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("frontier_brain_candidates: chain could not be built", exc_info=True)
+        return
+    yielded: set[str] = set()
+    for provider, model in chain:
+        if provider in yielded:
+            continue
+        cache_key = (provider, model or "")
+        brain = _cache.get(cache_key)
+        if brain is None:
+            try:
+                brain = _get_registry().instantiate(
+                    provider, **({"model": model} if model else {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.info(
+                    "frontier_brain_candidates: %s/%s not instantiable (%s)",
+                    provider, model or "<default>", type(exc).__name__,
+                )
+                continue
+            _cache[cache_key] = brain
+        yielded.add(provider)
+        yield brain
+
+
+def _is_fast_tier(config: JarvisConfig, provider: str, model: str | None) -> bool:
+    """Whether ``(provider, model)`` is this install's latency-first tier.
+
+    Classification comes from the tier tables and from the user's OWN router
+    configuration — never from a model name or a provider name (AP-21). A model
+    the tables do not know is treated as qualified: we filter what we know, we
+    do not guess from a name like "flash" or "mini", because that is exactly the
+    name-based gating that breaks silently for every provider we did not think
+    of.
+    """
+    name = (model or "").strip()
+    if not name:
+        return False
+
+    router_cfg = getattr(getattr(config, "brain", None), "router", None)
+    if (
+        getattr(router_cfg, "provider", None) == provider
+        and (getattr(router_cfg, "model", None) or "").strip() == name
+    ):
+        return True
+
+    fast_default = TIER_DEFAULTS_BY_PROVIDER.get("router", {}).get(provider, "")
+    deep_default = TIER_DEFAULTS_BY_PROVIDER.get("deep", {}).get(provider, "")
+    # A provider whose fast and deep defaults coincide has only one model worth
+    # having; filtering it away would leave that provider with nothing.
+    return bool(fast_default) and name == fast_default and name != deep_default
+
+
+def resolve_quality_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """A Brain for work that must not be done by a small model, or None.
+
+    ``resolve_frontier_brain`` walks the whole fallback chain, and that chain
+    deliberately ends in small, fast, cheap models so a core path never dies.
+    For callers whose OUTPUT is the product rather than a step towards it, that
+    trade is wrong: the Agentic IDE's prompt composer writes the brief a coding
+    agent then works from, and a brief written by a mini model on a depleted
+    primary is worse than an honestly plain deterministic one — and worse
+    *invisibly*, which is the part that matters. Nobody inspects a prompt that
+    looks fine.
+
+    So this resolver skips the latency-first stages and returns None when none
+    of the remaining ones can be instantiated, leaving the caller to degrade
+    openly. Never raises: None is the answer, not an error.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("resolve_quality_brain: chain could not be built", exc_info=True)
+        return None
+
+    for provider, model in chain:
+        if _is_fast_tier(config, provider, model):
+            log.debug(
+                "resolve_quality_brain: skipping %s/%s (latency-first tier)",
+                provider, model,
+            )
+            continue
+        cache_key = (provider, model or "")
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            brain = _get_registry().instantiate(
+                provider, **({"model": model} if model else {}),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.info(
+                "resolve_quality_brain: %s/%s not instantiable (%s)",
+                provider, model or "<default>", type(exc).__name__,
+            )
+            continue
+        _cache[cache_key] = brain
+        return brain
+
+    log.info("resolve_quality_brain: no quality-tier provider reachable")
+    return None
+
+
+def _tool_model_selection(config: JarvisConfig) -> tuple[str, str | None]:
+    """The Tool Model the user picked: ``(provider, model)``.
+
+    Mirrors what the Tool Model settings tab persists and displays, so the two
+    can never disagree about which model the user chose. Both halves are read
+    the same defensive way that tab reads them:
+
+    * The tier carries the provider, under the canonical ``tool_model`` name
+      with ``computer_use`` still accepted as its read-time alias.
+    * The MODEL is a per-provider override — a user who picks a provider
+      usually means "that provider's tool model", not its chat default — with
+      the provider's plain ``model`` as the floor when no override is set.
+
+    ``("auto", None)`` means the user never pinned one; the caller decides what
+    that is worth. Never raises: a malformed section reads as unset.
+    """
+    try:
+        brain_cfg = config.brain
+        tier = getattr(brain_cfg, "tool_model", None) or getattr(
+            brain_cfg, "computer_use", None
+        )
+        provider = str(getattr(tier, "provider", None) or "auto").strip() or "auto"
+        if provider == "auto":
+            return "auto", None
+        provider_cfg = brain_cfg.providers.get(provider)
+        model = (
+            getattr(provider_cfg, "tool_model", None)
+            or getattr(provider_cfg, "cu_model", None)
+            or getattr(provider_cfg, "model", None)
+        )
+        return provider, (str(model).strip() or None) if model else None
+    except Exception:  # noqa: BLE001 - an unreadable section is an unset one
+        log.info("tool-model selection could not be read", exc_info=True)
+        return "auto", None
+
+
+def resolve_tool_model_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """The user's configured Tool Model as a Brain, or None.
+
+    Exists because "which model does my own work" is a question the user has
+    already answered once, in the Tool Model tab, and callers whose OUTPUT is
+    the product should be able to honour that answer instead of running a
+    separate chain that lands somewhere else. The Agentic IDE's prompt writer
+    is the first: a user who deliberately pointed the Tool Model at a strong
+    model and then found their task briefs written by whichever coding CLI
+    happened to be signed in has been given a setting that does not settle
+    anything.
+
+    Deliberately NOT a chain. A tier resolver walks candidates until one
+    answers, which is right when the goal is that a core path never dies; here
+    the goal is the opposite — do what the user picked, or say you could not.
+    Falling through to a different model would reintroduce exactly the silent
+    substitution this resolver exists to end.
+
+    Returns None when no Tool Model is pinned (``auto``), when the pinned
+    provider is not installed in this build, or when it cannot be instantiated
+    — a missing key being the ordinary case. Never raises.
+    """
+    _ensure_bus_subscription(bus)
+    provider, model = _tool_model_selection(config)
+    if provider == "auto":
+        log.debug("resolve_tool_model_brain: no Tool Model pinned")
+        return None
+
+    cache_key = (provider, model or "")
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        brain = _get_registry().instantiate(
+            provider, **({"model": model} if model else {}),
+        )
+    except Exception as exc:  # noqa: BLE001 - a caller must degrade, not crash
+        log.info(
+            "resolve_tool_model_brain: %s/%s not instantiable (%s)",
+            provider, model or "<default>", type(exc).__name__,
+        )
+        return None
+    _cache[cache_key] = brain
+    return brain
+
+
+def resolve_vision_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """A Brain that can actually LOOK at an image, or None.
+
+    Gated purely on the ``supports_vision`` capability (AP-21) — never on a
+    provider name or a model id. Several providers in a normal chain are
+    text-only (a subscription CLI, a local model), and handing one an image
+    does not fail loudly: it answers about the words around the picture as if
+    it had seen it. That is the failure mode this resolver exists to prevent,
+    so a provider is skipped unless it declares the capability.
+
+    ``supports_vision`` is read defensively rather than assumed True: a
+    provider that does not declare it at all is treated as blind, because the
+    caller's whole job here is to describe a picture and a confident
+    description of an image nobody looked at is worse than no description.
+
+    Never raises. None means "nothing here can see", and the caller says so
+    instead of pretending otherwise.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("resolve_vision_brain: chain could not be built", exc_info=True)
+        return None
+
+    for provider, model in chain:
+        cache_key = (provider, model or "")
+        brain = _cache.get(cache_key)
+        if brain is None:
+            try:
+                brain = _get_registry().instantiate(
+                    provider, **({"model": model} if model else {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.info(
+                    "resolve_vision_brain: %s/%s not instantiable (%s)",
+                    provider, model or "<default>", type(exc).__name__,
+                )
+                continue
+            _cache[cache_key] = brain
+        if not getattr(brain, "supports_vision", False):
+            log.debug(
+                "resolve_vision_brain: skipping %s/%s (supports_vision is not set)",
+                provider, model or "<default>",
+            )
+            continue
+        return brain
+
+    log.info("resolve_vision_brain: no vision-capable provider reachable")
+    return None
+
+
+def _subscription_connected(provider: str) -> bool:
+    """Whether ``provider``'s subscription login is usable right now.
+
+    Asks the provider CLASS through the registry rather than importing an auth
+    service per family here, so a subscription brain added later answers for
+    itself with no edit to this module (AP-21). A provider that offers no probe
+    is treated as connected: the instantiation that follows is the real gate, a
+    false "yes" costs one wasted candidate, and a false "no" would hide a
+    working subscription the user is paying for. The drift guard in
+    ``tests/unit/brain/test_resolve_subscription_brain.py`` is what keeps that
+    lenient default from quietly becoming the normal case.
+    """
+    try:
+        brain_cls = _get_registry().get_class(provider)
+    except Exception:  # noqa: BLE001 - an unloadable plugin is simply not usable
+        return False
+    probe = getattr(brain_cls, "subscription_connected", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe())
+    except Exception:  # noqa: BLE001 - a probe must never break a turn
+        log.info("resolve_subscription_brain: %s probe failed", provider, exc_info=True)
+        return False
+
+
+def _subscription_candidates(config: JarvisConfig) -> list[str]:
+    """Registered brain providers billed against a subscription, in card order.
+
+    Membership comes from the provider cards' billing mode — never a name list,
+    so a fourth coding CLI joins the chain by shipping a card (AP-21/AP-22).
+    ``config`` is accepted for signature symmetry with the other helpers here.
+    """
+    from jarvis.ui.web.provider_spec import PROVIDERS, provider_billing
+
+    available = set(_get_registry().available())
+    return [
+        spec.id
+        for spec in PROVIDERS
+        if spec.tier == "brain"
+        and spec.id in available
+        and provider_billing(spec).startswith("subscription")
+    ]
+
+
+def resolve_subscription_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+    cli_timeout_s: float | None = None,
+) -> Brain | None:
+    """A Brain billed against a connected subscription, or None.
+
+    For callers whose output IS the product and who are already waiting seconds
+    — the Agentic IDE's prompt composer and work splitter. It exists so those
+    callers can spend a plan the user already pays for instead of a per-token
+    key, and so a downloader whose ONLY credential is a coding subscription
+    stops falling through to the deterministic prompt on every instruction.
+
+    Never raises: None means "no subscription can do this", and the caller falls
+    through to the API-billed resolver and finally to its own plain layer.
+
+    **A candidate that cannot honour ``structured_prompts`` is SKIPPED, never
+    used conversationally.** A CLI brain in conversational mode replaces the
+    caller's contract with "answer in one to three short sentences" and returns
+    three fluent sentences that read like a valid brief. That is strictly worse
+    than returning None, because the caller's own fallback is at least honest
+    about being plain.
+
+    Deliberately does NOT populate ``_cache``: its key is ``(provider, model)``
+    and is shared with the voice-tier resolvers, so a cached structured instance
+    would later be handed to a spoken turn built to expect the conversational
+    wrapper.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        candidates = _subscription_candidates(config)
+    except Exception:  # noqa: BLE001 - a spec problem must not kill the caller
+        log.info("resolve_subscription_brain: candidates unavailable", exc_info=True)
+        return None
+
+    for provider in candidates:
+        if not _subscription_connected(provider):
+            log.debug("resolve_subscription_brain: %s not signed in", provider)
+            continue
+        kwargs: dict[str, Any] = {"structured_prompts": True}
+        model = _deep_model_for(config, provider)
+        if model:
+            kwargs["model"] = model
+        if cli_timeout_s and cli_timeout_s > 0:
+            kwargs["cli_timeout_s"] = float(cli_timeout_s)
+        try:
+            brain = _get_registry().instantiate(provider, **kwargs)
+        except TypeError:
+            # Signature probe, not a name check (AP-21): no structured mode
+            # means no brief, so skip rather than degrade invisibly.
+            log.info(
+                "resolve_subscription_brain: %s cannot forward a system "
+                "contract — skipping rather than answering conversationally",
+                provider,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001
+            log.info(
+                "resolve_subscription_brain: %s not instantiable (%s)",
+                provider,
+                type(exc).__name__,
+            )
+            continue
+        log.info("resolve_subscription_brain: writing on %s", provider)
+        return brain
+
+    log.info("resolve_subscription_brain: no connected subscription reachable")
+    return None
+
+
 # ----------------------------------------------------------------------
 # Internal — Chain-Building
 # ----------------------------------------------------------------------
@@ -226,6 +617,15 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
     chain.extend(
         _reachable_keyed_families(config, exclude=frozenset(chain_providers)),
     )
+
+    # Stage 6 — keyless local tail (local-first mandate 2026-07-25): the
+    # registered local brains (spec-declared auth_mode "none": ollama,
+    # local-openai) close the chain, so a ZERO-key install still lands every
+    # background resolve on its own hardware. Deliberately AFTER the keyed
+    # families — a cloud family the user set up stays preferred, and a dead
+    # local server just fast-fails on its 2 s connect timeout.
+    chain_providers = {provider for provider, _ in chain}
+    chain.extend(_local_tail(config, exclude=frozenset(chain_providers)))
 
     # Filter duplicates while preserving order
     seen: set[tuple[str, str | None]] = set()
@@ -318,6 +718,30 @@ def _reachable_keyed_families(
         if not _provider_reachable(config, provider):
             continue
         tail.append((provider, _deep_model_for(config, provider)))
+    return tail
+
+
+def _local_tail(
+    config: JarvisConfig, *, exclude: frozenset[str] = frozenset(),
+) -> list[tuple[str, str | None]]:
+    """Keyless local brains as the chain's last resort (local-first mandate).
+
+    Membership is SPEC-driven — every registered brain provider whose card
+    declares ``auth_mode == "none"`` in ``jarvis.ui.web.provider_spec`` —
+    never a hardcoded name list (AP-21/22). Card order is preserved.
+    OAuth-subscription brains (codex/antigravity) declare their own auth
+    modes and can never leak in here.
+    """
+    from jarvis.ui.web.provider_spec import PROVIDERS
+
+    available = set(_get_registry().available())
+    tail: list[tuple[str, str | None]] = []
+    for spec in PROVIDERS:
+        if spec.tier != "brain" or spec.auth_mode != "none":
+            continue
+        if spec.id in exclude or spec.id not in available:
+            continue
+        tail.append((spec.id, _deep_model_for(config, spec.id)))
     return tail
 
 

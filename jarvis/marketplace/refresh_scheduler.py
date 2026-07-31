@@ -122,6 +122,87 @@ def _reload_before_refresh_commit(
     )
 
 
+# A rotated refresh token is a point of no return: the provider has already
+# retired the previous one. Give the local store several attempts before
+# accepting that it is lost — the write is local and its failures (a
+# momentarily locked keyring, a contended credential store) are usually
+# transient.
+_ROTATED_SAVE_ATTEMPTS = 4
+_ROTATED_SAVE_BACKOFF_SECONDS = 0.25
+
+
+async def _save_with_retries(
+    store: TokenStore, plugin_id: str, tokens: Tokens, *, rotated: bool
+) -> None:
+    """Persist a refreshed token, retrying harder when rotation made it unique.
+
+    Async so the backoff yields the event loop instead of blocking it — this
+    runs inside the voice-capable process, where a blocking sleep would stall
+    unrelated work.
+    """
+    attempts = _ROTATED_SAVE_ATTEMPTS if rotated else 1
+    delay = _ROTATED_SAVE_BACKOFF_SECONDS
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            store.save(plugin_id, tokens)
+            if attempt:
+                log.info(
+                    "plugin %s rotated token stored on attempt %d",
+                    plugin_id,
+                    attempt + 1,
+                )
+            return
+        except Exception as exc:  # noqa: BLE001 - retried below, re-raised at the end
+            last = exc
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay)
+                delay *= 2
+    assert last is not None
+    raise last
+
+
+def _handle_lost_rotation(
+    plugin_id: str,
+    store: TokenStore,
+    current: Tokens,
+    exc: Exception,
+) -> RefreshAttempt:
+    """React to a rotated refresh token we could not store.
+
+    This is the one failure that can destroy a connection permanently. Several
+    providers (Todoist documents it explicitly) treat a replay of an already
+    rotated refresh token as theft and revoke EVERY token for that account,
+    which costs the user a full re-consent. The stored token is now the retired
+    one, so simply "retrying later" would present exactly that replay.
+
+    So the connection is marked for re-authorization immediately: the scheduler
+    skips a ``needs_reauth`` entry, the card shows Reconnect, and one manual
+    sign-in costs far less than a provider-side mass revocation. Being wrong
+    here is cheap; being silent is not.
+    """
+    log.error(
+        "plugin %s: the provider rotated its refresh token but it could not be "
+        "stored (%s). The stored token is retired -- reusing it risks a "
+        "provider-side revocation of every token for this account, so the "
+        "connection is flagged for reconnect instead.",
+        plugin_id,
+        exc,
+    )
+    try:
+        store.save(plugin_id, dataclasses.replace(current, needs_reauth=True))
+    except Exception as mark_exc:  # noqa: BLE001 - the store is evidently broken
+        # Nothing durable can be written at all. Say so loudly rather than
+        # leave a retry loop that would keep replaying the retired token.
+        log.error(
+            "plugin %s: could not even flag the connection for reconnect (%s). "
+            "Reconnect it manually.",
+            plugin_id,
+            mark_exc,
+        )
+    return RefreshAttempt(REVOKED)
+
+
 async def refresh_plugin_token(
     plugin_id: str,
     store: TokenStore,
@@ -224,15 +305,21 @@ async def refresh_plugin_token(
             extra=merged_extra,
             needs_reauth=False,
         )
+        rotated = bool(refreshed.refresh) and refreshed.refresh != current.refresh
         try:
-            store.save(plugin_id, saved)
+            await _save_with_retries(store, plugin_id, saved, rotated=rotated)
         except Exception as exc:  # noqa: BLE001 - isolate storage failure
-            log.warning(
-                "plugin %s refreshed token save failed, will retry: %s",
-                plugin_id,
-                exc,
-            )
-            return RefreshAttempt(FAILED)
+            if not rotated:
+                # The provider did not rotate, so the stored refresh token is
+                # still the live one. Losing this write costs nothing but a
+                # short-lived access token; the next cycle retries safely.
+                log.warning(
+                    "plugin %s refreshed token save failed, will retry: %s",
+                    plugin_id,
+                    exc,
+                )
+                return RefreshAttempt(FAILED)
+            return _handle_lost_rotation(plugin_id, store, current, exc)
         return RefreshAttempt(
             REFRESHED,
             usable=True,

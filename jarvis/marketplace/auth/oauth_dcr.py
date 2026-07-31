@@ -81,6 +81,10 @@ class _PendingFlow:
     token_endpoint: str
     client_id: str
     resource: str | None = None
+    # RFC 7009 endpoint from discovery, persisted with the tokens so a later
+    # disconnect can actually end the grant at the provider instead of only
+    # deleting our local copy.
+    revocation_endpoint: str | None = None
 
 
 def _well_known_candidates(issuer: str) -> list[str]:
@@ -294,6 +298,7 @@ class HostedMcpDcrHandler:
             token_endpoint=meta["token_endpoint"],
             client_id=client_id,
             resource=resource,
+            revocation_endpoint=meta.get("revocation_endpoint") or None,
         )
 
         return AuthSession(
@@ -385,6 +390,10 @@ class HostedMcpDcrHandler:
         extra["token_endpoint"] = pending.token_endpoint
         if pending.resource:
             extra["resource"] = pending.resource
+        if pending.revocation_endpoint:
+            # A DCR client is ephemeral, so its revocation endpoint is only
+            # knowable from the discovery document used at connect time.
+            extra["revocation_endpoint"] = pending.revocation_endpoint
         return Tokens(
             access=access,
             refresh=refresh,

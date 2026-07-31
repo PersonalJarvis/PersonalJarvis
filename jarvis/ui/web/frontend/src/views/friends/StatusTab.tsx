@@ -1,4 +1,4 @@
-// === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
+// === F-FRIENDS [F4] · feature/friends-section · maintainer-2026-05-01 ===
 import { Loader2, Radio, ShieldAlert } from "lucide-react";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";

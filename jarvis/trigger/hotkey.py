@@ -47,7 +47,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
+from typing import Any
 
 # Relocated Windows machinery (AD-7). Imported here so callers that historically
 # did ``from jarvis.trigger.hotkey import _normalize_combo`` keep working, and so
@@ -58,6 +60,8 @@ from jarvis.trigger.backends import HotkeyBackend, make_hotkey_backend
 from jarvis.trigger.backends import global_hotkeys as _gh_backend
 from jarvis.trigger.backends.global_hotkeys import (
     _KEY_MAP,  # noqa: F401 — re-exported for backwards compatibility
+    MOUSE_BUTTON_TOKENS,
+    _canonical_token,
     _normalize_combo,
     _reset_checker_state_for_tests,
 )
@@ -85,6 +89,14 @@ _MODIFIER_TOKENS = frozenset(
         "ctrl", "control", "right_ctrl", "right_control",
         "alt", "right_alt", "left_alt", "altgr",
         "shift", "win", "window",
+        # macOS Command. The Quartz backend has always decoded it
+        # (``_FLAG_MASK_TO_TOKEN`` maps ``kCGEventFlagMaskCommand`` -> ``cmd``),
+        # but it was missing here, so the validator treated Command as an
+        # ordinary KEY. Consequence: every macOS-critical chord passed —
+        # ``cmd+q``, ``cmd+w``, ``cmd+c``, ``cmd+space`` were all accepted while
+        # their Windows equivalents were refused, and a user could bind "quit
+        # the focused app" as their dictation key.
+        "cmd", "command", "meta", "super",
     }
 )
 
@@ -102,59 +114,314 @@ _SOLO_SAFE_KEYS = frozenset({f"f{i}" for i in range(1, 25)}) | frozenset(
 )
 
 
-def validate_hotkey(combo: str) -> tuple[bool, str]:
-    """Validate a user-supplied push-to-talk hotkey string.
+# Keys the OS keeps for itself no matter what the user wants.
+#   * F12 is permanently reserved for the debugger — Microsoft documents that it
+#     must not be registered as a hot key even when nothing is being debugged.
+_RESERVED_SOLO_KEYS = frozenset({"f12"})
 
-    Returns ``(ok, reason)``. ``reason`` is an English, user-facing sentence
-    when ``ok`` is False (the UI surfaces it). The rules encode the CLAUDE.md
-    hotkey guidance so a bad combo can never reach the hotkey backend (where an
-    invalid registration would silently disable EVERY hotkey):
+# Command-modified chords macOS assigns to universal system actions. Binding one
+# means the focused app keeps doing that action too (Cmd+Q quits it, Cmd+W closes
+# its window, Cmd+Space opens Spotlight) — worth a caution, never a refusal.
+_MACOS_CRITICAL_KEYS = frozenset({"c", "v", "x", "z", "q", "w", "a", "s", "space", "tab"})
 
-      * non-empty and parseable (``mod+mod+key`` syntax),
-      * at least one non-modifier key (a combo of only Ctrl/Alt/Shift is dead),
-      * a modifier OR a second key — a single bare key (``j``) as a global
-        hotkey fires on every keystroke while typing,
-      * no Windows-key combos (reserved by the OS),
-      * not an OS-critical shortcut (Alt+F4 closes windows, Ctrl+C is
-        copy/interrupt).
+# The Windows-shell equivalent of the list above. It did not exist while
+# Win-key combos were refused outright; now that they are allowed, a user who
+# binds Win+D deserves the same warning a Mac user gets for Cmd+W — the shell
+# keeps showing the desktop on top of triggering the shortcut.
+_WINDOWS_CRITICAL_KEYS = frozenset(
+    {"d", "e", "l", "r", "x", "i", "s", "v", "a", "p", "tab", "left", "right", "up", "down"}
+)
+
+
+@dataclass(frozen=True)
+class HotkeyVerdict:
+    """The result of :func:`validate_hotkey`: a verdict plus soft cautions.
+
+    Why this shape and not a three-element tuple: every existing caller does
+    ``ok, reason = validate_hotkey(...)``. Appending a third element to the
+    tuple would turn each of them into a ``ValueError: too many values to
+    unpack`` at runtime — a silent-in-review, loud-in-production break across
+    the settings route, the setup wizard and four test modules. A small object
+    that ITERATES as the historical two-tuple keeps every one of those call
+    sites byte-identical, while ``verdict.cautions`` is there for the UI that
+    wants it. It is opt-in by construction: a caller who never asks for a
+    caution cannot accidentally receive one in place of the reason.
+
+    ``ok`` is False only for input that means nothing at all (an empty combo).
+    Everything the validator used to refuse — a modifiers-only chord, a bare
+    typing key, an OS-critical shortcut — is now ACCEPTED with a caution,
+    because the user, not the validator, owns the keyboard.
+    """
+
+    ok: bool
+    reason: str = ""
+    cautions: tuple[str, ...] = ()
+
+    @property
+    def caution(self) -> str:
+        """Every caution as one user-facing sentence block (``""`` when none)."""
+        return " ".join(self.cautions)
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    def __iter__(self) -> Iterator[Any]:
+        # The historical ``(ok, reason)`` contract — see the class docstring.
+        yield self.ok
+        yield self.reason
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> Any:
+        return (self.ok, self.reason)[index]
+
+
+def validate_hotkey(combo: str, *, platform: str | None = None) -> HotkeyVerdict:
+    """Validate a user-supplied hotkey string (call / hangup / dictate).
+
+    Returns a :class:`HotkeyVerdict` that still unpacks as the historical
+    ``(ok, reason)`` pair. The policy (maintainer directive 2026-07-28): **any
+    key combination is selectable**, mouse buttons included. The validator
+    refuses only what is genuinely meaningless — an empty combo — and reports
+    everything else as a NON-BLOCKING caution the UI can show next to the
+    saved shortcut:
+
+      * a modifiers-only chord (``ctrl+win``) also fires when any further key
+        joins it, so it triggers on Ctrl+Win+Left, Ctrl+Win+D and friends;
+      * a bare typing key fires while you type ordinary text;
+      * an OS-critical combo (Alt+F4, Ctrl+C, the macOS Command shortcuts,
+        F12) is still delivered to the focused app, which keeps doing its
+        thing on top of the shortcut;
+      * a Command chord on a machine that has no Command key cannot fire
+        there — honest, and harmless for a config that travels to a Mac;
+      * a mouse button does not swallow the click.
+
+    The two refusals that used to live here — "a combo of only Ctrl/Alt/Shift
+    cannot be a trigger" and "Windows / Super key combos are reserved by the
+    OS" — are gone because both were untrue for this codebase: the Windows
+    backend polls ``GetAsyncKeyState`` (it never calls ``RegisterHotKey``, so
+    the shell cannot claim the chord first), and Win/Super/Command are
+    first-class tokens in all three backends. What they cost the user was
+    real; what they protected against is a caution, not a wall.
+
+    ``platform`` (``"win32"`` / ``"darwin"`` / ``"linux"``) picks the
+    platform-specific cautions; it defaults to the live platform and exists so
+    tests are deterministic. The combo vocabulary itself stays
+    platform-neutral: a config file may legitimately travel between a Mac and
+    a PC.
     """
     if not combo or not combo.strip():
-        return False, "Hotkey is empty."
-    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
+        return HotkeyVerdict(False, "Hotkey is empty.")
+    parts = [_canonical_token(p.strip().lower()) for p in combo.split("+") if p.strip()]
     if not parts:
-        return False, "Hotkey is empty."
+        return HotkeyVerdict(False, "Hotkey is empty.")
 
     modifiers = [p for p in parts if p in _MODIFIER_TOKENS]
     non_modifiers = [p for p in parts if p not in _MODIFIER_TOKENS]
+    mouse_buttons = [p for p in parts if p in MOUSE_BUTTON_TOKENS]
+    cautions: list[str] = []
 
     if not non_modifiers:
-        return False, "Add a real key — a combo of only Ctrl/Alt/Shift cannot be a trigger."
-    if (
-        not modifiers
-        and len(parts) < 2
-        and parts[0] not in _SOLO_SAFE_KEYS
-    ):
-        return False, (
-            "This key fires while typing normal text — add Ctrl/Alt/Shift or a "
-            "second key. (Function keys and navigation keys like F5 or Arrow Up "
-            "can be used on their own.)"
+        cautions.append(
+            "This shortcut is modifier keys only, so it also fires the moment "
+            "any other key joins them — Ctrl+Win would trigger on Ctrl+Win+Left "
+            "(switch virtual desktop), Ctrl+Win+D and every other Ctrl+Win "
+            "shortcut too."
         )
-    if any(p in ("win", "window") for p in modifiers):
-        return False, "Windows-key combos are reserved by the OS — pick Ctrl/Alt/Shift."
+    elif not modifiers and len(parts) < 2 and parts[0] not in _SOLO_SAFE_KEYS and not mouse_buttons:
+        cautions.append(
+            "This key also fires while you type normal text — every press of it "
+            "triggers the shortcut. Add Ctrl/Alt/Shift or a second key if that "
+            "is not what you want."
+        )
+
+    reserved = sorted(set(non_modifiers) & _RESERVED_SOLO_KEYS)
+    if reserved:
+        cautions.append(
+            f"{reserved[0].upper()} is claimed by the system debugger — some "
+            "applications will take it before the shortcut sees it."
+        )
 
     _CTRL = ("ctrl", "control", "right_ctrl", "right_control")
     _ALT = ("alt", "right_alt", "left_alt", "altgr")
+    _CMD = ("cmd", "command", "meta", "super")
+    _WIN = ("win", "window", "super", "meta")
     alt_held = any(p in _ALT for p in modifiers)
     # "X-only" means X-family modifiers and nothing else — so the exact OS
-    # shortcut is blocked while a richer combo that merely contains it (e.g.
-    # Ctrl+Shift+C) stays allowed.
+    # shortcut is cautioned while a richer combo that merely contains it (e.g.
+    # Ctrl+Shift+C) stays silent.
     ctrl_only = bool(modifiers) and all(p in _CTRL for p in modifiers)
+    cmd_only = bool(modifiers) and all(p in _CMD for p in modifiers)
+    win_only = bool(modifiers) and all(p in _WIN for p in modifiers)
     if alt_held and "f4" in non_modifiers:
-        return False, "Alt+F4 closes the active window — choose another combo."
+        cautions.append(_os_shortcut_caution("Alt+F4", "closes the active window"))
     if ctrl_only and non_modifiers == ["c"]:
-        return False, "Ctrl+C is the copy / interrupt shortcut — choose another combo."
+        cautions.append(_os_shortcut_caution("Ctrl+C", "copies, and interrupts a terminal"))
+    if win_only and len(non_modifiers) == 1 and non_modifiers[0] in _WINDOWS_CRITICAL_KEYS:
+        cautions.append(
+            _os_shortcut_caution(
+                f"Win+{non_modifiers[0].upper()}",
+                "is a system shortcut on Windows (show the desktop, lock the "
+                "screen, the emoji picker and friends)",
+            )
+        )
+    if cmd_only and len(non_modifiers) == 1 and non_modifiers[0] in _MACOS_CRITICAL_KEYS:
+        cautions.append(
+            _os_shortcut_caution(
+                f"Command+{non_modifiers[0].upper()}",
+                "is a system shortcut on macOS (copy, quit, close, Spotlight "
+                "and friends)",
+            )
+        )
 
-    return True, ""
+    if any(p in ("cmd", "command") for p in modifiers):
+        host = platform if platform is not None else _detect_platform()
+        if host not in (None, "darwin"):
+            cautions.append(
+                "There is no Command key on this computer, so this shortcut "
+                "cannot fire here. (It works on macOS — a shortcut set on a "
+                "Mac keeps working when the config travels back.)"
+            )
+
+    if mouse_buttons:
+        cautions.append(
+            "A mouse button does not swallow the click: the button keeps doing "
+            "its normal job in whatever you are pointing at while it also "
+            "triggers this shortcut."
+        )
+
+    return HotkeyVerdict(True, "", tuple(cautions))
+
+
+def _os_shortcut_caution(pretty: str, does_what: str) -> str:
+    """One caution sentence for a combo the focused app also acts on."""
+    return (
+        f"{pretty} {does_what} — the app you are working in still receives it, "
+        "so you get both at once."
+    )
+
+
+def _detect_platform() -> str | None:
+    """The live platform id, or ``None`` when it cannot be determined.
+
+    Lazy + fail-open: a hotkey the validator cannot place is better accepted
+    (the backend then degrades honestly, per-combo) than rejected on a guess.
+    """
+    try:
+        from jarvis.platform import detect_platform
+
+        return detect_platform()
+    except Exception:  # noqa: BLE001 — validation must never depend on a probe
+        return None
+
+
+def normalized_combo_tokens(combo: str) -> frozenset[str]:
+    """The key set a combo ACTUALLY registers as, after normalization.
+
+    ``ctrl+right_alt+j`` and ``ctrl+left_alt+j`` are different strings and the
+    identical registration: the Windows backend folds every Alt variant onto
+    the generic ``alt`` (it cannot tell the sides apart), and win/super/meta
+    all fold onto ``window``. Any comparison of two shortcuts has to happen on
+    THIS set — comparing the raw tokens accepts two combos the OS sees as one.
+    """
+    return frozenset(
+        p.strip() for p in _normalize_combo(combo).split("+") if p.strip()
+    )
+
+
+def combos_collide(a: str, b: str) -> bool:
+    """Whether two shortcuts cannot coexist — normalized, not raw.
+
+    The bug this closes: the settings route compared RAW token sets, so
+    ``ctrl+left_alt+j`` and ``ctrl+right_alt+j`` passed the overlap check as
+    two different shortcuts and then normalized to the SAME registration. The
+    second one lost the race inside ``register`` and died with a log line
+    nobody sees, leaving the user with two bound-looking rows, one of them
+    silently dead.
+
+    Two relations collide, both evaluated on the normalized key sets:
+
+    * identical sets — the same registration under two spellings;
+    * subset / superset — the polling backends match a chord as soon as its
+      keys are down, so ``f1`` and ``f1+f2`` fire each other.
+
+    An unbound (empty) combo never collides: an empty set is a subset of
+    everything, and every save would be refused the moment one action is
+    cleared.
+    """
+    tokens_a = normalized_combo_tokens(a)
+    tokens_b = normalized_combo_tokens(b)
+    if not tokens_a or not tokens_b:
+        return False
+    return tokens_a <= tokens_b or tokens_b <= tokens_a
+
+
+def mouse_hotkeys_available(platform: str | None = None) -> tuple[bool, str]:
+    """Can this host bind a MOUSE BUTTON as a shortcut? ``(ok, reason)``.
+
+    A capability probe, never a platform name test (AP-21/AP-23). ``reason``
+    is an English sentence for the user when the answer is no, naming what is
+    missing and what still works — the UI shows it instead of offering a
+    control that would do nothing:
+
+    * Windows — always: the backend polls ``GetAsyncKeyState``, which reports
+      mouse buttons alongside keys.
+    * macOS — needs pyobjc's ``Quartz`` (the event tap already exists; it just
+      listens for mouse events too now) plus the Accessibility / Input
+      Monitoring grants the backend already checks at ``start``.
+    * Linux/X11 — needs ``pynput`` (the opt-in ``[desktop-linux]`` extra).
+      Wayland has no global button grabs at all, the same reason keyboard
+      shortcuts degrade there.
+
+    Kept import-light and lazy so it never runs on the boot path (AP-26).
+    """
+    host = platform if platform is not None else _detect_platform()
+    if host == "win32":
+        return True, ""
+    if host == "darwin":
+        if _module_present("Quartz"):
+            return True, ""
+        return False, (
+            "Mouse-button shortcuts need the pyobjc Quartz package, which is "
+            "not installed — install the [full] profile. Key combinations "
+            "still work."
+        )
+    if host == "linux":
+        try:
+            from jarvis.platform.probes import is_wayland
+
+            wayland = is_wayland()
+        except Exception:  # noqa: BLE001 — a probe failure must never hard-fail
+            wayland = False
+        if wayland:
+            return False, (
+                "Wayland does not let an application watch the mouse buttons "
+                "globally, so a mouse-button shortcut cannot work here. Use a "
+                "key combination, or bind a compositor shortcut to the Jarvis "
+                "CLI."
+            )
+        if _module_present("pynput"):
+            return True, ""
+        return False, (
+            "Mouse-button shortcuts need the pynput package, which is not "
+            "installed — install the [desktop-linux] extra. Key combinations "
+            "still work."
+        )
+    return False, (
+        "This system has no way to watch the mouse buttons globally — use a "
+        "key combination instead."
+    )
+
+
+def _module_present(name: str) -> bool:
+    """Is ``name`` importable, without importing it (cheap, AP-26)."""
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec(name) is not None
+    except Exception:  # noqa: BLE001 — a broken meta-path must not raise here
+        return False
 
 
 class HotkeyTrigger:
@@ -390,7 +657,12 @@ class HotkeyTrigger:
 
 
 __all__ = [
+    "MOUSE_BUTTON_TOKENS",
     "HotkeyTrigger",
+    "HotkeyVerdict",
+    "combos_collide",
+    "mouse_hotkeys_available",
+    "normalized_combo_tokens",
     "validate_hotkey",
     "_normalize_combo",
     "_reset_checker_state_for_tests",

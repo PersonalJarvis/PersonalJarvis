@@ -89,7 +89,7 @@ def is_truncated_body(raw: str) -> bool:
 def dangling_link_targets(raw: str, vault_root: Path) -> list[str]:
     """Return the wikilink targets in ``raw`` that resolve to no vault page.
 
-    Uses the real on-disk resolver: ``[[entities/ruben]]`` resolves and is
+    Uses the real on-disk resolver: ``[[entities/alex]]`` resolves and is
     kept; bare app names like ``[[Snipping Tool]]`` resolve to nothing and are
     flagged. Operates on the CLOSED-link body after a dangling-fragment strip,
     so an unclosed ``[[PickerHost.`` never reaches the resolver.

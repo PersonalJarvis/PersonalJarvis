@@ -655,7 +655,7 @@ async def test_never_raises_and_never_empty_under_pathology() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("brand", ["Ruben-Agent", "Harald-Agent", "Athena-Agent"])
+@pytest.mark.parametrize("brand", ["Ruben-Agent", "Morgan-Agent", "Athena-Agent"])
 async def test_brand_follows_any_wake_word_name(brand: str) -> None:
     """The spoken brand is a pure function of the configured wake word: a
     candidate naming the CURRENT brand passes, and every fallback phrase

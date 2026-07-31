@@ -27,39 +27,16 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+# Event kinds the inspector cares about live. DERIVED from the recorder's
+# persisted set instead of being a hand-copied twin: the two lists drifted apart
+# once already (the recorder gained forensic kinds the live stream never
+# forwarded, so an in-flight run showed less than the same run did after a
+# reload). One source, no sync ritual.
+from jarvis.sessions.recorder import _RAW_EVENT_KINDS as _LIVE_KINDS
+
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Event kinds the inspector cares about live (superset of the recorder forensic
-# additions). Keep in sync with jarvis/sessions/recorder.py::_RAW_EVENT_KINDS.
-_LIVE_KINDS: frozenset[str] = frozenset({
-    "VoiceSessionStarted",
-    "VoiceSessionEnded",
-    "VoiceTurnStarted",
-    "VoiceTurnCompleted",
-    "RealtimeSessionReady",
-    "WakeWordDetected",
-    "ListeningStarted",
-    "TranscriptFinal",
-    "IntentClassified",
-    "ActionProposed",
-    "ActionApproved",
-    "ActionDenied",
-    "BrainTurnStarted",
-    "BrainTurnCompleted",
-    "BrainTTFT",
-    "ToolCallStarted",
-    "ToolCallCompleted",
-    "ActionExecuted",
-    "ResponseGenerated",
-    "SystemStateChanged",
-    "LatencySpan",
-    "ErrorOccurred",
-    "SpeechSpoken",
-    "JarvisAgentTaskStarted",
-    "JarvisAgentTaskCompleted",
-})
 
 
 def _resolve_bus(ws: WebSocket):

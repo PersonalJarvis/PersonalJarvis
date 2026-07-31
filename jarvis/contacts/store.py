@@ -28,7 +28,7 @@ Frontmatter layout::
     relationship: friend            # optional; one of jarvis.contacts.schema
     contact:
       emails: [christoph@example.com]
-      phones: ['+4915123456789']    # E.164-normalised (separators stripped)
+      phones: ['+12025550101']      # E.164-normalised (separators stripped)
       address: {street, postal_code, city, country}
     last_updated: 2026-06-02T12:00:00+00:00
 
@@ -72,9 +72,9 @@ def _validate_email(raw: str) -> str:
 def _normalize_phone(raw: str) -> str:
     """Best-effort E.164 normalisation: keep a leading ``+``, strip separators.
 
-    - ``"+49 151 2345-6789"`` → ``"+4915123456789"``
-    - ``"0049 151 234"``      → ``"+49151234"`` (``00`` international prefix → ``+``)
-    - ``"(030) 12 34 56"``    → ``"030123456"`` (no country code given → digits only)
+    - ``"+1 202-555-0101"`` → ``"+12025550101"``
+    - ``"001 202 555 0102"`` → ``"+12025550102"`` (``00`` international prefix → ``+``)
+    - ``"(202) 555-0103"`` → ``"2025550103"`` (no country code given → digits only)
 
     A value with no digits at all is rejected (``ValueError``). This is
     deliberately *not* full libphonenumber parsing — that is a heavy dependency

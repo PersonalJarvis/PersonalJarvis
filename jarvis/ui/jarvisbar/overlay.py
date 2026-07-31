@@ -46,6 +46,12 @@ _WARNED_NO_APPKIT = False
 COLOR_KEY_HEX = "#FF00FF"
 DRAG_THRESHOLD_PX = 16
 MARGIN_PX = 12
+# How long after a file drop the bar keeps ignoring clicks. The synthetic
+# press/release a drop produces on this window arrives around the drop event,
+# not reliably before it, so the guard has to outlive the drop itself. Short
+# enough that a user who drops a file and then deliberately clicks the bar is
+# not left wondering why nothing happened.
+DROP_CLICK_QUIET_S = 0.6
 # Gap above the taskbar (~0.2 cm) when anchoring at the default bottom-center.
 TASKBAR_GAP_PX = 8
 # Window opacity (the pill goes semi-transparent; magenta stays fully keyed
@@ -404,7 +410,7 @@ class JarvisBarOverlay:
         # _schedule_frame): tracks how many consecutive ticks have shared the
         # same (effective_mode, hovered, muted) key, so a settled idle pill's
         # repaint can be skipped once its eased size has stopped moving.
-        self._static_tick_key: tuple[str, bool, bool] | None = None
+        self._static_tick_key: tuple[str, bool, bool, str] | None = None
         self._static_tick_count = 0
         self._root: Any = None
         self._canvas: Any = None
@@ -419,6 +425,18 @@ class JarvisBarOverlay:
         self._x = 0
         self._y = 0
         self._drag: dict | None = None
+        # Set while a file drag hovers the bar, plus a short tail after it lands
+        # — see ``_set_drop_active``. Both are plain attributes read from the Tk
+        # thread only, so no lock is involved.
+        self._drop_active = False
+        self._drop_quiet_until = 0.0
+        # What the bar SHOWS about a drop (renderer.DROP_STATE_*), and the
+        # perf_counter() the current verdict started at. Distinct from
+        # ``_drop_active`` on purpose: that one governs click suppression and
+        # ends the moment the payload lands, while the visible confirmation has
+        # to outlive it by design. Tk thread only.
+        self._drop_visual = renderer.DROP_STATE_NONE
+        self._drop_visual_t0 = 0.0
         # Multi-monitor follow: when on, the bar migrates to the monitor under
         # the mouse. ``_rel_pos`` is the monitor-independent free-space fraction
         # (the persisted placement truth); ``_cur_work`` is the work area the
@@ -721,6 +739,16 @@ class JarvisBarOverlay:
             except tk.TclError:
                 log.warning("transparentcolor unsupported — bar will show its key colour")
             root.configure(bg=COLOR_KEY_HEX)
+            # The colour key only ever applies to the window WE own. Once this
+            # Tk loop stops pumping — which any long GIL-holding stretch on
+            # another thread is enough to cause — Windows hides that window and
+            # paints an unlayered ``Ghost`` stand-in over the same rectangle,
+            # so the keyed-out padding arrives on screen as an opaque BLACK box
+            # around the pill. Turn the stand-in off rather than let a stall
+            # present itself as a rendering defect.
+            from jarvis.core.process_utils import disable_windows_app_ghosting
+
+            disable_windows_app_ghosting()
         # Window-level alpha ON TOP of the color key: the magenta stays fully
         # keyed out (verified — no bleed) while the pill itself goes
         # semi-transparent, so the desktop shows through it (glass look).
@@ -754,23 +782,38 @@ class JarvisBarOverlay:
         self._canvas.bind("<Leave>", self._on_leave)
 
         # Drag-drop onto the bar (desktop extra, cross-platform via tkdnd).
-        # TEMPORARILY DISABLED 2026-06-23 (wake-fix session): on this frameless
-        # color-key topmost window, tkdnd's ``_require(root)`` + drop_target_register
-        # injected PHANTOM mouse press/release events on every turn mode-switch,
-        # which the click handler read as a close-X click -> a ``request_hangup``
-        # STORM (6+/turn) that aborted every voice answer mid-thought (Hangup during
-        # thinking). The file-drop-onto-bar feature is purely additive — the web
-        # dock (POST /api/chat/drop) carries it on every OS — so disabling JUST the
-        # bar registration restores voice without losing the capability. Re-enable
-        # once the tkdnd phantom-event issue on the color-key window is resolved.
-        if False:  # noqa: SIM223 — intentional kill-switch (see note above)
-            try:
-                from jarvis.overlay.drop_bridge import dispatch_drop
-                from jarvis.overlay.drop_target import make_drop_target
+        #
+        # This was disabled 2026-06-23: on a frameless color-key topmost window
+        # tkdnd's registration made the window emit SYNTHETIC press/release
+        # events on every turn mode-switch, the click handler read them as a
+        # close-X click, and a ``request_hangup`` storm (6+/turn) aborted every
+        # voice answer mid-thought. Re-enabled now that both halves of that are
+        # actually fixed rather than avoided:
+        #
+        # 1. ``_on_release`` honours a click only when the OS pointer is really
+        #    over the bar (``_pointer_over_bar``), which kills every phantom
+        #    pair fired under a stationary cursor.
+        # 2. That guard alone is NOT enough for a real drop — during one the
+        #    pointer genuinely IS over the bar, so a synthetic pair emitted by
+        #    the drop would pass it and hang up the call the user was in the
+        #    middle of. Hence ``_set_drop_active``: while a drag hovers, and for
+        #    a moment after it lands, the bar takes no clicks at all.
+        try:
+            from jarvis.overlay.drop_bridge import (
+                dispatch_drop,
+                set_drop_result_sink,
+            )
+            from jarvis.overlay.drop_target import make_drop_target
 
-                make_drop_target().register(self._canvas, dispatch_drop)
-            except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
-                log.debug("bar drop target registration skipped", exc_info=True)
+            if make_drop_target().register(
+                self._canvas, dispatch_drop, self._set_drop_active
+            ):
+                # Only claim the return leg once the target actually registered
+                # — a host without tkdnd has no drops to confirm, and leaving a
+                # stale sink installed would point at a bar that never sees one.
+                set_drop_result_sink(self.notify_drop_result)
+        except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
+            log.debug("bar drop target registration skipped", exc_info=True)
 
         try:
             from jarvis.audio import level_tap
@@ -794,6 +837,15 @@ class JarvisBarOverlay:
 
     def stop(self) -> None:
         self._running = False
+        # Release the drop return leg before the Tk root goes: a swap to
+        # another surface installs its own sink, and a stale one pointing at a
+        # destroyed bar would enqueue onto a dead UI queue.
+        try:
+            from jarvis.overlay.drop_bridge import set_drop_result_sink
+
+            set_drop_result_sink(None)
+        except Exception:  # noqa: BLE001 — teardown must never raise
+            log.debug("drop result sink release failed", exc_info=True)
         if self._level_unsub is not None:
             try:
                 self._level_unsub()
@@ -1201,14 +1253,23 @@ class JarvisBarOverlay:
             # the render/PhotoImage/itemconfig work entirely. Any change in
             # mode, hover, or mute resets the counter, so a real transition
             # (including a hover/mute flip) always renders immediately.
-            tick_key = (effective_mode, self._hovered, self._muted)
+            # Drag-drop feedback is time-DEPENDENT (a pulsing rim, a tick that
+            # strokes itself on and fades), so it belongs in the tick key AND
+            # must veto the skip outright. Without the veto the confirmation
+            # would never be seen: an idle bar has usually been settled for
+            # long before a file arrives, so the very frames the tick lives in
+            # are exactly the ones the fast path skips.
+            drop_visual = self._current_drop_visual()
+            tick_key = (effective_mode, self._hovered, self._muted, drop_visual)
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
                 self._static_tick_count = 0
             else:
                 self._static_tick_count += 1
             is_settled_idle = (
-                effective_mode == "idle" and self._static_tick_count >= _IDLE_SETTLE_TICKS
+                effective_mode == "idle"
+                and drop_visual == renderer.DROP_STATE_NONE
+                and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
 
             if not is_settled_idle:
@@ -1229,6 +1290,12 @@ class JarvisBarOverlay:
                     ),
                     hovered=self._hovered,
                     muted=self._muted,
+                    drop_state=drop_visual,
+                    # Same getattr guard as the level stamp above, and for the
+                    # same reason: a ``__new__``-built test/hot-reload instance
+                    # skips __init__, and a missing stamp must read as "no drop
+                    # in flight" rather than blow the frame away.
+                    drop_elapsed=now - getattr(self, "_drop_visual_t0", 0.0),
                 )
                 if getattr(self, "_mac_transparent", False):
                     # macOS: no color key — carry real per-pixel alpha instead.
@@ -1444,10 +1511,89 @@ class JarvisBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar geometry update failed", exc_info=True)
 
+    def _set_drop_active(self, active: bool) -> None:
+        """A file drag is over the bar (or has just landed on it).
+
+        Called from the tkdnd callbacks. While this is armed the bar takes no
+        clicks: a drop makes the window emit a synthetic press/release with the
+        pointer genuinely over the bar, which is indistinguishable from a
+        deliberate close-X click by position alone — and reading it as one hung
+        up the user's call the moment they dropped a file.
+
+        The trailing window matters as much as the flag: the synthetic pair can
+        arrive just AFTER the drop is delivered, so clearing on the drop event
+        alone would let the very event this exists for through.
+        """
+        if active:
+            self._drop_active = True
+            self._set_drop_visual(renderer.DROP_STATE_ARMED)
+            return
+        self._drop_active = False
+        self._drop_quiet_until = time.monotonic() + DROP_CLICK_QUIET_S
+        # Leaving without dropping must not leave the rim pulsing. A verdict
+        # already on screen wins — the drop that produced it also reports
+        # ``False`` here, and clearing then would erase the confirmation the
+        # instant it appeared.
+        if self._drop_visual == renderer.DROP_STATE_ARMED:
+            self._set_drop_visual(renderer.DROP_STATE_NONE)
+
+    def _set_drop_visual(self, state: str) -> None:
+        """Switch what the bar shows about a drop and repaint promptly.
+
+        Restamps the clock on every transition so each verdict gets its full
+        animation, and invalidates the static-frame fast path so a long-settled
+        idle bar starts painting again for it.
+        """
+        self._drop_visual = state
+        self._drop_visual_t0 = time.perf_counter()
+        self._invalidate_static_frame()
+
+    def _current_drop_visual(self) -> str:
+        """The drop state to render now, expiring a finished confirmation.
+
+        The renderer is deliberately stateless about time, so somebody has to
+        retire a verdict once its animation has run out — doing it here means
+        the bar also falls back out of the fast-path veto and can settle again.
+        """
+        # getattr, like the level stamp in the frame loop: a ``__new__``-built
+        # test/hot-reload instance skips __init__, and an unset drop state must
+        # read as "nothing in flight" rather than kill the whole frame.
+        state = getattr(self, "_drop_visual", renderer.DROP_STATE_NONE)
+        if state in (renderer.DROP_STATE_OK, renderer.DROP_STATE_REJECTED):
+            elapsed = time.perf_counter() - getattr(self, "_drop_visual_t0", 0.0)
+            if elapsed >= renderer.DROP_CONFIRM_TOTAL_S:
+                self._drop_visual = renderer.DROP_STATE_NONE
+                return renderer.DROP_STATE_NONE
+        return state
+
+    def notify_drop_result(self, accepted: bool) -> None:
+        """Show the verdict of a drop this bar delivered. Thread-safe.
+
+        Called from the backend loop (via ``drop_bridge.report_drop_result``),
+        so the state change is marshalled onto the Tk thread like every other
+        cross-thread mutation. ``accepted=False`` deliberately still shows
+        something: a drop that produced nothing usable is exactly the case
+        where silence would leave the user guessing.
+        """
+        state = (
+            renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
+        )
+        if self._root is None:
+            # Not started (or already torn down) — nothing to animate on.
+            return
+        self._enqueue_ui(lambda s=state: self._set_drop_visual(s))
+
+    def _clicks_suppressed(self) -> bool:
+        """True while a drag/drop is claiming the bar's pointer events."""
+        return self._drop_active or time.monotonic() < self._drop_quiet_until
+
     def _on_release(self, event: Any) -> None:
         d = self._drag
         self._drag = None
         if d is None:
+            return
+        if self._clicks_suppressed():
+            log.debug("jarvisbar: ignoring click (a file drop is in flight)")
             return
         if interaction.classify_release(moved=bool(d["moved"])) == "click":
             # Phantom-click guard (root cause of the request_hangup STORM): a

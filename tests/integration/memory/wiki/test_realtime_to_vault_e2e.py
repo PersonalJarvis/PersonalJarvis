@@ -16,6 +16,7 @@ from jarvis.core.config import (
     BrainProviderConfig,
     JarvisConfig,
     MemoryConfig,
+    SchedulerConfig,
     WikiMemoryConfig,
 )
 from jarvis.core.events import VoiceSessionEnded, VoiceTurnCompleted
@@ -186,8 +187,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     (vault_root / "schema.md").write_text("# Schema\n", encoding="utf-8")
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    (vault_root / "entities" / "ruben.md").write_text(
-        _entity_page("ruben", "Ruben is the user."),
+    (vault_root / "entities" / "alex.md").write_text(
+        _entity_page("alex", "Alex is the user."),
         encoding="utf-8",
     )
 
@@ -197,6 +198,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             providers={"test-provider": BrainProviderConfig(model="test-model")},
         ),
         memory=MemoryConfig(wiki=WikiMemoryConfig()),
+        # This E2E drives one fact per short call and expects each to land
+        # in the vault immediately, so it pins per-candidate consolidation
+        # explicitly (the SHIPPED default batches 3 per judge run since the
+        # 2026-07-28 cost audit).
+        wiki_scheduler=SchedulerConfig(consolidate_after_candidates=1),
     )
     assert config.memory.wiki.voice_bridge.rate_limit_seconds == 0
     assert config.wiki_scheduler.consolidate_after_candidates == 1
@@ -204,9 +210,9 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     facts = [
         "Lena moved to Hamburg last month.",
         "Noah works at the city library.",
-        "Ruben owns a yacht named Aurora.",
-        "Ruben needs to use the bathroom right now.",
-        "Ruben owns an aircraft.",
+        "Alex owns a yacht named Aurora.",
+        "Alex needs to use the bathroom right now.",
+        "Alex owns an aircraft.",
     ]
     extractions = [
         json.dumps(
@@ -245,7 +251,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[3],
                     "kind": "other",
-                    "subjects": ["ruben"],
+                    "subjects": ["alex"],
                     "evidence_turn_id": "transient-turn",
                 }
             ]
@@ -257,7 +263,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[4],
                     "kind": "asset",
-                    "subjects": ["ruben", "aircraft"],
+                    "subjects": ["alex", "aircraft"],
                     "evidence_turn_id": "assistant-guess-turn",
                 }
             ]
@@ -292,7 +298,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                     "candidate_id": 3,
                     "decision": "add",
                     "target": "entities/aurora.md",
-                    "new_body": _asset_page("aurora", facts[2], "ruben"),
+                    "new_body": _asset_page("aurora", facts[2], "alex"),
                     "reason": "durable owned asset and relationship",
                 }
             ]
@@ -433,10 +439,10 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     )
     asset_body = (vault_root / "entities" / "aurora.md").read_text(encoding="utf-8")
     assert facts[2] in asset_body
-    assert "[[entities/ruben|Ruben]]" in asset_body
+    assert "[[entities/alex|Alex]]" in asset_body
     fresh_index = VaultIndex(repo=MarkdownPageRepository())
     await fresh_index.scan(vault_root)
-    assert [page.slug for page in fresh_index.backlinks_to("ruben")] == ["aurora"]
+    assert [page.slug for page in fresh_index.backlinks_to("alex")] == ["aurora"]
     assert all(
         "bathroom" not in path.read_text(encoding="utf-8").lower()
         for path in vault_root.rglob("*.md")

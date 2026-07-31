@@ -203,6 +203,25 @@ def test_secure_ax_field_redacts_value_and_preserves_focus() -> None:
     assert "must-not-leak" not in nodes[0].name
 
 
+def test_unknown_role_never_reads_axvalue() -> None:
+    reads: list[str] = []
+
+    class _UnknownRole:
+        def copy_attribute_value(self, attribute):
+            reads.append(attribute)
+            if attribute == "AXValue":
+                raise AssertionError("AXValue must not be read with unknown role")
+            return None
+
+    nodes = []
+    _ax_flatten(
+        _UnknownRole(), depth=0, max_depth=0, parent_index=-1, out=nodes
+    )
+
+    assert nodes[0].value == ""
+    assert "AXValue" not in reads
+
+
 @pytest.mark.asyncio
 async def test_permission_denied_degrades_to_empty_screenshot_only() -> None:
     # AD-13: AXIsProcessTrusted()==False -> empty nodes, source=screenshot_only,

@@ -149,7 +149,7 @@ logs, transcripts, or example API responses with secrets.
 - `octocat`: in pixels of `shot-github.png` (commit-author line +
   contributor list). Not present as text.
 
-**C:\Users\<name> / personal filesystem paths** — none found in tracked `video/`
+**<USER_HOME>/ personal filesystem paths** — none found in tracked `video/`
 text files.
 
 **Machine/user identifiers, Windows SIDs (S-1-5-21-…)** — none.

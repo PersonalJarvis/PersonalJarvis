@@ -71,6 +71,17 @@ ASSETS_DIR = DIST_DIR / "assets"
 # re-throttled every event; the browser reconnects on its own.
 _WS_SEND_TIMEOUT_S = 3.0
 
+# How long the UltraWiki pipeline WORKER is held back after boot. Its store is
+# opened immediately (reads, search and recall all need it), but the worker
+# grinds through the whole ingest backlog and was measured holding ~1.3 CPU
+# cores continuously for as long as items remain queued. Starting it the
+# instant the backend comes up made that backlog compete with the app's own
+# startup, which is exactly the "everything got sluggish" report AP-26 exists
+# to prevent. The window covers a typical cold start with headroom; nothing is
+# skipped, the same work simply begins once the app is usable. A shutdown
+# inside the window cancels the wait rather than delaying it.
+ULTRAWIKI_PIPELINE_GRACE_S = 20.0
+
 
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
@@ -135,9 +146,20 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
-        from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
+        from jarvis.core import runtime_refs
+        from jarvis.missions.tool_approvals import (
+            MissionToolApprovalCoordinator,
+            MissionToolAutoApprover,
+        )
 
         self._mission_tool_approvals = MissionToolApprovalCoordinator(self.bus)
+        # Mission-scoped tool pre-authorization (ADR-0031): answers the
+        # approval gate for tools a mission's broker grant pre-authorizes
+        # ([phase6.safety].auto_approve_tool_families), full audit chain
+        # preserved. Registered in runtime_refs because the WorkerToolBroker
+        # lives below the web layer (same pattern as the supervisor gateway).
+        self._mission_tool_auto_approver = MissionToolAutoApprover(self.bus)
+        runtime_refs.set_mission_tool_auto_approver(self._mission_tool_auto_approver)
         self.app: FastAPI = self._build_app()
         self.app.state.refresh_scheduler = None
 
@@ -277,6 +299,7 @@ class WebServer:
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
+        from .agent_accounts_routes import router as agent_accounts_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
             board_router as board_meta_router,
@@ -293,6 +316,7 @@ class WebServer:
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .diagnostics_routes import router as diagnostics_router
+        from .dictation_routes import router as dictation_router
         from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
         from .downloads_routes import router as downloads_router
@@ -319,6 +343,7 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
@@ -331,11 +356,15 @@ class WebServer:
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
+        from .ultrawiki_explore_routes import router as ultrawiki_explore_router
+        from .ultrawiki_identity_routes import router as ultrawiki_identity_router
+        from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
+        from .agentic_ide_routes import router as agentic_ide_router
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
         # otherwise get an ImportError here at server boot.
@@ -353,6 +382,8 @@ class WebServer:
         app.include_router(provider_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
+        # Several subscriptions per coding CLI, switchable without a logout.
+        app.include_router(agent_accounts_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
@@ -405,9 +436,19 @@ class WebServer:
         # Provides agent detection, workspace launch planning, and PTY WebSocket
         # for in-app Claude Code / Codex terminals (xterm panes, not OS windows).
         app.include_router(workspace_router)
+        # Agentic IDE (/api/agentic-ide/*) — a chosen folder plus named terminals
+        # running Claude Code / Codex, addressable by voice ("what is Mika
+        # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
+        # workspace above; adds the folder picker, call-signs, transcripts, and
+        # the focused coding mode.
+        app.include_router(agentic_ide_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(dictionary_router)
+        # Dictation mode — hold to speak, text lands in the focused field.
+        # Mounted so every action is also `jarvis api dictation <op>`, which is
+        # the documented Wayland path (no app-owned global shortcuts there).
+        app.include_router(dictation_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
@@ -417,6 +458,10 @@ class WebServer:
         app.include_router(federation_proxy_router)
         # Phase 8.5 — review-pipeline read-only UI (Plan §6.5).
         app.include_router(review_router)
+        # One-shot, intent-driven screen look. Answers honestly (not 503) on a
+        # machine with no display, so `jarvis api screen-context status` is a
+        # valid capability probe everywhere.
+        app.include_router(screen_context_router)
         # Voice-session transcription view (sidebar -> "Transcription").
         # Returns 503 as long as app.state.session_store isn't set.
         app.include_router(sessions_router)
@@ -452,6 +497,17 @@ class WebServer:
         # Forwards WikiPageChanged events from the shared EventBus to
         # subscribed UI clients. WikiWatcher is started in start().
         app.include_router(wiki_ws_router)
+        # UltraWiki (semantic memory mode) — status/activation/sources/sync/
+        # search. The service handle is wired in start() via _init_ultrawiki();
+        # while it is None the routes answer 503 (search answers 409 whenever
+        # the mode switch is off).
+        app.include_router(ultrawiki_router)
+        # The readable Explore surface over the same store — separate module,
+        # same prefix and tag (see ultrawiki_explore_routes for why).
+        app.include_router(ultrawiki_explore_router)
+        # The identity surface over the same store — People, the merge
+        # confirmation queue, and the reversible merge audit trail.
+        app.include_router(ultrawiki_identity_router)
         # ConnectionManager singleton for the global event stream. Attached
         # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()
@@ -460,6 +516,12 @@ class WebServer:
         # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
+        # UltraWikiService is constructed in start() (_init_ultrawiki); None
+        # keeps /api/ultrawiki honest (503 / degraded status) until then.
+        app.state.ultrawiki = None
+        # The named background task that opens the UltraWiki store when the
+        # mode is already on at boot (see _init_ultrawiki); cancelled in stop().
+        self._ultrawiki_start_task: asyncio.Task[None] | None = None
         app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
@@ -1065,7 +1127,13 @@ class WebServer:
                 codex_bin = (
                     getattr(getattr(cfg, "codex", None), "binary_path", "") or None
                 )
-                codex_status = CodexAuthService(codex_bin).status()
+                # Off the event loop like the Claude probe above: it spawns the
+                # CLI binary, and on the loop that few-hundred-millisecond pause
+                # froze the realtime voice socket into an audible mid-sentence
+                # hole (forensic 2026-07-27).
+                codex_status = await asyncio.to_thread(
+                    CodexAuthService(codex_bin).status
+                )
                 codex_connected = codex_status.connected
                 codex_installed = codex_status.installed
             except Exception:  # noqa: BLE001
@@ -1122,7 +1190,10 @@ class WebServer:
                     antigravity_provider_ready,
                 )
 
-                antigravity_status = GoogleCliAuthService().status()
+                # Off the event loop for the same reason as the Codex probe.
+                antigravity_status = await asyncio.to_thread(
+                    GoogleCliAuthService().status
+                )
                 antigravity_connected = (
                     antigravity_status.connected
                     and antigravity_status.mode == "oauth-personal"
@@ -1526,6 +1597,10 @@ class WebServer:
         from jarvis.core.runtime_refs import get_speech_pipeline
 
         mode = str(payload.get("mode", "start"))
+        # "chat" (default) fills the composer; "insert" is dictation mode —
+        # the transcript is pasted into the focused field of whatever app is in
+        # front. The chat mic button never sends "insert".
+        target = "insert" if str(payload.get("target", "chat")) == "insert" else "chat"
         pipeline = get_speech_pipeline()
         if pipeline is None:
             # Headless / voice disabled — no server mic. Recoverable, not fatal:
@@ -1545,7 +1620,7 @@ class WebServer:
             if mode == "stop":
                 pipeline.stop_dictation()
             else:
-                started = pipeline.start_dictation()
+                started = pipeline.start_dictation(target=target)
                 if not started:
                     await self.bus.publish(
                         ErrorOccurred(
@@ -2055,6 +2130,18 @@ class WebServer:
             )
         _boot_mark("wiki_watcher")
 
+        # UltraWiki (semantic memory mode): construct the service handle ALWAYS
+        # (cheap ctor — in-app activation from a disabled state must work);
+        # the store + staged pipeline only start while [ultrawiki].enabled is
+        # true, and both live off the boot critical path (AP-26).
+        try:
+            await self._init_ultrawiki()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "UltraWiki init failed — /api/ultrawiki answers 503"
+            )
+        _boot_mark("ultrawiki")
+
         # Voice-session recorder + store for the transcription view.
         # Sub-setup: runs sync (SQLite-WAL, no async loop needed), but is
         # run in start() so the EventBus is guaranteed to be alive.
@@ -2341,11 +2428,15 @@ class WebServer:
         # cleanup_days by mtime, not DB-gated): without this seam an isolated
         # headless boot (e.g. scripts/measure_boot.py) would sweep real mission
         # outputs older than 14 days.
+        from jarvis.missions.isolation.worktree import (
+            resolve_outputs_root,
+            resolve_readable_outputs_roots,
+        )
+
         _iso_override = os.environ.get("JARVIS_ISOLATION_ROOT")
         if _iso_override:
             isolation_root = Path(_iso_override)
         else:
-            from jarvis.missions.isolation.worktree import resolve_outputs_root
             isolation_root = resolve_outputs_root(repo_root)
 
         # Fail-closed primary-instance gate: POSITIVE proof is required.
@@ -2395,6 +2486,7 @@ class WebServer:
         # otherwise have to re-derive the same WEB_DIR.parent.parent.parent
         # walk and would silently drift if the launcher layout changes.
         self.app.state.outputs_root = isolation_root
+        self.app.state.outputs_roots = resolve_readable_outputs_roots(repo_root)
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
@@ -2611,6 +2703,61 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the safety net must never crash the app
                 logger.opt(exception=True).warning("wiki auto-backfill pass failed")
             await asyncio.sleep(interval_s)
+
+    async def _init_ultrawiki(self) -> None:
+        """UltraWiki (semantic memory mode): wire the service handle.
+
+        The constructor is deliberately cheap (no I/O, no heavy import), so it
+        ALWAYS runs — the REST surface must be able to activate the mode from
+        a disabled state in-app. The store and the staged pipeline start only
+        while ``cfg.ultrawiki.enabled`` is true; a later in-app enable reaches
+        ``ensure_started()`` again through the routes (AP-26: nothing here
+        touches the boot-critical or voice path).
+
+        The already-enabled case is dispatched as a NAMED BACKGROUND TASK and
+        never awaited here: opening the store can mean a Postgres connect, and
+        awaiting that inline put a remote host's latency (bounded, but still
+        seconds) directly into the startup sequence. The task is held on an
+        attribute so ``stop()`` can cancel it BEFORE the service shuts down —
+        otherwise a store could finish opening after the shutdown that was
+        supposed to close it, and leak the connection.
+        """
+        from jarvis.ultrawiki.service import UltraWikiService, set_active_service
+
+        service = UltraWikiService(self.cfg, bus=self.bus)
+        self.app.state.ultrawiki = service
+        # The brain's memory surfaces (wiki-recall, the context injector) live
+        # below the web layer and cannot read app.state — the module-level seam
+        # is how they reach the live service (runtime_refs pattern).
+        set_active_service(service)
+        if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
+            task = asyncio.create_task(
+                service.ensure_started(pipeline_grace_s=ULTRAWIKI_PIPELINE_GRACE_S),
+                name="ultrawiki-start",
+            )
+            self._ultrawiki_start_task = task
+            task.add_done_callback(self._on_ultrawiki_start_done)
+            logger.info("ultrawiki: store + pipeline start dispatched (mode enabled)")
+        else:
+            logger.info("ultrawiki: service constructed (mode disabled — dormant)")
+
+    def _on_ultrawiki_start_done(self, task: asyncio.Task[None]) -> None:
+        """Report the background start honestly — a silent failure would look
+        like a working mode with an empty store."""
+        if self._ultrawiki_start_task is task:
+            self._ultrawiki_start_task = None
+        if task.cancelled():
+            logger.info("ultrawiki: background start cancelled (shutdown)")
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.opt(exception=exc).warning(
+                "ultrawiki: background start failed — /api/ultrawiki reports it "
+                "as degraded until the next activation: {}",
+                exc,
+            )
+        else:
+            logger.info("ultrawiki: service started (mode enabled)")
 
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
@@ -3014,6 +3161,42 @@ class WebServer:
         if backfill_task is not None:
             backfill_task.cancel()
             self._wiki_backfill_task = None
+
+        # UltraWiki: the service owns the ordering internally — cancel the
+        # pipeline + every sync task (cancel, then wait_for(2 s) each), THEN
+        # close its store. Runs before the store-dependent closes below so no
+        # loop ever ticks against a closed connection.
+        # First the boot-path start task: cancel-then-wait BEFORE shutdown, so
+        # a store cannot finish opening after the shutdown meant to close it.
+        ultrawiki_start_task = getattr(self, "_ultrawiki_start_task", None)
+        if ultrawiki_start_task is not None and not ultrawiki_start_task.done():
+            ultrawiki_start_task.cancel()
+            try:
+                await asyncio.wait_for(ultrawiki_start_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug(
+                    "UltraWiki start-task cancel failed: {}", exc
+                )
+        self._ultrawiki_start_task = None
+
+        # Clear the brain-facing seam BEFORE the shutdown, so no memory surface
+        # can start a search against a store that is about to close.
+        try:
+            from jarvis.ultrawiki.service import set_active_service
+
+            set_active_service(None)
+        except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+            logger.opt(exception=exc).debug("UltraWiki seam clear failed: {}", exc)
+
+        ultrawiki_service = getattr(self.app.state, "ultrawiki", None)
+        if ultrawiki_service is not None:
+            try:
+                await ultrawiki_service.shutdown()
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug("UltraWiki shutdown failed: {}", exc)
+            self.app.state.ultrawiki = None
 
         # Phase B5 wiki write-wiring: unsubscribe + drain in-flight rollup task.
         wiki_handle = getattr(self, "_wiki_integration_handle", None)

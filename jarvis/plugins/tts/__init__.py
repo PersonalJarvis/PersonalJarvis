@@ -694,6 +694,29 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             speed=tts_cfg.speed,
         )
 
+    if provider in ("piper-local", "piper"):
+        try:
+            from jarvis.plugins.tts.piper_local import PiperLocalTTS
+        except ImportError as exc:
+            raise RuntimeError(
+                f"TTS provider 'piper-local' configured, but the plugin is not "
+                f"importable: {exc}. Check that "
+                f"jarvis/plugins/tts/piper_local.py exists.",
+            ) from exc
+        # No voice_de/voice_en pass-through: a Piper voice IS a language, so the
+        # provider resolves the file from the turn's language itself. What it
+        # does carry over is the speaker PROFILE, derived from whichever curated
+        # voice the config already names — so switching to the local voice keeps
+        # the masculine/feminine choice the user made on their cloud provider
+        # instead of silently changing who is speaking (voice-profile
+        # continuity, 2026-07-17).
+        from jarvis.plugins.tts.curated_catalog import voice_gender
+
+        profile = voice_gender(getattr(tts_cfg, "voice_de", None)) or voice_gender(
+            getattr(tts_cfg, "voice_en", None)
+        )
+        return PiperLocalTTS(gender=profile, speed=tts_cfg.speed)
+
     if provider not in ("gemini-flash-tts", "gemini-flash", "gemini"):
         log.warning(
             "Unknown TTS provider %r — falling back to gemini-flash-tts.",

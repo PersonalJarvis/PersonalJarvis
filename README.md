@@ -32,14 +32,7 @@
 ## See it work
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
-    <img src="assets/demo/personal-jarvis-demo.gif" alt="A spoken request makes Personal Jarvis open Windows Settings and switch the display from dark to light" width="860" />
-  </a>
-</p>
-
-<p align="center">
-  <strong><a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">Watch and hear the original spoken prompt</a></strong><br/>
-  <sub>GIF files do not carry audio. The GIF remains as a lightweight preview if video playback is unavailable.</sub>
+  <strong><a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">Watch the Personal Jarvis demo</a></strong>
 </p>
 
 ## Install

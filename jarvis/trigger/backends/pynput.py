@@ -15,9 +15,11 @@ form into the pynput key tokens the listener matches against.
 
 A combo is considered *down* when every one of its keys is currently held; the
 press handler fires on the transition into that state and the release handler on
-the transition out of it. This is the documented robust both-edges pynput
-pattern (a bare ``Listener`` with manual state), avoiding the press-only
-limitation of ``GlobalHotKeys``.
+the transition out of it. Each edge runs only its OWN handler, so a row carrying
+just one of the two observes just that edge — a toggle binding (``on_release``
+only) fires exactly once on key-up here, on Windows and on macOS alike. This is
+the documented robust both-edges pynput pattern (a bare ``Listener`` with manual
+state), avoiding the press-only limitation of ``GlobalHotKeys``.
 
 macOS permission hint (AD-8 / AD-13)
 ------------------------------------
@@ -38,6 +40,8 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+
+from jarvis.trigger.backends.global_hotkeys import MOUSE_BUTTON_TOKENS
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +78,11 @@ _MODIFIER_TO_KEY_ATTR = {
     "alt": "alt",
     "shift": "shift",
     "window": "cmd",
+    # ``_normalize_combo`` already folds super/meta to ``window``, so these two
+    # only matter for a caller that hands us a raw combo. pynput reports the
+    # Super/Windows key as ``Key.cmd`` on every platform, hence the same target.
+    "super": "cmd",
+    "meta": "cmd",
 }
 
 # ``pynput`` reports the right-hand modifier keys with side-specific names
@@ -86,6 +95,26 @@ _GENERIC_MODIFIER_ALIASES: dict[str, frozenset[str]] = {
     "alt": frozenset({"alt", "alt_l", "alt_r", "alt_gr"}),
     "shift": frozenset({"shift", "shift_l", "shift_r"}),
     "cmd": frozenset({"cmd", "cmd_l", "cmd_r"}),
+    # Super/Meta are the same key pynput calls ``cmd``. Reached only when a
+    # combo skipped ``_normalize_combo``; folding them here keeps a legacy
+    # config comparing against the right physical key instead of a token that
+    # matches nothing.
+    "super": frozenset({"cmd", "cmd_l", "cmd_r"}),
+    "meta": frozenset({"cmd", "cmd_l", "cmd_r"}),
+}
+
+# ``pynput.mouse.Button`` member name -> the shared mouse token. The X11 backend
+# numbers the extra buttons (the two side buttons land on 8 and 9); other
+# backends name them x1/x2. Matching by NAME keeps this table honest on a
+# platform whose pynput build simply has no such member — the button then never
+# appears in the held set and the shortcut stays quiet instead of firing on the
+# wrong button.
+_MOUSE_NAME_TO_TOKEN = {
+    "middle": "mouse_middle",
+    "button8": "mouse_x1",
+    "button9": "mouse_x2",
+    "x1": "mouse_x1",
+    "x2": "mouse_x2",
 }
 
 # --------------------------------------------------------------------------
@@ -136,6 +165,10 @@ class PynputBackend:
         # pynput ``keyboard.Listener`` once started; ``None`` until / on degrade.
         # Typed ``object | None`` to avoid a hard module-scope pynput type import.
         self._listener: object | None = None
+        # The mouse listener, started only when a bound combo actually contains
+        # a mouse button — an idle desktop must not pay for a second OS hook.
+        self._mouse_listener: object | None = None
+        self._needs_mouse = False
         self._started = False
         self._got_event = False
         self._incremented = False
@@ -164,6 +197,9 @@ class PynputBackend:
                 }
             )
         self._combos = combos
+        self._needs_mouse = any(
+            combo["tokens"] & MOUSE_BUTTON_TOKENS for combo in combos
+        )
 
     def _token_for(self, key) -> str | None:
         """Map a pynput key event to our canonical token, or ``None``."""
@@ -192,6 +228,63 @@ class PynputBackend:
         self._held.discard(token)
         self._reconcile()
 
+    def _on_click(self, _x, _y, button, pressed) -> None:  # noqa: ANN001 — pynput callback
+        """Feed a mouse button into the same held-set the keyboard uses."""
+        token = _MOUSE_NAME_TO_TOKEN.get(str(getattr(button, "name", "")).lower())
+        if token is None:
+            return
+        if pressed:
+            self._held.add(token)
+            self._reconcile()
+            return
+        self._reconcile()  # check release edges BEFORE dropping the token
+        self._held.discard(token)
+        self._reconcile()
+
+    def _start_mouse_listener(self) -> None:
+        """Start the mouse hook — only when a combo needs it. Degrades honestly.
+
+        A failure here must not take the KEYBOARD shortcuts down with it: the
+        message names what stopped working and what still does, so a user never
+        has to guess why one shortcut of two went quiet (AP-23).
+        """
+        if not self._needs_mouse or self._mouse_listener is not None:
+            return
+        try:
+            from pynput import mouse  # type: ignore[import-untyped]  # lazy (HN-7)
+
+            listener = mouse.Listener(on_click=self._on_click)
+            listener.start()
+        except Exception as exc:  # noqa: BLE001 — degrade, never crash the pipeline
+            log.warning(
+                "Mouse-button shortcuts are unavailable on this system (%s) — "
+                "shortcuts that use a key combination still work, and voice "
+                "still works via the wake word.",
+                exc,
+            )
+            self._mouse_listener = None
+            return
+        self._mouse_listener = listener
+
+    def _stop_mouse_listener(self) -> None:
+        """Tear the mouse hook down. Idempotent, never raises."""
+        listener = self._mouse_listener
+        self._mouse_listener = None
+        if listener is None:
+            return
+        for step_name, step in (
+            ("stop", lambda: listener.stop()),  # type: ignore[attr-defined]
+            ("join", lambda: listener.join(timeout=2.0)),  # type: ignore[attr-defined]
+        ):
+            try:
+                step()
+            except Exception:  # noqa: BLE001 — teardown must never propagate
+                log.debug(
+                    "pynput mouse listener %s failed (non-fatal)",
+                    step_name,
+                    exc_info=True,
+                )
+
     def _reconcile(self) -> None:
         """Fire press/release handlers on chord down/up transitions."""
         if not self._permission_check():
@@ -207,14 +300,18 @@ class PynputBackend:
             if is_down and not combo["down"]:
                 combo["down"] = True
                 self._got_event = True
-                handler = combo["on_press"] or combo["on_release"]
-                if handler is not None:
-                    handler()
+                # Each edge fires ONLY its own handler. A toggle binding carries
+                # on_release alone (HotkeyTrigger._build_bindings) so a held key
+                # fires exactly once on the up edge; falling back to it here made
+                # every toggle fire on key-DOWN on this backend while the Windows
+                # path fired on key-up — one config, two behaviours.
+                if combo["on_press"] is not None:
+                    combo["on_press"]()
             elif not is_down and combo["down"]:
                 combo["down"] = False
                 self._got_event = True
-                # Only a push-to-talk binding (both edges set) fires on release.
-                if combo["on_press"] is not None and combo["on_release"] is not None:
+                # Push-to-talk (both edges set) and toggle (release only) alike.
+                if combo["on_release"] is not None:
                     combo["on_release"]()
 
     def start(self) -> None:
@@ -300,6 +397,7 @@ class PynputBackend:
             self._listener = None
             return
         self._listener = listener
+        self._start_mouse_listener()
 
         with _LISTENER_LOCK:
             global _LISTENER_REFCOUNT
@@ -308,7 +406,8 @@ class PynputBackend:
         self._started = True
 
     def stop(self) -> None:
-        """Stop the pynput listener. Idempotent."""
+        """Stop the pynput listeners. Idempotent."""
+        self._stop_mouse_listener()
         listener = self._listener
         if listener is not None:
             try:
@@ -345,6 +444,7 @@ class PynputBackend:
     def unregister(self) -> None:
         """Drop the armed bindings. The listener is torn down in ``stop``."""
         self._combos = []
+        self._needs_mouse = False
 
     def received_any_event(self) -> bool:
         """True once any bound chord has fired (AD-8 macOS permission hint)."""
@@ -353,6 +453,7 @@ class PynputBackend:
 
 __all__ = [
     "PynputBackend",
+    "_MOUSE_NAME_TO_TOKEN",
     "_combo_is_down",
     "_parse_combo_tokens",
     "_reset_listener_state_for_tests",

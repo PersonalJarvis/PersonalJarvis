@@ -6,6 +6,7 @@ import {
   useUiLanguage,
   useReplyLanguage,
   useSttLanguage,
+  useSttLanguageOptions,
   setUiLanguage,
   setReplyLanguage,
   setSttLanguage,
@@ -14,12 +15,11 @@ import {
   hydrateSttLanguage,
   type UiLanguage,
   type ReplyLanguage,
-  type SttLanguage,
 } from "@/i18n";
+import { LanguageSelect } from "@/components/ui/language-select";
 
 const UI_OPTIONS: UiLanguage[] = ["en", "de", "es"];
 const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
-const STT_OPTIONS: SttLanguage[] = ["auto", "en", "de", "es"];
 
 /**
  * "Languages" group inside the Settings view — the interface-language and
@@ -33,6 +33,12 @@ export function LanguagesGroup() {
   const ui = useUiLanguage();
   const reply = useReplyLanguage();
   const stt = useSttLanguage();
+  // The accepted set comes from the backend (hydrated below), never a copy kept
+  // here — a second list would drift the first time a language is added (AP-4).
+  const sttCodes = useSttLanguageOptions();
+  // Whatever is persisted must be selectable even before the list arrives,
+  // otherwise the picker would silently show something the config never said.
+  const sttChoices = sttCodes.includes(stt) ? sttCodes : [...sttCodes, stt];
 
   // Reflect the backend's persisted languages on open (all are backend-backed
   // now, so a voice/Control-API change is shown and the choice survives restart).
@@ -63,19 +69,31 @@ export function LanguagesGroup() {
         ))}
       </Section>
 
+      {/*
+        A dropdown, not the row buttons the other two sections use: the
+        recogniser understands ~100 languages, and rendering one card per
+        language would bury the rest of the settings view. The reply and
+        interface languages stay as rows — they have three options each.
+      */}
       <Section
         title={t("languages_view.stt_section")}
         hint={t("languages_view.stt_hint")}
       >
-        {STT_OPTIONS.map((code) => (
-          <LanguageRow
-            key={`stt-${code}`}
-            active={stt === code}
-            label={t(`languages_view.options.${code}.label`)}
-            description={t(`languages_view.stt_options.${code}`)}
-            onClick={() => setSttLanguage(code)}
-          />
-        ))}
+        <li>
+          <div className="max-w-xs">
+            <LanguageSelect
+              value={stt}
+              codes={sttChoices}
+              onChange={(code) => setSttLanguage(code)}
+              autoLabel={t("languages_view.options.auto.label")}
+              ariaLabel={t("languages_view.stt_section")}
+              testId="stt-language"
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t("languages_view.stt_options.auto")}
+          </p>
+        </li>
       </Section>
 
       <Section

@@ -45,12 +45,28 @@ class AudioDevice:
 
 @dataclass(frozen=True, slots=True)
 class Transcript:
-    """STT result, optionally including segments and language information."""
+    """STT result, optionally including segments and language information.
+
+    ``text`` is what a consumer should normally read: providers run their
+    payload through ``jarvis.plugins.stt.transcript_filter.clean_stt_text``
+    first, which removes the artifacts a recognizer manufactures (decoder
+    repetition loops, hesitation sounds, stutters, an outer quote pair, NFD
+    umlauts).
+
+    ``raw_text`` is what the recognizer actually returned, and it exists for
+    the two callers that must NOT read an edited string: the dictation lane,
+    whose promise is "these are my words" and which owns the user's filler
+    switch, and wake verification, which has to judge the recognizer's own
+    output. It defaults to empty, so a provider that does not set it costs
+    those callers nothing — they fall back to ``text``.
+    """
     text: str
-    language: str  # "de", "en", "auto-detected" oder konkret
-    confidence: float  # 0.0–1.0
+    language: str  # "de", "en", "auto-detected", or a concrete code
+    confidence: float  # 0.0-1.0
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: The pre-filter transcript; empty when the provider did not filter.
+    raw_text: str = ""
 
 
 # ----------------------------------------------------------------------
@@ -96,9 +112,18 @@ class BrainRequest:
     # internal reasoning for THIS call — used by small deterministic
     # structured-output calls (Computer-Use actions/judges) where thinking
     # would eat the whole ``max_tokens`` budget and truncate the visible
-    # reply. ``None`` keeps the provider default; providers without a
-    # reasoning knob ignore the field (capability hint, never a hard switch).
-    reasoning_effort: Literal["none"] | None = None
+    # reply. The graded levels serve callers whose OUTPUT is the product: the
+    # Agentic IDE's prompt composer passes "medium" because turning a spoken
+    # sentence plus a set of file outlines into a briefed task is judgement
+    # work, and "none" is what once made it a mere rephraser.
+    # ``None`` keeps the provider default; providers without a reasoning knob
+    # ignore the field (capability hint, never a hard switch).
+    #
+    # The graded levels were added 2026-07-26: the composer had been passing
+    # "medium" into a field declared to accept only "none" since it was
+    # written, which survived only because nothing validates this. An
+    # annotation that is wrong is worse than none — the next caller trusts it.
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
 
 
 @dataclass(frozen=True, slots=True)

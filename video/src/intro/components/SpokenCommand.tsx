@@ -18,7 +18,7 @@ export const SpokenCommand: React.FC<{
   size?: number;
   compact?: boolean;
   jarvisSrc?: string;
-  /** Optional wake word shown highlighted before the command (e.g. "Hey Ruben") —
+  /** Optional wake word shown highlighted before the command (e.g. "Hey Nova") —
    *  makes clear you say the wake word first, then the command. */
   wake?: string;
 }> = ({ text, speaker = "user", delay = 0, size = 40, compact = false, jarvisSrc = "jarvis-mark.png", wake }) => {
@@ -27,7 +27,7 @@ export const SpokenCommand: React.FC<{
   const s = spring({ frame: frame - delay, fps, config: { damping: 200, mass: 0.7 } });
   const isUser = speaker === "user";
 
-  // “Hey Ruben, <command>” — the wake word in signal-yellow, the command in white.
+  // “Hey Nova, <command>” — the wake word in signal-yellow, the command in white.
   const quoted = (
     <>
       “{wake ? <span style={{ color: COLORS.primary, fontWeight: 800 }}>{wake}, </span> : null}

@@ -1,4 +1,4 @@
-﻿"""Plugin discovery via entry_points.
+"""Plugin discovery via entry_points.
 
 All plugin slots are declared in pyproject.toml under
 [project.entry-points."jarvis.*"]. This module lists them at runtime, loads
@@ -7,11 +7,12 @@ them lazily, and checks them against the matching Protocol.
 Important: `load()` only imports on actual invocation — this allows optional
 dependencies (e.g. discord.py only loads when the Discord channel is enabled).
 """
+
 from __future__ import annotations
 
-from importlib import metadata
 from typing import Any, Protocol
 
+from .entry_points import entry_points_for
 from .protocols import PLUGIN_GROUPS
 
 
@@ -35,7 +36,7 @@ def list_plugins(group: str) -> list[str]:
     """
     if group not in PLUGIN_GROUPS:
         raise ValueError(f"Unknown plugin group: {group}. Allowed: {PLUGIN_GROUPS}")
-    eps = metadata.entry_points(group=group)
+    eps = entry_points_for(group)
     return sorted(ep.name for ep in eps)
 
 
@@ -62,13 +63,12 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
     if group not in PLUGIN_GROUPS:
         raise ValueError(f"Unknown plugin group: {group}")
 
-    eps = metadata.entry_points(group=group)
+    eps = entry_points_for(group)
     candidates = [ep for ep in eps if ep.name == name]
     if not candidates:
         available = sorted(ep.name for ep in eps)
         raise PluginNotFoundError(
-            f"Plugin '{name}' not found in group '{group}'. "
-            f"Available: {available}"
+            f"Plugin '{name}' not found in group '{group}'. Available: {available}"
         )
 
     ep = candidates[0]
@@ -88,8 +88,7 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
         plugin_cls = ep.load()
     except ImportError as exc:
         raise PluginLoadError(
-            f"Plugin '{name}' could not be imported. "
-            f"Missing a dependency? Original error: {exc}"
+            f"Plugin '{name}' could not be imported. Missing a dependency? Original error: {exc}"
         ) from exc
     except Exception as exc:  # noqa: BLE001
         raise PluginLoadError(f"Plugin '{name}' load failed: {exc}") from exc
@@ -98,9 +97,7 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
     # signatures on the first isinstance call on an instance — not on the
     # class). Here we can at most ensure that it is a class.
     if not isinstance(plugin_cls, type):
-        raise PluginContractError(
-            f"Plugin '{name}' is not a class but {type(plugin_cls)}"
-        )
+        raise PluginContractError(f"Plugin '{name}' is not a class but {type(plugin_cls)}")
 
     _ = protocol  # Documentation-intent; verification happens at the instance level
     return plugin_cls

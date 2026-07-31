@@ -37,7 +37,7 @@ def test_managed_block_excludes_pii(tmp_path):
     contact = _contact(
         tmp_path,
         emails=["christoph@example.com"],
-        phones=["+49 151 2345678"],
+        phones=["+1 202-555-0117"],
         address={"street": "Musterweg 1", "city": "Berlin"},
     )
     page = render_person_page(contact, existing_text=None)

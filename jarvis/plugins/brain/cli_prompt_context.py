@@ -19,6 +19,15 @@ _NO_ACTIVE_PREFS_MARKER = "No active user preferences are currently set"
 # user ..." auto line — start with this marker.
 _REPLY_LANG_MARKER = "REPLY LANGUAGE"
 
+# Prepended to every structured CLI prompt. See render_structured_prompt for the
+# failure this prevents: an agent that reaches for a file it may not open in
+# headless mode returns a permissions notice instead of an answer.
+_NO_TOOLS_PREAMBLE = (
+    "Answer directly from the information in this message. Do not read files, "
+    "do not search the filesystem, do not run commands, and do not use any "
+    "tools — everything you need is already included below."
+)
+
 
 def extract_standing_instructions_block(system_prompt: str | None) -> str:
     """Return only the user standing-instructions block from a system prompt."""
@@ -70,8 +79,22 @@ def render_structured_prompt(req: object) -> str:
     broken to the wiki provider chain (live 2026-07-18: every antigravity
     extraction died with "no JSON array found in response"). Structured mode
     forwards the system contract and the user payload verbatim instead.
+
+    One line is added ahead of the contract, and it is not decoration. These
+    CLIs are autonomous AGENTS, while a structured caller is addressing them as
+    a model: given a payload full of file paths, the agent tries to go READ
+    those files, headless mode cannot prompt for the permission, and the run is
+    auto-denied. Measured live 2026-07-26 — an Agentic IDE brief came back as
+
+        jetski: no output produced — a tool required the "read_file" permission
+        that headless mode cannot prompt for, so it was auto-denied.
+
+    A structured caller has already gathered everything the answer needs (the
+    composer ships file outlines; the wiki extractor ships the text), so telling
+    the agent to work from what it was given costs nothing and is what makes the
+    difference between an answer and a permissions notice.
     """
-    parts: list[str] = []
+    parts: list[str] = [_NO_TOOLS_PREAMBLE]
     system = str(getattr(req, "system", "") or "").strip()
     if system:
         parts.append(system)

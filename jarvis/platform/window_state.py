@@ -63,9 +63,9 @@ class WindowInfo:
     title: str
     minimized: bool = False
     handle: int | None = None
-    #: Owning process id, when the platform probe knows it. Only the macOS
-    #: foreground path fills this today; it lets the CU foreground guard use
-    #: app-level identity where per-window handles churn (see
+    #: Owning process id, when the platform probe knows it. Native Windows,
+    #: macOS, and Linux/X11 probes fill it so privacy policy and the CU
+    #: foreground guard can use app-level identity where handles churn (see
     #: ``jarvis.cu.target_guard.window_signature``).
     pid: int | None = None
 
@@ -202,7 +202,7 @@ def _force_foreground_windows(hwnd: int) -> bool:
 
 
 def _list_windows_windows() -> list[WindowInfo]:
-    """All visible top-level windows with a non-empty title, plus minimized state."""
+    """All identifiable visible top-level windows, including untitled ones."""
     import ctypes
     from ctypes import wintypes
 
@@ -213,24 +213,31 @@ def _list_windows_windows() -> list[WindowInfo]:
     GetWindowTextLengthW = user32.GetWindowTextLengthW
     IsWindowVisible = user32.IsWindowVisible
     IsIconic = user32.IsIconic
+    GetWindowThreadProcessId = user32.GetWindowThreadProcessId
 
     out: list[WindowInfo] = []
 
     def _callback(hwnd: int, _lparam: int) -> bool:
         if not IsWindowVisible(hwnd):
             return True
+        pid = wintypes.DWORD()
+        GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         length = GetWindowTextLengthW(hwnd)
-        if length <= 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value or ""
-        if title.strip():
+        title = ""
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value or ""
+        # Privacy enumeration must retain an untitled password-manager or
+        # authentication window. A native handle/PID is sufficient identity;
+        # title-only filtering would silently omit it from monitor denylisting.
+        if title.strip() or hwnd or pid.value:
             out.append(
                 WindowInfo(
                     title=title,
                     minimized=bool(IsIconic(hwnd)),
                     handle=int(hwnd) if hwnd else None,
+                    pid=int(pid.value) or None,
                 )
             )
         return True
@@ -496,7 +503,7 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
 
 
 def _list_windows_macos() -> list[WindowInfo]:
-    """Top-level normal-layer windows from Quartz, front-to-back."""
+    """Identifiable normal-layer Quartz windows, front-to-back."""
     entries: list[dict] = []
     for entry in _quartz_window_list(on_screen_only=False):
         try:
@@ -505,7 +512,10 @@ def _list_windows_macos() -> list[WindowInfo]:
             title = _macos_window_title(entry).strip()
         except (TypeError, ValueError):
             continue
-        if title:
+        # Quartz frequently withholds titles for password/authentication
+        # windows. Retain entries carrying a window number or owner PID so
+        # monitor privacy checks can still resolve and denylist their process.
+        if title or _macos_window_pid(entry) or entry.get("kCGWindowNumber"):
             entries.append(entry)
 
     minimized_by_number: dict[int, bool] = {}
@@ -552,11 +562,14 @@ def _list_windows_macos() -> list[WindowInfo]:
             number = int(entry.get("kCGWindowNumber", 0) or 0)
         except (TypeError, ValueError):
             number = 0
-        result.append(WindowInfo(
-            title=_macos_window_title(entry).strip(),
-            minimized=minimized_by_number.get(number, False),
-            handle=number or None,
-        ))
+        result.append(
+            WindowInfo(
+                title=_macos_window_title(entry).strip(),
+                minimized=minimized_by_number.get(number, False),
+                handle=number or None,
+                pid=_macos_window_pid(entry) or None,
+            )
+        )
     return result
 
 
@@ -641,7 +654,7 @@ def _list_windows_linux() -> list[WindowInfo]:
     if shutil.which("wmctrl") is None:
         return []
     listing = subprocess.run(
-        ["wmctrl", "-l"],
+        ["wmctrl", "-lp"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -653,10 +666,27 @@ def _list_windows_linux() -> list[WindowInfo]:
         return []
     out: list[WindowInfo] = []
     for line in (listing.stdout or "").splitlines():
-        parts = line.split(None, 3)
+        parts = line.split(None, 4)
+        # ``wmctrl -lp`` may end after the host column for an untitled window.
+        # Keep it when its native id or PID is usable for privacy identity.
         if len(parts) < 4:
             continue
-        out.append(WindowInfo(title=parts[3]))
+        try:
+            pid = int(parts[2])
+        except ValueError:  # Invalid PID stays unknown; privacy callers fail closed.
+            pid = 0
+        try:
+            handle = int(parts[0], 16)
+        except ValueError:  # Invalid native id cannot identify a capture surface.
+            handle = 0
+        if handle or pid:
+            out.append(
+                WindowInfo(
+                    title=parts[4] if len(parts) >= 5 else "",
+                    handle=handle or None,
+                    pid=pid or None,
+                )
+            )
     return out
 
 
@@ -930,6 +960,7 @@ def foreground_window() -> WindowInfo | None:
 
 def _foreground_window_windows() -> WindowInfo | None:
     import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
     hwnd = user32.GetForegroundWindow()
@@ -938,7 +969,11 @@ def _foreground_window_windows() -> WindowInfo | None:
     length = int(user32.GetWindowTextLengthW(hwnd))
     buf = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buf, length + 1)
-    return WindowInfo(title=buf.value or "", handle=int(hwnd))
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return WindowInfo(
+        title=buf.value or "", handle=int(hwnd), pid=int(pid.value) or None
+    )
 
 
 def _quartz_window_list(*, on_screen_only: bool = True) -> list:
@@ -1048,7 +1083,24 @@ def _foreground_window_linux() -> WindowInfo | None:
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
     title = (name.stdout or "").strip() if name.returncode == 0 else ""
-    return WindowInfo(title=title, handle=win_id)
+    pid_probe = subprocess.run(
+        ["xdotool", "getwindowpid", str(win_id)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    try:
+        pid = (
+            int((pid_probe.stdout or "").strip())
+            if pid_probe.returncode == 0
+            else 0
+        )
+    except ValueError:  # Invalid active PID stays unknown; privacy callers fail closed.
+        pid = 0
+    return WindowInfo(title=title, handle=win_id, pid=pid or None)
 
 
 def move_window_to_primary(

@@ -8,11 +8,11 @@ Examples
 --------
     python scripts/telephony_provision.py verify
     python scripts/telephony_provision.py list --country DE --area-code 30
-    python scripts/telephony_provision.py buy --number +49301234567 \
+    python scripts/telephony_provision.py buy --number +12025550102 \
         --url https://jarvis.example.com/api/telephony/voice
-    python scripts/telephony_provision.py set-webhook --number +49301234567 \
+    python scripts/telephony_provision.py set-webhook --number +12025550102 \
         --url https://jarvis.example.com/api/telephony/voice
-    python scripts/telephony_provision.py inspect --number +49301234567
+    python scripts/telephony_provision.py inspect --number +12025550102
 """
 
 from __future__ import annotations

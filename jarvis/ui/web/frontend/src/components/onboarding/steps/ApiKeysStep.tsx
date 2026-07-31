@@ -1,9 +1,111 @@
-import { CheckCircle2, KeyRound, Radio, Waypoints } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, HardDrive, KeyRound, Radio, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { switchBrainProvider } from "@/hooks/useProviders";
 import { useT } from "@/i18n";
 import type { StepProps } from "../OnboardingFlow";
 
 const GUIDE_SCREENSHOT = "/onboarding/api-keys-realtime-guide.png";
+
+/**
+ * First-sixty-seconds local path (maintainer amendment 2026-07-25): a
+ * zero-key user with Ollama running must SEE the local option during
+ * onboarding, not discover it later in settings. The probe goes through the
+ * backend catalog route (never a browser-direct localhost:11434 call, which
+ * CORS would block anyway) and runs once on step mount only (AP-26).
+ */
+function LocalPathCard() {
+  const t = useT();
+  const [probe, setProbe] = useState<"checking" | "reachable" | "empty" | "unreachable">(
+    "checking",
+  );
+  const [activating, setActivating] = useState(false);
+  const [active, setActive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/providers/ollama/models");
+        const data = res.ok ? await res.json() : null;
+        const live = data?.source === "live" || data?.source === "cache";
+        const models = Array.isArray(data?.models) ? data.models.length : 0;
+        if (!cancelled) {
+          setProbe(live ? (models > 0 ? "reachable" : "empty") : "unreachable");
+        }
+      } catch {
+        if (!cancelled) setProbe("unreachable");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function useLocal() {
+    setActivating(true);
+    setError(null);
+    try {
+      await switchBrainProvider("ollama");
+      setActive(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-border bg-muted/30 p-4">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <HardDrive aria-hidden="true" className="h-4 w-4 text-primary" />
+        {t("onboarding.api_keys.local_title")}
+      </div>
+      {probe === "checking" && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("onboarding.api_keys.local_checking")}
+        </p>
+      )}
+      {probe === "reachable" && (
+        <div className="space-y-2">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("onboarding.api_keys.local_detected")}
+          </p>
+          {active ? (
+            <p className="flex items-center gap-2 text-xs font-medium text-emerald-600">
+              <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0" />
+              {t("onboarding.api_keys.local_active")}
+            </p>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={useLocal} disabled={activating}>
+              {t("onboarding.api_keys.local_use_button")}
+            </Button>
+          )}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+      )}
+      {probe === "empty" && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("onboarding.api_keys.local_detected_empty")}
+        </p>
+      )}
+      {probe === "unreachable" && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("onboarding.api_keys.local_missing")}{" "}
+          <a
+            href="https://ollama.com/download"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            {t("onboarding.api_keys.local_missing_link")}
+          </a>
+        </p>
+      )}
+    </section>
+  );
+}
 
 /**
  * Introduces the credential path without embedding the full provider console in
@@ -109,6 +211,8 @@ export function ApiKeysStep({ goNext }: StepProps) {
           </div>
         </section>
       </div>
+
+      <LocalPathCard />
 
       <p className="flex items-start gap-2 rounded-lg bg-emerald-500/10 px-3 py-2.5 text-xs leading-relaxed text-emerald-600">
         <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />

@@ -8,88 +8,185 @@ order: 1
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [overview, getting-started, privacy, safety]
 related: [install-personal-jarvis, desktop-app-tour, start-your-first-chat]
 ---
 
-Personal Jarvis is an open-source assistant, which means its source code is public. You can use the same app in a desktop window or a web browser. Type a request, or speak when voice is set up. Chats, longer agent tasks, tools, saved files, and optional service connections all live in the app.
+Personal Jarvis is an open-source assistant you can use in its desktop window
+or through its browser interface. You choose how it reasons, which services it
+can reach, and which device permissions it receives.
 
-Jarvis works with several artificial intelligence providers. A provider is a service or local program that handles part of a request. You choose which supported options to connect and what they power. Features that use a cloud service, microphone, screen, or desktop control need the relevant connection, hardware, and permission.
+You can begin with one working chat provider or a local model. Voice, connected
+services, long-running Agents, knowledge, and computer control are optional
+capabilities you can add when you need them.
 
-## Choose Where to Begin
+Several visible labels follow the assistant name you chose, including the
+Agents area and Voice hub. This guide uses the neutral words **assistant**,
+**Agents**, and **Voice** so it applies to every name.
 
-Start with the part that matches what you want to accomplish.
+## What You Can Do Now
 
-The labels below match the English interface. The **Agents** label follows your assistant name. For example, an assistant named Nova appears as **Nova-Agents**.
+| Goal | What Personal Jarvis provides |
+|---|---|
+| Talk or type | Saved chats, Pipeline or Realtime voice conversations, and push-to-talk from the current conversation. |
+| Dictate into another app | Local or hosted speech recognition, a personal dictionary, optional wording cleanup, and recent dictation history. |
+| Build useful knowledge | A Normal Wiki for editable notes and an optional UltraWiki for approved sources, semantic search, people, exploration, and cited answers. |
+| Use tools safely | App commands, plugins, MCP connections, command-line tools, and supported computer control, all subject to capability and safety checks. |
+| Delegate longer work | Assistant-named Agents run larger missions separately, show progress, and return reviewed results or files. |
+| Work with coding agents | Agentic IDE opens one or more live terminals in a chosen workspace and can focus assistant replies on that workspace. |
+| Plan and retrieve work | Tasks hold scheduled or persistent work; Outputs collects reports and other created files. |
 
-| Your goal | Where to begin | What you get |
-|---|---|---|
-| Ask a question or develop an idea | **Chats** | A conversation saved in **History** |
-| Speak instead of type | Voice controls in **Chats** or the sidebar | A transcript and, when voice output is available, a spoken reply |
-| Delegate longer work | The assistant-named **Agents** item | Live progress; saved results appear in **Outputs** |
-| Find a file created by Jarvis | **Outputs** | Generated reports and other saved deliverables |
-| Connect or change a provider | **API Keys** | Connection controls, provider choices, and current status |
+These surfaces are connected, but they are not one permission. Connecting a
+Brain does not connect a smart home. Granting microphone access does not grant
+screen control. Opening a coding workspace does not turn focused coding mode on
+unless you choose it.
 
-The sidebar is the main map of both the desktop and browser app. It also opens areas such as **Skills, Plugins & MCPs**, **Tasks**, **Transcription**, **Wiki**, **Contacts**, **Settings**, **Docs**, and **Feedback**.
+## Choose Local, Self-Hosted, or Cloud
+
+Personal Jarvis does not make one provider load-bearing. You choose providers
+for different jobs such as Brain reasoning, speech input, speech output,
+Realtime voice, tool use, Agents, and knowledge processing.
+
+- **Local:** Ollama can run the Brain; Whisper or Nemotron can recognize
+  speech; Piper can speak Pipeline replies. These options need no provider API
+  key, but use your computer's storage, memory, and processing time.
+- **Self-hosted:** The Brain can connect to a trusted OpenAI-compatible server,
+  and service plugins can reach servers you operate, such as Home Assistant.
+  Data still crosses the network between the app host and that server.
+- **Cloud:** Supported providers can supply stronger models or avoid local
+  downloads. You bring your own key or supported subscription login and remain
+  responsible for that provider's account, limits, cost, and privacy terms.
+
+Read [Use Local AI Providers](local-ai-providers) before planning an offline
+setup. “Local” applies to the selected call, not automatically to tools,
+fallbacks, wording, or knowledge slots. If a local Brain fails, the app can use
+another configured provider family; a hosted fallback may receive that
+request. Keep only the paths you trust ready for sensitive work.
+
+Local control means you own the app's records and can choose local inference;
+it is not a claim that every enabled feature is offline.
 
 ## What Stays Under Your Control
 
-- **Provider choice:** Jarvis does not bundle paid provider access. For a cloud provider, connect your own key or supported subscription login. Local options may require separate software instead.
-- **Permissions:** Microphone, screen, file, and accessibility access are required only by features that need them.
-- **Approvals:** Jarvis checks actions before they run. Some actions run directly, some require your confirmation, and disallowed actions stay blocked.
-- **Connections:** Optional tools and services add capabilities. If you do not connect one, the rest of the app can still use the capabilities that are available.
-- **Information sharing:** A connected provider or service may receive the content needed to complete a request. Review its privacy terms before sending sensitive information.
+- **Credentials:** Enter keys and tokens only in **API Keys** or the protected
+  connection dialog that owns them. Never send a credential through chat,
+  voice, a task, a skill, documentation, or a screenshot.
+- **Permissions:** Microphone, screen, accessibility, files, and desktop input
+  are requested only by features that need them. A missing permission should
+  produce an honest limitation rather than a pretend success.
+- **Approvals:** Actions use four safety levels: safe, monitor, ask, and block.
+  Some low-risk work can run directly, some changes wait for confirmation, and
+  blocked actions do not run. Review the exact target and effect before
+  approving.
+- **Connections:** Plugins and MCP servers add access to other services. Their
+  service-side permissions remain an outer boundary even after connection.
+- **Knowledge:** Normal Wiki files remain editable. UltraWiki reads only the
+  sources you add and approve, and switching Wiki modes does not delete either
+  store.
 
-> [!warning] Never send a password, access token, or other credential through chat or voice. Add credentials only through the app's **API Keys** view or the connection screen for that service.
+Much of the app's state—chats, Wiki data, task records, settings, and generated
+files—lives on the app host. Content needed by a configured provider or
+connected service can leave that host. Local data ownership and local inference
+are related, but not identical.
 
-## What Jarvis Does Not Do
+## What It Does Not Do Automatically
 
-Jarvis does not guarantee that every answer or completed task is correct. Review important facts, generated files, and actions that affect your accounts or computer.
+Personal Jarvis does not include paid provider access, create third-party
+accounts, or turn a chat message into secure credential setup. It does not need
+every provider card filled in, and a missing optional integration should not
+break unrelated features.
 
-It also does not bypass operating-system permissions, safety checks, or missing hardware. Voice, computer control, phone calls, and third-party connections work only when their requirements are available and configured.
+It does not guarantee that an answer, action, report, or code change is correct.
+Review important facts and outputs. Read approvals rather than treating them as
+routine prompts, especially for account changes, messages, files, computer
+control, locks, heating, or other physical effects.
 
-The core app supports Windows, macOS, and Linux, including a browser interface for headless servers. A feature that needs local audio, a display, or desktop integration may be unavailable on a headless device. Text chat still requires a running Jarvis backend and a reachable brain provider.
+The assistant does not bypass operating-system permissions, service policies,
+missing hardware, or unavailable models. It does not make every file, account,
+or folder an UltraWiki source; add and approve the sources you want. Chat
+history and other memory features keep their own records.
+
+## Understand Platform Differences
+
+The core app supports Windows, macOS, and Linux. A browser interface can reach
+a headless installation, so text chat, API access, provider connections,
+knowledge work, tasks, and suitable Agents do not require a desktop window.
+
+Device features still need devices. Local wake word, microphone capture,
+speakers, global shortcuts, screen context, and desktop control require the
+matching hardware, permission, and supported operating-system capability. A
+headless server with no display or audio should report those features as
+unavailable while keeping its server-capable paths working.
+
+Local models must also fit the host. A smaller CPU model may be slower or less
+capable than a hosted model, while a large model can exceed available memory.
+The provider card's readiness and live test are more useful than assumptions
+about a particular GPU or operating system.
+
+## Follow a Simple Reader Journey
+
+1. [Install Personal Jarvis](install-personal-jarvis) for your platform and
+   complete the in-app setup.
+2. Choose one Brain path in **API Keys**. Use a provider you already trust or
+   start with a key-free local option.
+3. Follow [Start Your First Chat](start-your-first-chat) and confirm one visible
+   reply before adding more capabilities.
+4. Use [Tour the Desktop App](desktop-app-tour) to find Voice, Wiki, Tasks,
+   Outputs, connections, and health indicators.
+5. Add one feature at a time. Try [Dictation](dictation), [Use
+   UltraWiki](ultrawiki), [Connect Home Assistant](connect-home-assistant), or
+   [Agentic IDE](agentic-ide) only when it matches a real goal.
+
+This order makes failures easier to understand: first prove chat, then test the
+new provider, device, permission, or connection separately.
 
 ## How It Fits Together
 
-One request can move through several parts of Jarvis:
-
-1. **You start the request** in a chat, through voice, from a task, or from another app feature.
-2. **Jarvis checks what the request needs.** It uses a configured provider with the required capability. If the preferred provider is unavailable, Jarvis can try a suitable provider from another configured family.
-3. **Jarvis chooses a path.** A simple question can return directly to the conversation. Longer work can go to an agent, while an action may use a connected tool or service.
-4. **Safety checks apply before action.** Jarvis runs permitted low-risk steps, asks you to review actions that need approval, and blocks disallowed actions.
-5. **The result returns to the relevant place.** You see a reply in the conversation, progress in the assistant-named **Agents** view, or a file in **Outputs**.
-6. **Jarvis reports what it cannot use.** It can use a suitable alternative when one is configured. If it cannot continue, it identifies the unavailable provider, permission, connection, or device capability.
-
-The [desktop app tour](desktop-app-tour) explains where each of these areas lives. The [first chat guide](start-your-first-chat) walks through the shortest complete request.
+1. You start a request in Chats, by voice, from a task, or through an app
+   control.
+2. The app identifies the required capabilities and offers only providers and
+   tools that are ready and relevant.
+3. A short request can return directly. Longer work can move to an Agent; a
+   coding request can use an Agentic IDE workspace when focused coding mode is
+   enabled.
+4. Safety rules inspect proposed actions before execution. Connected tools act
+   only within their own permissions.
+5. Results return to Chats, the Agents view, task history, Wiki, or Outputs.
+   Failures name the missing provider, permission, device, or connection rather
+   than claiming success.
 
 ## Check That It Works
 
-After you install the app and finish its setup:
+After setup:
 
-1. Open **Chats** from the sidebar.
-2. Type `What can you help me do?` and press Enter.
-3. Confirm that your message and Jarvis's reply appear in the same conversation.
+1. Open **Chats**.
+2. Send `Reply with: setup check complete.`
+3. Confirm that the reply appears in the same conversation.
+4. Open **API Keys** and confirm that the active Brain has no red health dot.
 
-That visible reply confirms that the app, chat view, and a reachable brain provider can complete a basic request. It does not test optional voice, tool, or computer-control features.
+This verifies the basic chat path only. Test voice, local models, tools,
+connections, Agents, and the IDE separately before relying on them.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **Starting…** or **Voice starting…** appears below the assistant name | The backend or voice service is still warming up | If the chat input is disabled, wait for it to become available. If it is enabled, you can type while voice warms up. Speak only after the status changes to **Ready**. |
-| **Offline** appears below the assistant name | The app cannot reach the Jarvis backend | Check that Jarvis is still running. If the status does not recover, close and reopen the app using your normal launcher. |
-| Your message sends but no answer appears | No suitable configured brain provider completed the request | Open **API Keys**, review the **Brain** status, and connect or choose a reachable provider. |
-| A feature is missing or unavailable | Its service, permission, software, or hardware is not ready on this device | Open the matching view or **Settings**, read the shown status, and complete the listed requirement. |
-| Jarvis asks for confirmation | The action reached a safety boundary | Review the exact action and approve it only if you understand and want the effect. |
+| **Starting** or **Voice starting** | The backend or voice path is warming | Use text when available and wait for **Ready** before speaking. |
+| **Offline** | The window lost its local backend connection | Wait briefly, then use the confirmed Restart action or reopen the app. |
+| Message sends but no answer arrives | No suitable Brain completed the request | Open **API Keys**, inspect the Brain health, and test or choose another ready provider. |
+| A feature says setup is required | Its provider, connection, permission, model, or device is missing | Open the named area and complete only that requirement. |
+| The assistant asks for confirmation | The action reached an ask-level safety boundary | Check the target and effect; reject it if either is unexpected. |
+| A local choice still uses the network | Another provider slot, fallback, tool, or connected service is hosted | Review all active provider and connection choices for that exact feature. |
+| A desktop feature is unavailable on a server | The host has no usable display, audio device, or desktop session | Use the server-capable path or move that feature to a desktop device. |
 
-If a problem continues, open **Docs** in the sidebar and search for the feature name or the visible error message.
+If a problem continues, open **Docs** and search for the feature name or the
+visible error.
 
 ## Next Steps
 
-- [Install Personal Jarvis](install-personal-jarvis) to set up the app on a supported computer.
-- [Tour the Desktop App](desktop-app-tour) to learn what each sidebar area is for.
-- [Start Your First Chat](start-your-first-chat) to send a request and understand where the conversation is saved.
+- [Install Personal Jarvis](install-personal-jarvis).
+- [Tour the Desktop App](desktop-app-tour).
+- [Start Your First Chat](start-your-first-chat).

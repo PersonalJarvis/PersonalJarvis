@@ -1,5 +1,5 @@
-# === F-FRIENDS [F3] · feature/friends-section · ruben-2026-05-01 ===
-# === F-FRIENDS [F2] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F3] · feature/friends-section · maintainer-2026-05-01 ===
+# === F-FRIENDS [F2] · feature/friends-section · maintainer-2026-04-30 ===
 """REST API for the Friends section (Phase F2).
 
 Pattern like ``missions_routes.py``:

@@ -63,8 +63,8 @@ async def real_stack(tmp_path: Path):
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
 
     # A durable page that a resolvable link can point at.
-    (vault_root / "entities" / "ruben.md").write_text(
-        _entity_body("ruben", "Profile body for Ruben."),
+    (vault_root / "entities" / "alex.md").write_text(
+        _entity_body("alex", "Profile body for Alex."),
         encoding="utf-8",
     )
 
@@ -158,7 +158,7 @@ async def test_resolvable_link_is_preserved(real_stack):
                 "\n"
                 "## Summary\n"
                 "\n"
-                "This concept concerns [[ruben]] directly.\n"
+                "This concept concerns [[alex]] directly.\n"
             ),
             reason="concept linking the existing user entity",
         ),
@@ -176,5 +176,5 @@ async def test_resolvable_link_is_preserved(real_stack):
     )
     # Resolvable link is canonicalised to the typed form (display kept as
     # an alias), never demoted to plain text.
-    assert "[[entities/ruben|ruben]]" in content
+    assert "[[entities/alex|alex]]" in content
     assert telemetry.get("wiki_links_refused_dangling") == before

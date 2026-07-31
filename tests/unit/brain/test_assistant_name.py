@@ -86,7 +86,7 @@ def test_agent_brand_follows_any_wake_word():
     from jarvis.brain.assistant_name import agent_brand
 
     assert agent_brand(_cfg(wake_phrase="Hey Ruben")) == "Ruben-Agent"
-    assert agent_brand(_cfg(wake_phrase="Harald")) == "Harald-Agent"
+    assert agent_brand(_cfg(wake_phrase="Morgan")) == "Morgan-Agent"
     assert agent_brand(_cfg(wake_phrase="ok athena")) == "Athena-Agent"
 
 

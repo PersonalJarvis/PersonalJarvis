@@ -1,0 +1,1 @@
+function t(n){window.open(n,"_blank","noopener,noreferrer")}async function r(n){if(n){try{const o=await fetch("/api/settings/open-external",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:n})});if(o.ok){const e=await o.json().catch(()=>null);if(e!=null&&e.opened)return}}catch{}t(n)}}export{r as o};

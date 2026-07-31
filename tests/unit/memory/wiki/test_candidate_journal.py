@@ -34,7 +34,7 @@ def _facts() -> list[CandidateFact]:
             evidence_turn_id="turn-17",
             evidence_excerpt="I know Lena moved to Hamburg.",
         ),
-        CandidateFact(fact="User prefers dark mode.", kind="preference", subjects=("ruben",)),
+        CandidateFact(fact="User prefers dark mode.", kind="preference", subjects=("alex",)),
     ]
 
 
@@ -66,7 +66,7 @@ def test_basis_and_salience_roundtrip_and_normalisation(
             CandidateFact(
                 fact="The user plays golf actively with friends.",
                 kind="activity",
-                subjects=("ruben", "golf"),
+                subjects=("alex", "golf"),
                 basis="behavioral",
                 salience=4,
             ),
@@ -90,7 +90,7 @@ def test_append_blocks_secret_shaped_candidate_defense_in_depth(
 ) -> None:
     secret = "sk-proj-" + "B" * 30
     count = journal.append(
-        [CandidateFact(fact=f"Credential: {secret}", subjects=("ruben",))],
+        [CandidateFact(fact=f"Credential: {secret}", subjects=("alex",))],
         source_label="test",
         turn_hash="secret-defense",
     )

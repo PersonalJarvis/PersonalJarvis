@@ -21,8 +21,13 @@ Protocol (UTF-8, one JSON object per line):
   exits, so no ownerless bar can linger on the user's desktop.
 - child → parent (stdout): events — ``{"event": "ready"}`` once the surface
   is initialized, plus user interactions (``talk``, ``hangup``,
-  ``mute_toggle``, ``feedback``, ``show_window``). Logging goes to stderr so
-  stdout stays pure protocol.
+  ``mute_toggle``, ``feedback``, ``show_window``, ``drop``). Logging goes to
+  stderr so stdout stays pure protocol.
+
+``drop`` is the one round trip: the child forwards a file/text dropped on the
+hosted surface, the parent runs the intake (the brain lives there), and the
+verdict comes back down as the ``drop_result`` command so the surface can
+confirm it visually.
 
 The host works on every OS (the parent simply only uses it where in-process
 hosting is impossible). ``JARVIS_BAR_HOST_FAKE=1`` swaps the Tk bar for an
@@ -87,6 +92,10 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     if op == "stop":
         return False
     if op == "show":
+        # The mode string is forwarded VERBATIM — this protocol carries no mode
+        # list of its own, so a new coarse mode reaches the hosted surface with
+        # no change here. The surface re-validates against the one canonical
+        # tuple (``jarvis.ui.jarvisbar.modes.MODES``).
         _call(surface, "show", str(msg.get("mode", "listen")))
     elif op == "hide":
         _call(surface, "hide")
@@ -128,6 +137,11 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         _call(surface, "start_mouth_animation", int(msg.get("duration_ms", 60000)))
     elif op == "stop_mouth_animation":
         _call(surface, "stop_mouth_animation")
+    elif op == "drop_result":
+        # The return leg of a drop this host forwarded: the parent ran the
+        # intake and says whether the content became context, so the surface
+        # can confirm it visually.
+        _call(surface, "notify_drop_result", bool(msg.get("accepted", False)))
     elif op == "reset_position":
         # The double-click reset seam.
         _call(surface, "_on_reset_double_click")
@@ -363,6 +377,27 @@ def _wire_surface_events(surface: Any) -> None:
         lambda kind, payload: emit("feedback", kind=kind, payload=payload),
     )
     _call(surface, "set_on_show_window", lambda: emit("show_window"))
+    _wire_drop_forwarding()
+
+
+def _wire_drop_forwarding() -> None:
+    """Forward drops onto the hosted surface to the parent process.
+
+    Both hosted surfaces (the Qt bar, the mascot) deliver a drop by calling
+    ``drop_bridge.dispatch_drop`` — but the real handler is registered in the
+    PARENT, where the brain lives. Without this the child's bridge has no
+    handler at all, so on macOS a file dropped on the bar was accepted by the
+    window, reported "copy" to the OS, and then silently discarded: the drop
+    never reached the conversation. Installing the child-side handler makes the
+    forward explicit; ``SubprocessBarOverlay`` re-dispatches it parent-side and
+    sends the verdict back as a ``drop_result`` command.
+    """
+    try:
+        from jarvis.overlay.drop_bridge import set_drop_handler
+
+        set_drop_handler(lambda paths, text: emit("drop", paths=list(paths), text=str(text)))
+    except Exception:  # noqa: BLE001 — drop is optional; never block the host
+        log.debug("bar-host drop forwarding unavailable", exc_info=True)
 
 
 def main() -> int:

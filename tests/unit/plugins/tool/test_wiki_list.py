@@ -31,8 +31,8 @@ from jarvis.plugins.tool.wiki_list import WikiListTool
 def vault(tmp_path: Path) -> Path:
     """Minimal realistic vault: content pages + a meta contract page."""
     (tmp_path / "entities").mkdir()
-    (tmp_path / "entities" / "ruben.md").write_text(
-        "# Ruben\n\nThe maintainer.\n", encoding="utf-8"
+    (tmp_path / "entities" / "alex.md").write_text(
+        "# Alex\n\nThe maintainer.\n", encoding="utf-8"
     )
     (tmp_path / "projects").mkdir()
     (tmp_path / "projects" / "personal-jarvis.md").write_text(
@@ -67,7 +67,7 @@ async def test_wiki_list_lists_real_files_only(vault: Path) -> None:
     result = await tool.execute({}, ctx=None)
     assert result.success is True
     out = result.output
-    assert "entities/ruben.md" in out
+    assert "entities/alex.md" in out
     assert "projects/personal-jarvis.md" in out
     assert "log.md" in out
     # The hallucinated names from the live incident must NOT appear.
@@ -87,7 +87,7 @@ async def test_wiki_list_flags_meta_pages(vault: Path) -> None:
     )
     assert "system file" in schema_line.lower()
     content_line = next(
-        line for line in result.output.splitlines() if "ruben.md" in line
+        line for line in result.output.splitlines() if "alex.md" in line
     )
     assert "system file" not in content_line.lower()
 
@@ -96,7 +96,7 @@ async def test_wiki_list_flags_meta_pages(vault: Path) -> None:
 async def test_wiki_list_shows_page_titles(vault: Path) -> None:
     tool = WikiListTool(vault_root=vault)
     result = await tool.execute({}, ctx=None)
-    assert "Ruben" in result.output
+    assert "Alex" in result.output
     assert "Personal Jarvis" in result.output
 
 

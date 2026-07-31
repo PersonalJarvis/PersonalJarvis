@@ -387,7 +387,7 @@ SPAWN_INPUTS = [
     "Bau eine Landingpage",
     "Wie viele PRs sind in jarvis-repo offen?",
     "Mach einen Screenshot und sag mir was du siehst",
-    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von Ruben):
+    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von Alex):
     # "Kannst du bitte einen Subagenten spawnen, welcher..." fiel ohne
     # Match auf den LLM-Pfad zurueck (40s Gemini-Stream-Timeout). "spawn"
     # als Verb-Trigger plus "Subagent"-Marker fangen beide unabhaengig.
@@ -1217,8 +1217,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 # Opinion / advice / recommendation / decision questions are CONVERSATION, not
 # work — they must be answered inline, NEVER force-spawned to a worker, even
 # when they contain an everyday word that collides with an action verb in the
-# universal catalogue. Live bug 2026-06-19 (voice session 11:53, San-Francisco
-# emigration turn): "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
+# universal catalogue. Live bug 2026-06-19 (voice session 11:53, Example-City
+# decision-routing turn): "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned a worker because has_action_intent matched the NOUN "Frage"
 # (-> verb "frag"/"frage") and the FILLER particle "halt" (-> verb "halt"), so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
@@ -1247,7 +1247,7 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
     """Opinion/advice questions are talk, not work — answered inline even when an
     everyday word ('Frage' -> 'frag', filler 'halt') collides with an action
-    verb (live bug 2026-06-19, emigration turn). Reproduces the real strict-mode
+    verb (live bug 2026-06-19, decision-routing turn). Reproduces the real strict-mode
     path with a seeded registry, where has_action_intent fires and
     _is_generic_subagent_work would otherwise force-spawn."""
     from jarvis.core.capabilities import get_registry
@@ -1277,12 +1277,12 @@ def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
         "Wie siehst du das?",
         "Was ist deine Meinung dazu?",
         # decision help (DE)
-        "Soll ich nach San Francisco oder nach Melbourne ziehen?",
+        "Soll ich Projekt Atlas oder Projekt Orion priorisieren?",
         # conversational opener (DE)
         "Ich hab da mal eine Frage.",
         # advice / opinion (EN)
         "What would you recommend?",
-        "Should I move to San Francisco or Melbourne?",
+        "Should I prioritize Project Atlas or Project Orion?",
         "I have a question.",
         # advice / opinion (ES)
         "¿Qué me recomiendas?",
@@ -1874,6 +1874,12 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # "what is in my wiki" in one round. Read-only, never a spawn.
             # ADR-0011 amendment "wiki-list tool".
             "wiki-list",
+            # UltraWiki semantic search (2026-07-25): fused keyword+vector
+            # retrieval with citations — the pull primitive of the semantic
+            # memory mode. Read-only, never a spawn (AP-5/AP-14); workers
+            # reach it only via the ADR-0025 broker (ADR-0030 gate).
+            # ADR-0011 amendment "UltraWiki Search".
+            "ultrawiki-search",
             # CLI-Integration (2026-05-24): virtual loader that expands to one
             # cli_<name> tool per connected & usable CLI. Router-tier only — a
             # cli_<name> tool is a direct safe-gated action, never a recursive
@@ -1893,6 +1899,13 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # rationale as gmail — its rest_wrapper transport produced zero MCP
             # tools, so it must be router-visible directly. Read-only.
             "vercel",
+            # Home Assistant Marketplace plugin (2026-07-25): native REST tool,
+            # same rationale as gmail — Home Assistant declined dynamic client
+            # registration and its MCP server only exposes its own Assist
+            # pipeline, so the entity/service surface must be router-visible
+            # directly. risk_tier "ask": a service call physically changes
+            # something in the user's home. Never a spawn (AP-5/AP-14).
+            "home_assistant",
             # Google Calendar Marketplace plugin (2026-06-27): native bridge tool
             # whose bot logic is a Node script (calendar_bot.mjs). Same rationale
             # as gmail — no MCP server block, so it must be router-visible
@@ -2110,7 +2123,7 @@ def test_whisper_fp_exact_only_seeds_still_filter_when_alone(
         "Musik leiser bitte",
         "Applaus für die Band einspielen",
         "Untertitel im VLC anzeigen lassen",
-        "Tschüss sagen zu Laura per Email",
+        "Tschüss sagen zu Casey per Email",
         "Thank you note in Word erstellen",
     ],
 )
@@ -2287,7 +2300,7 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
     sys.modules["jarvis.core.capabilities"] = mock_module
     try:
         manager, _executor = _manager_with_spawn()
-        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Harald")
+        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Morgan")
         assert result is not None, (
             "_check_unsupported_intent must return refusal for unregistered action"
         )
@@ -2470,7 +2483,7 @@ def test_external_integration_without_capability_stays_unsupported() -> None:
     try:
         manager = _strict_manager_with_mock_registry()
         for utterance in (
-            "schick eine Email an Harald",
+            "schick eine Email an Morgan",
             "trag einen Termin in meinen Kalender ein",
             "spiel Musik auf Spotify",
         ):
@@ -2557,7 +2570,7 @@ class _FakeProfileForPrompt:
     """Minimal UserProfile stand-in: only render_for_prompt is exercised."""
 
     def render_for_prompt(self, *, max_chars: int = 2000) -> str:
-        return "## Ueber den User\n- **Name:** Ruben"
+        return "## Ueber den User\n- **Name:** Alex"
 
 
 class _FakeUpdateProfileTool:
@@ -2746,7 +2759,7 @@ def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
     reg = get_registry()
     seed_registry(reg)
     for utterance in (
-        "Schick eine Email an harald@example.com mit dem Betreff Hallo",
+        "Schick eine Email an morgan@example.com mit dem Betreff Hallo",
         "Trag einen Termin morgen 10 Uhr ein",
         "Sende eine WhatsApp an Mama",
         "Bestelle eine Pizza",
@@ -2817,7 +2830,7 @@ def test_voice_save_contact_stays_router_tier() -> None:
     "utterance",
     [
         "ruf Christoph an",
-        "ruf Laura an",
+        "ruf Casey an",
         "call Christoph",
     ],
 )
@@ -2859,7 +2872,7 @@ _HEAVY_RESEARCH_SHOULD_SPAWN = [
 ]
 
 _HEAVY_RESEARCH_STAYS_INLINE = [
-    "Was ist das Wetter in Melbourne?",  # no research verb → fast lookup
+    "Was ist das Wetter in Example Town?",  # no research verb → fast lookup
     "Wie spät ist es in Sydney?",  # no research verb
     "Recherchier das mal kurz",  # verb but no scope (short, 1 verb, no marker)
     "Analysier kurz den Satz",  # verb but no scope
@@ -3063,7 +3076,7 @@ def test_heavy_research_never_force_spawns_without_explicit_trigger() -> None:
 def test_quick_weather_lookup_does_not_force_spawn() -> None:
     """A quick weather lookup must STILL stay inline (no false spawn)."""
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
-    assert manager._should_force_spawn("Was ist das Wetter in Melbourne?") is False
+    assert manager._should_force_spawn("Was ist das Wetter in Example Town?") is False
 
 
 def test_heavy_research_disabled_flag_restores_inline() -> None:
@@ -3493,3 +3506,78 @@ def test_pc_control_run_skill_gate_is_fault_tolerant() -> None:
     manager = _manager_with_cu_runskill_search()
     sentinel = object()
     assert manager._hide_run_skill_on_pc_control_turn(sentinel, "Oeffne Chrome") is sentinel  # type: ignore[arg-type]  # i18n-allow: German voice command under test
+
+
+# ---------------------------------------------------------------------------
+# Agentic-IDE workspace tool gate (2026-07-28 cost audit): the pane-scoped
+# agentic-ide-* tools only make sense relative to an OPEN workspace. With none
+# open they can only fail, while their schemas cost ~10 KB of input on every
+# tool-loop iteration. agentic-ide-status (honest "nothing is open" answer)
+# and agentic-ide-resume (the command that OPENS a workspace by voice) must
+# never be hidden.
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdeTool:
+    schema: dict[str, Any] = {}
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _manager_with_ide_tools() -> BrainManager:
+    tools = {
+        name: _FakeIdeTool(name)
+        for name in (
+            "agentic-ide-status",
+            "agentic-ide-resume",
+            "agentic-ide-prompt",
+            "agentic-ide-terminal-report",
+            "agentic-ide-spawn-terminals",
+        )
+    }
+    tools["search_web"] = _FakeSearchTool()
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools=tools,
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+
+
+def test_no_workspace_hides_pane_tools_keeps_status_and_resume(monkeypatch) -> None:
+    import jarvis.agentic_ide.session as ide_session
+
+    class _NoWorkspaceRegistry:
+        session = None
+
+    monkeypatch.setattr(ide_session, "get_registry", lambda: _NoWorkspaceRegistry())
+    manager = _manager_with_ide_tools()
+    gated = manager._hide_agentic_ide_tools_without_workspace(dict(manager._tools))
+    assert "agentic-ide-prompt" not in gated
+    assert "agentic-ide-terminal-report" not in gated
+    assert "agentic-ide-spawn-terminals" not in gated
+    assert "agentic-ide-status" in gated, "status must answer 'nothing open' honestly"
+    assert "agentic-ide-resume" in gated, "resume is what OPENS a workspace by voice"
+    assert "search_web" in gated
+
+
+def test_open_workspace_keeps_every_pane_tool(monkeypatch) -> None:
+    import jarvis.agentic_ide.session as ide_session
+
+    class _OpenWorkspaceRegistry:
+        session = object()
+
+    monkeypatch.setattr(ide_session, "get_registry", lambda: _OpenWorkspaceRegistry())
+    manager = _manager_with_ide_tools()
+    gated = manager._hide_agentic_ide_tools_without_workspace(dict(manager._tools))
+    assert set(gated) == set(manager._tools), "an open workspace hides nothing"
+
+
+def test_agentic_ide_gate_is_fault_tolerant() -> None:
+    manager = _manager_with_ide_tools()
+    sentinel = object()
+    assert (
+        manager._hide_agentic_ide_tools_without_workspace(sentinel)  # type: ignore[arg-type]
+        is sentinel
+    )

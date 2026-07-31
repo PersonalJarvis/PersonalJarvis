@@ -51,6 +51,19 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        /*
+         * Two tighter steps for dense, tool-shaped surfaces — the Agentic IDE's
+         * launcher above all (see components/agentic/controls.tsx).
+         *
+         * They exist because the three above do not separate: `--radius` is
+         * 0.75rem, so `md`, `lg` and Tailwind's own `xl` all land between 10 and
+         * 12 px. That is a fine radius for a settings card and no radius scale
+         * at all for a screen that stacks a 32 px control inside a row inside a
+         * panel — everything came out equally round, so nothing read as
+         * contained by anything else. Additive: no existing class changes.
+         */
+        control: "6px",
+        surface: "10px",
       },
       keyframes: {
         "accordion-down": {

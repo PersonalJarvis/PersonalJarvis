@@ -64,10 +64,10 @@
     "fallback_model_2": "gemini-3-pro-preview"
   },
   "stt": {
-    "provider": "groq-api",
+    "provider": "nemotron-local",
     "model": "whisper-large-v3",
-    "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Wispr Flow, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
-    "language": "de"
+    "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
+    "language": "auto"
   },
   "ack_brain": {
     "enabled": true,
@@ -110,9 +110,13 @@
     "provider": "gemini"
   },
   "brain.computer_use": {
-    "provider": "grok"
+    "provider": "openrouter"
   },
   "brain.providers.grok-realtime": {
     "voice": "lux"
+  },
+  "brain.providers.ollama": {
+    "tool_model": "deepseek-r1:14b",
+    "cu_model": "deepseek-r1:14b"
   }
 }

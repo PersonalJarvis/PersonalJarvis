@@ -224,7 +224,7 @@ async def probe() -> int:
         print("No scenarios were run.")
         return 0
 
-    with_name = sum(1 for r in results if "Ruben" in r[4])
+    with_name = sum(1 for r in results if "Alex" in r[4])
     name_ratio = with_name / total
     print(f"Name frequency: {with_name}/{total} ({name_ratio:.0%}) — target <= 33%.")
     print(f"  Result: {'OK' if name_ratio <= 0.34 else 'DRIFT'}")
@@ -247,7 +247,7 @@ async def probe() -> int:
     filler_as_opener = [
         (r[0], r[1]) for r in results
         if r[4].strip().startswith((
-            "Einen Moment, Ruben", "Einen Augenblick", "Ich schaue gleich nach",  # i18n-allow
+            "Einen Moment, Alex", "Einen Augenblick", "Ich schaue gleich nach",  # i18n-allow
         )) and r[0] not in ("06",)
     ]
     print(f"Filler-as-opener (non-tool scenarios): {len(filler_as_opener)} {filler_as_opener}")
@@ -256,12 +256,12 @@ async def probe() -> int:
     hangup_de_runs = [r for r in results if r[0] == "10" and r[1] == "de"]
     if hangup_de_runs:
         hangup = hangup_de_runs[0][4]
-        hangup_ok = "auf wiedersehen, ruben" in hangup.lower()  # i18n-allow
+        hangup_ok = "auf wiedersehen, alex" in hangup.lower()  # i18n-allow
         print(f"Hangup contract DE (scenario 10): {'OK' if hangup_ok else 'MISS'}")
     hangup_en_runs = [r for r in results if r[0] == "10" and r[1] == "en"]
     if hangup_en_runs:
         hangup_en = hangup_en_runs[0][4]
-        hangup_en_ok = "goodbye, ruben" in hangup_en.lower()
+        hangup_en_ok = "goodbye, alex" in hangup_en.lower()
         print(f"Hangup contract EN (scenario 10): {'OK' if hangup_en_ok else 'MISS'}")
 
     return 0

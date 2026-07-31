@@ -174,6 +174,63 @@ class DelegationOfferWindow:
 OFFER_WINDOW = DelegationOfferWindow()
 
 
+def names_spawn_vehicle(user_text: str) -> bool:
+    """True when the utterance names the background-agent vehicle explicitly.
+
+    Public because the Agentic-IDE turn detector needs the SAME answer this gate
+    uses: a workspace terminal may claim a turn only when the user did *not* ask
+    for a background agent. Sharing the one pattern keeps "spawn an agent that
+    helps Kai" a spawn while "let Kai do it" reaches Kai.
+    """
+    return bool(_DELEGATION_MARKER_RE.search((user_text or "").strip()))
+
+
+def spawn_vehicle_spans(user_text: str) -> list[tuple[int, int]]:
+    """Character spans of every explicit spawn-vehicle mention, in order.
+
+    The positional view of ``names_spawn_vehicle``, for the one caller that
+    needs to know not merely THAT the vehicle was named but WHERE: the
+    Agentic-IDE precedence rule has to tell "spawn an agent that helps Kai"
+    (an order to Jarvis, vehicle word first) from "Alex should spawn
+    sub-agents" (a description of Alex's work, vehicle word behind the
+    call-sign). Both share this ONE pattern so the two answers cannot drift.
+    """
+    return [
+        (match.start(), match.end())
+        for match in _DELEGATION_MARKER_RE.finditer((user_text or "").strip())
+    ]
+
+
+def addressed_pane_blocks_spawn(user_text: str) -> bool:
+    """True when this turn is aimed at a workspace terminal, which owns it.
+
+    The scope correction to the first attempt at this (maintainer, 2026-07-28).
+    That version blocked EVERY spawn while coding mode was on, which bought the
+    fix by deleting a feature: brainstorming inside the IDE and asking for a
+    background agent is a legitimate, common thing to do, and the mode is not a
+    reason to refuse it.
+
+    What actually decides is the TURN, not the mode. Addressing a pane is an
+    instruction to that pane — "sub-agents" inside it is the CLI agent's own
+    fan-out vocabulary, describing work that happens once the brief arrives in
+    the terminal. A turn that addresses no pane is unaffected, in or out of
+    coding mode, so the background agent stays fully available.
+
+    Delegated to ``intent.owns_turn`` rather than re-deciding here: that is the
+    ONE precedence rule the router's force-spawn guard and this gate already
+    share, and a second opinion would drift.
+
+    Never raises — the workspace is an optional surface and must never be able
+    to break spawn routing; a fault answers "does not block".
+    """
+    try:
+        from jarvis.agentic_ide.intent import owns_turn  # noqa: PLC0415
+
+        return owns_turn(user_text)
+    except Exception:  # noqa: BLE001 — optional surface, never fatal to routing
+        return False
+
+
 def llm_spawn_allowed(user_text: str) -> bool:
     """Gate an LLM-chosen spawn tool call against the user's ACTUAL turn.
 
@@ -188,6 +245,19 @@ def llm_spawn_allowed(user_text: str) -> bool:
         return False
     if _is_decline_or_feature_talk(text):
         log.info("spawn gate: decline / feature talk — spawn blocked")
+        return False
+    # An addressed Agentic-IDE terminal outranks a spawn. Checked before the
+    # delegation marker so a depth word inside a terminal instruction ("let Kai
+    # do a deep dive") cannot dispatch a background mission — but AFTER the
+    # decline guard. ``owns_turn`` still stands down for a turn that ASKS for a
+    # background agent ("spawn an agent that helps Kai"), which is what keeps
+    # delegation available inside the workspace; what it no longer stands down
+    # for is a pane being told to fan out ("Alex should spawn sub-agents").
+    if addressed_pane_blocks_spawn(text):
+        log.info(
+            "spawn gate: an open Agentic-IDE terminal is addressed — "
+            "the workspace handles this turn, no background agent"
+        )
         return False
     if _DELEGATION_MARKER_RE.search(text):
         OFFER_WINDOW.disarm()
@@ -224,10 +294,43 @@ SPAWN_BLOCKED_MODEL_FEEDBACK: str = (
 )
 
 
+# The addressed-pane variant. The generic text above would mislead here: it
+# invites the model to OFFER a background agent, and when the user has just told
+# a terminal to do something that offer is exactly the wrong next move — the
+# work belongs in the pane they named. "Sub-agents" in such a turn is the CLI
+# agent's own fan-out, which happens inside the terminal once the brief lands.
+SPAWN_BLOCKED_ADDRESSED_PANE_FEEDBACK: str = (
+    "spawn_worker was not executed: this turn is addressed to a coding "
+    "terminal in the open workspace, and that terminal does this work. Send "
+    "the user's request to it with the agentic-ide-prompt function, in the "
+    "user's own words — including any instruction to spawn sub-agents, which "
+    "is an instruction for the agent IN that terminal to carry out itself. You "
+    "may still use other functions to gather context for the brief. Do not "
+    "offer a background agent for this turn."
+)
+
+
+def spawn_blocked_feedback(user_text: str = "") -> str:
+    """The tool-error text matching WHY the spawn was blocked.
+
+    One function so the classic and realtime paths cannot teach the model two
+    different next moves for the same block. ``user_text`` is the verbatim turn
+    the gate just judged; without it the generic text is the honest answer.
+    """
+    if user_text and addressed_pane_blocks_spawn(user_text):
+        return SPAWN_BLOCKED_ADDRESSED_PANE_FEEDBACK
+    return SPAWN_BLOCKED_MODEL_FEEDBACK
+
+
 __all__ = [
     "OFFER_WINDOW",
+    "SPAWN_BLOCKED_ADDRESSED_PANE_FEEDBACK",
     "SPAWN_BLOCKED_MODEL_FEEDBACK",
     "SPAWN_VEHICLE_TOOL_NAMES",
     "DelegationOfferWindow",
+    "addressed_pane_blocks_spawn",
     "llm_spawn_allowed",
+    "names_spawn_vehicle",
+    "spawn_blocked_feedback",
+    "spawn_vehicle_spans",
 ]

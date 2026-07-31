@@ -46,7 +46,9 @@ describe("PatConnectDialog owner lock", () => {
     fireEvent.change(idField, { target: { value: "4242" } });
     fireEvent.click(screen.getByRole("button", { name: /^Connect/i }));
 
-    expect(onSubmit).toHaveBeenCalledWith("bot-token", 4242);
+    // The third argument is the self-hosted server address, null for a plugin
+    // whose auth config declares no instance_url field.
+    expect(onSubmit).toHaveBeenCalledWith("bot-token", 4242, null);
   });
 
   it("omits the owner-id field for non-channel plugins and submits null", () => {
@@ -67,7 +69,7 @@ describe("PatConnectDialog owner lock", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^Connect/i }));
 
-    expect(onSubmit).toHaveBeenCalledWith("ghp_x", null);
+    expect(onSubmit).toHaveBeenCalledWith("ghp_x", null, null);
   });
 
   it("forwards null when the owner-id field is left blank", () => {
@@ -87,6 +89,6 @@ describe("PatConnectDialog owner lock", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^Connect/i }));
 
-    expect(onSubmit).toHaveBeenCalledWith("123:ABC", null);
+    expect(onSubmit).toHaveBeenCalledWith("123:ABC", null, null);
   });
 });

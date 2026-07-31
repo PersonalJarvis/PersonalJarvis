@@ -21,7 +21,7 @@ import { useT } from "@/i18n";
 export interface ObsidianButtonProps {
   /** Absolute configured Jarvis vault root. */
   vaultRoot: string;
-  /** Vault-relative POSIX path, e.g. `"entities/harald.md"`. Empty opens the root. */
+  /** Vault-relative POSIX path, e.g. `"entities/morgan.md"`. Empty opens the root. */
   vaultRelPath: string;
   /** Use the compact "sm" button size — useful inside dense panels. */
   size?: "default" | "sm";

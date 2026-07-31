@@ -309,6 +309,19 @@ async def _run_headless(args) -> int:
             print(f"[BOOT_PROFILE] lx_{_name}={(_now - _bp_last) * 1000.0:.1f}", flush=True)
         _bp_last = _now
 
+    # Same contract as the desktop loop: a default executor that is already at
+    # full size, so ``asyncio.to_thread`` never grows one under the loop (a
+    # synchronous ``Thread.start()`` ON the loop — see
+    # ``jarvis/core/loop_executor.py``). A headless host runs the same 420
+    # ``to_thread`` call sites and has no window to hide the stall behind.
+    try:
+        from jarvis.core.loop_executor import install_prewarmed_default_executor
+
+        install_prewarmed_default_executor(asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001,S110 - a loop that can still stall is the
+        # behaviour we had yesterday; a boot that fails is not.
+        pass
+
     # The single-instance lock (and its heavy ``desktop_app`` import — pywebview +
     # win32, ~420 ms) is acquired in the deferred section below, OFF the
     # time-to-serving path. It only needs to set JARVIS_PRIMARY_INSTANCE before
@@ -548,6 +561,15 @@ async def _run_headless(args) -> int:
         if evt.source_layer in ("chat", "brain:mock"):
             return
         thread_id = evt.thread_id or "default"
+        # Persist the initiating turn before the reply. Older builds stored only
+        # the assistant half, producing anonymous "New Thread" rows that looked
+        # like text messages the user never sent.
+        await chat_store.add_message(
+            thread_id=thread_id,
+            role="user",
+            text=evt.text,
+            publish_event=False,
+        )
         # The brain is built in the background (off the boot critical path); a
         # first turn that arrives before it finishes waits (bounded) for it
         # rather than erroring — the honest deferral contract.
@@ -591,7 +613,10 @@ async def _run_headless(args) -> int:
                 # inline, never re-dispatched (doom-loop fix 2026-06-16). This
                 # is the headless/web (VPS) bridge; desktop_app.py mirrors it.
                 reply = await generate(
-                    evt.text, trace_id=evt.trace_id, source_layer=evt.source_layer,
+                    evt.text,
+                    trace_id=evt.trace_id,
+                    source_layer=evt.source_layer,
+                    conversation_id=thread_id,
                 )
             else:
                 reply = await brain(evt.text)
@@ -1031,8 +1056,82 @@ def main(argv: list[str] | None = None) -> int:
 
     ensure_cli_paths()
 
+    # An app launched once from a coding-agent or CI shell inherits that shell's
+    # "colour is impossible here" declaration and hands it to every terminal it
+    # hosts — panes, and the external terminals opened through
+    # `jarvis.clis.external_terminal`, which pass no env of their own. The
+    # restart chain re-inherits it, so it survives indefinitely until dropped
+    # here. Dict lookups only, no import and no I/O (AP-26-safe).
+    from jarvis.core.colour_env import sanitize_process_environment
+
+    _dropped_colour_claims = sanitize_process_environment()
+    if _dropped_colour_claims:
+        # loguru, not stdlib logging: this runs before anything configures the
+        # stdlib root logger, whose default level then discards an INFO record
+        # outright — so the one line explaining why the app rewrote its own
+        # environment would never reach console or log file. loguru carries a
+        # live sink from import.
+        from loguru import logger as _clog
+
+        _clog.info(
+            "Dropped inherited colour-suppressing variables ({}) so hosted "
+            "terminals render in colour; this app was started from a shell that "
+            "declared it had none.",
+            ", ".join(_dropped_colour_claims),
+        )
+
     _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
+
+    # Drop administrator rights BEFORE booting, not after.
+    #
+    # An elevated window is unreachable for dictation apps, text expanders and
+    # password-manager auto-type (Windows UIPI — see
+    # ``jarvis/platform/input_isolation.py``), and elevation survives every
+    # in-app restart. The app can already escape it, but only once there is a
+    # window to restart — so an elevated launch used to pay for a COMPLETE boot
+    # and throw it away. Measured 2026-07-29: 102 s discarded, then 18 s to come
+    # back. Here it costs one token probe.
+    #
+    # Desktop only (UIPI is about a window; a headless host has none), and fully
+    # best-effort: anything other than "the replacement is starting" boots on in
+    # this process, where the input-isolation banner remains the fallback.
+    if not args.headless:
+        try:
+            from pathlib import Path as _Path
+
+            import jarvis as _jarvis
+            from jarvis.platform.deescalate import maybe_relaunch_unelevated
+            from jarvis.ui.relauncher import detached_creationflags, fresh_user_env
+
+            _drop = maybe_relaunch_unelevated(
+                [sys.executable, "-m", "jarvis.ui.web.launcher", *_raw_argv],
+                cwd=str(_Path(_jarvis.__file__).resolve().parent.parent),
+                env=fresh_user_env(),
+                creationflags=detached_creationflags(),
+            )
+            if _drop is not None:
+                import logging as _dlog
+
+                if _drop.ok:
+                    _dlog.getLogger(__name__).info(
+                        "Started with administrator rights — handing this boot to an "
+                        "unelevated copy so dictation and text expanders can reach the "
+                        "window (%s). Set %s=1 to keep the elevation instead.",
+                        _drop.detail,
+                        "JARVIS_KEEP_ELEVATION",
+                    )
+                    return 0
+                _dlog.getLogger(__name__).warning(
+                    "Running with administrator rights and could not drop them (%s) — "
+                    "booting elevated. Dictation apps and text expanders will not be "
+                    "able to type into this window.",
+                    _drop.detail,
+                )
+        except Exception:  # noqa: BLE001,S110 - an app that boots elevated is
+            # degraded; one that fails to boot is not an app. The banner still
+            # reports the condition, and the in-app restart still repairs it.
+            pass
 
     # Windows taskbar branding: the taskbar button icon is the LAUNCHING EXE's
     # embedded icon, which no window-icon / class-icon / AUMID / Start-Menu /
@@ -1104,6 +1203,17 @@ def main(argv: list[str] | None = None) -> int:
         _logging.getLogger(__name__).info(
             "Healed stale inherited provider env from registry: %s", healed
         )
+
+    # One-time worker-tier heal BEFORE load_config: merge the legacy
+    # [brain.sub_jarvis] table into the canonical [brain.worker] so the two
+    # can never disagree again (config split-brain). Cheap no-op on healed
+    # files; internally best-effort and never blocks boot.
+    try:
+        from jarvis.core.config_writer import migrate_worker_tier_table
+
+        migrate_worker_tier_table()
+    except Exception:  # noqa: BLE001, S110 — boot heal must never block startup
+        pass
 
     cfg = load_config()
     _m_mark("parse_cwd_env_loadconfig")

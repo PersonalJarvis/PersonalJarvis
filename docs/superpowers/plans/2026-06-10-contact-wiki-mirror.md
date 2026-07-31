@@ -297,7 +297,7 @@ def test_update_emits_updated(tmp_path, seen):
 def test_upsert_existing_emits_updated(tmp_path, seen):
     store = ContactStore(base_dir=tmp_path)
     store.put(name="Christoph Meyer", aliases=["Chris"])
-    store.upsert(name="Chris", phone="+49 151 2345678")
+    store.upsert(name="Chris", phone="+1 202-555-0101")
     assert seen[-1][0] == "updated"
 
 
@@ -448,7 +448,7 @@ def test_managed_block_excludes_pii(tmp_path):
     contact = _contact(
         tmp_path,
         emails=["christoph@example.com"],
-        phones=["+49 151 2345678"],
+        phones=["+1 202-555-0101"],
         address={"street": "Musterweg 1", "city": "Berlin"},
     )
     page = render_person_page(contact, existing_text=None)

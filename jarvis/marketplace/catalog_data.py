@@ -92,26 +92,100 @@ def _migrate_obsolete_mcp_transports(raw: object) -> object:
     return raw
 
 
-def _read(path: Path) -> PluginCatalog:
+# What a user's `data/` override is allowed to keep when the package seed also
+# knows the plugin: the connection details they may genuinely have customized
+# (their own OAuth client id, a self-hosted MCP endpoint). Everything else —
+# name, description, category, logo, longevity badge — is a PRODUCT decision
+# that ships with the app, so it comes from the seed. Without this split, a
+# taxonomy or logo change would land only on fresh installs.
+_OVERRIDE_OWNED_FIELDS: tuple[str, ...] = ("auth", "mcp_server")
+
+
+def _merge_with_seed(override: object, seed: object) -> object:
+    """Reconcile a user's `data/` catalog with the shipped package seed.
+
+    Before this merge the override replaced the seed WHOLESALE, so a connector
+    added to the shipped catalog reached only FRESH installs: every machine
+    that had ever materialized ``data/`` kept serving its frozen list, and the
+    new plugin was invisible there — while every test, which reads the seed
+    directly, stayed green. That is the inverted form of "works on my machine",
+    and it hid new catalog work from the very box it was developed on.
+
+    Two rules now apply:
+      * a seed plugin the override does not declare is ADDED;
+      * a plugin both know is presented from the SEED, except for the fields in
+        ``_OVERRIDE_OWNED_FIELDS``, which stay the user's.
+
+    Consequence worth knowing: deleting an entry from the override no longer
+    hides a plugin — the seed supplies it again. Curation means editing an
+    entry, not removing it.
+    """
+    if not isinstance(override, dict) or not isinstance(override.get("plugins"), list):
+        return override
+    if not isinstance(seed, dict) or not isinstance(seed.get("plugins"), list):
+        return override
+
+    seed_by_id = {
+        str(plugin["id"]): plugin
+        for plugin in seed["plugins"]
+        if isinstance(plugin, dict) and plugin.get("id")
+    }
+    merged_plugins: list[object] = []
+    declared: set[str] = set()
+    for plugin in override["plugins"]:
+        if not isinstance(plugin, dict) or not plugin.get("id"):
+            merged_plugins.append(plugin)
+            continue
+        plugin_id = str(plugin["id"])
+        declared.add(plugin_id)
+        seed_plugin = seed_by_id.get(plugin_id)
+        if seed_plugin is None:
+            merged_plugins.append(plugin)  # a purely local entry
+            continue
+        reconciled = dict(seed_plugin)
+        for field in _OVERRIDE_OWNED_FIELDS:
+            if field in plugin:
+                reconciled[field] = plugin[field]
+        merged_plugins.append(reconciled)
+
+    merged_plugins.extend(
+        plugin for plugin_id, plugin in seed_by_id.items() if plugin_id not in declared
+    )
+    result = dict(override)
+    result["plugins"] = merged_plugins
+    return result
+
+
+def _read_raw(path: Path) -> object:
     with path.open(encoding="utf-8-sig") as f:
-        raw = json.load(f)
+        return json.load(f)
+
+
+def _read(path: Path) -> PluginCatalog:
+    raw = _read_raw(path)
     if path.resolve() == _DEFAULT_CATALOG_PATH.resolve():
         raw = _migrate_obsolete_mcp_transports(raw)
     return PluginCatalog.model_validate(raw)
 
 
-def _resolve_path(path: Path | None) -> Path:
-    """Explicit path wins; else the user's data/ override; else the seed."""
-    if path is not None:
-        return path
-    if _DEFAULT_CATALOG_PATH.exists():
-        return _DEFAULT_CATALOG_PATH
-    return _PACKAGE_SEED_PATH
-
-
 @lru_cache(maxsize=4)
 def load_catalog(path: Path | None = None) -> PluginCatalog:
-    return _read(_resolve_path(path))
+    """Explicit path wins; else the user's data/ override topped up from the
+    package seed; else the seed alone (fresh clone / headless VPS)."""
+    if path is not None:
+        return _read(path)
+    if not _DEFAULT_CATALOG_PATH.exists():
+        return _read(_PACKAGE_SEED_PATH)
+    raw = _migrate_obsolete_mcp_transports(_read_raw(_DEFAULT_CATALOG_PATH))
+    try:
+        seed_raw = _read_raw(_PACKAGE_SEED_PATH)
+    except (OSError, ValueError):
+        # A missing/corrupt package seed must never take the user's own
+        # catalog down with it — serve the override unchanged.
+        seed_raw = None
+    if seed_raw is not None:
+        raw = _merge_with_seed(raw, seed_raw)
+    return PluginCatalog.model_validate(raw)
 
 
 def clear_cache() -> None:

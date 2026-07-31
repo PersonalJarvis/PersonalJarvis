@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConnectIconButton,
+  PatConnectDialog,
   PkceConnectDialog,
   PluginsView,
 } from "@/views/PluginsView";
@@ -376,5 +377,151 @@ describe("PluginsView keeps revoked plugins visible", () => {
     expect(
       screen.getByRole("button", { name: "Reconnect plugin" }),
     ).toBeDefined();
+  });
+});
+
+describe("PatConnectDialog asks for a self-hosted server address", () => {
+  const selfHosted = {
+    id: "home_assistant",
+    name: "Home Assistant",
+    description: "Smart home",
+    category: "Home & Devices",
+    logoSlug: "homeassistant",
+    authMode: "pat_paste" as const,
+    authConfig: {
+      mode: "pat_paste",
+      token_creation_url: "https://example.test/token",
+      token_prefix: "",
+      instruction_md: "Create a long-lived token.",
+      instance_url: {
+        label: "Your Home Assistant address",
+        placeholder: "http://192.168.1.20:8123",
+        help_md: "The address you use in your browser.",
+      },
+    },
+    status: "not_connected" as const,
+    longevity: "permanent" as const,
+  };
+
+  it("cannot submit without the address, then passes it through", () => {
+    const onSubmit = vi.fn();
+    render(
+      <PatConnectDialog
+        plugin={selfHosted as never}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        isPending={false}
+        errorMessage={null}
+      />,
+    );
+
+    const token = screen.getByPlaceholderText("Token");
+    fireEvent.change(token, { target: { value: "llat-secret" } });
+
+    // A self-hosted plugin cannot be reached at all without its address, so
+    // Connect stays disabled rather than failing a round-trip later.
+    const connect = screen.getByRole("button", { name: /connect/i });
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText("http://192.168.1.20:8123"), {
+      target: { value: "http://192.168.1.20:8123/lovelace/0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /connect/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      "llat-secret",
+      null,
+      "http://192.168.1.20:8123/lovelace/0",
+    );
+  });
+});
+
+describe("PluginsView category sections are data-driven", () => {
+  function catalogWith(plugins: unknown[], categoryOrder?: string[]) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: plugins.length,
+            connected: 0,
+            category_order: categoryOrder,
+            plugins,
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+  }
+
+  const row = (id: string, category: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    display_name: id,
+    description: "d",
+    category,
+    logo_slug: id,
+    auth: { mode: "pat_paste" },
+    status: "not_connected",
+    live_callable: false,
+    ...extra,
+  });
+
+  it("renders a category the frontend has never heard of instead of crashing", async () => {
+    // The previous fixed record threw on `byCat[category].push(...)`, which
+    // blanked the entire view behind its error boundary. A backend-only
+    // taxonomy change must not be able to do that.
+    catalogWith([row("mystery", "Something Brand New")], ["Developer"]);
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Something Brand New", level: 2 }),
+      ).toBeDefined();
+    });
+    expect(screen.getByText("mystery")).toBeDefined();
+    // The filter menu is fed by the same data, so it offers the new category too.
+    expect(
+      screen.getByRole("option", { name: "Something Brand New" }),
+    ).toBeDefined();
+  });
+
+  it("orders sections by the catalog's category_order", async () => {
+    catalogWith(
+      [row("b", "Second"), row("a", "First")],
+      ["First", "Second"],
+    );
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "First", level: 2 })).toBeDefined();
+    });
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+    expect(headings.indexOf("First")).toBeLessThan(headings.indexOf("Second"));
+  });
+
+  it("states how long the connection lasts before the user connects", async () => {
+    catalogWith([
+      row("forever", "Developer", { longevity: "permanent" }),
+      row("limited", "Developer", {
+        longevity: "provider_limited",
+        longevity_note: "Google asks again every 7 days in Testing mode.",
+      }),
+    ]);
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByText("Stays connected")).toBeDefined();
+    });
+    expect(screen.getByText("Sign in again periodically")).toBeDefined();
   });
 });

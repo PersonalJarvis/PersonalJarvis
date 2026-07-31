@@ -132,6 +132,45 @@ def test_timeout_is_unreachable() -> None:
     assert classify_provider_error("timeout after 25.0s") == "unreachable"
 
 
+def test_local_server_not_reachable_is_unreachable() -> None:
+    """The local brains phrase connectivity honestly ("… not reachable at … —
+    is it running?"); that must read as unreachable, and the port number must
+    never be mistaken for an HTTP status code."""
+    msg = (
+        "RuntimeError: Ollama not reachable at http://localhost:11434 — is it "
+        "running? Start it (or install from https://ollama.com/download), then retry."
+    )
+    assert classify_provider_error(msg) == "unreachable"
+
+
+def test_local_server_without_models_is_model_unavailable() -> None:
+    """Reachable local server, nothing pulled — the fix is `ollama pull`, so
+    the chip must say model-unavailable, not integration error."""
+    msg = (
+        "RuntimeError: Ollama at http://localhost:11434 has no models installed "
+        "— run: ollama pull qwen3.5, then retry."
+    )
+    assert classify_provider_error(msg) == "model_unavailable"
+
+
+def test_local_openai_empty_model_list_is_model_unavailable() -> None:
+    msg = (
+        "RuntimeError: The server at http://localhost:8000 lists no models "
+        "(/v1/models is empty) — load a model in the server, or set one explicitly."
+    )
+    assert classify_provider_error(msg) == "model_unavailable"
+
+
+def test_local_openai_missing_base_url_is_not_configured() -> None:
+    """No server URL on the card = the local analogue of "no key set" — an
+    actionable amber, never a red integration error."""
+    msg = (
+        "RuntimeError: The local OpenAI-compatible provider needs a server URL "
+        "— set it on the provider card."
+    )
+    assert classify_provider_error(msg) == "not_configured"
+
+
 def test_unknown_error_is_error() -> None:
     assert classify_provider_error("ValueError: something structurally broke") == "error"
 

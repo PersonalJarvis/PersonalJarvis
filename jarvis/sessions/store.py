@@ -43,6 +43,11 @@ class SessionStore:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()
+        # SQLite's JSON1 functions are compiled in since 3.38 but were optional
+        # before that, and this store must open on whatever libsqlite a distro
+        # ships. Probed once at open(); the spoken-track lookups degrade to
+        # "turn text only" where it is missing instead of raising.
+        self._has_json1 = False
 
     # --- Lifecycle ----------------------------------------------------
 
@@ -67,6 +72,15 @@ class SessionStore:
             conn.executescript(schema_sql)
             conn.row_factory = sqlite3.Row
             self._conn = conn
+            try:
+                conn.execute("SELECT json_extract('{\"a\":1}', '$.a')").fetchone()
+                self._has_json1 = True
+            except sqlite3.Error:
+                self._has_json1 = False
+                log.info(
+                    "SessionStore: this SQLite build has no JSON1 — sessions "
+                    "whose only content is spoken output stay out of the list"
+                )
             self._apply_migrations()
             log.debug("SessionStore opened: %s", self._db_path)
 
@@ -398,22 +412,43 @@ class SessionStore:
         """Sessions by started_ms desc — newest first.
 
         ``preview`` is the first user utterance (the first turn row with
-        a non-empty ``user_text``). Set ``include_empty=False`` for
-        conversation-history surfaces: finished attempts without any persisted
-        user or assistant transcript stay available to diagnostics, but do not
-        crowd out real conversations. Open sessions remain visible while they
-        wait for their first turn.
+        a non-empty ``user_text``), falling back to the first phrase the
+        session voiced. Set ``include_empty=False`` for conversation-history
+        surfaces: finished attempts without any persisted user or assistant
+        transcript stay available to diagnostics, but do not crowd out real
+        conversations. Open sessions remain visible while they wait for their
+        first turn.
+
+        "Has content" deliberately includes the SPOKEN track, not just the turn
+        aggregates: a session whose only content is a voiced mission readback
+        ("Done. The file is in your Outputs folder.") has a transcript the
+        detail view and all three export formats render in full — hiding its
+        row made a conversation the user had definitely heard unreachable
+        (forensic 2026-07-27: 12 such sessions).
         """
-        with self._lock:
-            cur = self._c.execute(
-                """
+        spoken_text = (
+            "TRIM(COALESCE(json_extract(spoken.payload_json, '$.text'), ''))"
+            if self._has_json1
+            else "''"
+        )
+        sql = f"""
                 SELECT s.*,
-                       (SELECT t.user_text
-                        FROM voice_turns t
-                        WHERE t.session_id = s.id
-                          AND t.user_text != ''
-                        ORDER BY t.idx ASC
-                        LIMIT 1) AS preview
+                       COALESCE(
+                         (SELECT t.user_text
+                          FROM voice_turns t
+                          WHERE t.session_id = s.id
+                            AND t.user_text != ''
+                          ORDER BY t.idx ASC
+                          LIMIT 1),
+                         (SELECT {spoken_text}
+                          FROM voice_events spoken
+                          WHERE spoken.session_id = s.id
+                            AND spoken.kind = 'SpeechSpoken'
+                            AND {spoken_text} != ''
+                          ORDER BY spoken.seq ASC
+                          LIMIT 1),
+                         ''
+                       ) AS preview
                 FROM voice_sessions s
                 WHERE ? = 1
                    OR s.ended_ms IS NULL
@@ -426,9 +461,19 @@ class SessionStore:
                               OR TRIM(COALESCE(meaningful.jarvis_text, '')) != ''
                           )
                    )
+                   OR EXISTS (
+                        SELECT 1
+                        FROM voice_events spoken
+                        WHERE spoken.session_id = s.id
+                          AND spoken.kind = 'SpeechSpoken'
+                          AND {spoken_text} != ''
+                   )
                 ORDER BY s.started_ms DESC
                 LIMIT ? OFFSET ?
-                """,
+                """  # noqa: S608 — spoken_text is a fixed literal, never input
+        with self._lock:
+            cur = self._c.execute(
+                sql,
                 (1 if include_empty else 0, limit, max(0, int(offset))),
             )
             rows = cur.fetchall()
@@ -543,6 +588,47 @@ class SessionStore:
             )
             for r in rows
         ]
+
+    def get_events_for_sessions(
+        self, session_ids: list[str], *, kinds: list[str] | None = None
+    ) -> dict[str, list[VoiceEventRow]]:
+        """Events for MANY sessions in ONE query, optionally narrowed by kind.
+
+        The run list needs a handful of event kinds from each of up to 100
+        sessions. Doing that as 100 separate ``get_events`` calls costs 100
+        acquisitions of the store lock — which is fine on an idle box and
+        catastrophic while a live voice session has the recorder writing
+        through that same lock: the list endpoint stalled for tens of seconds.
+        One narrow query takes one lock, once.
+
+        Returns a mapping keyed by session id; a session with no matching
+        events is absent from the mapping (callers use ``.get(id, [])``).
+        """
+        if not session_ids:
+            return {}
+        id_marks = ",".join("?" for _ in session_ids)
+        sql = f"SELECT * FROM voice_events WHERE session_id IN ({id_marks})"  # noqa: S608
+        params: list[str] = list(session_ids)
+        if kinds:
+            kind_marks = ",".join("?" for _ in kinds)
+            sql += f" AND kind IN ({kind_marks})"  # noqa: S608
+            params.extend(kinds)
+        sql += " ORDER BY session_id, seq ASC"
+        with self._lock:
+            rows = self._c.execute(sql, params).fetchall()
+        out: dict[str, list[VoiceEventRow]] = {}
+        for r in rows:
+            out.setdefault(r["session_id"], []).append(
+                VoiceEventRow(
+                    seq=r["seq"],
+                    session_id=r["session_id"],
+                    turn_id=r["turn_id"],
+                    ts_ms=r["ts_ms"],
+                    kind=r["kind"],
+                    payload=json.loads(r["payload_json"] or "{}"),
+                )
+            )
+        return out
 
     def list_open_sessions(self) -> list[str]:
         """IDs of all sessions without ``ended_ms`` — for crash recovery."""

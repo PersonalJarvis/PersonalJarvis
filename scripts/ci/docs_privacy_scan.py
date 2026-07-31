@@ -14,16 +14,14 @@ Two modes:
   exits non-zero if any are found. Wired into a ``PostToolUse`` hook (warn), the
   ``.githooks/pre-push`` gate (fail-closed), and the ``docs-privacy`` CI job.
 * **--fix** — applies the ``scrub`` substitutions in place (canonical ordering
-  from the manifest) and replaces the private maintainer emails with a neutral
-  placeholder. Used for the one-off bulk clean-up.
+  from the manifest) and replaces blocked consumer emails with a neutral
+  placeholder. Used for one-off bulk clean-up.
 
-Both the ``scrub`` rows and the private ``block-only`` email patterns are read
+Both the ``scrub`` rows and the generic ``block-only`` email patterns are read
 from the manifest — this script hardcodes NO personal value of its own (so the
-script itself never leaks an identifier and never drifts from the manifest). The
-emails are ``block-only`` there because they must survive untouched in
-``.mailmap``; ``.mailmap`` is not under ``docs/``, so inside documentation we are
-free to mask them — and we must, because they would otherwise hard-block the
-next public push.
+script itself never leaks an identifier and never drifts from the manifest).
+Inside documentation those addresses are always masked because they would
+otherwise hard-block the next public push.
 
 Usage:
     python scripts/ci/docs_privacy_scan.py [PATH ...]        # scan (read-only)
@@ -42,8 +40,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "scripts" / "ci" / "privacy_gate" / "references" / "pii-scrub.tsv"
 
-# Where a private maintainer email gets masked inside docs (the real addresses
-# live only in the manifest + .mailmap; this script never spells one out).
+# Where a blocked consumer email gets masked inside docs.
 EMAIL_PLACEHOLDER = "maintainer@example.com"
 
 # Text-only file suffixes we look inside. Binary/image docs are skipped.
@@ -68,11 +65,10 @@ def load_manifest() -> tuple[list[tuple[re.Pattern[str], str, str]], list[re.Pat
 
     Returns ``(scrub_rules, blockonly_email_patterns)``:
     * ``scrub_rules`` = ``(compiled, replacement, note)`` for every ``scrub`` row,
-      in file order (the order is load-bearing: full name before surname, GitHub
-      login/slug before the bare first name).
+      in file order.
     * ``blockonly_email_patterns`` = compiled patterns from ``block-only`` rows
-      that look like an email (so private maintainer mailboxes are masked inside
-      docs without this script ever hardcoding the address).
+      that look like an email (so consumer mailboxes are masked inside docs
+      without this script ever hardcoding an address).
     """
     scrub_rules: list[tuple[re.Pattern[str], str, str]] = []
     blockonly_emails: list[re.Pattern[str]] = []

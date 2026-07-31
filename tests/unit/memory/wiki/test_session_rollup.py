@@ -90,11 +90,11 @@ async def worker_stack(tmp_path: Path):
     # Seed the durable hub pages the session worker links into. A real vault
     # always has a user entity and at least one active project; the session
     # rollup demotes links to pages that do NOT exist, so these must be
-    # present for the fake-brain's [[entities/ruben]] /
+    # present for the fake-brain's [[entities/alex]] /
     # [[projects/wiki-memory-rebuild]] references to survive as graph edges.
-    (vault_root / "entities" / "ruben.md").write_text(
-        "---\ntype: entity\nslug: ruben\naliases: [Ruben, the user]\n---\n"
-        "# Ruben\n\n## Summary\nThe user.\n",
+    (vault_root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\naliases: [Alex, the user]\n---\n"
+        "# Alex\n\n## Summary\nThe user.\n",
         encoding="utf-8",
     )
     (vault_root / "projects" / "wiki-memory-rebuild.md").write_text(
@@ -141,7 +141,7 @@ async def worker_stack(tmp_path: Path):
     # always streams a fixed paragraph as a BrainDelta sequence — same
     # shape as a real provider's async generator.
     fake_brain = _FakeBrain(
-        "User worked across [[entities/ruben]] context with several "
+        "User worked across [[entities/alex]] context with several "
         "[[projects/wiki-memory-rebuild]] iterations. Main decisions: "
         "settle on Karpathy pattern, ship Wave 2 integration, defer "
         "B5 to next session. Open thread: B7 itself."
@@ -330,7 +330,7 @@ async def test_graph_connectivity_postprocesses_links(worker_stack):
     worker._brain = None    # noqa: SLF001
     # The deterministic user-hub footer link only fires when a user entity is
     # configured (default is ""); this case exercises that footer, so pin it.
-    worker._cfg = worker._cfg.model_copy(update={"user_entity_slug": "ruben"})  # noqa: SLF001
+    worker._cfg = worker._cfg.model_copy(update={"user_entity_slug": "alex"})  # noqa: SLF001
 
     base = clock_holder[0]
     worker._session_start_ns = base - 90 * NS_PER_MIN    # noqa: SLF001
@@ -354,7 +354,7 @@ async def test_graph_connectivity_postprocesses_links(worker_stack):
     assert "[[projects/wiki-memory-rebuild]]" in content
     # Deterministic backbone footer wires the session to the user hub.
     assert "## Related" in content
-    assert "[[entities/ruben]]" in content
+    assert "[[entities/alex]]" in content
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_log_entry_links_durable_hubs(worker_stack):
 
     await worker.flush_session()
     log_content = (vault_root / "log.md").read_text(encoding="utf-8")
-    assert "[[entities/ruben]]" in log_content
+    assert "[[entities/alex]]" in log_content
 
 
 @pytest.mark.asyncio

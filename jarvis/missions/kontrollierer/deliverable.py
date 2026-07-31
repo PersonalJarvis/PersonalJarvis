@@ -243,7 +243,7 @@ def materialize_answer_document(
     artifact (HTML, ``.py``, …) and is shown in Outputs untouched — we never
     duplicate it. A pure research / Q&A task delivers its answer as text and
     would otherwise leave ``artifacts/files/`` empty (live forensic 2026-06-19:
-    the same "relocate to SF" question produced a report once and an empty
+    the same "launch Project Atlas" question produced a report once and an empty
     Outputs card the next time, depending on whether the worker happened to write
     a file). This writes that text answer into the canonical deliverable subtree
 

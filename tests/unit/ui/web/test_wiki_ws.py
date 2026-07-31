@@ -70,13 +70,13 @@ def test_publishes_forwarded_to_single_client(client_bus):
         _publish_from_thread(
             client,
             bus,
-            WikiPageChanged(slug="harald", path="entities/harald.md", kind="modified"),
+            WikiPageChanged(slug="morgan", path="entities/morgan.md", kind="modified"),
         )
         msg = ws.receive_json()
         assert msg == {
             "type": "page_changed",
-            "slug": "harald",
-            "path": "entities/harald.md",
+            "slug": "morgan",
+            "path": "entities/morgan.md",
             "kind": "modified",
         }
 
@@ -92,12 +92,12 @@ def test_multiple_clients_receive_the_same_event(client_bus):
         _publish_from_thread(
             client,
             bus,
-            WikiPageChanged(slug="ruben", path="entities/ruben.md", kind="created"),
+            WikiPageChanged(slug="alex", path="entities/alex.md", kind="created"),
         )
         for ws in sockets:
             msg = ws.receive_json()
-            assert msg["slug"] == "ruben"
-            assert msg["path"] == "entities/ruben.md"
+            assert msg["slug"] == "alex"
+            assert msg["path"] == "entities/alex.md"
             assert msg["kind"] == "created"
             assert msg["type"] == "page_changed"
 
@@ -196,10 +196,10 @@ def test_unrelated_event_does_not_appear(client_bus):
         _publish_from_thread(
             client,
             bus,
-            WikiPageChanged(slug="harald", path="entities/harald.md", kind="modified"),
+            WikiPageChanged(slug="morgan", path="entities/morgan.md", kind="modified"),
         )
         msg = ws.receive_json()
-        assert msg["slug"] == "harald"
+        assert msg["slug"] == "morgan"
         # No further events were published, so the receive queue
         # should be empty. We can't usefully assert "nothing arrives"
         # without a timeout knob on receive_json, so we just confirm

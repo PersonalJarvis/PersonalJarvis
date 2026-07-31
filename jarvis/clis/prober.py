@@ -35,6 +35,16 @@ AUTH_TIMEOUT_S = 15.0
 # bootstrap path that awaits it, see jarvis/clis/loader.py) forever. A leaked
 # zombie process beats an infinite hang.
 KILL_WAIT_TIMEOUT_S = 2.0
+# Budget for a WHOLE catalog sweep. Derived from the per-probe bounds above so
+# the two can never drift out of order: a single legitimate probe may spend
+# CHECK_TIMEOUT_S + KILL_WAIT_TIMEOUT_S on the binary and AUTH_TIMEOUT_S +
+# KILL_WAIT_TIMEOUT_S on the auth check (29s today) before it is anything but
+# healthy. The extra headroom covers OS scheduling when ~20 probes each spawn
+# their own subprocess at once — on Windows an AV scanner alone can add
+# seconds. A sweep budget BELOW the single-probe worst case would fire during
+# normal operation instead of acting as a backstop (see BUG: the 30s registry
+# ceiling blanked all 22 CLIs on 2026-07-25).
+PROBE_ALL_TIMEOUT_S = CHECK_TIMEOUT_S + AUTH_TIMEOUT_S + 2 * KILL_WAIT_TIMEOUT_S + 15.0
 
 
 class CliStatusProber:
@@ -56,16 +66,66 @@ class CliStatusProber:
         )
 
     async def probe_all(self, specs: list[CliSpec]) -> dict[str, CliStatus]:
-        results = await asyncio.gather(
-            *(self.probe(spec) for spec in specs), return_exceptions=True
-        )
+        """Probe every spec concurrently and ALWAYS return one row per spec.
+
+        Bounded per spec, not just in aggregate: probes that outlive
+        ``PROBE_ALL_TIMEOUT_S`` are cancelled individually and reported as
+        unknown, while every probe that finished keeps its real result. The
+        old ``wait_for(gather(...))`` shape cancelled the whole sweep, so a
+        few wedged Windows ``.cmd`` shims discarded the results of every
+        healthy CLI as well (0 tools exposed for the rest of the session).
+
+        A timed-out probe is ``CliStatus()`` — unknown, deliberately WITHOUT
+        ``error``: ``cli_routes._status_string`` renders any error as the red
+        "error" label, and "we could not finish checking" is not the same
+        claim as "this CLI is broken".
+        """
+        if not specs:
+            return {}
+        tasks = [asyncio.ensure_future(self.probe(spec)) for spec in specs]
+        await asyncio.wait(tasks, timeout=PROBE_ALL_TIMEOUT_S)
+
         out: dict[str, CliStatus] = {}
-        for spec, res in zip(specs, results, strict=False):
-            if isinstance(res, BaseException):
-                log.warning("probe(%s) exception: %s", spec.name, res)
-                out[spec.name] = CliStatus(error=str(res))
+        wedged: list[asyncio.Future[CliStatus]] = []
+        for spec, task in zip(specs, tasks, strict=False):
+            if not task.done():
+                task.cancel()
+                wedged.append(task)
+                log.warning(
+                    "probe(%s): still running after %.0fs — reporting it as "
+                    "unknown so the rest of the catalog keeps its results.",
+                    spec.name,
+                    PROBE_ALL_TIMEOUT_S,
+                )
+                out[spec.name] = CliStatus()
+                continue
+            if task.cancelled():
+                out[spec.name] = CliStatus()
+                continue
+            exc = task.exception()
+            if exc is not None:
+                log.warning("probe(%s) exception: %s", spec.name, exc)
+                out[spec.name] = CliStatus(error=str(exc))
             else:
-                out[spec.name] = res
+                out[spec.name] = task.result()
+
+        if wedged:
+            # Let the cancellations settle so asyncio does not log "Task was
+            # destroyed but it is pending" — but bounded, because the whole
+            # point here is that these probes do not come back promptly. A
+            # leaked task (and its zombie subprocess) beats a hung sweep,
+            # exactly as in the kill()/wait() path above.
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*wedged, return_exceptions=True),
+                    timeout=KILL_WAIT_TIMEOUT_S,
+                )
+            except TimeoutError:
+                log.warning(
+                    "probe_all: %d probe(s) did not honour cancellation — "
+                    "leaking them instead of blocking the sweep.",
+                    len(wedged),
+                )
         return out
 
     async def _probe_binary(self, spec: CliSpec) -> tuple[bool, str | None, str | None]:

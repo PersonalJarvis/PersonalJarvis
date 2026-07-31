@@ -12,6 +12,7 @@ and performs a stateful CPU resample before yielding each chunk.
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -36,8 +37,25 @@ from jarvis.core.protocols import AudioChunk
 
 SAMPLE_RATE = 16_000       # Whisper native rate
 CHANNELS = 1               # Mono is sufficient for speech
-BLOCKSIZE = 1600           # 100 ms blocks — compromise between latency and CPU overhead
+# One native Silero frame. The previous 1,600-frame / 100 ms callback made
+# every capture consumer wait up to 100 ms before it could see speech, silence,
+# or a barge-in edge; the VAD split that block back into 512-frame pieces anyway.
+# Delivering the model's native 32 ms unit removes that fixed batching delay
+# without increasing inference work or changing the PCM presented downstream.
+BLOCKSIZE = 512
 DTYPE = "int16"
+
+CAPTURE_BLOCK_DURATION_S = BLOCKSIZE / SAMPLE_RATE
+
+
+def capture_chunks_for_duration(seconds: float) -> int:
+    """Return the default-size chunk count covering at least ``seconds``."""
+    return max(1, math.ceil(max(0.0, float(seconds)) / CAPTURE_BLOCK_DURATION_S))
+
+
+# Preserve the old bulk-queue duration after reducing the callback block size.
+# Queue bounds are time budgets, not magic chunk counts.
+DEFAULT_QUEUE_CHUNKS = capture_chunks_for_duration(2.0)
 
 
 class MicrophoneAccessError(PermissionError):
@@ -79,7 +97,7 @@ def _macos_microphone_access_gate() -> Callable[[], bool] | None:
 # yet deep enough to absorb normal scheduling jitter on a machine that keeps up
 # (which never fills it). Bulk recorders that must keep every frame
 # (push-to-talk, dictation) use the deeper default instead. See MicrophoneCapture.
-REALTIME_QUEUE_CHUNKS = 6
+REALTIME_QUEUE_CHUNKS = capture_chunks_for_duration(0.6)
 
 # Input NAMES we never open as a microphone: playback/loopback/monitor sources
 # (opening one feeds constant hiss or TTS echo into the wake path) and GPU-HDMI
@@ -356,6 +374,21 @@ _RESOLVE_CACHE: dict[tuple[Any, tuple[str, ...]], tuple[Any, float]] = {}
 _RESOLVE_CACHE_FRESH_S = 5.0
 
 
+def _antialias_taps(from_rate: int, to_rate: int, num_taps: int = 33) -> np.ndarray:
+    """Hamming-windowed sinc low-pass just below the TARGET Nyquist.
+
+    Cutoff sits at 0.45 x the target rate (7.2 kHz for a 16 kHz target), which
+    keeps the whole speech band and the wake models' feature range while
+    removing what would otherwise fold into it.
+    """
+    cutoff_hz = 0.45 * to_rate
+    fc = cutoff_hz / from_rate  # cycles per SOURCE sample
+    n = np.arange(num_taps, dtype=np.float64) - (num_taps - 1) / 2.0
+    taps = 2.0 * fc * np.sinc(2.0 * fc * n) * np.hamming(num_taps)
+    total = taps.sum()
+    return taps / total if total else taps
+
+
 class _StreamingPcm16Resampler:
     """Stateful CPU-only resampler for interleaved PCM16 microphone frames.
 
@@ -364,6 +397,19 @@ class _StreamingPcm16Resampler:
     boundary, so the final source frame and fractional position are retained
     for the next callback. NumPy is part of the universal base installation;
     no GPU or optional native inference dependency is involved.
+
+    Downsampling additionally low-pass filters FIRST. Without that, interpolating
+    48 kHz straight down to 16 kHz folds every component above 8 kHz back into
+    the speech band at full amplitude — sibilance, keyboard clatter, fan and
+    coil whine, switching-supply noise. This path is reached only where the
+    native-rate fallback engages (CoreAudio, ALSA/PipeWire), i.e. macOS and
+    Linux; Windows resamples host-side in MME and never gets here. So the entire
+    wake stack — the openWakeWord melspec, the Vosk MFCCs, the Whisper log-mel,
+    and the AP-27 energy constants — was calibrated on clean Windows captures
+    and then deployed on aliased audio. Filtering strictly removes noise that
+    was never in any model's training data, so it cannot trade one corner of the
+    latency/recall/precision triangle for another; it only puts these two OSes
+    on the signal quality Windows already has.
     """
 
     def __init__(self, from_rate: int, to_rate: int, channels: int) -> None:
@@ -377,6 +423,30 @@ class _StreamingPcm16Resampler:
         self._step = self.from_rate / self.to_rate
         self._tail: np.ndarray | None = None
         self._position = 0.0
+        # Only DOWNsampling can alias; upsampling needs no pre-filter.
+        self._taps: np.ndarray | None = (
+            _antialias_taps(self.from_rate, self.to_rate)
+            if self.from_rate > self.to_rate
+            else None
+        )
+        self._filter_tail: np.ndarray | None = None
+
+    def _antialias(self, frames: np.ndarray) -> np.ndarray:
+        """Apply the low-pass, carrying ``taps-1`` frames across callbacks."""
+        taps = self._taps
+        assert taps is not None
+        history = taps.size - 1
+        if self._filter_tail is None:
+            # Prime with the first frame repeated instead of zeros: a
+            # zero-primed filter fades the first ~1 ms of the stream in, which
+            # would be an audible click and a dip in the very first wake window.
+            self._filter_tail = np.repeat(frames[:1], history, axis=0)
+        padded = np.concatenate((self._filter_tail, frames), axis=0)
+        self._filter_tail = padded[-history:].copy() if history else None
+        out = np.empty_like(frames)
+        for channel in range(self.channels):
+            out[:, channel] = np.convolve(padded[:, channel], taps, mode="valid")
+        return out
 
     def process(self, pcm16: bytes) -> bytes:
         if not pcm16:
@@ -389,6 +459,8 @@ class _StreamingPcm16Resampler:
 
         samples = np.frombuffer(pcm16, dtype="<i2").reshape(-1, self.channels)
         frames = samples.astype(np.float64)
+        if self._taps is not None:
+            frames = self._antialias(frames)
         if self._tail is not None:
             frames = np.concatenate((self._tail, frames), axis=0)
         if frames.shape[0] < 2:
@@ -464,6 +536,20 @@ def _touch_resolve_cache(
 def _invalidate_resolve_cache() -> None:
     """Drop every cached resolve — called on open failures/stream stalls."""
     _RESOLVE_CACHE.clear()
+
+
+def _request_topology_probe() -> None:
+    """Nudge the topology watcher to re-probe now (best-effort, never raises).
+
+    Imported lazily: ``topology`` imports this module, so a top-level import
+    would be circular.
+    """
+    try:
+        from jarvis.audio.topology import request_topology_probe
+
+        request_topology_probe()
+    except Exception:  # noqa: BLE001 — a diagnostics nudge must never propagate
+        _log.debug("topology probe request skipped", exc_info=True)
 
 
 def _cached_resolve(
@@ -586,7 +672,7 @@ class MicrophoneCapture:
         sample_rate: int = SAMPLE_RATE,
         blocksize: int = BLOCKSIZE,
         channels: int = CHANNELS,
-        max_queue_chunks: int = 20,
+        max_queue_chunks: int = DEFAULT_QUEUE_CHUNKS,
         device_priority: Sequence[str] | None = None,
         access_gate: Callable[[], bool] | None = None,
     ) -> None:
@@ -631,8 +717,9 @@ class MicrophoneCapture:
         # Queue bridges PortAudio thread → asyncio. maxsize bounds how STALE the
         # audio a consumer sees may get: with the drop-OLDEST policy in
         # ``_safe_put`` a full queue always holds the most-recent
-        # ``max_queue_chunks`` blocks, so worst-case staleness ==
-        # max_queue_chunks x 100 ms. The default 20 (~2 s) is generous back-
+        # ``max_queue_chunks`` blocks, so worst-case staleness is the queue
+        # depth times the configured block duration. The default stays at ~2 s
+        # after the low-latency 32 ms block change and is generous back-
         # pressure for a bulk consumer (push-to-talk, which records every frame).
         # A REAL-TIME detection consumer (VAD endpointing, wake) passes a SHALLOW
         # depth (~0.6 s) so that on a CPU that can't keep up the end-of-speech
@@ -882,8 +969,11 @@ class MicrophoneCapture:
                             close_exc,
                         )
                 # A failed open means the cached/resolved device may be gone —
-                # force the next construction through a fresh full resolve.
+                # force the next construction through a fresh full resolve, and
+                # ask the topology watcher to look NOW rather than at its next
+                # poll (that is why the poll interval can stay cheap).
                 _invalidate_resolve_cache()
+                _request_topology_probe()
                 _log.warning(
                     "Mic-Open on device={} at {}Hz failed ({}); trying next "
                     "fallback.",
@@ -937,6 +1027,7 @@ class MicrophoneCapture:
                 continue
             # Stalled: whatever we knew about the device landscape is suspect.
             _invalidate_resolve_cache()
+            _request_topology_probe()
             self._restart_count += 1
             _log.warning(
                 "Mic stall detected ({:.1f}s without a frame) — restart #{} (device={}).",

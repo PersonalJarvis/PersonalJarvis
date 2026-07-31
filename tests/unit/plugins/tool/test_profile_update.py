@@ -71,7 +71,7 @@ _SEED = """---
 schema_version: 1
 subject_type: user
 identity:
-  name: Ruben
+  name: Alex
   preferred_address: Chef
   languages:
   - English

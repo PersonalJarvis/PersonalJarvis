@@ -103,7 +103,7 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
     "type": "entity", "entity_kind": "person", "slug": "sam",
     "aliases": [], "created": "2026-05-13", "updated": "2026-05-13"
   },
-  "body_md": "# Sam\n\n## Summary\nSam is a person born in 1990.\n\n## Facts\n- Born in 1990.\n…",
+  "body_md": "# Sam\n\n## Summary\nSam is a mentor who likes hiking.\n\n## Facts\n- Likes hiking.\n…",
   "wikilinks": ["alex"],
   "stats": {"words": 17, "bytes": 289, "mtime": 1715590000.0}
 }
@@ -117,7 +117,7 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
     {"id": "pixel-art-editor", "kind": "project", "title": "Pixel Art Editor"}
   ],
   "edges": [
-    {"source": "alex", "target": "sam",           "context": "Father is [[sam]]"},
+    {"source": "alex", "target": "sam",           "context": "Mentor is [[sam]]"},
     {"source": "alex", "target": "pixel-art-editor", "context": "Working on [[pixel-art-editor]]"}
   ],
   "broken": []   // list of {source, target} where target page does not exist
@@ -128,7 +128,7 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
   "ok": true,
   "slug": "sam",
   "backlinks": [
-    {"slug": "alex", "title": "Alex", "snippet": "...father is [[sam]] — born 1990..."}
+    {"slug": "alex", "title": "Alex", "snippet": "...mentor is [[sam]] — likes hiking..."}
   ]
 }
 

@@ -2026,7 +2026,7 @@ def test_delegate_history_keeps_a_task_five_exchanges_back():
         "Write that to the wiki.",
         "Write the last transcript to the wiki.",
         "Kannst du bitte mein Wiki-System eintragen, "  # i18n-allow: German speech-input fixture
-        "dass ich morgen nach San Francisco "  # i18n-allow: German speech-input fixture
+        "dass ich morgen nach Example City "  # i18n-allow: German speech-input fixture
         "reisen will?",  # i18n-allow: German speech-input fixture
     ],
 )
@@ -2549,9 +2549,9 @@ class _TwoTurnClarifyProvider(FakeProvider):
 @pytest.mark.asyncio
 async def test_short_answer_to_delegate_clarify_question_is_delegated():
     brain = FakeBrain(
-        replies=("Which trip do you mean?", "Saved the San Francisco trip.")
+        replies=("Which trip do you mean?", "Saved the Example City trip.")
     )
-    provider = _TwoTurnClarifyProvider("The one to San Francisco")
+    provider = _TwoTurnClarifyProvider("The one to Example City")
     sess = _session(provider, brain=brain)
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
@@ -2560,7 +2560,7 @@ async def test_short_answer_to_delegate_clarify_question_is_delegated():
 
     assert [call[0] for call in brain.calls] == [
         "Write the travel plan to my wiki.",
-        "The one to San Francisco",
+        "The one to Example City",
     ]
     await sess.end(reason="test")
 
@@ -2675,7 +2675,7 @@ async def test_multi_final_transcript_waits_for_provider_turn_boundary():
             await asyncio.sleep(0.12)
             yield RealtimeEvent(
                 type="input_transcript",
-                text="that I travel to San Francisco tomorrow",
+                text="that I travel to Example City tomorrow",
                 is_final=True,
             )
             yield RealtimeEvent(type="turn_complete")
@@ -2696,7 +2696,7 @@ async def test_multi_final_transcript_waits_for_provider_turn_boundary():
     await asyncio.sleep(0.2)
 
     assert brain.calls[0][0] == (
-        "Write this to my wiki that I travel to San Francisco tomorrow"
+        "Write this to my wiki that I travel to Example City tomorrow"
     )
     await sess.end(reason="test")
 
@@ -2825,7 +2825,7 @@ async def test_action_result_that_outlived_its_turn_is_still_spoken():
             return await super().generate(text, **kwargs)
 
     brain = _SignallingBrain(
-        replies=("Stored on your page: flight to San Francisco tomorrow.",),
+        replies=("Stored on your page: flight to Example City tomorrow.",),
         gate=gate,
     )
     provider = _InterjectionProvider(
@@ -2844,7 +2844,7 @@ async def test_action_result_that_outlived_its_turn_is_still_spoken():
     await sess.wait_finished()
 
     spoken = provider.session.text_inputs[-1]
-    assert "Stored on your page: flight to San Francisco tomorrow." in spoken
+    assert "Stored on your page: flight to Example City tomorrow." in spoken
     assert "<trusted_action_result>" in spoken
     assert "earlier request" in spoken
     await sess.end(reason="test")
@@ -5836,4 +5836,147 @@ async def test_advised_reconnect_defers_to_the_turn_boundary_mid_turn():
     assert types.index("turn_complete") < len(types) - 1 - types[::-1].index(
         "audio_ready"
     )
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_provider_cannot_re_run_the_order_already_being_executed():
+    """One spoken order must reach the world exactly once.
+
+    Live 2026-07-27 20:12: the orchestrator dispatched the user's order
+    deterministically (the shared planner wanted an action), the provider then
+    finished its own pass over the same audio, opened a FRESH turn and called
+    ``jarvis_action`` for the same order — so one Agentic-IDE pane was briefed
+    with two different tasks 42 s apart while two idle panes got nothing. The
+    per-turn de-duplication cannot see it: the repeat arrives one turn late.
+    """
+    gate = asyncio.Event()  # the first action stays in flight for the test
+    dispatched = asyncio.Event()
+
+    class _SignallingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatched.set()
+            return await super().generate(text, **kwargs)
+
+    brain = _SignallingBrain(gate=gate)
+
+    class _RepeatSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write that to the wiki.",
+                is_final=True,
+            )
+            await dispatched.wait()
+            # Speaking into the waiting silence rolls the turn over while the
+            # action still runs — the live shape, and what the per-turn
+            # de-duplication cannot see.
+            yield RealtimeEvent(type="speech_started")
+            # The new turn carries no request of its own.
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="okay okay okay",
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="tool_call",
+                call_id="repeat-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "Write that to the wiki."},
+            )
+
+    class _RepeatProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _RepeatSession([])
+            return self.session
+
+    provider = _RepeatProvider([])
+    jsons = []
+    sess = _session(provider, brain=brain, jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.1)
+
+    assert len(brain.calls) == 1, (
+        f"the order must be executed exactly once, got {brain.calls}"
+    )
+    assert provider.session.tool_results, "the provider must hear a verdict"
+    _call_id, name, result = provider.session.tool_results[-1]
+    assert name == "jarvis_action"
+    assert result["success"] is False
+    assert "already being executed" in result["error"]
+    # Refusing must not trade the duplicate for silence: provider output is
+    # withheld while the action runs, so the orchestrator answers the turn —
+    # exactly once, not once more from the no-audio rescue.
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert len(spoken) == 1, f"expected one spoken progress line, got {spoken}"
+    gate.set()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_new_order_still_reaches_the_orchestrator_while_one_runs():
+    """The repeat guard must not swallow a SECOND, genuinely new request.
+
+    Guard-rail for the fix above: "and Blake should do it too" spoken while
+    the first action is still running is a new order, not the old one coming
+    back around, and it has to be dispatched.
+    """
+    gate = asyncio.Event()
+    dispatched = asyncio.Event()
+
+    class _SignallingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatched.set()
+            return await super().generate(text, **kwargs)
+
+    brain = _SignallingBrain(gate=gate)
+
+    class _SecondOrderSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write that to the wiki.",
+                is_final=True,
+            )
+            await dispatched.wait()
+            yield RealtimeEvent(type="speech_started")
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Now open the settings view as well.",
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="tool_call",
+                call_id="second-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "Open the settings view."},
+            )
+
+    class _SecondOrderProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _SecondOrderSession([])
+            return self.session
+
+    provider = _SecondOrderProvider([])
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.1)
+
+    assert len(brain.calls) == 2, (
+        f"the second order must still be dispatched, got {brain.calls}"
+    )
+    refusals = [
+        result
+        for _call_id, _name, result in provider.session.tool_results
+        if not result.get("success")
+        and "already being executed" in str(result.get("error", ""))
+    ]
+    assert refusals == [], "a new order must never be refused as a repeat"
+    gate.set()
     await sess.end(reason="test")

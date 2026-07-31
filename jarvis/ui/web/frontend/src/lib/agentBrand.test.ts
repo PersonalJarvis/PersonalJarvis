@@ -8,7 +8,7 @@ import { agentBrand, agentsBrand } from "./agentBrand";
 
 describe("agentBrand", () => {
   it("suffixes -Agent onto any assistant name (wake-word agnostic)", () => {
-    for (const name of ["Ruben", "Harald", "Athena", "Computer", "Nova Prime"]) {
+    for (const name of ["Ruben", "Morgan", "Athena", "Computer", "Nova Prime"]) {
       expect(agentBrand(name)).toBe(`${name}-Agent`);
       expect(agentsBrand(name)).toBe(`${name}-Agents`);
     }

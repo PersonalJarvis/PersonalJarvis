@@ -63,5 +63,6 @@ class RollbackError(SelfModError):
 
     This is the most severe error state: jarvis.toml may have been written
     in a corrupt state AND the restore also failed. The caller must manually
-    recover from `<jarvis.toml.parent>/.backups/`.
+    recover from `<user-data-dir>/backups/self_mod/`. Backups created by older
+    installations remain readable under `<jarvis.toml.parent>/.backups/`.
     """

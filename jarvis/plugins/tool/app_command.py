@@ -41,6 +41,37 @@ _TYPE_CHECKS: dict[str, type | tuple[type, ...]] = {
 }
 
 
+def _with_defaults(schema: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """``args`` plus every schema default the caller left out.
+
+    A ``default`` in a tool schema is a promise made to the model. It reads
+    "compose — rewrite the instruction into a briefed task, default true",
+    leaves the argument out because that is what a default is FOR, and expects
+    the documented behaviour. Nothing kept that promise: the arguments went to
+    the endpoint exactly as the model sent them, and the endpoint then applied
+    ITS own default — which is chosen for the surface that calls it directly,
+    not for the model reading the registry.
+
+    Measured live 2026-07-27 18:47: ``agentic-ide-prompt`` declares
+    ``compose: true`` while ``PromptRequest.compose`` defaults to False for the
+    typed prompt bar, which sends what someone wrote by hand and must not have
+    it rewritten. So every spoken instruction the router forwarded was typed
+    into the coding agent verbatim — a one-line paraphrase where a briefed task
+    with the workspace's files attached was the entire point of that path. The
+    same shape sits behind every other default in the registry, so this is
+    fixed once, here, rather than per command.
+    """
+    props = (schema or {}).get("properties", {})
+    if not isinstance(props, dict):
+        return dict(args)
+    filled = dict(args)
+    for key, spec in props.items():
+        if key in filled or not isinstance(spec, dict) or "default" not in spec:
+            continue
+        filled[key] = spec["default"]
+    return filled
+
+
 def _validate_args(schema: dict[str, Any], args: dict[str, Any]) -> list[str]:
     """Minimal, dependency-free JSON-schema check: unknown keys, required,
     enum membership, primitive types, string length, numeric range."""
@@ -79,6 +110,29 @@ def _validate_args(schema: dict[str, Any], args: dict[str, Any]) -> list[str]:
             if "maximum" in spec and value > spec["maximum"]:
                 errors.append(f"{key!r} must be <= {spec['maximum']}")
     return errors
+
+
+#: Response keys carrying a FULL app-state snapshot. Mutating routes return one
+#: so an open UI can re-render without a second fetch — but a language model
+#: needs what CHANGED, not the snapshot. Measured: one Agentic-IDE spawn answers
+#: with ~25 000 characters of workspace state (every pane, its transcript, the
+#: project's skills and subagents), so three calls in a turn bury the actual
+#: result and the reply the model has to act on. A live session on 2026-07-27
+#: spent 58 000 input tokens on one turn that way and lost track of the pane it
+#: had just opened. Callers that genuinely want the snapshot have a dedicated
+#: status command.
+_SNAPSHOT_KEYS = frozenset({"state"})
+
+
+def _without_snapshots(data: Any) -> Any:
+    """The server's response minus any full-state snapshot it echoed back."""
+    if not isinstance(data, dict):
+        return data
+    trimmed = {key: value for key, value in data.items() if key not in _SNAPSHOT_KEYS}
+    if trimmed.keys() <= {"ok"}:
+        # The snapshot WAS the answer; trimming it would return nothing at all.
+        return data
+    return trimmed
 
 
 def _summarize(title: str, data: Any) -> str:
@@ -166,7 +220,7 @@ class RegistryCommandTool:
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         cmd = self._cmd
-        cmd_args = dict(args or {})
+        cmd_args = _with_defaults(cmd.params, args or {})
         problems = _validate_args(cmd.params, cmd_args)
         if problems:
             return ToolResult(
@@ -239,7 +293,7 @@ class RegistryCommandTool:
             output={
                 "command_id": cmd.id,
                 "summary": _summarize(cmd.title, data),
-                "response": data,
+                "response": _without_snapshots(data),
             },
         )
 

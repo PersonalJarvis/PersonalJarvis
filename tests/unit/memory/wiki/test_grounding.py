@@ -15,7 +15,7 @@ from jarvis.memory.wiki.grounding import (
     is_unsupported_user_interest_claim,
 )
 
-_USER = "ruben"
+_USER = "alex"
 
 
 def _classify(fact: str, evidence: str, subjects: tuple[str, ...] = (_USER, "golf")):

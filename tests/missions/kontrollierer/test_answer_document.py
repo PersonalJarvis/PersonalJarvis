@@ -4,7 +4,7 @@ Background (live forensic 2026-06-19): the Outputs view lists ONLY genuine
 deliverable files under ``tasks/<id>/artifacts/files/``. A code/file task writes
 one (HTML, .py, …) so it shows up; a pure research/Q&A task delivers its answer
 as TEXT (spoken back) and only NON-DETERMINISTICALLY wrote a ``.md`` report — so
-the same "relocate to SF" question produced a file once and an empty Outputs card
+the same "launch a conference" question produced a file once and an empty Outputs card
 the next time. ``materialize_answer_document`` closes that gap: when a mission
 left no real file deliverable, the worker's text answer is written as a Markdown
 report into the canonical deliverable subtree, so EVERY successful mission shows
@@ -24,9 +24,9 @@ from jarvis.missions.kontrollierer.deliverable import (
 )
 
 _LONG_ANSWER = (
-    "To relocate to San Francisco you need to secure a work visa (typically an "
-    "H-1B or O-1), find housing well before arriving because the market moves "
-    "fast, open a US bank account, and get an SSN as soon as you land."
+    "To launch a technical conference you need to secure a venue, publish the "
+    "schedule, confirm speakers, test registration, and prepare attendee "
+    "support before opening day."
 )
 
 
@@ -56,20 +56,20 @@ def test_substantive_answer_is_materialised(tmp_path: Path) -> None:
     """A real text answer becomes a Markdown report carrying the answer text."""
     _task_dir(tmp_path)
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="what do I need to move to SF?"
+        tmp_path, answers=[_LONG_ANSWER], prompt="what do I need to launch a conference?"
     )
     assert out is not None
     assert out.is_file()
     assert out.suffix == ".md"
     body = out.read_text(encoding="utf-8")
-    assert "secure a work visa" in body
+    assert "secure a venue" in body
 
 
 def test_report_lands_in_deliverable_subtree(tmp_path: Path) -> None:
     """The report must sit in tasks/<id>/artifacts/files/ so Outputs lists it."""
     _task_dir(tmp_path)
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     assert out is not None
     rel = out.relative_to(tmp_path).parts
@@ -82,7 +82,7 @@ def test_report_is_found_by_build_deliverable_summary(tmp_path: Path) -> None:
     """End-to-end: after materialising, the readback summary names the report."""
     _task_dir(tmp_path)
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     assert out is not None
     summary = build_deliverable_summary(tmp_path)
@@ -108,7 +108,7 @@ def test_report_reuses_existing_task_dir(tmp_path: Path) -> None:
     """The report joins the archive's existing task dir, not a new sibling."""
     _task_dir(tmp_path, task_id="019edf4c-f827")
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     assert out is not None
     # Position-exact: the task id must be the tasks/<id>/ segment, not just
@@ -119,7 +119,7 @@ def test_report_reuses_existing_task_dir(tmp_path: Path) -> None:
 def test_report_created_when_no_task_dir_exists(tmp_path: Path) -> None:
     """No tasks/ at all (Edit-only / odd path) → a synthetic deliverable dir."""
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     assert out is not None
     rel = out.relative_to(tmp_path).parts
@@ -133,23 +133,23 @@ def test_title_from_prompt_in_report(tmp_path: Path) -> None:
     out = materialize_answer_document(
         tmp_path,
         answers=[_LONG_ANSWER],
-        prompt="What do I need to do to relocate to San Francisco?",
+        prompt="What do I need to do to launch a technical conference?",
     )
     assert out is not None
     body = out.read_text(encoding="utf-8")
     first_line = body.splitlines()[0]
     assert first_line.startswith("# ")
-    assert "relocate to San Francisco" in first_line
+    assert "launch a technical conference" in first_line
 
 
 def test_slug_from_prompt_in_filename(tmp_path: Path) -> None:
     """The filename is derived from the prompt, lowercased + hyphenated."""
     _task_dir(tmp_path)
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="Relocate to San Francisco"
+        tmp_path, answers=[_LONG_ANSWER], prompt="Launch a technical conference"
     )
     assert out is not None
-    assert out.name == "relocate-to-san-francisco.md"
+    assert out.name == "launch-a-technical-conference.md"
 
 
 def test_filename_is_ascii_safe(tmp_path: Path) -> None:
@@ -157,10 +157,10 @@ def test_filename_is_ascii_safe(tmp_path: Path) -> None:
     _task_dir(tmp_path)
     # German prompt is the umlaut-transliteration test fixture.
     out = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="Auswandern nach München"  # i18n-allow
+        tmp_path, answers=[_LONG_ANSWER], prompt="Größe der Bühne"  # i18n-allow
     )
     assert out is not None
-    assert out.name == "auswandern-nach-muenchen.md"
+    assert out.name == "groesse-der-buehne.md"
     # No raw non-ASCII in the filename.
     assert out.name.encode("ascii", "strict")
 
@@ -189,13 +189,13 @@ def test_quality_directive_preamble_stripped_from_title_and_filename(
     prompt = (
         "Deliver a complete, polished, production-quality result that fully "
         'satisfies the request. A skeleton or "content follows" shell is a '
-        "FAILURE.\n\nWhat do I need to relocate to San Francisco?"
+        "FAILURE.\n\nWhat do I need to launch a technical conference?"
     )
     out = materialize_answer_document(tmp_path, answers=[_LONG_ANSWER], prompt=prompt)
     assert out is not None
-    assert out.name == "what-do-i-need-to-relocate-to-san-francisco.md"
+    assert out.name == "what-do-i-need-to-launch-a-technical-conference.md"
     first_line = out.read_text(encoding="utf-8").splitlines()[0]
-    assert first_line == "# What do I need to relocate to San Francisco?"
+    assert first_line == "# What do I need to launch a technical conference?"
     assert "production-quality" not in first_line
 
 
@@ -204,24 +204,24 @@ def test_multiple_answers_are_joined(tmp_path: Path) -> None:
     _task_dir(tmp_path)
     out = materialize_answer_document(
         tmp_path,
-        answers=[_LONG_ANSWER, "Also remember to ship your belongings early."],
-        prompt="relocate",
+        answers=[_LONG_ANSWER, "Also remember to publish the schedule early."],
+        prompt="conference launch",
     )
     assert out is not None
     body = out.read_text(encoding="utf-8")
-    assert "secure a work visa" in body
-    assert "ship your belongings" in body
+    assert "secure a venue" in body
+    assert "publish the schedule" in body
 
 
 def test_idempotent_second_call_writes_no_duplicate(tmp_path: Path) -> None:
     """Re-running approve must not produce a second report file."""
     _task_dir(tmp_path)
     first = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     assert first is not None
     second = materialize_answer_document(
-        tmp_path, answers=[_LONG_ANSWER], prompt="relocate to SF"
+        tmp_path, answers=[_LONG_ANSWER], prompt="launch a conference"
     )
     # The first report now counts as an existing deliverable → no duplicate.
     assert second is None

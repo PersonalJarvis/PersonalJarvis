@@ -302,6 +302,212 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I am not sure what to write to the wiki. Please say it again with the content.",
         "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
     },
+    # No "I am writing the task now" phrase belongs here. One existed for a few
+    # hours on 2026-07-27 to fill the prompt writer's 10-21 s, and the realtime
+    # provider re-voiced it as a finished action; the only sentence the pane
+    # hand-off may speak is the delivery verdict below, which reports what was
+    # actually typed where.
+    # Agentic-IDE terminal delivery (deterministic fast path). Naming the pane
+    # back is the whole confirmation the user gets that the right agent was
+    # addressed — a spoken "sent" without the call-sign would be useless in a
+    # four-pane workspace.
+    "ide_prompt_sent": {
+        "de": "Ist bei {terminal}.",  # i18n-allow
+        "en": "Sent to {terminal}.",
+        "es": "Enviado a {terminal}.",
+    },
+    "ide_prompt_sent_files": {
+        "de": "Ist bei {terminal}, mit {count} Dateien dazu.",  # i18n-allow
+        "en": "Sent to {terminal}, with {count} files attached.",
+        "es": "Enviado a {terminal}, con {count} archivos adjuntos.",
+    },
+    "ide_prompt_sent_one_file": {
+        "de": "Ist bei {terminal}, samt {file}.",  # i18n-allow
+        "en": "Sent to {terminal}, along with {file}.",
+        "es": "Enviado a {terminal}, junto con {file}.",
+    },
+    "ide_terminal_not_running": {
+        "de": "{terminal} läuft gerade nicht ({status}). Ich habe nichts geschickt.",  # i18n-allow
+        "en": "{terminal} is not running right now ({status}). I sent nothing.",
+        "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
+    },
+    # Fan-out: ONE order handed to SEVERAL panes. The partial and the
+    # nobody-reached cases are separate keys on purpose — the live 2026-07-26
+    # failure was a partial delivery spoken as a complete one, and a single
+    # template with an optional clause is exactly how that rounds back up.
+    "ide_prompt_sent_many": {
+        "de": "Ist bei {names}.",  # i18n-allow
+        "en": "Sent to {names}.",
+        "es": "Enviado a {names}.",
+    },
+    "ide_prompt_sent_partial": {
+        "de": "Ist bei {names}. Zu {failed} bin ich nicht durchgekommen.",  # i18n-allow
+        "en": "Sent to {names}. I could not reach {failed}.",
+        "es": "Enviado a {names}. No pude llegar a {failed}.",
+    },
+    "ide_prompt_sent_nobody": {
+        "de": "Ich bin zu {failed} nicht durchgekommen, es läuft nichts.",  # i18n-allow
+        "en": "I could not reach {failed}, so nothing is running.",
+        "es": "No pude llegar a {failed}, así que no hay nada en marcha.",
+    },
+    # Typed into the input box but never submitted — looks identical to a
+    # running agent until you ask it something (the 2026-07-25 popup trap).
+    "ide_prompt_typed_not_started": {
+        "de": "Bei {names} steht der Text nur im Eingabefeld.",  # i18n-allow
+        "en": "On {names} the text is only sitting in the input box.",
+        "es": "En {names} el texto solo está en el cuadro de entrada.",
+    },
+    # Joining call-signs for speech. A comma-separated list read aloud sounds
+    # like an enumeration that never ends; the last pair needs the conjunction.
+    "ide_names_pair": {
+        "de": "{head} und {last}",  # i18n-allow
+        "en": "{head} and {last}",
+        "es": "{head} y {last}",
+    },
+    # Opening more panes by voice ("spawn five more Claude Code terminals").
+    # The names are always read back: they are how the user addresses the new
+    # panes in the very next sentence, and hearing them is also the fastest way
+    # to notice that fewer opened than asked for.
+    "ide_terminals_spawned_one": {
+        "de": "{names} ist offen.",  # i18n-allow
+        "en": "{names} is open.",
+        "es": "{names} está abierta.",
+    },
+    "ide_terminals_spawned": {
+        "de": "{count} neue Terminals: {names}.",  # i18n-allow
+        "en": "{count} new terminals: {names}.",
+        "es": "{count} terminales nuevas: {names}.",
+    },
+    "ide_terminals_briefing_queued": {
+        "de": "Ich übergebe ihnen die Aufgabe, sobald die Terminals bereit sind.",  # i18n-allow
+        "en": "I will hand them the task as soon as the terminals are ready.",
+        "es": "Les entregaré la tarea en cuanto las terminales estén listas.",
+    },
+    "ide_terminals_closed": {
+        "de": "{count} Terminals geschlossen: {names}.",  # i18n-allow
+        "en": "Closed {count} terminals: {names}.",
+        "es": "Cerré {count} terminales: {names}.",
+    },
+    "ide_terminals_none_to_close": {
+        "de": "Es sind keine passenden Terminals offen.",  # i18n-allow
+        "en": "There are no matching open terminals.",
+        "es": "No hay terminales abiertas que coincidan.",
+    },
+    # Fewer than asked for, because the workspace cap cut the batch short. Named
+    # separately from the plain success so the shortfall is impossible to miss.
+    "ide_terminals_spawned_capped": {
+        "de": "Platz war nur für {count}: {names}.",  # i18n-allow
+        "en": "There was only room for {count}: {names}.",
+        "es": "Solo había espacio para {count}: {names}.",
+    },
+    "ide_terminals_full": {
+        "de": "Der Workspace ist voll, {max} Terminals laufen schon.",  # i18n-allow
+        "en": "The workspace is full, {max} terminals are already running.",
+        "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
+    },
+    # The name came through garbled and lands between two coding CLIs. Asked
+    # rather than guessed (maintainer directive 2026-07-28): a needless question
+    # costs one word, a wrong guess opens the wrong agent on the wrong plan.
+    "ide_terminal_kind_unclear": {
+        "de": "Ich habe {spoken} verstanden. Meintest du {first} oder {second}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {first} or {second}?",
+        "es": "Escuché {spoken}: ¿te refieres a {first} o a {second}?",
+    },
+    "ide_terminal_kind_unclear_one": {
+        "de": "Ich habe {spoken} verstanden. Meintest du {first}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {first}?",
+        "es": "Escuché {spoken}: ¿te refieres a {first}?",
+    },
+    # A coding CLI this workspace does not offer was named in a fleet request.
+    # Said out loud rather than dropped: a name nobody recognises used to fall
+    # out of the parse without a word, so the user counted the panes and found
+    # one missing with nothing anywhere to explain it.
+    "ide_terminal_kind_unknown": {
+        "de": "Für {name} gibt es keine Terminal-Art. Verfügbar: {available}.",  # i18n-allow
+        "en": "There is no {name} terminal kind. Available: {available}.",
+        "es": "No hay un tipo de terminal {name}. Disponibles: {available}.",
+    },
+    # No workspace was open, so one was opened in the most recent folder. The
+    # folder is named on purpose: it is an assumption, and hearing it is how the
+    # user catches a wrong one before an agent starts working in it.
+    "ide_terminals_opened_workspace": {
+        "de": "Ich habe {folder} geöffnet: {names}.",  # i18n-allow
+        "en": "I opened {folder}: {names}.",
+        "es": "Abrí {folder}: {names}.",
+    },
+    # A call-sign the transcript almost matched. Both variants REPEAT what was
+    # heard: the user's own word is the only thing that lets them tell a
+    # misheard name from a wrong pane, and hearing "I understood Ilies" is what
+    # makes "no, Ellis" the obvious next thing to say.
+    "ide_terminal_clarify_one": {
+        "de": "Ich habe {spoken} verstanden. Meinst du {name}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {name}?",
+        "es": "Entendí {spoken}: ¿te refieres a {name}?",
+    },
+    "ide_terminal_clarify_many": {
+        "de": "Ich habe {spoken} verstanden. Meinst du {names}?",  # i18n-allow
+        "en": "I heard {spoken}. Did you mean {names}?",
+        "es": "Entendí {spoken}: ¿te refieres a {names}?",
+    },
+    # The user says a briefing never arrived, but the pane's own receipt says it
+    # did. Answering with the CLOCK TIME is the point: it is the one thing that
+    # lets them tell "it did not happen" from "I did not see it happen", and
+    # re-sending on their word would double-brief an agent that is already
+    # working (BUG-121).
+    "ide_prompt_already_delivered": {
+        "de": (
+            "{name} hat den Auftrag um {time} bekommen. "  # i18n-allow
+            "Ich schicke ihn nicht doppelt."  # i18n-allow
+        ),
+        "en": "{name} got the task at {time}. I am not sending it twice.",
+        "es": "{name} recibió la tarea a las {time}: no la envío dos veces.",
+    },
+    # The separator for the final pair of an alternative list ("Maggie or Max").
+    # A phrase entry rather than a literal, so the choice is offered in the
+    # turn's language like every other spoken word.
+    "join_or": {
+        "de": " oder ",  # i18n-allow
+        "en": " or ",
+        "es": " o ",
+    },
+    # The separator for the final pair of a LIST ("Alex and Blake"). Distinct
+    # from ``join_or`` because the two questions mean opposite things: "Max or
+    # Maggie" offers a choice between panes, "Alex and Blake" asks about both.
+    "join_and": {
+        "de": " und ",  # i18n-allow
+        "en": " and ",
+        "es": " y ",
+    },
+    # Panes were briefed AND one call-sign of the same breath stayed unclear.
+    # The two halves are said in one sentence on purpose: the user has to hear
+    # which agents actually got the work before being asked about the rest.
+    "ide_terminal_clarify_also": {
+        "de": "Ich habe außerdem {spoken} verstanden. Meinst du {names}?",  # i18n-allow
+        "en": "I also heard {spoken}. Did you mean {names}?",
+        "es": "También entendí {spoken}: ¿te refieres a {names}?",
+    },
+    # The user addressed several panes and only one call-sign survived speech
+    # recognition. Saying which one was placed is the load-bearing half: it is
+    # what stops the user believing a second agent is working when none is.
+    "ide_terminal_who_else": {
+        "de": "Ich konnte nur {names} zuordnen. Wer sollte noch ran?",  # i18n-allow
+        "en": "I could only place {names}. Who else did you mean?",
+        "es": "Solo pude identificar a {names}: ¿quién más?",
+    },
+    "ide_terminals_nowhere": {
+        "de": (  # i18n-allow
+            "Es ist kein Workspace offen und ich habe keinen letzten. "  # i18n-allow
+            "Wähle einen Ordner in der Agentic IDE."  # i18n-allow
+        ),
+        "en": (
+            "No workspace is open and there is no recent one. "
+            "Pick a folder in the Agentic IDE."
+        ),
+        "es": (
+            "No hay ningún espacio de trabajo abierto ni uno reciente. "
+            "Elige una carpeta en el IDE agéntico."
+        ),
+    },
 }
 
 

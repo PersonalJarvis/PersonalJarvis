@@ -10,14 +10,21 @@ shipped no plugin, so an OpenAI-only user dead-ended on the local
 Endpoint (OpenAI-compatible audio API, identical wire shape to the Groq plugin):
   * ``POST {base_url}/audio/transcriptions`` (multipart upload),
   * Headers: ``Authorization: Bearer <key>``,
-  * multipart fields: ``file`` (an in-memory WAV), ``model``, ``response_format``
-    (``verbose_json`` for segment timings + confidence), optional ``language`` /
-    ``prompt`` / ``temperature``.
+  * multipart fields: ``file`` (an in-memory WAV), ``model``, ``response_format``,
+    optional ``language`` / ``prompt`` / ``temperature``.
+
+The wire contract is NOT the same for every model, which is why the request is
+built from a per-model capability shape (:mod:`jarvis.plugins.stt.capabilities`)
+rather than from constants: ``whisper-1`` answers ``verbose_json`` with segment
+timings and log probabilities, while ``gpt-4o-transcribe`` rejects that value
+with HTTP 400 and transcribes nothing. A 400 that names an optional field
+narrows the shape and retries; a 400 that names the MODEL falls back to the
+default model once, loudly.
 
 Model default: ``whisper-1`` — the universally-available transcription model
 every OpenAI account can call. Gate on the capability, never a fancier model id
 (AP-21); a user who wants a newer transcription model sets it in the STT model
-field and the wire contract is unchanged.
+field and the request adapts itself to that model's contract.
 
 Plugin contract: structurally compatible with
 ``jarvis.core.protocols.STTProvider`` WITHOUT importing ``jarvis.*`` at import
@@ -70,6 +77,27 @@ DEFAULT_MODEL = "whisper-1"
 # total silence — never worth saving a few extra words.
 _MAX_PROMPT_CHARS = 1024
 
+#: The per-call ``language`` value that REQUESTS detection instead of a pinned
+#: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the service detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English
+      (live bug 2026-07-28);
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
 
 @dataclass(frozen=True, slots=True)
 class Transcript:
@@ -85,6 +113,10 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: What the vendor returned BEFORE the cleanup filter ran. Read by the two
+    #: callers that must not get an edited string - the dictation lane (which
+    #: owns the user's filler switch) and wake verification.
+    raw_text: str = ""
 
 
 class OpenAIWhisperAPI:
@@ -120,6 +152,7 @@ class OpenAIWhisperAPI:
         self._api_key = api_key or None
         self._api_key_is_explicit = bool(api_key)
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
         self._base_url = base_url or None
         self._language = language if language and language != "auto" else None
         # Whisper ``prompt`` biases the token distribution toward the words in
@@ -140,6 +173,11 @@ class OpenAIWhisperAPI:
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
 
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
+
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
         pcm_pieces: list[bytes] = []
@@ -156,7 +194,7 @@ class OpenAIWhisperAPI:
         wav_bytes = _wrap_pcm_as_wav(
             b"".join(pcm_pieces), sample_rate=sample_rate, channels=channels
         )
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(wav_bytes, language=self._language)
 
     async def stream_transcribe(
         self, audio: AsyncIterator[Any]
@@ -176,19 +214,37 @@ class OpenAIWhisperAPI:
         The speech pipeline delivers a full VAD-segmented utterance as raw int16
         PCM (mono, 16 kHz by default). We wrap it in a WAV container and POST it
         as a single multipart request.
+
+        ``language="auto"`` forces per-utterance detection for THIS call even
+        when a language is configured — see :func:`_detect_or`.
         """
         if not pcm_bytes:
             return Transcript(text="", language="unknown", confidence=0.0)
         wav_bytes = _wrap_pcm_as_wav(pcm_bytes, sample_rate=sample_rate, channels=1)
-        # Optional per-call language override (restore afterwards).
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(wav_bytes)
-            finally:
-                self._language = previous
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(
+            wav_bytes, language=_detect_or(language, self._language)
+        )
+
+    async def transcribe_container(
+        self, data: bytes, *, filename: str = "recording", language: str | None = None
+    ) -> Transcript:
+        """Transcribe an ENCODED audio file (m4a, opus, mp3, mp4, wav, ...).
+
+        The optional capability the UltraWiki enrichment stage looks for. The
+        live microphone path delivers raw PCM, which is why everything else
+        here wraps PCM in a WAV container — but an imported voice note arrives
+        already encoded, and this endpoint accepts those formats directly.
+        Decoding them locally would mean shipping a media stack to every
+        install, including headless servers that have no other use for one.
+
+        The container is passed through untouched: the service identifies the
+        format itself, and re-wrapping it would be the one way to corrupt it.
+        """
+        if not data:
+            return Transcript(text="", language="unknown", confidence=0.0)
+        return await self._post_transcription(
+            data, filename=filename, language=_detect_or(language, self._language)
+        )
 
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
@@ -261,39 +317,116 @@ class OpenAIWhisperAPI:
         self._endpoint_url = base.rstrip("/") + "/audio/transcriptions"
         return self._endpoint_url
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
-        url = self._ensure_endpoint()
-        files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-        data: dict[str, str] = {
-            "model": self._model,
-            "response_format": "verbose_json",
-            "temperature": str(self._temperature),
-        }
-        if self._language:
-            data["language"] = self._language
-        if self._prompt:
-            data["prompt"] = self._prompt
+    async def _post_transcription(
+        self,
+        wav_bytes: bytes,
+        *,
+        filename: str = "audio.wav",
+        language: str | None = None,
+    ) -> Transcript:
+        """POST one upload, adapting the request to what the MODEL accepts.
 
+        ``whisper-1`` answers ``verbose_json``; ``gpt-4o-transcribe`` — the
+        newer multilingual model — rejects that value with HTTP 400 and
+        transcribes nothing. The request is therefore built from a per-model
+        capability shape, and a 400 that names an optional field narrows that
+        shape and retries instead of losing the utterance
+        (:mod:`jarvis.plugins.stt.capabilities`).
+        """
+        url = self._ensure_endpoint()
+        # The NAME is how the service identifies the container, so an imported
+        # `.opus` must not be announced as `audio.wav`. The content type stays
+        # generic: the extension is the signal these APIs actually read.
+        upload_name = _upload_name(filename)
+        mime = "audio/wav" if upload_name.endswith(".wav") else "application/octet-stream"
         headers = {"Authorization": f"Bearer {self._api_key}"}
         client = self._get_client()
-        try:
-            response = await client.post(
-                url, headers=headers, data=data, files=files
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"OpenAI STT request failed (network/unreachable): {exc}"
-            ) from exc
 
-        if response.status_code >= 400:
+        from jarvis.plugins.stt.capabilities import (
+            MAX_REQUEST_DOWNGRADES,
+            error_text,
+            is_model_rejection,
+            log_model_fallback,
+            remember_shape,
+            resolve_shape,
+            shape_after_rejection,
+        )
+
+        model = self._model
+        shape = resolve_shape(self.name, model)
+        # One attempt per optional field that could still be dropped, plus one
+        # for the model substitution below. Bounded so a service answering 400
+        # to everything ends in an honest error rather than a retry loop.
+        for _attempt in range(MAX_REQUEST_DOWNGRADES):
+            # A fresh file tuple per attempt: httpx consumes the buffer it is
+            # handed, so a retry with the same object uploads zero bytes.
+            files = {"file": (upload_name, wav_bytes, mime)}
+            data: dict[str, str] = {
+                "model": model,
+                "response_format": shape.response_format,
+            }
+            if shape.temperature:
+                data["temperature"] = str(self._temperature)
+            # Omitted entirely when None — that is what asks Whisper to detect
+            # the spoken language instead of decoding it as a pinned one.
+            if language and shape.language:
+                data["language"] = language
+            if self._prompt and shape.prompt:
+                data["prompt"] = self._prompt
+
+            try:
+                response = await client.post(
+                    url, headers=headers, data=data, files=files
+                )
+            except httpx.HTTPError as exc:
+                raise RuntimeError(
+                    f"OpenAI STT request failed (network/unreachable): {exc}"
+                ) from exc
+
+            if response.status_code < 400:
+                transcript = _payload_to_transcript(response.json())
+                self._last_used_model = model
+                return transcript
+            if response.status_code != 400:
+                raise _http_error_to_runtime(response)
+
+            detail = error_text(response)
+            narrowed = shape_after_rejection(shape, detail)
+            if narrowed is not None:
+                remember_shape(self.name, model, narrowed)
+                shape = narrowed
+                continue
+            if model != DEFAULT_MODEL and is_model_rejection(detail, model):
+                # The pinned model is not one this account can call. Falling
+                # back to the universally-available one keeps the user
+                # dictating; the warning is what tells them to fix the pin.
+                log_model_fallback("OpenAI", model, DEFAULT_MODEL, detail)
+                model = DEFAULT_MODEL
+                shape = resolve_shape(self.name, model)
+                continue
             raise _http_error_to_runtime(response)
-        payload = response.json()
-        return _payload_to_transcript(payload)
+
+        raise _http_error_to_runtime(response)
 
 
 # ----------------------------------------------------------------------
 # Helpers (module-private)
 # ----------------------------------------------------------------------
+
+#: Container extensions these transcription APIs accept. A name outside the
+#: list is uploaded as `.wav`, which is what the live path always sends.
+_ACCEPTED_UPLOAD_SUFFIXES: frozenset[str] = frozenset(
+    {".wav", ".mp3", ".mp4", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".webm", ".mpga", ".mpeg"}
+)
+
+
+def _upload_name(filename: str) -> str:
+    """A safe multipart filename that still carries the real extension."""
+    from pathlib import PurePosixPath  # noqa: PLC0415 — tiny, local
+
+    suffix = PurePosixPath(str(filename or "")).suffix.lower()
+    return f"audio{suffix}" if suffix in _ACCEPTED_UPLOAD_SUFFIXES else "audio.wav"
+
 
 def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
     """Wrap int16 little-endian PCM in a minimal WAV header (in memory)."""
@@ -307,34 +440,24 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
 
 
 def _http_error_to_runtime(response: httpx.Response) -> RuntimeError:
-    """Map an HTTP error status to a clear English RuntimeError.
+    """Map an HTTP error status to a clear English, CLASSIFIABLE error.
 
     401 (bad/dead key), 402 (out of credit), 429 (rate limited) and any other
-    4xx/5xx all become a RuntimeError so the caller degrades honestly to the
-    local floor rather than bricking the STT tier (AP-22).
+    4xx/5xx all become an ``STTHTTPError`` — still a ``RuntimeError``, so the
+    caller degrades honestly to the local floor exactly as before (AP-22), but
+    now carrying the ``status`` and the server's ``Retry-After``. Without those
+    the pipeline's transient-error retry ladder was dead code for this plugin
+    (it could only read a status off the one provider that raised an
+    ``httpx.HTTPStatusError``), so an OpenAI-key user lost the whole turn to the
+    first rate limit. The English wording is unchanged; only the type is.
     """
-    status = response.status_code
-    detail = ""
-    try:
-        payload = response.json()
-        if isinstance(payload, dict):
-            err = payload.get("error")
-            if isinstance(err, dict):
-                detail = str(err.get("message", "")).strip()
-            elif isinstance(err, str):
-                detail = err.strip()
-    except Exception:  # noqa: BLE001 — body may not be JSON
-        detail = (response.text or "").strip()[:200]
+    # Imported here, not at module top, to keep the plugin ``jarvis.*``-free at
+    # import time (the entry-point purity contract) — the same lazy seam the
+    # credential lookup uses. This runs only on an already-failed request, so
+    # the import costs nothing on the happy path.
+    from jarvis.plugins.stt.errors import http_error_from_response
 
-    reason = {
-        401: "invalid or missing OpenAI API key",
-        402: "OpenAI account out of credit",
-        429: "OpenAI rate limit / quota exceeded",
-    }.get(status, f"OpenAI STT HTTP {status}")
-    msg = f"OpenAI STT failed: {reason}"
-    if detail:
-        msg = f"{msg} ({detail})"
-    return RuntimeError(msg)
+    return http_error_from_response(response, vendor="OpenAI")
 
 
 def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
@@ -345,8 +468,13 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
     from the mean segment ``avg_logprob`` (``exp`` of the average); otherwise it
     is a plain presence signal (1.0 for non-empty text, else 0.0) — the same
     convention the Groq plugin uses.
+
+    The text is filtered on the way in (see
+    :func:`jarvis.plugins.stt.transcript_filter.clean_stt_text`) and the
+    untouched payload text stays on ``raw_text``. Per-segment texts are left as
+    delivered: they carry timings, and nothing reads them as prose.
     """
-    text = str(payload.get("text", "")).strip()
+    raw = str(payload.get("text", "")).strip()
     language = str(payload.get("language", "unknown")) or "unknown"
     segments_raw = payload.get("segments") or ()
 
@@ -367,14 +495,20 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
         except OverflowError:
             confidence = 0.0
     else:
-        confidence = 1.0 if text else 0.0
+        # Presence is judged on the RAW text: a cleanup that emptied the string
+        # is a filter defect, and reporting 0.0 would call it silence instead.
+        confidence = 1.0 if raw else 0.0
+
+    # Local import (entry-point purity), same seam as the error mapper.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
 
     return Transcript(
-        text=text,
+        text=clean_stt_text(raw, language=language),
         language=language,
         confidence=min(1.0, max(0.0, confidence)),
         is_partial=False,
         segments=seg_tuple,
+        raw_text=raw,
     )
 
 

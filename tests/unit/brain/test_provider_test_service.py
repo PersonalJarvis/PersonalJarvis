@@ -119,18 +119,30 @@ def test_brain_probe_bad_key_is_bad_key() -> None:
 
 
 def test_local_provider_none_auth_is_ok_without_network() -> None:
-    # A local STT provider with auth_mode "none" needs no credential and no
-    # network: a successful local build IS the "ok" signal. The former
-    # faster-whisper spec was removed in v1.0.1, so synthesize the spec shape
-    # here rather than resolve a live registry entry (which now returns None).
+    # A local STT provider needs no credential and no network — but "ok" is
+    # earned by RUNNING it, not by constructing it. This test asserted the
+    # opposite until 2026-07-29 ("a successful local build IS the ok signal"),
+    # and that is exactly how the Nemotron card came to report ready on a
+    # machine where nothing had been installed: an on-device provider loads its
+    # weights lazily, so construction succeeds everywhere and proves nothing.
+    ran: list[str] = []
+
+    class _LocalSTT:
+        name = "fw"
+
+        async def transcribe(self, _audio):
+            ran.append("decoded")
+            return SimpleNamespace(text="")
+
     spec = SimpleNamespace(id="local-stt", auth_mode="none", tier="stt")
     res = _run(
         run_provider_test(
             spec, _cfg(), present=True,
-            make_stt=lambda _cfg, _prov: SimpleNamespace(name="fw"),
+            make_stt=lambda _cfg, _prov: _LocalSTT(),
         )
     )
     assert res.status == "ok"
+    assert ran == ["decoded"], "the local test must actually run the recognizer"
 
 
 def test_codex_connected_is_ok() -> None:
@@ -270,3 +282,37 @@ def test_realtime_depleted_credits_are_an_account_error() -> None:
         )
     )
     assert res.status == "no_credits"
+
+
+# ----------------------------------------------------------------------
+# Dictation cards are refused here, not mis-probed
+# ----------------------------------------------------------------------
+
+
+def test_a_dictation_card_is_refused_instead_of_probed_as_a_recognizer() -> None:
+    """The tier had no branch and fell through to the STT probe below it, so
+    "Test" on a wording card built the user's RECOGNIZER and reported its
+    verdict under the card's name. The wording probe itself may not live in
+    this layer (AP-11), so the honest answer here is a refusal — never a
+    fall-through to a provider this card has nothing to do with."""
+    from jarvis.ui.web.provider_spec import dictation_spec_id
+
+    built = False
+
+    def make_stt(_cfg, _provider):  # pragma: no cover - must NOT run
+        nonlocal built
+        built = True
+        raise AssertionError("a wording card must not build an STT provider")
+
+    res = _run(
+        run_provider_test(
+            get_spec(dictation_spec_id("openai")),
+            _cfg(),
+            present=True,
+            make_stt=make_stt,
+        )
+    )
+
+    assert built is False
+    assert res.status == "error"
+    assert "dictation layer" in res.detail

@@ -52,10 +52,10 @@ const WakeDemo: React.FC = () => {
           textAlign: "center",
         }}
       >
-        I picked <span style={{ color: COLORS.primary, fontWeight: 800 }}>“Ruben”</span> — so I just
+        I picked <span style={{ color: COLORS.primary, fontWeight: 800 }}>“Nova”</span> — so I just
         say:
       </div>
-      <SpokenCommand text="Hey Ruben…" speaker="user" size={46} />
+      <SpokenCommand text="Hey Nova…" speaker="user" size={46} />
       <Sequence from={54} layout="none">
         <SpokenCommand text="Yes? I’m listening." speaker="jarvis" size={32} />
       </Sequence>

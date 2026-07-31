@@ -5076,6 +5076,11 @@ routinely slower; bound on resource cost, not on optimism.
 
 ## BUG-070: User probes the silent wait ("hello?") — the provider greets like a fresh conversation while the delegated answer is still being computed (HIGH, FIXED 2026-07-17)
 
+**Open follow-up — duplicate salutation.** A native provider opener and the
+delegated reply can each begin with a salutation. Deduplicate at the trusted
+reply boundary so one turn cannot address the user twice, without suppressing
+a legitimate salutation in a later turn.
+
 **Symptom (maintainer report + live session 2026-07-17 09:21, gemini-live).**
 Mid-conversation, the answer to a follow-up question starts and dies after
 two words; the user probes the silence with a bare greeting, and the
@@ -6523,6 +6528,12 @@ periodic ordering operation does not activate the helper application. Keep
 compositor workarounds behind a platform backend instead of changing a
 rendering path already proven on another OS.
 
+**Sequel on Windows (2026-07-28).** The same black rectangle was then reported
+on Windows, where the colour key measurably works. It has a different cause —
+Windows' ghost window over a stalled bar — and its own entry: BUG-118. Per-OS
+mechanics and the colour-of-the-box decision table:
+[`docs/overlay-transparency.md`](overlay-transparency.md).
+
 ---
 
 ## BUG-094: macOS Jarvis Bar cannot enter a hidden Dock strip and stays stranded when the Dock changes state (MEDIUM, FIXED 2026-07-19)
@@ -7484,7 +7495,655 @@ Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 (the answer itself also missed the Gulfstream G800, in service since
 2025 — fact-quality family, tracked there).
 
-## BUG-109: gemini-3.6-flash rejects the forced thinking_budget=0 with a parameterless 400 — every delegated realtime fallback turn bricked (HIGH, FIXED 2026-07-21)
+## BUG-109: every dictation app, text expander, and auto-type tool goes dead inside the Jarvis window — the desktop app was running elevated (HIGH, FIXED 2026-07-25)
+
+**Symptom (desktop field report).** Dictation software — one commercial
+dictation app in the report, but the class is open: the OS's own accessibility
+voice control, other voice-typing tools, text expanders, clipboard managers,
+password-manager auto-type — works everywhere on the machine except inside the
+Personal Jarvis desktop window.
+The user speaks, the dictation app records and reports success, and no text
+ever appears in the Jarvis chat box. Nothing logs an error on either side, so
+from the outside it reads as "Jarvis breaks my dictation app".
+
+**Root cause.** The desktop process was running **elevated** (HIGH integrity,
+`elevated=True`), while every ordinary user application including the dictation
+tool runs at MEDIUM integrity. Windows **UIPI** (User Interface Privilege
+Isolation) forbids a lower-integrity process from injecting synthetic input
+into, or reading the UI-Automation tree of, a higher-integrity window. Both
+mechanisms every tool in this category depends on are therefore cut:
+
+* **Field detection.** Measured against the live elevated window, a normal
+  automation client saw **1** element and **0** text fields; an ordinary
+  window in the same session yielded 418 elements / 80 fields.
+* **Text insertion.** Microsoft documents that `SendInput` blocked by UIPI
+  reports the failure through *neither* its return value *nor* `GetLastError`
+  — which is exactly why the dictation app believes it succeeded.
+
+The WebView engine was ruled out by control experiment: an identical
+pywebview/WebView2 window launched **unelevated** accepted both synthetic
+unicode typing and a Ctrl+V clipboard paste. Privilege level was the only
+differing variable.
+
+Two properties made this durable and invisible:
+
+1. **Elevation is sticky.** `POST /api/settings/restart-app` spawns the
+   relauncher as a child, so every in-app restart inherited the elevated
+   token. Once elevated, always elevated.
+2. **Nothing checked.** The app is *designed* to run unelevated — the
+   autostart scheduled task pins `RunLevel=Limited` (see
+   `jarvis/autostart/windows.py`) and privileged operations go through the
+   separate helper in `jarvis/admin/` — but no code verified the assumption,
+   so a single elevated manual start silently persisted across reboots.
+
+**Fix.**
+* `jarvis/platform/input_isolation.py` — cross-platform probe reporting
+  whether outside input software can reach our window (Windows: token
+  elevation; POSIX: euid 0). Fail-open: an unreadable privilege state reports
+  `unknown` and warns about nothing, so no user is nagged on a guess.
+* `jarvis/platform/deescalate.py` — relaunch through the elevated token's
+  filtered companion token (`TokenLinkedToken` → `DuplicateTokenEx` →
+  `CreateProcessWithTokenW`), landing the fresh window at ordinary integrity.
+  Refuses honestly where no companion token exists (UAC disabled, built-in
+  Administrator, SYSTEM) instead of quietly relaunching elevated again.
+* `DesktopApp._schedule_restart(drop_elevation=...)` +
+  `request_unelevated_restart()` — a failed de-escalation leaves the app UP
+  and returns the reason; a restart that never comes back is worse than the
+  defect.
+* `GET /api/settings/input-isolation` + `POST /api/settings/restart-unelevated`
+  (mission-guarded, `x-jarvis-dangerous`), hence CLI-reachable.
+* `InputIsolationBanner` — app-wide alert naming the affected software in
+  plain language with a one-click "restart without admin rights", localized in
+  de/en/es. Renders nothing when the window is reachable.
+* Boot-time warning from `_log_input_isolation()` on the background heavy-init
+  task (AP-26), so a support log shows the condition.
+
+**Regression guards.** `tests/unit/platform/test_input_isolation.py`,
+`tests/unit/platform/test_deescalate.py`,
+`tests/unit/ui/test_input_isolation_route.py`,
+`src/components/layout/InputIsolationBanner.test.tsx`. All inject the privilege
+verdict — none read the host's real state, so they hold on an elevated Windows
+box, in a Linux container, and on a Mac.
+
+**Class lesson.** "Works everywhere except in *this one app's window*" is the
+signature of a privilege boundary, not of the app's UI framework. Check the
+integrity levels of both processes *before* investigating the window toolkit —
+the measurement takes seconds and the toolkit hypothesis costs hours.
+
+**Three follow-ups the live check caught — none of which any unit test saw.**
+
+1. **The probe answered "unknown" on every Windows host.** Undeclared `ctypes`
+   prototypes default to a 32-bit int, truncating the 64-bit handle from
+   `GetCurrentProcess`; `OpenProcessToken` then failed and the probe returned
+   `None`. That is *indistinguishable from the deliberate fail-open*, so the
+   banner would simply never appear and the entire fix would sit inert. Fixed by
+   declaring `argtypes`/`restype` on every call, and guarded by a cross-check
+   against `shell32.IsUserAnAdmin()` — a disagreement (including `None` where it
+   says False) now fails the suite.
+2. **`TokenLinkedToken` is not a usable source** (`DuplicateTokenEx` → 1346,
+   `ERROR_BAD_IMPERSONATION_LEVEL`): without `SeTcbPrivilege` Windows hands the
+   companion token out at *identification* level, from which no primary token can
+   be duplicated. The desktop shell's token is now the primary source (Explorer
+   always runs as the plain interactive user, access flows downward, and it also
+   works with UAC disabled); the linked token stays as a fallback.
+3. **`CreateProcessWithTokenW` rejected the relauncher's flags**
+   (`ERROR_INVALID_PARAMETER`, 87): that API implies `CREATE_NEW_CONSOLE`, which
+   Windows forbids combining with the `DETACHED_PROCESS` the desktop relauncher
+   normally passes. `token_creationflags()` strips it and keeps
+   `CREATE_NO_WINDOW`.
+
+**Live verification (2026-07-25).** Boot log wrote `Input isolation ACTIVE
+(reason=elevated)`; the repair was refused honestly three times while the app
+stayed up (errors 1346 then 87); after the fixes the log wrote `relauncher
+spawned WITHOUT administrator rights`. The fresh process measures MEDIUM
+integrity, the endpoint reports `blocked: false`, and the automation elements a
+normal-privilege client can see in the Jarvis window went from **1 to 22**.
+
+**Meta-lesson.** A fail-open diagnostic can perfectly disguise its own breakage.
+Any probe whose "I don't know" path is silent needs a cross-check against an
+independent implementation, or it will report "nothing to see here" forever.
+
+## BUG-110: a terminal pane in the Agentic IDE offers "Drop to put it in front of Dana" to a user holding nothing (LOW, FIXED 2026-07-27)
+
+**Symptom (desktop field report, screenshot).** In the Agentic IDE, one pane
+suddenly dimmed behind a blurred overlay reading "Drop to put it in front of
+**Dana**" with a paperclip icon — while the user was dragging no file, and had
+no file anywhere in hand. The overlay cleared on its own moments later. Nothing
+was lost and no agent was disturbed; it read as the UI hallucinating a
+drag-and-drop that was not happening.
+
+**Root cause — two independent halves, both in the pane's drop arming**
+(`jarvis/ui/web/frontend/src/components/agentic/AgenticTerminal.tsx`):
+
+1. **The pane armed on ANY drag, never asking what it carried.** `onDragEnter`
+   set `dragging = true` unconditionally and `onDragOver` reported
+   `dropEffect = "copy"` to match. A browser fires `dragenter` for every drag
+   that crosses an element, and the cheapest way to start one by accident is a
+   TEXT selection: brush across terminal output or a header label with the
+   mouse held down and the browser lifts the selection into a native drag. An
+   internal Outputs mission card tossed across the grid did the same. Every one
+   of them lit the file overlay of whichever pane it flew over.
+2. **Disarming depended on a `dragleave` that is not owed.** The enter/leave
+   counter (`dragDepth`) is the correct answer to child-element flicker, but it
+   only balances when every enter gets its leave. A drag released over another
+   element, dropped outside the window, or cancelled with Escape sends this pane
+   nothing at all — the overlay then sits over a live agent until some later
+   drag happens to balance the count.
+
+Half 1 explains what the user saw; half 2 is the same defect's worse outcome —
+an overlay that never clears — and was fixed with it.
+
+**Fix.** The arming logic moved into
+`jarvis/ui/web/frontend/src/components/agentic/paneFileDrag.ts`:
+
+- `dragCarriesFiles()` (`paneDrop.ts`) gates the overlay on the drag's TYPES —
+  the only thing a browser exposes mid-flight, by design. `Files` (Explorer,
+  Finder) and `text/uri-list` (some Linux file managers) arm the pane;
+  `text/plain` alone does not, and neither does the internal mission MIME.
+- `dropEffect` follows the same gate, so the cursor stops promising a copy
+  where a drop would do nothing.
+- `dragenter`/`dragover` still call `preventDefault()` for payloads the pane
+  refuses — otherwise a dropped link would NAVIGATE the window and take every
+  agent in the grid with it.
+- A window-level backstop (`drop`, `dragend`, and a viewport-edge `dragleave`
+  with `relatedTarget === null`) disarms the pane whenever the drag ends
+  anywhere else — the same pattern `JarvisDock` already uses.
+
+**Guards.** `paneDrop.test.ts` (types gate: files vs. dragged text vs. mission
+card) and `paneFileDrag.test.ts` (arming, child-element flicker, copy-cursor
+honesty, and all three disarm paths).
+
+**Class rule.** A drop target may only announce itself for a payload it can
+actually accept, and must never rely on a matching `dragleave` to take that
+announcement down. `dragenter` is a "something is moving over you" signal, not
+a "the user is offering you a file" signal.
+
+## BUG-111: typing into an Agentic-IDE terminal lags 2-3 s and then arrives in a burst (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** Characters typed into a terminal pane took
+seconds to appear. Users concluded the keystrokes were lost, retyped them, and
+the backlog then flushed at once — running the command twice. It got worse the
+more panes a workspace held and the busier the agents in them were. Measured on
+the live machine at the time: **63 panes open in one workspace**, most of them
+idle, the backend burning two cores.
+
+**Root cause — an unbounded fan-in with no pacing, on both sides of the wire.**
+
+1. **Backend: one coroutine and one websocket frame per PTY read**
+   (`jarvis/terminal/pty_manager.py`). The reader thread scheduled
+   `on_output(...)` through `run_coroutine_threadsafe` for every single
+   `read()`, and each one queued behind the socket's send lock. The producer
+   runs at PTY speed and the consumer at browser speed, so with enough panes
+   the queue grew faster than it drained — and every new chunk, including the
+   echo of the key just pressed, joined the END of it. The delay was therefore
+   not constant but *compounding*, which is why it presents as "nothing, then
+   everything at once" rather than as a steady lag.
+2. **Frontend: every pane drew, whether or not anyone could see it**
+   (`.../components/agentic/AgenticTerminal.tsx`). A pane scrolled out of the
+   grid, or hidden with `display:none` behind a maximized sibling, still ran
+   `term.write` for every chunk — parsing the escape stream, updating a cell
+   grid, scheduling a repaint. All of it on the one browser main thread that
+   also has to notice a keypress, and all of it for pixels nobody could see.
+
+Both halves multiply with the pane count, which is why the feature was fine at
+two panes and unusable at sixty.
+
+**What it was NOT.** The PTY read path, the write path, and asyncio dispatch
+were all measured at well under a millisecond, and idle panes cost nothing. The
+screen emulator (`agentic_ide/screen.py`) runs at ~4 MB/s and was never the
+limit. Frame COUNT was the cost, not bytes.
+
+**Fix.**
+
+- `PtyManager` gained a per-session **output pump**: the reader thread appends
+  to a bounded buffer and wakes the pump, and the pump forwards everything that
+  accumulated while the previous send was in flight as ONE chunk. It is
+  self-clocking — an idle pane forwards its first chunk immediately, with no
+  timer and no added latency — so a slow viewer costs frame count, never queue
+  depth. Past `MAX_PENDING_CHARS` the OLDEST output is dropped, for the reason
+  the replay buffer drops it: a terminal UI repaints continuously, so the newest
+  bytes are the screen. `on_closed` now fires after the final flush, so a caller
+  can no longer be told the agent exited while its last words are still
+  buffered.
+- An empty non-EOF read now backs off instead of spinning, which the comment
+  above it had claimed since it was written.
+- The pane writes only when it is on screen (`offscreenBuffer.ts` +
+  an `IntersectionObserver` in `AgenticTerminal.tsx`); hidden output is parked
+  and replayed in a single `term.write` when the pane comes back. Bounded the
+  same way, and every pane write — output, exit banner, trouble notice — goes
+  through the same gate so ordering survives.
+
+**Measured, 45 concurrent panes redrawing a full-screen UI (backend):**
+
+| | before | after |
+|---|---|---|
+| event-loop lag, mean | 45-126 ms | -4.5 ms |
+| event-loop lag, p99 | 482-2227 ms | 16-17 ms |
+| event-loop lag, max | 496-3344 ms | 21-30 ms |
+| keystroke echo, mean | 3.4-3.9 s | 1.1 s |
+| keystroke echo, max | 6.0-8.0 s | 1.5-1.6 s |
+| output actually delivered | 0.46-0.72 MB/s | 4.1 MB/s |
+
+The last row is the tell: the old path was so far behind that it could not even
+carry what the agents produced, in MORE frames than the new one uses.
+
+**Measured, 63 panes in a real browser (frontend):** main-thread scheduling
+delay mean 52-60 ms -> 25-30 ms, p99 102-124 ms -> 79-81 ms — i.e. from above
+the 100 ms interactivity budget to below it.
+
+**Guards.** `tests/unit/terminal/test_pty_output_pump.py` (first chunk not
+delayed, backlog coalesced, oldest dropped under flood, exit after the final
+output, a broken viewer does not stop the PTY, an idle PTY does not spin);
+`offscreenBuffer.test.ts` and `AgenticTerminal.offscreen.test.tsx` (withhold,
+replay in one write, ordering, and no gating where `IntersectionObserver` is
+absent).
+
+**Class rule.** Whenever a thread produces into an event loop for a consumer
+that can be slower than the producer, forward the BACKLOG, not each item: one
+wake-up and one coalesced hand-off, bounded, dropping the stalest. Per-item
+scheduling turns a slow consumer into a compounding delay, and the first thing
+that delay eats is the user's own keystrokes. The same rule governs the far end
+— never render for a surface nobody is looking at, because that thread is
+usually the one holding the keyboard.
+
+## BUG-112: the subscription switcher names the wrong account — panes run on a plan the user never selected (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report, with screenshots).** In *Workspace settings →
+Your subscriptions*, two Claude rows showed the SAME email, and the row marked
+"in use" named a subscription the user was not actually on. The only visible
+evidence was arithmetic: the account named in the switcher had ~9 % of its
+weekly limit left, while the plan the terminals were really spending had ~1 %.
+Nothing in the UI was red — both rows were green, both said "Signed in via
+Claude Max", and the user could only tell something was wrong by comparing the
+usage page against what the switcher claimed.
+
+**Root cause A — a fixed preference over two identity files.** Claude Code can
+keep its signed-in identity in either `~/.claude.json` or
+`~/.claude/.claude.json`, depending on release. `claude_account_identity()`
+built a candidate list and returned the FIRST one that parsed:
+
+```python
+candidates = [config_dir / ".claude.json"]        # ← always won
+if config_dir == Path(os.path.expanduser("~/.claude")):
+    candidates.append(Path(os.path.expanduser("~/.claude.json")))
+for candidate in candidates:
+    ...
+    if email or name:
+        return email, name
+```
+
+On the reporting machine `~/.claude/.claude.json` was an abandoned copy from an
+earlier release, last written **ten days** before the report; the live
+`~/.claude.json` next to it was minutes old and named a different account. The
+list order alone decided, so the switcher confidently displayed the previous
+occupant of that directory and the default login appeared to be someone it had
+not been for a week and a half.
+
+The same ordering bug sat in `ClaudeAuthService._identity_path()`, which
+additionally fell back to `~/.claude.json` for a CUSTOM config dir — so an
+added account with no identity file of its own borrowed the DEFAULT login's
+email and displayed it as its own. That fallback existed to make sure the card
+"still shows an email"; showing the wrong one is worse than showing none.
+
+**Root cause B — a second sign-in silently reuses the first account.** The
+CLI's OAuth flow is a browser redirect. With a live claude.com session, the
+browser approves the new authorization against the account it is already signed
+in with, without an account chooser and without ever reaching the "paste this
+code" step — the sign-in terminal sits at `Paste code here if prompted >`
+while the browser page just says the user is signed in. The result is two
+registered accounts holding ONE subscription. Both rows go green, both name a
+valid plan, and the only symptom is one plan's usage draining twice as fast:
+precisely the feature's whole purpose, inverted, with no signal anywhere.
+
+**Fix.**
+- `jarvis/claude_auth.py` — `claude_account_identity()` now picks the
+  **freshest readable** candidate by mtime instead of the first in a list: the
+  file the installed CLI actually keeps current is the truth, the same
+  "most recently refreshed wins" rule `freshest_claude_oauth()` already applies
+  to credentials. `_identity_path()` follows the same rule, and a custom config
+  dir no longer falls back to the home identity — no email beats a wrong one.
+- `_is_default_config_dir()` builds the comparison from `Path.home()` and
+  compares through `os.path.normcase`, replacing a hand-written `"~/.claude"`
+  string, so the home-level candidate is considered on macOS and Linux too and
+  survives a differently-cased Windows path (CLAUDE.md §3).
+- `jarvis/agent_accounts.py` — `snapshots()` groups connected accounts by email
+  and flags every row after the first as a duplicate of the account it collides
+  with, naming it and saying how to avoid it (sign out at claude.com, or use a
+  private window). Accounts with no readable email are never grouped: "both
+  unknown" is absence of evidence, not evidence of sameness. New display-safe
+  `AccountSnapshot.warning`, carried through `to_dict()` and rendered by
+  `AgentAccountsPanel`.
+- `jarvis/ui/web/agent_accounts_routes.py` — the sign-in response now states
+  the browser-session trap up front, at the moment the user is about to hit it.
+
+**Deliberately NOT done.** An "identity older than its credentials is stale"
+guard reads like the obvious extra safeguard and is wrong: the CLI refreshes
+the bearer in place indefinitely while never rewriting the identity, so on any
+long-lived account the identity is legitimately the older file. That rule would
+blank the email on exactly the accounts that work. It is written into the
+docstring so it does not get "fixed" back in.
+
+**Regression guard.** `tests/unit/test_claude_auth.py` — freshest-wins in both
+directions, a custom dir never borrowing the default's email, a custom dir
+reporting its own, and `_is_default_config_dir` built without a hardcoded
+separator. `tests/unit/test_agent_accounts.py` — two accounts on one
+subscription flagged (naming the collision partner), two genuine subscriptions
+never flagged, no grouping without an email, and the warning surviving
+`to_dict()` while no token does.
+`AgentAccountsPanel.test.tsx` — the warning renders on the colliding row and
+not on the one it duplicates.
+
+**Class rule.** When two files on disk can answer the same question, never let
+declaration order decide — take the freshest, because which one an external
+tool keeps current is that tool's choice and changes between its releases. And
+an identity read for account A must never be satisfied from account B's file:
+a confident wrong name sends work to the wrong plan, where the only feedback is
+a number on a billing page nobody is watching.
+
+---
+
+## BUG-113: a workspace of Agentic-IDE terminals freezes on screen while every agent behind it keeps working (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "All the terminals you see here are frozen.
+You can't write in them any more — the only one you can still type into is one
+you spawn fresh." The panes drew a screen that never changed again; typing into
+them appeared to do nothing.
+
+**What was actually true at that moment.** Measured on the reporting machine
+while the panes were frozen:
+
+- `GET /api/agentic-ide/state` reported all 16 panes `live`, four of them with
+  `idle_seconds` of 0.0-0.2 — agents printing *right now*.
+- `netstat` showed 17 established connections to the backend port: the panes'
+  WebSockets were open, not dropped.
+
+So neither the agents nor the wire were broken. The keystrokes even arrived —
+input is written straight to the PTY and never touches the viewer — but with
+nothing coming back, a pane that echoes nothing is indistinguishable from a pane
+that ignores you.
+
+**Root cause A — a departing viewer released a slot it no longer owned.** A
+pane's output goes to ONE viewer slot (`Terminal.viewer_output`), and viewers
+overlap by design: reloading the page, restarting a pane or coming back to the
+section closes one socket and opens another for the same pane in the same
+breath, while the agent keeps running. `attach()` handed the slot to the new
+viewer; the old socket's teardown then ran
+
+```python
+finally:
+    registry.detach(term.key, pane_workspace)   # cleared the slot unconditionally
+```
+
+Whichever of the two the server finished first was a matter of milliseconds, and
+with a full grid reconnecting at once some panes always lost the race. The
+loser's screen was never fed again: socket open, agent alive, transcript
+filling, pane frozen for the rest of the session. Nothing recovered it, because
+nothing re-attached — the socket was still connected.
+
+**Root cause B — "not yet" was answered as "not here".** A pane that connects
+while the workspace is still being restored got `SessionError("No Agentic-IDE
+session is running.")`, which the socket closed with **4404**. The client reads
+4404 as "this terminal does not exist here" and stops for good — correctly, for
+what that code means. It is exactly the state every pane reconnects into after
+an app restart: the log shows eleven panes doing it within nine seconds of the
+10:00 boot, all of them permanently dead while their workspace came back twelve
+minutes later. On top of that, ANY pane that spent its eight attempts was dead
+for the session — a laptop waking up was enough.
+
+**Fix.**
+- `jarvis/agentic_ide/session.py` — `detach(key, workspace_id, viewer=...)`
+  releases the slot only if it still holds *that* viewer's callback (compared by
+  equality, since a bound method is a new object per attribute access). A caller
+  that means "nobody is watching this pane" — teardown, tests — passes nothing
+  and clears it outright. New `SessionNotReady(SessionError)` separates "the
+  workspace is not open yet" from "no such pane".
+- `jarvis/ui/web/agentic_ide_routes.py` — the PTY socket passes its own
+  `on_output` when detaching, and closes with **4503** on `SessionNotReady`
+  instead of 4404.
+- `paneSocket.ts` — 4503 is waited out on its own counter (fast while a restart
+  plays out, then every 30 s), and a spent attempt budget no longer ends the
+  pane: it reports itself unreachable and keeps knocking every 30 s, so a
+  backend that comes back finds its terminals waiting. Only 4404 is final.
+- `AgenticTerminal.tsx` — at most one line per KIND of trouble, so a pane that
+  knocks every half minute does not stamp a red line into the terminal forever.
+
+**Regression guard.** `tests/unit/agentic_ide/test_viewer_handover.py` — the
+reload race in the order that used to freeze the workspace, the ordinary release
+still working, an exit reaching the viewer that took over, and "not yet" vs.
+"not here". `paneSocket.test.ts` — 4503 waited out, and a pane that ran out of
+fast attempts still reconnecting half a minute later.
+
+**Class rule.** A shared slot may only be cleared by whoever still holds it —
+"I am leaving" is never the same statement as "nobody is here". And a client
+that gives up permanently needs a reason that is permanent: everything else is a
+delay, so the honest answer to it is a slower retry, not a dead pane in front of
+a live process.
+
+---
+
+## BUG-114: a pane on a second subscription runs a stripped version of the CLI — no skills, no plugins, no user instructions (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "The terminals in the Agentic IDE are not
+real Claude Code sessions." Opening the same folder in an ordinary terminal
+showed 93 user skills, thirteen installed plugins and the user's global
+instructions; a pane opened by Jarvis showed the CLI's built-in skills plus the
+project's own `.claude/` and nothing else. Same machine, same binary, same
+folder, no error anywhere — the pane simply knew less, and the only way to
+notice was to compare it against a terminal.
+
+**Root cause.** Multi-subscription switching (BUG-112's feature) points the
+CLI's own config-dir override — `CLAUDE_CONFIG_DIR` / `CODEX_HOME` — at a
+directory per account. That override does not move a credential: it moves the
+CLI's **entire user level**. `skills/`, `agents/`, `commands/`, `hooks/`,
+`output-styles/`, `plugins/` (marketplaces = the connectors), the user-level
+`CLAUDE.md` / `AGENTS.md`, `rules/`, and `settings.json` / `config.toml` all
+resolve from it. An account directory holds none of those, so every pane on an
+added subscription ran a quieter, emptier build of the CLI the user installed.
+
+`inherit_default_mode` had already patched the narrowest instance of this — a
+pane opened in the CLI's fallback operating mode — one setting at a time,
+without recognising that the missing setting was one symptom of a missing
+directory.
+
+The Agentic IDE is the ONLY spawn path that passes `env=` to the PTY manager,
+which is exactly why the same CLI behaved correctly in every other terminal
+Jarvis opens, and why the report read as "the IDE builds its own broken
+terminals".
+
+**Fix — `jarvis/agent_config_parity.py`.** Before every pane spawn, the user's
+own setup is shared into a redirected directory from an explicit allowlist:
+
+- **directories are linked** — symlink, Windows junction where symlink creation
+  needs a privilege the app does not have (`WinError 1314` on a normal
+  non-elevated install), copy where neither works;
+- **files are mirrored by digest, then merged** — a file the account has
+  written to itself is never overwritten; the keys it is MISSING are filled in
+  recursively. Without that last step the fix was HALF a fix: the plugin trees
+  arrived while `enabledPlugins` stayed absent, so nothing loaded;
+- **`plugins/` is shared whole or not at all** — which plugins are active lives
+  in state files beside the marketplaces they name;
+- **identity is out of reach by construction** — `.credentials.json`,
+  `auth.json`, `secrets/`, `.claude.json`, `projects/`, `sessions/` and
+  `history.jsonl` are not on the list, and Claude Code's user-scope MCP servers
+  are merged out of `.claude.json` one key at a time because that document
+  holds the login too;
+- **one re-entrant lock per account directory** — panes attach concurrently, and
+  the trust entry and the MCP merge are read-modify-write cycles on the same
+  file.
+
+Second defect found on the way: `jarvis/workspace/trust.py` seeded folder trust
+only into the machine's default config, so a pane on an added account met the
+"do you trust this directory?" dialog — which voice and the prompt bar cannot
+answer. `ensure_trusted` takes `config_dirs` now, and the registry pre-trusts
+the directory each pane actually runs from.
+
+**Regression guard.** `tests/unit/test_agent_config_parity.py` — the setup
+arrives and keeps arriving; identity is never shared; an account's own value
+survives while its missing keys are filled; symlink host, junction host,
+copy-only host and a host that can do none of it; eight threads doing what eight
+panes do; and a drift guard that fails when a CLI gains accounts without gaining
+an allowlist. `tests/unit/agentic_ide/test_account_spawn.py` — the spawn
+provisions and pre-trusts under the lock. `tests/unit/workspace/test_trust.py` —
+per-account trust, de-duplicated.
+
+**Class rule.** An environment variable that redirects a tool's "home" moves
+everything that lives there, not the one thing you were thinking about. Before
+redirecting one, enumerate what else resolves from that directory — and when the
+answer is "the user's whole setup", carry it across explicitly instead of
+discovering the loss one setting at a time.
+
+## BUG-115: Jarvis pauses for a fraction of a second mid-sentence, then speaks on (MEDIUM, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "When you talk to Jarvis there are
+sometimes pauses of 0.2 or 0.5 seconds in the middle of a sentence, then he
+carries on." Intermittent, never reproducible on demand, no error anywhere.
+
+**Root cause — one buffer, three different producers of a gap.** The realtime
+voice path fed a device stream opened with a 200 ms PortAudio buffer, and that
+buffer was the ONLY thing between a hiccup and silence. The app already
+attributed its own holes: `RealtimeSession._note_audio_flow` logs every
+mid-reply gap with a cause, and the 2026-07-26/27 logs name all three —
+
+- **this process stalled its own event loop** (5 events, 311-375 ms): "the
+  audio likely sat unread in the socket, not missing from the provider". A PTY
+  spawn storm from the Agentic IDE, synchronous CLI auth probes behind the
+  provider panels, embedding work. While the loop is stalled NOTHING can move
+  audio, so only what is already inside PortAudio keeps playing — 200 ms of it;
+- **the provider delivered no audio** (3 events, 405-686 ms): gemini-live
+  bursts and then goes quiet while it generates the next span. Nothing was
+  banked to bridge it, because the writer is throttled to one buffer ahead;
+- **the provider rendered its own pause as silent PCM** (many, 400-800 ms) —
+  a genuine generation pause inside the audio, not a hole in delivery, and the
+  one of the three that is the model speaking rather than Jarvis failing.
+
+Every one of the first two exceeded 200 ms, so every one of them was audible.
+The earlier de-click (2026-07-21) had smoothed the EDGES of these gaps without
+touching what produced them.
+
+**Fix — give the gap something to eat, at both levels.**
+
+- `jarvis/audio/player.py` — `DEFAULT_OUTPUT_BUFFER_S = 0.4`: the reserved
+  device buffer now outlasts the worst measured event-loop stall. This is the
+  only layer that helps there, because audio banked in an asyncio queue still
+  needs the stalled loop to reach the device. It costs nothing elsewhere:
+  barge-in's `Pa_AbortStream` discards the buffer, so a deeper one never speaks
+  past an interruption; the realtime echo guard already reads the stream's
+  REPORTED latency instead of assuming a value; and a deeper buffer bounds only
+  how far AHEAD the writer may run — it does not pre-fill, so the first word
+  still starts on the first write.
+- The feed-dry de-click window is derived from that buffer instead of being
+  fixed at 80 ms. Ramping the waveform down while the device still holds 400 ms
+  would carve a dip out of speech that was never going to break — with a deep
+  buffer, ordinary network jitter is exactly that case.
+- `jarvis/realtime/desktop.py` — a jitter buffer (`DEFAULT_PREBUFFER_MS = 180`)
+  banks the opening of each turn before playback starts, so a provider that
+  goes quiet mid-reply eats a reserve rather than the speaker. Bounded twice
+  over — by `prebuffer_timeout_ms` and by the end-of-turn sentinel — so a short
+  reply is never held back and the first word is delayed by at most the
+  timeout.
+- `jarvis/ui/web/{provider_routes,antigravity_routes,server}.py` — the Codex
+  and Google CLI auth probes now run in a worker thread. Each one SPAWNS the
+  CLI binary; on the event loop, one poll from an open provider panel was a
+  few hundred milliseconds of frozen process. `list_providers` and the Claude
+  probe had already been moved off the loop for the same reason; these were
+  the ones left behind.
+
+**Regression guard.** `tests/unit/audio/test_player_output_buffer.py` — the
+reserved buffer outlasts the measured stall, a requested depth is clamped to an
+audible range, the stall window scales with the buffer, a gap the buffer
+absorbs reaches the device byte-identical, and a gap past the window is still
+de-clicked. `tests/unit/realtime/test_desktop.py` — playback waits for the
+reserve, order and content survive it, a short reply is released by the
+sentinel, and the wait is bounded by its timeout.
+`tests/unit/web/test_cli_auth_probes_off_the_event_loop.py` — a structural walk
+of the route modules that fails on any `async def` reaching a blocking CLI probe
+inline, which is what regresses the next time a provider CLI is added.
+
+**Class rule.** While audio is streaming, the event loop is a real-time
+deadline: anything blocking on it is heard. A buffer sized for a device's own
+jitter is not sized for the process that feeds it — pick the depth from the
+worst stall the process actually produces, and measure that instead of assuming
+the remote end is at fault. What the third cause shows is the other half of the
+rule: log an attributable cause at the boundary, or an intermittent gap stays
+unfalsifiable forever.
+
+## BUG-116: the Transcription view drops whole utterances and hides entire conversations (HIGH, FIXED 2026-07-27)
+
+**Symptom (desktop field report).** "I don't think my last transcription is
+11 minutes old, and I'm fairly sure I had more than just two turns."  <!-- i18n-allow: quoted maintainer report, translated -->
+The list looked stale and sessions read short.
+
+**What the recording actually lost.** An audit of the live store (842 sessions,
+32 079 events) found three separate holes, all silent:
+
+- **18 turns swallowed a user utterance.** A turn received two DIFFERENT final
+  transcripts and only one survived. 07-17 19:21:03 "Wie viel Kilometer sind es  <!-- i18n-allow: quoted user utterance from the forensic session -->
+  im Schnitt?" and 07-15 19:56:11 "Ich möchte Business Class fliegen." appear  <!-- i18n-allow: quoted user utterance from the forensic session -->
+  nowhere in their transcripts.
+- **18 sessions carried duplicate turn indices**, so `get_turns` (ORDER BY idx)
+  returned them in arbitrary order and the view numbered the same turn twice.
+- **12 finished sessions were invisible in the list** although speech was
+  recorded in them — including four whose user utterance had been swallowed by
+  the first defect, and eight whose only content was a voiced mission readback
+  ("Done. The file is in your Outputs folder.").
+
+**Root cause — a final transcript was bound to `VoiceTurnStarted`.**
+`SessionRecorder._on_transcription_update` returned unless an OPEN turn with an
+explicit lifecycle existed. Realtime does not always announce its turns: the
+layer opens one silently while an out-of-band readback is speaking and
+withholds `VoiceTurnStarted` (`_ensure_turn_started` publishes only when
+`_external_update is None`), and the BUG-103 recovery only re-announces it
+while the readback is still silent. Once the readback had audio out, the user's
+next utterance arrived at a recorder whose current turn was already finalized —
+and was dropped on the floor, taking the turn count with it. The bus can
+produce the same gap on its own: the recorder is a wildcard subscriber, so a
+dispatch past `_WILDCARD_HANDLER_TIMEOUT_S` is abandoned (seen once on
+2026-07-27 15:21:32). The classic path had solved this long ago —
+`_on_transcript_final` invents a turn via `_ensure_turn_open` — realtime simply
+never got the same treatment. The duplicate indices were the second half of the
+same split: explicit turns numbered from `event.turn_index`, invented ones from
+`turn_count`, two counters that collide as soon as both kinds occur in one
+session.
+
+**Fix.**
+
+- `jarvis/sessions/recorder.py` — a final transcript arriving with no open turn
+  now opens one instead of returning (logged as a recovered turn). An open
+  explicit turn still takes the whole-utterance snapshot, and the classic
+  pipeline still lets `TranscriptFinal` own `user_text`, gated on a new
+  `explicit_turn_lifecycle` flag so a stray STT partial can never invent a turn.
+- One monotonic index allocator (`_allocate_idx`) serves both turn kinds:
+  provider numbering is honoured while it leads, anything at or behind the
+  high-water mark is bumped past it. A turn announced twice keeps its row.
+- `jarvis/sessions/store.py` — "has content" now includes the SPOKEN track, and
+  a session with no user text previews its first voiced phrase. JSON1 is probed
+  once at `open()` (optional before SQLite 3.38) and the lookup degrades to
+  turn text where it is missing. `schema.sql` gains
+  `idx_events_session_kind`; the list query measures 1-5 ms on the real store.
+
+**Verified on production data.** The recorded events of four real sessions were
+replayed through the fixed recorder: 07-17 19:17 went from 13 turn rows (two
+blank, two duplicate indices, two utterances missing) to 14 correct ones,
+07-15 19:54 regained "Ich möchte Business Class fliegen.", 07-20 08:21 filled  <!-- i18n-allow: quoted user utterance from the forensic session -->
+its blank last turn, and the unaffected 07-27 19:08 session came out
+byte-identical.
+
+**Regression guard.** `tests/unit/sessions/test_recorder_realtime.py` — an
+unannounced final becomes its own turn with its own reply, recovered and
+announced turns never share an index, and a classic-pipeline partial still
+invents nothing. `tests/unit/sessions/test_empty_session_visibility.py` — a
+spoken-only session stays listed and previews its phrase, while a blank spoken
+event does not resurrect an empty attempt.
+
+**Class rule.** A recorder must never make the RECORD conditional on a
+lifecycle event it does not control. Every producer of turn boundaries
+eventually skips one — deliberately (a silent readback turn), or because the
+bus abandoned the subscriber — and the honest fallback is to open a turn from
+the evidence in hand, not to discard the evidence. The corollary bit the list
+query too: "did anything happen here?" must be asked of every track the detail
+view renders, or a conversation the user definitely heard becomes unreachable.
+
+## BUG-117: gemini-3.6-flash rejects the forced thinking_budget=0 with a parameterless 400 — every delegated realtime fallback turn bricked (HIGH, FIXED 2026-07-21)
 
 **Symptom (live 2026-07-21 18:27–18:33, sessions `62965e5d`, `dcd9d16a`,
 `43ca9ad6`).** In a realtime call, whenever the provider (Gemini Live) went
@@ -7528,3 +8187,242 @@ with two variables changed the accepted retry proves nothing.
 Related: BUG-019 (stale-cache recovery in the same except block), AP-21
 (capability probes), AP-22 (the single-provider brick this produced live:
 gemini 400 + openai 429 left zero reachable tool-tier families).
+
+---
+
+## BUG-118: black rectangle around the JarvisBar on Windows — a stalled paint loop gets an unlayered ghost window (MEDIUM, FIXED 2026-07-28)
+
+**Symptom (maintainer field report).** An opaque black box around the bar's
+pill, surviving a restart. Read as a rendering regression of the macOS defect
+BUG-093, but on Windows, where the colour-key path was believed proven.
+
+**Root cause.** The bar's magenta colour key is a property of the WINDOW, not
+of the pixels: `-transparentcolor` sets `LWA_COLORKEY` on the layered window
+Jarvis owns. When a top-level window stops pumping messages for ~5 s, Windows
+hides it and substitutes a stand-in window of class `Ghost`, painted by the DWM
+at the identical rectangle. That stand-in carries **no `WS_EX_LAYERED`**, so
+the key is never applied to it and the whole window rect lands on screen as
+opaque black. Measured with both windows alive at once: `TkTopLevel` (app pid,
+`LAYERED=True`, `key=0x00ff00ff`) and `Ghost` (dwm pid, `LAYERED=False`),
+`IsHungAppWindow=True` on both, `black=3141` on screen over the rect.
+
+Reaching this needs no crash. The bar paints from an in-process Tk loop, so it
+stops pumping whenever ANOTHER thread holds the GIL through a long CPU-bound
+stretch. The live trigger was the backend thread sitting `active+gil` in
+`load_config()` → `JarvisConfig(**data)`, reached from
+`resolve_provider_endpoint()` in `claude_api._ensure_client` on every brain
+call — the pydantic half of the freeze whose TOML half `325af16d` cached. So a
+STALL presented itself as a RENDERING defect, which is why it was first
+mis-triaged (as a screen-capture artifact, on the strength of an isolated probe
+whose window was never stalled).
+
+**Fix.** `disable_windows_app_ghosting()` in `jarvis/core/process_utils.py`,
+called from both colour-key surfaces: the bar (`jarvis/ui/jarvisbar/overlay.py`)
+and the mascot (`ui/orb/overlay.py`). `DisableProcessWindowsGhosting` is
+process-wide and irreversible, which is the right trade — a frameless
+click-through overlay gains nothing from a ghost (no title bar to grey out, no
+close button to offer), while the app keeps its own Restart control, the tray
+icon, and Task Manager as ways out of a hang. Windows-only; a no-op returning
+False on macOS/Linux, which substitute nothing.
+
+**Proof.** A color-keyed frameless Tk window showing a real renderer frame,
+with its UI thread deliberately blocked past the threshold, measured from a
+second thread: control `before black=0 / during black=1982` of 2870; with the
+fix `before black=0 / during black=0`.
+
+**Guards.** `tests/unit/core/test_process_utils_ghosting.py` — no-op off
+Windows without touching ctypes, disables on Windows, idempotent second call
+never re-enters user32, a failing API degrades to False instead of taking the
+overlay boot down, and the helper stays exported.
+
+**Still open (separate defect).** The stall itself. Ghosting-off stops it
+LOOKING like a rendering bug; the bar still freezes while the GIL is held. The
+in-process bar is Windows/Linux-only coupling — macOS already runs it in a
+companion process (BUG-093), which is immune by construction.
+
+**Class rule.** A compositor-level transparency trick protects only the window
+you own, and only while that window is the one on screen. Before concluding
+that a transparency path works, check it in the state the report describes —
+an unstalled probe cannot falsify a stall-triggered defect. When a UI defect's
+rectangle matches a window exactly and its colour is one the renderer never
+emits, suspect a substituted window before suspecting the renderer.
+
+---
+
+## BUG-119: a unit run leaves a SECOND, permanently visible JarvisBar on the developer's desktop (MEDIUM, FIXED 2026-07-28)
+
+**Symptom (maintainer field report).** Two bars on screen at once, slightly
+offset and of different sizes. The second one belonged to no Jarvis instance:
+`python -m jarvis.ui.jarvisbar.host`, parented to
+`pytest tests/unit -q --timeout=180`, still visible long after that test had
+moved on. Different geometry from the app's own bar (72x30 vs 93x39) because it
+booted from a different scale — the tell that it was a foreign process, not a
+duplicated window.
+
+**Root cause.** `SubprocessBarOverlay` schedules its bounded auto-respawn as
+`threading.Thread(target=self._respawn_after_backoff, ...)`. A **bound method
+keeps the surface alive**, so the thread holds the whole overlay across its
+5 s backoff. In a test the fake host's scripted stdout EOFs immediately, the
+pump reads "host is gone", and a respawn is scheduled — but by the time the
+sleep ends, `monkeypatch` has reverted and `subprocess.Popen` is REAL again.
+The respawn then starts a genuine host process, which on Windows builds a real
+Tk bar (`QT_QPA_PLATFORM=offscreen` binds Qt only, and the Qt host test is
+Darwin-gated anyway) and shows it on the developer's desktop, where nothing
+ever reaps it.
+
+`test_subprocess_overlay.py` already carried an autouse fixture marking every
+live proxy `_stopping` for exactly this reason — but it is per-file, so any
+other module that constructs one is unprotected, and it only papers over a
+lifetime bug in the production path.
+
+**Fix.** The backoff is served by a module-level
+`_respawn_after_backoff_weakly(weakref.ref(surface), attempt, backoff)`, which
+sleeps holding only a **weak** reference and abandons the attempt when the
+overlay has been released. "Nobody holds this overlay" now means "there is no
+bar to restore, so do not spawn a host". The live path is unchanged: the
+desktop app holds its surface, so real respawns still fire.
+
+**Guards.** `tests/unit/ui/jarvisbar/test_subprocess_overlay.py` — a released
+surface abandons its pending respawn, a live one still respawns, and (the real
+regression) a proxy with a respawn pending is still garbage-collectable once
+dropped. Verified sharp: with the previous bound-method target that last
+assertion fails.
+
+**Class rule.** A thread that sleeps on behalf of an object must not own it.
+Any delayed retry/backoff/watchdog that targets a bound method silently extends
+its subject's lifetime past the point where anything wants it — and when the
+retry's side effect is spawning a process or a window, the leak becomes
+user-visible on a machine nobody is testing on. Hold the subject weakly and
+treat collection as cancellation.
+
+## BUG-120: a spoken order to brief two coding agents changes a SETTING instead — no prompt, no thought, and a confident report that both are working (HIGH, FIXED 2026-07-29)
+
+**Symptom (maintainer field report, voice session 2026-07-28 20:34).** Coding
+mode on, six panes open. The user asked, in one long dictated paragraph, for
+two named panes to be given split work. Jarvis answered "Alles klar, ich hab <!-- i18n-allow: verbatim quote of the runtime output under investigation -->
+T1 und T5 die Aufgaben gegeben …" ("sure, I gave T1 and T5 their tasks") and <!-- i18n-allow: verbatim quote of the runtime output under investigation -->
+named what each would do. Nothing had been written to either pane. No agent was briefed, and — the part that made
+this feel different from a delivery failure — nothing had even tried: no
+composer call, no fan-out, no brain turn.
+
+**Root cause (measured from the flight recorder, not inferred).** The turn was
+routed correctly (`path=orchestrator`, `reasons=…,workspace`) and the
+addressed-terminal detector was innocent: replayed against the verbatim
+transcript, `agentic_ide.intent.detect_all` returns T1 **and** T5,
+`kind='prompt'`. What killed it sits earlier. `BrainManager.generate` runs the
+deterministic self-configuration gates BEFORE the Agentic-IDE delivery path,
+and `voice_command_gate._match_language_switch` searched the WHOLE utterance
+for each ingredient of a language command *independently, with no proximity
+requirement*:
+
+| ingredient | matched | offset | what the user actually meant |
+|---|---|---|---|
+| language alias | the word for "automatically" | 458 | describing a bug — text is NOT inserted automatically |
+| `_LANG_OUTPUT_VERB` | the verb in "ask questions" | 866 | the panes should ASK if unsure |
+| `_LANG_PREP` | "in" | 398 | "in the text field" |
+
+Three unrelated clauses, up to 468 characters apart, assembled into "switch the
+reply language to auto". The gate applied it, persisted it to `jarvis.toml` and
+returned — 283 lines above `_run_agentic_ide_fast_path`. Timing confirms it end
+to end: `realtime_delegate_completed … success=True` after **519 ms**, where a
+real delivery needs 10-21 s for the prompt composer alone. A turn reported as
+successful that had done nothing but change a setting nobody asked about.
+
+The spoken confirmation was then handed to the live model, which re-renders
+injected text in its own words — so instead of "language set to automatic" the
+user heard a detailed account of a fleet briefing that never happened.
+
+**Fix (two layers, because either alone leaves the class open).**
+
+1. `_match_language_switch` binds its ingredients to a **window** around the
+   language word (`_command_window`: 60 characters, and never across a sentence
+   boundary). Scattered co-occurrence can no longer form a command. The
+   earliest QUALIFYING language still wins, so the 2026-06-27 first-language
+   rule is untouched; a language word with no command around it is skipped
+   instead of deciding the turn. `_language_words` also switched to `finditer`,
+   so a language named twice is judged at each place it appears.
+2. A turn that NAMES A RUNNING PANE outranks the self-configuration gates
+   altogether (`ide_owns_turn` in `generate`), the same precedence the desktop
+   gate already honours further down. Briefing an agent and changing a setting
+   are not things a user can mean at the same time. Deliberately NOT applied to
+   the cancel intercept: stopping work is a safety control and must keep
+   working under every phrasing.
+
+**Guards.** `tests/unit/brain/test_config_gate_vs_agentic_ide_routing.py` — the
+trimmed live transcript no longer reads as a language switch, both addressed
+panes are briefed end to end through `generate`, and a plain "switch to
+English" still works with six panes open. The precedence is proven
+independently of fix 1 by FORCING the detector to claim a language switch and
+asserting it is still overruled. `tests/unit/brain/test_voice_command_gate.py`
+adds the clause-proximity case. Verified sharp both ways: the trimmed
+transcript resolves to `auto` under the pre-fix matcher, and the forced-match
+test fails with the precedence removed.
+
+**Class rule.** A deterministic gate that assembles an intent from ingredients
+found ANYWHERE in the utterance will eventually assemble one out of a long
+dictated paragraph — the longer users talk, the likelier it is, so this gets
+worse exactly as voice input gets more natural. Bind every ingredient to a
+window around the anchor word. And when two deterministic gates can both claim
+a turn, the one holding the MORE SPECIFIC evidence must win: a named running
+agent beats a keyword match, however plausible the keyword looked.
+
+---
+
+## BUG-121: only Claude Code panes come back with their conversation — every other coding CLI resumes empty (HIGH, FIXED 2026-07-29)
+
+**Symptom (maintainer field report).** Resuming a workspace restores the Claude
+Code panes with their history intact, while the Codex, OpenCode and Kimi Code
+panes come back as fresh agents that know nothing. The panes themselves are
+there — right call-sign, right grid position — so the loss is invisible until
+somebody asks the agent a follow-up question and gets a blank stare. Nothing in
+the log said a word about it.
+
+**Root cause — the handle was never captured, not lost.** A pane resumes through
+a *resume handle*, and the two ways of getting one are not equally reliable:
+
+* Claude Code is TOLD its id at launch (`--session-id <uuid>`), so the handle
+  exists before the CLI has done anything at all.
+* Codex, OpenCode and Kimi Code choose their own, so the id can only be
+  DISCOVERED from what they write to disk — and they write nothing until the
+  conversation has its first message.
+
+`Registry._schedule_lookup` searched 4 s and 16 s after the pane's process
+started, was called from exactly one place (the spawn branch of
+`_attach_locked`), and gave up permanently after the second attempt. A pane
+opened and prompted a minute later — the normal way a grid is used — therefore
+missed both attempts and kept `resume = None` for the rest of its life.
+`Terminal.to_snapshot` then stored a pane with no conversation, and on restore
+`resume_argv` returned `None`, which is the same code path as "this pane never
+had a conversation": a silent fresh start.
+
+**Evidence.** A Codex pane launched 15:17:44 and briefed 15:19:32 wrote its
+rollout file at 15:19:32 — 106 s after launch, 90 s after the last lookup — while
+both the filename and the record inside it carry the SESSION START time
+(15:17:46), which is why the file looks like it was there in time. Across 338
+real Codex TUI sessions on the maintainer's machine, 40 % of the files appeared
+after the 16 s window (p90: 402 s); `codex exec` runs, which carry their prompt
+at launch, landed inside it 98 % of the time. The stored snapshot showed it
+plainly: one Codex pane with `prompts_sent: 1` and `resume: null` beside nine
+Claude panes that all had handles, including ones never prompted.
+
+**Fix.** The search is now triggered by the event that MAKES a session findable
+rather than by the pane's age: `Registry._lookup_after_conversation` runs a
+short second schedule (`CONVERSATION_DELAYS_S`) when a prompt is delivered
+(`send_prompt`) and when the user submits a line in the pane themselves
+(`write`) — so a pane driven only by hand is covered too. `started_at` stays the
+pane's LAUNCH time, because a session's recorded timestamp is when it opened.
+One round per pane at a time plus a cooldown (`LOOKUP_COOLDOWN_S`) keeps a
+leaning-on-Enter user from re-crawling the CLI's history. A restored pane that
+was worked in and still has no id now says so in the log instead of starting
+over in silence.
+
+**Guards.** `tests/unit/agentic_ide/test_resume_session.py` — a CLI that files
+its session only once the conversation has a message is still captured after a
+prompt and after a hand-typed submit; the cooldown holds back repeated Enters;
+a pane that already has a handle never looks again.
+
+**Class rule.** When a capability depends on an external tool writing something,
+time the wait from the EVENT that makes the tool write, never from the moment we
+happened to start it — and never let the last attempt be silent. Two of the four
+CLIs here were pinned by tests that pre-created the session file and set the
+delay to zero, which proved the mechanism and hid the timing entirely.

@@ -4,7 +4,7 @@ import { Pill, ShotZoom } from "../Shot";
 import { line, TimelineScene } from "../timeline";
 
 // shot-wiki-map.png is 6824×3928 (captured at 4× device scale so a zoom stays
-// crisp). Focal point ≈ the central "Ruben" hub.
+// crisp). Focal point ≈ the central "Nova" hub.
 const SRC_W = 6824;
 const SRC_H = 3928;
 const DW = 928;

@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from jarvis.marketplace import refresh_scheduler
 from jarvis.marketplace.refresh_scheduler import (
     FAILED,
     REFRESHED,
@@ -683,23 +684,38 @@ async def test_on_refreshed_exception_does_not_break_the_loop(caplog) -> None:  
 class _SaveFailsForPlugin:
     """Wraps a real TokenStore; ``save`` raises for one chosen plugin id --
     used to prove a store failure for one plugin stays isolated from the
-    rest of the cycle."""
+    rest of the cycle. ``fail_times`` limits how many saves fail."""
 
-    def __init__(self, inner: TokenStore, fail_for: str) -> None:
+    def __init__(
+        self, inner: TokenStore, fail_for: str, fail_times: int | None = None
+    ) -> None:
         self._inner = inner
         self._fail_for = fail_for
+        self._fail_times = fail_times
+        self.failures = 0
 
     def load(self, plugin_id: str):
         return self._inner.load(plugin_id)
 
     def save(self, plugin_id: str, tokens: Tokens) -> None:
-        if plugin_id == self._fail_for:
+        if plugin_id == self._fail_for and (
+            self._fail_times is None or self.failures < self._fail_times
+        ):
+            self.failures += 1
             raise RuntimeError("simulated store.save failure")
         self._inner.save(plugin_id, tokens)
 
 
+@pytest.fixture()
+def _no_save_backoff(monkeypatch):
+    """Keep the rotated-save retry backoff out of the test wall-clock."""
+    monkeypatch.setattr(refresh_scheduler, "_ROTATED_SAVE_BACKOFF_SECONDS", 0)
+
+
 @pytest.mark.asyncio
-async def test_one_plugins_save_failure_does_not_block_the_next() -> None:
+async def test_one_plugins_save_failure_does_not_block_the_next(
+    _no_save_backoff,
+) -> None:
     inner = _store()
     inner.save("gmail", _tokens(60))
     inner.save("notion", _tokens(60))
@@ -711,8 +727,97 @@ async def test_one_plugins_save_failure_does_not_block_the_next() -> None:
 
     outcomes = await refresh_due_tokens(["gmail", "notion"], store, lambda pid: handlers[pid])
 
-    assert outcomes == {"gmail": FAILED, "notion": REFRESHED}
+    # gmail's provider ROTATED its refresh token and the store would not take
+    # it, so the stored token is now the retired one — see the rotation tests
+    # below for why that is flagged rather than retried.
+    assert outcomes == {"gmail": REVOKED, "notion": REFRESHED}
     assert inner.load("notion").access == "a2"
+
+
+# ---------------------------------------------------------------------------
+# The rotation trap
+#
+# Several providers (Todoist documents it explicitly) treat a replay of an
+# already-rotated refresh token as theft and revoke EVERY token for that
+# account. So the single path that is meant to keep a connection alive forever
+# is also the one that can kill it permanently: if the provider rotates and we
+# then fail to store the new token, "retry later" replays the retired one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_transient_store_failure_never_loses_a_rotated_token(
+    _no_save_backoff,
+) -> None:
+    """A rotated token is unique — one flaky keyring write must not lose it."""
+    inner = _store()
+    inner.save("todoist", _tokens(60))
+    store = _SaveFailsForPlugin(inner, fail_for="todoist", fail_times=1)
+    handler = _FakeHandler("todoist", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    attempt = await refresh_plugin_token("todoist", store, lambda pid: handler)
+
+    assert attempt.outcome == REFRESHED
+    assert store.failures == 1, "the first write really did fail"
+    assert inner.load("todoist").refresh == "r1", "the NEW token is what persisted"
+
+
+@pytest.mark.asyncio
+async def test_a_lost_rotation_is_flagged_instead_of_replayed(
+    _no_save_backoff,
+) -> None:
+    """When the new token cannot be stored at all, the connection is flagged
+    for reconnect. One manual sign-in costs far less than the provider
+    revoking every token for the account."""
+    inner = _store()
+    inner.save("todoist", _tokens(60))
+    # Only the token write fails; the needs_reauth mark is allowed through so
+    # the flag itself is observable.
+    store = _SaveFailsForPlugin(inner, fail_for="todoist", fail_times=4)
+    handler = _FakeHandler("todoist", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    attempt = await refresh_plugin_token("todoist", store, lambda pid: handler)
+
+    assert attempt.outcome == REVOKED
+    assert inner.load("todoist").needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_the_retired_token_is_never_presented_to_the_provider_again(
+    _no_save_backoff,
+) -> None:
+    """The scheduler skips a needs_reauth entry, so the retired refresh token
+    is never sent a second time — which is exactly the replay that triggers a
+    provider-side mass revocation."""
+    inner = _store()
+    inner.save("todoist", _tokens(60))
+    store = _SaveFailsForPlugin(inner, fail_for="todoist", fail_times=4)
+    handler = _FakeHandler("todoist", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    await refresh_plugin_token("todoist", store, lambda pid: handler)
+    calls_after_loss = handler.calls
+    # A later cycle must not go near the provider again.
+    await refresh_plugin_token("todoist", store, lambda pid: handler)
+
+    assert handler.calls == calls_after_loss
+
+
+@pytest.mark.asyncio
+async def test_a_non_rotating_provider_still_just_retries(_no_save_backoff) -> None:
+    """Without rotation the stored refresh token is still the live one, so a
+    failed write costs only a short-lived access token — no need to make the
+    user reconnect."""
+    inner = _store()
+    inner.save("slack", _tokens(60, refresh="r0"))
+    store = _SaveFailsForPlugin(inner, fail_for="slack")
+    # Same refresh token back: no rotation.
+    handler = _FakeHandler("slack", new_tokens=Tokens(access="a1", refresh="r0"))
+
+    attempt = await refresh_plugin_token("slack", store, lambda pid: handler)
+
+    assert attempt.outcome == FAILED
+    assert inner.load("slack").needs_reauth is False
+    assert store.failures == 1, "no point retrying a write that costs nothing"
 
 
 @pytest.mark.asyncio

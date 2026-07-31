@@ -85,13 +85,13 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "harald", kind: "entity", title: "Harald" },
-              { id: "ruben", kind: "entity", title: "Ruben" },
+              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "alex", kind: "entity", title: "Alex" },
               { id: "pixel-art-editor", kind: "project", title: "Pixel Art Editor" },
             ],
             edges: [
-              { source: "ruben", target: "harald", context: "Father" },
-              { source: "ruben", target: "pixel-art-editor", context: "Working on" },
+              { source: "alex", target: "morgan", context: "Mentor" },
+              { source: "alex", target: "pixel-art-editor", context: "Working on" },
             ],
             broken: [],
           }),
@@ -111,12 +111,12 @@ describe("WikiGraph", () => {
     const ids = screen
       .getAllByTestId("wiki-graph-node")
       .map((el) => el.getAttribute("data-node-id"));
-    expect(ids).toEqual(["harald", "ruben", "pixel-art-editor"]);
+    expect(ids).toEqual(["morgan", "alex", "pixel-art-editor"]);
     const edges = screen.getAllByTestId("wiki-graph-edge");
     expect(edges).toHaveLength(2);
-    expect(edges[0].textContent).toContain("Ruben → Harald · Father");
+    expect(edges[0].textContent).toContain("Alex → Morgan · Mentor");
     expect(edges[1].textContent).toContain(
-      "Ruben → Pixel Art Editor · Working on",
+      "Alex → Pixel Art Editor · Working on",
     );
   });
 
@@ -128,14 +128,14 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "harald", kind: "entity", title: "Harald" },
-              { id: "ruben", kind: "entity", title: "Ruben" },
+              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "alex", kind: "entity", title: "Alex" },
             ],
             edges: [
               {
-                source: "ruben",
-                target: "harald",
-                context: "Father <trusted>",
+                source: "alex",
+                target: "morgan",
+                context: "Mentor <trusted>",
               },
             ],
             broken: [],
@@ -164,9 +164,9 @@ describe("WikiGraph", () => {
 
     expect(props.linkDirectionalArrowLength).toBe(4);
     expect(props.linkDirectionalArrowRelPos).toBe(0.82);
-    expect(nodeLabel(graphData.nodes[0])).toContain("Harald (entity) · 1 backlink");
+    expect(nodeLabel(graphData.nodes[0])).toContain("Morgan (entity) · 1 backlink");
     expect(linkLabel(graphData.links[0])).toContain(
-      "Ruben → Harald · Father &lt;trusted&gt;",
+      "Alex → Morgan · Mentor &lt;trusted&gt;",
     );
   });
 
@@ -177,7 +177,7 @@ describe("WikiGraph", () => {
         new Response(
           JSON.stringify({
             ok: true,
-            nodes: [{ id: "harald", kind: "entity", title: "Harald" }],
+            nodes: [{ id: "morgan", kind: "entity", title: "Morgan" }],
             edges: [],
             broken: [],
           }),
@@ -195,8 +195,8 @@ describe("WikiGraph", () => {
     await waitFor(() => {
       expect(screen.getByTestId("wiki-graph-node")).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Harald/i }));
-    expect(onNodeClick).toHaveBeenCalledWith("harald");
+    fireEvent.click(screen.getByRole("button", { name: /Morgan/i }));
+    expect(onNodeClick).toHaveBeenCalledWith("morgan");
   });
 
   it("renders highlighted node with 1.5x radius", async () => {
@@ -207,11 +207,11 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "harald", kind: "entity", title: "Harald" },
-              { id: "ruben", kind: "entity", title: "Ruben" },
+              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "alex", kind: "entity", title: "Alex" },
             ],
-            // ruben → harald gives harald 1 backlink (radius = 10), zero for ruben (radius = 8)
-            edges: [{ source: "ruben", target: "harald", context: "Father" }],
+            // alex → morgan gives morgan 1 backlink (radius = 10), zero for alex (radius = 8)
+            edges: [{ source: "alex", target: "morgan", context: "Mentor" }],
             broken: [],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -221,24 +221,24 @@ describe("WikiGraph", () => {
     const client = makeClient();
     render(
       <Wrapper client={client}>
-        <WikiGraph onNodeClick={() => {}} highlightSlug="harald" />
+        <WikiGraph onNodeClick={() => {}} highlightSlug="morgan" />
       </Wrapper>,
     );
     await waitFor(() => {
       expect(screen.getAllByTestId("wiki-graph-node")).toHaveLength(2);
     });
-    const haraldNode = screen
+    const morganNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "harald");
-    const rubenNode = screen
+      .find((el) => el.getAttribute("data-node-id") === "morgan");
+    const alexNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "ruben");
-    expect(haraldNode?.getAttribute("data-node-active")).toBe("true");
-    expect(rubenNode?.getAttribute("data-node-active")).toBe("false");
-    const haraldRadius = Number(haraldNode?.getAttribute("data-node-radius"));
-    const rubenRadius = Number(rubenNode?.getAttribute("data-node-radius"));
-    // harald: base 10 * 1.5 = 15. ruben: base 8.
-    expect(haraldRadius).toBe(15);
-    expect(rubenRadius).toBe(8);
+      .find((el) => el.getAttribute("data-node-id") === "alex");
+    expect(morganNode?.getAttribute("data-node-active")).toBe("true");
+    expect(alexNode?.getAttribute("data-node-active")).toBe("false");
+    const morganRadius = Number(morganNode?.getAttribute("data-node-radius"));
+    const alexRadius = Number(alexNode?.getAttribute("data-node-radius"));
+    // morgan: base 10 * 1.5 = 15. alex: base 8.
+    expect(morganRadius).toBe(15);
+    expect(alexRadius).toBe(8);
   });
 });

@@ -20,7 +20,7 @@ You are a senior Windows systems engineer for Personal Jarvis. You are called wh
 
 1. `jarvis/vision/screenshot.py` — reference for DPI-Awareness and the lazy-import pattern (`_ensure_dpi_awareness`, `# noqa: PLC0415`).
 2. `jarvis/vision/uia_tree.py` — reference for UIA walking + pruning + thread discipline.
-3. `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` — JARVIS_AWARENESS_PLAN, in particular §5 (WindowFocusWatcher) + §10 (anti-pattern watcher-lifecycle-leak).
+3. `tests/unit/awareness/` and `tests/integration/awareness/` — WindowFocusWatcher behavior and watcher-lifecycle regression guards.
 4. `CLAUDE.md` section "Windows specifics".
 
 ## Binding patterns

@@ -489,11 +489,11 @@ async def bootstrap_wiki_integration(
                     getattr(
                         getattr(root_cfg, "wiki_scheduler", None),
                         "consolidate_after_candidates",
-                        # Fallback must match SchedulerConfig's own default (1).
-                        # A larger fallback could resurrect a delayed
-                        # pre-A4 threshold if the [wiki_scheduler] section were
-                        # ever absent, silently undermining ambient capture.
-                        1,
+                        # Fallback must match SchedulerConfig's own default (3
+                        # since the 2026-07-28 cost audit — one judge run per
+                        # burst instead of one per candidate; the age flush
+                        # keeps a lone candidate's visibility bounded).
+                        3,
                     )
                 )
                 extractor.attach_scheduler(scheduler, consolidate_after=threshold)

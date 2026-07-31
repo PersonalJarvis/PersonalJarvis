@@ -1,4 +1,4 @@
-// === F-FRIENDS [F2] · feature/friends-section · ruben-2026-04-30 ===
+// === F-FRIENDS [F2] · feature/friends-section · maintainer-2026-04-30 ===
 import { useState } from "react";
 import { Plus, Users } from "lucide-react";
 

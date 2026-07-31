@@ -75,8 +75,10 @@ class WSCommand(BaseModel):
         "terminal.input",
         "terminal.resize",
         "terminal.close",
-        # Chat mic-dictation: payload {"mode": "start" | "stop"}. Transcribe-only
-        # into the chat input — never reaches the brain.
+        # Mic-dictation: payload {"mode": "start" | "stop", "target": "chat" |
+        # "insert"}. Transcribe-only — never reaches the brain. "chat" (the
+        # default) fills the composer; "insert" pastes into the focused field
+        # of whatever application is in front.
         "stt_dictate",
         # Drag-drop a mission/output card onto the Jarvis dock: payload
         # {slug, utterance, status, summary?, error?, mission_id?, thread_id?}.

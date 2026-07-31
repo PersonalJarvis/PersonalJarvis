@@ -125,6 +125,34 @@ def _email_from_id_token(tokens: dict[str, Any] | None) -> str | None:
     return email if isinstance(email, str) and email else None
 
 
+def codex_login_in(codex_home: Path) -> tuple[bool, str, str | None]:
+    """``(connected, mode, email)`` for the login kept in ONE ``CODEX_HOME``.
+
+    The multi-account switcher (:mod:`jarvis.agent_accounts`) asks about a
+    specific directory rather than about "the" Codex login, so this deliberately
+    ignores ``$CODEX_HOME`` and reads exactly the directory it is handed.
+
+    Never raises; an absent or unparseable ``auth.json`` is
+    ``(False, "unknown", None)``.
+    """
+    try:
+        raw = (codex_home / "auth.json").read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False, "unknown", None
+    try:
+        data = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        return False, "unknown", None
+    auth = data if isinstance(data, dict) else None
+    connected, mode = _derive_auth(auth)
+    email = (
+        _email_from_id_token(auth.get("tokens"))
+        if connected and mode == "chatgpt" and isinstance(auth, dict)
+        else None
+    )
+    return connected, mode, email
+
+
 # ----------------------------------------------------------------------
 # Status snapshot
 # ----------------------------------------------------------------------

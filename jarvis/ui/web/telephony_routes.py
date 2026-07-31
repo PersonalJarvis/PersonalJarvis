@@ -224,7 +224,7 @@ async def post_config(request: Request, body: ConfigUpdate) -> JSONResponse:
         pn = body.phone_number.strip()
         if pn and not _E164_RE.match(pn):
             return JSONResponse(
-                {"error": "phone_number must be E.164, e.g. +49301234567"},
+                {"error": "phone_number must be E.164, e.g. +12025550102"},
                 status_code=422,
             )
         updates["phone_number"] = pn
@@ -568,7 +568,7 @@ async def post_outbound(request: Request, body: OutboundCall) -> JSONResponse:
     to = (body.to or "").strip()
     if not _E164_RE.match(to):
         return JSONResponse(
-            {"ok": False, "error": "to must be E.164, e.g. +4915112345678"},
+            {"ok": False, "error": "to must be E.164, e.g. +12025550101"},
             status_code=422,
         )
 

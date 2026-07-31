@@ -32,6 +32,7 @@ from jarvis.marketplace.auth import (
     get_registry,
 )
 from jarvis.marketplace.catalog import (
+    CATEGORY_ORDER,
     HostedMcpOAuthDcrAuth,
     OAuthDeviceFlowAuth,
     OAuthPkceLoopbackAuth,
@@ -43,6 +44,8 @@ from jarvis.marketplace.discord_connect import (
     on_discord_connected,
     on_discord_disconnected,
 )
+from jarvis.marketplace.instance_url import InstanceUrlError, normalize_instance_url
+from jarvis.marketplace.revoke import revoke_tokens
 from jarvis.marketplace.telegram_connect import (
     on_telegram_connected,
     on_telegram_disconnected,
@@ -139,7 +142,9 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
     Raises ``httpx.HTTPError`` to the caller when the endpoint is unreachable.
     """
 
-    async def _validate(auth: PatPasteAuth, token: str) -> tuple[bool, int]:
+    async def _validate(
+        auth: PatPasteAuth, token: str, instance_url: str | None = None
+    ) -> tuple[bool, int]:
         scheme = getattr(auth, "auth_scheme", "bearer")
         headers = {"User-Agent": "Personal-Jarvis/1.0"}
         if scheme == "telegram_path":
@@ -151,6 +156,10 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
         else:  # bearer
             url = auth.validation_endpoint
             headers["Authorization"] = f"Bearer {token}"
+        if auth.instance_url is not None and instance_url:
+            # Self-hosted: the catalog cannot know the address, so validation
+            # goes to the user's own server instead of a fixed endpoint.
+            url = normalize_instance_url(instance_url) + auth.instance_url.validation_path
         async with httpx.AsyncClient(timeout=10.0, transport=transport) as client:
             resp = await client.get(url, headers=headers)
         if resp.status_code != 200:
@@ -254,6 +263,11 @@ async def list_plugins(response: Response) -> dict[str, Any]:
     return {
         "version": catalog.version,
         "schema_version": catalog.schema_version,
+        # Section order for the store. Served rather than hardcoded in the UI so
+        # a new category is a backend-only change; the frontend appends any
+        # category it receives that is not listed here instead of dropping (or
+        # crashing on) it.
+        "category_order": list(CATEGORY_ORDER),
         "plugins": enriched,
         "total": len(enriched),
         "connected": connected,
@@ -267,6 +281,9 @@ async def list_plugins(response: Response) -> dict[str, Any]:
 
 class PatConnectBody(BaseModel):
     token: str = Field(min_length=1, max_length=2048)
+    # Base address of the user's own server, for self-hosted plugins whose
+    # catalog entry declares an `instance_url`. Not a secret.
+    instance_url: str | None = Field(default=None, max_length=512)
     # Owner lock for channel plugins (telegram/discord): the numeric user id the
     # bot will obey. When given, it is added to the allowlist and
     # trust-on-first-contact is turned off. Not a secret — lives in jarvis.toml.
@@ -297,12 +314,38 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
             f"(got first 4 chars: {token[:4]!r})",
         )
 
+    # Self-hosted services (Home Assistant, Jellyfin, ...) live at the user's
+    # own address, which the catalog cannot know.
+    instance_url: str | None = None
+    if spec.auth.instance_url is not None:
+        if not (body.instance_url or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"{spec.display_name} needs the address of your own server",
+            )
+        try:
+            instance_url = normalize_instance_url(body.instance_url or "")
+        except InstanceUrlError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    target = (
+        instance_url + spec.auth.instance_url.validation_path
+        if instance_url and spec.auth.instance_url
+        else spec.auth.validation_endpoint
+    )
     try:
-        ok, status = await _validate_token(spec.auth, token)
+        # Only widen the call for self-hosted plugins. Every other caller (and
+        # every injected test double) keeps the two-argument shape it has had
+        # since the flow was written.
+        ok, status = (
+            await _validate_token(spec.auth, token, instance_url)
+            if instance_url
+            else await _validate_token(spec.auth, token)
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"could not reach {spec.auth.validation_endpoint}: {type(exc).__name__}",
+            detail=f"could not reach {target}: {type(exc).__name__}",
         ) from exc
 
     if not ok:
@@ -312,7 +355,11 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
         )
 
     store = TokenStore()
-    store.save(plugin_id, Tokens(access=token))
+    # The address rides in `extra` beside the token: it is per-connection state,
+    # it must survive a restart exactly like the credential, and a tool that has
+    # the token but not the address can do nothing with it.
+    extra = {"instance_url": instance_url} if instance_url else {}
+    store.save(plugin_id, Tokens(access=token, extra=extra))
     if plugin_id in _CHANNEL_PLUGIN_IDS:
         # A channel "connect" enables the in-repo bidirectional channel. Do not
         # report a successful Marketplace connect if the canonical channel
@@ -578,9 +625,26 @@ async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HT
 @router.delete("/plugins/{plugin_id}")
 async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
     catalog = load_catalog()
-    if catalog.by_id(plugin_id) is None:
+    spec = catalog.by_id(plugin_id)
+    if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
-    TokenStore().delete(plugin_id)
+
+    # Tell the provider to drop the grant BEFORE the local token is gone —
+    # afterwards there is nothing left to revoke with. Deleting the local
+    # credential is what the user asked for and must always happen, so a
+    # provider that is unreachable or does not implement revocation only
+    # changes what we report, never whether the disconnect succeeds.
+    store = TokenStore()
+    revocation = "unsupported"
+    try:
+        tokens = store.load(plugin_id)
+        if tokens is not None:
+            revocation = await revoke_tokens(spec, tokens)
+    except Exception as exc:  # noqa: BLE001 - never block the disconnect
+        log.info("plugin %s revocation skipped: %s", plugin_id, exc)
+        revocation = "failed"
+
+    store.delete(plugin_id)
     _refresh_plugin_in_live_registry(plugin_id)
     if plugin_id == "telegram":
         try:
@@ -600,4 +664,7 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
         "plugin_id": plugin_id,
         "status": "not_connected",
         "live_applied": live_applied,
+        # "revoked" | "unsupported" | "failed" — so the UI can say honestly
+        # whether the user still has to remove the app at the provider.
+        "revocation": revocation,
     }

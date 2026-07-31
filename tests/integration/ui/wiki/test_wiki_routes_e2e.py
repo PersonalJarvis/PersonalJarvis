@@ -6,10 +6,10 @@ with three real markdown pages, and walks the same flow the Wave-2
 walk-through covers in ``docs/plans/b3/00-OVERVIEW.md §7``:
 
 1. ``GET /api/wiki/tree``                 → 3 files across 2 folders.
-2. ``GET /api/wiki/page/harald``          → body contains "1976".
+2. ``GET /api/wiki/page/morgan``          → body contains "hiking".
 3. ``GET /api/wiki/graph``                → at least 2 edges.
-4. ``GET /api/wiki/search?q=pizza``       → 1 hit on ruben.
-5. ``GET /api/wiki/backlinks/harald``     → 1 hit (ruben).
+4. ``GET /api/wiki/search?q=pizza``       → 1 hit on alex.
+5. ``GET /api/wiki/backlinks/morgan``     → 1 hit (alex).
 
 No mocks; the only side-effects are temp-directory file writes and an
 HTTP round-trip via FastAPI's ``TestClient``.
@@ -33,15 +33,15 @@ def _seed_vault(vault: Path) -> None:
     (vault / "concepts").mkdir(parents=True)
     (vault / "sessions").mkdir(parents=True)
 
-    (vault / "entities" / "harald.md").write_text(
-        "---\ntype: entity\nslug: harald\n---\n\n"
-        "# Harald\n\n## Summary\nHarald is a person born in 1976.\n\n"
-        "## Facts\n- Born in 1976.\n",
+    (vault / "entities" / "morgan.md").write_text(
+        "---\ntype: entity\nslug: morgan\n---\n\n"
+        "# Morgan\n\n## Summary\nMorgan is a person who likes hiking.\n\n"
+        "## Facts\n- Likes hiking.\n",
         encoding="utf-8",
     )
-    (vault / "entities" / "ruben.md").write_text(
-        "---\ntype: entity\nslug: ruben\n---\n\n"
-        "# Ruben\n\n## Summary\nFather is [[harald]].\n\n"
+    (vault / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\n---\n\n"
+        "# Alex\n\n## Summary\nMentor is [[morgan]].\n\n"
         "## Facts\n- Working on [[pixel-art-editor]].\n"
         "- Favorite food is Pizza (source: voice-fact:demo).\n",
         encoding="utf-8",
@@ -100,10 +100,10 @@ def test_full_flow_tree_page_graph_search_backlinks(
         assert tree["stats"]["total_pages"] == 3
 
         # 2. page
-        page = client.get("/api/wiki/page/harald").json()
+        page = client.get("/api/wiki/page/morgan").json()
         assert page["ok"] is True
-        assert page["slug"] == "harald"
-        assert "1976" in page["body_md"]
+        assert page["slug"] == "morgan"
+        assert "hiking" in page["body_md"]
         assert page["frontmatter_valid"] is True
 
         # 3. graph
@@ -116,9 +116,9 @@ def test_full_flow_tree_page_graph_search_backlinks(
         search = client.get("/api/wiki/search", params={"q": "pizza"}).json()
         assert search["ok"] is True
         assert len(search["hits"]) >= 1
-        assert search["hits"][0]["slug"] == "ruben"
+        assert search["hits"][0]["slug"] == "alex"
 
         # 5. backlinks
-        backlinks = client.get("/api/wiki/backlinks/harald").json()
+        backlinks = client.get("/api/wiki/backlinks/morgan").json()
         assert backlinks["ok"] is True
-        assert any(b["slug"] == "ruben" for b in backlinks["backlinks"])
+        assert any(b["slug"] == "alex" for b in backlinks["backlinks"])

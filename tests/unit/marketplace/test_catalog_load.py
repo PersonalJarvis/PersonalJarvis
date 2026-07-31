@@ -12,6 +12,7 @@ contract the frontend depends on (id, display_name, category, auth.mode).
 
 from __future__ import annotations
 
+from jarvis.marketplace.catalog import CATEGORY_ORDER
 from jarvis.marketplace.catalog_data import clear_cache, load_catalog
 
 
@@ -36,7 +37,9 @@ def test_every_plugin_has_a_resolvable_auth_block() -> None:
     for plugin in catalog.plugins:
         assert plugin.id, "plugin without id"
         assert plugin.display_name, f"{plugin.id}: missing display_name"
-        assert plugin.category in {"Developer", "Productivity", "Communication"}
+        assert plugin.category in set(CATEGORY_ORDER), (
+            f"{plugin.id}: category {plugin.category!r} is not in CATEGORY_ORDER"
+        )
         assert plugin.auth.mode in known_modes, (
             f"{plugin.id}: unknown auth mode {plugin.auth.mode!r}"
         )

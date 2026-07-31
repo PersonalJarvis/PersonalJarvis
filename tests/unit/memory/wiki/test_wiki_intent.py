@@ -43,8 +43,8 @@ def test_inline_content_is_extracted(text, expected_fragment):
 @pytest.mark.parametrize(("text", "expected_fragment"), [
     (
         "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
-        "San Francisco reisen will?",  # i18n-allow: production transcript under test
-        "san francisco",
+        "Example City reisen will?",  # i18n-allow: production transcript under test
+        "example city",
     ),
     (
         "Kannst du bitte in mein Wikisystem eintragen, dass mein Zug um acht fährt?",  # i18n-allow
@@ -101,7 +101,7 @@ def test_reported_obsidian_follow_up_resolves_locative_wiki_target() -> None:
     match = match_wiki_intent(
         (
             "Kannst du bitte einen Eintrag da eintragen, dass ich ziemlich "  # i18n-allow
-            "genervt bin und dass ich in San Francisco "  # i18n-allow
+            "genervt bin und dass ich in Example City "  # i18n-allow
             "wohne?"  # i18n-allow: production transcript under test
         ),
         prior_text=prior,
@@ -110,18 +110,18 @@ def test_reported_obsidian_follow_up_resolves_locative_wiki_target() -> None:
     assert match is not None
     assert match.content is not None
     assert "genervt" in match.content
-    assert "san francisco" in match.content
+    assert "example city" in match.content
 
 
 def test_entry_noun_before_explicit_wiki_target_is_control_syntax() -> None:
     match = match_wiki_intent(
         "Kannst du bitte einen Eintrag in mein Wiki eintragen, dass ich "  # i18n-allow
-        "in San Francisco wohne?"  # i18n-allow: production syntax under test
+        "in Example City wohne?"  # i18n-allow: production syntax under test
     )
 
     assert match is not None
     assert match.content is not None
-    assert match.content.startswith("ich in san francisco")
+    assert match.content.startswith("ich in example city")
 
 
 def test_locative_write_requires_immediate_wiki_context() -> None:

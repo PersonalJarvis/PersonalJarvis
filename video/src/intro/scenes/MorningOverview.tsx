@@ -37,7 +37,7 @@ export const MorningOverview: React.FC = () => {
 
         <Sequence from={30} layout="none">
           <SpokenCommand
-            text="Hey Ruben, what’s on my plate today?"
+            text="Hey Nova, what’s on my plate today?"
             speaker="user"
             size={24}
             compact

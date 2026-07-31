@@ -24,7 +24,11 @@ class TestTierDefaultsCatalog:
         # itself says "GPT-5.5 has per-token latency like GPT-5.4". The fast-tier
         # heuristic therefore also accepts frontier main models.
         # See the TIER_DEFAULTS_BY_PROVIDER doc in jarvis/brain/manager.py.
+        from jarvis.brain.app_control import LOCAL_PROVIDERS
+
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["router"].items():
+            if provider in LOCAL_PROVIDERS:
+                continue  # empty by design: plugin-side model discovery
             if provider == "openrouter":
                 continue  # deliberate free-model default; not a fast-tier slug
             if provider == "gemini":
@@ -45,7 +49,11 @@ class TestTierDefaultsCatalog:
                 f"{provider}: {model} does not look like a fast tier"
 
     def test_sub_models_look_frontier(self):
+        from jarvis.brain.app_control import LOCAL_PROVIDERS
+
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["deep"].items():
+            if provider in LOCAL_PROVIDERS:
+                continue  # empty by design: plugin-side model discovery
             if provider == "openrouter":
                 continue  # deliberate free-model default; not a frontier slug
             if provider == "grok":
@@ -69,9 +77,15 @@ class TestTierDefaultsCatalog:
         assert "deep" in TIER_DEFAULTS_BY_PROVIDER
 
     def test_no_empty_model_strings(self):
+        from jarvis.brain.app_control import LOCAL_PROVIDERS
+
         for tier, providers in TIER_DEFAULTS_BY_PROVIDER.items():
             for provider, model in providers.items():
-                assert model, f"Leerer Model-String bei {tier}/{provider}"
+                if provider in LOCAL_PROVIDERS:
+                    # Empty by design: "" = the plugin discovers the first
+                    # installed model on the user's own server.
+                    continue
+                assert model, f"empty model string at {tier}/{provider}"
 
 
 class TestResolveTierModel:

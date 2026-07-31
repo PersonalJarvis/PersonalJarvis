@@ -7,6 +7,190 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+---
+
+## [1.2.0] — 2026-07-30
+
+This is the first public release since 1.1.5 and it is a large one: a
+voice-driven workspace for coding agents, a personal knowledge base, voice
+that can run entirely offline, and a dictation pass that tidies your wording.
+
+### Added
+
+- **Voice input and voice output can now run entirely on your own machine — no
+  API key, no cloud account, nothing leaving the device.** Three new providers
+  appear in the API-Keys view, each marked *Local · no key needed*:
+
+  - **Whisper (on this machine)** — OpenAI's Whisper `large-v3`, the full
+    multilingual model, for the highest accuracy. One-time download of about
+    3 GB; noticeably slower than a hosted provider on a machine without a
+    graphics card, which is the price of keeping everything local.
+  - **Nemotron (on this machine)** — NVIDIA's Nemotron 3.5 streaming model.
+    Covers 40 languages including German, downloads about 690 MB instead of
+    3 GB, and transcribes several times faster than real time on a plain CPU.
+    No NVIDIA hardware required despite the name.
+  - **Piper (on this machine)** — the established offline voice engine, about
+    200 MB, with one voice each for German, English and Spanish. It speaks
+    faster than real time on a CPU. It sounds good rather than
+    indistinguishable from a person; a hosted voice is still the more natural
+    option.
+
+  **Everything is installed from inside the app.** Each card says honestly
+  whether its engine and model are actually on this machine, and offers a
+  single button that fetches what is missing. A provider whose files are not
+  there cannot be activated at all — instead of being switched on and then
+  failing silently on the first sentence.
+
+  **It degrades honestly.** If you select a local provider and later start
+  Jarvis on a machine where it is not installed, voice input crosses to
+  whichever cloud provider you do have a key for rather than going dead. Local
+  speech recognition also tells the rest of the app that your words never left
+  the device, so the optional dictation clean-up stays local too.
+
+- **Dictation now tidies up your wording, and this is ON by default.** After a
+  dictation is transcribed, a fast model rewrites the *structure* of the text —
+  punctuation, capitalization, filler words and sentence breaks — before it
+  lands in whatever you were typing in. Your exact words and their meaning are
+  kept; the pass is not allowed to rephrase you, and a rewrite that drifts too
+  far from what you said is discarded and your own text delivered instead.
+
+  **Where your text goes.** While the pass is on, the finished transcript is
+  sent to the model you selected. If your speech recognition already runs on
+  your own machine, the pass stays there too and never crosses to a cloud
+  provider on its own — picking a cloud model in the dropdown is the deliberate
+  exception. On an install with no text-model key at all, nothing happens and
+  the raw transcript is delivered exactly as before.
+
+  **Your raw text is always kept.** Every dictation stores what was actually
+  recognized alongside what was delivered, and the history shows both, so a
+  rewrite you dislike is never a loss. Each row also says what the pass did to
+  it, including when it did nothing and why.
+
+  **Where the switch is:** the Voice section → *Language* tab → *Clean up my
+  wording*. Turning it off is immediate and needs no restart. The same tab
+  chooses which model family answers, and a *Test* button runs one fixed sample
+  through your own setup so you can see the before and after before trusting it
+  with your words.
+
+- **Agentic IDE — a voice-driven workspace for coding agents.** Open several
+  named terminal panes, each running a different coding CLI (Codex, Claude,
+  Gemini and others), then split, drag and resize them freely. Address a pane
+  by its name, spoken or typed, and the instruction goes to that agent; one
+  request can brief a whole fleet at once and reports back which agents
+  actually received it. Drop files onto a pane and they are analysed before
+  they become part of the prompt. Workspaces and sessions survive a restart
+  and offer to resume. When a spoken call-sign is unclear, the assistant asks
+  once instead of guessing — and says so plainly when an instruction reached
+  nobody.
+- **Screen Context — private, one-shot visual context for voice and chat.**
+  Jarvis can capture the active screen only when explicitly asked, shows a
+  visible capture indicator, redacts password fields and sensitive text, and
+  never stores the image. Windows, macOS and Linux/X11 are supported; Wayland
+  and headless systems fail closed with an honest explanation. Screen
+  observation remains separate from desktop-control permission.
+- **UltraWiki — a personal knowledge base built from your own material.** A
+  staged import pipeline, hybrid keyword and semantic search, and an Explore
+  view with topics, moments and a graph. Readers cover local folders, GitHub
+  issues and pull requests, cloud-storage attachments, phone media (with
+  image description and audio transcription), generic HTTP and RSS sources,
+  and Obsidian vault import and export.
+
+  What it needs: semantic search requires one embedding backend — Ollama runs
+  locally with no key at all, or use a Gemini, OpenAI, Voyage, Mistral or
+  Cohere key. Without one, search runs on keywords only and the built-in
+  health checklist says so rather than failing quietly. Storage is SQLite by
+  default and needs no setup; Postgres and Supabase are optional
+  (`pip install "personal-jarvis[ultrawiki-postgres]"`). Your own content
+  never leaves your machine except to the providers you configure.
+  UltraWiki can now answer questions with real citations, returns
+  `insufficient_evidence` instead of inventing a source, keeps configured
+  folders fresh automatically, and lets users edit source settings in-app.
+- **Local and subscription brains.** A generic provider for any server
+  speaking the OpenAI chat API (llama.cpp, vLLM, LM Studio, HF serve), a
+  keyless local Ollama provider, and an Anthropic-subscription option — a
+  fully offline or self-hosted setup is now a real path.
+- **Marketplace connectors**, including Home Assistant, plus a self-hosted
+  server option for supported services.
+
+### Changed
+
+- Wake-word verification no longer assumes the wake phrase is spoken in
+  German; it follows the language actually in use.
+- Skill routing is deterministic and relevance-scored, and mission workers
+  now reach the same knowledge the voice assistant does.
+- A coding CLI is a registry entry rather than a hardcoded path, so a newly
+  supported agent is reachable by voice the day it lands.
+- UltraWiki's background import paces itself against a configurable share of
+  the machine instead of monopolising a core.
+- The in-app documentation now covers 50 maintained guides, including
+  Dictation, Agentic IDE, Screen Context, UltraWiki, local AI and Home
+  Assistant.
+
+### Fixed
+
+- A dictation that lost part of its audio no longer reports itself as a
+  success. It is marked as partly transcribed, the recording is kept, and the
+  history offers to transcribe it again.
+- **Dictated text lands where you were actually typing.** The transcript now
+  carries the target the pipeline resolved, so a dictation meant for another
+  program is no longer written into whatever Jarvis field last had focus —
+  invisibly, in a section you were not even looking at.
+- **A finished terminal pane now rings the bell.** The notification used to
+  wait for something a particular coding CLI prints — first an interrupt hint,
+  then a running clock — and neither is printed by every product in every
+  phase, so panes finished all around you and announced nothing. A pane is now
+  judged by whether its screen is still moving, which is true of any terminal
+  and of a CLI nobody has taught it about yet. A pane that ends says why.
+- **A skill imported from a link no longer activates itself.** Imported
+  skills are stored as drafts and stay inactive until explicitly enabled, and
+  a downloaded file can no longer declare itself active.
+- A misheard agent name can no longer deliver an instruction to the wrong
+  terminal.
+- A denied tool call inside a mission is treated as a recoverable setback
+  rather than ending the whole mission.
+- Sub-second audio gaps mid-answer, a realtime fallback misreported as a
+  hangup, and a turn-planner failure ending a live call.
+- A spoken mention of an unrelated product name could unlock desktop control;
+  dictation and auto-type tools went dead while the app ran elevated.
+- Disconnecting a marketplace plugin now revokes the grant at the provider
+  instead of only forgetting it locally.
+- **A dictation is no longer punished for being corrected.** The safety check
+  that watches for words going missing counted a repair as a loss, so
+  "deskto" becoming "desktop" was treated as a deleted word and the tidied
+  text was thrown away — taking the corrections you wanted with it. A word
+  that reappears spelled correctly now counts as fixed, while a word that
+  genuinely vanishes still stops the pass.
+- **Dictation recognises the spoken language reliably**, and translation
+  works out of any supported language rather than only out of English, with
+  the two ends no longer swapped.
+- **The on-device voice speaks the right language.** Switching to the local
+  Piper voice inherited a pinned German setting from whatever provider came
+  before, so every answer came out in German — including the ones meant to be
+  English or Spanish. A downloaded voice you picked yourself is also kept
+  across a switch instead of being reset.
+- **A terminal pane no longer shows a screen full of garbled characters**
+  when you return to it: the replay was being drawn over what was already
+  there instead of on a cleared screen. The pane scrollbar also works in
+  every CLI now, rather than only the one whose wording it was reading.
+- **The app starts and responds faster.** A catalogue of installed extensions
+  was being re-read from disk on every lookup — a sweep across hundreds of
+  packages that blocked the app for seconds at a time. It is read once. A
+  stall in the interface now also names the code responsible, instead of
+  reporting that something, somewhere, was slow.
+- Startup now recovers cleanly from malformed structured environment values
+  instead of leaving the desktop app unable to open.
+- Chat history once again prefers real voice sessions, hides phantom text
+  threads with no user message, and persists new text conversations without
+  duplicate websocket output.
+- UltraWiki no longer imports linked worktrees or retains raw content in
+  deletion tombstones. Legacy tombstones self-heal, stale source timestamps
+  are corrected, and Gemini capability probing no longer repeats a rejected
+  request for every background summary.
+
+---
+
 ## [1.1.5] — 2026-07-26
 
 ### Added

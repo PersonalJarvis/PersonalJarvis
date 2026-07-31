@@ -8,7 +8,7 @@
 // Usage:
 //   node scripts/capture_wiki.mjs <out.png> [tabText] [pageText]
 //   e.g. node scripts/capture_wiki.mjs public/shot-wiki-map.png  "Memory Map"
-//        node scripts/capture_wiki.mjs public/shot-wiki-page.png "Page" "ruben.md"
+//        node scripts/capture_wiki.mjs public/shot-wiki-page.png "Page" "alex.md"
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -154,7 +154,7 @@ async function main() {
     // diagnostics: what tabs / tree rows exist?
     console.log("tabs:", await visibleText(call, "[role=tab], button"));
     // Select a real vault page (tree-only names), then open the Page tab.
-    for (const name of ["bridgemind.md", "obsidian.md", "claude-opus.md", "lena.md"]) {
+    for (const name of ["examplehub.md", "obsidian.md", "claude-opus.md", "lena.md"]) {
       const r = await realClick(name);
       console.log("tree file", name, "->", r);
       if (r.startsWith("clicked")) break;

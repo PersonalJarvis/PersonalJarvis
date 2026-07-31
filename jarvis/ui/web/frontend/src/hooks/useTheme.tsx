@@ -44,3 +44,18 @@ export function useTheme(): ThemeCtx {
   if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
   return ctx;
 }
+
+/**
+ * The current theme for components that merely want to MATCH it.
+ *
+ * `useTheme` throws without a provider, which is right for anything that
+ * switches the theme — that is a wiring bug worth failing loudly on. But a
+ * component that only tints itself to fit should not take the view down when it
+ * is rendered outside the provider (a unit test, a storybook, an isolated
+ * mount). Those get the stored/system value instead, which is what the provider
+ * would have resolved anyway.
+ */
+export function useThemeValue(): Theme {
+  const ctx = useContext(Ctx);
+  return ctx?.theme ?? readInitial();
+}

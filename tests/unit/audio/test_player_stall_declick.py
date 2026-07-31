@@ -60,6 +60,9 @@ def _make_player(monkeypatch) -> tuple[AudioPlayer, list[np.ndarray]]:
     monkeypatch.setattr(player, "_close_output_stream", lambda stream: None)
     monkeypatch.setattr(player, "_write_samples", fake_write)
     # Fast stall detection so the test does not sleep for real buffer spans.
+    # The effective window is derived from the device buffer, so the shallow
+    # buffer here is what lets the patched floor win.
+    player._output_buffer_s = 0.1
     monkeypatch.setattr(player_module, "FEED_STALL_FADE_S", 0.02)
     return player, written
 

@@ -1,4 +1,4 @@
-﻿"""BrainManager: Intent-Router + Smart-Fallback + Pipeline-Adapter.
+"""BrainManager: Intent-Router + Smart-Fallback + Pipeline-Adapter.
 
 Architecture:
 
@@ -24,11 +24,20 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
@@ -350,6 +359,10 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # from the live catalog wins over this.
         "nvidia": "meta/llama-3.3-70b-instruct",
         "mistral": "mistral-small-3.1",
+        # Local providers: no server-side catalog is knowable ahead of time —
+        # empty means "the plugin discovers the first installed model".
+        "ollama": "",
+        "local-openai": "",
     },
     "deep": {
         # Frontier 2026-Q2 — deep brain (user mandate 2026-04-29:
@@ -369,6 +382,9 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
         "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
         "mistral": "mistral-large-3",
+        # Local providers: empty = plugin-side discovery (see router tier).
+        "ollama": "",
+        "local-openai": "",
     },
 }
 
@@ -501,6 +517,7 @@ _NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset(
 # question; this holds what turn N+1 needs to resolve the user's "ja"/"nein".
 # Bounded re-asks avoid a soft-lock on a persistently ambiguous answer.
 _MAX_CONFIRM_REASKS = 2
+_SCREEN_CONFIRM_TTL_S = 20.0
 
 
 class _PendingVoiceConfirm:
@@ -513,6 +530,16 @@ class _PendingVoiceConfirm:
         self.lang = lang
         self.tool_name = tool_name
         self.reasks = reasks
+
+
+class _PendingScreenConfirm:
+    """A short-lived, conversation-scoped proposal to inspect the screen."""
+
+    __slots__ = ("expires_at", "lang")
+
+    def __init__(self, lang: str, expires_at: float) -> None:
+        self.lang = lang
+        self.expires_at = expires_at
 
 
 # Option A (2026-06-15): a heavy-research request whose deliverable is an ANSWER
@@ -780,6 +807,24 @@ def _is_instructional_question(user_text: str) -> bool:
 # NEVER in here (the question must stay answerable inline).
 _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 
+# Agentic-IDE pane tools that only make sense RELATIVE TO AN OPEN WORKSPACE.
+# With none open, every one of them can only fail — while their schemas cost
+# ~10 KB of input on every tool-loop iteration (2026-07-28 cost audit).
+# Deliberately NOT listed: ``agentic-ide-status`` (answers "nothing is open"
+# honestly) and ``agentic-ide-resume`` (the command that OPENS a workspace
+# by voice — hiding it would strand the feature).
+_AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
+    "agentic-ide-terminal-report",
+    "agentic-ide-prompt",
+    "agentic-ide-fanout",
+    "agentic-ide-spawn-terminals",
+    "agentic-ide-move-terminal",
+    "agentic-ide-close-agent-terminals",
+    "agentic-ide-focus",
+    "agentic-ide-interrupted",
+    "agentic-ide-continue-interrupted",
+})
+
 # Consequential action tools a turn with NO action signal of its own must never
 # INHERIT from the conversation context. GENERAL rule (not one phrase): a
 # question, a remark, or a mis-transcription asks for no desktop action, so it
@@ -901,8 +946,8 @@ def _is_definitional_question_about(user_text: str, token: str) -> bool:
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
 # even when they contain an everyday word that collides with an action verb in
 # the universal catalogue ("Frage" -> "frag"/"frage", the filler particle
-# "halt" -> "halt"). Live bug 2026-06-19 (voice session 11:53, San-Francisco
-# emigration turn): "ich hab ne Frage ... was würdest du mir empfehlen?"
+# "halt" -> "halt"). Live bug 2026-06-19 (voice session 11:53, Example-City
+# decision-routing turn): "ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned because has_action_intent matched "Frage"/"halt", so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
 # work; the answer then returned out-of-band via the MissionAnnouncer and never
@@ -1071,6 +1116,203 @@ def _is_spawn_feature_reference(user_text: str) -> bool:
     ("Spawne einen Subagenten …") is not matched and still force-spawns.
     """
     return bool(_SPAWN_FEATURE_RE.search(user_text or ""))
+
+
+def _prompt_sent_line(terminal: str, files: list[str], lang: str) -> str:
+    """Spoken confirmation that an Agentic-IDE terminal received the prompt.
+
+    Deliberately short and pane-named: in a four-pane workspace the only thing
+    the user needs to hear is WHICH agent got it. Naming the attached file when
+    there is exactly one is worth the extra second — it is also the fastest way
+    for the user to catch a wrong file before the agent acts on it.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    if len(files) == 1:
+        return action_phrase(
+            "ide_prompt_sent_one_file", lang, terminal=terminal, file=files[0]
+        )
+    if files:
+        return action_phrase(
+            "ide_prompt_sent_files", lang, terminal=terminal, count=len(files)
+        )
+    return action_phrase("ide_prompt_sent", lang, terminal=terminal)
+
+
+def _terminal_not_running_line(terminal: str, status: str, lang: str) -> str:
+    """Honest readback when the addressed pane is not accepting input."""
+    from jarvis.voice.action_phrases import action_phrase
+
+    return action_phrase(
+        "ide_terminal_not_running", lang, terminal=terminal, status=status
+    )
+
+
+def _join_names(names: Sequence[str], lang: str) -> str:
+    """Call-signs as a speakable list ("Iris und Bruno", "Iris, Bruno and Casey")."""
+    from jarvis.voice.action_phrases import action_phrase
+
+    items = [n for n in names if n]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return action_phrase(
+        "ide_names_pair", lang, head=", ".join(items[:-1]), last=items[-1]
+    )
+
+
+def _fanout_reply_line(result: Any, lang: str) -> str:
+    """Spoken readback for a fan-out, naming who got it and who did not.
+
+    The live 2026-07-26 lie came from a readback that could only describe
+    success: one pane was briefed, the sentence named one pane, and the realtime
+    provider filled the gap from the user's own question ("Iris and Bruno").
+    Every branch here therefore names the panes it is talking about, and the
+    partial case is its own sentence rather than an optional clause — an
+    optional clause is what gets dropped when a model paraphrases.
+
+    A single addressee keeps the exact wording the one-pane path always had:
+    that is the common case, and it should not start sounding like a fleet
+    operation because the plumbing underneath grew one.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    deliveries = result.deliveries
+    ok = [d.terminal for d in result.delivered]
+    bad = [d.terminal for d in result.undelivered]
+
+    if len(deliveries) == 1:
+        only = deliveries[0]
+        if only.delivered:
+            line = _prompt_sent_line(only.terminal, list(only.files), lang)
+        elif only.reason_code == "not_running":
+            line = _terminal_not_running_line(only.terminal, only.status, lang)
+        else:
+            line = action_phrase(
+                "ide_prompt_sent_nobody", lang, failed=only.terminal
+            )
+    elif not ok:
+        line = action_phrase(
+            "ide_prompt_sent_nobody", lang, failed=_join_names(bad, lang)
+        )
+    elif bad:
+        line = action_phrase(
+            "ide_prompt_sent_partial",
+            lang,
+            names=_join_names(ok, lang),
+            failed=_join_names(bad, lang),
+        )
+    else:
+        line = action_phrase(
+            "ide_prompt_sent_many", lang, names=_join_names(ok, lang)
+        )
+
+    stuck = [d.terminal for d in result.typed_but_not_started]
+    if stuck:
+        line = f"{line} " + action_phrase(
+            "ide_prompt_typed_not_started", lang, names=_join_names(stuck, lang)
+        )
+    return line
+
+
+def _recent_agent(recent: Any) -> str:
+    """The coding agent a remembered workspace mostly ran, defaulting to Claude.
+
+    Reopening a project the user last worked in with Codex should not silently
+    switch them to a different agent. ``agents`` is a name -> pane-count map, so
+    the majority answer is the one that matches what they saw last time.
+    """
+    counts = getattr(recent, "agents", None) or {}
+    if not counts:
+        return "claude"
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+@dataclass(slots=True)
+class _PendingCliChoice:
+    """A "did you mean Claude Code or Codex?" waiting for its answer.
+
+    Kept on the manager rather than inside the detector for the same reason the
+    pane-name question is: the detector answers "is this clear?", and only the
+    turn loop knows what to do about it and when the answer arrives.
+
+    The whole fleet is held, not just the unclear part. "Two Klaudi terminals
+    and one Codex" is ONE request, and opening the Codex pane while asking about
+    the other two would leave the user answering a question about a workspace
+    that had already changed under them.
+    """
+
+    groups: tuple[Any, ...]
+    """The parsed fleet. Every group with no CLI takes the answered one."""
+
+    utterance: str
+    candidates: tuple[str, ...]
+    """CLI display names offered, best first. The answer names one of these."""
+
+    asked_at: float
+    """``time.monotonic()`` — the window is short on purpose (see TTL)."""
+
+
+#: How long the CLI question stays answerable.
+#:
+#: Two minutes, the same bound as the pane-name question and the delegation
+#: offer: long enough for "uh… Codex", short enough that a forgotten question
+#: cannot open panes in the middle of an unrelated turn later on.
+_CLI_QUESTION_TTL_S = 120.0
+
+#: A short reply is an ANSWER; a sentence is the user moving on.
+_CLI_ANSWER_MAX_WORDS = 6
+
+
+def _available_terminal_kinds() -> str:
+    """The coding CLIs this workspace can open, as a spoken list.
+
+    Read from the registry rather than written out here: a list kept in a
+    sentence drifts from the one the workspace actually has, and the whole
+    reason this sentence exists is to tell the user something true when they
+    named a CLI that is not on it.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        names = [agent.display_name for agent in workspace_agents.coding_agents()]
+    except Exception:  # noqa: BLE001 - a phrase must never break a turn
+        return ""
+    return ", ".join(names)
+
+
+def _terminals_spawned_line(
+    names: list[str], *, requested: int, folder: str | None, lang: str
+) -> str:
+    """Spoken confirmation for "open N more terminals".
+
+    Always names the new panes: they are how the user addresses them in the very
+    next sentence ("Zara, mach mal ..."), and hearing three names after asking
+    for five is the fastest possible way to notice the workspace was full.
+
+    The names are joined with commas rather than a localized "and" — a list
+    separator needs no translation, and a per-language conjunction would be one
+    more thing to get wrong in a fourth locale.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    listed = ", ".join(names)
+    if folder is not None:
+        # A workspace had to be opened first; naming the folder is what makes the
+        # assumption auditable.
+        return action_phrase(
+            "ide_terminals_opened_workspace", lang, folder=folder, names=listed
+        )
+    if len(names) < requested:
+        return action_phrase(
+            "ide_terminals_spawned_capped", lang, count=len(names), names=listed
+        )
+    if len(names) == 1:
+        return action_phrase("ide_terminals_spawned_one", lang, names=listed)
+    return action_phrase(
+        "ide_terminals_spawned", lang, count=len(names), names=listed
+    )
 
 
 # Conversational coaching: "help me [get better at a soft / cognitive /
@@ -2023,6 +2265,12 @@ class BrainManager:
             getattr(getattr(config, "brain", None), "voice_confirm", True)
         )
         self._pending_voice_confirm: _PendingVoiceConfirm | None = None
+        # Ambiguous visual requests use a separate, read-only yes/no proposal.
+        # Keying by source keeps a web-chat answer from authorizing a voice
+        # capture (and vice versa); entries expire quickly and never persist.
+        self._pending_screen_confirms: dict[
+            tuple[str, str], _PendingScreenConfirm
+        ] = {}
         self._system_prompt_extra = system_prompt_extra
         self._user_profile = user_profile
         self._soul = soul
@@ -3368,6 +3616,23 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
 
+        # Ambient personal knowledge: the standing identity card. A
+        # precomputed, deterministic distillation of the user's own profile
+        # page + core memory — no model call, hard-capped, and rebuilt only
+        # when its sources change, so it stays in the CACHED prefix in both
+        # prompt layouts (unlike the per-turn wiki snippets below, which move
+        # to the turn context in cache-optimized mode). Absent profile =
+        # empty string = no block. Defensive: ambient knowledge must never be
+        # able to break a prompt build.
+        try:
+            from jarvis.brain.identity_card import identity_card_block
+
+            _identity_block = identity_card_block(getattr(self, "_config", None))
+            if _identity_block:
+                parts.append(_identity_block)
+        except Exception:  # noqa: BLE001
+            pass
+
         if self._core_memory is not None:
             # Mandatory: re-read BEFORE rendering. Otherwise the LLM only sees
             # facts that existed at init time — UI additions and remember-tool
@@ -3561,6 +3826,19 @@ class BrainManager:
         if self._wiki_context_suffix and not self._cache_optimized():
             parts.append(self._wiki_context_suffix)
 
+        # Agentic IDE: while the user has the focused coding mode ON, this turn
+        # is answered inside their open workspace — the folder, the codebase
+        # profile, and what each named terminal (Mika, Nova, …) last printed.
+        # Off / no session = empty string = no block, so this is inert for every
+        # user who never opens the IDE. In cache-optimized mode the block rides
+        # the per-turn user message instead (see _build_turn_context), because
+        # it changes as the agents print and would otherwise break the cached
+        # system prefix every turn.
+        if not self._cache_optimized():
+            agentic_block = self._agentic_focus_block()
+            if agentic_block:
+                parts.append(agentic_block)
+
         # Active-model self-awareness: tell THIS turn's actually-answering
         # provider/model who it is, so a "which model are you?" question gets an
         # honest answer instead of a guessed "Gemini" (forensic 2026-06-20: Grok
@@ -3685,7 +3963,25 @@ class BrainManager:
                 pass
         if self._wiki_context_suffix:
             parts.append(self._wiki_context_suffix)
+        agentic_block = self._agentic_focus_block()
+        if agentic_block:
+            parts.append(agentic_block)
         return "\n\n".join(p for p in parts if p)
+
+    def _agentic_focus_block(self) -> str:
+        """Workspace-awareness block while the Agentic IDE's focus mode is on.
+
+        Pure in-memory read (the session's cached project profile + each
+        terminal's ring buffer), so it stays off the latency budget the way
+        awareness does (AP-9). Any failure degrades to no block — a coding-mode
+        convenience must never be able to break a voice turn.
+        """
+        try:
+            from jarvis.agentic_ide.context import focus_context_block
+
+            return focus_context_block()
+        except Exception:  # noqa: BLE001 - feature absent or mid-reload
+            return ""
 
     # ------------------------------------------------------------------
     # Explicit switching
@@ -4583,35 +4879,91 @@ class BrainManager:
         self._skill_turn_content = content
         self._skill_turn_source = source
 
+    def _skills_config(self) -> Any:
+        """The ``[skills]`` config section.
+
+        Reads ``self._config`` directly rather than through a defensive
+        ``getattr`` chain: an earlier draft looked up a mistyped attribute name
+        and silently fell back to defaults, which left shadow mode permanently
+        on and made every capture test fail for a reason nothing reported. A
+        wrong config read must be a crash, not a quiet behaviour change.
+
+        The section fallback stays, because an older ``jarvis.toml`` parsed by a
+        newer binary genuinely can lack it.
+        """
+        from jarvis.core.config import SkillsConfig
+
+        section = getattr(self._config, "skills", None)
+        return section if section is not None else SkillsConfig()
+
     def _match_skill_for_turn(self, user_text: str, lang: str = "auto") -> Any | None:
         """Deterministic skill-match probe (AD-S3). Returns the matched Skill or None.
 
-        Uses the TriggerMatcher (incl. its tolerant filler-stripping pass) over
-        the live SkillContext registry. Never raises — routing must not break
-        when the skill subsystem is absent (headless/mock boots).
+        Two channels, in strict order, through the ONE shared entry point
+        (``jarvis.skills.match_eval.evaluate_match``):
+
+        1. The author's voice-trigger regex — absolute precedence, unchanged.
+           Every utterance that worked before this method grew a second channel
+           still takes exactly the same path.
+        2. The deterministic relevance scorer — the paraphrase channel. Only
+           reached on a trigger MISS, so it is purely additive.
+
+        The relevance fallback is nested HERE rather than added as another gate
+        in ``generate()`` for one reason: every guard below (definitional
+        question, block tier, and — via the caller — AD-S9 and the local-action
+        stand-down) is then inherited structurally instead of re-implemented,
+        and the call site does not move.
+
+        Never raises — routing must not break when the skill subsystem is
+        absent (headless/mock boots).
         """
+        self._skill_relevance = None
+        self._skill_match_band = "none"
+        self._skill_match_class = ""
         try:
+            from jarvis.skills import guards, match_eval, match_log
+            from jarvis.skills.autofire_policy import classify, may_capture
             from jarvis.skills.skill_context import try_get_skill_context
-            from jarvis.skills.trigger_matcher import TriggerMatcher
 
             ctx = try_get_skill_context()
             if ctx is None:
                 return None
-            res = TriggerMatcher(ctx.registry).match_voice_with_match(
-                user_text, lang=lang
+
+            cfg = self._skills_config()
+            decision = match_eval.evaluate_match(
+                ctx.registry,
+                user_text,
+                lang=lang,
+                limit=max(3, int(getattr(cfg, "narrow_candidates", 3)) + 2),
+                use_relevance=bool(getattr(cfg, "relevance_enabled", True)),
+                fire_threshold=getattr(cfg, "fire_threshold", None),
+                hint_threshold=getattr(cfg, "hint_threshold", None),
             )
-            if res is None:
+            if decision.top is None:
+                self._record_skill_decision(user_text, decision, lang=lang)
                 return None
-            skill = res[0]
-            # Definitional-question guard: a bare-name plugin trigger must not
-            # capture a "was ist <App>?" knowledge turn (2026-06-24 eval).
-            matched_token = res[1].group(0) if res[1] is not None else ""
-            if _is_definitional_question_about(user_text, matched_token):
+
+            try:
+                skill = ctx.registry.get(decision.top.skill_name)
+            except Exception:  # noqa: BLE001
+                self._record_skill_decision(user_text, decision, lang=lang)
+                return None
+
+            # Unchanged guards, now shared by both channels. `evidence` is the
+            # RAW matched span, never a normalized token — the definitional
+            # guard re-escapes it against the original text, so a
+            # transliterated token would blind it on every umlaut word.
+            evidence = decision.top.evidence
+            if _is_definitional_question_about(user_text, evidence):
                 log.info(
                     "skill %s matched token %r but the turn is a definitional "
                     "question about it — not captured (answer it instead)",
                     getattr(skill, "name", "?"),
-                    matched_token,
+                    evidence,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang,
+                    vetoed_by=guards.VETO_DEFINITIONAL, skill=skill,
                 )
                 return None
             if self._skill_is_blocked(skill):
@@ -4619,10 +4971,137 @@ class BrainManager:
                     "skill %s matched but is block-tier — turn not captured",
                     getattr(skill, "name", "?"),
                 )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang,
+                    vetoed_by=guards.VETO_BLOCK_TIER, skill=skill,
+                )
                 return None
+
+            self._skill_match_band = decision.band
+            self._skill_match_class = classify(skill)
+
+            # A trigger hit keeps its historical unconditional capture: the
+            # author wrote that phrase precisely so it would fire, and changing
+            # that would be a behaviour regression, not a safety win.
+            if decision.source == match_eval.SOURCE_TRIGGER:
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, skill=skill, fired=True,
+                )
+                return skill
+
+            # --- relevance channel: capture is a privilege, not a default ---
+            self._skill_relevance = decision
+            allowed, veto = may_capture(
+                skill,
+                decision.band,
+                override=self._skill_autofire_override(skill),
+                min_band=str(getattr(cfg, "auto_fire_min_band", "fire")),
+            )
+            if not allowed:
+                log.info(
+                    "relevance match %s (band=%s, class=%s) does not capture: %s",
+                    getattr(skill, "name", "?"),
+                    decision.band,
+                    self._skill_match_class,
+                    veto,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, vetoed_by=veto, skill=skill,
+                )
+                return None
+
+            if bool(getattr(cfg, "relevance_shadow", True)):
+                # Shadow mode: record what WOULD have happened, change nothing.
+                # The narrowed candidate hint still ships, so the model keeps
+                # the benefit while the maintainer reviews real decisions.
+                log.info(
+                    "relevance match %s (band=%s) SHADOWED — would have captured "
+                    "the turn; review GET /api/skills/match-log",
+                    getattr(skill, "name", "?"),
+                    decision.band,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, skill=skill,
+                    vetoed_by=guards.VETO_SHADOW_MODE, shadow=True,
+                )
+                return None
+
+            self._record_skill_decision(
+                user_text, decision, lang=lang, skill=skill, fired=True,
+            )
             return skill
         except Exception:  # noqa: BLE001
             return None
+
+    def _skill_autofire_override(self, skill: Any) -> str | None:
+        """The user's persisted per-skill auto-fire choice, if any."""
+        try:
+            from jarvis.skills.prefs import load_autofire_prefs
+
+            return load_autofire_prefs().get(getattr(skill, "name", ""))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _record_skill_decision(
+        self,
+        user_text: str,
+        decision: Any,
+        *,
+        lang: str = "auto",
+        vetoed_by: str = "",
+        skill: Any | None = None,
+        fired: bool = False,
+        shadow: bool = False,
+    ) -> None:
+        """Log the decision to the ring and the bus. Never raises, never blocks.
+
+        Emitted on EVERY evaluation, including "nothing matched" and every veto.
+        That completeness is the point: until now each veto was a ``log.info``
+        nobody reads, which is exactly why "my skill never fires" could not be
+        diagnosed.
+        """
+        try:
+            from jarvis.skills import match_log
+            from jarvis.skills.autofire_policy import classify
+
+            autofire_class = classify(skill) if skill is not None else ""
+            match_log.record(
+                utterance=user_text,
+                decision=decision,
+                lang=lang,
+                vetoed_by=vetoed_by,
+                autofire_class=autofire_class,
+                fired=fired,
+                shadow=shadow,
+            )
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            from jarvis.skills.match_log import utterance_hash
+            from jarvis.skills.schema import SkillMatchEvaluated
+
+            top = getattr(decision, "top", None)
+            event = SkillMatchEvaluated(
+                source_layer="brain.manager",
+                utterance_hash=utterance_hash(user_text),
+                lang=lang,
+                source=str(getattr(decision, "source", "none")),
+                band=str(getattr(decision, "band", "none")),
+                winner=str(getattr(top, "skill_name", "") if top is not None else ""),
+                autofire_class=autofire_class,
+                vetoed_by=vetoed_by,
+                fired=fired,
+                shadow=shadow,
+                elapsed_us=int(getattr(decision, "elapsed_us", 0) or 0),
+                candidates=tuple(
+                    (getattr(c, "skill_name", ""), round(float(getattr(c, "score", 0.0)), 4))
+                    for c in (getattr(decision, "candidates", ()) or ())[:3]
+                ),
+            )
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._bus.publish(event))
+        except Exception:  # noqa: BLE001
+            log.debug("SkillMatchEvaluated publish failed", exc_info=True)
 
     def _previous_user_turn_text(self, *, use_history: bool) -> str:
         """Return the latest bounded user message from this task's history."""
@@ -4700,6 +5179,35 @@ class BrainManager:
             "clearly wrong."
         )
 
+    def _skill_stand_downs_allowed(self) -> bool:
+        """May this turn's matched skill suppress the other deterministic paths?
+
+        True for the historical case — an author's trigger, or an
+        instruction-only skill at FIRE — and False for anything the relevance
+        layer merely inferred about a tool-backed skill. In the False case the
+        skill still injects its instructions, but ``run-skill`` stays visible and
+        the local-action gate keeps precedence, which turns a wrong match from a
+        turn hijack into a suggestion the model can decline.
+
+        This distinction is the single most important safety property of the
+        relevance layer: capture is not all-or-nothing.
+        """
+        skill = self._skill_turn_match
+        if skill is None:
+            return False
+        try:
+            from jarvis.skills.autofire_policy import stand_downs_allowed
+            from jarvis.skills.match_eval import BAND_FIRE, SOURCE_TRIGGER
+        except Exception:  # noqa: BLE001
+            return True
+        # An author-written trigger keeps its unconditional historical rights.
+        if getattr(self, "_skill_relevance", None) is None:
+            return True
+        decision = self._skill_relevance
+        if getattr(decision, "source", "") == SOURCE_TRIGGER:
+            return True
+        return stand_downs_allowed(skill, getattr(decision, "band", BAND_FIRE))
+
     def _drop_run_skill_when_inline_injected(self, tools: Any) -> Any:
         """Hide ``run-skill`` once a matched skill's instructions are already on
         the turn context (``_skill_injected_inline``).
@@ -4711,12 +5219,85 @@ class BrainManager:
         model-agnostic: every model just follows the injected instructions, no
         tool call required. No-op when the skill was not inline-injected, or the
         tool set is not a dict (intelligent-router lead path).
+
+        Kept ONLY while the turn's match is entitled to the full stand-down. A
+        relevance-inferred match on a tool-backed skill leaves ``run-skill``
+        visible on purpose: dropping it is what removes the model's ability to
+        signal "wrong skill", and the model needs that escape hatch exactly when
+        nobody stated an intent for this skill.
         """
         if not getattr(self, "_skill_injected_inline", False):
             return tools
         if not isinstance(tools, dict):
             return tools
+        if not self._skill_stand_downs_allowed():
+            return tools
         return {k: v for k, v in tools.items() if k != "run-skill"}
+
+    def _render_skill_candidate_hint(self) -> str | None:
+        """Narrow the skill choice for a turn the matcher did NOT capture.
+
+        The router's real problem was never that skills are invisible — it is
+        that all twenty listed skills look equally plausible while ~26k tokens
+        of tool schemas compete for attention. This block names the one to three
+        that actually scored, right next to the user's message, where recency is
+        worth more than position in a long cached list.
+
+        Deliberately rides the PER-TURN context and never the cached system
+        prefix: rewriting that prefix per turn would break prompt caching on
+        every single turn, which costs far more than it could ever save.
+
+        Returns ``None`` on a captured turn, a dead scorer, or a weak ranking —
+        so the common case adds nothing at all.
+        """
+        decision = getattr(self, "_skill_relevance", None)
+        if decision is None or self._skill_turn_match is not None:
+            return None
+        candidates = getattr(decision, "candidates", ()) or ()
+        if not candidates:
+            return None
+
+        cfg = self._skills_config()
+        limit = max(1, int(getattr(cfg, "narrow_candidates", 3)))
+        try:
+            from jarvis.skills.match_eval import BAND_NONE
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return None
+            registry = ctx.registry
+        except Exception:  # noqa: BLE001
+            return None
+
+        lines: list[str] = []
+        for candidate in candidates:
+            if len(lines) >= limit:
+                break
+            if getattr(candidate, "band", BAND_NONE) == BAND_NONE:
+                continue
+            name = getattr(candidate, "skill_name", "")
+            try:
+                skill = registry.get(name)
+            except Exception:  # noqa: BLE001
+                continue
+            frontmatter = getattr(skill, "frontmatter", None)
+            if frontmatter is None:
+                continue
+            description = (getattr(frontmatter, "description", "") or "").strip()
+            when_to_use = (getattr(frontmatter, "when_to_use", "") or "").strip()
+            blurb = f"{description} {when_to_use}".strip()[:400]
+            lines.append(f"- `{name}` — {blurb}")
+        if not lines:
+            return None
+
+        return (
+            "[Skill candidates] The user's request scored against these "
+            "installed skills. If one genuinely fits, call the `run-skill` tool "
+            "with that name FIRST and follow the returned instructions. If none "
+            "fits, ignore this block entirely and answer normally — these are "
+            "ranked suggestions, not a verdict.\n" + "\n".join(lines)
+        )
 
     def _render_skill_turn_injection(self, user_text: str) -> str | None:
         """Render the matched skill's instructions for direct turn injection.
@@ -4962,6 +5543,36 @@ class BrainManager:
             return {n: tool for n, tool in tools.items() if n not in _SPAWN_TOOL_NAMES}
         except Exception:  # noqa: BLE001 — gate must never blind the brain
             log.debug("knowledge-question spawn-hide gate failed", exc_info=True)
+            return tools
+
+    def _hide_agentic_ide_tools_without_workspace(
+        self, tools: dict[str, Tool]
+    ) -> dict[str, Tool]:
+        """Drop the pane-scoped Agentic-IDE tools when NO workspace is open.
+
+        A capability gate, not a keyword guess: without an open workspace
+        those tools can only fail, so hiding them loses nothing — and their
+        schemas are ~10 KB of input re-sent on every tool-loop iteration.
+        ``agentic-ide-status`` and ``agentic-ide-resume`` always stay (see
+        _AGENTIC_IDE_WORKSPACE_TOOL_NAMES). Defensive: any fault returns
+        the tools unchanged so a gate bug can never blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            if not any(n in tools for n in _AGENTIC_IDE_WORKSPACE_TOOL_NAMES):
+                return tools
+            from jarvis.agentic_ide.session import get_registry as _ide_registry
+
+            if _ide_registry().session is not None:
+                return tools
+            return {
+                n: tool
+                for n, tool in tools.items()
+                if n not in _AGENTIC_IDE_WORKSPACE_TOOL_NAMES
+            }
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("agentic-ide workspace tool gate failed", exc_info=True)
             return tools
 
     def _hide_action_tools_on_signalless_turn(
@@ -5224,6 +5835,27 @@ class BrainManager:
                 "in the utterance wins (mission, not a sidebar switch)."
             )
             return None
+        # An addressed terminal outranks a sidebar switch, for the same reason
+        # the desktop gate stands down for one a few lines below in ``generate``:
+        # whichever gate holds the MORE SPECIFIC evidence wins. Naming a running
+        # pane and telling it to do something is unambiguous; a section word that
+        # happens to appear in the same breath is not.
+        #
+        # Live bug 2026-07-29 17:04 (BUG-121): "Kannst du mal bitte Terminal T7
+        # prompten, … wieso das Resuming Feature nur bei claude Code Sessions
+        # funktioniert … oder bei Open Codes oder bei anderen Sessions" opened
+        # the Sessions section and returned. T7 was never briefed, and the live
+        # model narrated the briefing anyway. ``match_navigation_intent`` now
+        # binds its ingredients so that sentence no longer matches at all; this
+        # is the second layer, because a matcher fix alone leaves the class open
+        # for the next section word that lands next to a genuine cue.
+        # <!-- i18n-allow: quoted spoken transcript of the failing utterance -->
+        if self._agentic_ide_owns_turn(user_text):
+            log.info(
+                "navigation fast-path stands down — this turn addresses a "
+                "running Agentic-IDE terminal (more specific evidence)."
+            )
+            return None
         tool = self._tools.get("navigate")
         if tool is None or self._tool_executor is None:
             return None
@@ -5245,6 +5877,1039 @@ class BrainManager:
             re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)  # i18n-allow
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
+
+    def _agentic_ide_owns_turn(self, user_text: str) -> bool:
+        """True when this turn belongs to the open coding workspace.
+
+        Asked by the deterministic gates that would otherwise consume the turn
+        first — today the desktop/Computer-Use gate. The answer comes from
+        ``intent.owns_turn``, the one precedence rule the force-spawn guard and
+        the spawn gate already share, so a fourth opinion cannot appear here.
+
+        Cost is a regex sweep over the in-memory session, no IO and no LLM
+        (AP-9 / AP-11), so it is safe to ask on every turn of the voice hot
+        path. Any fault answers "no": the workspace is an optional surface and
+        must never be able to divert a turn away from the path that would
+        otherwise have served it.
+        """
+        try:
+            from jarvis.agentic_ide.intent import owns_turn
+
+            return owns_turn(user_text)
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return False
+
+    async def _run_agentic_ide_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Deliver a spoken instruction to the addressed Agentic-IDE terminal.
+
+        The Agentic IDE's promise is that talking to a named pane makes that pane
+        work. Leaving that to the LLM's tool choice made it unreliable in exactly
+        the situation it matters most: on 2026-07-25 (voice session 15:47) "let
+        Kai do a deep dive" was swallowed by the force-spawn heuristic and became
+        an invisible background mission, and even without that collision a router
+        that is busy deciding between a dozen tools sometimes just answers in
+        prose. So the delivery is deterministic here, ahead of force-spawn — the
+        same shape as the navigation and local-action fast-paths.
+
+        What is NOT deterministic is the prompt itself: the composer
+        (``agentic_ide.prompt_composer``) rewrites the spoken sentence into a
+        briefed task with ``@file`` references. That is one bounded provider call
+        with a regex fallback, so the instruction is delivered either way.
+
+        Several panes may be addressed in one breath ("Iris und Bruno beide in
+        Deep Dive geben"). They are served CONCURRENTLY and reported
+        individually — see ``agentic_ide.fanout``, which exists because doing
+        this in a loop cannot fit in a voice turn and cannot report a partial
+        delivery honestly.
+
+        Returns ``None`` whenever this turn is not an addressed terminal, so the
+        normal path runs untouched.
+        """
+        try:
+            from jarvis.agentic_ide import clarify as ide_clarify
+            from jarvis.agentic_ide import fanout as ide_fanout
+            from jarvis.agentic_ide import intent as ide_intent
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+
+        try:
+            from jarvis.agentic_ide.session import get_registry
+
+            registry = get_registry()
+            session = registry.session
+            if session is None:
+                return None
+            candidates = [t.name for t in session.terminals]
+            # An answer to a pending "did you mean Ellis?" is claimed before
+            # anything else. It names no pane on its own ("ja") and carries no
+            # instruction, so every detector below would read it as ordinary
+            # conversation and the task the user already spoke would be lost a
+            # second time — which is worse than the silent miss the question
+            # replaced, because it also cost them a turn.
+            #
+            # The window classifies the answer under every supported language
+            # itself, so no per-turn language has to be resolved before it.
+            answered = ide_clarify.WINDOW.resolve_answer(user_text)
+            recent = getattr(self, "_last_ide_spawn", None)
+            if (
+                ide_intent.references_recent_fleet(user_text)
+                and recent is not None
+                and recent[0] == session.id
+                and time.monotonic() - recent[2] <= 300.0
+            ):
+                recent_names = [name for name in recent[1] if session.find(name)]
+                if recent_names:
+                    candidates = recent_names
+            addressed = ide_intent.detect_all(
+                user_text, names=candidates
+            )
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+
+        # Naming the spawn vehicle outranks the workspace: "spawn an agent that
+        # helps Kai" is a genuine background-worker request even with a
+        # workspace open. Asked through the shared rule rather than through
+        # ``names_spawn_vehicle`` directly, because that stand-down has two
+        # exceptions now (coding mode is on; the spawn words describe a PANE's
+        # work, "Alex should spawn sub-agents"), and a second hand-written copy
+        # of it here would strand exactly those turns: the spawn gate would
+        # refuse the mission, this fast path would refuse to type, and the user
+        # would get silence. Passed THIS path's roster — it may include a
+        # just-closed fleet the global one no longer lists.
+        if ide_intent.spawn_vehicle_outranks_workspace(user_text, names=candidates):
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+
+        # A clarified pane is briefed with the ORIGINAL utterance — the sentence
+        # that actually carried the work — not with the "yes" that confirmed it.
+        if answered is not None:
+            panes, original = answered
+            # Every pane the answer confirmed, not the first one: "Alex und
+            # Blaike, macht beide …" is ONE instruction for two agents, and a
+            # single "yes" has to brief both of them. Answering it with one
+            # pane is how the second agent of an addressed pair was lost (live
+            # 2026-07-27 19:07).
+            live = [name for name in panes if session.find(name) is not None]
+            if live:
+                log.info(
+                    "Agentic IDE: clarified call-sign(s) resolved to %s",
+                    ", ".join(live),
+                )
+                return await self._deliver_agentic_ide_prompt(
+                    session=session,
+                    names=live,
+                    utterance=original,
+                    instruction="",
+                    language=out_lang,
+                )
+
+        if not addressed:
+            # No pane was named with certainty — but the turn may still have
+            # MEANT one. A call-sign arrives through speech recognition, and the
+            # live 2026-07-27 failure was exactly this: "Ellis" came back as
+            # "Ilies", scored just under the acting threshold, and this path
+            # returned None without a word. Nothing reached the pane, nothing
+            # was said, and the live model — which never learns any of this —
+            # filled the silence by claiming an agent was working.
+            #
+            # Asking costs the user one word and cannot type a stranger's
+            # sentence into a coding agent, so uncertainty resolves to a
+            # question. ``detect_clarification`` decides when there is one to
+            # ask; it stands down for anything that is not addressing the
+            # workspace.
+            # "Du hast es gar nicht gepromptet." names no pane and carries no
+            # instruction, so everything above returns nothing — which is how
+            # the user ended up saying it twice while Jarvis apologised and
+            # promised a delivery it never made (BUG-121). The sentence is only
+            # meaningful against the turn before it, so that is where the work
+            # comes from.
+            # <!-- i18n-allow: quotes the spoken sentence that failed -->
+            retry = await self._retry_undelivered_agentic_ide_prompt(
+                user_text,
+                session=session,
+                candidates=candidates,
+                language=out_lang,
+            )
+            if retry is not None:
+                return retry
+            return self._ask_which_agentic_ide_terminal(
+                user_text, candidates=candidates, language=out_lang
+            )
+        found = addressed[0]
+
+        # A question about a pane is read-only: answer it from what that pane
+        # printed, and let the normal brain path phrase the answer with the
+        # focus-context block (which already carries the transcript tail).
+        if found.kind == ide_intent.KIND_REPORT:
+            return None
+
+        names = [item.terminal for item in addressed]
+
+        # A turn addresses a FLEET, and speech recognition may have carried
+        # only part of it across. "Alex und Blaike, macht beide einen Deep
+        # Dive" resolves Alex and mangles Blake, and this path used to brief
+        # Alex and say nothing at all about the rest — so the user heard one
+        # agent confirmed and believed two were working (live 2026-07-27
+        # 19:07). The pane that WAS understood still gets its brief; the one
+        # that was not becomes a question appended to the same answer.
+        leftover = self._agentic_ide_leftover_question(
+            user_text, candidates=candidates, claimed=names, language=out_lang
+        )
+
+        # NOTHING is spoken between here and the delivery verdict below, and that
+        # silence is the feature. A bridge line lived here for a few hours on
+        # 2026-07-27 to fill the prompt writer's 10-21 s, and it produced the
+        # worst possible failure the same day: announcements are not read out
+        # verbatim on a live call — ``deliver_announcement`` hands the text to
+        # the realtime model to RE-RENDER in its own words — and the model
+        # rendered the in-progress line as a finished action ("I have forwarded
+        # the bug to Alex") while nothing had reached the pane yet. On a turn
+        # whose delivery then failed, that sentence was the only thing the
+        # maintainer ever heard. Careful wording cannot fix this: any statement
+        # made before the work is done is a claim a downstream model is free to
+        # re-tense. So the only sentence this path emits is the per-pane verdict
+        # at the end, derived from what was actually typed into which terminal.
+        # Slow and true beats fast and wrong.
+
+        # Two agents told to "split the work between you" must get DIFFERENT
+        # briefs — the same sentence twice is two agents racing on one file.
+        # Only an explicit request plans a split: it costs a provider call, and
+        # "both of you run the tests" is one order for two agents.
+        assignments: dict[str, str] | None = None
+        if len(names) > 1 and ide_intent.wants_split(user_text):
+            try:
+                from jarvis.agentic_ide import work_split as ide_split
+
+                plan = await ide_split.split(
+                    found.instruction or user_text,
+                    session=session,
+                    count=len(names),
+                    conversation=self._agentic_ide_conversation(user_text),
+                )
+                assignments = {
+                    name: item.task
+                    for name, item in zip(names, plan.assignments, strict=False)
+                }
+                log.info(
+                    "Agentic IDE fan-out: work split %s across %d panes (%s)",
+                    plan.split_by, len(assignments),
+                    ", ".join(a.area for a in plan.assignments),
+                )
+            except Exception:  # noqa: BLE001 - an unplanned fleet still works
+                log.warning("Agentic IDE work split failed", exc_info=True)
+                assignments = None
+
+        verdict = await self._deliver_agentic_ide_prompt(
+            session=session,
+            names=names,
+            utterance=user_text,
+            instruction=found.instruction,
+            language=out_lang,
+            assignments=assignments,
+        )
+        if leftover is not None:
+            # Armed only now: a question about the rest of the fleet is worth
+            # asking once the panes that WERE understood are actually briefed,
+            # and a delivery that failed on the way there should not leave a
+            # question standing about work nobody received.
+            need, question = leftover
+            ide_clarify.WINDOW.arm(need, question=question)
+            log.info(
+                "Agentic IDE: briefed %s, asking about %s",
+                ", ".join(names),
+                " / ".join(need.offered),
+            )
+            return f"{verdict} {question}" if verdict else question
+        return verdict
+
+    def _agentic_ide_conversation(self, utterance: str) -> tuple[tuple[str, str], ...]:
+        """The turns an addressed-pane instruction came out of, for the composer.
+
+        A spoken order to a pane points back into the conversation constantly —
+        "above all points two and three", "do that for the wake path too" — and
+        the coding agent receives the composed brief and nothing else. Live
+        2026-07-29 that gap produced a brief instructing two agents to
+        "incorporate points 2 and 3 from the current context": a pointer to
+        something they can never open, so the substance of the order reached
+        neither of them.
+
+        Read through ``_active_turn_history`` rather than ``self._history``
+        directly, because a realtime call keeps its own bounded context and
+        hands it to the delegated turn — on that path the shared buffer is
+        empty and this is the ONLY place the previous turns exist.
+        """
+        from jarvis.agentic_ide import conversation as ide_conversation
+
+        try:
+            return ide_conversation.from_messages(
+                self._active_turn_history(), exclude=utterance
+            )
+        except Exception:  # noqa: BLE001 - context is a bonus, never the turn
+            log.debug("Agentic IDE: conversation context unavailable", exc_info=True)
+            return ()
+
+    async def _deliver_agentic_ide_prompt(
+        self,
+        *,
+        session: Any,
+        names: list[str],
+        utterance: str,
+        instruction: str,
+        language: str,
+        assignments: dict[str, str] | None = None,
+    ) -> str | None:
+        """Compose and type one instruction into the addressed panes.
+
+        Shared by the addressed-terminal path and by the answer to a "did you
+        mean …?" question, so a clarified pane is briefed through exactly the
+        same composer and reported by exactly the same verdict line. A second
+        delivery site would be free to drift into announcing something it did
+        not do, which is the failure class this whole area exists to prevent.
+
+        No brain is pinned for the composer on purpose. An earlier version
+        handed it this turn's FAST router model to save 4-5 s, but that
+        optimised the wrong axis: the prompt is what the coding agent then
+        works from for minutes, and the maintainer's decision on 2026-07-25
+        was explicitly for the better prompt over the quicker handoff. The
+        composer resolves a quality-tier model itself and degrades to its
+        deterministic prompt when none is reachable.
+        """
+        from jarvis.agentic_ide import fanout as ide_fanout
+
+        # Returning None here would hand the turn to the model with nothing to
+        # go on, and a model asked about a pane it cannot see answers from the
+        # user's own question — which is precisely how "I have let Alex know"
+        # was spoken over a terminal that had received nothing (2026-07-27).
+        # A delivery that did not happen is a fact worth saying out loud, so
+        # every exit below carries one; ``deliver`` itself never raises for a
+        # single pane, so reaching these means the whole fan-out fell over.
+        try:
+            result = await ide_fanout.deliver(
+                session=session,
+                terminals=names,
+                utterance=utterance,
+                instruction=instruction,
+                assignments=assignments,
+                conversation=self._agentic_ide_conversation(utterance),
+            )
+        except Exception:  # noqa: BLE001 - never crash the turn over a pane
+            log.warning("Agentic IDE fast-path failed", exc_info=True)
+            return action_phrase(
+                "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
+            )
+
+        if not result.deliveries:
+            log.warning(
+                "Agentic IDE fast-path: fan-out returned no verdicts for %s",
+                ", ".join(names),
+            )
+            return action_phrase(
+                "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
+            )
+        return _fanout_reply_line(result, language)
+
+    #: How long a "you never prompted it" complaint may reach back. Bounded to
+    #: the running conversation: past this, "do it again" is a fresh request and
+    #: replaying a stale sentence into a coding agent would be its own bug.
+    _IDE_RETRY_WINDOW_S = 300.0
+
+    async def _retry_undelivered_agentic_ide_prompt(
+        self,
+        user_text: str,
+        *,
+        session: Any,
+        candidates: list[str],
+        language: str,
+    ) -> str | None:
+        """Deliver the PREVIOUS turn's briefing when the user says it never went.
+
+        Live failure 2026-07-29 17:04 (BUG-121). A briefing for T7 was consumed
+        by the navigation gate; Jarvis said it had briefed T7 anyway. The user
+        corrected it twice — "Du hast es gar nicht gepromptet", then "Das war
+        noch nicht geprompted" — and both corrections produced nothing at all,
+        because they name no pane and carry no instruction, so every detector
+        returned None and the live model was left to answer alone. It apologised
+        and promised a delivery it had no way to make. The third attempt only
+        worked because the model happened to call the action tool by itself.
+        <!-- i18n-allow: quotes the spoken sentences that failed -->
+
+        A complaint is not proof, so the pane's OWN receipt decides. If
+        ``last_prompt_at`` says the briefing did arrive, this answers with the
+        clock time instead of typing the sentence a second time — an agent
+        briefed twice is two agents' worth of work on one task, and the honest
+        answer is what tells the user "it did not happen" from "I did not see it
+        happen". Only a pane with no receipt in the window is briefed.
+        """
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+        if not ide_intent.reports_undelivered(user_text):
+            return None
+        previous = self._previous_user_turn_text(use_history=True)
+        if not previous:
+            return None
+        try:
+            addressed = ide_intent.detect_all(previous, names=candidates)
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+        wanted = [
+            item.terminal
+            for item in addressed
+            if item.kind == ide_intent.KIND_PROMPT
+        ]
+        if not wanted:
+            return None
+
+        now = time.time()
+        delivered: list[tuple[str, float]] = []
+        missing: list[str] = []
+        for name in wanted:
+            term = session.find(name)
+            if term is None:
+                continue
+            at = getattr(term, "last_prompt_at", None)
+            if at is not None and now - float(at) <= self._IDE_RETRY_WINDOW_S:
+                delivered.append((name, float(at)))
+            else:
+                missing.append(name)
+
+        if not missing:
+            if not delivered:
+                return None
+            name, at = delivered[0]
+            log.info(
+                "Agentic IDE: %s reported undelivered, but %s has a receipt "
+                "from %s — answering with the time instead of re-sending",
+                user_text[:60],
+                name,
+                time.strftime("%H:%M:%S", time.localtime(at)),
+            )
+            return action_phrase(
+                "ide_prompt_already_delivered",
+                language,
+                name=name,
+                time=time.strftime("%H:%M", time.localtime(at)),
+            )
+
+        log.info(
+            "Agentic IDE: retrying an undelivered briefing for %s from the "
+            "previous turn",
+            ", ".join(missing),
+        )
+        return await self._deliver_agentic_ide_prompt(
+            session=session,
+            names=missing,
+            utterance=previous,
+            instruction="",
+            language=language,
+        )
+
+    def _ask_which_agentic_ide_terminal(
+        self,
+        user_text: str,
+        *,
+        candidates: list[str],
+        language: str,
+    ) -> str | None:
+        """Ask which pane was meant, or ``None`` when there is nothing to ask.
+
+        The question is armed as a one-shot window: the user's next turn ("ja",
+        "Ellis") delivers the ORIGINAL instruction to the confirmed pane, so
+        clarifying costs one word rather than a repeated sentence.
+        """
+        try:
+            from jarvis.agentic_ide import clarify as ide_clarify
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+        try:
+            need = ide_clarify.detect_clarification(user_text, names=candidates)
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+        if need is None:
+            return None
+
+        question = self._agentic_ide_clarify_question(need, language)
+        ide_clarify.WINDOW.arm(need, question=question)
+        log.info(
+            "Agentic IDE: heard %r, asking whether %s was meant",
+            " / ".join(item.spoken for item in need.uncertain),
+            " / ".join(need.offered),
+        )
+        return question
+
+    @staticmethod
+    def _agentic_ide_clarify_question(
+        need: Any, language: str, *, also: bool = False
+    ) -> str:
+        """The spoken question for one uncertain call-sign, or for a list.
+
+        Three shapes, because they mean three different things and a user has
+        to be able to answer each with one word: one pane offered ("did you
+        mean Blake?"), one word that could be several panes ("Max OR
+        Maggie?"), and several garbled names in one list ("Alex AND Blake?").
+        Joining the last one with "or" would ask the user to pick between two
+        agents they had just addressed together.
+        """
+        spoken = need.spoken
+        if len(need.uncertain) > 1:
+            heard = [item.spoken for item in need.uncertain]
+            spoken = action_phrase("join_and", language).join(
+                (", ".join(heard[:-1]), heard[-1])
+            )
+
+        offered = need.offered
+        if len(need.uncertain) == 1 and len(offered) == 1:
+            if also:
+                return action_phrase(
+                    "ide_terminal_clarify_also",
+                    language,
+                    spoken=spoken,
+                    names=offered[0],
+                )
+            return action_phrase(
+                "ide_terminal_clarify_one", language, spoken=spoken, name=offered[0]
+            )
+        # Alternatives for ONE word are offered with "or"; a list of separate
+        # names is joined with "and", because both were meant.
+        joiner = "join_and" if len(need.uncertain) > 1 else "join_or"
+        joined = action_phrase(joiner, language).join(
+            (", ".join(offered[:-1]), offered[-1])
+        )
+        return action_phrase(
+            "ide_terminal_clarify_also" if also else "ide_terminal_clarify_many",
+            language,
+            spoken=spoken,
+            names=joined,
+        )
+
+    def _agentic_ide_leftover_question(
+        self,
+        user_text: str,
+        *,
+        candidates: list[str],
+        claimed: list[str],
+        language: str,
+    ) -> tuple[Any, str] | None:
+        """A question about the addressees this turn named but did not resolve.
+
+        Returns ``(need, question)`` when the utterance addressed panes BEYOND
+        the ones about to be briefed, else ``None``. The caller arms it after
+        the delivery, so the user hears which agents really got the work before
+        being asked about the rest.
+
+        Nothing is asked when every uncertain word points at a pane that is
+        already being briefed — that is the same addressee reached twice, not a
+        second one.
+        """
+        try:
+            from jarvis.agentic_ide import clarify as ide_clarify
+            from jarvis.agentic_ide import intent as ide_intent
+
+            need = ide_clarify.detect_clarification(user_text, names=candidates)
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+
+        already = {name.casefold() for name in claimed}
+        if need is not None and not all(
+            all(name.casefold() in already for name in item.candidates)
+            for item in need.uncertain
+        ):
+            return need, self._agentic_ide_clarify_question(need, language, also=True)
+
+        # No word came close enough to name a pane — and a call-sign can be
+        # mangled past every threshold there is ("Dave" for a pool that holds
+        # none). What survives that is the COUNT the user stated out loud:
+        # "both of you" says two agents were addressed however badly the names
+        # travelled. Briefing one and saying nothing is the failure this
+        # catches — the user hears one name confirmed and believes two are
+        # working (live 2026-07-27 19:07).
+        try:
+            if not ide_intent.expects_several(user_text):
+                return None
+        except Exception:  # noqa: BLE001 - a detector fault stays silent
+            return None
+        if len(claimed) > 1:
+            return None
+        rest = tuple(name for name in candidates if name.casefold() not in already)
+        if not rest:
+            return None
+        # Armed over every OTHER pane, so the next word ("Blake") delivers the
+        # original task. A bare "yes" decides nothing here and must not: there
+        # is no candidate to confirm, only panes to choose between.
+        unresolved = ide_clarify.ClarificationNeeded(
+            uncertain=(ide_clarify.UncertainName(spoken="", candidates=rest),),
+            utterance=user_text,
+            certain=tuple(claimed),
+        )
+        return unresolved, action_phrase(
+            "ide_terminal_who_else", language, names=", ".join(claimed)
+        )
+
+    async def _brief_spawned_agentic_ide_fleet(
+        self,
+        session: Any,
+        names: list[str],
+        user_text: str,
+    ) -> None:
+        """Brief newly mounted Codex panes once their real input lines exist."""
+        from jarvis.agentic_ide import fanout as ide_fanout
+        from jarvis.agentic_ide import intent as ide_intent
+        from jarvis.agentic_ide.fleet_actions import wait_for_prompt_ready
+
+        instruction = ide_intent.spawn_instruction(user_text)
+        # Read once, up front: this runs as a background task that outlives the
+        # turn, and the history it reads keeps moving underneath it.
+        spoken_before = self._agentic_ide_conversation(user_text)
+        assignments: dict[str, str] | None = None
+        if len(names) > 1 and ide_intent.wants_split(user_text):
+            try:
+                from jarvis.agentic_ide import work_split as ide_split
+
+                plan = await ide_split.split(
+                    instruction,
+                    session=session,
+                    count=len(names),
+                    conversation=spoken_before,
+                )
+                assignments = {
+                    name: item.task
+                    for name, item in zip(names, plan.assignments, strict=False)
+                }
+            except Exception:  # noqa: BLE001 - the common brief is still usable
+                log.warning("Agentic IDE spawned-fleet split failed", exc_info=True)
+
+        ready = await wait_for_prompt_ready(session, names)
+        missing = [name for name in names if name not in ready]
+        if missing:
+            log.warning(
+                "Agentic IDE spawned-fleet briefing: panes never became ready: %s",
+                ", ".join(missing),
+            )
+        if not ready:
+            return
+
+        result = await ide_fanout.deliver(
+            session=session,
+            terminals=ready,
+            utterance=user_text,
+            instruction=instruction,
+            assignments=assignments,
+            conversation=spoken_before,
+        )
+        log.info(
+            "Agentic IDE spawned-fleet briefing: %d of %d prompts delivered",
+            len(result.delivered),
+            len(names),
+        )
+
+    async def _run_agentic_ide_close_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Close an explicitly requested terminal fleet without model routing."""
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.fleet_actions import (
+                close_agent_terminals,
+                terminals_closed_event,
+            )
+            from jarvis.agentic_ide.session import get_registry
+
+            request = ide_intent.detect_close_fleet(user_text)
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+        if request is None:
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        registry = get_registry()
+        session = registry.session
+        if session is None:
+            return action_phrase("ide_terminals_none_to_close", out_lang)
+        closed = await close_agent_terminals(registry, request.agent)
+        if not closed:
+            return action_phrase("ide_terminals_none_to_close", out_lang)
+        if self._bus is not None:
+            try:
+                await self._bus.publish(
+                    terminals_closed_event(
+                        session,
+                        closed,
+                        source_layer="brain.agentic_ide_close",
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the terminals are already closed
+                log.warning("Agentic IDE close: UI notification failed", exc_info=True)
+        names = [term.name for term in closed]
+        return action_phrase(
+            "ide_terminals_closed",
+            out_lang,
+            count=len(names),
+            names=_join_names(names, out_lang),
+        )
+
+    async def _run_agentic_ide_spawn_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Open N more coding terminals when the user asks for them out loud.
+
+        "Spawn five more Claude Code terminals" is a workspace request, but it
+        opens with the word the force-spawn heuristic reads as "dispatch a
+        background agent" — so left to the router it becomes an invisible mission
+        worker instead of five panes. ``intent.detect_spawn`` claims the turn
+        (that precedence lives in ``intent.owns_turn``, which both routing gates
+        already consult) and this path carries it out.
+
+        Three things happen here that the REST route cannot do on its own:
+
+        1. **A workspace is opened when none is running.** The folder is the most
+           recently used one, and it is NAMED in the reply — it is an assumption,
+           and the user has to be able to hear a wrong one.
+        2. **The open UI is told.** Panes added from outside the workspace view
+           are invisible to it (it fetches its state once, on mount), so the new
+           pane list is published on the bus.
+        3. **The view is brought forward.** This is also what STARTS the agents:
+           ``add_terminals`` creates the registry entries, and each agent's
+           pseudo-terminal spawns when its pane mounts.
+
+        Returns ``None`` on every turn that is not a terminal-spawn request, so
+        the normal path runs untouched.
+        """
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.session import (
+                MAX_TERMINALS,
+                SessionError,
+                get_registry,
+                terminals_added_event,
+            )
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+
+        # A question asked last turn is answered BEFORE anything is parsed
+        # again: "Codex" on its own is not a spawn request and would otherwise
+        # fall through to the ordinary brain, leaving the user's answer — and
+        # the fleet it was about — to evaporate.
+        answered = self._answer_pending_cli_question(user_text)
+
+        try:
+            request = answered or ide_intent.detect_spawn(user_text)
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+        if request is None:
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        from jarvis.voice.action_phrases import action_phrase
+
+        # The name did not clearly reach one CLI. ASK — this is the maintainer's
+        # directive of 2026-07-28 and the same rule the pane-name question
+        # follows: whatever is unsure becomes a question rather than an action,
+        # because the question costs one word and the guess costs an agent
+        # working on the wrong plan until somebody notices.
+        if request.uncertain_cli:
+            unclear = request.uncertain_cli[0]
+            self._pending_cli_choice = _PendingCliChoice(
+                groups=tuple(request.groups),
+                utterance=request.utterance,
+                candidates=unclear.candidates,
+                asked_at=time.monotonic(),
+            )
+            if len(unclear.candidates) == 1:
+                return action_phrase(
+                    "ide_terminal_kind_unclear_one",
+                    out_lang,
+                    spoken=unclear.spoken,
+                    first=unclear.candidates[0],
+                )
+            return action_phrase(
+                "ide_terminal_kind_unclear",
+                out_lang,
+                spoken=unclear.spoken,
+                first=unclear.candidates[0],
+                second=unclear.candidates[1],
+            )
+
+        registry = get_registry()
+        folder_label: str | None = None
+        #: Why a group of the fleet could not be opened, one sentence each.
+        #: Spoken back with the panes that DID open — a fleet that came up short
+        #: without saying so is the failure this whole path is shaped around.
+        refused: list[str] = []
+        # A CLI this app has no terminal kind for. It is answered even when it
+        # is the ONLY thing that was asked for, which is why it is collected
+        # before anything is opened.
+        for unknown in request.unsupported:
+            refused.append(
+                action_phrase(
+                    "ide_terminal_kind_unknown",
+                    out_lang,
+                    name=unknown,
+                    available=_available_terminal_kinds(),
+                )
+            )
+
+        if not request.groups:
+            # Nothing openable was asked for — the only CLI named is one this
+            # workspace does not have. Answering is the whole job here; opening
+            # a substitute pane would grant a request that was just refused.
+            return " ".join(refused) if refused else None
+
+        try:
+            if registry.session is None:
+                # No workspace open: take the most recent one. Reading the
+                # recents file is IO, so it goes to a thread — this path runs
+                # inside a voice turn.
+                from jarvis.agentic_ide import recents
+
+                entries = await asyncio.to_thread(recents.load)
+                if not entries:
+                    return action_phrase("ide_terminals_nowhere", out_lang)
+                recent = entries[0]
+                fallback_agent = request.agent or _recent_agent(recent)
+                # One spec per pane, group by group: "5 Codex and 3 Claude Code
+                # terminals" is a mixed fleet, and collapsing it to one agent
+                # opened five of the first kind and silently dropped the rest
+                # (maintainer report 2026-07-26).
+                specs = [
+                    {"agent": group.agent or fallback_agent}
+                    for group in request.groups
+                    for _ in range(group.count)
+                ]
+                session = await registry.start(recent.path, specs)
+                created = list(session.terminals)
+                folder_label = recent.name
+            else:
+                created = []
+                for group in request.groups:
+                    # One group's failure is that GROUP's failure.
+                    #
+                    # A CLI that is not installed, or one whose binary vanished,
+                    # raises here — and letting that leave the loop threw away
+                    # every group behind it, including the ones that would have
+                    # opened perfectly well. "Two Claude, one Codex and one GLM"
+                    # then produced nothing but a sentence about GLM. Each group
+                    # is attempted on its own and what could not be opened is
+                    # named at the end, so a mixed fleet degrades pane by pane
+                    # instead of all at once.
+                    try:
+                        opened, _capped = await registry.add_terminals(
+                            group.count, agent=group.agent
+                        )
+                    except SessionError as exc:
+                        if "maximum" in str(exc).lower():
+                            raise
+                        log.info(
+                            "Agentic IDE spawn: %s group refused: %s",
+                            group.agent or "inherited",
+                            exc,
+                        )
+                        refused.append(str(exc))
+                        continue
+                    created.extend(opened)
+                    if _capped:
+                        # The workspace filled up mid-fleet. Stop rather than
+                        # asking for the next group and getting the same
+                        # refusal — the readback already reports the shortfall.
+                        break
+        except SessionError as exc:
+            # A full workspace, a missing CLI, an unreadable folder: every one of
+            # these already carries a user-facing English sentence, and speaking
+            # it is more useful than a generic failure.
+            log.info("Agentic IDE spawn fast-path refused: %s", exc)
+            if "maximum" in str(exc).lower():
+                return action_phrase(
+                    "ide_terminals_full", out_lang, max=MAX_TERMINALS
+                )
+            return str(exc)
+        except Exception:  # noqa: BLE001 - never crash the turn over a pane
+            log.warning("Agentic IDE spawn fast-path failed", exc_info=True)
+            return None
+
+        if not created:
+            # Nothing opened. If a group said WHY, that sentence is the answer —
+            # "the workspace is full" would be a different claim, and usually a
+            # false one (an uninstalled CLI is not a full workspace).
+            if refused:
+                return " ".join(refused)
+            return action_phrase("ide_terminals_full", out_lang, max=MAX_TERMINALS)
+
+        session = registry.session
+        if session is not None and self._bus is not None:
+            try:
+                await self._bus.publish(
+                    terminals_added_event(
+                        session, created, source_layer="brain.agentic_ide_spawn"
+                    )
+                )
+                # Bring the workspace forward so the panes are SEEN appearing —
+                # and so their agents boot, which only happens once a pane
+                # mounts. A no-op when the view is already active.
+                from jarvis.core.events import NavigateSidebar
+
+                await self._bus.publish(
+                    NavigateSidebar(
+                        section="agentic-ide",
+                        source_layer="brain.agentic_ide_spawn",
+                        trace_id=trace_id or uuid4(),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the panes exist either way
+                log.warning("Agentic IDE spawn: UI notification failed", exc_info=True)
+
+        names = [t.name for t in created]
+        if session is not None:
+            self._last_ide_spawn = (session.id, tuple(names), time.monotonic())
+
+        briefing_queued = bool(
+            session is not None and ide_intent.spawn_includes_task(user_text)
+        )
+        if briefing_queued and session is not None:
+            tasks = getattr(self, "_ide_background_tasks", None)
+            if tasks is None:
+                tasks = set()
+                self._ide_background_tasks = tasks
+            task = asyncio.create_task(
+                self._brief_spawned_agentic_ide_fleet(session, names, user_text),
+                name="agentic-ide-spawned-fleet-briefing",
+            )
+            tasks.add(task)
+
+            def _briefing_done(done: asyncio.Task[Any]) -> None:
+                tasks.discard(done)
+                if done.cancelled():
+                    return
+                try:
+                    done.result()
+                except Exception:  # noqa: BLE001 - background failure is logged
+                    log.warning(
+                        "Agentic IDE spawned-fleet briefing failed",
+                        exc_info=True,
+                    )
+
+            task.add_done_callback(_briefing_done)
+        log.info(
+            "Agentic IDE spawn fast-path: opened %d pane(s) %s%s",
+            len(names),
+            names,
+            f" in {folder_label}" if folder_label else "",
+        )
+        line = _terminals_spawned_line(
+            names, requested=request.count, folder=folder_label, lang=out_lang
+        )
+        # A partial fleet says so in the same breath. The panes that opened are
+        # already named; without this the ones that did not simply were not
+        # mentioned, and a user who asked for four and got three had to count.
+        if refused:
+            line = f"{line} {' '.join(refused)}"
+        if briefing_queued:
+            line = f"{line} {action_phrase('ide_terminals_briefing_queued', out_lang)}"
+        return line
+
+    def _answer_pending_cli_question(self, user_text: str) -> Any | None:
+        """The held fleet with its CLI filled in, or ``None``.
+
+        Consumes the question either way. A question that has been answered,
+        declined, or simply talked past must never open panes on a later turn —
+        the same rule the pane-name window follows, and for the same reason: a
+        forgotten "yes" that opens four terminals ten minutes later is worse
+        than never having asked.
+
+        Three shapes count as an answer, in falling directness: naming a CLI
+        ("Codex", "Claude Code"), agreeing when only one was offered ("yes"),
+        and naming its position ("the first one"). Anything longer than a few
+        words is the user moving on.
+        """
+        pending = getattr(self, "_pending_cli_choice", None)
+        if pending is None:
+            return None
+        text = (user_text or "").strip()
+        if not text:
+            return None
+        if time.monotonic() - pending.asked_at > _CLI_QUESTION_TTL_S:
+            self._pending_cli_choice = None
+            return None
+        if len(text.split()) > _CLI_ANSWER_MAX_WORDS:
+            # Not an answer. The question is spent rather than left armed: the
+            # user has moved on, and a stale question would answer a sentence
+            # they never meant as one.
+            self._pending_cli_choice = None
+            return None
+
+        from jarvis.agentic_ide import intent as ide_intent
+
+        chosen: str | None = None
+        # A CLI named outright wins, wherever in the short answer it sits.
+        for size in (3, 2, 1):
+            words = text.replace(",", " ").split()
+            for start in range(len(words) - size + 1):
+                agent = ide_intent.canonical_agent(" ".join(words[start : start + size]))
+                if agent is not None:
+                    chosen = agent
+                    break
+            if chosen is not None:
+                break
+        if chosen is None and len(pending.candidates) == 1:
+            # "Yes" answers a question that offered exactly one name. With two
+            # on the table it answers nothing, so it is not accepted there.
+            from jarvis.agentic_ide.clarify import classify_short_answer
+
+            if classify_short_answer(text) == "confirm":
+                chosen = ide_intent.canonical_agent(pending.candidates[0])
+        self._pending_cli_choice = None
+        if chosen is None:
+            return None
+
+        from jarvis.agentic_ide.intent import SpawnGroup, SpawnTerminalsRequest
+
+        groups = tuple(
+            SpawnGroup(count=g.count, agent=g.agent or chosen) for g in pending.groups
+        )
+        if not groups:
+            groups = (SpawnGroup(count=1, agent=chosen),)
+        log.info(
+            "Agentic IDE: the unclear CLI was answered with %s — opening %d pane(s)",
+            chosen,
+            sum(g.count for g in groups),
+        )
+        return SpawnTerminalsRequest(
+            count=sum(g.count for g in groups),
+            agent=groups[0].agent,
+            # The ORIGINAL request, so a brief that rode along with it still
+            # reaches the panes it was written for.
+            utterance=pending.utterance,
+            groups=groups,
+        )
 
     def _is_explicit_heavy_request(self, user_text: str) -> bool:
         """Return whether the user semantically requested a heavy worker."""
@@ -5366,6 +7031,28 @@ class BrainManager:
                 "force-spawn skipped: auto-spawn feature named, not commanded — inline"
             )
             return False
+        # An open Agentic-IDE terminal that is being ADDRESSED owns the turn.
+        # Checked BEFORE the explicit-trigger hoist for the same reason the two
+        # guards above are: the hoist matches a DEPTH marker, and "let Kai do a
+        # deep dive" carries one while meaning the exact opposite of a background
+        # mission. Live bug 2026-07-25 (voice session 15:47): that sentence
+        # dispatched a Codex worker into a fresh worktree while the terminal
+        # called Kai sat idle and the user saw nothing happen.
+        #
+        # ``owns_turn`` stands down when the user NAMES the spawn vehicle, so an
+        # explicit "spawn an agent that helps Kai" still force-spawns — the
+        # workspace claims ambiguous turns, never explicit delegation.
+        try:
+            from jarvis.agentic_ide.intent import owns_turn as _ide_owns_turn
+
+            if _ide_owns_turn(t):
+                log.info(
+                    "force-spawn skipped: an open Agentic-IDE terminal is "
+                    "addressed — the workspace handles this turn"
+                )
+                return False
+        except Exception:  # noqa: BLE001 — optional surface, never breaks routing
+            pass
         # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
         # EXPLICIT heavy-work trigger that NAMES the execution vehicle
         # ("subagent", "spawn", "openclaw", "delegate") is an UNAMBIGUOUS request
@@ -5410,7 +7097,7 @@ class BrainManager:
         # never a heavy-worker spawn. Guards the verb-collision false positive
         # where an everyday word ("Frage" -> "frag", the filler "halt") trips
         # has_action_intent and pushes a pure chat turn into
-        # _is_generic_subagent_work. Live bug 2026-06-19 (emigration turn). The
+        # _is_generic_subagent_work. Live bug 2026-06-19 (decision-routing turn). The
         # explicit heavy-work trigger hoisted above still wins, so "spawn a
         # subagent and tell me what you'd recommend" dispatches as asked.
         if _is_opinion_advice_question(t):
@@ -6586,7 +8273,136 @@ class BrainManager:
         2026-06-26). Mirrors how ``_background_mission_in_flight`` keeps a running
         mission's session alive.
         """
-        return self._pending_voice_confirm is not None
+        screen_pending = getattr(self, "_pending_screen_confirms", {})
+        if screen_pending:
+            now = time.monotonic()
+            expired = [
+                key
+                for key, pending in screen_pending.items()
+                if pending.expires_at <= now
+            ]
+            for key in expired:
+                screen_pending.pop(key, None)
+        voice_screen_pending = any(
+            surface == "voice" for surface, _conversation_id in screen_pending
+        )
+        return self._pending_voice_confirm is not None or voice_screen_pending
+
+    async def _resolve_screen_context_turn(
+        self,
+        user_text: str,
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+        trace_id: UUID,
+    ) -> Any:
+        """Resolve a one-shot screen look and its optional next-turn consent.
+
+        Screen consent is isolated by conversation surface and expires quickly.
+        A bare confirmation can therefore authorize only the proposal the user
+        just heard on that same surface; unrelated text drops the proposal and
+        continues as a normal turn.
+        """
+        from jarvis.screen_context.intent import (  # noqa: PLC0415
+            cancelled_reply,
+            clarifying_question,
+        )
+        from jarvis.screen_context.turn import (  # noqa: PLC0415
+            TurnScreenContext,
+            screen_context_for_turn,
+        )
+
+        confirm_key = self._screen_confirm_key(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        )
+        pending_map = getattr(self, "_pending_screen_confirms", None)
+        if pending_map is None:
+            pending_map = self._pending_screen_confirms = {}
+        pending = pending_map.get(confirm_key)
+        now = time.monotonic()
+        if pending is not None and pending.expires_at <= now:
+            pending_map.pop(confirm_key, None)
+            pending = None
+
+        if pending is not None:
+            # Lazy import avoids pulling self-mod's confirmation graph into the
+            # brain manager at module import time.
+            from jarvis.voice.echo_confirmation import classify_response  # noqa: PLC0415
+
+            verdict = classify_response(user_text, language=pending.lang)
+            if verdict == "confirm":
+                pending_map.pop(confirm_key, None)
+                return await screen_context_for_turn(
+                    "",
+                    locale=pending.lang,
+                    bus=self._bus,
+                    force=True,
+                    trace_id=trace_id,
+                )
+            if verdict == "veto":
+                pending_map.pop(confirm_key, None)
+                return TurnScreenContext(
+                    status="cancelled", message=cancelled_reply(pending.lang)
+                )
+            if verdict == "ambiguous":
+                pending.expires_at = now + _SCREEN_CONFIRM_TTL_S
+                return TurnScreenContext(
+                    status="clarify", question=clarifying_question(pending.lang)
+                )
+            pending_map.pop(confirm_key, None)
+
+        locale = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        outcome = await screen_context_for_turn(
+            user_text,
+            locale=locale,
+            bus=self._bus,
+            trace_id=trace_id,
+        )
+        if outcome.status == "clarify":
+            pending_map[confirm_key] = _PendingScreenConfirm(
+                locale, now + _SCREEN_CONFIRM_TTL_S
+            )
+        return outcome
+
+    @staticmethod
+    def _screen_confirm_key(
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+    ) -> tuple[str, str]:
+        surface = "voice" if allow_voice_confirm else (source_layer or "chat")
+        return (surface, conversation_id or "default")
+
+    def _has_pending_screen_confirm(
+        self,
+        *,
+        source_layer: str | None,
+        conversation_id: str | None,
+        allow_voice_confirm: bool,
+    ) -> bool:
+        """Return whether this exact conversation owns a live look proposal."""
+        key = self._screen_confirm_key(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        )
+        pending = self._pending_screen_confirms.get(key)
+        if pending is None:
+            return False
+        if pending.expires_at <= time.monotonic():
+            self._pending_screen_confirms.pop(key, None)
+            return False
+        return True
 
     def _arm_voice_confirm(self, descriptor: dict[str, Any], user_text: str) -> None:
         """Turn N: record a deferred consequential action awaiting yes/no.
@@ -7266,6 +9082,7 @@ class BrainManager:
         text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
+        conversation_id: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
@@ -7296,6 +9113,7 @@ class BrainManager:
                 text_consumer=text_consumer,
                 on_progress=on_progress,
                 source_layer=source_layer,
+                conversation_id=conversation_id,
                 allow_voice_confirm=allow_voice_confirm,
                 prefer_tool_model=prefer_tool_model,
                 emit_tool_ack=emit_tool_ack,
@@ -7322,6 +9140,7 @@ class BrainManager:
         text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
+        conversation_id: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
@@ -7381,6 +9200,7 @@ class BrainManager:
         # confirmation is a VETO of that one action, not a global cancel-all.
         # Returns the spoken outcome (turn consumed) or None (user moved on →
         # the pending action is dropped and this utterance runs as a normal turn).
+        screen_context = None
         if self._pending_voice_confirm is not None:
             resumed = await self._resume_voice_confirm(user_text)
             if resumed is not None:
@@ -7389,6 +9209,32 @@ class BrainManager:
                     use_history=use_history, trace_id=turn_trace_id,
                 )
                 return resumed
+
+        # A veto such as "stop" belongs to the pending one-shot look, not to
+        # the global cancel-all gate below. Resolve only an already-armed,
+        # conversation-scoped proposal here; ordinary turns still take the
+        # cheap classifier at the normal Screen Context integration point.
+        if self._has_pending_screen_confirm(
+            source_layer=source_layer,
+            conversation_id=conversation_id,
+            allow_voice_confirm=allow_voice_confirm,
+        ):
+            screen_context = await self._resolve_screen_context_turn(
+                user_text,
+                source_layer=source_layer,
+                conversation_id=conversation_id,
+                allow_voice_confirm=allow_voice_confirm,
+                trace_id=turn_trace_id,
+            )
+            if screen_context.ends_the_turn:
+                screen_reply = screen_context.question or screen_context.message or ""
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=screen_reply,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return screen_reply
 
         if self._detect_cancel_intent(user_text):
             confirmation = self._cancel_readback(self._cancel_all_background_tasks())
@@ -7400,7 +9246,32 @@ class BrainManager:
             )
             return confirmation
 
-        switch_target = self._detect_switch_intent(user_text)
+        # An addressed Agentic-IDE pane outranks every self-configuration gate
+        # below — the same precedence the desktop gate already honours further
+        # down (``_agentic_ide_owns_turn`` there), applied here because the
+        # config gates run FIRST and therefore get the only chance to be wrong.
+        #
+        # Live 2026-07-28 20:34, coding mode on, six panes open: a spoken
+        # order to brief two of them was claimed by the reply-language gate on
+        # three unrelated words scattered across the utterance. It applied the
+        # setting and returned, so ``_run_agentic_ide_fast_path`` below never
+        # ran and no agent was briefed — while the live model, which is told
+        # none of this, reported both as working. The gate's own proximity
+        # bound (``voice_command_gate._match_language_switch``) is the first
+        # fix; this is the second, because a config gate winning a turn that
+        # NAMES A RUNNING AGENT is wrong however plausible its match looked —
+        # briefing an agent and changing a setting are not things a user can
+        # mean at the same time.
+        #
+        # Deliberately NOT applied to the cancel intercept above: stopping work
+        # is a safety control and must keep working under every phrasing.
+        # Cheap enough for the hot path — an in-memory regex sweep, no IO and
+        # no model call (AP-9/AP-11) — and it answers "no" on any fault.
+        ide_owns_turn = self._agentic_ide_owns_turn(user_text)
+
+        switch_target = (
+            None if ide_owns_turn else self._detect_switch_intent(user_text)
+        )
         if switch_target:
             confirmation = await self._apply_main_provider_switch(switch_target)
             if confirmation:
@@ -7416,7 +9287,9 @@ class BrainManager:
         # heuristic so "stell auf Englisch um" sets brain.reply_language
         # directly (live + persisted) instead of being dispatched as a worker
         # mission (2026-06-22 forensic). Provider-independent: no LLM tool-call.
-        lang_switch = self._detect_language_switch_intent(user_text)
+        lang_switch = (
+            None if ide_owns_turn else self._detect_language_switch_intent(user_text)
+        )
         if lang_switch:
             confirmation = self._apply_reply_language_switch(lang_switch)
             if confirmation:
@@ -7432,7 +9305,9 @@ class BrainManager:
         # reasoning as the language switch: runs BEFORE the force-spawn/LLM path
         # so "switch the sub-agent provider to X" sets brain.sub_jarvis.provider
         # directly instead of escalating to a worker mission (2026-06-22 forensic).
-        subagent_switch = self._detect_subagent_switch_intent(user_text)
+        subagent_switch = (
+            None if ide_owns_turn else self._detect_subagent_switch_intent(user_text)
+        )
         if subagent_switch:
             confirmation = await self._apply_subagent_provider_switch(subagent_switch)
             if confirmation:
@@ -7444,7 +9319,9 @@ class BrainManager:
                 )
                 return confirmation
 
-        depth_override = self._detect_depth_override(user_text)
+        depth_override = (
+            None if ide_owns_turn else self._detect_depth_override(user_text)
+        )
         if depth_override in ("deep", "fast"):
             self._force_level = depth_override
             confirmation = self._depth_readback(depth_override)
@@ -7591,10 +9468,19 @@ class BrainManager:
         # gate → None) is untouched.
         if self._skill_turn_match is not None:
             _gate_plan = match_local_action(user_text)
-            if _gate_plan is not None and _gate_plan.mode in (
+            _claiming = _gate_plan is not None and _gate_plan.mode in (
                 LocalActionMode.DIRECT,
                 LocalActionMode.COMPUTER_USE,
-            ):
+            )
+            # A relevance-channel match that is not instruction-only yields to
+            # the desktop gate on ANY plan, not just a claiming one. The author
+            # of a trigger asked for their phrase to win, so trigger matches keep
+            # the narrower historical rule verbatim — this widening is additive
+            # and applies only to the new, inferred channel, where nobody stated
+            # an intent for the skill to beat local control.
+            if not _claiming and _gate_plan is not None and not self._skill_stand_downs_allowed():
+                _claiming = True
+            if _claiming and _gate_plan is not None:
                 log.info(
                     "Skill match %s stands down — the deterministic local-action "
                     "gate claims this turn as %s; Computer-Use owns it "
@@ -7625,7 +9511,52 @@ class BrainManager:
                 )
                 return mission_reply
 
-        if self._skill_turn_match is None:
+        # Screen Context is a one-shot, explicit look request. It must run on
+        # the production BrainManager path before desktop-action routing: an
+        # ambiguous request asks first, a privacy refusal shuts every alternate
+        # screen path, and a successful capture owns the visual part of the turn.
+        if screen_context is None:
+            screen_context = await self._resolve_screen_context_turn(
+                user_text,
+                source_layer=source_layer,
+                conversation_id=conversation_id,
+                allow_voice_confirm=allow_voice_confirm,
+                trace_id=turn_trace_id,
+            )
+        if screen_context.ends_the_turn:
+            screen_reply = screen_context.question or screen_context.message or ""
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=screen_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return screen_reply
+
+        # An addressed Agentic-IDE terminal outranks the desktop gate — the
+        # mirror image of the skill stand-down just above, and for the same
+        # reason: whichever gate holds the MORE SPECIFIC evidence wins.
+        #
+        # Live bug 2026-07-26 09:44 (coding mode on, twelve panes open): "let
+        # Bruno do a deep dive and look into why you cannot paste text in the
+        # Agentic IDE" reached Computer-Use, which clicked into the workspace's
+        # own chat box and typed a prompt there — Jarvis operating its own UI by
+        # hand while the agent named in the sentence sat idle. The gate had
+        # matched the GUI verb "kopieren", a word that appears in that sentence
+        # as the DESCRIPTION of a bug, never as an order to copy anything. A
+        # single-verb matcher cannot tell "copy this" from "copying is broken",
+        # whereas naming a running pane is unambiguous.
+        #
+        # ``owns_turn`` is the shared precedence the force-spawn guard and the
+        # spawn gate already consult (it stands down by itself when the user
+        # names the background-worker vehicle), so this third consumer cannot
+        # drift away from them. The turn is not answered here — it simply stays
+        # available for the Agentic-IDE fast path a few lines below.
+        if (
+            not screen_context.has_image
+            and self._skill_turn_match is None
+            and not self._agentic_ide_owns_turn(user_text)
+        ):
             local_action = await self._run_local_action_fast_path(
                 user_text, trace_id=turn_trace_id,
             )
@@ -7655,6 +9586,62 @@ class BrainManager:
             )
             return nav_reply
 
+        # Agentic-IDE fleet close: "close all Codex terminals" is a concrete
+        # workspace action, not a question for the router to interpret. It runs
+        # before addressed delivery so the word "all" cannot become a prompt
+        # sent into the very panes the user asked to stop.
+        ide_close_reply = await self._run_agentic_ide_close_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if ide_close_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=ide_close_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return ide_close_reply
+
+        # Agentic-IDE fast-path: an instruction aimed at a named terminal of the
+        # open coding workspace is DELIVERED to that terminal, deterministically.
+        # Placed before force-spawn — whose depth-marker hoist used to swallow
+        # exactly these turns (live bug 2026-07-25: "let Kai do a deep dive"
+        # dispatched a background mission while Kai sat idle) — and before the
+        # capability gate. Placed AFTER navigation so a section command still
+        # moves the UI even when a pane happens to share that word. Returns None
+        # on every turn that does not address a terminal.
+        ide_reply = await self._run_agentic_ide_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if ide_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=ide_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return ide_reply
+
+        # Agentic-IDE pane spawn: "spawn five more Claude Code terminals" opens
+        # five panes instead of dispatching a background mission. Same reason to
+        # be deterministic and to sit ahead of force-spawn as the path above —
+        # the utterance NAMES the spawn vehicle, so nothing but a narrower
+        # deterministic rule can keep it in the workspace. Runs after the
+        # addressed-terminal path because ``detect_spawn`` stands down for an
+        # addressed pane ("sag Mika, sie soll ein Terminal öffnen" is Mika's
+        # work), which makes the two mutually exclusive by construction.
+        ide_spawn_reply = await self._run_agentic_ide_spawn_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if ide_spawn_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=ide_spawn_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return ide_spawn_reply
+
         # Agent-C (capability-coupling): pre-generation capability gate.
         # If the utterance looks like an action request but no registered
         # capability covers it, return a deterministic "not supported" reply
@@ -7664,7 +9651,7 @@ class BrainManager:
         # refusal must not fire on a skill turn.
         unsupported = (
             None
-            if self._skill_turn_match is not None
+            if self._skill_turn_match is not None or screen_context.has_image
             else self._check_unsupported_intent(user_text)
         )
         if unsupported is not None:
@@ -7680,7 +9667,9 @@ class BrainManager:
         # the LLM tool-use loop. Prevents spawn reflex on ambiguous smalltalk
         # inputs (see docs/persona-research.md section 2 — 60% empty smalltalk
         # outputs from the reflexive LLM spawn path).
-        if (
+        if screen_context.has_image:
+            forced_spawn = None
+        elif (
             contextual_tool_names
             and not self._is_explicit_heavy_request(user_text)
             and not self._research_wants_artifact(user_text)
@@ -7913,12 +9902,27 @@ class BrainManager:
         # after (AP-9: keep the deictic turn off the serial hot path). The task does
         # the regex gate itself, so non-deictic turns complete instantly with
         # ("", None) and fast-skip on a headless host. Awaited just below.
-        pointer_task = self._start_pointer_task(user_text, is_smalltalk_turn)
-        images: tuple[ImageBlock, ...] = await self._collect_vision_images(
-            trace_id=trace_uuid,
-            user_text=user_text,
-            is_smalltalk=is_smalltalk_turn,
+        pointer_task = (
+            None
+            if screen_context.has_image
+            else self._start_pointer_task(user_text, is_smalltalk_turn)
         )
+        if screen_context.has_image:
+            pending_images = getattr(self, "_pending_turn_images", None)
+            injected = pending_images.pop(trace_uuid, ()) if pending_images else ()
+            images = tuple(injected) + (
+                ImageBlock(
+                    mime=screen_context.mime,
+                    data_b64=base64.b64encode(screen_context.image).decode("ascii"),
+                    source_hash=screen_context.source_hash,
+                ),
+            )
+        else:
+            images = await self._collect_vision_images(
+                trace_id=trace_uuid,
+                user_text=user_text,
+                is_smalltalk=is_smalltalk_turn,
+            )
         # Per-provider error aggregation for a meaningful user message when
         # the whole chain fails. Pattern: (provider, model, kind, detail).
         # kind ∈ {"rate_limit", "missing_key", "skipped_cooldown", "init_fail",
@@ -7956,6 +9960,12 @@ class BrainManager:
         # message (keeping the cached system prompt stable); empty in legacy
         # mode. Reused for every provider in the fallback chain below.
         turn_context = self._build_turn_context()
+        if screen_context.note:
+            turn_context = (
+                f"{turn_context}\n\n{screen_context.note}"
+                if turn_context
+                else screen_context.note
+            )
 
         # AD-S3/S4: on a skill-matched turn the rendered instructions ride on
         # the per-turn context (guaranteed invocation, no run-skill round
@@ -7966,7 +9976,18 @@ class BrainManager:
             turn_context = (
                 f"{turn_context}\n\n{_skill_block}" if turn_context else _skill_block
             )
-
+        else:
+            # No capture, but the deterministic scorer may still have found
+            # plausible candidates. Narrowing 20 undifferentiated bullets down
+            # to the 1-3 that actually score is the cheapest part of this whole
+            # change and the part with no blast radius: the model still decides.
+            _narrow_block = self._render_skill_candidate_hint()
+            if _narrow_block:
+                turn_context = (
+                    f"{turn_context}\n\n{_narrow_block}"
+                    if turn_context
+                    else _narrow_block
+                )
         # AI Pointer (deictic push): collect the result of the resolution started
         # above. When the utterance points at the mouse cursor ("was ist das da?")  # i18n-allow
         # the resolved element rides on this turn's context + a tight crop is
@@ -7990,7 +10011,7 @@ class BrainManager:
         # (2) drop the full-screen screenshot + inspect-pointer tools (below), and
         # (3) inject a "do not guess" instruction when resolution failed.
         pointing_turn = (not is_smalltalk_turn) and self._is_pointer_intent(user_text)
-        if pointing_turn:
+        if pointing_turn and not screen_context.has_image:
             images = (pointer_image,) if pointer_image is not None else ()
             if not pointer_block:
                 pointer_block = (
@@ -8019,6 +10040,8 @@ class BrainManager:
         _tool_ack_emitter = (
             self._build_tool_ack_emitter(user_text) if emit_tool_ack else None
         )
+
+        vision_capable_seen = False
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
@@ -8068,8 +10091,28 @@ class BrainManager:
                 provider_errors.append((prov_name, model, kind, msg[:200]))
                 continue
 
+            # Attached pixels are evidence, not decoration. A provider that
+            # cannot inspect them must never answer as though it had; skip it
+            # by runtime capability and preserve the normal cross-family retry
+            # order for the remaining vision-capable providers.
+            if images and getattr(brain, "supports_vision", False) is not True:
+                provider_errors.append(
+                    (prov_name, model, "vision_unsupported", "vision unsupported")
+                )
+                log.info(
+                    "Skipping %s(%s): this turn carries an image but the "
+                    "provider does not advertise vision support",
+                    prov_name,
+                    model,
+                )
+                continue
+            if images:
+                vision_capable_seen = True
+
             _turn_tools = (
-                self._smalltalk_tool_override() if is_smalltalk_turn
+                {}
+                if screen_context.has_image
+                else self._smalltalk_tool_override() if is_smalltalk_turn
                 # Non-smalltalk turn: drop plugin tools irrelevant to this
                 # utterance (progressive disclosure), then hide any plugin whose
                 # CLI counterpart is connected (req 4: CLI > plugin fallback).
@@ -8112,6 +10155,14 @@ class BrainManager:
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
                     _turn_tools, routing_text
+                )
+            # Agentic-IDE pane tools exist only relative to an OPEN workspace
+            # (2026-07-28 cost audit): with none open they can only fail,
+            # while their schemas ride every loop iteration. Status/resume
+            # always stay visible.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_agentic_ide_tools_without_workspace(
+                    _turn_tools
                 )
             # A referential follow-up that inherited a currently registered
             # plugin/MCP tool remains inline even when that tool has no usage
@@ -8348,8 +10399,22 @@ class BrainManager:
                 try:
                     from jarvis.brain.cost import calculate_cost_usd
                     cost_usd_total = calculate_cost_usd(model, tokens_in_total, tokens_out_total)
+                    if cost_usd_total == 0.0 and tokens_in_total > 0:
+                        # An unknown model prices as $0.00 and every surface
+                        # then renders the turn as free — that silence is how
+                        # 1.87M deepseek tokens went unbilled for a month
+                        # (2026-07-28 cost audit). Say it once per turn.
+                        log.warning(
+                            "No pricing entry for model %r — %d in / %d out "
+                            "tokens recorded as $0.00; add it to "
+                            "jarvis/brain/cost.py PRICING_USD_PER_MTOK",
+                            model, tokens_in_total, tokens_out_total,
+                        )
                 except Exception:  # noqa: BLE001
-                    pass
+                    log.warning(
+                        "Cost calculation failed for model %r — recording $0.00",
+                        model, exc_info=True,
+                    )
                 await self._bus.publish(BrainTurnStarted(
                     provider=prov_name,
                     model=model,
@@ -8447,6 +10512,27 @@ class BrainManager:
         # B5 Agent C: reset per-turn wiki suffix regardless of outcome so
         # stale context cannot leak into the next voice turn.
         self._wiki_context_suffix = ""
+
+        if screen_context.has_image and not vision_capable_seen:
+            from jarvis.screen_context.intent import (  # noqa: PLC0415
+                no_vision_provider_reply,
+            )
+
+            language = resolve_output_language(
+                self._reply_language,
+                "unknown",
+                user_text,
+                default=DEFAULT_LOCALE,
+                conversation_language=self._conversation_language,
+            )
+            response_text = no_vision_provider_reply(language)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=response_text,
+                use_history=use_history,
+                trace_id=trace_uuid,
+            )
+            return response_text
 
         if used_provider is None:
             self._last_turn_all_failed = True
@@ -8665,12 +10751,25 @@ class BrainManager:
                 vision.current(), timeout=_VISION_COLLECT_TIMEOUT_S
             )
             hash_prefix = (obs.screenshot_hash or "")[:16]
+            geometry = tuple(
+                getattr(obs, "monitor_geom", (0, 0, 0, 0))
+                or (0, 0, 0, 0)
+            )
+            width, height = (
+                (int(geometry[2]), int(geometry[3]))
+                if len(geometry) >= 4
+                else (0, 0)
+            )
+            capture_age_ms = max(
+                0, int((time.time_ns() - obs.timestamp_ns) / 1_000_000)
+            )
             log.info(
-                "Vision-Inject Observation: screenshot_path=%s "
-                "screenshot_hash=%s window=%r",
-                obs.screenshot_path,
+                "Vision-Inject Observation: screenshot_hash=%s "
+                "dimensions=%dx%d capture_age_ms=%d",
                 hash_prefix,
-                getattr(obs, "window_title", None),
+                width,
+                height,
+                capture_age_ms,
             )
             mime, image_b64 = await _read_observation_image_b64(obs)
             # Wave 1 (omni-latency): enforce max_image_kb (was dead config) —
@@ -8735,6 +10834,7 @@ class BrainManager:
         trace_id: UUID | None = None,
         on_progress: Callable[[], None] | None = None,
         allow_voice_confirm: bool = False,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
@@ -8792,6 +10892,7 @@ class BrainManager:
                     text_consumer=_consumer,
                     on_progress=on_progress,
                     allow_voice_confirm=allow_voice_confirm,
+                    conversation_id=conversation_id,
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".
@@ -9038,7 +11139,10 @@ class BrainManager:
                     extra_patterns_fn=make_cli_patterns_fn(),
                 )
                 approval = ApprovalWorkflow(self._bus)
-                executor = ToolExecutor(self._bus, evaluator, approval)
+                executor = ToolExecutor(
+                    self._bus, evaluator, approval,
+                    default_timeout_s=self._config.safety.tool_approval_timeout_s,
+                )
 
             harness_manager = HarnessManager(bus=self._bus)
 

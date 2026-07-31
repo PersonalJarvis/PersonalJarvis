@@ -63,7 +63,11 @@ class LaunchRequest(BaseModel):
 
 @router.get("/agents", response_model=AgentsResponse)
 async def get_agents() -> AgentsResponse:
-    infos = await detect_agents()
+    # Coding agents only. This grid plans terminals that EXTEND Jarvis, and its
+    # split is validated against the same list — offering the plain-terminal
+    # entry here would put a choice in front of the user that ``/launch`` then
+    # rejects. A plain shell is offered where it belongs: the Agentic-IDE grid.
+    infos = [i for i in await detect_agents() if i.name in AGENT_NAMES]
     return AgentsResponse(
         cwd=str(repo_root()),
         terminal_available=pty_available(),

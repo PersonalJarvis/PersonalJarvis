@@ -69,7 +69,7 @@ def test_explicit_delegation_request_allows_spawn(utterance: str) -> None:
 
 def test_wake_word_brand_is_not_hardcoded() -> None:
     """ANY '<wake-name> Agent' phrasing must match — the brand is dynamic (§4)."""
-    for brand in ("Gustav", "Harald", "Nova"):
+    for brand in ("Gustav", "Morgan", "Nova"):
         OFFER_WINDOW.disarm()
         utterance = f"Frag mal einen {brand} Agent dazu."  # i18n-allow: DE trigger
         assert llm_spawn_allowed(utterance) is True

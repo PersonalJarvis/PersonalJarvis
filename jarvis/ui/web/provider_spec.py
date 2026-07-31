@@ -1,18 +1,25 @@
-﻿"""Declarative description of all Brain/TTS/STT providers for the desktop app.
+﻿"""Declarative description of every configurable provider for the desktop app.
 
 Single source of truth for the UI: which providers exist, what auth method
 do they need, which credential-manager slot stores their key, which login
 CLI needs to be spawned? Deliberately NO model names — models change too
 often, and the default comes from jarvis.toml. The UI renders a generic
 widget per provider based on auth_mode.
+
+Tiers: brain, tts, stt, realtime — and ``dictation``, the optional transcript
+polish pass. The dictation cards are NOT hand-written here: they are derived
+from ``jarvis.dictation.polish_client.POLISH_FAMILIES``, which owns the family
+list, so a new family is one row there plus one block of card text below.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
 
-AuthMode = Literal["api_key", "codex", "antigravity", "none"]
-Tier = Literal["brain", "tts", "stt", "realtime"]
+from jarvis.dictation.polish_client import POLISH_FAMILIES
+
+AuthMode = Literal["api_key", "codex", "antigravity", "claude_cli", "none"]
+Tier = Literal["brain", "tts", "stt", "realtime", "dictation"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
 # account; a subscription provider runs over an existing plan login; codex can
@@ -78,13 +85,30 @@ class ProviderSpec:
     # behavior (AP-21). Set on NVIDIA NIM: the free dev tier's 10-30s+ TTFB makes
     # it sluggish as a main/voice brain. ``None`` = no caution.
     caution: str | None = None
+    # This provider powers a feature the install does NOT depend on: without a
+    # key the feature simply does not run and everything else behaves exactly as
+    # before. The health rollup reads it to stay SILENT instead of raising a
+    # permanent amber "needs setup" dot (``_tier_section_health``), and the card
+    # renders an "Optional" chip. Presentation + nag-suppression only — it never
+    # gates behavior and no code path branches on a provider name because of it
+    # (AP-21). Set on the whole ``dictation`` tier today.
+    optional: bool = False
+    # Local/self-hosted providers: the card exposes an editable server URL
+    # (persisted as ``[brain.providers.<id>].base_url`` via
+    # ``PUT /api/providers/{id}/base-url``). ``default_base_url`` is the
+    # placeholder shown while no override is stored — ``None`` with
+    # ``supports_base_url=True`` means the user MUST set one (local-openai:
+    # no guessable default port).
+    supports_base_url: bool = False
+    default_base_url: str | None = None
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
     """How using *spec* is billed — capability-driven, never name-branched
     (multi-provider mandate, AP-21).
 
-    * a subscription-login provider (``codex``/``antigravity``) that ALSO carries
+    * a subscription-login provider (``codex``/``antigravity``/``claude-cli``)
+      that ALSO carries
       an API-key slot → ``"subscription_or_api"`` (a plan login OR per-token key);
       one with no key slot → ``"subscription"``. The distinction is the presence
       of ``secret_keys``, not the provider name — so adding a key slot to either
@@ -92,7 +116,7 @@ def provider_billing(spec: ProviderSpec) -> Billing:
     * ``none`` → ``"local"`` — no credential, runs on-device.
     * everything else (``api_key``) → ``"api"`` — pay per token on an API account.
     """
-    if spec.auth_mode in ("antigravity", "codex"):
+    if spec.auth_mode in ("antigravity", "codex", "claude_cli"):
         return "subscription_or_api" if spec.secret_keys else "subscription"
     if spec.auth_mode == "none":
         return "local"
@@ -118,6 +142,181 @@ _GEMINI_VERTEX = AltCredential(
     dashboard_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
     credential_path_hint="~/.config/jarvis/vertex-sa.json",
 )
+
+
+# ── Dictation polish: the cards are DERIVED, not declared ─────────────────────
+# The family list itself lives in ``jarvis.dictation.polish_client`` and is the
+# single source of truth for ids, labels, credential slots and default models.
+# Re-typing it here would be a second declaration of the same fact — the exact
+# shape that produced BUG-008 four times. This module contributes only the half
+# polish_client has no opinion about: where you get the key and what it buys you.
+#
+# The spec id is the family id plus a suffix, because a bare "groq"/"openai"
+# would collide with the brain cards and ``get_spec`` returns the first match.
+
+#: Distinguishes a dictation-polish card from the brain/STT card of the same
+#: vendor. Never parsed anywhere except the two helpers below.
+_DICTATION_SPEC_SUFFIX = "-polish"
+
+
+def dictation_spec_id(family_id: str) -> str:
+    """ProviderSpec id for a polish family id (``"groq"`` -> ``"groq-polish"``)."""
+    return f"{family_id}{_DICTATION_SPEC_SUFFIX}"
+
+
+def dictation_family_id(spec_id: str) -> str:
+    """Polish family id behind a dictation card id; ``""`` if it is not one."""
+    return DICTATION_FAMILY_BY_SPEC_ID.get(spec_id, "")
+
+
+@dataclass(frozen=True, slots=True)
+class _DictationCardText:
+    """The human-facing half of one dictation-polish card.
+
+    Deliberately carries NO id, label, credential slot or model name: every one
+    of those is read from the :data:`~jarvis.dictation.polish_client.POLISH_FAMILIES`
+    row this text is keyed by.
+    """
+
+    dashboard_url: str | None
+    credential_help: str
+    signup_url: str | None = None
+    #: May contain ``{model}``, filled from the family's own ``default_model``
+    #: so a setup command can never advertise a model the pass does not run.
+    install_hint: str | None = None
+    recommended: bool = False
+
+
+# One entry per family we can actually ACCEPT a key for. A family with no entry
+# ships no card — see the Cerebras note below for the only case today.
+_DICTATION_CARD_TEXT: dict[str, _DictationCardText] = {
+    "groq": _DictationCardText(
+        dashboard_url="https://console.groq.com/keys",
+        credential_help=(
+            "Groq API key (starts with gsk_) — the SAME key the Groq "
+            "speech-to-text provider uses, so most installs already have it and "
+            "need no new account. It lets a small, very fast model tidy up "
+            "punctuation, capitalization and filler words in what you dictated, "
+            "without changing your words. Optional: with no key here, dictation "
+            "keeps working exactly as it did before."
+        ),
+        # Recommended because the key is usually already present (Groq is the
+        # shipped speech-to-text default), so the feature turns itself on with
+        # zero setup — and it is the cheapest of the cloud options per dictation.
+        recommended=True,
+    ),
+    "gemini": _DictationCardText(
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Same Google AI Studio key as the Gemini brain (starts with AIza or "
+            "AQ.) — no second key needed. Tidies up punctuation and filler words "
+            "in your dictation without changing your words, and handles languages "
+            "outside German, English and Spanish best of the cloud options. "
+            "Optional: with no key here, dictation keeps working as before."
+        ),
+    ),
+    "openai": _DictationCardText(
+        dashboard_url="https://platform.openai.com/api-keys",
+        credential_help=(
+            "Uses your OpenAI API key (shared with the GPT brain and Whisper "
+            "speech-to-text). Tidies up punctuation and filler words in your "
+            "dictation without changing your words. Optional: with no key here, "
+            "dictation keeps working exactly as it did before."
+        ),
+    ),
+    "openrouter": _DictationCardText(
+        dashboard_url="https://openrouter.ai/keys",
+        credential_help=(
+            "Uses your OpenRouter API key (shared with the OpenRouter brain — no "
+            "second key needed). One OpenRouter key reaches every model family "
+            "this feature can use, so a single credential is enough on its own. "
+            "Optional: with no key here, dictation keeps working as before."
+        ),
+    ),
+    "ollama": _DictationCardText(
+        dashboard_url=None,
+        signup_url="https://ollama.com/download",
+        install_hint="ollama pull {model}",
+        credential_help=(
+            "Tidies up your dictation FULLY LOCAL through an Ollama server — no "
+            "API key, no cloud account, nothing leaves this machine. Install "
+            "Ollama, pull a small instruct model, then choose Ollama as the "
+            "dictation clean-up provider in the Voice settings. It is never "
+            "picked automatically: dialling a local server that happens to not "
+            "be running would spend the whole time budget on a refused "
+            "connection, so this one is only ever used when you ask for it."
+        ),
+    ),
+    # Cerebras is a POLISH_FAMILIES member with NO entry here on purpose. Its
+    # credential slot ("cerebras_api_key") is not declared in the setup wizard,
+    # and ALLOWED_SECRET_KEYS (provider_routes) is derived from that
+    # declaration — so a Cerebras card would render a key field whose Save
+    # button answers 404. A card that cannot accept a key is worse than no card.
+    # Declare the wizard slot first, then add one row here; the guard test
+    # ``test_dictation_provider_tier.py`` goes red the moment the slot exists.
+}
+
+
+def _dictation_specs() -> tuple[ProviderSpec, ...]:
+    """Build one card per polish family we can store a credential for.
+
+    ``auth_mode`` is derived from the family's own ``needs_key`` capability, not
+    from its name (AP-21): a keyless local engine becomes a ``"none"`` card and
+    therefore bills as ``"local"`` and never reports "no key set".
+    """
+    specs: list[ProviderSpec] = []
+    for family in POLISH_FAMILIES:
+        text = _DICTATION_CARD_TEXT.get(family.id)
+        if text is None:
+            continue
+        specs.append(
+            ProviderSpec(
+                id=dictation_spec_id(family.id),
+                # Qualified, never bare: the delete-a-shared-key warning lists
+                # provider LABELS, and a second plain "Groq" there would not tell
+                # the user which surface is about to lose its credential. A colon
+                # rather than a parenthesis, because a family label may already
+                # carry one ("Ollama (local)"); plain ASCII, because a label
+                # travels into log lines that may land on a cp1252 console.
+                label=f"{family.label}: dictation polish",
+                tier="dictation",
+                auth_mode="api_key" if family.needs_key else "none",
+                # The card renders ONE field: the family's primary slot. The
+                # remaining candidates are read-only fallbacks the runtime
+                # resolves on its own, so offering them as extra input boxes
+                # would ask for keys nobody needs to enter twice.
+                secret_keys=family.secret_candidates[:1],
+                dashboard_url=text.dashboard_url,
+                install_hint=(
+                    text.install_hint.format(model=family.default_model)
+                    if text.install_hint
+                    else None
+                ),
+                signup_url=text.signup_url,
+                credential_help=text.credential_help,
+                recommended=text.recommended,
+                # No recommended_model: the model for each family already lives
+                # in POLISH_FAMILIES[].default_model, and this tier has no model
+                # picker to highlight it in.
+                optional=True,
+            )
+        )
+    return tuple(specs)
+
+
+_DICTATION_PROVIDERS: tuple[ProviderSpec, ...] = _dictation_specs()
+
+#: Polish family id -> the id of the card that configures it, and back. The
+#: config key ``[dictation].polish_provider`` stores a FAMILY id while the UI
+#: and the health rollup address a SPEC id; these two are the one translation.
+DICTATION_SPEC_ID_BY_FAMILY: dict[str, str] = {
+    family.id: dictation_spec_id(family.id)
+    for family in POLISH_FAMILIES
+    if family.id in _DICTATION_CARD_TEXT
+}
+DICTATION_FAMILY_BY_SPEC_ID: dict[str, str] = {
+    spec_id: family_id for family_id, spec_id in DICTATION_SPEC_ID_BY_FAMILY.items()
+}
 
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
@@ -245,6 +444,34 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "API key to bill per token instead."
         ),
     ),
+    # ── Brain: Anthropic subscription via the official Claude CLI ──
+    # Sibling of the Codex/Antigravity subscription paths: spends a Claude plan
+    # login instead of a per-token Anthropic key. No secret_keys slot — the
+    # per-token path for this family already exists as ``claude-api``, and
+    # duplicating it here would present the same key twice.
+    #
+    # ``brain_switchable=False`` is not a formality: process start-up alone is
+    # ~10-12 s, which would destroy a spoken turn, so this must never become an
+    # install's main conversational brain.
+    ProviderSpec(
+        id="claude-cli",
+        label="Claude (Anthropic subscription)",
+        tier="brain",
+        auth_mode="claude_cli",
+        secret_keys=(),
+        dashboard_url=None,
+        login_cli=("claude", "/login"),
+        install_hint="curl -fsSL https://claude.ai/install.sh | bash",
+        credential_path_hint="~/.claude/.credentials.json",
+        brain_switchable=False,
+        signup_url="https://claude.ai",
+        credential_help=(
+            "Write Agentic IDE task briefs over your Claude subscription via the "
+            "Claude Code CLI — no API key needed. Sign in from the UltraWiki "
+            "model panel, or run 'claude /login' in a terminal. Too slow to "
+            "start for spoken replies, so it is not offered as a voice brain."
+        ),
+    ),
     ProviderSpec(
         id="nvidia",
         label="NVIDIA NIM",
@@ -264,7 +491,46 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "background tasks, sluggish as your main or voice brain."
         ),
     ),
-    # Ollama provider removed 2026-04-21 — pure API-provider chain.
+    # Ollama re-added 2026-07-25 as a keyless LOCAL provider (auth_mode
+    # "none" → billing "local"); the 2026-04-21 removal predates the
+    # local-first mandate.
+    ProviderSpec(
+        id="ollama",
+        label="Ollama (local)",
+        tier="brain",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        install_hint="ollama pull qwen3.5",
+        signup_url="https://ollama.com/download",
+        supports_base_url=True,
+        default_base_url="http://localhost:11434",
+        credential_help=(
+            "Runs models fully local through an Ollama server — no API key, "
+            "no cloud account, nothing leaves this machine. Install Ollama, "
+            "pull a tools-capable model (e.g. ollama pull qwen3.5), and "
+            "Jarvis finds it at http://localhost:11434 automatically. Point "
+            "the server URL at another machine to share one Ollama box."
+        ),
+    ),
+    ProviderSpec(
+        id="local-openai",
+        label="Local server (OpenAI-compatible)",
+        tier="brain",
+        auth_mode="none",
+        secret_keys=("local_openai_api_key",),
+        dashboard_url=None,
+        signup_url="https://huggingface.co/docs/transformers/main/serving",
+        credential_help=(
+            "Any self-hosted server that speaks the OpenAI chat format: "
+            "HuggingFace transformers serve (http://localhost:8000), llama.cpp "
+            "llama-server (http://localhost:8080), LM Studio "
+            "(http://localhost:1234), vLLM, or an existing TGI. Set the server "
+            "URL on this card — no cloud account, nothing leaves your network. "
+            "The API key is optional; most local servers ignore it."
+        ),
+        supports_base_url=True,
+    ),
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key
     # reaches many vetted speech models); Inworld sits last as a premium
@@ -353,19 +619,30 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Diego/Lupita). Billed per character on your Inworld account."
         ),
     ),
-    # ── STT ───────────────────────────────────────────────────────────────
+    # Local, keyless TTS. Same readiness contract as the local STT cards: the
+    # payload carries a real on-disk probe, and "ready" means one voice per
+    # SUPPORTED LANGUAGE is downloaded — a Piper voice speaks exactly one
+    # language, so a German-only install would leave the assistant mute the
+    # moment the conversation switches to English.
     ProviderSpec(
-        id="groq-api",
-        label="Groq STT (Whisper)",
-        tier="stt",
-        auth_mode="api_key",
-        secret_keys=("groq_api_key",),
-        dashboard_url="https://console.groq.com/keys",
+        id="piper-local",
+        label="Piper (on this machine)",
+        tier="tts",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
         credential_help=(
-            "Groq API key (starts with gsk_). Fast hosted Whisper "
-            "speech-to-text, billed per token."
+            "Speaks on this machine — no API key, no cloud account, nothing "
+            "sent anywhere. Piper is the established offline voice engine: "
+            "small neural voices that run faster than real time even without a "
+            "graphics card. The download is about 200 MB and brings one voice "
+            "each for German, English and Spanish. The voices sound good rather "
+            "than indistinguishable from a person; a hosted provider is still "
+            "the more natural-sounding option."
         ),
     ),
+    # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
         id="openai-api",
         label="OpenAI Whisper STT",
@@ -391,17 +668,75 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "lists only transcription-capable models."
         ),
     ),
-    # Local "Faster-Whisper (lokal)" STT was REMOVED as a user-selectable
-    # provider (2026-07-03, v1.0.1). Two defects made the card actively
-    # misleading: the provider list never checked whether the local-voice extra
-    # was actually installed, so it always showed as "ready" on a base install;
-    # and the model dropdown listed all seven Whisper checkpoints regardless of
-    # what was downloaded. Cloud STT (groq-api / openai-api / openrouter-stt) is
-    # the supported dictation path. NOTE: this only removes the *dictation*
-    # provider from the UI — the wake word still uses its own local Whisper
-    # (build_wake_whisper, reading [stt].wake_*), and build_stt_from_config keeps
-    # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
-    # as an invisible resilience floor for a user with no cloud STT key.
+    # Local, keyless STT. This card was REMOVED once (2026-07-03, v1.0.1) and is
+    # back under the condition that made the removal necessary: it may never
+    # claim a readiness nobody verified. Both original defects are fixed at the
+    # source rather than in the card — the payload carries a real
+    # ``local_runtime`` probe (engine importable AND checkpoint downloaded, see
+    # jarvis.speech.local_models), and there is no seven-checkpoint picker at
+    # all: exactly ONE model is offered, the one the install actually fetches.
+    # NOTE: the wake word is a separate path with its own small checkpoint
+    # ([stt].wake_*, build_wake_whisper) and is unaffected by this card;
+    # _build_local_fallback likewise stays the invisible key-free floor (AP-22).
+    ProviderSpec(
+        id="faster-whisper",
+        label="Whisper (on this machine)",
+        tier="stt",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "Transcribes your speech on this machine — no API key, no cloud "
+            "account, no audio leaving the device. Runs Whisper large-v3, the "
+            "full multilingual model. It needs a one-time download of about "
+            "3 GB and is slower than a hosted provider on a machine without a "
+            "graphics card, which is the trade for keeping everything local."
+        ),
+    ),
+    ProviderSpec(
+        id="nemotron-local",
+        label="Nemotron (on this machine)",
+        tier="stt",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "The faster on-device option: NVIDIA's Nemotron 3.5 streaming "
+            "model, also fully local and keyless. It covers 40 languages "
+            "including German, needs a ~690 MB download instead of 3 GB, and "
+            "transcribes several times faster than real time on a plain CPU — "
+            "no graphics card required. Pick Whisper instead if you want the "
+            "highest accuracy and have the hardware for it."
+        ),
+    ),
+    # Deliberately last in the Voice Input picker and last among cloud runtime
+    # fallbacks. It remains available for users who only have a Groq key, but
+    # live German dictation has been substantially less reliable than the other
+    # hosted choices and must not be presented as a preferred takeover.
+    ProviderSpec(
+        id="groq-api",
+        label="Groq STT (Whisper)",
+        tier="stt",
+        auth_mode="api_key",
+        secret_keys=("groq_api_key",),
+        dashboard_url="https://console.groq.com/keys",
+        credential_help=(
+            "Groq API key (starts with gsk_). Fast hosted Whisper "
+            "speech-to-text, billed per token."
+        ),
+        caution=(
+            "Not recommended for primary transcription: real-world dictation "
+            "quality has been less reliable than the other hosted choices."
+        ),
+    ),
+    # ── Dictation polish ──────────────────────────────────────────────────
+    # Derived from POLISH_FAMILIES above, in that tuple's order (Groq first —
+    # it is the recommended pick because its key is usually already there).
+    # OPTIONAL by construction: this tier reads a key it never demands, and a
+    # missing one leaves dictation behaving exactly as it did before.
+    *_DICTATION_PROVIDERS,
     # ── Realtime ──────────────────────────────────────────────────────────
     # Realtime voice spans independently selectable OpenAI, Gemini, and xAI
     # plugins behind the provider-neutral RealtimeProvider contract.

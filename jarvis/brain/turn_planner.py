@@ -35,6 +35,7 @@ class TurnReason(StrEnum):
     PRIVATE_DATA = "private_data"
     SKILL = "skill"
     UNCERTAIN = "uncertain"
+    WORKSPACE = "workspace"
 
 
 @dataclass(frozen=True)
@@ -379,6 +380,88 @@ def _matched_capabilities(
     return tuple(sorted(item for item in matched if item))
 
 
+def _is_workspace_turn(text: str, workspace_names: Sequence[str]) -> bool:
+    """Whether this turn is about a terminal of the open coding workspace.
+
+    The realtime half of the 2026-07-27 miss. Asked "was hat Dana gemacht", the
+    live model answered that it did not know any person called Dana — correctly,
+    from its own knowledge, because nothing had ever told it that a coding agent
+    named Dana was running two feet away. No vocabulary rule could have caught
+    that turn: it carries no lookup verb, no action, no possessive and no
+    connected domain, so the planner routed it natively and the pane was never
+    consulted. The CALL-SIGN is the evidence, and it is evidence the static
+    vocabularies below structurally cannot hold, because the names are chosen
+    per workspace at runtime.
+
+    The verdict is delegated to the workspace's OWN detectors rather than
+    re-derived here — the same rule that decides which pane gets the work has to
+    decide whether the orchestrator is needed for it, or the planner would
+    delegate turns the workspace then declines (and worse, the reverse). Both
+    are pure regex over the utterance, no IO and no LLM, so this keeps the
+    module's promise on the voice hot path.
+
+    Two shapes qualify:
+
+    1. a pane is named — addressed, or asked about ("was hat Dana gemacht");
+    2. a pane is ALMOST named — the clarify path has a question to ask, and it
+       can only ask it from the orchestrator.
+    """
+    names = [str(name) for name in workspace_names if str(name or "").strip()]
+    if not names or not str(text or "").strip():
+        return False
+    try:
+        from jarvis.agentic_ide.intent import detect
+
+        if detect(text, names=names) is not None:
+            return True
+    except Exception:  # noqa: BLE001 - optional surface, never breaks planning
+        return False
+    try:
+        from jarvis.agentic_ide.clarify import detect_clarification
+
+        return detect_clarification(text, names=names) is not None
+    except Exception:  # noqa: BLE001 - optional surface, never breaks planning
+        return False
+
+
+def _is_workspace_retry(
+    text: str, context: Sequence[str], workspace_names: Sequence[str]
+) -> bool:
+    """Whether this turn says a pane briefing did not happen, or asks to retry.
+
+    A correction of the form "you never prompted it" names no pane, carries no
+    instruction and matches no vocabulary here — so the planner routed it
+    natively, the live model answered alone, and it apologised for a failure it
+    could not see and promised a delivery it could not make (BUG-121, voice
+    session 2026-07-29 17:04). The user said it twice; the second time only
+    worked by luck, because the model happened to call the action tool by
+    itself.
+
+    The sentence is only meaningful against the turn before it, so that is where
+    the evidence comes from: the complaint shape from the workspace's own
+    detector, the subject from a prior turn that WAS about a pane. Both halves
+    are required — a bare "try again" after a weather question is not workspace
+    work. Pure regex over in-memory text, no IO and no LLM. The failing live
+    sentences are pinned verbatim in
+    ``tests/unit/brain/test_agentic_ide_undelivered_retry.py``.
+    """
+    if not workspace_names or not str(text or "").strip():
+        return False
+    try:
+        from jarvis.agentic_ide.intent import reports_undelivered
+
+        if not reports_undelivered(text):
+            return False
+    except Exception:  # noqa: BLE001 - optional surface, never breaks planning
+        return False
+    context_text = " ".join(str(item or "") for item in context).strip()
+    if not context_text:
+        return False
+    if len(context_text) > _CONTEXT_MAX_CHARS:
+        context_text = context_text[-_CONTEXT_MAX_CHARS:]
+    return _is_workspace_turn(context_text, workspace_names)
+
+
 def is_contextual_follow_up(text: str, context: Sequence[str]) -> bool:
     """Return whether ``text`` explicitly refers to the bounded prior context."""
     normalized = _normalize(text).strip()
@@ -400,18 +483,51 @@ def plan_turn(
     tool_names: Iterable[str] = (),
     evidence_domains: Mapping[str, Sequence[str]] | None = None,
     context: Sequence[str] = (),
+    skill_index: Any | None = None,
+    workspace_names: Sequence[str] = (),
 ) -> TurnPlan:
     """Return the conservative shared execution plan for ``text``.
 
     Uncertainty is resolved toward the orchestrator because it can still
     answer conversationally, while a native realtime model cannot recover
     private or connected evidence it never received.
-    """
+
+    ``skill_index`` is an optional ``jarvis.skills.relevance.SkillMatchIndex``
+    — a frozen bag of dicts and frozensets exposing ``.rank()``, holding
+    no registry reference, no paths and no file handles. Passing it in (rather
+    than importing the skill package here) is what keeps this module's promise
+    of no model call, no disk access and no network structurally true, and
+    avoids dragging ``jarvis.skills``' eager package init into every early
+    import of the planner (AP-26).
+
+    Without it the planner falls back to its static vocabulary, which for skills
+    means the three literal trigger words in _SKILL_RE above — i.e. it has no idea
+    what is actually installed, so "starte die Morgenroutine" produced no skill
+    reason at all.
+
+    ``workspace_names`` is the live Agentic-IDE call-signs
+    (``agentic_ide.session.running_call_signs``). Like the skill index it is
+    passed IN rather than looked up, so this module keeps holding no registry
+    reference; see ``_is_workspace_turn`` for why a runtime-chosen name can
+    never be covered by the static vocabularies.
+    """  # i18n-allow: names the German trigger words the static branch matches
     normalized = _normalize(text).strip()
     if not normalized:
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
 
     reasons: set[TurnReason] = set()
+    # Checked before the suppressors and never dampened by them: a named pane
+    # is as strong as evidence gets, and the reason it must not be weakened is
+    # that its most ordinary phrasings are exactly the shapes the suppressors
+    # target: a question about what a pane has done reads as third-party
+    # smalltalk, and a modal asking whether a pane should do something reads as
+    # first-person deliberation. Both would be talked back down into a native
+    # answer the model cannot give.
+    workspace_turn = _is_workspace_turn(text, workspace_names) or _is_workspace_retry(
+        text, context, workspace_names
+    )
+    if workspace_turn:
+        reasons.add(TurnReason.WORKSPACE)
     definition = bool(_DEFINITION_RE.search(normalized))
     instructional = bool(_INSTRUCTIONAL_RE.search(normalized))
     # An instructional form asks for an explanation, even when the sentence
@@ -420,7 +536,10 @@ def plan_turn(
     # not execute the referenced action or fetch private/current evidence.
     # Return early so none of the conservative evidence heuristics below can
     # turn an advice question into an orchestrator-owned action.
-    if instructional:
+    #
+    # A named pane is the exception: "how do I get Dana to run the tests" asks
+    # about THIS workspace, and only the orchestrator can see what Dana is.
+    if instructional and not workspace_turn:
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
     required = () if definition or instructional else _matched_capabilities(
         text,
@@ -502,6 +621,31 @@ def plan_turn(
         reasons.add(TurnReason.MISSION)
     if _SKILL_RE.search(normalized) and not definition:
         reasons.add(TurnReason.SKILL)
+    elif skill_index is not None and not definition:
+        # Content-aware skill detection: ask the deterministic index whether an
+        # INSTALLED skill actually owns this utterance. Pure CPU, no IO. Only a
+        # FIRE-band hit counts — a NARROW candidate is a suggestion for the
+        # orchestrator's prompt, not a reason to pay a delegation.
+        #
+        # The band is derived here from the index's own corpus-relative
+        # threshold rather than asked of the index, because the band vocabulary
+        # lives in jarvis.skills.match_eval and having the scorer know about it
+        # would close an import cycle. The scorer ranks; callers decide.
+        try:
+            ranking = skill_index.rank(text, limit=1)
+            winner = ranking.top
+            if (
+                winner is not None
+                and winner.score >= ranking.fire_threshold
+                and ranking.clear_winner
+            ):
+                reasons.add(TurnReason.SKILL)
+                required = tuple(sorted({*required, f"skill:{winner.name}"}))
+        except Exception:  # noqa: BLE001
+            # Silent by design: this module has no logger and must stay free of
+            # side effects, and a scorer fault simply means the static
+            # vocabulary decides, exactly as before the index existed.
+            reasons.discard(TurnReason.SKILL)
 
     # Realtime follow-ups routinely omit the evidence domain and ASR may garble
     # the possessive itself. Inherit only when the current lookup contains an
@@ -601,6 +745,10 @@ def plan_turn(
                 TurnReason.CURRENT_DATA,
                 TurnReason.LOCAL_STATE,
                 TurnReason.PRIVATE_DATA,
+                # What the pane actually printed is evidence the live model
+                # never holds; answering "what has Dana done" without it is
+                # exactly the guess this whole path exists to prevent.
+                TurnReason.WORKSPACE,
             }
         ),
     )

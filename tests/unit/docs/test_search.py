@@ -129,6 +129,29 @@ def test_replace_all_keeps_previous_index_when_atomic_swap_fails(
     assert search.query("Replacement") == []
 
 
+def test_replace_all_retries_transient_windows_file_lock(
+    search: DocSearch,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_replace = search_module.os.replace
+    calls = 0
+
+    def transient_failure(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("simulated transient file lock")
+        real_replace(source, target)
+
+    monkeypatch.setattr(search_module.os, "replace", transient_failure)
+    monkeypatch.setattr(search_module.time, "sleep", lambda _delay: None)
+
+    search.replace_all([_doc("new", "New", "Replacement content")])
+
+    assert calls == 2
+    assert len(search.query("Replacement")) == 1
+
+
 # ----------------------------------------------------------------------
 # Query — Filter + BM25
 # ----------------------------------------------------------------------

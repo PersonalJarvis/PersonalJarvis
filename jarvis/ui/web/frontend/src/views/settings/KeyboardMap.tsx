@@ -3,6 +3,7 @@ import { codeToKeyToken, codeToModifierToken } from "@/hooks/useHotkey";
 import { useT } from "@/i18n";
 import {
   ARROW_ROWS,
+  MOUSE_CAPS,
   NAV_ROWS,
   mainRows,
   type KeyCap,
@@ -11,9 +12,10 @@ import {
 } from "./keyboardLayout";
 
 /** The bindable jarvis token for a cap, or null when it cannot be bound. */
-function capToken(cap: KeyCap): string | null {
+function capToken(cap: KeyCap, platform: KeyboardPlatform): string | null {
   if (cap.dead) return null;
-  return codeToModifierToken(cap.code) ?? codeToKeyToken(cap.code);
+  if (cap.token) return cap.token;
+  return codeToModifierToken(cap.code, platform) ?? codeToKeyToken(cap.code);
 }
 
 interface KeyboardMapProps {
@@ -26,28 +28,39 @@ interface KeyboardMapProps {
   platform: KeyboardPlatform;
   /** Toggle a bindable key in/out of the combo (click-to-assign). */
   onToggleToken: (token: string) => void;
+  /**
+   * Whether this host can bind a mouse button. False hides the cluster rather
+   * than offering a control that cannot work (Wayland, a Mac without pyobjc);
+   * ``mouseReason`` is the backend's English sentence saying why.
+   */
+  mouseSupported?: boolean;
+  mouseReason?: string;
 }
 
 function Key({
   cap,
+  platform,
   pressedCodes,
   selectedTokens,
   boundTokens,
   onToggleToken,
 }: {
   cap: KeyCap;
+  platform: KeyboardPlatform;
   pressedCodes: Set<string>;
   selectedTokens: Set<string>;
   boundTokens: Record<string, string>;
   onToggleToken: (token: string) => void;
 }) {
-  const t = useT();
-  const token = capToken(cap);
-  // The Windows key is reserved by the OS (the backend rejects every win+…
-  // combo), so offering it as clickable only manufactures a doomed save —
-  // render it like a dead key and say why in the tooltip.
-  const reserved = token === "win";
-  const bindable = token !== null && !reserved;
+  const token = capToken(cap, platform);
+  // Every key the backend can register is clickable — including the Meta key.
+  // It used to be drawn dead with a "reserved by the system" tooltip, on the
+  // premise that the OS claims it. That was wrong for this app: the Windows
+  // backend polls the key state instead of registering with the shell, so it
+  // sees Win combos like any other. Click-to-assign matters MOST for this key,
+  // because pressing it physically makes Windows open Start and pull focus out
+  // of the app mid-recording.
+  const bindable = token !== null;
   const pressed = pressedCodes.has(cap.code);
   const selected = bindable && selectedTokens.has(token);
   const boundLabel = bindable ? boundTokens[token] : undefined;
@@ -72,13 +85,7 @@ function Key({
       data-testid={`key-${cap.code}`}
       aria-label={cap.code}
       aria-pressed={selected}
-      title={
-        reserved
-          ? `${cap.label} — ${t("settings_view.keybinds.keyboard.reserved")}`
-          : boundLabel
-            ? `${cap.label} — ${boundLabel}`
-            : cap.label
-      }
+      title={boundLabel ? `${cap.label} — ${boundLabel}` : cap.label}
       disabled={!bindable}
       onClick={bindable ? () => onToggleToken(token) : undefined}
       style={{ flexGrow: cap.width ?? 1, flexBasis: 0 }}
@@ -94,12 +101,12 @@ function Key({
   );
 }
 
-function Row({
-  row,
-  ...rest
-}: {
-  row: KeyRow;
-} & Omit<KeyboardMapProps, "platform">) {
+type KeyProps = Pick<
+  KeyboardMapProps,
+  "pressedCodes" | "selectedTokens" | "boundTokens" | "platform" | "onToggleToken"
+>;
+
+function Row({ row, ...rest }: { row: KeyRow } & KeyProps) {
   return (
     <div className="flex gap-1">
       {row.map((cap) => (
@@ -122,9 +129,17 @@ export function KeyboardMap({
   boundTokens,
   platform,
   onToggleToken,
+  mouseSupported = true,
+  mouseReason,
 }: KeyboardMapProps) {
   const t = useT();
-  const keyProps = { pressedCodes, selectedTokens, boundTokens, onToggleToken };
+  const keyProps: KeyProps = {
+    pressedCodes,
+    selectedTokens,
+    boundTokens,
+    platform,
+    onToggleToken,
+  };
   const rows = useMemo(() => mainRows(platform), [platform]);
 
   return (
@@ -165,6 +180,29 @@ export function KeyboardMap({
               </div>
             ))}
           </div>
+
+          {/* Mouse buttons. Click-to-assign is the reliable path here: a side
+              button is Back/Forward in most apps and the middle button starts
+              autoscroll, so the physical press may be consumed before the
+              recorder sees it. */}
+          {mouseSupported ? (
+            <div className="flex gap-1">
+              {MOUSE_CAPS.map((cap) => (
+                <div key={cap.code} className="w-[3.25rem]">
+                  <Key cap={cap} {...keyProps} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            mouseReason && (
+              <p
+                data-testid="mouse-unavailable"
+                className="max-w-[10rem] text-[10px] leading-snug text-muted-foreground"
+              >
+                {mouseReason}
+              </p>
+            )
+          )}
         </div>
       </div>
 

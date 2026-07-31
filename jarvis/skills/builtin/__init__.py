@@ -40,6 +40,13 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-google_calendar",
     "plugin-google_drive",
     "plugin-vercel",
+    "plugin-todoist",
+    "plugin-clickup",
+    "plugin-dropbox",
+    "plugin-canva",
+    "plugin-airtable",
+    "plugin-cal_com",
+    "plugin-home_assistant",
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (

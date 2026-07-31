@@ -13,7 +13,10 @@ Endpoint (verified live 2026-07-02):
     headers the brain adapter also sends).
   * JSON body: ``{"model": "<id>", "input_audio": {"data": "<base64 RAW audio
     bytes, NOT a data-URI>", "format": "wav"}, "language": "<ISO-639-1>"?,
-    "temperature": <0-1>?}``.
+    "temperature": <0-1>?}``. Which of the optional fields a given model
+    accepts is a per-MODEL question the gateway answers with 400, so the body
+    is shaped by :mod:`jarvis.plugins.stt.capabilities` and narrowed on a
+    refusal rather than pinned to a lowest common denominator.
   * JSON response: ``{"text": "...", "usage": {"seconds": ..., "cost": ...,
     "total_tokens": ...?}}`` with an ``X-Generation-Id`` response header. No
     streaming — a single final ``Transcript`` is returned.
@@ -66,6 +69,33 @@ DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 # in the model dropdown; the picker only offers transcription-capable models.
 DEFAULT_MODEL = "openai/whisper-large-v3"
 
+# OpenRouter exposes vocabulary priming through provider-specific passthrough
+# options. Keep the same conservative ceiling as the direct Whisper adapters so
+# one dictionary cannot turn a transcription into a request-size failure.
+_MAX_PROMPT_CHARS = 1000
+
+#: The per-call ``language`` value that REQUESTS detection instead of a pinned
+#: language. Spelled out per plugin because plugins may not import ``jarvis.*``.
+AUTO_LANGUAGE = "auto"
+
+
+def _detect_or(language: str | None, configured: str | None) -> str | None:
+    """The language for ONE call. ``None`` means "let the model detect".
+
+    Three cases, and the middle one is the whole point:
+
+    * a concrete code (``"de"``) — transcribe as that language;
+    * ``"auto"`` — an explicit request to DETECT, which clears ``configured`` for
+      this call. Treating it as "no argument given" is what let dictation's auto
+      mode inherit ``[stt].language`` and write German speech in English
+      (live bug 2026-07-28);
+    * ``None`` / empty — no per-call opinion, so the configured pin stands.
+    """
+    if language is None or not str(language).strip():
+        return configured
+    return None if str(language).strip().lower() == AUTO_LANGUAGE else str(language)
+
+
 # The OpenRouter attribution headers (same values the brain adapter sends).
 _ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://github.com/PersonalJarvis",
@@ -80,6 +110,13 @@ class Transcript:
     Plugin code must not import from ``jarvis.*``; structural compatibility is
     sufficient because ``STTProvider`` is a ``runtime_checkable`` Protocol and
     consumers access the fields by name.
+
+    ``raw_text`` is additive and optional: it carries what the gateway returned
+    BEFORE the cleanup filter ran. Consumers that want the cleaned sentence keep
+    reading ``text`` and never notice it; the one caller that must not get a
+    cleaned string — the dictation lane, whose whole promise is "these are my
+    words" and which owns a user switch for filler removal — reads it through a
+    ``getattr`` default, so every other provider stays unchanged.
     """
 
     text: str
@@ -87,6 +124,7 @@ class Transcript:
     confidence: float
     is_partial: bool = False
     segments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    raw_text: str = ""
 
 
 class OpenRouterSTT:
@@ -111,7 +149,14 @@ class OpenRouterSTT:
         base_url: str | None = None,
         language: str | None = None,
         prompt: str | None = None,
-        temperature: float | None = None,
+        # 0.0 by DEFAULT, not "omit unless configured". Transcription is a
+        # measurement, and the same recording has to come back the same way
+        # twice — a gateway default that samples turns an unchanged dictation
+        # into a different sentence on every retry, which is exactly the kind of
+        # variance a user reads as "it got worse". The field is dropped
+        # automatically for a model that refuses it (see ``_post_transcription``),
+        # so the reproducibility costs no portability.
+        temperature: float | None = 0.0,
         timeout_s: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -122,15 +167,15 @@ class OpenRouterSTT:
         self._api_key = api_key or None
         self._api_key_is_explicit = bool(api_key)
         self._model = model or DEFAULT_MODEL
+        self._last_used_model = ""
+        self._last_usage_cost_usd: float | None = None
         self._base_url = base_url or None
         self._language = language if language and language != "auto" else None
-        # ``prompt`` (bias vocabulary) is accepted for STT-factory kwarg
-        # compatibility but NOT forwarded: the OpenRouter transcription endpoint
-        # exposes no documented bias-prompt parameter, and sending an
-        # unsupported field risks a hard 400 that silences the whole turn. It is
-        # stored only so a future API revision could opt in without a signature
-        # change.
-        self._prompt = (prompt or "").strip() or None
+        # The gateway exposes bias through provider-specific passthrough rather
+        # than a top-level field. Only the matched upstream receives it, and the
+        # request-shape downgrade below removes it when that model rejects it.
+        cleaned = (prompt or "").strip()
+        self._prompt = cleaned[:_MAX_PROMPT_CHARS] if cleaned else None
         self._temperature = temperature
         self._timeout_s = timeout_s
         self._client = http_client
@@ -141,6 +186,16 @@ class OpenRouterSTT:
     # ------------------------------------------------------------------
     # Public API (STTProvider contract + pipeline compat shims)
     # ------------------------------------------------------------------
+
+    @property
+    def last_used_model(self) -> str:
+        """Effective model that produced the latest successful transcript."""
+        return self._last_used_model
+
+    @property
+    def last_usage_cost_usd(self) -> float | None:
+        """Billed cost reported for the latest successful gateway response."""
+        return self._last_usage_cost_usd
 
     async def transcribe(self, audio: AsyncIterator[Any]) -> Transcript:
         """Collect audio chunks, upload once, return a final Transcript."""
@@ -158,7 +213,7 @@ class OpenRouterSTT:
         wav_bytes = _wrap_pcm_as_wav(
             b"".join(pcm_pieces), sample_rate=sample_rate, channels=channels
         )
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(wav_bytes, language=self._language)
 
     async def stream_transcribe(
         self, audio: AsyncIterator[Any]
@@ -178,19 +233,16 @@ class OpenRouterSTT:
         The speech pipeline delivers a full VAD-segmented utterance as raw int16
         PCM (mono, 16 kHz by default). We wrap it in a WAV container and POST it
         as a single JSON request.
+
+        ``language="auto"`` forces per-utterance detection for THIS call even
+        when a language is configured — see :func:`_detect_or`.
         """
         if not pcm_bytes:
             return Transcript(text="", language="unknown", confidence=0.0)
         wav_bytes = _wrap_pcm_as_wav(pcm_bytes, sample_rate=sample_rate, channels=1)
-        # Optional per-call language override (restore afterwards).
-        if language and language != "auto":
-            previous = self._language
-            self._language = language
-            try:
-                return await self._post_transcription(wav_bytes)
-            finally:
-                self._language = previous
-        return await self._post_transcription(wav_bytes)
+        return await self._post_transcription(
+            wav_bytes, language=_detect_or(language, self._language)
+        )
 
     def _ensure_model(self) -> None:
         """No-op compat shim — cloud STT has nothing to warm up.
@@ -258,42 +310,93 @@ class OpenRouterSTT:
         self._endpoint_url = base.rstrip("/") + "/audio/transcriptions"
         return self._endpoint_url
 
-    async def _post_transcription(self, wav_bytes: bytes) -> Transcript:
+    async def _post_transcription(
+        self, wav_bytes: bytes, *, language: str | None = None
+    ) -> Transcript:
+        """POST one upload, adapting the body to what the MODEL accepts.
+
+        The gateway fronts ~10 transcription backends whose contracts differ,
+        so the body is built from a per-model capability shape
+        (:mod:`jarvis.plugins.stt.capabilities`) and a 400 that names a field
+        narrows that shape and retries. That is what lets this plugin send a
+        temperature by DEFAULT: the field used to be omitted unless configured,
+        purely because one unsupported field would have cost the whole
+        utterance — and the cost of omitting it was a transcription that came
+        back differently every time the same audio was sent.
+        """
         import base64
 
-        url = self._ensure_endpoint()
-        body: dict[str, Any] = {
-            "model": self._model,
-            "input_audio": {
-                "data": base64.b64encode(wav_bytes).decode("ascii"),
-                "format": "wav",
-            },
-        }
-        if self._language:
-            body["language"] = self._language
-        # Temperature is omitted unless explicitly configured: keeping the body
-        # minimal maximises portability across the ~10 transcription backends the
-        # gateway fronts (some reject unexpected fields).
-        if self._temperature is not None:
-            body["temperature"] = float(self._temperature)
+        # Never let a previous successful request's cost leak into a failed
+        # evaluation sample. The harness reads this only after the call returns.
+        self._last_usage_cost_usd = None
 
+        url = self._ensure_endpoint()
+        encoded = base64.b64encode(wav_bytes).decode("ascii")
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             **_ATTRIBUTION_HEADERS,
         }
         client = self._get_client()
-        try:
-            response = await client.post(url, headers=headers, json=body)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"OpenRouter STT request failed (network/unreachable): {exc}"
-            ) from exc
 
-        if response.status_code >= 400:
+        from jarvis.plugins.stt.capabilities import (
+            MAX_REQUEST_DOWNGRADES,
+            error_text,
+            is_model_rejection,
+            log_model_fallback,
+            remember_shape,
+            resolve_shape,
+            shape_after_rejection,
+        )
+
+        model = self._model
+        shape = resolve_shape(self.name, model)
+        for _attempt in range(MAX_REQUEST_DOWNGRADES):
+            body: dict[str, Any] = {
+                "model": model,
+                "input_audio": {"data": encoded, "format": "wav"},
+            }
+            # Omitted entirely when None — that is what asks the model to detect
+            # the spoken language instead of decoding it as a pinned one.
+            if language and shape.language:
+                body["language"] = language
+            if self._temperature is not None and shape.temperature:
+                body["temperature"] = float(self._temperature)
+            if self._prompt and shape.prompt:
+                body["provider"] = {
+                    "options": {"groq": {"prompt": self._prompt}}
+                }
+
+            try:
+                response = await client.post(url, headers=headers, json=body)
+            except httpx.HTTPError as exc:
+                raise RuntimeError(
+                    f"OpenRouter STT request failed (network/unreachable): {exc}"
+                ) from exc
+
+            if response.status_code < 400:
+                payload = response.json()
+                transcript = _payload_to_transcript(payload)
+                self._last_used_model = model
+                self._last_usage_cost_usd = _payload_cost_usd(payload)
+                return transcript
+            if response.status_code != 400:
+                raise _http_error_to_runtime(response)
+
+            detail = error_text(response)
+            narrowed = shape_after_rejection(shape, detail)
+            if narrowed is not None:
+                remember_shape(self.name, model, narrowed)
+                shape = narrowed
+                continue
+            if model != DEFAULT_MODEL and is_model_rejection(detail, model):
+                log_model_fallback("OpenRouter", model, DEFAULT_MODEL, detail)
+                model = DEFAULT_MODEL
+                shape = resolve_shape(self.name, model)
+                continue
             raise _http_error_to_runtime(response)
-        payload = response.json()
-        return _payload_to_transcript(payload)
+
+        raise _http_error_to_runtime(response)
 
 
 # ----------------------------------------------------------------------
@@ -384,34 +487,24 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, channels: int) -> bytes:
 
 
 def _http_error_to_runtime(response: httpx.Response) -> RuntimeError:
-    """Map an HTTP error status to a clear English RuntimeError.
+    """Map an HTTP error status to a clear English, CLASSIFIABLE error.
 
     401 (bad/dead key), 402 (out of credit), 429 (rate limited) and any other
-    4xx/5xx all become a RuntimeError so the caller degrades honestly to the
-    local floor rather than bricking the STT tier (AP-22).
+    4xx/5xx all become an ``STTHTTPError`` — still a ``RuntimeError``, so the
+    caller degrades honestly to the local floor exactly as before (AP-22), but
+    now carrying the ``status`` and the server's ``Retry-After``. Without those
+    the pipeline's transient-error retry ladder was dead code for this plugin
+    (it could only read a status off the one provider that raised an
+    ``httpx.HTTPStatusError``), so an OpenRouter-key user lost the whole turn to
+    the first rate limit. The English wording is unchanged; only the type is.
     """
-    status = response.status_code
-    detail = ""
-    try:
-        payload = response.json()
-        if isinstance(payload, dict):
-            err = payload.get("error")
-            if isinstance(err, dict):
-                detail = str(err.get("message", "")).strip()
-            elif isinstance(err, str):
-                detail = err.strip()
-    except Exception:  # noqa: BLE001 — body may not be JSON
-        detail = (response.text or "").strip()[:200]
+    # Imported here, not at module top, to keep the plugin ``jarvis.*``-free at
+    # import time (the entry-point purity contract) — the same lazy seam the
+    # credential lookup uses. This runs only on an already-failed request, so
+    # the import costs nothing on the happy path.
+    from jarvis.plugins.stt.errors import http_error_from_response
 
-    reason = {
-        401: "invalid or missing OpenRouter API key",
-        402: "OpenRouter account out of credit",
-        429: "OpenRouter rate limit / quota exceeded",
-    }.get(status, f"OpenRouter STT HTTP {status}")
-    msg = f"OpenRouter STT failed: {reason}"
-    if detail:
-        msg = f"{msg} ({detail})"
-    return RuntimeError(msg)
+    return http_error_from_response(response, vendor="OpenRouter")
 
 
 def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
@@ -421,16 +514,46 @@ def _payload_to_transcript(payload: dict[str, Any]) -> Transcript:
     no per-segment timings or confidence, so confidence is a plain presence
     signal (1.0 when non-empty text, else 0.0) and segments stay empty — the
     same convention the Groq plugin uses when segments are absent.
+
+    The text is run through :func:`jarvis.plugins.stt.transcript_filter.clean_stt_text`
+    on the way in, which is the last point where the gateway's own artifacts —
+    a decoder repetition loop, a hesitation sound, a stutter, an outer quote
+    pair, NFD umlauts — can be removed before every consumer downstream starts
+    reading the string. The untouched payload text stays on ``raw_text``.
+
+    Confidence is computed from the RAW text, not the cleaned one. The two only
+    diverge when cleanup emptied the string, and that is a cleanup defect, not
+    a silent utterance — reporting 0.0 there would hand the pipeline a "nothing
+    was said" verdict about audio that contained speech.
     """
-    text = str(payload.get("text", "")).strip()
+    raw = str(payload.get("text", "")).strip()
     language = str(payload.get("language", "") or "unknown") or "unknown"
+    # Local import: the module top must stay ``jarvis.*``-free (entry-point
+    # purity), the same lazy seam the credential lookup and the error mapper
+    # already use.
+    from jarvis.plugins.stt.transcript_filter import clean_stt_text
+
+    text = clean_stt_text(raw, language=language)
     return Transcript(
         text=text,
         language=language,
-        confidence=1.0 if text else 0.0,
+        confidence=1.0 if raw else 0.0,
         is_partial=False,
         segments=(),
+        raw_text=raw,
     )
+
+
+def _payload_cost_usd(payload: dict[str, Any]) -> float | None:
+    """Return OpenRouter's billed USD amount when the response carries one."""
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    try:
+        value = float(usage.get("cost"))
+    except (TypeError, ValueError):  # optional telemetry: malformed means absent
+        return None
+    return value if value >= 0.0 else None
 
 
 __all__ = [

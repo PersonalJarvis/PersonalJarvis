@@ -51,6 +51,11 @@ DRAG_THRESHOLD_PX = 16
 MARGIN_PX = 12
 TASKBAR_GAP_PX = 8
 HANGUP_CLICK_GUARD_S = 1.0
+# How long after a file drop the bar keeps ignoring clicks. Mirrors the Tk bar's
+# value for the same reason it exists there: a drop and a deliberate click on
+# the close-X are both "pointer down on the bar", and reading the first as the
+# second hangs up the call the user was in the middle of.
+DROP_CLICK_QUIET_S = 0.6
 _IDLE_SETTLE_TICKS = 30
 
 # Cursor-monitor follow poll (ms). When enabled, the bar hops to whichever
@@ -324,6 +329,36 @@ def _window_class() -> type:
             self.setMouseTracking(True)
             self.setFixedSize(renderer.WIN_W, renderer.WIN_H)
             self.setWindowOpacity(owner._opacity)
+            # Drag-drop onto the bar. The Tk bar gets this from tkdnd; on macOS
+            # this window IS the bar, so without these four handlers dropping a
+            # file on it did nothing at all while the same gesture worked on
+            # Windows and Linux — an OS-parity gap, not a missing extra.
+            self.setAcceptDrops(True)
+
+        # ------------------------------------------------------------------ #
+        # Drag-drop (parity with the Tk bar's tkdnd path)                     #
+        # ------------------------------------------------------------------ #
+        def dragEnterEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
+            if self._owner._drag_carries_drop(event.mimeData()):
+                self._owner._set_drop_active(True)
+                event.acceptProposedAction()
+                return
+            event.ignore()
+
+        def dragMoveEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
+            if self._owner._drag_carries_drop(event.mimeData()):
+                event.acceptProposedAction()
+                return
+            event.ignore()
+
+        def dragLeaveEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
+            self._owner._set_drop_active(False)
+            event.accept()
+
+        def dropEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
+            self._owner._set_drop_active(False)
+            self._owner._deliver_drop_ui(event.mimeData())
+            event.acceptProposedAction()
 
         def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
             del event
@@ -403,7 +438,7 @@ class QtJarvisBarOverlay:
         self._last_level_rx_t = 0.0
         self._muted = False
         self._hovered = False
-        self._static_tick_key: tuple[str, bool, bool] | None = None
+        self._static_tick_key: tuple[str, bool, bool, str] | None = None
         self._static_tick_count = 0
         self._hangup_click_block_until = 0.0
 
@@ -445,6 +480,16 @@ class QtJarvisBarOverlay:
         self._rel_pos: tuple[float, float] | None = None
         self._cur_work: GeometryBounds | None = None
         self._drag: dict[str, Any] | None = None
+        # Set while a file drag hovers the bar, plus a short tail after it lands
+        # — see ``_set_drop_active``. Qt UI thread only, so no lock is involved.
+        self._drop_active = False
+        self._drop_quiet_until = 0.0
+        # What the bar SHOWS about a drop (renderer.DROP_STATE_*) and when the
+        # current verdict started. Separate from ``_drop_active``, which governs
+        # click suppression and ends when the payload lands — the visible
+        # confirmation has to outlive it. Qt UI thread only.
+        self._drop_visual = renderer.DROP_STATE_NONE
+        self._drop_visual_t0 = 0.0
 
         self._on_mute_toggle: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
@@ -701,14 +746,21 @@ class QtJarvisBarOverlay:
                 # here, so recent real level samples are the truthful signal.
                 playback_active=False,
             )
-            tick_key = (effective_mode, self._hovered, self._muted)
+            # Drag-drop feedback animates (pulsing rim, a tick that strokes on
+            # and fades), so it joins the tick key AND vetoes the idle skip.
+            # Without the veto the confirmation is never seen: a settled idle
+            # bar skips exactly the frames the tick would live in.
+            drop_visual = self._current_drop_visual()
+            tick_key = (effective_mode, self._hovered, self._muted, drop_visual)
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
                 self._static_tick_count = 0
             else:
                 self._static_tick_count += 1
             settled_idle = (
-                effective_mode == "idle" and self._static_tick_count >= _IDLE_SETTLE_TICKS
+                effective_mode == "idle"
+                and drop_visual == renderer.DROP_STATE_NONE
+                and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
             if settled_idle:
                 return
@@ -722,6 +774,8 @@ class QtJarvisBarOverlay:
                 ),
                 hovered=self._hovered,
                 muted=self._muted,
+                drop_state=drop_visual,
+                drop_elapsed=now - self._drop_visual_t0,
             )
             rgba_frame = renderer.key_to_alpha(pil_frame)
             input_mask_key = rgba_frame.getchannel("A").tobytes()
@@ -1285,8 +1339,104 @@ class QtJarvisBarOverlay:
         self._persist_position_ui()
         return True
 
+    # ---------------------------------------------------------------- #
+    # Drag-drop onto the bar (parity with the Tk bar's tkdnd path)      #
+    # ---------------------------------------------------------------- #
+    def _drag_carries_drop(self, mime: Any) -> bool:
+        """True when this drag holds something the bar can actually take.
+
+        Files first, then text. A drag carrying neither is refused outright so
+        the cursor says "no drop" instead of promising something the bar would
+        then silently discard.
+        """
+        try:
+            return bool(mime is not None and (mime.hasUrls() or mime.hasText()))
+        except Exception:  # noqa: BLE001 — a malformed drag is simply not ours
+            return False
+
+    def _set_drop_active(self, active: bool) -> None:
+        """A file drag is over the bar, or has just landed on it.
+
+        Arms the same click stand-down the Tk bar uses: during a drop the
+        pointer genuinely IS on the bar, so position alone cannot separate the
+        drop from a deliberate close-X click, and the trailing quiet window
+        covers a release delivered just after the drop.
+        """
+        if active:
+            self._drop_active = True
+            self._set_drop_visual_ui(renderer.DROP_STATE_ARMED)
+            return
+        self._drop_active = False
+        self._drop_quiet_until = time.monotonic() + DROP_CLICK_QUIET_S
+        # A drag that leaves without landing must stop the rim pulsing; a
+        # verdict already on screen wins (the landing drop reports False here
+        # too, and clearing then would erase the confirmation immediately).
+        if self._drop_visual == renderer.DROP_STATE_ARMED:
+            self._set_drop_visual_ui(renderer.DROP_STATE_NONE)
+
+    def _set_drop_visual_ui(self, state: str) -> None:
+        """Switch the visible drop state and repaint promptly (Qt UI thread)."""
+        self._drop_visual = state
+        self._drop_visual_t0 = time.perf_counter()
+        self._invalidate_static_frame()
+
+    def _current_drop_visual(self) -> str:
+        """The drop state to render now, expiring a finished confirmation.
+
+        The renderer holds no clock of its own, so the surface retires a
+        verdict once its animation has run out — which also releases the
+        fast-path veto and lets a resting bar settle again.
+        """
+        state = self._drop_visual
+        if state in (renderer.DROP_STATE_OK, renderer.DROP_STATE_REJECTED):
+            if time.perf_counter() - self._drop_visual_t0 >= renderer.DROP_CONFIRM_TOTAL_S:
+                self._drop_visual = renderer.DROP_STATE_NONE
+                return renderer.DROP_STATE_NONE
+        return state
+
+    def notify_drop_result(self, accepted: bool) -> None:
+        """Show the verdict of a drop this bar delivered. Thread-safe.
+
+        On macOS the verdict travels from the parent process over the host
+        protocol, so this is reached from the stdin reader thread and marshals
+        onto the Qt UI thread like every other cross-thread mutation.
+        """
+        state = (
+            renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
+        )
+        self._enqueue_if_started(lambda s=state: self._set_drop_visual_ui(s))
+
+    def _deliver_drop_ui(self, mime: Any) -> None:
+        """Hand a dropped payload to the process-global drop bridge.
+
+        Runs on the Qt UI thread and must never raise out of an event handler:
+        an exception here would take the overlay's event loop with it.
+        """
+        try:
+            paths: list[str] = []
+            if mime is not None and mime.hasUrls():
+                for url in mime.urls():
+                    local = url.toLocalFile()
+                    if local:
+                        paths.append(local)
+            text = ""
+            if not paths and mime is not None and mime.hasText():
+                text = (mime.text() or "").strip()
+            if not paths and not text:
+                return
+
+            from jarvis.overlay.drop_bridge import dispatch_drop
+
+            log.info("Qt bar DROP received: %d file(s), text=%s", len(paths), bool(text))
+            dispatch_drop(paths, text)
+        except Exception:  # noqa: BLE001 — a drop must never wedge the Qt loop
+            log.debug("Qt bar drop handling failed", exc_info=True)
+
     def _dispatch_click_ui(self, click_x: float, *, hovered: bool | None = None) -> str:
         if time.monotonic() < self._hangup_click_block_until:
+            return "none"
+        if self._drop_active or time.monotonic() < self._drop_quiet_until:
+            log.debug("Qt bar: ignoring click (a file drop is in flight)")
             return "none"
         is_hovered = self._hovered if hovered is None else bool(hovered)
         active = self._mode in ("listen", "think", "speak")

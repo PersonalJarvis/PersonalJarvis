@@ -67,11 +67,11 @@ def _manager(*, contacts: Any = None, tools: dict[str, Any] | None = None) -> Br
 # 1) Name-index injection
 # --------------------------------------------------------------------------- #
 def test_contacts_name_index_appears_in_system_prompt() -> None:
-    contacts = _FakeContacts("## Contacts\n- Christoph (friend)\n- Laura (colleague)")
+    contacts = _FakeContacts("## Contacts\n- Christoph (friend)\n- Casey (colleague)")
     prompt = _manager(contacts=contacts)._build_system_prompt()
     assert "## Contacts" in prompt
     assert "Christoph" in prompt
-    assert "Laura" in prompt
+    assert "Casey" in prompt
 
 
 def test_no_contacts_block_when_store_absent() -> None:

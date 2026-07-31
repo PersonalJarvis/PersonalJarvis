@@ -79,7 +79,7 @@ def extract_wikilinks(body: str) -> tuple[str, ...]:
 
     The returned strings are in *canonical form*: the alias (the part
     after ``|``) is stripped, but any directory prefix is preserved.
-    Duplicates are kept — a page that references ``[[ruben]]`` twice
+    Duplicates are kept — a page that references ``[[alex]]`` twice
     yields a 2-tuple. Escaped links (``\\[[ignored]]``), empty links
     (``[[]]``), and links inside inline code or fenced code blocks are
     not returned.
@@ -128,7 +128,7 @@ def resolve_wikilink(link: str, vault_root: Path) -> Path | None:
 def _canonicalise(raw: str) -> str:
     """Strip alias and whitespace from a wikilink body.
 
-    ``"entities/ruben|the user"`` → ``"entities/ruben"``.
+    ``"entities/alex|the user"`` → ``"entities/alex"``.
     Empty or whitespace-only results return ``""``.
     """
     if not raw:

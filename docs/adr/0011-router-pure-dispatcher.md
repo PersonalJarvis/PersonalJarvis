@@ -978,3 +978,79 @@ supervisor, and it never enters a legacy worker tier or direct worker tool set
 - `tests/unit/plugins/tool/test_wiki_list.py`
 - `tests/unit/plugins/tool/test_wiki_tools.py` (meta-page warning)
 - `tests/unit/brain/test_routing.py` (ROUTER_TOOLS parity)
+
+---
+
+## Amendment 2026-07-25 — `home_assistant` router tool
+
+### Context
+
+Home Assistant is the connector where "assistant" is the literal use case:
+lights, heating, doors, scenes. It reached the catalog as a `pat_paste` plugin
+with a per-connection instance address, so the question was how a connected
+smart home becomes callable by voice.
+
+Its MCP integration is not the answer. Home Assistant has explicitly declined
+RFC 7591 dynamic client registration, and its MCP server is deliberately scoped
+to Home Assistant's own Assist pipeline — it exposes conversation, not the
+entity and service surface an external assistant needs. The documented REST API
+does expose exactly that.
+
+### Decision
+
+`ROUTER_TOOLS` gains `home_assistant`
+(`jarvis/plugins/tool/home_assistant_rest.py::HomeAssistantRestTool`): list
+entities (optionally by domain), read one entity's state, and call a service.
+
+Two properties are load-bearing:
+
+- **The server address is per-connection state**, stored in
+  `Tokens.extra["instance_url"]` beside the credential rather than hardcoded.
+  Home Assistant runs on the user's own network; there is no canonical
+  endpoint, and the `.local` hostname does not resolve inside Docker or over a
+  VPN.
+- **risk_tier is `ask`, not `monitor`.** Every other native marketplace tool is
+  read-focused. This one physically changes the user's home. Turning off the
+  wrong light is recoverable; unlocking a door is not, so the safety layer
+  decides rather than the tool.
+
+The router remains a pure dispatcher: this is a direct gated action, never a
+spawn, and it never enters a worker tool set (AP-5/AP-14). Jarvis-Agents reach
+it only through ADR-0025's mission-scoped supervisor broker.
+
+### Consequences
+
+The long-lived access token is valid for ten years with no rotation, which
+makes this the most durable connection in the catalog — and the reason the
+setup text asks for a dedicated non-admin Home Assistant user, since the token
+inherits every permission of whoever created it.
+
+Reachability, not authentication, is the honest limitation: a headless Jarvis
+on a server cannot see a home LAN without a remote URL or a tunnel. The tool
+reports that as a network problem instead of implying a bad credential.
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_home_assistant_rest.py`
+- `tests/unit/marketplace/test_instance_url.py`
+- `tests/unit/brain/test_routing.py` (ROUTER_TOOLS parity)
+
+## Amendment: UltraWiki Search (2026-07-25)
+
+`ultrawiki-search` joins `ROUTER_TOOLS`: the read-only pull primitive over
+the UltraWiki semantic store (fused keyword + vector retrieval with citation
+permalinks, `jarvis/plugins/tool/ultrawiki_search.py`). Direct safe-gated
+read, never a spawn (AP-5/AP-14). Resolver-not-instance wiring (the
+UltraWikiService is built by the WebServer after the brain — the wiki-ingest
+lazy-curator precedent); the tool loads even while UltraWiki mode is
+disabled and answers with an honest steer to the classic `wiki-*` tools, so
+the router's tool surface stays stable across mode toggles. Mission workers
+reach it only through the ADR-0025 broker grant once the ADR-0030 gate is
+live. A dedicated `who_is` primitive stays DEFERRED until the UltraWiki P5
+identity layer exists; until then `ultrawiki-search` answers "who is X"
+queries via hybrid search.
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_ultrawiki_search_tool.py`
+- `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)

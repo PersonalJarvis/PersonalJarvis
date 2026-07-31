@@ -56,9 +56,18 @@ def test_render_structured_prompt_keeps_system_and_user_verbatim() -> None:
         ),
     )
     prompt = render_structured_prompt(req)
-    assert prompt.startswith("Return ONLY a single JSON array.")
+    assert "Return ONLY a single JSON array." in prompt
     assert "Source content." in prompt
     assert "never included" not in prompt  # assistant turns are not payload
+    # A no-tools preamble frames the call, but the caller's contract must stay
+    # AFTER it: these models weight the end of a prompt most heavily, and the
+    # contract is the instruction that has to win.
+    assert prompt.index("Do not read files") < prompt.index(
+        "Return ONLY a single JSON array."
+    )
+    assert prompt.index("Return ONLY a single JSON array.") < prompt.index(
+        "Source content."
+    )
 
 
 def test_extracts_trailing_mandatory_directive() -> None:

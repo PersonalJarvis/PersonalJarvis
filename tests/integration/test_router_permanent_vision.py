@@ -28,8 +28,30 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _no_screen_context(monkeypatch: pytest.MonkeyPatch):
+    """Keep Screen Context out of this file, deterministically.
+
+    ``RouterBrain.handle`` consults ``jarvis.screen_context`` before the
+    permanent-vision path and takes precedence on an explicit look-request,
+    which some utterances here are. Left alone, these tests would pass or fail
+    depending on whether the host running them has a screen — captured on a dev
+    box, unavailable in headless CI.
+
+    These cases pin the permanent-vision path itself; Screen Context precedence
+    is covered by ``tests/unit/brain/test_router_screen_context.py``.
+    """
+    from jarvis.screen_context.turn import TurnScreenContext
+
+    async def _none(*_args: Any, **_kwargs: Any) -> TurnScreenContext:
+        return TurnScreenContext(status="none")
+
+    monkeypatch.setattr("jarvis.screen_context.turn.screen_context_for_turn", _none)
+    return None
+
+
 # ======================================================================
-# Gemeinsame Fakes
+# Shared fakes
 # ======================================================================
 
 
@@ -171,7 +193,9 @@ async def test_router_handle_includes_image():
         )
         router.manager._brain_cache[("fake", "fake")] = _FakeBrain()
         recorder = _RecordingDispatcher()
-        router.manager._build_dispatcher = lambda _b: recorder  # type: ignore[method-assign]
+        router.manager._build_dispatcher = (  # type: ignore[method-assign]
+            lambda _b, **_kwargs: recorder
+        )
 
         [_ async for _ in router.handle("was siehst du")]
 
@@ -257,7 +281,9 @@ async def test_privacy_pause_drops_image():
                              tool_executor=object(), vision_provider=provider)
         router.manager._brain_cache[("fake", "fake")] = _FakeBrain()
         recorder = _RecordingDispatcher()
-        router.manager._build_dispatcher = lambda _b: recorder  # type: ignore[method-assign]
+        router.manager._build_dispatcher = (  # type: ignore[method-assign]
+            lambda _b, **_kwargs: recorder
+        )
 
         provider.pause()
 

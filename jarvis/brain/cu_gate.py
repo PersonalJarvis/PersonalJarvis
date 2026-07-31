@@ -63,6 +63,39 @@ _UMLAUT_TRANSLITERATION = str.maketrans(
 )
 
 
+# Tech proper names and terms of art that merely CONTAIN a vehicle token.
+# Masked out of the turn before the vehicle match runs, so a product name can
+# never read as an on-screen command. Live incident 2026-07-27 11:52 (voice
+# session 57cc5f5f): "…BGE-M3 und Gemini oder Open AI  # i18n-allow: live quote
+# Embedding 3 Large, was der Unterschied?" — a pure  # i18n-allow: quote cont.
+# model-comparison question. The provider name
+# "Open AI" matched the English open-verb, the gate allowed, and the router's
+# computer_use call took a screenshot and started driving the desktop.
+#
+# This is the same defect class the local-action gate fixed on 2026-07-10
+# ("OpenRouter-Zugang checkst" read as "open X and Y"); the fix never reached
+# this gate. Masking beats inlining negative lookaheads: the vehicle pattern
+# below is already dense, and every entry here carries its own reason.
+#
+# The mask is deliberately narrow — only multi-token names where the vehicle
+# token is provably part of the NAME. A bare "Edge"/"Windows"/"Programm" stays
+# a vehicle noun, because "mach den Edge zu" is a real desktop command.
+_PRODUCT_NAME_NOISE_RE: re.Pattern[str] = re.compile(
+    # "open" as a brand/license prefix, never the imperative verb. Written
+    # with an optional space so both "openai" and "Open AI" are covered.
+    r"\bopen[-\s]?(?:ai|router|source|weights?|models?|web[-\s]?ui|interpreter"
+    r"|claw\w*|wake[-\s]?word|cv|ssl|vino|telemetry|street[-\s]?map)\b"
+    # "window" as a model/attention term, never the desktop object.
+    # i18n-allow: German/Spanish speech-input matching data
+    r"|\b(?:context|kontext|contexto|sliding|rolling|attention|token)"
+    r"[-\s]?(?:windows?|ventanas?)\b"
+    # "edge" as an engineering term, never the browser.
+    r"|\bedge[-\s]?(?:cases?|computing|functions?|runtimes?|deployments?)\b"
+    r"|\bcutting[-\s]?edge\b",
+    re.IGNORECASE,
+)
+
+
 # Explicit desktop-vehicle vocabulary (DE/EN/ES) — speech-input matching data.
 #
 # Deliberate exclusions (each one is a live trap):
@@ -73,12 +106,16 @@ _UMLAUT_TRANSLITERATION = str.maketrans(
 #   only when not preceded by a question/genitive word.
 # * "google"/"search"/"such": search intent belongs to search_web, never to
 #   the desktop — "google das im Browser" still passes via "browser".
+# * bare "open\w*": it swallowed every "Open…" product name as an open-verb
+#   (see _PRODUCT_NAME_NOISE_RE). Pinned to the real English conjugations,
+#   exactly like ``_OPEN_VERB_RE`` in jarvis/brain/local_action_gate.py.
 _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
     r"(?:"
     # --- action verbs (en) ---
-    r"\bopen\w*\b|\blaunch\w*\b|\bclick\w*\b|\bdouble-?click\w*\b|\btap\b"
+    r"\bopen(?:s|ed|ing)?\b|\blaunch\w*\b|\bclick\w*\b|\bdouble-?click\w*\b|\btap\b"
     r"|\bscroll\w*\b|\bdrag\w*\b|\bhover\b|\bpress\w*\b|\bpaste\b"
     r"|\bminimi[sz]e\b|\bmaximi[sz]e\b|\bnavigate\b|\bbrowse\b"
+    r"|\brefresh\w*\b|\breload\w*\b"
     r"|\blog\s?in\b|\bsign\s?in\b|\bgo\s+to\b"
     r"|(?<!what )(?<!which )(?<!of )\btype\b"
     r"|\bstart(?:s|ed|ing)?\s+(?:up\s+)?(?:the|a|an|my)\b"
@@ -86,12 +123,14 @@ _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
     r"|\boeffn\w*|\baufmach\w*|\bklick\w*|\btipp\w*|\bscroll\w*"
     r"|\bzieh\w*\b|\bdrueck\w*|\bschliess\w*|\bnavigier\w*|\beinfueg\w*"
     r"|\bstart(?:e|et|en)\b"
+    r"|\baktualisier\w*\b|\bneu\s+lad\w*\b"
     r"|\bmach\w*\b[^.?!]{0,40}\b(?:auf|zu)\b"
     r"|\bgeh\w*\s+(?:auf|zu|in)\b"
     r"|\blogg\w*\b"
     # --- action verbs (es) ---  # i18n-allow: Spanish speech-input matching data
     r"|\babr(?:e|a|as|ir)\b|\bcli(?:c|ca|quea)\b|\bpincha\w*|\bpulsa\w*"
     r"|\btecle\w*|\bdesplaz\w*|\barrastr\w*|\bpega\b|\bcierr\w*|\bnaveg\w*"
+    r"|\bactualiz\w*|\brecarg\w*"
     # --- screen/app/browser nouns (en/de/es share most brand tokens) ---
     r"|\bscreen\w*|\bdesktop\b|\bbrowser\w*|\bchrome\b|\bsafari\b"
     r"|\bfirefox\b|\bedge\b|\btabs?\b|\bwindows?\b|\bmouse\b|\bcursor\w*"
@@ -112,7 +151,15 @@ _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
 
 
 def _normalized(text: str) -> str:
-    return (text or "").casefold().translate(_UMLAUT_TRANSLITERATION)
+    """Casefold + transliterate, then blank out tech proper names.
+
+    The mask runs BEFORE the vehicle match so a product name ("Open AI",
+    "context window", "edge case") can never be read as an on-screen command.
+    It substitutes a space, not the empty string, so the surrounding words keep
+    their boundaries and a genuine command in the same turn still matches.
+    """
+    folded = (text or "").casefold().translate(_UMLAUT_TRANSLITERATION)
+    return _PRODUCT_NAME_NOISE_RE.sub(" ", folded)
 
 
 def llm_computer_use_allowed(user_text: str) -> bool:

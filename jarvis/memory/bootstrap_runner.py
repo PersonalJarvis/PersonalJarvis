@@ -87,21 +87,21 @@ _FAREWELL = (
 # Parser regexes
 # ----------------------------------------------------------------------
 
-# "Ich heisse Ruben", "ich heiße ruben", "mein Name ist Ruben Lütke",  # i18n-allow
-# "ich bin Harald". Case-insensitive. Capture group = name remainder.
+# "Ich heisse Alex", "ich heiße alex", "mein Name ist Alex Morgan",  # i18n-allow
+# "ich bin Morgan". Case-insensitive. Capture group = name remainder.
 _NAME_INTRO_RE = re.compile(
     r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",  # i18n-allow
     re.IGNORECASE,
 )
 
-# "Nenn mich Ruben", "ruf mich X", "call me X" — explicit form-of-address preference
+# "Nenn mich Alex", "ruf mich X", "call me X" — explicit form-of-address preference
 _ADDRESS_RE = re.compile(
     r"(?:nenn(?:e)?\s+mich|ruf(?:e)?\s+mich|call\s+me|sag(?:e)?\s+(?:einfach\s+)?)\s+(.+)",
     re.IGNORECASE,
 )
 
-# Strip trailing junk after the actual name (e.g. "Ruben, aber nenn
-# mich gerne Rube" → we want "Ruben"). Cut at first comma / " aber ".
+# Strip trailing junk after the actual name (e.g. "Alex, aber nenn
+# mich gerne Rube" → we want "Alex"). Cut at first comma / " aber ".
 _NAME_TRAIL_RE = re.compile(r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+", re.IGNORECASE)  # i18n-allow
 
 # Language keywords → ISO-639-1. Key match is case-insensitive substring.
@@ -295,7 +295,7 @@ class BootstrapRunner:
         if ma:
             address_candidate = ma.group(1).strip()
             # If _NAME_INTRO_RE found nothing but the user wrote
-            # "Ich bin Ruben, nenn mich Rube": the address group can overlap the
+            # "Ich bin Alex, nenn mich Rube": the address group can overlap the
             # name — we keep both.
 
         # Remove trailing junk (comma, "aber ...", "und ...")  # i18n-allow
@@ -423,9 +423,9 @@ def _trim_name(raw: str | None) -> str:
     """Strips trailing junk after the name and capitalizes it.
 
     Examples (real German voice input the parser must handle):
-        "ruben, aber nenn mich rube" → "Ruben"  # i18n-allow
-        "Ruben Lütke"                → "Ruben Lütke"  # i18n-allow
-        "  harald  "                 → "Harald"
+        "alex, aber nenn mich rube" → "Alex"  # i18n-allow
+        "Alex Morgan"                → "Alex Morgan"  # i18n-allow
+        "  morgan  "                 → "Morgan"
     """
     if not raw:
         return ""
@@ -561,9 +561,9 @@ if __name__ == "__main__":  # pragma: no cover
         assert _QUESTIONS[0] in greeting
 
         # --- Stage 0 → 1: name ---
-        r = runner.handle_answer("Ich heisse Ruben, aber nenn mich Rube")
-        print(f"[A1] Ruben -> next: {r}")
-        assert profile.get("identity", "name") == "Ruben", profile.get("identity", "name")
+        r = runner.handle_answer("Ich heisse Alex, aber nenn mich Rube")
+        print(f"[A1] Alex -> next: {r}")
+        assert profile.get("identity", "name") == "Alex", profile.get("identity", "name")
         assert profile.get("identity", "preferred_address") == "Rube"
         assert r == _QUESTIONS[1]
 
@@ -603,7 +603,7 @@ if __name__ == "__main__":  # pragma: no cover
 
         # Reload from disk → round-trip is consistent
         reloaded = UserProfile.load(ws.user_path)
-        assert reloaded.get("identity", "name") == "Ruben"
+        assert reloaded.get("identity", "name") == "Alex"
         assert reloaded.get("identity", "preferred_address") == "Rube"
         assert reloaded.get("communication", "directness") == 5
 

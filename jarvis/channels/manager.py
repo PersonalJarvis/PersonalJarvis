@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · maintainer-2026-04-30 ===
 """ChannelManager: discovery + lifecycle for all registered channels.
 
 Analogous to :class:`jarvis.harness.manager.HarnessManager`, but for channels.

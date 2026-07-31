@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { WSClient } from "@/lib/ws";
+import { deliverDictationText, isForThisWindow } from "@/lib/dictationTarget";
 import {
   SECTION_LABELS,
   isSectionId,
@@ -109,6 +110,31 @@ export function useWebSocket(): void {
           payload: env.payload,
         });
 
+        if (env.event_name === "ScreenCaptureAnnounced") {
+          pushToast("info", translate("settings_view.screen_context.capturing"));
+        }
+
+        if (env.event_name === "ScreenCaptureCompleted") {
+          const payload = env.payload as {
+            width?: unknown;
+            height?: unknown;
+            redaction_count?: unknown;
+          };
+          const width = typeof payload.width === "number" ? payload.width : 0;
+          const height = typeof payload.height === "number" ? payload.height : 0;
+          const redactions =
+            typeof payload.redaction_count === "number"
+              ? payload.redaction_count
+              : 0;
+          pushToast(
+            "success",
+            translate("settings_view.screen_context.completed")
+              .replace("{0}", String(width))
+              .replace("{1}", String(height))
+              .replace("{2}", String(redactions)),
+          );
+        }
+
         // Live reasoning trace: while the text chat is waiting on a reply,
         // turn-progress events (tools, computer-use, worker dispatch, ...)
         // become visible thinking steps. Gated on chatThinking inside the
@@ -215,16 +241,44 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "DictationTranscript") {
-          // Chat mic-dictation — transcribe-only. Interim partials overwrite the
-          // live tail; the final one is committed (appended to the chat input).
-          // Separate from TranscriptionUpdate so live-voice transcripts never
-          // leak into the text box. Uses getState() to stay out of the deps array.
-          const p = env.payload as { text?: string; is_final?: boolean };
+          // In-app dictation. Interim partials overwrite the live tail; the
+          // final one is delivered. Separate from TranscriptionUpdate so
+          // live-voice transcripts never leak into a text box. Uses getState()
+          // to stay out of the deps array.
+          const p = env.payload as {
+            text?: string;
+            is_final?: boolean;
+            target?: string;
+          };
           const text = typeof p.text === "string" ? p.text : "";
-          if (p.is_final) {
-            useEventStore.getState().commitDictation(text);
-          } else {
+          if (!p.is_final) {
             useEventStore.getState().setDictationInterim(text);
+          } else {
+            const store = useEventStore.getState();
+            const forThisWindow = isForThisWindow(p, store.dictating);
+            const delivered = forThisWindow
+              ? deliverDictationText(text)
+              : "none";
+            if (delivered !== "none") {
+              // Straight into the field or terminal, so no sequence bump for
+              // the composer — just drop the live tail.
+              store.setDictationInterim("");
+            } else {
+              // The composer is the historical sink and still the right
+              // fallback. It only exists on the Chats section, though, and
+              // handing a transcript to a component that is not there is
+              // exactly how a dictation used to vanish without a word (see
+              // lib/dictationTarget.ts). So when the words were meant for this
+              // window and nothing at all could take them, say so rather than
+              // reporting a delivery that did not happen.
+              store.commitDictation(text);
+              if (
+                forThisWindow &&
+                !document.querySelector("[data-jarvis-chat-input]")
+              ) {
+                pushToast("info", translate("use_web_socket.dictation_nowhere"));
+              }
+            }
           }
         }
 
@@ -254,6 +308,59 @@ export function useWebSocket(): void {
         if (env.event_name === "SecretConfigured") {
           // Trigger only — ApiKeysView refreshes its own provider list.
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
+        }
+
+        if (
+          env.event_name === "AgenticIdeTerminalsAdded" ||
+          env.event_name === "AgenticIdeTerminalsClosed" ||
+          // A whole workspace opened, was restored after a restart, came to the
+          // front, or closed. Same treatment as a pane change and for a
+          // stronger reason: a view holding a workspace that no longer exists
+          // has panes that connect to nothing, so it does not merely look
+          // stale — it stops working, and until this event existed nothing but
+          // a reload told it (2026-07-28).
+          env.event_name === "AgenticIdeWorkspaceChanged"
+        ) {
+          // Panes were changed by voice or the CLI. The workspace view loads its
+          // state once on mount, so without this it would keep showing the old
+          // grid while the agents are already running. Trigger only — the view
+          // re-runs its own fetch, which is the single source of truth for the
+          // layout.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:agentic-ide-changed", { detail: env.payload }),
+          );
+        }
+
+        if (env.event_name === "AgenticIdePromptSent") {
+          // Jarvis typed an instruction into a pane. The pane will show it as
+          // the agent echoes it back, but that is one path and the user is
+          // usually not looking at it while speaking — so the fact is stated
+          // here too, on the socket every screen already holds.
+          const p = env.payload as {
+            terminal?: string;
+            submitted?: boolean | null;
+          };
+          if (typeof p.terminal === "string" && p.terminal.length > 0) {
+            pushToast(
+              p.submitted === true ? "success" : "warning",
+              p.submitted === true
+                ? `${translate("use_web_socket.prompt_sent")} ${p.terminal}`
+                : `${p.terminal}: ${translate("use_web_socket.prompt_not_submitted")}`,
+            );
+            window.dispatchEvent(
+              new CustomEvent("jarvis:agentic-ide-prompt", { detail: p }),
+            );
+          }
+        }
+
+        if (env.event_name === "AgenticIdeCodingModeChanged") {
+          // Coding mode changes how Jarvis answers on EVERY screen, so the
+          // app-wide indicator has to hear about a switch made anywhere — by
+          // voice, by the CLI, or in a workspace view the user is not looking
+          // at. Trigger only; useCodingMode re-reads the authoritative state.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:agentic-ide-mode", { detail: env.payload }),
+          );
         }
 
         // Live interface-language switch (voice / Control API / another client):

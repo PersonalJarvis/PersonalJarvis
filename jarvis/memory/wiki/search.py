@@ -70,12 +70,26 @@ class SearchHit:
     score:
         Float in [0.0, 1.0].  Higher is better.  Monotonic within a
         single call; not comparable across calls.
+    frontmatter:
+        The page's flattened frontmatter values — the same text the FTS
+        ``frontmatter`` column indexes, including any ``search_aliases``.
+        A hit matched via an alias has NO body snippet, so a consumer
+        judging relevance on title+snippet alone would discard exactly the
+        hits aliases exist to produce; it needs this to see WHY the page
+        matched.  Empty string when the page has no frontmatter.
+    preview:
+        Leading body text of the page, always populated regardless of where
+        the match occurred.  Gives frontmatter-only hits something to show;
+        ``snippet`` keeps its legacy "empty unless the body matched"
+        contract.
     """
 
     title: str
     path: Path
     snippet: str
     score: float
+    frontmatter: str = ""
+    preview: str = ""
 
 
 class VaultSearch:
@@ -202,7 +216,8 @@ class VaultSearch:
                 title,
                 snippet(wiki_fts, 3, '', '', '…', 32) AS snippet,
                 body,
-                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0) AS bm25_score
+                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0) AS bm25_score,
+                frontmatter
             FROM wiki_fts
             WHERE wiki_fts MATCH ?
             ORDER BY bm25_score
@@ -210,13 +225,16 @@ class VaultSearch:
         """
         cursor = conn.execute(sql, (match_expr, k))
         # Lowercased bare tokens for the "did body actually contain a hit?" check.
+        # Strip the quotes AND the prefix marker: '"drogen"*' and '"drogen"'
+        # both reduce to 'drogen', so the body check below stays a plain
+        # substring test and a prefix-only hit is judged on its stem.
         bare_tokens = [
-            _FTS5_SPECIAL_STRIP_RE.sub("", tok).lower()
+            _FTS5_SPECIAL_STRIP_RE.sub("", tok).rstrip("*").lower()
             for tok in match_expr.split(" OR ")
         ]
         hits: list[SearchHit] = []
         for row in cursor:
-            rel_path_str, title, snippet, body, bm25_raw = row
+            rel_path_str, title, snippet, body, bm25_raw, frontmatter = row
             abs_path = self._root / rel_path_str
             score = _normalise_bm25(bm25_raw)
             # SQLite's snippet() returns the body column text even when the
@@ -231,6 +249,8 @@ class VaultSearch:
                     path=abs_path,
                     snippet=snippet or "",
                     score=round(score, 4),
+                    frontmatter=frontmatter or "",
+                    preview=_leading_text(body),
                 )
             )
         log.debug(
@@ -247,6 +267,12 @@ class VaultSearch:
 # ---------------------------------------------------------------------------
 
 
+#: Shortest token that may be searched as a prefix. Below this a prefix match
+#: is indiscriminate ("ab*" hits half the vault) and costs precision for no
+#: recall worth having.
+_PREFIX_MIN_LEN = 4
+
+
 def _build_match_expr(tokens: list[str]) -> str:
     """Build an FTS5 MATCH expression from a list of tokens.
 
@@ -254,17 +280,59 @@ def _build_match_expr(tokens: list[str]) -> str:
     double-quotes) so that FTS5 special characters are treated as literals.
     Tokens are combined with OR.
 
+    Tokens of at least :data:`_PREFIX_MIN_LEN` characters additionally get a
+    PREFIX variant (``"drogen"*``). FTS5 matches whole tokens, which is a poor
+    fit for a compounding language: measured on the real vault, "Drogen" did
+    not find a page whose term was the corresponding German compound, and a
+    singular did not find its own plural. Every compound and every inflection
+    was a
+    separate, unreachable word. The prefix variant is OR-ed IN ADDITION to the
+    exact token, so exact matches keep their higher BM25 rank and the change
+    can only add recall, never reorder a hit that already worked.
+
     Examples
     --------
     >>> _build_match_expr(["foo", "bar"])
     '"foo" OR "bar"'
+    >>> _build_match_expr(["drogen"])
+    '"drogen" OR "drogen"*'
     >>> _build_match_expr(['a:b'])
     '"a:b"'
-    >>> _build_match_expr(['"foo*bar"'])
-    '"foo*bar"'
     """
-    quoted = [f'"{_FTS5_SPECIAL_STRIP_RE.sub("", tok)}"' for tok in tokens]
-    return " OR ".join(quoted)
+    parts: list[str] = []
+    for tok in tokens:
+        cleaned = _FTS5_SPECIAL_STRIP_RE.sub("", tok)
+        if not cleaned:
+            continue
+        parts.append(f'"{cleaned}"')
+        if len(cleaned) >= _PREFIX_MIN_LEN:
+            parts.append(f'"{cleaned}"*')
+    return " OR ".join(parts)
+
+
+#: How much leading body text ``SearchHit.preview`` carries.
+_PREVIEW_CHARS = 200
+
+
+def _leading_text(body: str | None, limit: int = _PREVIEW_CHARS) -> str:
+    """First meaningful prose of a page, for hits with no body snippet.
+
+    Skips the H1 and any blank/heading lines so the preview starts at real
+    content rather than at "# Title" — a frontmatter-only hit otherwise shows
+    the reader nothing it did not already know from the title.
+    """
+    if not body:
+        return ""
+    parts: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+            continue
+        parts.append(stripped)
+        if sum(len(p) for p in parts) >= limit:
+            break
+    text = " ".join(parts)
+    return text[:limit].rstrip() + "…" if len(text) > limit else text
 
 
 def _normalise_bm25(raw: float) -> float:

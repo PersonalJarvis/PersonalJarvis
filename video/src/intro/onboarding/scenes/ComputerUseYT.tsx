@@ -25,7 +25,7 @@ export const ComputerUseYT: React.FC<{ scene: TimelineScene }> = ({ scene }) => 
         </Title>
 
         <Sequence from={commandAt} layout="none">
-          <SpokenCommand text="Open Chrome and find Elon Musk's latest posts." speaker="user" size={24} compact wake="Hey Ruben" />
+          <SpokenCommand text="Open Chrome and find Elon Musk's latest posts." speaker="user" size={24} compact wake="Hey Nova" />
         </Sequence>
 
         <Steps demoAt={demoAt} />

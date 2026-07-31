@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 43
+page_count: 50
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -43,7 +43,7 @@ pages:
     file: docs/product/start-here/install-personal-jarvis.md
     title: Install Personal Jarvis
     diataxis: howto
-    summary: Install the app on a supported computer, then confirm that Personal Jarvis starts correctly.
+    summary: Install Personal Jarvis on a desktop or headless Linux host, choose an update path, and protect your data during repair.
     authoritative_sources:
       - install/README.md
       - install/install.ps1
@@ -52,6 +52,7 @@ pages:
       - pyproject.toml
     related:
       - first-run-setup
+      - local-ai-providers
       - platform-support
       - troubleshooting
     reader_level: beginner
@@ -64,7 +65,7 @@ pages:
     file: docs/product/start-here/first-run-setup.md
     title: Complete First-Run Setup
     diataxis: tutorial
-    summary: Walk through language, permissions, microphone, wake word, and provider setup without exposing credentials.
+    summary: Choose languages, a local or connected Brain, permissions, and voice activation without exposing credentials.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/components/onboarding/OnboardingFlow.tsx
       - jarvis/ui/web/frontend/src/components/onboarding/steps/ApiKeysStep.tsx
@@ -106,7 +107,7 @@ pages:
     file: docs/product/start-here/start-your-first-chat.md
     title: Start Your First Chat
     diataxis: tutorial
-    summary: Send a first message, attach useful context, and understand how the conversation is saved.
+    summary: Send a first message, dictate a draft, add bounded context, and reopen what the app saved.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/ChatsView.tsx
       - jarvis/ui/web/chats_routes.py
@@ -114,7 +115,8 @@ pages:
       - jarvis/ui/web/frontend/src/lib/chatsApi.ts
     related:
       - chats
-      - start-your-first-voice-conversation
+      - dictation
+      - outputs-and-files
       - sessions-and-run-inspector
     reader_level: beginner
     maturity: stable
@@ -126,7 +128,7 @@ pages:
     file: docs/product/start-here/start-your-first-voice-conversation.md
     title: Start Your First Voice Conversation
     diataxis: tutorial
-    summary: Check the microphone, wake Jarvis, ask a question, and know when the app is listening or speaking.
+    summary: Start a voice conversation, follow each listening and reply state, and end the call safely on desktop or in the browser.
     authoritative_sources:
       - jarvis/speech/pipeline.py
       - jarvis/realtime/session.py
@@ -135,8 +137,8 @@ pages:
     related:
       - voice-conversations
       - audio-and-wake-word
+      - dictation
       - languages-and-voices
-      - permissions
     reader_level: beginner
     maturity: stable
 
@@ -157,6 +159,7 @@ pages:
       - sessions-and-run-inspector
       - outputs-and-files
       - instructions-and-persona
+      - dictation
     reader_level: beginner
     maturity: stable
 
@@ -167,7 +170,7 @@ pages:
     file: docs/product/everyday-use/voice-conversations.md
     title: Voice Conversations
     diataxis: explanation
-    summary: Learn how wake detection, speech recognition, the assistant, and text-to-speech form one voice turn.
+    summary: Understand how Pipeline and Realtime handle spoken questions, actions, privacy, interruptions, and fallback.
     authoritative_sources:
       - jarvis/speech/pipeline.py
       - jarvis/realtime/session.py
@@ -176,9 +179,9 @@ pages:
       - docs/realtime-voice/DESIGN.md
     related:
       - audio-and-wake-word
-      - languages-and-voices
+      - dictation
+      - local-ai-providers
       - sessions-and-run-inspector
-      - speech-dictionary
     reader_level: beginner
     maturity: stable
 
@@ -285,6 +288,29 @@ pages:
     reader_level: beginner
     maturity: stable
 
+  - section: Everyday use
+    section_order: 2
+    order: 8
+    slug: dictation
+    file: docs/product/everyday-use/dictation.md
+    title: Dictate Into Any App
+    diataxis: howto
+    summary: Turn speech into text in the focused field, recover missed words, and choose what stays local or uses a provider.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/DictationView.tsx
+      - jarvis/ui/web/frontend/src/views/voice/ShortcutsTab.tsx
+      - jarvis/ui/web/frontend/src/views/voice/LanguageTab.tsx
+      - jarvis/ui/web/dictation_routes.py
+      - jarvis/dictation/history.py
+      - jarvis/speech/pipeline.py
+    related:
+      - voice-conversations
+      - speech-dictionary
+      - providers-and-api-keys
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
   - section: Personalize and connect
     section_order: 3
     order: 1
@@ -292,7 +318,7 @@ pages:
     file: docs/product/personalize-and-connect/providers-and-api-keys.md
     title: Providers and API Keys
     diataxis: howto
-    summary: Connect the services you choose, see which capabilities they provide, and learn where fallback is available.
+    summary: Connect cloud services or local models to each assistant capability, then verify what is actually ready.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/ApiKeysView.tsx
       - jarvis/ui/web/provider_routes.py
@@ -300,10 +326,10 @@ pages:
       - jarvis/brain/resolver.py
       - jarvis/core/config.py
     related:
+      - local-ai-providers
+      - dictation
       - credentials-and-secrets
-      - languages-and-voices
-      - troubleshooting
-      - tasks-and-reminders
+      - jarvis-agents
     reader_level: beginner
     maturity: stable
 
@@ -413,6 +439,31 @@ pages:
     reader_level: advanced
     maturity: stable
 
+  - section: Personalize and connect
+    section_order: 3
+    order: 7
+    slug: local-ai-providers
+    file: docs/product/personalize-and-connect/local-ai-providers.md
+    title: Use Local AI Providers
+    diataxis: howto
+    summary: Run chat and speech on your own machine, or connect a trusted self-hosted server, without making cloud access mandatory.
+    authoritative_sources:
+      - jarvis/ui/web/provider_spec.py
+      - jarvis/ui/web/provider_routes.py
+      - jarvis/speech/local_models.py
+      - jarvis/speech/local_install.py
+      - jarvis/plugins/brain/ollama.py
+      - jarvis/plugins/brain/local_openai.py
+      - jarvis/plugins/stt/nemotron_local.py
+      - jarvis/plugins/tts/piper_local.py
+    related:
+      - providers-and-api-keys
+      - dictation
+      - voice-conversations
+      - ultrawiki
+    reader_level: beginner
+    maturity: stable
+
   - section: Knowledge and sharing
     section_order: 4
     order: 1
@@ -515,6 +566,57 @@ pages:
       - desktop-app-tour
       - troubleshooting
       - app-command-reference
+    reader_level: beginner
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 6
+    slug: ultrawiki
+    file: docs/product/knowledge-and-sharing/ultrawiki.md
+    title: Use UltraWiki
+    diataxis: howto
+    summary: Build a searchable knowledge base from approved sources, ask cited questions, and understand where your data is processed.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/WikiView.tsx
+      - jarvis/ui/web/frontend/src/views/ultrawiki/UltraWikiPanel.tsx
+      - jarvis/ui/web/frontend/src/components/ultrawiki/AskPanel.tsx
+      - jarvis/ui/web/ultrawiki_routes.py
+      - jarvis/ui/web/ultrawiki_explore_routes.py
+      - jarvis/ui/web/ultrawiki_identity_routes.py
+      - jarvis/ultrawiki/service.py
+      - jarvis/ultrawiki/search.py
+      - jarvis/ultrawiki/answer.py
+    related:
+      - wiki-and-memory
+      - connect-ultrawiki-sources
+      - connect-obsidian
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 7
+    slug: connect-ultrawiki-sources
+    file: docs/product/knowledge-and-sharing/connect-ultrawiki-sources.md
+    title: Connect UltraWiki Sources
+    diataxis: howto
+    summary: Connect folders, exports, feeds, and supported services to UltraWiki, then control consent, refreshes, and copied data.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/components/ultrawiki/SourcesPanel.tsx
+      - jarvis/ui/web/frontend/src/components/ultrawiki/ConnectorPicker.tsx
+      - jarvis/ui/web/ultrawiki_routes.py
+      - jarvis/ultrawiki/connectors/local_folder.py
+      - jarvis/ultrawiki/connectors/custom_source.py
+      - jarvis/ultrawiki/connectors/plugin_bridge.py
+      - jarvis/ultrawiki/media_enrich.py
+      - jarvis/ultrawiki/throughput.py
+    related:
+      - ultrawiki
+      - plugins
+      - connect-obsidian
+      - privacy-and-local-data
     reader_level: beginner
     maturity: stable
 
@@ -672,6 +774,76 @@ pages:
     reader_level: advanced
     maturity: experimental
     source_policy: Link to docs/commands-reference.md; do not copy its generated command catalog.
+
+  - section: Extend and automate
+    section_order: 5
+    order: 8
+    slug: agentic-ide
+    file: docs/product/extend-and-automate/agentic-ide.md
+    title: Agentic IDE
+    diataxis: howto
+    summary: Open a project workspace, coordinate coding agents in live terminal panes, and keep every instruction and result visible.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/AgenticIdeView.tsx
+      - jarvis/ui/web/frontend/src/components/agentic/AgenticGrid.tsx
+      - jarvis/ui/web/agentic_ide_routes.py
+      - jarvis/agentic_ide/session.py
+      - jarvis/agentic_ide/resume_store.py
+      - jarvis/agentic_ide/notifications.py
+      - jarvis/workspace/trust.py
+    related:
+      - cli-connections
+      - jarvis-agents
+      - cli-reference
+      - safety-and-approvals
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 9
+    slug: screen-context
+    file: docs/product/extend-and-automate/screen-context.md
+    title: Screen Context
+    diataxis: howto
+    summary: Let your assistant inspect one requested screen or window with visible capture, privacy filtering, and short-lived memory.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/settings/ScreenContextGroup.tsx
+      - jarvis/ui/web/screen_context_routes.py
+      - jarvis/screen_context/service.py
+      - jarvis/screen_context/intent.py
+      - jarvis/screen_context/targeting.py
+      - jarvis/screen_context/redaction.py
+      - jarvis/screen_context/ports.py
+    related:
+      - computer-use
+      - permissions
+      - providers-and-api-keys
+      - cli-reference
+    reader_level: beginner
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 10
+    slug: connect-home-assistant
+    file: docs/product/extend-and-automate/connect-home-assistant.md
+    title: Connect Home Assistant
+    diataxis: howto
+    summary: Connect a self-hosted Home Assistant, protect its long-lived token, and use approved smart-home reads and actions safely.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/PluginsView.tsx
+      - jarvis/ui/web/marketplace_routes.py
+      - jarvis/marketplace/seed_catalog.json
+      - jarvis/marketplace/usage_cards/home_assistant.md
+      - jarvis/plugins/tool/home_assistant_rest.py
+    related:
+      - plugins
+      - skills
+      - workflows-and-commands
+      - credentials-and-secrets
+    reader_level: beginner
+    maturity: stable
 
   - section: Privacy, safety, and support
     section_order: 6

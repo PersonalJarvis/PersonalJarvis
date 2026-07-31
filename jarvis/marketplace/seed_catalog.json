@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 4,
   "schema_version": "2026-05-09",
   "plugins": [
     {
@@ -8,7 +8,10 @@
       "description": "Repos, issues, pull requests and Actions runs",
       "category": "Developer",
       "logo_slug": "github",
+      "logo_color": "24292E",
       "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "Pick 'No expiration' when you create the token.",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=Personal+Jarvis",
@@ -29,7 +32,10 @@
       "description": "Deployments, runtime logs, domains and env-vars",
       "category": "Developer",
       "logo_slug": "vercel",
+      "logo_color": "000000",
       "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "Pick 'No expiration' when you create the token.",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://vercel.com/account/tokens",
@@ -46,7 +52,9 @@
       "description": "Projects, SQL, Edge Functions, advisors and logs",
       "category": "Developer",
       "logo_slug": "supabase",
+      "logo_color": "3FCF8E",
       "featured": false,
+      "longevity": "permanent",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://supabase.com/dashboard/account/tokens",
@@ -65,9 +73,11 @@
       "id": "notion",
       "display_name": "Notion",
       "description": "Pages, databases and comments — multi-workspace",
-      "category": "Productivity",
+      "category": "Knowledge & Reading",
       "logo_slug": "notion",
+      "logo_color": "000000",
       "featured": true,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://mcp.notion.com/.well-known/oauth-protected-resource",
@@ -94,10 +104,13 @@
       "id": "slack",
       "display_name": "Slack",
       "description": "Channels, DMs, search and Canvas drafts",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "slack",
+      "logo_color": "4A154B",
       "logo_url": "/plugin-assets/slack-logo.svg",
       "featured": true,
+      "longevity": "self_renewing",
+      "oauth_client_family": "slack",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://slack.com/oauth/v2/authorize",
@@ -135,7 +148,9 @@
       "description": "Issues, projects, cycles and roadmap for software teams",
       "category": "Developer",
       "logo_slug": "linear",
+      "logo_color": "5E6AD2",
       "featured": true,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://mcp.linear.app/.well-known/oauth-protected-resource",
@@ -154,7 +169,9 @@
       "description": "Payments, customers, invoices and balance — read-first",
       "category": "Developer",
       "logo_slug": "stripe",
+      "logo_color": "635BFF",
       "featured": false,
+      "longevity": "permanent",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://dashboard.stripe.com/apikeys",
@@ -175,7 +192,9 @@
       "description": "Workers, observability logs, analytics and Radar insights",
       "category": "Developer",
       "logo_slug": "cloudflare",
+      "logo_color": "F38020",
       "featured": false,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://observability.mcp.cloudflare.com/.well-known/oauth-protected-resource",
@@ -198,9 +217,12 @@
       "id": "discord",
       "display_name": "Discord",
       "description": "Chat with Jarvis from Discord (your bot)",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "discord",
+      "logo_color": "5865F2",
       "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "A bot token stays valid until you reset it in the Discord developer portal.",
       "auth": {
         "mode": "pat_paste",
         "auth_scheme": "bot",
@@ -215,9 +237,12 @@
       "id": "telegram",
       "display_name": "Telegram",
       "description": "Chat with Jarvis from Telegram (your bot)",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "telegram",
+      "logo_color": "26A5E4",
       "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "A bot token stays valid until you revoke it in BotFather.",
       "auth": {
         "mode": "pat_paste",
         "auth_scheme": "telegram_path",
@@ -232,9 +257,12 @@
       "id": "asana",
       "display_name": "Asana",
       "description": "Tasks, projects and workspaces",
-      "category": "Productivity",
+      "category": "Lists & Tasks",
       "logo_slug": "asana",
+      "logo_color": "F06A6A",
       "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "asana",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://app.asana.com/-/oauth_authorize",
@@ -242,7 +270,9 @@
         "revocation_url": "https://app.asana.com/-/oauth_revoke",
         "client_id": "REPLACE_WITH_JARVIS_ASANA_CLIENT_ID",
         "callback_port": 3119,
-        "scopes": ["default"],
+        "scopes": [
+          "default"
+        ],
         "refresh_supported": true,
         "resource": "https://mcp.asana.com/v2"
       },
@@ -257,9 +287,13 @@
       "id": "google_drive",
       "display_name": "Google Drive",
       "description": "Search, read, create, share and delete your Drive files",
-      "category": "Productivity",
+      "category": "Files & Photos",
       "logo_slug": "googledrive",
+      "logo_color": "1FA463",
       "featured": false,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -268,7 +302,9 @@
         "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
         "callback_port": 3120,
         "callback_path": "",
-        "scopes": ["https://www.googleapis.com/auth/drive"],
+        "scopes": [
+          "https://www.googleapis.com/auth/drive"
+        ],
         "scope_separator": "space",
         "user_scopes_only": false,
         "refresh_supported": true,
@@ -281,9 +317,13 @@
       "id": "gmail",
       "display_name": "Gmail",
       "description": "Read, send, organize and delete mail in your inbox",
-      "category": "Communication",
+      "category": "Calendar & Mail",
       "logo_slug": "gmail",
+      "logo_color": "EA4335",
       "featured": false,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -307,9 +347,13 @@
       "id": "google_calendar",
       "display_name": "Google Calendar",
       "description": "See your schedule and create, move or delete events by voice",
-      "category": "Productivity",
+      "category": "Calendar & Mail",
       "logo_slug": "googlecalendar",
+      "logo_color": "1A73E8",
       "featured": true,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -328,6 +372,163 @@
       },
       "native_tool": "google_calendar",
       "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
+    },
+    {
+      "id": "todoist",
+      "display_name": "Todoist",
+      "description": "Tasks, projects and due dates by voice",
+      "category": "Lists & Tasks",
+      "logo_slug": "todoist",
+      "logo_color": "E44332",
+      "featured": true,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://ai.todoist.net/.well-known/oauth-protected-resource",
+        "mcp_url": "https://ai.todoist.net/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://ai.todoist.net/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_todoist_access_token}"
+      },
+      "post_install_hint_md": "Works on the free plan. Reminders and labels are Todoist Pro features, so those requests need a paid Todoist plan."
+    },
+    {
+      "id": "clickup",
+      "display_name": "ClickUp",
+      "description": "Tasks, lists and docs across your spaces",
+      "category": "Lists & Tasks",
+      "logo_slug": "clickup",
+      "logo_color": "7B68EE",
+      "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "ClickUp states its access token does not expire, so this connection needs no renewal. That is a policy rather than a guarantee, so Jarvis still asks you to reconnect if it is ever rejected.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.clickup.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.clickup.com/mcp",
+        "refresh_supported": false
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.clickup.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_clickup_access_token}"
+      }
+    },
+    {
+      "id": "dropbox",
+      "display_name": "Dropbox",
+      "description": "Find, read and share files in your Dropbox",
+      "category": "Files & Photos",
+      "logo_slug": "dropbox",
+      "logo_color": "0061FF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.dropbox.com/.well-known/oauth-protected-resource/mcp",
+        "mcp_url": "https://mcp.dropbox.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.dropbox.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_dropbox_access_token}"
+      }
+    },
+    {
+      "id": "canva",
+      "display_name": "Canva",
+      "description": "Create, search and export designs",
+      "category": "Media & Creativity",
+      "logo_slug": "canva",
+      "logo_color": "00C4CC",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.canva.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.canva.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.canva.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_canva_access_token}"
+      },
+      "post_install_hint_md": "Creating, editing, searching and exporting designs works on every Canva plan. Resizing needs Canva Pro; brand kits and templates need an Enterprise plan."
+    },
+    {
+      "id": "airtable",
+      "display_name": "Airtable",
+      "description": "Records, tables and views in your bases",
+      "category": "Knowledge & Reading",
+      "logo_slug": "airtable",
+      "logo_color": "18BFFF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "longevity_note": "Airtable ends a connection after 60 days without use. Jarvis renews it in the background every 12 hours, so it stays open as long as this machine runs from time to time.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://airtable.com/.well-known/oauth-authorization-server/oauth2/v1",
+        "mcp_url": "https://mcp.airtable.com",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.airtable.com",
+        "auth_header_template": "Authorization: Bearer ${plugin_airtable_access_token}"
+      }
+    },
+    {
+      "id": "cal_com",
+      "display_name": "Cal.com",
+      "description": "Bookings, availability and event types",
+      "category": "Calendar & Mail",
+      "logo_slug": "caldotcom",
+      "logo_color": "292929",
+      "featured": false,
+      "longevity": "self_renewing",
+      "longevity_note": "Cal.com publishes no token lifetime, so how long this stays connected has not been confirmed. Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.cal.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.cal.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.cal.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_cal_com_access_token}"
+      }
+    },
+    {
+      "id": "home_assistant",
+      "display_name": "Home Assistant",
+      "description": "Lights, heating, doors and scenes in your own smart home",
+      "category": "Home & Devices",
+      "logo_slug": "homeassistant",
+      "logo_color": "18BCF2",
+      "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "A Home Assistant long-lived access token is valid for ten years and is never renewed or rotated, so this connection needs no maintenance.",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://www.home-assistant.io/docs/authentication/#your-account-profile",
+        "token_prefix": "",
+        "validation_endpoint": "https://homeassistant.local:8123/api/",
+        "instruction_md": "In Home Assistant open your **profile** (your name, bottom left) → **Security** → **Long-lived access tokens** → **Create token**. It is shown once, so copy it straight away.\n\nThe token inherits every permission of the account that creates it, so prefer a dedicated non-admin Home Assistant user over your own admin account.",
+        "instance_url": {
+          "label": "Your Home Assistant address",
+          "placeholder": "http://192.168.1.20:8123",
+          "validation_path": "/api/",
+          "help_md": "The address you use in your browser. Home Assistant runs on your home network, so a Jarvis on a different machine, behind a VPN or in a container may not reach it."
+        }
+      },
+      "native_tool": "home_assistant",
+      "post_install_hint_md": "Try “turn off the living room lights” or “is the garage door still open”. Acting on a device asks for confirmation first."
     }
   ]
 }

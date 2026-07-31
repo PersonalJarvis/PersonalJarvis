@@ -1,185 +1,228 @@
 ---
 title: "Voice Conversations"
 slug: voice-conversations
-summary: "Learn how wake detection, speech recognition, the assistant, and text-to-speech form one voice turn."
+summary: "Understand how Pipeline and Realtime handle spoken questions, actions, privacy, interruptions, and fallback."
 section: "Everyday use"
 section_order: 2
 order: 2
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [voice, microphone, wake-word, speech-recognition, text-to-speech, pipeline, realtime, language]
-related: [audio-and-wake-word, languages-and-voices, sessions-and-run-inspector, speech-dictionary]
+related: [audio-and-wake-word, dictation, local-ai-providers, sessions-and-run-inspector]
 ---
 
-A voice conversation turns what you say into a reply or action and plays the
-answer aloud. On a desktop, you can start one with a wake phrase, the voice
-control in the app, or the configurable Call shortcut.
+A voice conversation turns speech into a request for your assistant. It can
+answer aloud, use a supported tool, or ask before an action that needs your
+approval. The normal conversation stays open for follow-up turns until you
+hang up or it reaches its quiet-time limit.
 
-Jarvis offers two voice engines. **Pipeline** handles listening, answering, and
-speaking as separate steps. **Realtime** keeps those parts in one live audio
-session. Both use the same permission and confirmation rules. Realtime can
-delegate action requests to the regular assistant, but it does not yet support
-every Pipeline feature.
-
-Realtime is the recommended default for a fresh configuration. If no compatible
-Realtime connection is ready, Jarvis uses Pipeline instead.
+This is different from [Dictation](dictation). Dictation delivers your words
+as text to the field where you are typing; it does not ask the assistant to
+reason, act, or speak a reply.
 
 ## Before You Start
 
-- Wait until the desktop app shows **Ready** instead of **Voice starting...**.
-- Make sure the selected microphone and speaker or headset work.
-- On macOS, open **Settings > Privacy permissions > macOS permissions** and
-  allow **Microphone**. The Call shortcut also needs **Accessibility** and
-  **Input Monitoring**. Windows and Linux do not have this extra Jarvis
-  permission panel, but the audio devices still need to be available to the
-  app.
-- Open **API Keys & Providers** to review the **Voice engine** choice. Realtime
-  can be selected explicitly only when a compatible live voice service is
-  available.
+- Wait for **Voice starting…** to become **Ready**.
+- Choose a working microphone and speaker under **Settings > Audio devices**.
+- On macOS, allow **Microphone** access. The Call shortcut can also need
+  Accessibility and Input Monitoring access. Other systems use their own audio
+  and shortcut permissions.
+- Open **API Keys & Providers** and review **Voice engine**. Realtime needs one
+  compatible live voice connection. Pipeline needs usable Voice Input, Brain,
+  and Voice Output paths, which can be local, hosted, or mixed.
 
-You do not need to connect every service shown in the app. Pipeline can use
-separate compatible services for speech recognition, the assistant, and voice
-output. Realtime needs one compatible live voice connection for the session.
+On a headless computer, native wake detection, desktop shortcuts, microphone,
+and speaker output are unavailable. A browser can offer **Start Realtime
+Voice** when the page is on localhost or HTTPS and microphone permission is
+allowed.
 
-On a headless server, local desktop audio, wake detection, and desktop
-shortcuts are unavailable. Open the web app over HTTPS or on localhost, select
-Realtime, and use **Start Realtime Voice** in the sidebar. The browser then owns
-the microphone and speaker and asks for its own microphone permission.
+> [!warning] Never speak passwords, API keys, recovery codes, or other
+> secrets. Enter a required credential only in **API Keys & Providers**.
 
-> [!warning] Never speak passwords, provider credentials, recovery codes, or
-> other secrets. Enter a required credential only in **API Keys & Providers**.
+## How a Voice Conversation Works
 
-## How a Voice Turn Works
+A **turn** is one request and its result. A **session** is the call that can
+contain several turns.
 
-One **turn** begins when you start speaking and ends when Jarvis finishes the
-reply or action. A **session** is the call around those turns. Conversation mode
-keeps the call open for another turn until you hang up or it reaches its idle
-timeout. Single-turn mode ends the session after each answer.
+1. **Start the session.** Say your wake phrase, use the idle voice control, or
+   press the configured **Call (answer / start talking)** shortcut. Wake
+   detection opens the microphone; it does not answer or transcribe the
+   request itself.
+2. **Speak while the app shows Listening.** Pipeline waits for a pause long
+   enough to mark the end of your request. Realtime lets the live voice model
+   detect that boundary. The Pipeline **Thinking pause** setting therefore
+   does not control Realtime.
+3. **Jarvis prepares one understood request.** Pipeline converts the captured
+   audio into text first. Realtime receives transcript updates from the live
+   connection. Your Speech Dictionary corrects known names and terms in both
+   modes before routing and session history use the text.
+4. **Jarvis chooses the path.** An ordinary question can be answered directly.
+   A request that needs an app, connected service, Computer Use, or longer work
+   goes through the regular planning and Tool Model path. Realtime can hand an
+   action request to that path instead of pretending the live voice model has
+   every tool.
+5. **Safety rules check an action.** Low-risk work may continue immediately.
+   An ask-level action pauses for a clear yes or no, and a blocked action does
+   not run. Review the exact target and effect before saying yes.
+6. **Hear the result.** Pipeline sends reply text to Voice Output. Realtime
+   normally returns speech through the open live connection. The visible flow
+   is usually **Listening → Thinking → Speaking → Listening**.
+7. **Continue or hang up.** Conversation mode listens for another turn. An
+   optional single-turn setting ends the session after each answer. Silence can
+   also end a conversation when an idle limit is enabled.
 
-1. **You activate voice.** A saved wake phrase, the app's voice control, or the
-   Call shortcut opens a listening session. A headless installation instead
-   uses the browser's **Start Realtime Voice** control.
-2. **Jarvis receives microphone audio.** The app shows **Listening**. Wake
-   detection only starts the session; it is separate from understanding the
-   request that follows.
-3. **Your request becomes usable input.** Pipeline waits for the end of your
-   phrase and turns the recording into text. Realtime sends audio through the
-   live session and receives transcript events when the service supplies them.
-4. **The assistant handles the request.** A question can be answered directly.
-   A request that needs an action can use supported tools or be delegated to the
-   regular assistant. Actions follow the same permission and confirmation rules
-   as text chat.
-5. **Jarvis prepares speech output.** Pipeline converts the answer from text to
-   audio with the selected speech-output service. Realtime normally returns
-   spoken audio through the open live session.
-6. **The turn closes or listening continues.** The app moves through
-   **Thinking** and **Speaking**, then returns to **Listening** or **Ready**.
-   **Transcription** saves the user and assistant text that the active services
-   returned. If a service did not return a transcript, that missing speech
-   cannot be reconstructed in the view.
-
-### Pipeline and Realtime Compared
+### Choose Pipeline or Realtime
 
 | Question | Pipeline | Realtime |
 |---|---|---|
-| How does it work? | Speech recognition finishes, then the assistant handles the request, then speech output plays | One live audio session listens and replies; supported actions may use the regular assistant and tools |
-| Conversation feel | Separate stages after you finish speaking; speaking over a reply can stop playback | Lower-latency back-and-forth; browser voice uses echo cancellation, while desktop interruption is checked locally to avoid speaker echo |
-| Service choices | Input, assistant, and output can use separate compatible choices | Requires a compatible live voice choice |
-| Speech Dictionary | Applies to the recognized request | Does not currently rewrite the live session's transcript |
-| Call shortcut | Starts Pipeline when Pipeline is selected | Starts Realtime when Realtime is selected |
-| If startup fails | The affected stage can use another configured compatible choice or report that it is unavailable | Jarvis can use another compatible live choice, then fall back to Pipeline before the turn starts |
-| Current scope | Broadest feature coverage | Research preview; some tools and features are not yet available |
+| How is speech handled? | Voice Input creates text, the Brain handles it, and Voice Output speaks | One live model listens and answers within an audio session |
+| What can you choose? | Separate compatible providers for input, reasoning, and output | One compatible Realtime provider and model |
+| Can speech run locally? | Yes. Local recognition and Piper voice output are available on supported computers | No local Realtime engine is currently offered; live audio goes to the connected service |
+| How do actions work? | Broadest feature and tool coverage | Ordinary conversation stays live; supported action requests use the regular planner and Tool Model |
+| How does interruption work? | Sustained user speech can stop playback | Browser audio uses echo cancellation; desktop interruption is checked locally to avoid reacting to speaker echo |
+| What happens on failure? | An unavailable stage can use another ready compatible choice or report the missing stage | Another ready Realtime family can be tried; before a turn is committed, the call can fall back to Pipeline |
+| Current maturity | Established staged path | Recommended conversational default, but still a research preview with feature gaps |
 
-Choose Pipeline when you want predictable staged processing, independent
-service choices, or Dictionary corrections. Choose Realtime when you want a
-more conversational audio flow and the features you need are supported. The
-best choice depends on the request, not on a particular provider brand.
+Use Realtime for faster back-and-forth when its current feature set covers your
+request. Use Pipeline when you need local speech, independent providers, or the
+broadest tool support.
+
+The **Voice engine** selection says what Jarvis should try next. Its runtime
+line says what the current session actually uses. Changing the engine during
+an active desktop call closes and reopens that call with the new choice.
+
+### Know What Stays Local
+
+“Local” applies to one Pipeline stage, not automatically to the whole
+conversation.
+
+- Desktop wake detection runs locally and only activates the session.
+- Local Voice Input keeps recognition audio on the computer. If local
+  recognition fails, Jarvis does not silently upload that recording just to
+  recover.
+- A hosted Brain can still receive the resulting transcript, even when Voice
+  Input is local.
+- Piper creates speech locally, but the text it speaks may have come from a
+  hosted Brain.
+- Realtime sends the live conversation audio to the selected Realtime service
+  and bypasses the separate Pipeline Voice Input, Brain, and Voice Output
+  selections.
+- A failed local Brain may cross to another ready provider family. If that
+  choice is hosted, the request can leave the device and the effective provider
+  is reported in the session data.
+
+Read [Local AI Providers](local-ai-providers) before treating a mixed setup as
+offline.
+
+### Keep One Language Across the Turn
+
+The recognition language controls how speech becomes text. The reply language
+controls how the assistant answers. **Voice > Language** belongs to Dictation;
+use **Languages** for voice-conversation recognition and reply settings.
+
+Jarvis resolves the reply language once for each turn. A language you pin wins.
+In **Auto**, a one- or two-word interjection keeps the conversation's current
+language, while a complete request can switch it. When neither speech nor
+context gives a clear answer, English is the fallback.
+
+That one decision covers clarification questions, approval prompts, status and
+error phrases, the final answer, and the speaking-language choice. A provider
+fallback can change the sound of the voice without changing the language rule.
+After changing recognition language, end an active Realtime call; Pipeline
+applies that recognition change after the app restart requested by the
+**Languages** view.
+
+### Interrupt, Cancel, or End the Call
+
+- **Interrupt a reply:** speak clearly over it. Desktop voice waits for
+  sustained speech so the assistant's own speaker output is less likely to
+  trigger a false interruption. A whisper may not interrupt reliably; use
+  **Hangup** when you need an immediate stop.
+- **Reject an approval:** answer with a clear no. In Realtime, changing the
+  subject is not a reliable denial; say no or end the call.
+- **End the session:** say a clear end-call command, press the configured
+  **Hangup** shortcut, or use the active voice control. Hangup stops listening
+  and playback and cancels the active assistant or Computer Use turn.
+- **Check delegated work:** a background agent mission that already started
+  can continue after hangup. Its visible name follows your assistant name, such
+  as **Nova-Agent**, with **Assistant-Agent** as the neutral fallback. Review
+  its own view and Outputs for the result.
+
+Stopping a call does not undo a tool effect that already completed. If a
+Realtime connection fails after a request or action has been committed, Jarvis
+ends the call instead of replaying the captured audio through Pipeline and
+risking a duplicate action. Start a new call for the next turn.
+
+### Understand Session Records
+
+The local session recorder is enabled by default. **Transcription** groups the
+recognized user text, recorded replies, spoken notices, and available provider
+details by voice session. It does not save the microphone audio for these
+views. If a provider supplies no transcript for part of a Realtime exchange,
+Jarvis cannot reconstruct those missing words later.
+
+**Run Inspector** adds captured routing, tool, timing, approval, and error
+details. Dictation uses separate **Recent dictations** history and can retain
+recovery audio only for incomplete results when that option is enabled.
 
 ## How It Fits Together
 
-Voice is a path into the same Jarvis experience you use in Chats. The features
-around it each have one distinct job:
+1. [Audio and Wake Word](audio-and-wake-word) supplies the desktop devices and
+   optional activation phrase; Call or the in-app control can open the same
+   session without wake detection.
+2. The chosen voice engine receives the request. Pipeline connects Voice
+   Input, the Brain, and Voice Output; Realtime uses one live audio connection.
+3. The Speech Dictionary corrects recognized terms in both engines. The turn's
+   recognition and reply language settings keep the conversation consistent.
+4. The planner keeps ordinary conversation on the simplest path and sends
+   supported actions through the Tool Model, connected tools, permissions, and
+   any required safety confirmation.
+5. The reply returns as speech. Transcription and Run Inspector record the
+   available text and events without controlling the live turn.
+6. [Dictation](dictation) can use the same microphone and recognition choices,
+   but its result goes to a text field instead of the Brain or spoken output.
 
-| Related feature | What it contributes | What it does not change |
-|---|---|---|
-| Audio and Wake Word | Chooses the microphone, speaker, wake phrase, and activation behavior | A wake phrase starts listening; it does not answer the request |
-| Languages and Voices | Chooses the reply language and the voice you hear | It does not repair microphone input or grant permission |
-| Speech Dictionary | Corrects names and specialist words in Pipeline speech recognition | It does not retrain wake detection or change Realtime transcripts |
-| Sessions and Run Inspector | Groups voice turns and exposes more detail about work and failures | It does not change how a request is recognized |
-| Chats | Provides a text alternative and can supply earlier conversation context when you start voice from an existing chat | It does not require voice to be available |
-
-### Language Across a Turn
-
-Jarvis supports English, German, and Spanish for reply-language selection. It
-decides the output language once for each turn so status phrases, the answer,
-and the speaking voice agree. A reply language you explicitly select wins. In
-**Auto**, a short interjection keeps the current conversation language, while a
-complete request can switch it. If there is no language pin, useful input, or
-established conversation language, the reply defaults to English.
-
-Changing the voice engine during an active desktop call closes and reopens the
-session with the selected engine. A reply-language change affects the next
-resolved turn. Realtime updates an active provider when it can; a provider that
-fixes its instructions when the call opens needs a new session. The current
-turn still uses one resolved language throughout.
-
-Pipeline and Realtime store their speaking-voice choices with their respective
-providers. Switching the engine or falling back to another provider can change
-how the assistant sounds without changing the reply-language policy.
-
-### What Happens When Voice Is Unavailable
-
-Fallbacks protect the request without pretending that every path is healthy:
-
-- If a Realtime session cannot open before Jarvis has accepted the turn,
-  Jarvis can continue through Pipeline without replaying an action.
-- If Realtime fails after a request or action has already been accepted, Jarvis
-  ends the call instead of replaying the same audio and risking a duplicate
-  action. Start a new call or choose Pipeline for the next turn.
-- If speech recognition, the assistant, or speech output is unavailable,
-  Jarvis can use another configured compatible option where one exists. When
-  none is usable, the app reports the unavailable part rather than claiming the
-  turn succeeded.
-- If no voice path remains, continue in **Chats** while you review audio,
-  permissions, or provider status.
+When the preferred provider is unavailable, Jarvis uses another compatible,
+ready path when it can and names the effective mode. When no safe path remains,
+it reports the unavailable part and leaves Chats usable.
 
 ## Check That It Works
 
-1. Start a voice session with your wake phrase or the app's voice control.
-2. Ask one short question and watch for **Listening**, then **Thinking** or
+1. Start a session with your wake phrase, Call shortcut, or voice control.
+2. Ask one harmless question and watch **Listening** change to **Thinking** or
    **Speaking**.
-3. Confirm that you hear a relevant reply and the app returns to **Ready** or
-   **Listening**.
-4. Open **Transcription** and confirm that the session contains the available
-   request and assistant transcripts.
+3. Confirm that you hear a relevant answer and the app returns to **Listening**.
+4. Use **Hangup**, confirm **Ready**, then open **Transcription** and find the
+   completed turn.
 
-When testing Realtime, keep the call open long enough to review the runtime
-line under **API Keys & Providers > Voice engine**. It shows whether the active
-session is Realtime, Pipeline, or a Pipeline fallback.
+For Realtime, also check the runtime line under **API Keys & Providers > Voice
+engine**. It should name Realtime, Pipeline, or a Pipeline fallback honestly.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| The wake phrase does nothing | Wake activation, its language, or the microphone is not ready | Run **Test wake word**, then use the app's voice control or Call shortcut while you review the wake setup |
-| **Listening** appears, but the request is wrong or empty | The wrong microphone is selected, the level is too low, or speech recognition could not understand the turn | Check **Audio devices**, try one short request, and add repeated Pipeline mistakes to **Dictionary** |
-| Realtime is selected, but the runtime line says Pipeline | No compatible live session could open for this call | Review the Realtime category in **API Keys & Providers**; keep using the working Pipeline fallback or choose Pipeline explicitly |
-| A Realtime call ends after an error | The live path failed after Jarvis had already accepted part of the turn | Start a fresh call; use Pipeline if the failure repeats so Jarvis does not replay a possible action |
-| **Speaking** appears, but there is no sound | The output device, volume, or speech-output service is unavailable | Check **Audio devices** and system volume, then test another configured compatible voice output |
-| The reply uses the wrong language | The reply language is pinned differently, or automatic detection had too little context | Review **Languages**, then try a complete sentence in the language you want |
-| **Start Realtime Voice** is unavailable in a remote browser | The page is not on HTTPS or localhost, the browser lacks the required audio feature, or no Realtime key is ready | Use HTTPS, allow microphone access in the browser, and test the active Realtime service in **API Keys & Providers** |
+| Wake or Call does not reach **Listening** | Voice is still warming, the microphone is unavailable, or activation is not ready | Wait for **Ready**, check **Audio devices**, and run **Test wake word**; use an in-app control meanwhile |
+| The transcript is empty, wrong, or misses a name | The input device, recognition language, provider, or vocabulary is wrong | Try one short sentence, review **Languages**, and add repeated term mistakes under **Voice > Dictionary** |
+| Realtime is selected but the runtime line says Pipeline | No compatible live session opened safely | Test the active Realtime provider in **API Keys & Providers**, or choose Pipeline deliberately |
+| **Speaking** appears but you hear nothing | The output device, volume, or speech path is unavailable | Check the selected speaker and system volume; in Pipeline, test another ready Voice Output choice |
+| Browser Realtime is unavailable or cannot hear you | The page is not localhost/HTTPS, microphone access is denied, or the browser lacks required audio support | Use a secure address, allow microphone access, and retry; continue in Chats if audio remains unavailable |
+
+If a Realtime call ends after an error, check Transcription and Run Inspector
+before repeating an action. The safe recovery may be a new call rather than an
+automatic replay.
 
 ## Next Steps
 
-- Read [Audio and Wake Word](audio-and-wake-word) to choose devices, set up
-  activation, and test a wake phrase.
-- Read [Languages and Voices](languages-and-voices) to control the language and
-  speaking voice used across the whole turn.
-- Read [Speech Dictionary](speech-dictionary) to correct recurring Pipeline
-  recognition mistakes without changing the wake phrase.
-- Read [Sessions and Run Inspector](sessions-and-run-inspector) to understand
-  saved voice turns and investigate a request that did not finish as expected.
+- Read [Audio and Wake Word](audio-and-wake-word) to choose devices, activation,
+  and the Call and Hangup controls.
+- Use [Dictation](dictation) when you want speech inserted into another app
+  without an assistant reply.
+- Read [Local AI Providers](local-ai-providers) to separate local recognition,
+  local reasoning, and local speech output.
+- Open [Sessions and Run Inspector](sessions-and-run-inspector) to review saved
+  turns, effective providers, actions, and failures.

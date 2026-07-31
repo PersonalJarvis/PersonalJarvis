@@ -174,8 +174,8 @@ Rules for the curator:
 
 ## Wikilinks
 
-Use double-bracket syntax `[[entities/ruben]]` or short form `[[ruben]]`
-when the slug is globally unique. Aliased links `[[entities/ruben|the user]]`
+Use double-bracket syntax `[[entities/alex]]` or short form `[[alex]]`
+when the slug is globally unique. Aliased links `[[entities/alex|the user]]`
 are allowed but discouraged — prefer adding the alias to the entity's
 frontmatter and using the canonical short form.
 

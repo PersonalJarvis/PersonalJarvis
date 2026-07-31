@@ -190,6 +190,27 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/ci/assert_min_passed.py report.xml
 
+      # Its OWN blocking step, on purpose, and two traps avoided deliberately:
+      #
+      #   * NOT carrying the `eval` marker. The suite above filters
+      #     `-m "not ... and not eval"`, so an `eval`-marked routing test would
+      #     silently never run — which is exactly how scripts/skill_routing_eval.py
+      #     became invisible.
+      #   * NOT folded into the pytest step above, which ends in `|| echo` and
+      #     therefore swallows failures until the min-passed floor moves.
+      #
+      # Measures precision AND recall together. Watching only precision is how
+      # the wake-word subsystem destroyed its own recall twice without anyone
+      # noticing (AP-27); recall may not drop without editing the committed
+      # BASELINE.json in the same change, which puts it in the diff.
+      - name: Skill routing eval (BLOCKING — precision AND recall)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          python -m pytest tests/unit/skills/test_skill_routing_offline.py \
+            -q -p no:cacheprovider
+          python scripts/skill_relevance_calibrate.py
+
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
   # UTF-8 I/O, no Windows APIs); this job proves it imports + its unit tests
@@ -252,6 +273,18 @@ jobs:
         # destructive marker must carry openapi_extra x-jarvis-dangerous so the
         # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
         run: python scripts/ci/check_danger_metadata.py
+
+      - name: Dead config switch gate (every switch is read by some code)
+        # Static + stdlib-only: a config field nothing reads makes jarvis.toml
+        # and the settings screen promise behaviour that does not exist (AP-31).
+        # Known backlog is baselined; only a NEW one fails. Mirrors pre-push.
+        run: python scripts/ci/check_config_switches_wired.py
+
+      - name: Silent exception gate (no new invisible failure)
+        # Static + stdlib-only: an except that neither logs, re-raises, nor
+        # explains itself makes a failure invisible (AP-30). Per-file ratchet —
+        # fails only when a file GAINS one. Mirrors pre-push.
+        run: python scripts/ci/check_silent_exception_handlers.py
 
       - name: CLI reference drift gate (docs in sync with command tree)
         # Fails if a curated command was added/changed without regenerating

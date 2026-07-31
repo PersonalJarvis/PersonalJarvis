@@ -246,6 +246,64 @@ async def test_list_outputs_empty_root(app: FastAPI) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_outputs_includes_legacy_sessions_when_canonical_root_exists(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """A newly-created canonical root must not hide retained mission history."""
+    canonical = tmp_path / "jarvis-agent-outputs"
+    legacy = tmp_path / "sub-agents-outputs"
+    canonical.mkdir()
+    legacy.mkdir()
+    mission_id = "019e3600-a84e-7000-8000-000000000099"
+    legacy_session = _make_mission_dir(legacy, mission_id)
+    _seed(
+        legacy_session / "tasks" / "task-1" / "artifacts" / "files" / "report.md",
+        "legacy output",
+    )
+    app.state.outputs_root = canonical
+    app.state.outputs_roots = (canonical, legacy)
+
+    with TestClient(app) as client:
+        listing = client.get("/api/outputs")
+        artifacts = client.get(f"/api/outputs/{legacy_session.name}/artifacts")
+
+    assert listing.status_code == 200
+    assert [session["slug"] for session in listing.json()["sessions"]] == [
+        legacy_session.name
+    ]
+    assert artifacts.status_code == 200
+    assert [item["path"] for item in artifacts.json()["files"]] == [
+        "tasks/task-1/artifacts/files/report.md"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_canonical_root_wins_when_both_roots_contain_the_same_slug(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    canonical = tmp_path / "jarvis-agent-outputs"
+    legacy = tmp_path / "sub-agents-outputs"
+    canonical.mkdir()
+    legacy.mkdir()
+    mission_id = "019e3600-a84e-7000-8000-000000000098"
+    canonical_session = _make_mission_dir(canonical, mission_id)
+    legacy_session = _make_mission_dir(legacy, mission_id)
+    rel = Path("tasks/task-1/artifacts/files/report.md")
+    _seed(canonical_session / rel, "canonical output")
+    _seed(legacy_session / rel, "legacy output")
+    app.state.outputs_root = canonical
+    app.state.outputs_roots = (canonical, legacy)
+
+    with TestClient(app) as client:
+        listing = client.get("/api/outputs")
+        raw = client.get(f"/api/outputs/{canonical_session.name}/files/{rel.as_posix()}/raw")
+
+    assert len(listing.json()["sessions"]) == 1
+    assert raw.status_code == 200
+    assert raw.json()["text"] == "canonical output"
+
+
+@pytest.mark.asyncio
 async def test_list_outputs_mission_dir_resolves_status_from_db(
     app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
 ) -> None:
@@ -845,6 +903,38 @@ def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
     # Genuine deliverables — including one INSIDE qa-artifacts/ next to junk.
     assert _is_deliverable_relpath((*base, "index.html"))
     assert _is_deliverable_relpath((*base, "qa-artifacts", "melbourne-plan-render.png"))
+
+
+def test_is_deliverable_relpath_excludes_uv_cache_scratch() -> None:
+    """A sandbox-local uv cache is process state, never a mission result."""
+    base = ("tasks", "019fa4bc-9110", "artifacts", "files")
+    assert not _is_deliverable_relpath(
+        (*base, ".uv-cache-audit", "wheels-v6", "pypi", "fastapi.lock")
+    )
+    assert not _is_deliverable_relpath(
+        (*base, ".uv-cache-wiki", "builds-v0", ".tmp123", "pyvenv.cfg")
+    )
+    assert _is_deliverable_relpath((*base, "reports", "uv-cache-analysis.md"))
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_hides_uv_cache_from_existing_missions(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """Read-side filtering repairs missions archived before the source fix."""
+    d = _make_mission_dir(tmp_path, "019fa4bc8d2b")
+    files = d / "tasks" / "019fa4bc-9110" / "artifacts" / "files"
+    _seed(files / ".uv-cache-audit" / "wheels-v6" / "fastapi.lock", "")
+    _seed(files / ".uv-cache-audit" / "builds-v0" / "pyvenv.cfg", "cache")
+    _seed(files / "wiki-audit.md", "# Findings")
+
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+
+    assert r.status_code == 200
+    assert [item["path"] for item in r.json()["files"]] == [
+        "tasks/019fa4bc-9110/artifacts/files/wiki-audit.md"
+    ]
 
 
 @pytest.mark.asyncio

@@ -48,6 +48,69 @@ export async function robustCopy(text: string): Promise<boolean> {
   return nativeBackendCopy(text);
 }
 
+/** Hard cap on the browser clipboard read (see robustPaste). */
+const BROWSER_READ_TIMEOUT_MS = 5000;
+
+/**
+ * Robustly reads the system clipboard for an in-app "Paste" command.
+ *
+ * Returns the text, or null when no path could read it.
+ *
+ * Order matters, and it is the reverse of robustCopy's. Measured inside the
+ * desktop WebView (2026-07-26): the REST route answers in ~60 ms, while
+ * `navigator.clipboard.readText()` **never settles at all** — not resolved,
+ * not rejected, still pending after 10 s, because the embedded browser
+ * withholds the `clipboard-read` permission and nothing ever answers the
+ * prompt. Awaiting it first made right-click Paste look dead. So the native
+ * route goes first, and the browser API is only a fallback for a real browser
+ * — where the desktop route is deliberately absent — and even then it is
+ * raced against a timeout so a pending promise can never hang the menu.
+ */
+export async function robustPaste(): Promise<string | null> {
+  // Path A — local desktop backend, reading through the operating system.
+  // Intentionally absent on a browser/headless server, where it would expose
+  // the server's clipboard rather than the user's.
+  const fromBackend = await nativeBackendPaste();
+  if (fromBackend !== null) return fromBackend;
+  // Path B — modern clipboard API, for a real browser.
+  return browserPaste();
+}
+
+async function browserPaste(): Promise<string | null> {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.clipboard ||
+    typeof navigator.clipboard.readText !== "function"
+  ) {
+    return null;
+  }
+  try {
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), BROWSER_READ_TIMEOUT_MS),
+    );
+    return await Promise.race([navigator.clipboard.readText(), timeout]);
+  } catch {
+    return null;
+  }
+}
+
+async function nativeBackendPaste(): Promise<string | null> {
+  if (typeof fetch !== "function") return null;
+  try {
+    const response = await fetch("/api/clipboard/text", {
+      method: "GET",
+      credentials: "same-origin",
+    });
+    if (!response.ok) return null;
+    const result = (await response.json().catch(() => null)) as {
+      text?: unknown;
+    } | null;
+    return typeof result?.text === "string" ? result.text : null;
+  } catch {
+    return null;
+  }
+}
+
 async function nativeBackendCopy(text: string): Promise<boolean> {
   if (typeof fetch !== "function") return false;
   try {

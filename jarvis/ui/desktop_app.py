@@ -32,12 +32,16 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, OSError):
+        # Nothing to log to yet — this IS the call that makes the streams
+        # usable, and no logger exists this early in the process.
         pass
     try:
         from jarvis.ui.icon_utils import ensure_windows_app_identity
 
         ensure_windows_app_identity()
-    except Exception:
+    except Exception:  # noqa: S110
+        # Taskbar-icon grouping is cosmetic and Windows-only; failing here must
+        # not stop the app from starting on any other OS.
         pass
 
 from filelock import FileLock, Timeout
@@ -102,6 +106,8 @@ def _supported_call_kwargs(
     try:
         signature = inspect.signature(function)
     except (TypeError, ValueError):
+        # Builtins and C callables have no introspectable signature; passing
+        # every kwarg through is the documented fallback of this helper.
         return dict(kwargs)
     parameters = tuple(signature.parameters.values())
     if any(
@@ -189,6 +195,8 @@ def _install_desktop_log_sink(log_path: Path) -> None:
             try:
                 level: str | int = logger.level(record.levelname).name
             except ValueError:
+                # A custom stdlib level loguru does not know by name; the
+                # numeric level carries the same information.
                 level = record.levelno
             frame, depth = _logging.currentframe(), 2
             while frame and frame.f_code.co_filename == _logging.__file__:
@@ -234,6 +242,8 @@ def _pid_alive(pid: int) -> bool:
     try:
         return psutil.pid_exists(int(pid))
     except Exception:  # noqa: BLE001
+        # Fail SAFE, not quiet: claiming "alive" keeps the caller from evicting
+        # a lock holder it could not verify, which is the conservative answer.
         return True
 
 
@@ -254,8 +264,43 @@ def _write_meta(port: int, pid: int) -> None:
             from loguru import logger
 
             logger.warning("Could not write Jarvis meta sidecar: {}", exc)
-        except Exception:
+        except Exception:  # noqa: S110
+            # The logger itself failed (very early boot); the outer handler
+            # above already carries the real report.
             pass
+
+
+def _log_input_isolation() -> None:
+    """Record whether outside input software can reach our window.
+
+    Elevation is sticky (it survives every in-app restart) and invisible: while
+    it lasts, Windows silently discards synthetic keystrokes and automation
+    queries from ordinary user software, so dictation apps, text expanders, and
+    password-manager auto-type stop working INSIDE our window with no error on
+    either side. Without this line a support log gives no hint at all — the
+    2026-07-25 report reached us as "dictation just doesn't work in Jarvis".
+
+    Runs on the background heavy-init task, never the startup critical path
+    (AP-26), and is a token read costing microseconds. Fully guarded: a
+    diagnostic must never be the thing that breaks boot.
+    """
+    try:
+        from loguru import logger
+
+        from jarvis.platform.input_isolation import describe_input_isolation
+
+        report = describe_input_isolation()
+        if report.blocked:
+            logger.warning(
+                "Input isolation ACTIVE (reason={}): {} Repair: {}",
+                report.reason,
+                report.summary,
+                report.remedy,
+            )
+        else:
+            logger.debug("Input isolation clear (reason={}).", report.reason)
+    except Exception:  # noqa: BLE001, S110 — never let a diagnostic break boot
+        pass
 
 
 def _read_meta() -> dict[str, Any] | None:
@@ -263,12 +308,16 @@ def _read_meta() -> dict[str, Any] | None:
     try:
         raw = META_FILE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
+        # No sidecar means no running instance — the normal first-start case.
         return None
     except OSError:
+        # Unreadable is treated as absent: the caller's next step (probe the
+        # known ports) covers both, and a log here would fire on every start.
         return None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        # A sidecar caught mid-write; the port probe below handles it.
         return None
     if not isinstance(data, dict):
         return None
@@ -288,11 +337,15 @@ def _focus_existing_instance() -> bool:
     try:
         import httpx
     except Exception:  # noqa: BLE001
+        # httpx is absent on a minimal install; the caller falls back to the
+        # window-title path, which needs no HTTP at all.
         return False
     url = f"http://127.0.0.1:{int(meta['port'])}/api/window/focus"
     try:
         r = httpx.post(url, timeout=1.0)
     except Exception:  # noqa: BLE001
+        # Nothing listening = no running instance, which is the ANSWER this
+        # function returns, not a failure worth reporting.
         return False
     return 200 <= r.status_code < 300
 
@@ -307,7 +360,9 @@ def focus_existing_instance_robust() -> bool:
         cfg_port = int(load_config().ui.admin_api_port)
         if cfg_port not in ports:
             ports.append(cfg_port)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
+        # Config unreadable: the hardcoded default port below still gets tried,
+        # which is the whole point of this being the "robust" variant.
         pass
     if 47821 not in ports:
         ports.append(47821)
@@ -325,13 +380,16 @@ def focus_existing_instance_robust() -> bool:
                     f"http://127.0.0.1:{port}/api/window/focus",
                     timeout=1.0,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S112
+                # This port is not the running instance; try the next candidate.
                 continue
             if 200 <= r.status_code < 300:
                 try:
                     payload = r.json()
                     focused = bool(payload.get("ok", True))
                 except Exception:  # noqa: BLE001
+                    # A 2xx without a JSON body still means the instance
+                    # accepted the focus request, so treat it as success.
                     focused = True
                 if focused:
                     _bring_window_to_front_by_title(WINDOW_TITLE)
@@ -476,6 +534,9 @@ def _bring_window_to_front_by_title(title: str) -> bool:
             user32.MoveWindow(hwnd, 80, 60, width, height, True)
         return _force_foreground_hwnd(hwnd, user32, ctypes.windll.kernel32)
     except Exception:  # noqa: BLE001
+        # Win32-only path; on any non-Windows host, or when the window has
+        # already gone, False is the honest answer and the caller has its own
+        # fallback. Returning False here is the report.
         return False
 
 
@@ -663,6 +724,8 @@ def _terminate_pid(pid: int) -> bool:
     try:
         import psutil  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001
+        # Without psutil we cannot prove the zombie died, and the docstring's
+        # contract is to keep the lock blocked rather than claim an eviction.
         return False
     try:
         proc = psutil.Process(int(pid))
@@ -721,6 +784,8 @@ def acquire_single_instance_lock(
         lock.acquire(timeout=timeout)
         return lock
     except Timeout:
+        # Expected whenever another instance holds the lock; the zombie check
+        # below decides whether that holder is real, and reports from there.
         pass
 
     # Held — is the holder still alive?
@@ -729,6 +794,8 @@ def acquire_single_instance_lock(
         raw = mp.read_text(encoding="utf-8")
         meta = json.loads(raw)
     except (FileNotFoundError, OSError, json.JSONDecodeError):
+        # No usable sidecar: pid/port stay None below, which routes to the
+        # conservative path (assume a healthy holder, do not evict).
         meta = None
 
     pid = int(meta["pid"]) if meta and "pid" in meta else None
@@ -820,6 +887,8 @@ class DesktopApp:
 
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
+        # Off-loop stall reporter, armed once the backend loop starts serving.
+        self._loop_watchdog: Any = None
         self._server: WebServer | None = None
         # Serve-first bootstrap: binds the admin port before the heavy build so
         # /api/health answers immediately and the window can appear (see
@@ -902,6 +971,26 @@ class DesktopApp:
             _prebound_bootstrap = None
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
+
+        # Before anything can await: hand the loop a default executor that is
+        # already at full size, so ``asyncio.to_thread`` never has to grow one
+        # under it. Growing costs a synchronous ``Thread.start()`` ON the loop,
+        # and three of the worst stalls measured 2026-07-29 (75.7 s, 16.6 s,
+        # 15.3 s) were exactly that. Filling it happens on a background thread,
+        # so this call itself is a pool allocation (AP-26).
+        try:
+            from jarvis.core.loop_executor import install_prewarmed_default_executor
+
+            self._io_executor = install_prewarmed_default_executor(loop)
+        except Exception:  # noqa: BLE001 — a loop that can still stall is the
+            # behaviour we shipped yesterday; a boot that fails is not.
+            from loguru import logger as _ex_log
+
+            _ex_log.opt(exception=True).warning(
+                "Could not install the prewarmed default executor — "
+                "asyncio.to_thread may stall the loop while the pool grows."
+            )
+            self._io_executor = None
 
         # Cold-boot profiling (gated behind JARVIS_BOOT_PROFILE=1; production
         # stdout unchanged). The desktop window only appears once
@@ -1238,6 +1327,8 @@ class DesktopApp:
                 try:
                     await asyncio.wait_for(brain_ready.wait(), timeout=timeout_s)
                 except TimeoutError:
+                    # Expected while the brain is still warming; the caller
+                    # handles a None brain and the timeout is the signal.
                     pass
             return brain_holder["brain"]
 
@@ -1348,10 +1439,14 @@ class DesktopApp:
                 try:
                     iterator = stream(text, **call_kwargs)
                 except TypeError:
+                    # Capability probe, not an error: older brain plugins do not
+                    # accept these kwargs, so drop them one at a time and retry.
                     call_kwargs.pop("allow_voice_confirm", None)
                     try:
                         iterator = stream(text, **call_kwargs)
                     except TypeError:
+                        # Second and last kwarg to drop; a TypeError after this
+                        # is a real signature mismatch and propagates.
                         call_kwargs.pop("on_progress", None)
                         iterator = stream(text, **call_kwargs)
                 async for chunk in iterator:
@@ -1375,6 +1470,15 @@ class DesktopApp:
                 return
 
             thread_id = evt.thread_id or "default"
+            # Persist the initiating turn before the reply. Older builds stored
+            # only the assistant half, producing anonymous "New Thread" rows
+            # that looked like text messages the user never sent.
+            await chat_store.add_message(
+                thread_id=thread_id,
+                role="user",
+                text=evt.text,
+                publish_event=False,
+            )
             from loguru import logger
             brain = await _await_brain_ready()
 
@@ -1462,6 +1566,7 @@ class DesktopApp:
                             evt.text,
                             trace_id=evt.trace_id,
                             source_layer=evt.source_layer,
+                            conversation_id=thread_id,
                         ),
                         loop,
                     )
@@ -1525,23 +1630,40 @@ class DesktopApp:
         # (build error) → ingest_drop degrades to a text-only turn.
         try:
             from jarvis.brain.drop_context import ingest_drop, items_from_paths
-            from jarvis.overlay.drop_bridge import set_drop_handler
+            from jarvis.overlay.drop_bridge import (
+                report_drop_result,
+                set_drop_handler,
+            )
 
             def _on_overlay_drop(paths: list[str], text: str) -> None:
                 items = items_from_paths(paths) if paths else []
                 dragged = (text or "").strip() or None
                 if not items and dragged is None:
+                    # A drop the user definitely made, carrying nothing we can
+                    # use (an empty folder, an unreadable path). Say so — this
+                    # is precisely the case where silence leaves them guessing
+                    # whether the bar even noticed.
+                    report_drop_result(False)
                     return
 
                 async def _handle_drop() -> None:
-                    current_brain = await _await_brain_ready()
-                    await ingest_drop(
-                        bus=server.bus,
-                        brain=current_brain,
-                        thread_id="default",
-                        items=items,
-                        dragged_text=dragged,
-                    )
+                    accepted = False
+                    try:
+                        current_brain = await _await_brain_ready()
+                        accepted = bool(
+                            await ingest_drop(
+                                bus=server.bus,
+                                brain=current_brain,
+                                thread_id="default",
+                                items=items,
+                                dragged_text=dragged,
+                            )
+                        )
+                    finally:
+                        # The overlay gets an honest answer either way: a
+                        # confirmation tick that appears when the content never
+                        # reached the context would be worse than none at all.
+                        report_drop_result(accepted)
 
                 asyncio.run_coroutine_threadsafe(_handle_drop(), loop)
 
@@ -1857,6 +1979,7 @@ class DesktopApp:
                 # the meta file only needs the API to answer, which set_app
                 # just made true.
                 _write_meta(self.cfg.ui.admin_api_port, os.getpid())
+                _log_input_isolation()
                 try:
                     await server.start(start_serving=False)
                     _db_mark("server_start")
@@ -1927,12 +2050,64 @@ class DesktopApp:
 
             loop.create_task(_heavy_backend_bg(), name="heavy-backend")
             loop.call_soon(self._start_virtual_cursor)
+            # Watch this loop from OFF it, for the rest of the process's life.
+            # Everything the user touches — every WebSocket frame, every route,
+            # every brain turn — is serialized through the loop below, so one
+            # synchronous call on it stops all of them at once. That failure
+            # reaches the user as "Not responding" in the title bar and as
+            # keystrokes arriving seconds late in an Agentic-IDE pane, and it
+            # cannot be diagnosed from the inside: the diagnostics route that
+            # measures loop lag runs ON the loop and answers nothing while it
+            # is wedged (2026-07-28 — ten minutes of silence, health included,
+            # and a sampling profiler attached to the live process was the only
+            # way to learn it was a TOML parse). Costs one sleeping thread.
+            self._start_loop_watchdog(loop)
             loop.run_forever()
         finally:
+            self._stop_loop_watchdog()
             try:
                 loop.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # Closing an already-closed or still-busy loop on the way out;
+                # the process exits either way.
                 pass
+            # Never waited on: a worker still inside a blocking native call
+            # would hold the quit open, and this process is on its way out
+            # anyway (the restart path depends on the port and the
+            # single-instance mutex being released promptly).
+            executor = getattr(self, "_io_executor", None)
+            if executor is not None:
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:  # noqa: BLE001,S110 - last statement of a
+                    # process that is exiting; the OS reclaims the threads.
+                    pass
+
+    # ---- Event-loop watchdog -------------------------------------------------
+
+    def _start_loop_watchdog(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Arm the off-loop stall reporter. Never fatal — it is a diagnostic."""
+        try:
+            from jarvis.core.loop_watchdog import EventLoopWatchdog
+
+            watchdog = EventLoopWatchdog(loop)
+            watchdog.start()
+            self._loop_watchdog = watchdog
+        except Exception:  # noqa: BLE001 — a watchdog must never break boot
+            from loguru import logger as _wd_log
+
+            _wd_log.opt(exception=True).debug("Event-loop watchdog not armed.")
+
+    def _stop_loop_watchdog(self) -> None:
+        """Retire the watchdog with the loop it watches."""
+        watchdog = getattr(self, "_loop_watchdog", None)
+        if watchdog is None:
+            return
+        self._loop_watchdog = None
+        try:
+            watchdog.stop()
+        except Exception:  # noqa: BLE001, S110 — teardown of a diagnostic
+            pass
 
     def _start_virtual_cursor(self) -> None:
         """Arm the Jarvis cursor identity and (optionally) the click-pulse overlay.
@@ -2130,8 +2305,12 @@ class DesktopApp:
         enabled = bool(enabled)
         try:
             self.cfg.ui.bar_persistent = enabled
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # The live flip below still happens, so the bar visibly changes and
+            # this call still reports ok — but the value never reached the
+            # config, so it is gone at the next start. That reads as "the
+            # setting does not stick", which is unfindable without this line.
+            logger.warning("bar_persistent not stored in config: {}", exc)
         bar = getattr(self, "_orb", None)
         bridge = getattr(self, "_bridge", None)
         if bar is None or bridge is None:
@@ -2166,8 +2345,10 @@ class DesktopApp:
         scale = renderer.clamp_user_size(scale)
         try:
             self.cfg.ui.bar_size_scale = scale
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Same trap as set_bar_persistent: the bar resizes on screen but the
+            # scale is lost at the next start, and the call still reports ok.
+            logger.warning("bar_size_scale not stored in config: {}", exc)
         bar = getattr(self, "_orb", None)
         fn = getattr(bar, "set_size_scale", None)
         if not callable(fn):
@@ -2193,8 +2374,10 @@ class DesktopApp:
         enabled = bool(enabled)
         try:
             self.cfg.ui.bar_follow_cursor_monitor = enabled
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Same trap as set_bar_persistent: follow-cursor applies live but is
+            # lost at the next start, while the call still reports ok.
+            logger.warning("bar_follow_cursor_monitor not stored in config: {}", exc)
         bar = getattr(self, "_orb", None)
         fn = getattr(bar, "set_follow_cursor", None)
         if not callable(fn):
@@ -2304,42 +2487,89 @@ class DesktopApp:
         (no window to restart). Fully guarded — a spawn failure leaves the app
         running rather than half-quitting.
         """
+        return self._schedule_restart(drop_elevation=False)[0]
+
+    def request_unelevated_restart(self) -> tuple[bool, str]:
+        """Restart WITHOUT the administrator rights this process is carrying.
+
+        Recovery for the input-isolation defect: while the app runs elevated,
+        Windows UIPI silently discards synthetic keystrokes and automation
+        queries from ordinary user software, so dictation apps, text expanders,
+        clipboard tools, and password-manager auto-type all go dead inside our
+        window while working everywhere else (see
+        ``jarvis/platform/input_isolation.py``). Elevation survives every normal
+        in-app restart, so escaping it needs this dedicated path.
+
+        Returns ``(scheduled, detail)``. On failure the app deliberately stays
+        UP and elevated rather than quitting: a half-repaired restart that never
+        comes back is strictly worse than the problem being fixed, and the
+        detail string is what the UI shows instead of a silent dead button.
+        """
+        return self._schedule_restart(drop_elevation=True)
+
+    def _schedule_restart(self, *, drop_elevation: bool) -> tuple[bool, str]:
+        """Spawn the detached relauncher, then quit — optionally dropping
+        elevation on the way out.
+
+        ``drop_elevation`` launches the relauncher through the elevated token's
+        filtered companion token, so the whole restart chain (relauncher → fresh
+        launcher → window) lands at ordinary integrity. Any failure returns
+        ``(False, detail)`` WITHOUT scheduling the quit.
+        """
         import subprocess
 
         from loguru import logger
 
         from jarvis.ui.relauncher import (
             detached_creationflags,
+            fresh_user_env,
             run_restart_quit_sequence,
         )
 
         window = getattr(self, "_window", None)
         if window is None:
-            return False
+            return (False, "no desktop window to restart")
         try:
             import jarvis as _jarvis
 
             repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
-            kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
-            if sys.platform == "win32":
-                kwargs["creationflags"] = detached_creationflags()
+            argv = [
+                sys.executable,
+                "-m",
+                "jarvis.ui.relauncher",
+                str(os.getpid()),
+                repo_root,
+            ]
+            if drop_elevation:
+                from jarvis.platform.deescalate import spawn_unelevated
+
+                outcome = spawn_unelevated(
+                    argv,
+                    cwd=repo_root,
+                    env=fresh_user_env(),
+                    creationflags=detached_creationflags(),
+                )
+                if not outcome.ok:
+                    logger.warning(
+                        "Unelevated relaunch refused — staying up elevated: {}",
+                        outcome.detail,
+                    )
+                    return (False, outcome.detail)
             else:
-                kwargs["start_new_session"] = True
-            subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
-                [
-                    sys.executable,
-                    "-m",
-                    "jarvis.ui.relauncher",
-                    str(os.getpid()),
-                    repo_root,
-                ],
-                **kwargs,
-            )
+                kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
+                if sys.platform == "win32":
+                    kwargs["creationflags"] = detached_creationflags()
+                else:
+                    kwargs["start_new_session"] = True
+                subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
+                    argv,
+                    **kwargs,
+                )
         except Exception as exc:  # noqa: BLE001 — never half-quit on a spawn error
             logger.opt(exception=exc).warning(
                 "relauncher spawn failed — staying up (no self-restart)"
             )
-            return False
+            return (False, f"{type(exc).__name__}: {exc}")
 
         def _mark_quit() -> None:
             self._user_requested_quit = True
@@ -2359,10 +2589,11 @@ class DesktopApp:
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned; quitting in ~0.2 s, "
-            "independent hard-exit watchdog at ~0.9 s)."
+            "Self-restart scheduled (relauncher spawned{}; quitting in ~0.2 s, "
+            "independent hard-exit watchdog at ~0.9 s).",
+            " WITHOUT administrator rights" if drop_elevation else "",
         )
-        return True
+        return (True, "restart scheduled")
 
     def request_quit(self) -> bool:
         """Cleanly quit the app WITHOUT relaunching (Terms declined).
@@ -2564,7 +2795,7 @@ class DesktopApp:
                     _name = getattr(_inst, "name", None)
                     if _name and hasattr(_inst, "execute"):
                         skill_tool_registry[_name] = _inst
-                except Exception:
+                except Exception:  # noqa: S112
                     continue  # Tool needs args — not relevant for skills.
 
             skill_runner = SkillRunner(
@@ -2759,6 +2990,30 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
+                # Dictation. Both keys ship bound to a curated combo (see
+                # TriggerConfig.hotkey_dictate); either can be cleared in the
+                # Voice → Shortcuts tab, and both live-re-arm without a restart.
+                dictate_hotkeys=(
+                    (self.cfg.trigger.hotkey_dictate,)
+                    if self.cfg.trigger.hotkey_dictate.strip()
+                    else ()
+                ),
+                dictate_toggle_hotkeys=(
+                    (self.cfg.trigger.hotkey_dictate_toggle,)
+                    if self.cfg.trigger.hotkey_dictate_toggle.strip()
+                    else ()
+                ),
+                # "Insert the last dictation again". Editable in the same tab,
+                # so it has to be armed here for the same reason the two above
+                # are — a shortcut the UI can change but the pipeline never
+                # reads is a row that lies.
+                paste_last_hotkeys=(
+                    (self.cfg.trigger.hotkey_paste_last,)
+                    if self.cfg.trigger.hotkey_paste_last.strip()
+                    else ()
+                ),
+                dictate_mode=self.cfg.dictation.mode,
+                dictation_config=self.cfg.dictation,
                 hangup_hotkeys=(
                     (self.cfg.trigger.hotkey_hangup,)
                     if self.cfg.trigger.hotkey_hangup.strip()
@@ -2921,7 +3176,7 @@ class DesktopApp:
                 from jarvis.core import runtime_refs
 
                 runtime_refs.set_speech_pipeline(pipeline)
-            except Exception:  # noqa: BLE001 — best-effort, never block voice boot
+            except Exception:  # noqa: BLE001, S110 - best-effort, never block voice boot
                 pass
             self._pipeline_task = loop.create_task(
                 pipeline.run(), name="speech-pipeline"
@@ -3063,6 +3318,9 @@ class DesktopApp:
                                 self._wake_model_loaded.wait(), timeout=120.0
                             )
                         except TimeoutError:
+                            # The gate is an optimisation, not a precondition:
+                            # after two minutes the upgrade proceeds anyway
+                            # rather than abandoning the hot-swap entirely.
                             pass
 
                         turbo = await asyncio.to_thread(
@@ -3200,6 +3458,8 @@ class DesktopApp:
                     "reason": "foreground_lock",
                 }
             except Exception as exc:  # noqa: BLE001
+                # Not swallowed: the reason travels back to the caller in the
+                # response body and surfaces in the focus API result.
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     # ---- WebView hooks -------------------------------------------------------
@@ -3224,7 +3484,7 @@ class DesktopApp:
         )
         try:
             window.evaluate_js(js)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             # Not fatal: the local control key can still unlock AuthGate.
             pass
 
@@ -3235,7 +3495,9 @@ class DesktopApp:
             )
 
             set_window_icon_by_title(WINDOW_TITLE, project_icon_path())
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
+            # Window-icon polish is cosmetic and Win32-only; the app works
+            # identically with the default icon.
             pass
 
         # Repair shell registration only after the first webview paint. This is
@@ -3291,7 +3553,9 @@ class DesktopApp:
                 r = httpx.get(url, timeout=0.5)
                 if r.status_code == 200:
                     return True
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # Expected on every poll until the backend binds its port;
+                # logging here would emit a line every 250 ms during boot.
                 pass
             time.sleep(0.25)
         return False
@@ -3355,6 +3619,17 @@ class DesktopApp:
         from jarvis.core.win32_dpi import ensure_dpi_awareness
 
         ensure_dpi_awareness()
+        # Ask the embedded browser to keep a built accessibility tree. Chromium
+        # otherwise builds it in response to the first query and answers that
+        # query from the unbuilt one, so every dictation app, text expander and
+        # password-manager auto-type saw a window with no fields in it. Must
+        # happen before the WebView exists — the flag is read when the browser
+        # process starts. Costs nothing at boot: it sets one variable.
+        from jarvis.platform.webview_accessibility import (
+            enable_webview_accessibility_tree,
+        )
+
+        enable_webview_accessibility_tree()
         import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
@@ -3422,7 +3697,7 @@ class DesktopApp:
             pin_linux_wm_class()
             ensure_linux_desktop_entry()
             apply_macos_dock_icon()
-        except Exception:  # noqa: BLE001 — icon/identity pins are never load-bearing
+        except Exception:  # noqa: BLE001, S110 - icon/identity pins are never load-bearing
             pass
 
         # Native file drag-out: dragging a saved-download toast drops the REAL
@@ -3437,7 +3712,7 @@ class DesktopApp:
             from jarvis.ui.native_drag import install_native_drag
 
             install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads"])
-        except Exception:  # noqa: BLE001 — the drag bridge is never load-bearing
+        except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
             pass
 
         # webview.start blocks the main thread. func/args gets called after
@@ -3458,6 +3733,8 @@ class DesktopApp:
                 debug=debug,
             )
         except webview.WebViewException as exc:
+            # Not swallowed: the exception is handed to the degrade path, which
+            # reports it and opens the UI in the default browser instead.
             return self._degrade_to_browser_ui(exc)
         # webview.start returns once the window is destroyed. A real quit (the
         # X, tray "Quit", or a restart) has set ``_user_requested_quit``; in that
@@ -3638,6 +3915,8 @@ class DesktopApp:
                 try:
                     cmd = cmd_queue.get(timeout=0.5)
                 except queue.Empty:
+                    # The idle case of a polling loop, not a failure: no command
+                    # arrived within the tick, so check the shutdown flag again.
                     continue
                 action = cmd.action
                 if action == "open_ui":
@@ -3654,7 +3933,9 @@ class DesktopApp:
                     try:
                         if self._window is not None:
                             self._window.destroy()
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001, S110
+                        # Teardown best-effort: the window may already be gone,
+                        # and the process is exiting on the next line anyway.
                         pass
                     return
 
@@ -3711,8 +3992,13 @@ class DesktopApp:
             self._reload_window_if_stale()
             # Bring the persistent bar back too (it was cleared on minimise).
             self._restore_overlay_for_visible_window()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # The whole show-the-window path is in this try, so a failure here
+            # is exactly the "clicked the tray icon and nothing happened"
+            # report — with no other trace anywhere.
+            from loguru import logger
+
+            logger.opt(exception=exc).warning("Showing the desktop window failed")
 
     def _reload_window_if_stale(self) -> None:
         """Re-fetch the SPA root if the embedded WebView is stuck on an
@@ -3728,16 +4014,25 @@ class DesktopApp:
         """
         if self._window is None:
             return
+        from loguru import logger
+
         try:
             title = self._window.evaluate_js("document.title")
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # A probe that ALWAYS fails looks identical to "the SPA never
+            # booted", so every show() reloads the window — the reload loop
+            # that reads as a flickering window at startup. Distinguishing a
+            # broken probe from a genuinely stale frame needs this line.
+            logger.debug("Staleness probe failed, assuming a stale frame: {}", exc)
             title = None
         if title and isinstance(title, str) and "Jarvis" in title:
             return
         try:
             self._window.load_url(self._url())
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Nothing left to try: the window keeps showing the stale body, so
+            # the user sees an error page that never refreshes.
+            logger.warning("Could not reload the stale window: {}", exc)
 
     # ---- Window close (X) = minimise to tray + clear overlay ---------------
 
@@ -3875,7 +4170,9 @@ class DesktopApp:
                     stop()
                 else:
                     self._orb.hide()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # Teardown best-effort: the process is exiting and the OS
+                # reclaims the window regardless.
                 pass
 
         # Restore other apps' audio (in case a session was muting music at quit).
@@ -3883,8 +4180,12 @@ class DesktopApp:
         if ducker is not None:
             try:
                 ducker.restore_sync()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Worth a line: a failure here leaves the user's music ducked
+                # AFTER Jarvis is gone, and nothing else will restore it.
+                from loguru import logger as _logger
+
+                _logger.warning("Could not restore other apps' audio on quit: {}", exc)
 
         # Virtual-mouse overlay down too (own Tk thread). Its shutdown blocks
         # up to ~5s on the Tk thread join + does a ShowWindow(SW_HIDE) Win32
@@ -3916,7 +4217,9 @@ class DesktopApp:
             try:
                 from jarvis.overlay.system_cursor import set_jarvis_system_cursor
                 set_jarvis_system_cursor(None)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # The shutdown() above already logged if the cursor is stuck;
+                # this is the second, redundant restore attempt.
                 pass
             self._jarvis_cursor = None
 
@@ -3928,8 +4231,13 @@ class DesktopApp:
             if self._pipeline_task is not None and not self._pipeline_task.done():
                 try:
                     loop.call_soon_threadsafe(self._pipeline_task.cancel)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # If this cancel never lands, HotkeyTrigger stays in the loop
+                    # and server.stop() never gets a turn — the hung-shutdown
+                    # shape that once kept a dead process on the port.
+                    from loguru import logger as _logger
+
+                    _logger.warning("Pipeline-task cancel did not dispatch: {}", exc)
             # Wake-model background tasks + gate: cancel the turbo hot-swap task
             # and RELEASE the wake-model-loaded gate so any task still parked in
             # ``await self._wake_model_loaded.wait()`` (the heavy-backend gate)
@@ -3941,14 +4249,23 @@ class DesktopApp:
             if _wut is not None and not _wut.done():
                 try:
                     loop.call_soon_threadsafe(_wut.cancel)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # This is the exact path behind the 2026-06-27 forensic
+                    # above: a task left pending can stall loop.stop, the
+                    # self-restart hangs, and the old process keeps the port.
+                    from loguru import logger as _logger
+
+                    _logger.warning("Wake-upgrade task cancel did not dispatch: {}", exc)
             _wml = getattr(self, "_wake_model_loaded", None)
             if _wml is not None:
                 try:
                     loop.call_soon_threadsafe(_wml.set)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # Same failure shape: anything parked on this gate stays
+                    # parked through shutdown instead of unblocking.
+                    from loguru import logger as _logger
+
+                    _logger.warning("Wake-model gate release did not dispatch: {}", exc)
             # Cleanly shut down the workflow scheduler + store — prevents
             # a cron tick from still triggering a run mid-shutdown.
             wf_scheduler = getattr(self, "_workflow_scheduler", None)
@@ -3961,19 +4278,25 @@ class DesktopApp:
                         try:
                             if sched is not None:
                                 await sched.stop()
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001, S110
+                            # One scheduler refusing to stop must not skip the
+                            # other, nor the store closes below.
                             pass
                     for st in (wf_store, cd_store):
                         try:
                             if st is not None:
                                 await st.close()
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001, S110
+                            # Same: the process is exiting, so an unclosed
+                            # store handle is released by the OS anyway.
                             pass
                 try:
                     asyncio.run_coroutine_threadsafe(
                         _workflow_cleanup(), loop,
                     ).result(timeout=2.0)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
+                    # Bounded by the 2 s timeout on purpose: a wedged cleanup
+                    # must not hold the whole quit open.
                     pass
             # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:
@@ -3988,7 +4311,9 @@ class DesktopApp:
                     _logger.warning("PTY-Cleanup failed: {}", exc)
             try:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # _pty_cleanup already logs its own failure; this only bounds
+                # how long the quit waits for it.
                 pass
             # Stop the serve-first bootstrap (it owns the listening socket).
             if self._bootstrap is not None:
@@ -3996,20 +4321,25 @@ class DesktopApp:
                     asyncio.run_coroutine_threadsafe(
                         self._bootstrap.stop(), loop
                     ).result(timeout=3.0)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
+                    # Timed out or already down; the loop stop below is the
+                    # backstop that frees the socket either way.
                     pass
             try:
                 fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
                 try:
                     fut.result(timeout=3.0)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
                     # Server shutdown may hang; the event loop still stops forcibly.
                     pass
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # Could not even schedule the stop (loop already closing); the
+                # forced loop.stop below covers it.
                 pass
             try:
                 loop.call_soon_threadsafe(loop.stop)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # The loop is already stopped or closed — the desired end state.
                 pass
 
         if self._backend_thread is not None:
@@ -4020,14 +4350,23 @@ class DesktopApp:
         if self._tray is not None:
             try:
                 self._tray.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Worth a line: the visible symptom is a ghost tray icon that
+                # outlives the process, which reads as "Jarvis did not quit".
+                from loguru import logger as _logger
+
+                _logger.warning("Tray icon did not stop cleanly: {}", exc)
             self._tray = None
 
         try:
             META_FILE_PATH.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # A sidecar left behind makes the NEXT start believe an instance is
+            # already running, so it refuses to launch or tries to focus a dead
+            # window. Silence here costs the user the next start.
+            from loguru import logger as _logger
+
+            _logger.warning("Could not remove the instance sidecar: {}", exc)
 
         return 0
 
@@ -4057,8 +4396,11 @@ def main() -> int:
     finally:
         try:
             lock.release()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # A lock left held blocks the next start outright. The zombie
+            # eviction path recovers it, but only after a confusing delay, so
+            # the reason belongs in the log of the run that caused it.
+            sys.stderr.write(f"Could not release the single-instance lock: {exc}\n")
 
 
 if __name__ == "__main__":

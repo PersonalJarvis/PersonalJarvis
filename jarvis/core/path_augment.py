@@ -24,6 +24,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -68,8 +69,25 @@ def _posix_candidates() -> list[str]:
 def _windows_candidates() -> list[str]:
     home = Path.home()
     dirs: list[str] = []
+    node_dirs: set[str] = set()
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        program_files = os.environ.get(var)
+        if not program_files:
+            continue
+        # The official Node.js Windows installer writes this directory to the
+        # machine PATH. A running desktop process keeps its old PATH, though,
+        # so a freshly installed npm Codex shim is found while its `node.exe`
+        # runtime is not. ProgramW6432 keeps the 64-bit install visible even
+        # when Jarvis itself runs as a 32-bit process.
+        candidate = os.path.join(program_files, "nodejs")
+        key = os.path.normcase(os.path.normpath(candidate))
+        if key not in node_dirs:
+            node_dirs.add(key)
+            dirs.append(candidate)
     local = os.environ.get("LOCALAPPDATA")
     if local:
+        # User-scoped Node installers commonly use this UAC-free location.
+        dirs.append(os.path.join(local, "Programs", "nodejs"))
         # The official Antigravity PowerShell/CMD installer uses this directory.
         dirs.append(os.path.join(local, "agy", "bin"))
         # winget's shim dir lands on the *registry* PATH only — a running
@@ -89,9 +107,34 @@ def _windows_candidates() -> list[str]:
     return dirs
 
 
+def _registered_agent_dirs() -> list[str]:
+    """Install dirs contributed by registered coding-CLI entries.
+
+    A CLI whose own installer drops the binary somewhere the platform lists are
+    not going to guess (``~/.local/bin`` on a GUI-launched macOS process, for
+    one) says so on its registry entry rather than earning a line in the
+    platform tables here — which would put product knowledge in a module that
+    has no business holding any.
+
+    Failures are swallowed: PATH augmentation is best-effort by contract, and a
+    registry that cannot be imported must not take the whole lookup with it.
+    """
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        return [
+            os.path.expanduser(d)
+            for agent in workspace_agents.coding_agents()
+            for d in agent.extra_path_dirs
+        ]
+    except Exception:  # noqa: BLE001 - see docstring
+        return []
+
+
 def candidate_dirs() -> list[str]:
     """The platform's well-known CLI install dirs (existing or not)."""
-    return _windows_candidates() if sys.platform == "win32" else _posix_candidates()
+    base = _windows_candidates() if sys.platform == "win32" else _posix_candidates()
+    return [*base, *_registered_agent_dirs()]
 
 
 def ensure_cli_paths() -> list[str]:
@@ -125,4 +168,21 @@ def ensure_cli_paths() -> list[str]:
     return added
 
 
-__all__ = ["candidate_dirs", "ensure_cli_paths"]
+def resolve_node_executable() -> str | None:
+    """Return an absolute Node.js executable, including stale-GUI-PATH hosts."""
+    ensure_cli_paths()
+    found = shutil.which("node") or shutil.which("node.exe")
+    if found:
+        return found
+    if sys.platform == "win32":
+        for directory in _windows_candidates():
+            candidate = Path(directory) / "node.exe"
+            try:
+                if candidate.is_file():
+                    return str(candidate)
+            except OSError:
+                continue
+    return None
+
+
+__all__ = ["candidate_dirs", "ensure_cli_paths", "resolve_node_executable"]

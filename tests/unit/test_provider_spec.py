@@ -27,15 +27,17 @@ def test_every_secret_key_exists_in_wizard() -> None:
     for spec in PROVIDERS:
         for key in spec.secret_keys:
             assert key in wizard_keys, (
-                f"Provider '{spec.id}' referenziert secret_key '{key}', "
-                f"is not declared in wizard.SECRETS"
+                f"Provider '{spec.id}' references secret_key '{key}', "
+                f"which is not declared in wizard.SECRETS"
             )
 
 
 def test_only_subscription_cli_providers_use_cli_login() -> None:
     """A login CLI belongs to the subscription/login providers only. Codex logs
     in via ``codex login``; Antigravity drives the bare ``agy`` binary (it has
-    no ``login`` subcommand). Every pure API-key / local provider has none."""
+    no ``login`` subcommand); the Claude subscription signs in with the
+    ``/login`` slash command of the ``claude`` CLI. Every pure API-key / local
+    provider has none."""
     for spec in PROVIDERS:
         assert spec.auth_mode != "subscription_cli"  # never the legacy literal
         if spec.id == "codex":
@@ -44,6 +46,9 @@ def test_only_subscription_cli_providers_use_cli_login() -> None:
         elif spec.id == "antigravity":
             assert spec.auth_mode == "antigravity"
             assert spec.login_cli == ("agy",)
+        elif spec.id == "claude-cli":
+            assert spec.auth_mode == "claude_cli"
+            assert spec.login_cli == ("claude", "/login")
         else:
             assert spec.login_cli is None, f"{spec.id}: unexpected login_cli"
 
@@ -65,10 +70,15 @@ def test_codex_spec_is_separate_from_openai_api_key() -> None:
     assert openai.secret_keys == ("openai_api_key",)
 
 
-def test_none_specs_have_no_credentials() -> None:
+def test_none_specs_never_require_credentials() -> None:
+    """auth_mode "none" bills as "local" and must never DEMAND a credential.
+    OPTIONAL secret slots are allowed (local-openai's vLLM --api-key case) —
+    is_credential_present reports none-cards as configured either way."""
+    from jarvis.ui.web.provider_spec import provider_billing
+
     for spec in PROVIDERS:
         if spec.auth_mode == "none":
-            assert spec.secret_keys == ()
+            assert provider_billing(spec) == "local"
             assert spec.login_cli is None
 
 
@@ -76,6 +86,14 @@ def test_get_spec_lookup() -> None:
     assert get_spec("openai") is not None
     assert get_spec("claude-api") is not None
     assert get_spec("does-not-exist") is None
+
+
+def test_groq_stt_is_last_and_not_recommended() -> None:
+    """Groq remains selectable, but the Voice Input UI must de-emphasize it."""
+    stt_specs = [spec for spec in PROVIDERS if spec.tier == "stt"]
+    assert stt_specs[-1].id == "groq-api"
+    assert stt_specs[-1].recommended is False
+    assert stt_specs[-1].caution
 
 
 def test_all_secret_keys_collects_unique_set() -> None:

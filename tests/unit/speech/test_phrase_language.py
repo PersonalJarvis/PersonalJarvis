@@ -166,7 +166,7 @@ async def test_brain_timeout_phrase_is_german_for_whisper_language_name() -> Non
 def test_smalltalk_fallback_is_german_for_whisper_language_name() -> None:
     answer = _smalltalk_fallback_for_non_substantive("wie geht es dir", "german")
     assert answer is not None
-    assert "Ruben" in answer
+    assert "Alex" in answer
     assert "geht's gut" in answer, answer  # the German variant, not "I'm good"
 
 

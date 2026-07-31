@@ -116,7 +116,7 @@ async def test_speak_does_not_cancel_playback_when_barge_monitor_returns_false()
 
     pipe._barge_monitor = _barge_monitor  # type: ignore[method-assign]
 
-    barged = await pipe._speak("Hallo Ruben.", language="de")
+    barged = await pipe._speak("Hallo Alex.", language="de")
 
     assert barged is False
     assert player.completed is True
@@ -206,7 +206,7 @@ async def test_wellbeing_prompt_gets_voice_fallback_when_brain_returns_filler() 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Mir geht's gut, Ruben. Was machen wir als Naechstes?", "de")]
+    assert pipe._spoken == [("Mir geht's gut, Alex. Was machen wir als Naechstes?", "de")]
     assert pipe._turn_state == TurnTakingState.IDLE
     assert pipe._session_end_reason == "turn_complete"
 
@@ -865,14 +865,14 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
         FakeSTT(text="Ich glaube wir sind durch"),
-        brain_response="Bis später, Ruben. [[END_CALL]]",  # i18n-allow
+        brain_response="Bis später, Alex. [[END_CALL]]",  # i18n-allow
         continue_listening_after_response=True,  # prove hangup overrides stay-open
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Bis später, Ruben.", "de")]  # sentinel stripped  # i18n-allow
+    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped  # i18n-allow
     assert pipe._session_end_reason == "voice_pattern"
     assert pipe._hangup_event.is_set()
 
@@ -884,7 +884,7 @@ async def test_polite_thanks_no_longer_auto_hangs_up() -> None:
     # sentinel) keeps the conversation open. Realizes "stay on when unsure".
     pipe = _make_pipeline(
         FakeSTT(text="Vielen Dank"),
-        brain_response="Gern geschehen, Ruben.",
+        brain_response="Gern geschehen, Alex.",
         continue_listening_after_response=True,
     )
 
@@ -911,7 +911,7 @@ async def test_explicit_auflegen_still_hard_hangs_up_via_regex() -> None:
 async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> None:
     pipe = _make_streaming_pipeline(
         FakeSTT(text="x"),
-        stream_chunks=["Alles erledigt. ", "Bis später, Ruben. ", "[[END_CALL]]"],  # i18n-allow
+        stream_chunks=["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"],  # i18n-allow
         all_failed=False,
     )
 

@@ -31,7 +31,7 @@ config:
   docs_root: docs
   default_diataxis: explanation
   default_status: draft
-  default_owner: harald
+  default_owner: project-maintainers
   review_cadence_days_default: 180
   review_cadence_days_tutorial: 90
   review_cadence_days_howto: 90
@@ -132,7 +132,7 @@ title: "Concept: Router-Discipline"        # display title, in quotes
 slug: router-discipline                     # URL-stable, kebab-case, append-only
 diataxis: explanation                       # tutorial|howto|reference|explanation|troubleshooting|adr
 status: draft                               # draft|active|deprecated
-owner: harald                               # who is responsible for correctness
+owner: project-maintainers                               # who is responsible for correctness
 last_reviewed: 2026-04-28                   # ISO date YYYY-MM-DD
 phase: 5                                    # master-plan phase: 0|1|1a|1c|2|3|4|5|6|7|L+P|A0..A5|-
 ---

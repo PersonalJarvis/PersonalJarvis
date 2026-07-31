@@ -543,6 +543,7 @@ def _atspi_flatten(
         enabled = _atspi_enabled(element)
         focused = _atspi_focused(element)
         # AT-SPI marks secure edits with a dedicated ROLE, not a flag.
+        secure_state_known = bool(native_role.strip())
         is_password = native_role.strip().upper() == "ROLE_PASSWORD_TEXT"
     except Exception:  # noqa: BLE001
         return
@@ -550,12 +551,13 @@ def _atspi_flatten(
     # L3 value-read: editable text via the AT-SPI Text interface. Optional --
     # buttons/labels/containers have no Text iface -> "" (graceful; never raises).
     value = ""
-    try:
-        query_text = getattr(element, "queryText", None)
-        if callable(query_text):
-            value = str(query_text().getText(0, -1) or "")
-    except Exception:  # noqa: BLE001
-        value = ""
+    if secure_state_known and not is_password:
+        try:
+            query_text = getattr(element, "queryText", None)
+            if callable(query_text):
+                value = str(query_text().getText(0, -1) or "")
+        except Exception:  # noqa: BLE001
+            value = ""
 
     my_index = len(out)
     out.append(RawNode(

@@ -6,15 +6,15 @@ colleagues, family) has their own Markdown file. The Curator decides
 and it ends up in exactly one file.
 
 Example scenario from a user request:
-    User says: "My girlfriend Laura works at X."
-    → Extractor recognises: subject=person:Laura, field=profession=X,
-      relationship_to_user=partner
-    → Validator checks: "Laura" is not User.name
-    → Merger: `people/laura.md` is created (if not yet present) or
+    User says: "My colleague Casey works at X."
+    → Extractor recognises: subject=person:Casey, field=profession=X,
+      relationship_to_user=colleague
+    → Validator checks: "Casey" is not User.name
+    → Merger: `people/casey.md` is created (if not yet present) or
       updated. USER.md remains unchanged.
 
-The user can open `people/laura.md` at any time and see what Jarvis knows
-about Laura. The separation is visible, not hidden.
+The user can open `people/casey.md` at any time and see what Jarvis knows
+about Casey. The separation is visible, not hidden.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ class Person:
 class PersonStore:
     """Manages `data/workspace/people/`.
 
-    Lookup is slug-based (`person_slug("Laura Müller") == "laura_mueller"`)  # i18n-allow: example name demonstrating umlaut-safe slug conversion
+    Lookup is slug-based (`person_slug("Casey Müller") == "casey_mueller"`)  # i18n-allow: example name demonstrating umlaut-safe slug conversion
     so that umlauts and special characters do not cause filename issues.
     """
 
@@ -120,7 +120,7 @@ class PersonStore:
     def find_by_alias(self, query: str) -> Person | None:
         """Searches for a person by name or alias.
 
-        Important on second contact: the user says "Laura" once, then "Lola" as
+        Important on second contact: the user says "Casey" once, then "Lola" as
         a nickname — we match on both.
         """
         slug = person_slug(query)
@@ -144,8 +144,8 @@ class PersonStore:
         """Compact prompt block with names and relationships of known people.
 
         We do NOT inject the full person files into every prompt (too large);
-        instead we include only a list so Jarvis knows that 'Laura' exists and
-        that she is a partner. Details are read on demand via a tool call
+        instead we include only a list so Jarvis knows that 'Casey' exists and
+        that the person is a colleague. Details are read on demand via a tool call
         (see the `remember` tool).
         """
         people = self.list_all()

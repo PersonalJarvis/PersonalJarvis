@@ -75,6 +75,32 @@ function installFetchMock(
         }),
       } as Response;
     }
+    // Which mode owns the Wiki section. These tests are about the NORMAL wiki
+    // body, and that body only renders once the backend has actually said the
+    // mode is off — an unanswered status renders neither body, because
+    // guessing "off" is what dropped Ultra installs back into the normal wiki
+    // after every restart (WikiView.mode-persistence.test.tsx).
+    if (url.startsWith("/api/ultrawiki/status")) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          enabled: false,
+          configured: false,
+          started: false,
+          db_backend: "sqlite",
+          backend_in_use: "",
+          slots: {},
+          counts: {},
+          pipeline: { running: false, processed: {} },
+          sources: [],
+          jobs: [],
+          search_legs: {},
+          degradations: [],
+        }),
+      } as Response;
+    }
     for (const prefix of Object.keys(routes)) {
       if (url.startsWith(prefix)) {
         const body = routes[prefix]();
@@ -116,8 +142,8 @@ const POPULATED_TREE: WikiTreeResponse = {
       kind: "entity",
       count: 2,
       files: [
-        { slug: "ruben", title: "Ruben", mtime: 1, size: 100 },
-        { slug: "harald", title: "Harald", mtime: 2, size: 200 },
+        { slug: "alex", title: "Alex", mtime: 1, size: 100 },
+        { slug: "morgan", title: "Morgan", mtime: 2, size: 200 },
       ],
     },
     { name: "concepts", kind: "concept", count: 0, files: [] },
@@ -134,33 +160,33 @@ const POPULATED_TREE: WikiTreeResponse = {
   stats: { total_pages: 3, total_links: 8, last_curator_run: "2026-05-13T13:59:00" },
 };
 
-const HARALD_PAGE: WikiPageResponse = {
+const MORGAN_PAGE: WikiPageResponse = {
   ok: true,
-  slug: "harald",
+  slug: "morgan",
   kind: "entity",
-  title: "Harald",
-  path: "entities/harald.md",
+  title: "Morgan",
+  path: "entities/morgan.md",
   frontmatter: {
     type: "entity",
     entity_kind: "person",
-    slug: "harald",
+    slug: "morgan",
     aliases: [],
     created: "2026-05-13",
     updated: "2026-05-13",
   },
-  body_md: "# Harald\n\n## Relationships\n\nFather of [[ruben]] — established via voice fact.\n",
-  wikilinks: ["ruben"],
+  body_md: "# Morgan\n\n## Relationships\n\nMentor of [[alex]] — established via voice fact.\n",
+  wikilinks: ["alex"],
   stats: { words: 17, bytes: 289, mtime: 1 },
 };
 
-const HARALD_BACKLINKS: WikiBacklinksResponse = {
+const MORGAN_BACKLINKS: WikiBacklinksResponse = {
   ok: true,
-  slug: "harald",
+  slug: "morgan",
   backlinks: [
     {
-      slug: "ruben",
-      title: "Ruben",
-      snippet: "...Father is [[harald]] — born 1976...",
+      slug: "alex",
+      title: "Alex",
+      snippet: "...Mentor is [[morgan]] — likes hiking...",
     },
   ],
 };
@@ -193,8 +219,8 @@ describe("WikiView — populated tree", () => {
   beforeEach(() => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/": () => HARALD_PAGE,
-      "/api/wiki/backlinks/": () => HARALD_BACKLINKS,
+      "/api/wiki/page/": () => MORGAN_PAGE,
+      "/api/wiki/backlinks/": () => MORGAN_BACKLINKS,
     });
   });
 
@@ -208,8 +234,8 @@ describe("WikiView — populated tree", () => {
     // Three populated leaves are visible because entities and projects open
     // by default (per mockup contract).
     await waitFor(() => {
-      expect(screen.getByText("ruben.md")).toBeDefined();
-      expect(screen.getByText("harald.md")).toBeDefined();
+      expect(screen.getByText("alex.md")).toBeDefined();
+      expect(screen.getByText("morgan.md")).toBeDefined();
       expect(screen.getByText("pixel-art-editor.md")).toBeDefined();
     });
 
@@ -258,15 +284,15 @@ describe("WikiView — populated tree", () => {
     renderWithClient(<WikiView />);
 
     await waitFor(() => {
-      expect(screen.getByText("harald.md")).toBeDefined();
+      expect(screen.getByText("morgan.md")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByText("harald.md"));
+    fireEvent.click(screen.getByText("morgan.md"));
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
-    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Harald");
+    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Morgan");
   }, 10_000);
 });
 
@@ -280,7 +306,7 @@ describe("WikiView — health strip", () => {
     last_write: {
       ts: 1750000000,
       ok: true,
-      pages: ["ruben"],
+      pages: ["alex"],
       error: null,
       source: "curator",
     },
@@ -321,7 +347,7 @@ describe("WikiView — health strip", () => {
       ts: 1750000000,
       ok: false,
       pages: [],
-      error: "Permission denied writing entities/ruben.md",
+      error: "Permission denied writing entities/alex.md",
       source: "curator",
     },
     last_chain_failure: null,
@@ -392,7 +418,7 @@ describe("WikiView — health strip", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-health-write").textContent).toContain(
-        "Permission denied writing entities/ruben.md",
+        "Permission denied writing entities/alex.md",
       );
     });
     expect(
@@ -424,25 +450,25 @@ describe("WikiView — health strip", () => {
 
 describe("PageRenderer — wikilink behaviour", () => {
   it("preprocessWikilinks rewrites [[slug]] / [[folder/slug]] / [[slug|label]]", () => {
-    expect(preprocessWikilinks("see [[ruben]] here")).toBe(
-      "see [ruben](#wiki:ruben) here",
+    expect(preprocessWikilinks("see [[alex]] here")).toBe(
+      "see [alex](#wiki:alex) here",
     );
-    expect(preprocessWikilinks("see [[entities/ruben]] here")).toBe(
-      "see [ruben](#wiki:ruben) here",
+    expect(preprocessWikilinks("see [[entities/alex]] here")).toBe(
+      "see [alex](#wiki:alex) here",
     );
-    expect(preprocessWikilinks("see [[ruben|the son]] here")).toBe(
-      "see [the son](#wiki:ruben) here",
+    expect(preprocessWikilinks("see [[alex|the son]] here")).toBe(
+      "see [the son](#wiki:alex) here",
     );
   });
 
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/harald": () => HARALD_PAGE,
+      "/api/wiki/page/morgan": () => MORGAN_PAGE,
     });
     const onClick = vi.fn();
     renderWithClient(
-      <PageRenderer slug="harald" onWikilinkClick={onClick} />,
+      <PageRenderer slug="morgan" onWikilinkClick={onClick} />,
     );
 
     await waitFor(() => {
@@ -450,25 +476,25 @@ describe("PageRenderer — wikilink behaviour", () => {
     });
 
     const link = document.querySelector(
-      "a.wikilink[data-target-slug='ruben']",
+      "a.wikilink[data-target-slug='alex']",
     ) as HTMLAnchorElement | null;
     expect(link).not.toBeNull();
     fireEvent.click(link!);
-    expect(onClick).toHaveBeenCalledWith("ruben");
+    expect(onClick).toHaveBeenCalledWith("alex");
   });
 
   it("renders a broken wikilink with the `.broken` class when the slug is unknown", async () => {
     const brokenPage: WikiPageResponse = {
-      ...HARALD_PAGE,
+      ...MORGAN_PAGE,
       body_md: "Refers to [[nonexistent-slug]] which doesn't exist.\n",
       wikilinks: ["nonexistent-slug"],
     };
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/harald": () => brokenPage,
+      "/api/wiki/page/morgan": () => brokenPage,
     });
     renderWithClient(
-      <PageRenderer slug="harald" onWikilinkClick={vi.fn()} />,
+      <PageRenderer slug="morgan" onWikilinkClick={vi.fn()} />,
     );
 
     await waitFor(() => {
@@ -487,19 +513,19 @@ describe("PageHeader — frontmatter pills", () => {
   it("renders pills for known frontmatter keys and skips slug + aliases", () => {
     render(
       <PageHeader
-        slug="harald"
+        slug="morgan"
         kind="entity"
-        title="Harald"
+        title="Morgan"
         frontmatter={{
           type: "entity",
           entity_kind: "person",
-          slug: "harald",
+          slug: "morgan",
           aliases: ["herry", "h"],
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
         vaultRoot="C:/vault/Jarvis"
-        vaultRelPath="entities/harald.md"
+        vaultRelPath="entities/morgan.md"
       />,
     );
 

@@ -479,8 +479,16 @@ class DictionaryCorrectingSTT:
 
     @property
     def provider_label(self) -> str:
-        """Human-readable inner provider name for log lines."""
-        return type(self._inner).__name__
+        """Human-readable inner provider name for log lines.
+
+        Delegates when the inner object carries a label of its own. Since the
+        runtime fallback chain started wrapping the real provider, the class
+        name here resolved to ``FallbackSTT`` and the transcription log stopped
+        naming which provider actually ran — the one fact you need when a
+        provider is the thing failing, which is exactly when someone reads it.
+        """
+        inner = getattr(self._inner, "provider_label", "")
+        return str(inner) if inner else type(self._inner).__name__
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -493,13 +501,27 @@ class DictionaryCorrectingSTT:
             text = getattr(transcript, "text", None)
             if not text:
                 return transcript
-            corrected = get_corrector(self._store).correct(text)
-            if corrected == text:
+            corrector = get_corrector(self._store)
+            corrected = corrector.correct(text)
+            # A provider may also carry the pre-cleanup string on ``raw_text``,
+            # and the dictation lane transcribes from THAT. The user's spelling
+            # corrections are not part of the cleanup they opted out of — they
+            # are words a person registered by name — so they have to reach both
+            # fields or dictation silently stops honouring the dictionary.
+            raw = getattr(transcript, "raw_text", "") or ""
+            corrected_raw = corrector.correct(raw) if raw else raw
+            if corrected == text and corrected_raw == raw:
                 return transcript
             log.debug("STT dictionary corrected: %r -> %r", text, corrected)
+            updates: dict[str, Any] = {"text": corrected}
+            # Only when the provider actually has the field: passing it to a
+            # provider that does not would raise instead of correcting.
+            if raw:
+                updates["raw_text"] = corrected_raw
             if dataclasses.is_dataclass(transcript):
-                return dataclasses.replace(transcript, text=corrected)
-            transcript.text = corrected  # duck-typed fakes in tests
+                return dataclasses.replace(transcript, **updates)
+            for name, value in updates.items():  # duck-typed fakes in tests
+                setattr(transcript, name, value)
             return transcript
         except Exception as exc:  # noqa: BLE001 — corrections must never break STT
             log.warning("STT dictionary correction failed (%s); using raw text.", exc)

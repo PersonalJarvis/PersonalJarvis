@@ -33,6 +33,7 @@ from loguru import logger
 # Each ref is a 1-element list so the setter can rebind without ``global``.
 _BRAIN_MANAGER: list[Any] = []
 _SUPERVISOR_TOOL_GATEWAY: list[Any] = []
+_MISSION_TOOL_AUTO_APPROVER: list[Any] = []
 _SPEECH_PIPELINE: list[Any] = []
 _MCP_REGISTRY: list[Any] = []
 
@@ -69,6 +70,21 @@ def set_supervisor_tool_gateway(gateway: Any) -> None:
 def get_supervisor_tool_gateway() -> Any | None:
     """Return the live supervisor tool gateway, or ``None`` before brain wiring."""
     return _SUPERVISOR_TOOL_GATEWAY[0] if _SUPERVISOR_TOOL_GATEWAY else None
+
+
+def set_mission_tool_auto_approver(approver: Any) -> None:
+    """Register the mission-scoped tool pre-authorizer (ADR-0031).
+
+    Set by the web-server bootstrap next to the MissionToolApprovalCoordinator;
+    read by the WorkerToolBroker (which lives below the web layer, same pattern
+    as the supervisor tool gateway) to arm/disarm per-grant auto-approval.
+    """
+    _set(_MISSION_TOOL_AUTO_APPROVER, approver)
+
+
+def get_mission_tool_auto_approver() -> Any | None:
+    """The live MissionToolAutoApprover, or ``None`` before server wiring."""
+    return _MISSION_TOOL_AUTO_APPROVER[0] if _MISSION_TOOL_AUTO_APPROVER else None
 
 
 def set_speech_pipeline(pipeline: Any) -> None:
@@ -212,6 +228,7 @@ def _reset_for_tests() -> None:
     """Clear all refs. Test-only helper (fixtures call this in teardown)."""
     _BRAIN_MANAGER.clear()
     _SUPERVISOR_TOOL_GATEWAY.clear()
+    _MISSION_TOOL_AUTO_APPROVER.clear()
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
     _WEB_APP.clear()

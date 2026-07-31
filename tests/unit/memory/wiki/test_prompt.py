@@ -47,7 +47,7 @@ class _FakeVault:
 def test_select_top_slugs_empty_source_returns_empty() -> None:
     """A blank source contributes no tokens, so the shortlist is empty."""
 
-    result = select_top_slugs("", ["ruben-luetke", "awareness-layer"])
+    result = select_top_slugs("", ["alex-morgan", "awareness-layer"])
     assert result == []
 
 
@@ -61,9 +61,9 @@ def test_select_top_slugs_zero_overlap_returns_empty() -> None:
 def test_select_top_slugs_ranks_by_overlap_then_alpha() -> None:
     """Higher overlap wins; ties break alphabetically for deterministic output."""
 
-    source = "ruben pushes the awareness layer for the jarvis-agent bridge"
+    source = "alex pushes the awareness layer for the jarvis-agent bridge"
     candidates = [
-        "ruben-luetke",
+        "alex-morgan",
         "awareness-layer",
         "jarvis-agent-bridge",
         "phase-6",
@@ -72,7 +72,7 @@ def test_select_top_slugs_ranks_by_overlap_then_alpha() -> None:
     ranked = select_top_slugs(source, candidates)
     assert "awareness-layer" in ranked
     assert "jarvis-agent-bridge" in ranked
-    assert "ruben-luetke" in ranked
+    assert "alex-morgan" in ranked
     assert "kontrollierer" not in ranked
 
 
@@ -193,7 +193,7 @@ def test_build_system_prompt_includes_vault_summary_when_provided() -> None:
     vault_summary = {
         "counts": {"entity": 2, "concept": 1, "project": 0, "session": 0},
         "latest": {
-            "entity": ["ruben-luetke", "personal-jarvis"],
+            "entity": ["alex-morgan", "personal-jarvis"],
             "concept": ["awareness-layer"],
             "project": [],
             "session": [],
@@ -202,7 +202,7 @@ def test_build_system_prompt_includes_vault_summary_when_provided() -> None:
     }
     prompt = build_system_prompt("schema body", vault_summary=vault_summary)
     assert "Entities: 2" in prompt
-    assert "ruben-luetke" in prompt
+    assert "alex-morgan" in prompt
     assert "Concepts: 1" in prompt
     assert "[2026-05-11 18:00] create | seed" in prompt
 
@@ -225,10 +225,10 @@ def test_build_user_prompt_wraps_source_verbatim() -> None:
 
     prompt = build_user_prompt(
         "BrainTurnCompleted 2026-05-11 19:42",
-        "Ruben fixed BUG-019 in fix/bug-019-tts-silent.",
-        top_slugs=["ruben-luetke"],
+        "Alex fixed BUG-019 in fix/bug-019-tts-silent.",
+        top_slugs=["alex-morgan"],
     )
-    assert "Ruben fixed BUG-019 in fix/bug-019-tts-silent." in prompt
+    assert "Alex fixed BUG-019 in fix/bug-019-tts-silent." in prompt
     assert "----- BEGIN SOURCE -----" in prompt
     assert "----- END SOURCE -----" in prompt
     assert "BrainTurnCompleted 2026-05-11 19:42" in prompt
@@ -238,9 +238,9 @@ def test_build_user_prompt_includes_top_slugs() -> None:
     """The keyword-overlap shortlist is rendered as bullet hints."""
 
     prompt = build_user_prompt(
-        "source-label", "some content", top_slugs=["ruben-luetke", "jarvis-agent-bridge"],
+        "source-label", "some content", top_slugs=["alex-morgan", "jarvis-agent-bridge"],
     )
-    assert "- ruben-luetke" in prompt
+    assert "- alex-morgan" in prompt
     assert "- jarvis-agent-bridge" in prompt
 
 
@@ -359,7 +359,7 @@ def test_system_prompt_requires_self_disclosure_for_topic_memory() -> None:
 def test_system_prompt_has_no_maintainer_specific_user_target() -> None:
     """Generic curator guidance never bakes in one maintainer's profile slug."""
     prompt = build_system_prompt("schema body", vault_summary=None).lower()
-    assert "entities/ruben.md" not in prompt
+    assert "entities/alex.md" not in prompt
     assert "never infer a personal slug" in prompt
 
 
@@ -408,7 +408,7 @@ def test_consolidator_prompt_binds_exact_user_subject_and_page(
     assert f'subject slug ["{expected}"]' in user
     assert f"profile page entities/{expected}.md" in user
     assert "never infer a name" in user
-    assert "ruben" not in f"{system}\n{user}".lower()
+    assert "alex" not in f"{system}\n{user}".lower()
 
 
 def test_consolidator_prompt_rechecks_question_derived_user_claims() -> None:
@@ -455,13 +455,13 @@ def test_consolidator_prompt_carries_the_graph_visibility_rule() -> None:
 def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     candidate = SimpleNamespace(
         id=8,
-        fact="The user plans to travel to San Francisco tomorrow.",
+        fact="The user plans to travel to Example City tomorrow.",
         kind="plan",
         subjects=("user",),
         evidence_turn_id="sf-turn",
         evidence_excerpt=(
             "Evidence user turn [sf-turn]: Kannst du bitte hinzufügen, dass "  # i18n-allow
-            "ich morgen nach San Francisco reisen möchte?"  # i18n-allow
+            "ich morgen nach Example City reisen möchte?"  # i18n-allow
         ),
     )
 
@@ -475,7 +475,7 @@ def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     assert "commands with no separately asserted durable content" in system
     assert "the one-shot action" in system
     assert "request itself remains non-durable" in system
-    assert "San Francisco" in user
+    assert "Example City" in user
 
 
 # ---------------------------------------------------------------------
@@ -487,20 +487,20 @@ def test_build_full_prompt_roundtrip_smoke() -> None:
     """One full pipeline: vault → summary → system prompt + user prompt."""
 
     vault = _FakeVault({
-        "entity": [_Page("ruben-luetke", "entity"), _Page("personal-jarvis", "entity")],
+        "entity": [_Page("alex-morgan", "entity"), _Page("personal-jarvis", "entity")],
         "concept": [_Page("awareness-layer", "concept")],
     })
     summary = compute_vault_summary(vault)
     system_prompt = build_system_prompt("BINDING SCHEMA TEXT", summary)
-    top_slugs = select_top_slugs("Ruben pushed the awareness layer", [
-        "ruben-luetke", "awareness-layer", "personal-jarvis",
+    top_slugs = select_top_slugs("Alex pushed the awareness layer", [
+        "alex-morgan", "awareness-layer", "personal-jarvis",
     ])
     user_prompt = build_user_prompt(
-        "BrainTurnCompleted", "Ruben pushed the awareness layer", top_slugs,
+        "BrainTurnCompleted", "Alex pushed the awareness layer", top_slugs,
     )
 
     assert "BINDING SCHEMA TEXT" in system_prompt
     assert "Entities: 2" in system_prompt
     assert "Concepts: 1" in system_prompt
-    assert "ruben-luetke" in user_prompt
+    assert "alex-morgan" in user_prompt
     assert "awareness-layer" in user_prompt

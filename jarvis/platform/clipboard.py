@@ -1,12 +1,15 @@
-"""Cross-platform system clipboard writer for the local desktop shell.
+"""Cross-platform system clipboard access for the local desktop shell.
 
 The Web UI normally uses the browser Clipboard API. Embedded WebViews can deny
 that API even after a visible button click (notably WKWebView after an awaited
 request), so the desktop backend needs a native, capability-gated fallback.
+Reading is denied outright: the embedded browser withholds the ``clipboard-read``
+permission, so a right-click "Paste" has no browser path at all and depends on
+``read_text`` below.
 
 Only text is supported here. Clipboard contents are passed through stdin or a
 native memory buffer, never process arguments or logs. Missing display/tooling
-returns ``False`` instead of raising, preserving headless operation.
+returns ``False``/``None`` instead of raising, preserving headless operation.
 """
 from __future__ import annotations
 
@@ -44,6 +47,141 @@ def write_text(text: str) -> bool:
     if platform == "darwin":
         return _run_command(["/usr/bin/pbcopy"], text)
     return _write_linux(text)
+
+
+def read_text() -> str | None:
+    """Return the local desktop clipboard's text.
+
+    ``None`` means this host cannot read a clipboard at all (headless, or no
+    OS tooling); an empty string means the clipboard is genuinely empty. The
+    caller must be able to distinguish those, so an unreachable clipboard is
+    never reported as a successful empty paste.
+
+    Line endings are normalised to ``\\n``. Windows hands out ``\\r\\n``, and a
+    raw carriage return pasted into a terminal reads as a second Enter — which
+    would run every line of a multi-line command twice.
+    """
+    if not detect_capabilities().display_present:
+        log.info("clipboard: no display present; native paste is unavailable")
+        return None
+
+    platform = detect_platform()
+    if platform == "win32":
+        raw = _read_windows()
+    elif platform == "darwin":
+        raw = _read_command(["/usr/bin/pbpaste"])
+    else:
+        raw = _read_linux()
+
+    if raw is None:
+        return None
+    return raw.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _read_command(command: Sequence[str]) -> str | None:
+    """Read clipboard text from a fixed OS command's stdout."""
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
+            list(command),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_COMMAND_TIMEOUT_S,
+            check=False,
+            close_fds=True,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("clipboard: native paste command unavailable (%s)", exc)
+        return None
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip()
+        log.warning(
+            "clipboard: native paste command failed with exit %d%s",
+            completed.returncode,
+            f" ({detail[:300]})" if detail else "",
+        )
+        return None
+    return completed.stdout
+
+
+def _read_linux() -> str | None:
+    """Use the available Wayland/X11 clipboard command, if any."""
+    candidates = (
+        ("wl-paste", ["wl-paste", "--no-newline"]),
+        ("xclip", ["xclip", "-selection", "clipboard", "-out"]),
+        ("xsel", ["xsel", "--clipboard", "--output"]),
+    )
+    for executable, command in candidates:
+        resolved = shutil.which(executable)
+        if resolved:
+            command[0] = resolved
+            return _read_command(command)
+    log.info("clipboard: no wl-paste, xclip, or xsel command is available")
+    return None
+
+
+def _read_windows() -> str | None:
+    """Read Unicode text with the Win32 clipboard API.
+
+    The clipboard is a shared, singly-owned resource: brief retries handle
+    another application holding it open, and the handle is always unlocked and
+    the clipboard always closed, even on an unexpected format.
+    """
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+        user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+    except (AttributeError, OSError) as exc:
+        log.warning("clipboard: Win32 API unavailable (%s)", exc)
+        return None
+
+    opened = False
+    for _attempt in range(_WINDOWS_CLIPBOARD_RETRIES):
+        if user32.OpenClipboard(None):
+            opened = True
+            break
+        time.sleep(_WINDOWS_CLIPBOARD_RETRY_S)
+    if not opened:
+        log.warning("clipboard: Win32 clipboard remained busy")
+        return None
+
+    handle = None
+    try:
+        if not user32.IsClipboardFormatAvailable(13):  # CF_UNICODETEXT
+            # Something non-textual is on the clipboard (an image, a file
+            # list). There is nothing to paste as text, which is not a failure.
+            return ""
+        handle = user32.GetClipboardData(13)
+        if not handle:
+            return ""
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return None
+        try:
+            return ctypes.wstring_at(pointer)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    except (AttributeError, OSError, ValueError) as exc:
+        log.warning("clipboard: Win32 clipboard read failed (%s)", exc)
+        return None
+    finally:
+        user32.CloseClipboard()
 
 
 def _run_command(command: Sequence[str], text: str) -> bool:
@@ -163,4 +301,4 @@ def _write_windows(text: str) -> bool:
         user32.CloseClipboard()
 
 
-__all__ = ["write_text"]
+__all__ = ["read_text", "write_text"]

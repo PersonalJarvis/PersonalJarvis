@@ -64,12 +64,26 @@ HANGUP_ERROR: Final[str] = "error"
 termination. The exact failure should be in the trace logs; this
 string only marks the session row."""
 
+HANGUP_DESKTOP_FALLBACK: Final[str] = "desktop_fallback"
+"""The desktop realtime engine handed the SAME voice session over to the
+classic pipeline (no realtime provider could open a session, or the duplex
+stream died before any turn was committed).
+
+This marks a handover, NOT an end: the pipeline keeps the same ``session_id``
+running and publishes the one real ``VoiceSessionEnded`` when the call actually
+finishes. ``RealtimeVoiceSession.end`` therefore stops here without announcing a
+session end — treating the handover as one froze the JarvisBar mid-call and
+closed the recorder row with ``turns=0`` (live 2026-07-26). It stays in
+``HANGUP_REASONS`` because rows written before that fix still carry it, so the
+session list must keep a label for them."""
+
 HANGUP_REASONS: Final[tuple[str, ...]] = (
     HANGUP_VOICE_PATTERN,
     HANGUP_HOTKEY,
     HANGUP_CLIENT_STOP,
     HANGUP_WS_CLOSED,
     HANGUP_REALTIME_FALLBACK,
+    HANGUP_DESKTOP_FALLBACK,
     HANGUP_IDLE_TIMEOUT,
     HANGUP_TURN_COMPLETE,
     HANGUP_SHUTDOWN,
@@ -186,6 +200,7 @@ SPOKEN_KINDS: Final[tuple[str, ...]] = (
 
 __all__ = [
     "HANGUP_CLIENT_STOP",
+    "HANGUP_DESKTOP_FALLBACK",
     "HANGUP_ERROR",
     "HANGUP_HOTKEY",
     "HANGUP_IDLE_TIMEOUT",

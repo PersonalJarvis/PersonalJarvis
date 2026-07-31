@@ -48,7 +48,7 @@ def _make_legacy(source: Path) -> None:
     """Plant a representative legacy workspace under ``source``."""
     source.mkdir(parents=True, exist_ok=True)
     (source / "USER.md").write_text(
-        "---\nname: Ruben\naliases: ruby\n---\n\n# Ruben\n\nProfile body.\n",
+        "---\nname: Alex\naliases: ruby\n---\n\n# Alex\n\nProfile body.\n",
         encoding="utf-8",
     )
     (source / "SOUL.md").write_text(
@@ -113,7 +113,7 @@ def test_plan_migrations_emits_three_entries_for_full_legacy(
 
     plans = migrate_module.plan_migrations(source, target)
     targets = sorted(p.target.name for p in plans)
-    assert targets == ["jarvis-persona.md", "mama.md", "ruben.md"]
+    assert targets == ["alex.md", "jarvis-persona.md", "mama.md"]
 
 
 def test_plan_migrations_empty_when_no_legacy(
@@ -149,9 +149,9 @@ def test_apply_creates_entity_pages_with_legacy_body_preserved(
     )
     assert rc == 0
 
-    ruben_page = target / "entities" / "ruben.md"
-    assert ruben_page.exists()
-    content = ruben_page.read_text(encoding="utf-8")
+    alex_page = target / "entities" / "alex.md"
+    assert alex_page.exists()
+    content = alex_page.read_text(encoding="utf-8")
     assert "type: entity" in content
     assert "entity_kind: person" in content
     assert "Profile body." in content      # legacy verbatim block
@@ -223,7 +223,7 @@ def test_apply_appends_log_entry(tmp_path: Path, migrate_module) -> None:
     )
     log = (target / "log.md").read_text(encoding="utf-8")
     assert "migrate | legacy flat workspace" in log
-    assert "[[entities/ruben]]" in log
+    assert "[[entities/alex]]" in log
 
 
 def test_apply_updates_index_entities_section(
@@ -244,7 +244,7 @@ def test_apply_updates_index_entities_section(
         ]
     )
     idx = (target / "index.md").read_text(encoding="utf-8")
-    assert "[[entities/ruben]]" in idx
+    assert "[[entities/alex]]" in idx
     assert "[[entities/jarvis-persona]]" in idx
     assert "[[entities/mama]]" in idx
     assert "(empty" not in idx     # placeholder gone

@@ -41,7 +41,6 @@ from jarvis.core.protocols import (
     ToolResult,
 )
 
-
 # ----------------------------------------------------------------------
 # Fakes
 # ----------------------------------------------------------------------
@@ -74,6 +73,33 @@ class _FakeBrain:
         self.requests.append(req)
         yield BrainDelta(content="ok")
         yield BrainDelta(finish_reason="stop")
+
+
+@pytest.fixture(autouse=True)
+def _no_screen_context(monkeypatch: pytest.MonkeyPatch):
+    """Keep Screen Context out of this file, deterministically.
+
+    ``RouterBrain.handle`` consults ``jarvis.screen_context`` before the
+    permanent-vision path and takes precedence when the user explicitly asked
+    Jarvis to LOOK — which several of the utterances in this file do. Without
+    this fixture the outcome would depend on whether the machine running the
+    tests has a screen: captured on a dev box, unavailable in headless CI.
+    A test that passes or fails based on the host's hardware is worse than no
+    test.
+
+    These cases exist to pin the permanent-vision path itself, so Screen
+    Context is neutralised here. Its own precedence is covered by
+    ``test_router_screen_context.py``.
+    """
+    from jarvis.screen_context.turn import TurnScreenContext
+
+    async def _none(*_args: Any, **_kwargs: Any) -> TurnScreenContext:
+        return TurnScreenContext(status="none")
+
+    monkeypatch.setattr(
+        "jarvis.screen_context.turn.screen_context_for_turn", _none
+    )
+    return None
 
 
 class _NoopToolExecutor:
@@ -187,7 +213,10 @@ def _make_jpeg_file() -> tuple[str, bytes]:
     return fh.name, data
 
 
-def _make_obs(path: str | None = "/tmp/fake.png", sha: str = "abc123") -> Observation:
+def _make_obs(
+    path: str | None = "/tmp/fake.png",  # noqa: S108 - inert fake path, never written
+    sha: str = "abc123",
+) -> Observation:
     return Observation(
         trace_id=uuid4(),
         timestamp_ns=time.time_ns(),
@@ -218,7 +247,9 @@ def _build_router(
     fb = _FakeBrain()
     router.manager._brain_cache[("fake", "fake-model")] = fb
     recorder = _RecordingDispatcher()
-    router.manager._build_dispatcher = lambda _brain: recorder  # type: ignore[method-assign]
+    router.manager._build_dispatcher = (  # type: ignore[method-assign]
+        lambda _brain, *, tools_override=None, **_kwargs: recorder
+    )
     return router, recorder
 
 
@@ -369,7 +400,10 @@ async def test_router_continues_on_vision_failure(caplog: pytest.LogCaptureFixtu
     assert len(recorder.calls) == 1
     assert recorder.calls[0]["images"] == ()
     assert any(d.content for d in deltas)
-    assert any("Vision-Inject fehlgeschlagen" in rec.message for rec in caplog.records)  # i18n-allow
+    assert any(
+        "Vision-Inject fehlgeschlagen" in rec.message  # i18n-allow
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio

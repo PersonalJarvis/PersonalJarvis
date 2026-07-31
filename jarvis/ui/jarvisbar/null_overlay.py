@@ -5,6 +5,11 @@ drive "no overlay on screen" without sprinkling None-checks through its event
 handlers. Has no Tk window and imports nothing heavy, so it stays importable on
 a headless host. Deliberately does NOT define ``_root`` so the bridge's
 ``getattr(orb, "_root", None)`` reset path early-returns.
+
+``show`` is deliberately mode-AGNOSTIC: it accepts every entry of
+``jarvis.ui.jarvisbar.modes.MODES`` — and anything else — without validating,
+so a new coarse mode can never make this surface raise. Pinned by
+``tests/unit/ui/jarvisbar/test_mode_parity.py``.
 """
 from __future__ import annotations
 

@@ -735,7 +735,7 @@ async def test_pure_question_no_files_is_approved_not_revised(
 
     worker_log = json.dumps({
         "type": "result",
-        "result": "I'd recommend Sydney as your first stop, then Melbourne.",
+        "result": "I'd recommend Sydney as your first stop, then Example City.",
         "subtype": "success",
     })
 
@@ -875,7 +875,7 @@ async def test_advisory_codex_agent_message_no_files_is_approved(
         "item": {
             "type": "agent_message",
             "text": (
-                "For a first trip to Australia I recommend Melbourne: walkable, "
+                "For a first trip to Australia I recommend Example City: walkable, "
                 "world-class coffee, and close to the Great Ocean Road."
             ),
         },
@@ -913,7 +913,7 @@ async def test_advisory_codex_tool_evidence_no_files_is_approved(
                 "type": "command_execution",
                 "command": "web_search Australia first visit city",
                 "aggregated_output": (
-                    "Sydney, Melbourne and Brisbane are common first-trip options."
+                    "Sydney, Example City and Brisbane are common first-trip options."
                 ),
                 "exit_code": "0",
             },

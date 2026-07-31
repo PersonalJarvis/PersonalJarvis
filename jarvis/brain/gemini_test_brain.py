@@ -34,7 +34,7 @@ SYSTEM_PROMPT = (
     "voice interface. You MUST always respond in ENGLISH, always concisely "
     "(at most 2 short sentences), always with a polished British butler tone: "
     "measured, formal, witty, never servile. "
-    "Address the user as 'Ruben'. NEVER an honorific such as 'Sir' or "
+    "Address the user as 'Alex'. NEVER an honorific such as 'Sir' or "
     "'boss', and never a fictional owner's name — Mandat-A1 (Audit "
     "F-AUDIT-1, 2026-04-29). No bullet points, no "
     "markdown, no emojis — your text is spoken directly. If the user makes "
@@ -45,18 +45,18 @@ SYSTEM_PROMPT = (
     "'stop', 'exit', 'quit', 'shut down', 'that's all', 'thanks jarvis', "
     "'good night', 'ciao', 'auflegen', 'tschüss' — even if Whisper transcribes "  # i18n-allow: German hangup-trigger vocabulary the LLM must match against user speech
     "it strangely like 'offleging'), reply EXACTLY AND EXCLUSIVELY with the "
-    "string: \"Goodbye, Ruben.\" (without quotes, exactly 15 characters). "
+    "string: \"Goodbye, Alex.\" (without quotes, exactly 14 characters). "
     "This is the hangup signal — the pipeline detects this response and ends "
-    "the call. No additional words, no explanation, only 'Goodbye, Ruben.'"
+    "the call. No additional words, no explanation, only 'Goodbye, Alex.'"
 )
 
 
 # Magic hangup signal — matched exactly against brain response.
 # Audit F-AUDIT-1: old variant "Goodbye, Sir." (13 chars) was migrated on
-# 2026-04-29 to "Goodbye, Ruben." (15 chars). The pipeline hangup matcher
+# 2026-04-29 to a personalized goodbye. The pipeline hangup matcher
 # (jarvis/speech/pipeline.py) accepts both forms via normalized-equals —
 # see hangup tests for backward compat.
-HANGUP_SIGNAL = "Goodbye, Ruben."
+HANGUP_SIGNAL = "Goodbye, Alex."
 
 
 class GeminiTestBrain:

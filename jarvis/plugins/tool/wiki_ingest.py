@@ -83,7 +83,7 @@ class WikiIngestTool:
     input_examples: list[dict[str, Any]] = [
         {
             "text": (
-                "Joy's birthday is August 14th. She is Harald's younger "
+                "Joy's birthday is August 14th. She is Morgan's younger "
                 "sister."
             ),
             "source": "voice:user-direct",

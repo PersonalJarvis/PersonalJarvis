@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, RotateCcw } from "lucide-react";
 
+import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
@@ -10,10 +11,32 @@ import {
   RealtimeAudioSupportError,
   type BrowserRealtimeSupportIssue,
 } from "@/lib/realtimeAudio";
-import { useEventStore } from "@/store/events";
+import { useEventStore, type VoiceState } from "@/store/events";
 import { cn } from "@/lib/utils";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
+
+/** Map the socket state plus the shared voice state onto one visualizer look.
+ *
+ * Kept as a pure function so the mapping is testable and lives in exactly one
+ * place: which look the pill shows is a claim about what the microphone and
+ * the session are doing, and a second copy of that logic would eventually
+ * claim something different from this one. */
+export function waveformPhase(
+  state: ConnectionState,
+  voiceState: VoiceState,
+): WaveformPhase {
+  if (state === "error") return "error";
+  if (state === "connecting") return "connecting";
+  if (state !== "connected") return "idle";
+  if (voiceState === "error") return "error";
+  // The turn was committed: the transcription and then the reply are in
+  // flight, and the microphone feed has stopped — so there is nothing left to
+  // measure and the pill switches from the waveform to the activity sweep.
+  if (voiceState === "thinking") return "working";
+  if (voiceState === "speaking") return "speaking";
+  return "listening";
+}
 
 /** Browser-owned microphone control for remote/headless installations.
  *
@@ -28,10 +51,17 @@ export function BrowserRealtimeControl() {
   const { mode, realtimeAvailable } = useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
+  const voiceState = useEventStore((store) => store.voiceState);
+  const transcriptionFinal = useEventStore((store) => store.transcriptionFinal);
+  const transcription = useEventStore((store) => store.transcription);
   const [state, setState] = useState<ConnectionState>("idle");
   const [effectiveProvider, setEffectiveProvider] = useState("");
   const [error, setError] = useState("");
-  const [inputLevel, setInputLevel] = useState(0);
+  // The microphone level lands in a ref, not in state: it arrives ~30 times a
+  // second and only the animation loop consumes it. Routing it through
+  // setState re-rendered this control (and everything it renders) at 30 Hz to
+  // repaint a five-segment meter.
+  const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const browserSurface = capabilities.data?.native_file_actions === false;
   const visible = browserSurface && mode === "realtime";
@@ -56,7 +86,7 @@ export function BrowserRealtimeControl() {
     setState("idle");
     setEffectiveProvider("");
     setError("");
-    setInputLevel(0);
+    levelRef.current = 0;
     setVoice("idle");
   }, [setVoice]);
 
@@ -76,7 +106,9 @@ export function BrowserRealtimeControl() {
         setError("");
         setVoice("speaking");
       },
-      onInputLevel: setInputLevel,
+      onInputLevel: (value) => {
+        levelRef.current = value;
+      },
       onStatus: (status, payload) => {
         if (status === "audio_ready") {
           const provider = typeof payload.provider === "string" ? payload.provider : "";
@@ -154,6 +186,19 @@ export function BrowserRealtimeControl() {
           ? t("sidebar.realtime_retry")
           : t("sidebar.realtime_start");
   const Icon = connecting ? Loader2 : connected ? MicOff : state === "error" ? RotateCcw : Mic;
+  const phase = waveformPhase(state, voiceState);
+  // Name what the pill is doing. The waveform says "something is happening";
+  // this says WHICH something, which is the part a screen reader gets too —
+  // the visualizer itself is aria-hidden because a scrolling row of bars has
+  // nothing to announce.
+  const progressKey =
+    phase === "working"
+      ? "sidebar.realtime_working"
+      : phase === "speaking"
+        ? "sidebar.realtime_speaking"
+        : transcription && !transcriptionFinal
+          ? "sidebar.realtime_transcribing"
+          : "sidebar.realtime_listening";
 
   return (
     <div className="mt-2 rounded-md border border-border/70 bg-background/50 p-2">
@@ -179,24 +224,16 @@ export function BrowserRealtimeControl() {
         />
         <span>{connecting ? t("sidebar.realtime_connecting") : label}</span>
       </button>
-      {connected && (
-        <div className="mt-1.5 flex h-1.5 items-stretch gap-0.5" aria-hidden="true">
-          {[0.08, 0.24, 0.42, 0.6, 0.78].map((threshold) => (
-            <span
-              key={threshold}
-              className={cn(
-                "flex-1 rounded-sm transition-colors duration-75",
-                inputLevel >= threshold ? "bg-primary" : "bg-border/60",
-              )}
-            />
-          ))}
+      {(connected || connecting) && (
+        <div className="mt-1.5">
+          <VoiceWaveform levelRef={levelRef} phase={phase} />
         </div>
       )}
       <div className="mt-1.5 min-h-4 text-[10px] text-muted-foreground" aria-live="polite">
         {error ||
           (supportIssue ? supportMessage(supportIssue) : "") ||
           (connected
-            ? `${t("sidebar.realtime_connected")} ${effectiveProvider}`.trim()
+            ? [t(progressKey), effectiveProvider].filter(Boolean).join(" · ")
             : t("sidebar.realtime_browser_hint"))}
       </div>
     </div>

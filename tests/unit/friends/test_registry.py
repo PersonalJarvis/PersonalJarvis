@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · maintainer-2026-04-30 ===
 """Unit tests for :class:`jarvis.friends.registry.FriendRegistry`."""
 from __future__ import annotations
 

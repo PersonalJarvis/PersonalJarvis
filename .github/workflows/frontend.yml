@@ -45,3 +45,12 @@ jobs:
 
       - name: Build and verify production assets
         run: npm run build
+
+      # The entry chunk is parsed and executed before the UI paints a single
+      # pixel, so its size IS startup latency. Guarding it here is the frontend
+      # twin of the Python boot budget in .githooks/pre-push: both block the
+      # same regression class, where a statically imported view or library
+      # quietly adds seconds to every launch.
+      - name: Check startup bundle budget
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/ci/check_frontend_bundle_budget.py

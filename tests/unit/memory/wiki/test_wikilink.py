@@ -26,15 +26,15 @@ def test_extract_empty_body_returns_empty_tuple() -> None:
 
 
 def test_extract_single_short_link() -> None:
-    assert extract_wikilinks("See [[ruben]] here.") == ("ruben",)
+    assert extract_wikilinks("See [[alex]] here.") == ("alex",)
 
 
 def test_extract_explicit_prefix_form() -> None:
-    assert extract_wikilinks("Related: [[entities/ruben]].") == ("entities/ruben",)
+    assert extract_wikilinks("Related: [[entities/alex]].") == ("entities/alex",)
 
 
 def test_extract_aliased_form_canonical_strips_alias() -> None:
-    assert extract_wikilinks("Talk to [[ruben|the user]].") == ("ruben",)
+    assert extract_wikilinks("Talk to [[alex|the user]].") == ("alex",)
 
 
 def test_extract_prefix_plus_alias() -> None:
@@ -53,8 +53,8 @@ def test_extract_multiple_links_order_preserved() -> None:
 
 
 def test_extract_duplicates_kept_in_order() -> None:
-    body = "[[ruben]] talked to [[ruben]] about [[claude]]."
-    assert extract_wikilinks(body) == ("ruben", "ruben", "claude")
+    body = "[[alex]] talked to [[alex]] about [[claude]]."
+    assert extract_wikilinks(body) == ("alex", "alex", "claude")
 
 
 def test_extract_empty_link_ignored() -> None:
@@ -78,7 +78,7 @@ def test_extract_adjacent_links() -> None:
 
 def test_extract_ignores_inline_code_spans() -> None:
     # Quoted example links in docs (schema.md style) are not live links.
-    body = "Use `[[wikilinks]]` or the short form `[[ruben]]` in prose."
+    body = "Use `[[wikilinks]]` or the short form `[[alex]]` in prose."
     assert extract_wikilinks(body) == ()
 
 
@@ -133,8 +133,8 @@ def _make_vault(tmp_path: Path) -> Path:
 
 def test_resolve_short_form_unique_match(tmp_path: Path) -> None:
     vault = _make_vault(tmp_path)
-    (vault / "entities" / "ruben.md").write_text("x", encoding="utf-8")
-    assert resolve_wikilink("ruben", vault) == vault / "entities" / "ruben.md"
+    (vault / "entities" / "alex.md").write_text("x", encoding="utf-8")
+    assert resolve_wikilink("alex", vault) == vault / "entities" / "alex.md"
 
 
 def test_resolve_explicit_prefix(tmp_path: Path) -> None:
@@ -172,10 +172,10 @@ def test_resolve_missing_returns_none(tmp_path: Path) -> None:
 
 def test_resolve_alias_is_stripped_before_resolution(tmp_path: Path) -> None:
     vault = _make_vault(tmp_path)
-    (vault / "entities" / "ruben.md").write_text("x", encoding="utf-8")
+    (vault / "entities" / "alex.md").write_text("x", encoding="utf-8")
     assert (
-        resolve_wikilink("ruben|the user", vault)
-        == vault / "entities" / "ruben.md"
+        resolve_wikilink("alex|the user", vault)
+        == vault / "entities" / "alex.md"
     )
 
 

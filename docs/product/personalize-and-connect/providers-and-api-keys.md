@@ -1,245 +1,238 @@
 ---
 title: "Providers and API Keys"
 slug: providers-and-api-keys
-summary: Connect the services you choose, see which capabilities they provide, and learn where fallback is available.
+summary: Connect cloud services or local models to each assistant capability, then verify what is actually ready.
 section: "Personalize and connect"
 section_order: 3
 order: 1
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-30
 phase: "-"
 audience: end-user
 tags: [providers, api-keys, models, capabilities, fallback, connections]
-related: [credentials-and-secrets, languages-and-voices, troubleshooting, tasks-and-reminders]
+related: [local-ai-providers, dictation, credentials-and-secrets, jarvis-agents]
 ---
 
-Use **API Keys & Providers** to choose the services that power each part of
-Jarvis. Chat, actions, speech, Realtime voice, and longer Jarvis-Agent missions
-can use different providers.
+Use **API Keys & Providers** to decide what powers chat, speech, Computer Use,
+Realtime voice, and background Agents. Each capability has its own selection,
+so one provider does not have to run everything.
 
-A saved credential only means that Jarvis can find a key or login. Make the
-provider active, then test or use the feature before depending on it.
+The cards in the live app are the current provider catalog. Providers, models,
+voices, prices, and account rules change; use this guide to understand the
+choices rather than as a permanent list of every available service.
 
 ## Before You Start
 
-- Get API keys only from the provider's official dashboard. A consumer plan and
-  an API account can be separate products, even when they use the same login.
-- Check the provider's prices and account limits. A live provider test makes a
-  small real request and may count as billable usage.
-- Never put a key, token, password, or recovery code in chat, voice input, a
-  task, a screenshot, documentation, or `jarvis.toml`.
+- Get credentials only from the provider's official dashboard, linked from its
+  card. A consumer subscription and API billing may be separate products.
+- Check pricing, regional availability, model access, and usage limits. A live
+  **Test** makes a small real request and may be billable.
+- Decide which data may leave the computer. Hosted speech recognition receives
+  audio, hosted text models receive prompts or transcripts, and hosted voices
+  receive the text they speak.
 
-## Choose What Each Provider Powers
+> [!warning] Never put a key, token, password, service-account file, or recovery
+> code in chat, voice input, a task, a screenshot, documentation, or
+> `jarvis.toml`. Enter it only in the matching credential field.
 
-A **provider** is the service Jarvis connects to. A **model** is one engine from
-that service. A **capability** is something that model can do, such as accept an
-image, call a tool, transcribe speech, or produce audio.
+## Understand the Provider Areas
 
-These are the provider choices currently shown in the app:
+| Area | What it powers | Important distinction |
+|---|---|---|
+| **Brain** | Chat and Pipeline voice answers | Choose a provider and a model. |
+| **Computer Use** | Planning actions from screenshots | This is a separate global choice and needs an image-capable model. |
+| **Voice output** | Speech in Pipeline mode | Choose a voice as well as a provider where offered. |
+| **Voice input** | Speech recognition in Pipeline mode and dictation | Cloud and on-device cards are available. |
+| **Dictation** | Optional punctuation and wording cleanup after recognition | It improves text; it does not transcribe audio. |
+| **Realtime** | One live model that listens and speaks | Model and voice are selected together; Computer Use remains separate. |
+| **Agents** | Longer background work | API-key providers and supported coding-CLI subscriptions appear separately. |
+| **Advanced** | Optional team proxy, telephony, and classic Wiki model | These do not have to be configured for normal chat. |
 
-| View | Selectable providers | Access | What it powers |
-|---|---|---|---|
-| **Brain** | Google Gemini, OpenRouter, xAI Grok, Claude (API-Key), OpenAI, NVIDIA NIM | API key | Chat and voice answers |
-| **Tool Model** | The same API providers as Brain | API key | Tool routing, actions, and Computer Use |
-| **Voice Output** | OpenRouter, ElevenLabs, Gemini Flash TTS, xAI Text to Speech, Cartesia, Inworld | API key | Speech in Pipeline voice |
-| **Voice Input** | Groq STT, OpenAI Whisper STT, OpenRouter STT | API key | Transcription in Pipeline voice |
-| **Realtime** | OpenAI Realtime, Gemini Live | API key | One live audio stream for listening and replying |
-| **Jarvis-Agents** | Claude, Gemini, OpenAI, OpenRouter, xAI Grok, NVIDIA NIM, OpenAI Codex, Antigravity | API key or supported subscription login | Longer background missions |
-| **Advanced** | Team key proxy, telephony, and Wiki provider | Varies by integration | Optional connections |
+The **Pipeline / Realtime** switch changes the voice-provider tabs, not the
+whole app. Pipeline joins Voice input, Brain, and Voice output. Realtime uses a
+single full-duplex connection. The Computer Use and Agent choices remain
+independent in both modes.
 
-The model picker is the current source for available models and voices. A
-provider can offer both capable and unsuitable models. The Tool Model needs
-tool support, and Computer Use also needs image input. The picker removes
-models known to be text-only, but missing capability metadata is not proof that
-a model will work. The runtime still checks the capability when it can.
+Card labels describe state, not a guarantee:
 
-**Pipeline** uses Voice Input, the Brain, and Voice Output as three separate
-steps. **Realtime** uses one full-duplex model for the audio conversation.
-Realtime is a research preview. Many tools and features are unavailable, and
-screen actions are delegated to the separate Tool Model.
-
-The voice-engine switch changes which tabs you see. Pipeline shows Brain, Tool
-Model, Voice Output, and Voice Input. Realtime shows Realtime and Tool Model.
-Both modes also show Jarvis-Agents, your install's control key, and Advanced.
-
-## Connect and Activate a Provider
-
-1. Open **API Keys & Providers**. Choose **Pipeline** or **Realtime**, then open
-   the tab for the feature you want to configure.
-
-2. Choose a provider and read its access and billing note. For example, the
-   Gemini cards distinguish an AI Studio API key from a Vertex AI service
-   account because they bill separate Google projects.
-
-3. Select **Get your key here** to open the official provider dashboard. For a
-   supported Jarvis-Agent subscription, install the named command-line tool and
-   use **Connect** to start its sign-in flow. Current subscription choices use
-   ChatGPT through Codex, Google through Antigravity or the Gemini CLI, and
-   Claude through the Claude CLI.
-
-4. Paste an API key into its password field and select **Save**. After a
-   successful save, the field collapses to a masked value. Jarvis returns only
-   whether a credential exists; it never sends the saved value back to the
-   page.
-
-   A related card may instead say that a shared family key already covers it.
-   In that case, adding a dedicated key is optional. Realtime and Jarvis-Agent
-   keys have dedicated slots, but compatible family keys remain fallback paths
-   for existing and single-key installations.
-
-5. Select **Set active**. If the category has no active provider yet, saving
-   its first key can activate that provider automatically. Brain and Tool Model
-   are separate choices, as are both speech categories, Realtime, and
-   Jarvis-Agents.
-
-6. Choose a model or voice where the card offers one. Brain and Tool Model
-   choices are stored per provider. Voice Input and most Voice Output choices
-   appear only on the active connected card. Realtime has separate model and
-   voice selectors.
-
-7. Select **Test** on a Brain, Tool Model, Voice Input, Voice Output, or
-   Realtime card. The result appears on that card. A provider test proves a
-   minimal request, not every model capability or tool workflow.
-
-   Jarvis-Agent subscription cards have a separate **Test** action for the
-   installed command-line tool and its login. API-backed Jarvis-Agent cards
-   show credential readiness but do not have a live provider test. Run a short,
-   non-sensitive mission to verify that worker path.
-
-Brain and Tool Model switches apply without an app restart. A Realtime switch
-also selects Realtime mode and reconnects an active voice session when
-possible. A Voice Input change applies at the next voice or app start. Voice
-Output tries to switch the running Pipeline; if no Pipeline is active or the
-live switch fails, it applies at the next start. A Jarvis-Agent switch applies
-to the next mission.
-
-### Understand the Status Labels
-
-| Label | What it means |
+| Label | Meaning |
 |---|---|
-| **open** | No usable key or login was detected for this card. |
-| **ready** | A key or login was detected, but it may still be invalid, expired, rate limited, or out of credit. |
-| **active** | This is the saved or currently resolved choice for the category. It is not a guarantee that a request will succeed. |
-| **Setup needed** | The active category has no usable credential or selection. |
-| **Not working** | A live health check found a problem with the active provider or model. |
+| **open** | No usable credential or login was found. |
+| **ready** | Access was found, but it has not necessarily passed a live request. |
+| **active** | This is the selected card for that capability. |
+| **Setup needed** | The active capability lacks a usable selection or access method. |
+| **Not working** | A live health check found a problem. |
 
-The manual test uses these more specific results:
+## Connect a Cloud Provider
 
-| Test result | Meaning |
-|---|---|
-| **Works** | The provider completed the minimal live request. |
-| **No key set** | Jarvis could not resolve a usable credential. |
-| **Key invalid** | The service rejected the credential. |
-| **Out of credits** | The account has no usable credit or quota. |
-| **Rate limited** | The service is temporarily throttling requests. |
-| **Model unavailable** | The selected model cannot be used by this account or endpoint. |
-| **Unreachable** | The service did not answer within the test limit or could not be reached. |
-| **Integration error** | The adapter or response failed in another way. |
+1. Open **API Keys & Providers**, choose the capability, and read the card's
+   access and billing note.
+2. Select **Get your key here** and create a key in the official provider
+   account. When a card offers two credential types, choose deliberately. For
+   example, an AI Studio key and a Vertex service account use different Google
+   projects and billing.
+3. Paste the value into the password field and select **Save**. The field then
+   becomes masked. The page receives only whether the credential exists; it
+   does not read the saved value back.
+4. Select **Set active** or **Use this provider**. Saving the first usable key
+   in an empty area may activate it automatically.
+5. Choose the model or voice shown on the active card. The picker is the
+   authoritative catalog and may also allow a custom model ID.
+6. Select **Test**. **Works** means the minimal request succeeded; it does not
+   prove every tool, language, model, or long-running workflow.
+
+A card may say it is covered by a shared family key. That is a working setup;
+a dedicated key is optional. Dedicated Realtime or worker slots take priority
+when present, while compatible shared keys keep single-key installations
+working.
+
+Brain and Computer Use changes apply to the next request. Voice input applies
+to the next transcription. Voice output switches the running Pipeline when it
+can, otherwise the saved choice is used when speech starts again. Activating a
+Realtime provider selects Realtime mode and reconnects an active session.
+
+## Use Local Providers
+
+Local cards avoid cloud API billing, but they still need a running engine,
+downloaded model, enough storage, and suitable hardware.
+
+- **Ollama** powers the Brain through an Ollama server. Install Ollama and pull
+  a tool-capable model outside the app, then check the server URL on the card.
+  The default points to this computer; another address sends data to that
+  machine instead.
+- **Local server (OpenAI-compatible)** connects to a self-hosted server such as
+  llama.cpp, LM Studio, vLLM, or another compatible endpoint. Enter its server
+  URL. A key is optional unless that server requires one.
+- **Whisper** and **Nemotron** provide on-device Voice input. Whisper favors
+  multilingual accuracy with a download of roughly 3 GB; Nemotron is the
+  smaller, faster CPU-oriented choice at roughly 690 MB.
+- **Piper** provides on-device Voice output. Its roughly 200 MB installation
+  includes voices for the supported languages.
+
+The speech cards include an in-app **Install** action. Installation runs in the
+background while the card reports progress. A card becomes ready only after
+the app verifies both the engine and model files on disk. Read
+[Local AI Providers](local-ai-providers) for hardware, endpoint, and privacy
+tradeoffs.
+
+## Configure Dictation, Agents, and Wiki Providers
+
+**Dictation wording** is optional. Recognition works without it. Choose a
+wording provider only if you want punctuation, sentence cleanup, or translation
+after transcription. A compatible Brain key may cover the card. Automatic
+wording does not silently select an unavailable local server; failure leaves
+the safer unpolished text. See [Dictation](dictation).
+
+**Background Agents** have their own provider and model. API cards use normal
+provider billing. Subscription cards use installed coding CLIs, currently
+including supported OpenAI, Google, and Anthropic login paths. Install the CLI,
+select **Connect**, finish the provider's browser or terminal sign-in, then use
+the card's **Test**. The selected worker applies to the next mission.
+
+The account panel can keep multiple subscription seats for a supported coding
+CLI. Give each account a recognizable label and choose the active one. These
+external logins are separate from API keys and may also be selected inside an
+Agentic IDE workspace.
+
+**Advanced > Wiki provider** chooses the model used for classic Wiki
+maintenance. Leaving it blank follows the normal Brain choice.
+
+UltraWiki has a separate provider screen with four capability slots:
+
+- **Storage** keeps the knowledge data. Local storage remains the working
+  floor; changing to a connected cloud store takes effect when the store opens
+  again.
+- **Embedding** creates the vector space used for semantic search. It has no
+  automatic cross-provider fallback. Changing provider or model requires the
+  existing corpus to be embedded again, so the app asks before starting.
+- **Distillation** turns captured material into concise knowledge. Automatic
+  mode uses a ready provider and can cross families.
+- **Rerank** improves result ordering. It can stay off and can cross families
+  when enabled.
+
+Each UltraWiki slot has its own **Test**, model picker where relevant, and
+credential card. Shared keys use the same safe storage and delete warnings as
+the main provider screen.
 
 ## Replace or Remove Access
 
-Select **Replace** to enter a new value, save it, and test again. Replacing a
-key does not revoke the old key at the provider. Revoke it separately in the
-provider's dashboard when rotation requires that.
+Select **Replace**, save the new value, and test again. Replacing a key in the
+app does not revoke the old key at the provider; revoke it in the provider
+dashboard when rotation requires that.
 
-Use the delete button to remove the saved credential slot. If other cards read
-the same slot, Jarvis names those cards and asks for confirmation. If the
-operating system's credential store cannot confirm deletion, Jarvis reports an
-error instead of claiming the key is gone.
+The delete button removes the saved credential slot. If other cards use the
+same slot, the app names them and asks for confirmation. Deleting a slot does
+not remove a value supplied by the host environment or `.env`, and it does not
+sign out an external CLI. Remove an environment value at its source; use
+**Disconnect** for a subscription login.
 
-Deletion does not remove a value supplied by the host environment or `.env`,
-and it does not disconnect a subscription login owned by an external
-command-line tool. Remove an environment-provided value at its source. Use
-**Disconnect** on the relevant subscription card for a CLI login.
-
-Jarvis normally stores an in-app key in the operating system's credential
-store. If that store is missing or fails, such as on a headless server, Jarvis
-uses a local `credentials.json` file with owner-only permissions. Read
-[Credentials and Secrets](credentials-and-secrets) for the storage order and
-its security limits.
+In-app credentials normally go to the operating system's credential store. If
+that is unavailable, the app can use its protected local credential file. Read
+[Credentials and Secrets](credentials-and-secrets) before rotating or deleting
+shared access.
 
 ## How Provider Fallback Works
 
-Fallback is specific to each feature. It does not grant access, copy keys
-between accounts, or guarantee the same model, voice, price, or capability.
+Fallback is capability-based and feature-specific. The selected provider is a
+preference, not permission to use an unsuitable model.
 
-1. Jarvis resolves a usable credential for the provider family. A dedicated
-   key wins on its own surface; compatible shared keys can cover related
-   surfaces when the dedicated slot is empty.
-2. Jarvis builds a chain for the capability the request needs. The selected
-   provider is a preference, but a separate deep model or Tool Model can lead
-   when the request requires it.
-3. Supported paths skip providers known to be missing credentials, unavailable,
-   rate limited, or blocked by account limits. They can continue with another
-   connected provider family.
-4. When no suitable option remains, the feature reports or records a failure
-   instead of claiming success.
+1. The app resolves a dedicated credential, a compatible shared credential, a
+   connected subscription, or a keyless local provider.
+2. It filters choices for the required capability, such as tools, images,
+   transcription, or speech output.
+3. Supported paths can move to another connected provider family after a
+   missing key, unavailable service, rate limit, or blocked account.
+4. If no eligible choice remains, the feature reports failure instead of
+   claiming success.
 
-The current paths differ in important ways:
-
-- Brain and Tool Model requests can cross provider families. A fallback answer
-  does not necessarily change the provider saved as active.
-- Pipeline Voice Input and Voice Output choose another keyed family when the
-  configured provider has no usable key. Voice Output also supports runtime
-  fallback in supported adapters. Voice Input can use local Faster-Whisper as a
-  last resort when its optional local dependencies are installed; it is not a
-  selectable card.
-- A Realtime session tries credential-ready Realtime providers in order. If no
-  Realtime session can serve the call, the voice surface can use Pipeline when
-  that full path is available.
-- A Jarvis-Agent mission can move to another reachable worker family when the
-  selected worker is missing, expired, in quota cooldown, or otherwise unusable.
-- A scheduled **agent** task currently calls its active Brain provider and
-  selected fast or deep model directly. If that call fails, the task records
-  **failed**; it does not run the normal chat fallback chain.
+Fallback never copies credentials, guarantees identical output, or preserves
+the same speed, price, privacy boundary, model, or voice. UltraWiki embeddings
+are intentionally pinned to one vector space; optional Dictation wording and
+reranking may simply be skipped. A local endpoint on another computer is local
+to your network, not necessarily to this device.
 
 ## How It Fits Together
 
-| Connected feature | Relationship to providers | Where to continue |
-|---|---|---|
-| **Credentials and Secrets** | Stores, replaces, and removes provider keys. Provider lists receive presence signals, not the values. | Read [Credentials and Secrets](credentials-and-secrets) before rotating or removing access. |
-| **Languages and Voices** | The reply-language setting chooses the language. Voice Output or Realtime supplies the spoken voice. | Read [Languages and Voices](languages-and-voices) to align language and voice choices. |
-| **Phone Calls** | Telephony has its own account, then uses the configured Pipeline speech and Brain path. | Read [Phone Calls](phone-calls) before adding telephony credentials. |
-| **Jarvis-Agents** | Heavy missions have their own worker and model choice, plus a cross-family worker fallback. | Read [Jarvis-Agents](jarvis-agents) before running a long mission. |
-| **Tasks and Reminders** | Scheduled agent tasks use an isolated Brain turn and do not inherit normal chat fallback. | Read [Tasks and Reminders](tasks-and-reminders) before relying on unattended work. |
+1. A feature identifies the capability it needs.
+2. The active card supplies a provider, model or voice, and access method.
+3. Capability checks and supported fallback paths choose an eligible runtime.
+4. Safety and permission checks still govern actions after a provider answers.
+5. Chat, speech, dictation, an action, an Agent result, or Wiki data returns to
+   its own feature surface.
 
-The usual request path is: your request, the required capability, an eligible
-provider and model, safety or tool checks, then an answer, action, speech, or
-mission result.
+Changing the Brain does not silently change Computer Use, speech, Realtime,
+Agents, or UltraWiki. Configure and verify each capability you plan to rely on.
 
 ## Check That It Works
 
-1. Open **API Keys & Providers > Brain**.
-2. On the active provider card, select **Test** and confirm that it shows
-   **Works**.
-3. Open **Chats** and send `Reply with: provider check complete.`
-4. Confirm that a matching answer appears.
+Open **API Keys & Providers > Brain**, select **Test** on the active card, and
+confirm **Works**. Then send a short, non-sensitive chat message and confirm an
+answer appears.
 
-This checks the active Brain credential, selected model, provider connection,
-and chat path. Verify speech, Realtime, Tool Model actions, and Jarvis-Agent
-missions separately because they use different selections and capabilities.
+Test Voice input, Voice output, Realtime, Computer Use, Agent subscriptions,
+and every enabled UltraWiki slot separately. They use different providers and
+capabilities even when they share one key.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| A card is **ready**, but **Test** fails | Ready confirms credential presence, not account health | Follow the specific test result. Check the provider account, model access, quota, and service status. |
-| **Key invalid**, **Out of credits**, **Rate limited**, or **Model unavailable** | The service answered but blocked the request | Fix the account or model issue, or activate a ready provider from another compatible family. |
-| **Unreachable** or **Integration error** | The service, network, adapter, or app connection did not complete the test | Retry once, check the provider's status and your network, then use [Troubleshooting](troubleshooting) if other providers also fail. |
-| A deleted card still looks ready | A shared family key, environment value, or CLI login still covers it | Read the card's shared-key note and remove or disconnect the actual credential source. |
-| A speech change is not used yet | Voice Input needs a new voice start; Voice Output could not switch the current Pipeline live | End and start voice again, then confirm the runtime status names the expected engine. |
-| Realtime is selected, but the current session says Pipeline | The Realtime handshake failed or no Realtime provider was usable | Test the Realtime card, then test all three Pipeline categories before trying again. |
-| A Jarvis-Agent mission uses another provider | The selected worker was not reachable or was in a quota cooldown | Reconnect or replace that worker's access, then run a short mission and review its provider status. |
+| **ready**, but **Test** fails | Access exists, but the account, model, network, or quota rejected the request | Read the result, check the provider account, and try another eligible family. |
+| A local card stays unready | Its engine, model files, or server is unavailable | Use **Install** for local speech, or start the configured Ollama/compatible server and refresh. |
+| A deleted card still looks ready | A shared key, environment value, or CLI login still covers it | Read the shared-access note and remove or disconnect the real source. |
+| A speech change seems ignored | The current turn began before the live switch, or Voice output needs a new Pipeline | Finish the turn, restart voice, and check the active card again. |
+| A subscription card will not connect | The coding CLI is missing, outdated, or signed out | Install the CLI shown on the card, reconnect, then run its **Test**. |
+| UltraWiki asks to rebuild vectors | The embedding provider or model changed | Confirm only if you intend to recreate the corpus vector space. |
 
 ## Next Steps
 
-- Read [Credentials and Secrets](credentials-and-secrets) to understand storage,
-  replacement, deletion, and the local-file fallback.
-- Use [Languages and Voices](languages-and-voices) to choose the reply language
-  and spoken voice after the providers work.
-- Read [Jarvis-Agents](jarvis-agents) before selecting a worker or relying on
-  mission fallback.
-- Open [Troubleshooting](troubleshooting) for app-wide startup, connection, and
-  provider recovery checks.
+- Read [Local AI Providers](local-ai-providers) before choosing an on-device
+  model or network endpoint.
+- Use [Dictation](dictation) to decide whether recognition and wording should
+  be local or hosted.
+- Read [Credentials and Secrets](credentials-and-secrets) before rotating or
+  deleting a shared key.
+- Open [Background Agents](jarvis-agents) before relying on a subscription
+  account or long-running mission.

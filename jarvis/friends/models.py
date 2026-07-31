@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · maintainer-2026-04-30 ===
 """Pydantic data types for the Friends layer.
 
 Three related models:

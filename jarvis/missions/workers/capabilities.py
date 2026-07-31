@@ -195,9 +195,71 @@ def restricted_worker_app_commands() -> tuple[str, ...]:
         return ()
 
 
+# Always-granted additions beyond the wiki base (ADR-0030): the voice brain's
+# read-only research reach. ``search_web`` is keyless and safe-tier;
+# ``contact-lookup`` degrades to a clean "contacts unavailable" error exactly
+# as the router sees it. NB the underscore in ``search_web`` — the broker
+# matches ``Tool.name``, not the entry-point name.
+_UNCONDITIONAL_EXTRA_KNOWLEDGE_TOOLS: tuple[str, ...] = (
+    "search_web",
+    "contact-lookup",
+)
+
+
+def _awareness_recall_available() -> bool:
+    """Session memory follows the awareness master switch — fail closed.
+
+    Granting ``awareness-recall`` while ``[awareness].enabled = false`` would
+    hand the worker a phantom tool whose every call errors (the honesty
+    failure ``search_status`` was written to avoid).
+    """
+    try:
+        from jarvis.core.config import load_config  # noqa: PLC0415 — lazy, boot-safe
+
+        return bool(load_config().awareness.enabled)
+    except Exception:  # noqa: BLE001 - config drift must not break missions
+        return False
+
+
+def _ultrawiki_worker_tool_available() -> bool:
+    """``ultrawiki-search`` joins the grant only when it can actually answer.
+
+    Honest grant condition (ADR-0030): UltraWiki mode is enabled AND the
+    ``UltraWikiService`` is live on the web-app state. The startup race is
+    covered by ``ensure_started()`` inside ``service.search()``; the
+    gateway-catalog intersection remains the structural backstop for a tool
+    that never loaded. Fails closed on any error (phantom-tool rule).
+    """
+    try:
+        from jarvis.core import runtime_refs  # noqa: PLC0415 — lazy, boot-safe
+        from jarvis.core.config import load_config  # noqa: PLC0415
+
+        if not load_config().ultrawiki.enabled:
+            return False
+        app = runtime_refs.get_web_app()
+        return getattr(getattr(app, "state", None), "ultrawiki", None) is not None
+    except Exception:  # noqa: BLE001 - config/runtime drift must not break missions
+        return False
+
+
 def restricted_worker_knowledge_tools() -> tuple[str, ...]:
-    """Return the read-only native Wiki surface granted to Jarvis-Agents."""
-    return RESTRICTED_WORKER_KNOWLEDGE_TOOLS
+    """Read-only knowledge surface granted to Jarvis-Agents (ADR-0030).
+
+    Dynamic, gate-driven: the wiki triple is unconditional; session memory
+    (``awareness-recall``) follows the awareness master switch; ``search_web``
+    and ``contact-lookup`` mirror the voice brain's read-only reach;
+    ``ultrawiki-search`` joins once its gate goes live. Execution always
+    stays in the supervisor via the ADR-0025 broker — a worker never holds
+    the tool object — and every gate fails closed so a disabled subsystem
+    never yields a phantom tool.
+    """
+    tools: list[str] = list(RESTRICTED_WORKER_KNOWLEDGE_TOOLS)
+    if _awareness_recall_available():
+        tools.append("awareness-recall")
+    tools.extend(_UNCONDITIONAL_EXTRA_KNOWLEDGE_TOOLS)
+    if _ultrawiki_worker_tool_available():
+        tools.append("ultrawiki-search")
+    return tuple(tools)
 
 
 def worker_app_command_allowed(command_id: str) -> bool:

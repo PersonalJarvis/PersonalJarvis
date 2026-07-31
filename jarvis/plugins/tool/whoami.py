@@ -53,7 +53,7 @@ class WhoAmITool:
             profile: The UserProfile handle (USER.md). Can be `None` if the
                 workspace could not be loaded — in that case `execute`
                 returns a friendly error message instead of crashing.
-            people: Optional `PersonStore` for the "Laura as partner,
+            people: Optional `PersonStore` for the "Casey as colleague,
                 Paul as colleague" line.
         """
         self._profile = profile
@@ -100,7 +100,7 @@ class WhoAmITool:
 
         Strategy: we collect the strongest signals (name, communication style,
         values, pet peeves) into natural sentences. Never "According to your
-        profile...", but directly "You're called Ruben and you like direct
+        profile...", but directly "You're called Alex and you like direct
         answers."
         """
         identity = meta.get("identity", {}) or {}

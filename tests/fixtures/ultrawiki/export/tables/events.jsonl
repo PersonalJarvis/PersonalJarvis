@@ -1,0 +1,3 @@
+{"event": "ledger_filed", "actor": "ada", "at": "2024-01-01T09:00:00Z"}
+{"event": "budget_moved", "actor": "bruno", "at": "2024-01-02T11:30:00Z"}
+{"event": "review_scheduled", "actor": "ada", "at": "2024-01-10T14:00:00Z"}

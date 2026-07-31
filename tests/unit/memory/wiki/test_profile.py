@@ -26,13 +26,13 @@ SEED_BODY = (
     "---\n"
     "type: entity\n"
     "entity_kind: person\n"
-    "slug: ruben\n"
-    "aliases: [Ruben, the user]\n"
+    "slug: alex\n"
+    "aliases: [Alex, the user]\n"
     "created: 2026-05-14\n"
     "updated: 2026-05-30\n"
     "---\n"
     "\n"
-    "# Ruben\n"
+    "# Alex\n"
     "\n"
     "## Summary\n"
     "\n"
@@ -89,12 +89,12 @@ def _age(path: Path) -> None:
 @pytest.mark.asyncio
 async def test_skeleton_added_to_existing_profile_preserving_content(stack) -> None:
     vault_root, curator = stack
-    page = vault_root / "entities" / "ruben.md"
+    page = vault_root / "entities" / "alex.md"
     page.write_text(SEED_BODY, encoding="utf-8")
     _age(page)
 
     changed = await ensure_profile_skeleton(
-        vault_root=vault_root, slug="ruben", curator=curator,
+        vault_root=vault_root, slug="alex", curator=curator,
     )
 
     assert changed is True
@@ -112,15 +112,15 @@ async def test_skeleton_added_to_existing_profile_preserving_content(stack) -> N
 @pytest.mark.asyncio
 async def test_skeleton_is_idempotent(stack) -> None:
     vault_root, curator = stack
-    page = vault_root / "entities" / "ruben.md"
+    page = vault_root / "entities" / "alex.md"
     page.write_text(SEED_BODY, encoding="utf-8")
     _age(page)
 
-    await ensure_profile_skeleton(vault_root=vault_root, slug="ruben", curator=curator)
+    await ensure_profile_skeleton(vault_root=vault_root, slug="alex", curator=curator)
     _age(page)
     first = page.read_text(encoding="utf-8")
     changed = await ensure_profile_skeleton(
-        vault_root=vault_root, slug="ruben", curator=curator,
+        vault_root=vault_root, slug="alex", curator=curator,
     )
 
     assert changed is False
@@ -132,14 +132,14 @@ async def test_missing_profile_page_is_created(stack) -> None:
     vault_root, curator = stack
 
     changed = await ensure_profile_skeleton(
-        vault_root=vault_root, slug="ruben", curator=curator,
+        vault_root=vault_root, slug="alex", curator=curator,
     )
 
     assert changed is True
-    page = vault_root / "entities" / "ruben.md"
+    page = vault_root / "entities" / "alex.md"
     assert page.is_file()
     content = page.read_text(encoding="utf-8")
     assert "type: entity" in content
-    assert "slug: ruben" in content
+    assert "slug: alex" in content
     for section in PROFILE_SECTIONS:
         assert f"## {section}" in content

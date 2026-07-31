@@ -30,7 +30,7 @@ from jarvis.memory.wiki.protocols import PageRepository, WikiPage
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _entity_page(tmp_path: Path, slug: str = "ruben") -> Path:
+def _entity_page(tmp_path: Path, slug: str = "alex") -> Path:
     return tmp_path / "entities" / f"{slug}.md"
 
 
@@ -39,13 +39,13 @@ def _make_entity_dirs(tmp_path: Path) -> None:
         (tmp_path / sub).mkdir(exist_ok=True)
 
 
-def _valid_entity_markdown(slug: str = "ruben") -> str:
+def _valid_entity_markdown(slug: str = "alex") -> str:
     return (
         "---\n"
         "type: entity\n"
         "entity_kind: person\n"
         f"slug: {slug}\n"
-        "aliases: [Rubén, Ruben Lütke]\n"  # i18n-allow: proper name with umlaut used as unicode-handling test fixture
+        "aliases: [Álex, Alex Morgan]\n"  # i18n-allow: accented proper name used as unicode-handling test fixture
         "created: 2026-05-11\n"
         "updated: 2026-05-11\n"
         "---\n"
@@ -77,8 +77,8 @@ def test_parse_valid_entity_is_schema_valid(tmp_path: Path) -> None:
     page = parse_markdown(_valid_entity_markdown(), path)
     assert page.is_schema_valid is True
     assert page.page_type == "entity"
-    assert page.slug == "ruben"
-    assert page.frontmatter["aliases"] == "[Rubén, Ruben Lütke]"  # i18n-allow: proper name with umlaut, matched fixture value
+    assert page.slug == "alex"
+    assert page.frontmatter["aliases"] == "[Álex, Alex Morgan]"  # i18n-allow: accented proper name, matched fixture value
 
 
 def test_parse_extracts_wikilinks_in_order(tmp_path: Path) -> None:
@@ -175,7 +175,7 @@ def test_parse_missing_frontmatter_is_invalid_no_raise(tmp_path: Path) -> None:
 
 def test_parse_unclosed_frontmatter_is_invalid(tmp_path: Path) -> None:
     _make_entity_dirs(tmp_path)
-    src = "---\ntype: entity\nslug: ruben\n# body without closing marker\n"
+    src = "---\ntype: entity\nslug: alex\n# body without closing marker\n"
     page = parse_markdown(src, _entity_page(tmp_path))
     assert page.is_schema_valid is False
     # Everything went to body when the close marker was missing.
@@ -187,15 +187,15 @@ def test_parse_directory_mismatch_invalid(tmp_path: Path) -> None:
     # An entity page placed under concepts/ — type mismatches directory.
     page = parse_markdown(
         _valid_entity_markdown(),
-        tmp_path / "concepts" / "ruben.md",
+        tmp_path / "concepts" / "alex.md",
     )
     assert page.is_schema_valid is False
 
 
 def test_parse_slug_filename_mismatch_invalid(tmp_path: Path) -> None:
     _make_entity_dirs(tmp_path)
-    src = _valid_entity_markdown(slug="ruben")
-    # The frontmatter says ``slug: ruben`` but the file lives at
+    src = _valid_entity_markdown(slug="alex")
+    # The frontmatter says ``slug: alex`` but the file lives at
     # entities/someone-else.md — must be flagged.
     page = parse_markdown(src, tmp_path / "entities" / "someone-else.md")
     assert page.is_schema_valid is False
@@ -222,7 +222,7 @@ def test_parse_empty_body_does_not_raise(tmp_path: Path) -> None:
     src = (
         "---\n"
         "type: entity\n"
-        "slug: ruben\n"
+        "slug: alex\n"
         "---\n"
     )
     page = parse_markdown(src, _entity_page(tmp_path))
@@ -281,7 +281,7 @@ def test_round_trip_empty_body(tmp_path: Path) -> None:
     src = (
         "---\n"
         "type: entity\n"
-        "slug: ruben\n"
+        "slug: alex\n"
         "---\n"
     )
     path = _entity_page(tmp_path)
@@ -296,7 +296,7 @@ def test_round_trip_preserves_internal_whitespace(tmp_path: Path) -> None:
     src = (
         "---\n"
         "type: entity\n"
-        "slug: ruben\n"
+        "slug: alex\n"
         "---\n"
         "\n"
         "\n"
@@ -317,8 +317,8 @@ def test_round_trip_unicode_body(tmp_path: Path) -> None:
     src = (
         "---\n"
         "type: entity\n"
-        "slug: ruben\n"
-        "aliases: [Rubén Lütke]\n"  # i18n-allow: proper name with umlaut used as unicode round-trip test fixture
+        "slug: alex\n"
+        "aliases: [Álex Morgan]\n"  # i18n-allow: proper name with umlaut used as unicode round-trip test fixture
         "---\n"
         "Café — über sechs Zeichen mit Umlauten: äöüß.\n"  # i18n-allow: German sentence deliberately testing umlaut/unicode round-tripping, content under test
     )
@@ -348,7 +348,7 @@ def test_frontmatter_value_with_colon_is_kept_verbatim(tmp_path: Path) -> None:
     src = (
         "---\n"
         "type: entity\n"
-        "slug: ruben\n"
+        "slug: alex\n"
         "url: https://example.com/path\n"
         "---\n"
         "body\n"
@@ -439,7 +439,7 @@ def test_repository_load_async_reads_file(tmp_path: Path) -> None:
     repo = MarkdownPageRepository()
     page = asyncio.run(repo.load(path))
     assert page.is_schema_valid is True
-    assert page.slug == "ruben"
+    assert page.slug == "alex"
 
 
 def test_repository_parse_does_not_touch_disk(tmp_path: Path) -> None:
@@ -454,10 +454,10 @@ def test_repository_parse_does_not_touch_disk(tmp_path: Path) -> None:
 
 def test_repository_resolve_delegates_to_wikilink(tmp_path: Path) -> None:
     _make_entity_dirs(tmp_path)
-    (tmp_path / "entities" / "ruben.md").write_text("x", encoding="utf-8")
+    (tmp_path / "entities" / "alex.md").write_text("x", encoding="utf-8")
     repo = MarkdownPageRepository()
-    resolved = repo.resolve_wikilink("ruben", tmp_path)
-    assert resolved == tmp_path / "entities" / "ruben.md"
+    resolved = repo.resolve_wikilink("alex", tmp_path)
+    assert resolved == tmp_path / "entities" / "alex.md"
 
 
 def test_repository_render_round_trip(tmp_path: Path) -> None:

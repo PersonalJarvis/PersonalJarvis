@@ -1,4 +1,4 @@
-# === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · maintainer-2026-04-30 ===
 """Unit tests for :class:`jarvis.channels.telegram.TelegramChannel`.
 
 Strategy: no real ``python-telegram-bot`` lib needed in the test path —

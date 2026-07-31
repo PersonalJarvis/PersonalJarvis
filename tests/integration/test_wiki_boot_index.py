@@ -36,9 +36,9 @@ def test_populated_vault_searchable_after_boot_index(tmp_path: Path) -> None:
     vault.mkdir(parents=True)
     _write_page(
         vault,
-        "entities/ruben.md",
-        "---\naliases: [Ruben, boss]\n---\n# Ruben\n\n"
-        "Ruben drives a turquoise sailboat named Albatross.\n",
+        "entities/alex.md",
+        "---\naliases: [Alex, boss]\n---\n# Alex\n\n"
+        "Alex drives a turquoise sailboat named Albatross.\n",
     )
     _write_page(
         vault,
@@ -74,7 +74,7 @@ def test_populated_vault_searchable_after_boot_index(tmp_path: Path) -> None:
         hits = search.search("Albatross")
         assert hits, "expected at least one hit after boot index"
         titles = {h.title for h in hits}
-        assert "Ruben" in titles or "Sailing" in titles
+        assert "Alex" in titles or "Sailing" in titles
     finally:
         search.close()
 

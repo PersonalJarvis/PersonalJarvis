@@ -27,21 +27,14 @@
 # product-safe. (The single personal path in phase6-adr-update/SKILL.md is
 # depersonalized by the PII scrub, not withheld.)
 #
-# The privacy gate itself is personal: scripts/ci/privacy_gate/references/
-# (pii-scrub.tsv, secret-allowlist.tsv) carry the maintainer's real name +
-# emails as scrub *patterns* — shipping them would leak exactly what they exist
-# to remove, and a fork generates its own. So withhold that whole subtree.
+# The privacy gate is release-process tooling rather than runtime content.
+# Its tracked manifests contain generic patterns only; semantic review remains
+# mandatory for private values that cannot safely be listed in a public file.
 scripts/ci/privacy_gate/**
 
-# --- .mailmap: shipped again since 2026-07-28 (maintainer directive) ---------
-# The 2026-06-01 full-depersonalization entry withheld .mailmap because it then
-# carried the maintainer's two private e-mail addresses as file data. That era
-# is retired (2026-07-17: one shared git history) and its premise no longer
-# holds either: the public history is NOT purely noreply-authored (generic
-# "Personal Jarvis Maintainer" and placeholder identities exist there), so the
-# file IS load-bearing for honest `git shortlog` attribution. The tracked
-# .mailmap now must never contain a real personal address (see
-# scrub-exempt.txt), which removes the reason to withhold it.
+# `.mailmap` is intentionally absent: identity mappings can expose private
+# addresses in one convenient public file. New commits use GitHub noreply
+# metadata directly instead.
 
 # --- Encrypted release-signing keys (maintainer identity) -------------------
 install/keys/*.key.enc
@@ -92,7 +85,7 @@ boot-progress.md
 # privacy-review finding). Glob covers the "(2)" suffix and any sibling copies.
 Unbenanntes*.pdf
 *.pdf
-# Same class as the PDF above but the Markdown siblings ("Unbenanntes Dokument
+# Same class as the PDF above but the Markdown siblings ("Private Research Note
 # (7).md" / "(8).md"): internal German bug-report / handoff notes to another
 # agent session, tracked by accident (auto-save hook). They carry German prose +
 # wake-word/pipeline logs and have no downstream product value (2026-07-08 scan
@@ -189,8 +182,8 @@ docs/qa/**
 # --- Internal privacy/red-team agent spec (2026-06-30) ----------------------
 # docs-privacy-reviewer.md is the maintainer's OWN depersonalization red-team
 # guide: in source it enumerates the real maintainer identity (real name in
-# every spelling incl. the accented 'Rubén', alt name 'Harald Herz', the private
-# email shapes, GitHub login) and the entire scrub scheme. Shipping the doc that
+# every spelling, alternate names, private email shapes, public login) and the
+# entire scrub scheme. Shipping the doc that
 # lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
 # internal dev tool with no downstream value; a fork writes its own.
 .claude/agents/docs-privacy-reviewer.md
@@ -218,7 +211,7 @@ voice-session-*
 # --- Internal pick-up / handoff prompt notes (2026-06-30) -------------------
 # reporttutorialpickupprompt*.md is a loose top-level "pick-up" prompt: an
 # internal instruction to a Claude session to run the §2 privacy review. It
-# names the maintainer real name ("Ruben", "Lütke / Luetke") and enumerates the  # i18n-allow
+# names the maintainer identity and enumerates the
 # private categories to hunt for — the same self-leak class as
 # docs-privacy-reviewer.md and docs/handoffs/** already withheld above (shipping
 # the doc that lists what to hide IS the leak). Internal process artifact, zero

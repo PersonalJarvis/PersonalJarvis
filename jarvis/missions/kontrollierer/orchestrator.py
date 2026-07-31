@@ -121,6 +121,24 @@ _PROGRESS_NOTE_MAX_CHARS: int = 160
 """Cap on a single WorkerProgress note — enough for a tool name + a command /
 path / text snippet, short enough to keep the event small."""
 
+_ARTIFACT_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
+
+
+def _replace_artifact_path_with_retry(source: Path, target: Path) -> Path:
+    """Rename an artifact tree while tolerating transient Windows file locks."""
+    last_error: PermissionError | None = None
+    for delay_s in _ARTIFACT_REPLACE_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            return source.replace(target)
+        except PermissionError as exc:
+            # Antivirus and indexers may briefly retain a completed staging tree.
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("artifact path replacement exhausted without an attempt")
+
 # Mission time-budget shape (user mandate 2026-06-10: "a task should take
 # 5-15 minutes on average and never run much past 20 — nobody waits longer,
 # but the output must stay remarkable"). Supersedes the 2026-06-09 "more
@@ -1438,8 +1456,9 @@ class Kontrollierer:
                     ),
                 }
                 logger.error(
-                    "Task %s iter %d: refusing critic review after an unclean "
-                    "supervisor tool grant: %s",
+                    "Task %s iter %d: refusing critic review after an "
+                    "integrity-compromised supervisor tool grant (a call was "
+                    "still running or its outcome is unknown): %s",
                     step.task_id,
                     iteration,
                     error_detail,
@@ -1656,13 +1675,28 @@ class Kontrollierer:
                 if safety_kill_reason is not None:
                     return TaskOutcome.ERROR
 
-            # Critic-Call
+            # Critic-Call. Honest supervisor-tool refusals (denied/timed-out/
+            # errored calls the worker OBSERVED in-stream) did not abort the
+            # iteration — only integrity failures do — but the critic must
+            # judge the deliverable WITH the refusal list: "the task depended
+            # on the denied call" is a reject, "the worker adapted" is not
+            # (BUG-096: execution, artifact, approval, and outcome are four
+            # separate facts). Appended to the critic's log view only, never
+            # to the diff, and after the safety scan so the scanner never
+            # reads our own note.
+            critic_log = log_text
+            if spawn_result.supervisor_tool_refusals:
+                critic_log = (
+                    f"{log_text}\n\n"
+                    "# supervisor-tool refusals (observed by the worker)\n"
+                    f"{spawn_result.supervisor_tool_refusals}\n"
+                )
             env = self._env_builder(mission_dir)
             try:
                 verdict = await self._runner.run(
                     mission_prompt=mission_prompt,
                     worker_diff=diff_text,
-                    worker_log=log_text,
+                    worker_log=critic_log,
                     prior_reflections=prior_block,
                     iteration=iteration,
                     worktree=worktree,
@@ -1810,6 +1844,7 @@ class Kontrollierer:
             worker_timed_out: bool = False,
             supervisor_tool_failed: bool = False,
             supervisor_tool_error: str | None = None,
+            supervisor_tool_refusals: str | None = None,
         ) -> None:
             self.worker_id = worker_id
             self.cost_usd = cost_usd
@@ -1830,6 +1865,10 @@ class Kontrollierer:
             self.worker_error = worker_error
             self.supervisor_tool_failed = supervisor_tool_failed
             self.supervisor_tool_error = supervisor_tool_error
+            # Observed refusals (denied/timed_out/error/cancelled) — the
+            # worker saw these in-stream and could adapt; they do NOT fail
+            # the iteration, they inform the critic (BUG-096 four facts).
+            self.supervisor_tool_refusals = supervisor_tool_refusals
 
     async def _spawn_worker_collect(
         self,
@@ -2037,8 +2076,12 @@ class Kontrollierer:
             session_id=session_id,
             worker_error=worker_error,
             worker_timed_out=worker_timed_out,
-            supervisor_tool_failed=not broker_summary.clean,
+            # Only INTEGRITY failures (outcome_unknown / still-active calls)
+            # abort the iteration — an observed refusal keeps the work
+            # reviewable and reaches the critic as context instead.
+            supervisor_tool_failed=broker_summary.integrity_compromised,
             supervisor_tool_error=broker_summary.failure_summary,
+            supervisor_tool_refusals=broker_summary.refusal_summary,
         )
 
     # --- Phase-5 Safety -----------------------------------------------------
@@ -2730,17 +2773,17 @@ class Kontrollierer:
                 # exchange flags.
                 moved_previous = False
                 if files_root.exists():
-                    files_root.replace(previous_root)
+                    _replace_artifact_path_with_retry(files_root, previous_root)
                     moved_previous = True
                 try:
-                    staged_root.replace(files_root)
+                    _replace_artifact_path_with_retry(staged_root, files_root)
                 except OSError:
                     if (
                         moved_previous
                         and previous_root.exists()
                         and not files_root.exists()
                     ):
-                        previous_root.replace(files_root)
+                        _replace_artifact_path_with_retry(previous_root, files_root)
                     raise
                 if moved_previous:
                     shutil.rmtree(previous_root, ignore_errors=True)

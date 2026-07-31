@@ -95,7 +95,7 @@ def test_recently_touched_page_is_skipped(
     surfaces in ``WriteResult.skipped_due_to_recent_edit`` and the file
     contents on disk stay unchanged.
     """
-    target = write_page(vault_root, "entity", "ruben", body="user just typed this")
+    target = write_page(vault_root, "entity", "alex", body="user just typed this")
     original = target.read_text(encoding="utf-8")
 
     # Force the file mtime to "5 seconds ago" — well inside the lock.
@@ -105,7 +105,7 @@ def test_recently_touched_page_is_skipped(
     update = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="curator-overwritten body"),
+        new_body=_valid_entity_body("alex", body="curator-overwritten body"),
         reason="should be skipped",
     )
 
@@ -123,7 +123,7 @@ def test_recently_touched_page_is_skipped(
 def test_old_mtime_passes_lock(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    target = write_page(vault_root, "entity", "ruben", body="old content")
+    target = write_page(vault_root, "entity", "alex", body="old content")
     # Make the file 5 minutes old — well past the lock.
     five_minutes_ago = time.time() - 300.0
     os.utime(target, (five_minutes_ago, five_minutes_ago))
@@ -131,7 +131,7 @@ def test_old_mtime_passes_lock(
     update = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="updated"),
+        new_body=_valid_entity_body("alex", body="updated"),
     )
     result = asyncio.run(writer.apply([update], repo=fake_repo))
 
@@ -159,14 +159,14 @@ def test_successive_self_writes_bypass_recent_edit_lock(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
     """A confirmed writer-owned mtime must not throttle the next curator pass."""
-    target = write_page(vault_root, "entity", "ruben", body="old content")
+    target = write_page(vault_root, "entity", "alex", body="old content")
     old = time.time() - 300.0
     os.utime(target, (old, old))
 
     first = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="first curator fact"),
+        new_body=_valid_entity_body("alex", body="first curator fact"),
     )
     first_result = asyncio.run(writer.apply([first], repo=fake_repo))
     assert first_result.applied == [target.resolve()]
@@ -174,7 +174,7 @@ def test_successive_self_writes_bypass_recent_edit_lock(
     second = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="second curator fact"),
+        new_body=_valid_entity_body("alex", body="second curator fact"),
     )
     second_result = asyncio.run(writer.apply([second], repo=fake_repo))
 
@@ -187,24 +187,24 @@ def test_external_edit_after_self_write_remains_lock_protected(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
     """Changing a confirmed self-written file invalidates its exemption."""
-    target = write_page(vault_root, "entity", "ruben", body="old content")
+    target = write_page(vault_root, "entity", "alex", body="old content")
     old = time.time() - 300.0
     os.utime(target, (old, old))
 
     first = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="curator fact"),
+        new_body=_valid_entity_body("alex", body="curator fact"),
     )
     first_result = asyncio.run(writer.apply([first], repo=fake_repo))
     assert first_result.applied == [target.resolve()]
 
-    external_body = _valid_entity_body("ruben", body="external editor fact")
+    external_body = _valid_entity_body("alex", body="external editor fact")
     target.write_text(external_body, encoding="utf-8")
     second = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("ruben", body="should stay blocked"),
+        new_body=_valid_entity_body("alex", body="should stay blocked"),
     )
     second_result = asyncio.run(writer.apply([second], repo=fake_repo))
 
@@ -516,8 +516,8 @@ def test_backup_rotation_keeps_max_backups(
     vault_root: Path, tmp_path: Path, fake_repo: FakePageRepository
 ) -> None:
     """After 11 applies with max_backups=10, exactly 10 archives remain."""
-    write_page(vault_root, "entity", "ruben", body="seed")
-    target = vault_root / "entities" / "ruben.md"
+    write_page(vault_root, "entity", "alex", body="seed")
+    target = vault_root / "entities" / "alex.md"
 
     writer_small = AtomicWriter(
         vault_root=vault_root,
@@ -531,7 +531,7 @@ def test_backup_rotation_keeps_max_backups(
         update = PageUpdate(
             target_path=target,
             operation="update",
-            new_body=_valid_entity_body("ruben", body=f"iteration {i}"),
+            new_body=_valid_entity_body("alex", body=f"iteration {i}"),
         )
         asyncio.run(writer_small.apply([update], repo=fake_repo))
         time.sleep(0.02)  # keep snapshot mtimes distinct on coarse FS
@@ -610,14 +610,14 @@ def test_allowed_operations_set_matches_protocol(
 def test_rename_writes_new_path_and_unlinks_old(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    old = write_page(vault_root, "entity", "luetke", body="old slug")
+    old = write_page(vault_root, "entity", "alex-old", body="old slug")
     os.utime(old, (time.time() - 600, time.time() - 600))
-    new = vault_root / "entities" / "ruben-luetke.md"
+    new = vault_root / "entities" / "alex-morgan.md"
 
     update = PageUpdate(
         target_path=new,
         operation="rename",
-        new_body=_valid_entity_body("ruben-luetke", body="new slug"),
+        new_body=_valid_entity_body("alex-morgan", body="new slug"),
         rename_from=old,
     )
     result = asyncio.run(writer.apply([update], repo=fake_repo))
@@ -758,7 +758,7 @@ def test_clean_body_passes_the_guard(
         target_path=target,
         operation="create",
         new_body=_valid_entity_body(
-            "clean", body="Ruben prefers a multi-provider brain."
+            "clean", body="Alex prefers a multi-provider brain."
         ),
         reason="normal write",
     )

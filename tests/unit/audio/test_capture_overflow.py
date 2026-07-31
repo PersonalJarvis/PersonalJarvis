@@ -9,7 +9,13 @@ real-time detection consumer uses a shallow depth so the bound is small.
 """
 from __future__ import annotations
 
-from jarvis.audio.capture import REALTIME_QUEUE_CHUNKS, MicrophoneCapture
+from jarvis.audio.capture import (
+    BLOCKSIZE,
+    DEFAULT_QUEUE_CHUNKS,
+    REALTIME_QUEUE_CHUNKS,
+    SAMPLE_RATE,
+    MicrophoneCapture,
+)
 from jarvis.core.protocols import AudioChunk
 
 
@@ -23,12 +29,19 @@ def _chunk(tag: int) -> AudioChunk:
 
 
 def test_realtime_depth_is_shallower_than_the_bulk_default() -> None:
-    assert MicrophoneCapture()._queue.maxsize == 20
+    assert MicrophoneCapture()._queue.maxsize == DEFAULT_QUEUE_CHUNKS
     assert (
         MicrophoneCapture(max_queue_chunks=REALTIME_QUEUE_CHUNKS)._queue.maxsize
         == REALTIME_QUEUE_CHUNKS
     )
-    assert 1 <= REALTIME_QUEUE_CHUNKS < 20
+    assert 1 <= REALTIME_QUEUE_CHUNKS < DEFAULT_QUEUE_CHUNKS
+    assert DEFAULT_QUEUE_CHUNKS * BLOCKSIZE / SAMPLE_RATE >= 2.0
+    assert REALTIME_QUEUE_CHUNKS * BLOCKSIZE / SAMPLE_RATE >= 0.6
+
+
+def test_capture_block_matches_the_native_vad_frame_budget() -> None:
+    assert BLOCKSIZE == 512
+    assert BLOCKSIZE / SAMPLE_RATE == 0.032
 
 
 def test_safe_put_drops_oldest_and_keeps_newest_on_overflow() -> None:

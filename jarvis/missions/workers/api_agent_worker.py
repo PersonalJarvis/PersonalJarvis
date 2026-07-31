@@ -103,6 +103,12 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     # (subscription-first) when its binary is present; this is the API fallback.
     "claude-api": ("jarvis.plugins.brain.claude_api", "ClaudeAPIBrain"),
     "gemini": ("jarvis.plugins.brain.gemini", "GeminiBrain"),
+    # Keyless local providers (2026-07-25): same in-process tool loop against
+    # the user's own server — heavy missions with zero cloud keys. Keyless is
+    # tolerated by design: get_jarvis_agent_secret returns None and the
+    # plugins supply their own dummy SDK key.
+    "ollama": ("jarvis.plugins.brain.ollama", "OllamaBrain"),
+    "local-openai": ("jarvis.plugins.brain.local_openai", "LocalOpenAIBrain"),
 }
 
 # A free OpenRouter model id — the LAST-RESORT default for the gateway provider
@@ -171,7 +177,10 @@ _SYSTEM_PROMPT = (
     "workspace. Your ONLY way to deliver work is to call the provided tools — "
     "Write, Edit, Read, RunCommand, Ls, plus any mission-scoped connected tools — "
     "with file paths relative to the workspace root. Connected tools are "
-    "executed by the supervisor and may honestly require human approval. "
+    "executed by the supervisor and may honestly require human approval; a "
+    "denied or failed connected-tool call is a normal, recoverable event - "
+    "adapt, use an alternative, or deliver the remainder and state the "
+    "limitation in your summary. "
     "Actually CREATE and EDIT the files the task needs; never just describe what "
     "you would do (a text description is not a deliverable and will be rejected). "
     "Work autonomously without asking questions: if a detail is unspecified, pick "
@@ -242,6 +251,7 @@ class ApiAgentWorker:
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        timeout_s: float = _WORKER_TIMEOUT_S,
         _broker_binding: Any | None = None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -249,7 +259,7 @@ class ApiAgentWorker:
         issued_here = broker_binding is None
         if issued_here:
             broker_binding = self.capability_inventory.bind_broker(
-                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                ttl_s=timeout_s + 60.0,
                 mission_id=_unused.get("mission_id"),
                 worker_id=worker_id,
             )
@@ -263,6 +273,7 @@ class ApiAgentWorker:
                 log_dir=log_dir,
                 model=model,
                 max_turns=max_turns,
+                timeout_s=timeout_s,
                 broker_binding=broker_binding,
                 **_unused,
             ):
@@ -285,6 +296,7 @@ class ApiAgentWorker:
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        timeout_s: float = _WORKER_TIMEOUT_S,
         broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -384,14 +396,14 @@ class ApiAgentWorker:
 
         try:
             for turn in range(max_turns):
-                if time.perf_counter() - t0 > _WORKER_TIMEOUT_S:
+                if time.perf_counter() - t0 > timeout_s:
                     res = ClaudeResult(
                         subtype="error_during_execution",
                         is_error=True,
                         session_id=session_id,
                         timed_out=True,
                         duration_ms=int((time.perf_counter() - t0) * 1000),
-                        result=f"{final_text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip(),
+                        result=f"{final_text}\n[timeout after {timeout_s:.0f}s]".strip(),
                     )
                     _emit_line(res)
                     yield res

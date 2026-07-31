@@ -16,6 +16,7 @@ import {
   type BrainModel,
   type BrainModelProbe,
   type BrainModelSaveResult,
+  type BrainModelsResult,
   type ProviderTestStatus,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
@@ -111,6 +112,8 @@ export function BrainModelSelector({
   placeholder,
   controlled,
   visionOnly,
+  loadModels,
+  fixedCatalog = false,
 }: {
   providerId: string;
   currentModel?: string;
@@ -161,6 +164,24 @@ export function BrainModelSelector({
    * default — the main brain picker shows everything.
    */
   visionOnly?: boolean;
+  /**
+   * Override where the list comes from. The UltraWiki capability slots pass
+   * their own fetcher (`GET /api/ultrawiki/models/{slot}`) so they get THIS
+   * picker — searchable, refreshable, with the custom-id escape hatch — rather
+   * than a look-alike that would drift from it. Defaults to the per-provider
+   * brain catalog, so every existing call site is unchanged.
+   */
+  loadModels?: (refresh: boolean) => Promise<BrainModelsResult>;
+  /**
+   * This provider's list is CLOSED: it is what is installed on the machine, and
+   * there is no custom id to type. On-device providers set it.
+   *
+   * With a single option it also drops the picker entirely and states what will
+   * run. A dropdown holding one entry — plus a search box inviting a "custom
+   * id" that would resolve to a model nobody downloaded — asks the user to make
+   * a choice that does not exist, and offers a way to break it.
+   */
+  fixedCatalog?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -170,6 +191,10 @@ export function BrainModelSelector({
   const [filter, setFilter] = useState<ModelFilter>("all");
   const [models, setModels] = useState<BrainModel[]>([]);
   const [source, setSource] = useState<"live" | "cache" | "static" | "curated" | null>(null);
+  // Why the list is the fallback one ("no Gemini API key saved yet") — shown
+  // verbatim, because "these five are all there is" and "we couldn't ask" look
+  // identical in a dropdown and mean very different things.
+  const [sourceNote, setSourceNote] = useState("");
   const [selects, setSelects] = useState<"model" | "voice">("model");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -179,9 +204,12 @@ export function BrainModelSelector({
   async function load(refresh = false) {
     setLoading(true);
     try {
-      const res = await getBrainProviderModels(providerId, refresh);
+      const res = loadModels
+        ? await loadModels(refresh)
+        : await getBrainProviderModels(providerId, refresh);
       setModels(Array.isArray(res.models) ? res.models : []);
       setSource(res.source);
+      setSourceNote(typeof res.reason === "string" ? res.reason : "");
       setSelects(res.selects === "voice" ? "voice" : "model");
       // Uncontrolled: adopt the catalog's current selection as the pinned value.
       // Controlled (CU picker): the parent owns the pinned value (cu_model) —
@@ -344,6 +372,28 @@ export function BrainModelSelector({
     } finally {
       setSaving(false);
     }
+  }
+
+  // A closed catalog with one entry is not a choice. Say what runs and stop.
+  // (While the list is still loading, `models` is empty and we fall through to
+  // the normal control rather than flashing a wrong single-model line.)
+  if (fixedCatalog && models.length === 1) {
+    const only = models[0];
+    return (
+      <div
+        className="space-y-1.5"
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {headingLabel ??
+            (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
+        </span>
+        <p className="text-xs text-foreground" data-testid="fixed-model">
+          {only.label || only.id}
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -530,7 +580,11 @@ export function BrainModelSelector({
               );
             })}
 
-            {trimmed && !exactMatch && (
+            {/* No custom-id escape hatch on a closed catalog: the options ARE
+                the files on this machine, so a typed id could only name
+                something that is not downloaded — an instant, self-inflicted
+                failure the moment the user speaks. */}
+            {trimmed && !exactMatch && !fixedCatalog && (
               <li>
                 <button
                   type="button"
@@ -564,6 +618,9 @@ export function BrainModelSelector({
           <span className="text-[11px] text-amber-600" title={t("apikeys_model.source_static_note")}>
             {t("apikeys_model.source_static")}
           </span>
+        )}
+        {sourceNote && (
+          <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
         )}
         {probe && <ProbeChip probe={probe} />}
       </div>

@@ -189,3 +189,37 @@ def test_language_switch_survives_live_stt_mistranscript() -> None:
     )
     assert m is not None and m.kind == "language_switch"
     assert m.target == "en"
+
+
+def test_language_switch_needs_its_ingredients_in_one_clause() -> None:
+    """A dictated paragraph must not be assembled into a language command.
+
+    Live 2026-07-28 20:34, coding mode on, six panes open: the user asked for
+    two coding agents to be briefed. The utterance happened to contain
+    "automatisch" (describing a bug — text is NOT inserted automatically), the  # i18n-allow: quoted German transcript token
+    verb "stellen" 408 characters later (from "Rückfragen stellen") and an "in"  # i18n-allow: quoted German transcript tokens
+    before both. The gate searched the WHOLE utterance for each ingredient,
+    assembled them into "switch the reply language to auto", answered the turn
+    and persisted the setting — so ``generate()`` returned before the
+    Agentic-IDE delivery path and no agent was ever briefed, while the live
+    model told the user two of them were working.
+    """
+    m = match_voice_command(
+        "Was mir aufgefallen ist: es funktioniert nicht, dass es dann nicht "  # i18n-allow: bug transcript
+        "automatisch in das Textfeld reingepromptet wird. Sie sollen in der "  # i18n-allow: bug transcript
+        "Codebase nachschauen, und wenn sie das nicht wissen, dann sollen sie "  # i18n-allow: bug transcript
+        "mir Rückfragen stellen."  # i18n-allow: bug transcript
+    )
+    assert m is None or m.kind != "language_switch"
+
+
+def test_language_switch_still_matches_across_ordinary_filler() -> None:
+    """The proximity bound must not cost a normally-spoken switch."""
+    for text, target in (
+        ("wechsle die Sprache bitte mal auf Spanisch", "es"),  # i18n-allow: German speech-input test vocabulary
+        ("stell die Antwortsprache auf automatisch", "auto"),  # i18n-allow: German speech-input test vocabulary
+        ("sprich Spanisch", "es"),  # i18n-allow: German speech-input test vocabulary
+    ):
+        m = match_voice_command(text)
+        assert m is not None and m.kind == "language_switch", text
+        assert m.target == target, text

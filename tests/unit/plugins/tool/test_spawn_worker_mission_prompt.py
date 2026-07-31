@@ -180,7 +180,7 @@ async def test_execute_dispatches_enriched_prompt_not_raw_fragment() -> None:
 
 
 def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
-    """Live regression (2026-06-16, "move to the USA" mission): an explicit
+    """Live regression (2026-06-16, relocation-research mission): an explicit
     voice trigger ("spawn a sub-agent which will help me find out X") routes to
     the force-spawn path (action=""), where the verbatim utterance became the
     worker's task. The worker then read "spawn a sub-agent" as ITS task — which
@@ -190,7 +190,7 @@ def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
     prompt = _build_mission_prompt(
         utterance=(
             "Create and spawn a sub-agent which will help me find out what I "
-            "have to be aware of when I move to the USA"
+            "have to be aware of when I move to Example Country A"
         ),
         action="",
     )
@@ -199,7 +199,7 @@ def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
     assert "spawn a sub-agent" not in low
     assert "create and spawn" not in low
     # the actual research task survives verbatim
-    assert "move to the USA" in prompt
+    assert "move to Example Country A" in prompt
     # the standing quality directive is still present
     assert "production-quality" in low
 
@@ -211,7 +211,7 @@ def test_forcespawn_german_spawn_meta_stripped() -> None:
     prompt = _build_mission_prompt(
         utterance=(
             "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
-            "USA-Umzug beachten muss"  # i18n-allow
+            "Umzug nach Beispielstadt beachten muss"  # i18n-allow
         ),
         action="",
     )
@@ -219,7 +219,7 @@ def test_forcespawn_german_spawn_meta_stripped() -> None:
     assert "sub-agent" not in low
     assert "sub-agenten" not in low
     # the real task survives
-    assert "USA-Umzug" in prompt
+    assert "Umzug nach Beispielstadt" in prompt
 
 
 def test_forcespawn_topic_request_does_not_leave_an_orphaned_article() -> None:

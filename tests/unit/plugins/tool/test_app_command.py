@@ -13,7 +13,11 @@ import httpx
 from fastapi import FastAPI, HTTPException
 
 from jarvis.commands.registry import get_registry
-from jarvis.plugins.tool.app_command import AppCommandTool, _validate_args
+from jarvis.plugins.tool.app_command import (
+    AppCommandTool,
+    _validate_args,
+    _with_defaults,
+)
 
 
 def _fake_app(calls: dict) -> FastAPI:
@@ -39,6 +43,11 @@ def _fake_app(calls: dict) -> FastAPI:
     @app.post("/api/tts/switch")
     async def tts_switch(body: dict) -> dict:
         raise HTTPException(status_code=409, detail="no key stored")
+
+    @app.post("/api/agentic-ide/terminals/{name}/prompt")
+    async def terminal_prompt(name: str, body: dict) -> dict:
+        calls["terminal_prompt"] = {"name": name, **body}
+        return {"ok": True, "terminal": name, "submitted": True}
 
     return app
 
@@ -138,6 +147,55 @@ async def test_no_server_available_is_honest() -> None:
     assert "not available" in (result.error or "")
 
 
+async def test_schema_default_is_sent_when_the_model_leaves_it_out() -> None:
+    """The live 2026-07-27 18:47 failure, pinned.
+
+    ``agentic-ide-prompt`` declares ``compose: true``; the endpoint behind it
+    defaults to False because its other caller is the typed prompt bar, which
+    must send a hand-written prompt untouched. A model that reads the default
+    and omits the argument therefore got the OPPOSITE of what the schema
+    promised: its one-line paraphrase was typed into the coding agent as the
+    whole assignment, instead of being composed into a briefed task with this
+    workspace's files attached.
+    """
+    calls: dict = {}
+    result = await _tools(calls)["agentic-ide-prompt"].execute(
+        {"name": "Casey", "prompt": "have a look at the macOS paths"}, None
+    )
+    assert result.success is True
+    assert calls["terminal_prompt"]["compose"] is True
+
+
+async def test_an_explicit_argument_still_beats_the_default() -> None:
+    """A default is a fallback, never an override — "continue" stays verbatim."""
+    calls: dict = {}
+    await _tools(calls)["agentic-ide-prompt"].execute(
+        {"name": "Casey", "prompt": "continue", "compose": False}, None
+    )
+    assert calls["terminal_prompt"]["compose"] is False
+
+
+def test_every_registry_default_survives_into_the_payload() -> None:
+    """Whatever the registry promises the model is what the endpoint receives.
+
+    Generic on purpose: the compose bug was one instance of a class, and the
+    next default added to the registry gets the same guarantee without anyone
+    having to remember this test exists.
+    """
+    for cmd in get_registry():
+        props = (cmd.params or {}).get("properties", {})
+        promised = {
+            key: spec["default"]
+            for key, spec in props.items()
+            if isinstance(spec, dict) and "default" in spec
+        }
+        if not promised:
+            continue
+        filled = _with_defaults(cmd.params, {})
+        for key, value in promised.items():
+            assert filled[key] == value, f"{cmd.id}: default for {key!r} was dropped"
+
+
 def test_validator_covers_types_and_ranges() -> None:
     schema = {
         "type": "object",
@@ -209,3 +267,37 @@ async def test_end_to_end_against_real_webserver_app(monkeypatch) -> None:
     # old_provider comes from cfg.brain.primary (shared app_control logic),
     # so only pin the destination side of the transition here.
     assert "-> openrouter" in result.output["summary"]
+
+
+# --------------------------------------------------------------------------- #
+# Response trimming: what CHANGED, not a snapshot of everything                #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_full_state_snapshot_is_kept_out_of_the_readback() -> None:
+    """Mutating routes echo the whole app state back; the model must not read it.
+
+    One Agentic-IDE spawn answers with roughly 25 000 characters of workspace
+    state — every pane, its transcript, the project's skills and subagents —
+    purely so an open UI can re-render without a second fetch. Three such calls
+    in one turn buried the result the model then had to act on: a live session
+    on 2026-07-27 spent 58 000 input tokens on a single turn and lost track of
+    the pane it had just opened, spawning three more.
+    """
+    from jarvis.plugins.tool.app_command import _without_snapshots
+
+    trimmed = _without_snapshots(
+        {"ok": True, "terminals": [{"name": "Kate"}], "state": {"huge": "x" * 5000}}
+    )
+
+    assert trimmed == {"ok": True, "terminals": [{"name": "Kate"}]}
+
+
+def test_a_response_that_is_only_a_snapshot_is_still_returned() -> None:
+    """Trimming must never answer with nothing at all."""
+    from jarvis.plugins.tool.app_command import _without_snapshots
+
+    payload = {"ok": True, "state": {"active": True}}
+
+    assert _without_snapshots(payload) == payload
+    assert _without_snapshots("plain text") == "plain text"

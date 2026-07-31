@@ -23,13 +23,13 @@ export const Examples: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, marginTop: 18 }}>
           <Sequence from={c1} layout="none">
-            <SpokenCommand text="What's on my calendar today?" speaker="user" size={28} compact wake="Hey Ruben" />
+            <SpokenCommand text="What's on my calendar today?" speaker="user" size={28} compact wake="Hey Nova" />
           </Sequence>
           <Sequence from={c2} layout="none">
-            <SpokenCommand text="Switch the brain to Gemini." speaker="user" size={28} compact wake="Hey Ruben" />
+            <SpokenCommand text="Switch the brain to Gemini." speaker="user" size={28} compact wake="Hey Nova" />
           </Sequence>
           <Sequence from={c3} layout="none">
-            <SpokenCommand text="Summarise this article for me." speaker="user" size={28} compact wake="Hey Ruben" />
+            <SpokenCommand text="Summarise this article for me." speaker="user" size={28} compact wake="Hey Nova" />
           </Sequence>
         </div>
       </div>

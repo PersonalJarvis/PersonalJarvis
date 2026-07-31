@@ -179,8 +179,8 @@ Rules:
   ["personal-jarvis"]). The caller supplies the speaker's exact user slug.
   For a first-person fact about a named place, person, organization, project,
   asset, vehicle, or recurring activity, include BOTH the exact user slug and
-  the named topic slug. Example: "I live in San Francisco" uses kind "place"
-  and subjects ["<user-slug>", "san-francisco"].
+  the named topic slug. Example: "I live in Example City" uses kind "place"
+  and subjects ["<user-slug>", "example-city"].
 - Never include credentials, API keys, passwords, or tokens in a fact.
 - No prose outside the JSON array.
 """
@@ -232,8 +232,8 @@ Rules:
   complete fact over several fragments.
 - For a first-person fact about a named place, person, organization, project,
   asset, vehicle, or recurring activity, include BOTH the exact user slug and
-  the named topic slug. A residence in San Francisco uses kind "place" and
-  subject "san-francisco" alongside the exact user slug.
+  the named topic slug. A residence in Example City uses kind "place" and
+  subject "example-city" alongside the exact user slug.
 - Return [] for greetings, questions, commands without durable content,
   transient bodily/status chatter, weather talk, and immediate-task details.
 - Never include credentials, API keys, passwords, or tokens.

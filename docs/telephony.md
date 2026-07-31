@@ -77,7 +77,7 @@ Then in the app's **Telephony** section (or in `jarvis.toml`) set:
 [integrations.twilio]
 enabled = true
 account_sid = "AC..."                # your Account SID (not a secret)
-phone_number = "+49301234567"        # your Twilio number, E.164
+phone_number = "+12025550102"        # your Twilio number, E.164
 public_base_url = "https://jarvis.example.com"   # no trailing slash
 language_code = "de-DE"
 greeting = ""                        # empty = Jarvis butler default
@@ -88,7 +88,7 @@ Finally point the number's **Voice webhook** at Jarvis:
 
 ```bash
 python scripts/telephony_provision.py set-webhook \
-    --number +49301234567 \
+    --number +12025550102 \
     --url https://jarvis.example.com/api/telephony/voice
 ```
 

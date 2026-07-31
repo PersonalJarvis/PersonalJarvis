@@ -48,12 +48,28 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "dictionary",
+        "dictation",
+        "voice-shortcuts",
+        "voice-language",
+        "voice-api-keys",
+        "agentic-ide",
     }
 )
 
 # Natural-language aliases (DE + EN) → canonical id. The router usually passes an
 # id from the schema enum; this is the safety net for spoken labels/synonyms.
 _ALIASES: dict[str, str] = {
+    # Agentic IDE — the spoken forms people reach for. "agentic" is a mouthful
+    # in every supported language, so the plain-words variants matter more here
+    # than for sections whose label is already a common noun.
+    "agentic ide": "agentic-ide",
+    "agentic": "agentic-ide",
+    "ide": "agentic-ide",
+    "coding mode": "agentic-ide",
+    "coding workspace": "agentic-ide",
+    "codier-modus": "agentic-ide",  # i18n-allow: input vocab
+    "programmier-modus": "agentic-ide",  # i18n-allow: input vocab
+    "modo de programación": "agentic-ide",  # i18n-allow: input vocab
     "social": "socials",
     "social media": "socials",
     "soziale medien": "socials",
@@ -124,6 +140,21 @@ _ALIASES: dict[str, str] = {
     "erweiterung": "skills",
     "tools": "plugins",
     "werkzeuge": "plugins",
+    # Voice section tabs. Deliberately NARROW, multi-word phrases only: the
+    # brain-side matcher (jarvis/brain/navigation_intent.py) runs BEFORE the
+    # capability gate, so a bare "voice" / "stimme" / "voz" alias would hijack
+    # every utterance that merely mentions the voice.
+    "dictation shortcuts": "voice-shortcuts",
+    "dictation keys": "voice-shortcuts",
+    "diktat-tastenkürzel": "voice-shortcuts",  # i18n-allow: input vocab
+    "diktat-tasten": "voice-shortcuts",  # i18n-allow: input vocab
+    "atajos de dictado": "voice-shortcuts",  # i18n-allow: input vocab
+    "dictation language": "voice-language",
+    "diktat-sprache": "voice-language",  # i18n-allow: input vocab
+    "idioma de dictado": "voice-language",  # i18n-allow: input vocab
+    "voice input keys": "voice-api-keys",
+    "spracheingabe-schlüssel": "voice-api-keys",  # i18n-allow: input vocab
+    "claves de entrada de voz": "voice-api-keys",  # i18n-allow: input vocab
 }
 
 

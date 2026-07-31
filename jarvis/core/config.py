@@ -22,8 +22,9 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
@@ -333,6 +334,45 @@ class TriggerConfig(BaseModel):
     # Hangup key. Was hardcoded ("f1+f2",) at the SpeechPipeline call sites; now
     # user-editable via /api/settings/keybinds. Read directly at bootstrap.
     hotkey_hangup: str = "f1+f2"
+    # Push-to-talk dictation key: HOLD to speak, release to insert. The
+    # transcript lands in whatever text field currently has focus.
+    #
+    # Ships BOUND (maintainer directive 2026-07-28). Dictation shipped unbound
+    # for a while on the theory that no chord is free on every machine; the
+    # result was a headline feature that did nothing on a fresh install unless
+    # the user happened to open the Shortcuts tab. The two combos below are
+    # curated instead: both pass ``validate_hotkey`` on win32, darwin AND linux,
+    # neither is an OS-reserved chord, and their key sets are neither subsets
+    # nor supersets of each other or of Call (``f3+f4``) / Hangup (``f1+f2``),
+    # so the keybind collision rule accepts all four at once. Clearing a row in
+    # the Voice → Shortcuts tab is one click, and an empty value remains a
+    # fully valid state: dictation still starts from the bar, from the UI, and
+    # from ``jarvis api dictation start`` — the last of which is the documented
+    # Wayland path, where the compositor (not the app) owns global shortcuts.
+    hotkey_dictate: str = "ctrl+right_alt+j"
+    # Hands-free dictation key: press once to start, press again to stop. Its
+    # own action (not ``[dictation].mode``) so a user can have BOTH a hold key
+    # and a toggle key armed at the same time; ``[dictation].mode = "toggle"``
+    # stays honoured for installs that configured it, and only changes how
+    # ``hotkey_dictate`` behaves.
+    hotkey_dictate_toggle: str = "ctrl+right_alt+space"
+    # Insert the most recent dictation into the focused field AGAIN — the
+    # recovery key for a paste that landed nowhere. It exists because the
+    # clipboard is not a fallback here: a successful paste deliberately puts
+    # the previous clipboard content back, so the transcript is gone from the
+    # clipboard a second later and the local history is the only durable copy.
+    #
+    # Ships bound for the same reason the two dictation keys do (a recovery
+    # action nobody can find is not a recovery action). Ctrl+Alt+V is the
+    # documented suggestion; it does overlap with "Paste Special" in some
+    # office suites, and because the hotkey backend POLLS key state rather than
+    # registering with the OS, the key is not swallowed — both would fire.
+    # Clearing the row is one click, and an empty value stays fully valid: the
+    # action is also `jarvis api dictation paste-last`, which is the documented
+    # Wayland path (there the compositor, not the app, owns global shortcuts).
+    # A macOS user can record a Command-based combination instead; the
+    # validator accepts `cmd+...` on darwin.
+    hotkey_paste_last: str = "ctrl+alt+v"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -388,6 +428,24 @@ class TriggerConfig(BaseModel):
 
 class STTConfig(BaseModel):
     provider: str = "groq-api"
+    # Set by every user-facing provider switch. Once present, the persisted
+    # provider is authoritative over a stale JARVIS__STT__PROVIDER inherited
+    # from an older desktop process or User-scope environment entry. Fresh
+    # headless installs keep the normal ENV-over-TOML contract until a user
+    # explicitly chooses a provider through Jarvis.
+    provider_user_selected: bool = False
+    # Where transcription goes when ``provider`` keeps failing at RUNTIME — a
+    # depleted or revoked key (401/402), or a rate limit that survives the
+    # retry ladder. ``auto`` (the default) asks the key-aware resolver for a
+    # provider in a DIFFERENT family that the user actually holds a credential
+    # for; crossing to a second provider in the same family buys nothing,
+    # because one dead key takes both down (AP-22). A concrete id pins the
+    # fallback to that provider, and an empty value disables crossing entirely
+    # and keeps the honest single-provider failure. Honoured by the runtime
+    # cross-family fallback in ``jarvis.plugins.stt`` — this key was carried in
+    # shipped configs for a long time while nothing read it, which is why it is
+    # spelled out here: dead config is a lie.
+    fallback: str = "auto"
     # ``model`` is the local FasterWhisperProvider's post-wake utterance model
     # (used whenever ``provider = "faster-whisper"``; the Groq cloud plugin
     # hardcodes its own multilingual model and ignores this). Must be a
@@ -453,6 +511,22 @@ class STTConfig(BaseModel):
     # ignores it because an initial-prompt on silent audio used to
     # hallucinate the prompt itself as the transcript.
     bias_prompt: str = ""
+    # Which model each CLOUD recognizer uses, keyed by provider id
+    # (``{"openrouter-stt": "openai/gpt-4o-transcribe"}``). A per-provider slot
+    # rather than one global value, because ``model`` above is a
+    # faster-whisper checkpoint name and a checkpoint name is meaningless to a
+    # hosted API — forwarding one global string to whichever provider happened
+    # to be selected is how a picked cloud model reached no provider at all
+    # and a fresh install would have posted ``large-v3-turbo`` to Groq.
+    # Unset (the default) means "the plugin's own default model", which is the
+    # behaviour every install had before this key existed.
+    models: dict[str, str] = Field(default_factory=dict)
+    # Sampling temperature for transcription. ``0.0`` on purpose and by
+    # default: transcription is a measurement, so the same recording has to
+    # come back the same way twice. Forwarded only to providers whose model
+    # accepts the field (``jarvis.plugins.stt.capabilities``), so a backend
+    # that rejects it keeps working.
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class TTSConfig(BaseModel):
@@ -1110,10 +1184,15 @@ class SchedulerConfig(BaseModel):
     periodic_interval_minutes: int = 30
     lock_path: Path = Path("data/wiki_curator.lock")
     lock_stale_after_seconds: int = 300
-    # A durable candidate should become visible in the vault without waiting
-    # for unrelated future conversation. The background consolidator may still
-    # coalesce candidates that arrive concurrently.
-    consolidate_after_candidates: int = 1
+    # A durable candidate must become visible in the vault promptly, but not
+    # necessarily on its own dedicated judge run: each Stage-2 run re-sends an
+    # ~11k-char system prompt plus full neighbour page bodies, so firing per
+    # candidate multiplied that fixed cost across every fact-yielding turn
+    # (2026-07-28 cost audit). Three coalesces an active conversation's burst
+    # into one run, and the age flush below still bounds how long a LONE
+    # candidate can wait — that pair is what keeps spec A4's visibility
+    # promise.
+    consolidate_after_candidates: int = 3
     # Age-based flush (spec A4): even below the count threshold, pending
     # candidates older than this become a JOURNAL trigger so a quiet fresh
     # install still produces visible pages. 0 disables the age flush.
@@ -1245,6 +1324,45 @@ class SafetyConfig(BaseModel):
     always_block_tiers: list[RiskTier] = Field(default_factory=lambda: ["block"])
     whitelist: SafetyWhitelistConfig = Field(default_factory=SafetyWhitelistConfig)
     blacklist: SafetyBlacklistConfig = Field(default_factory=SafetyBlacklistConfig)
+    # How long an armed approval gate waits for a decision before the default
+    # deny. Deliberately short: an unattended, non-pre-authorized ask-tier
+    # call should fail fast and honestly (the worker observes the denial and
+    # adapts, ADR-0031/W3) instead of burning its iteration budget blocked.
+    tool_approval_timeout_s: float = Field(default=60.0, ge=5.0, le=600.0)
+
+
+class SkillsConfig(BaseModel):
+    """Deterministic skill matching (2026-07-25).
+
+    Author-written voice triggers are unaffected by everything here; these knobs
+    govern only the relevance layer that catches paraphrases.
+    """
+
+    #: Master switch for the deterministic relevance layer. Off = exactly the
+    #: pre-2026-07-25 behaviour (author regex + the LLM listing).
+    relevance_enabled: bool = True
+
+    #: While true, a FIRE-band relevance match is RECORDED but does not capture
+    #: the turn — the narrowed candidate hint still ships. Default true for the
+    #: first release: the maintainer reviews a day of real decisions via
+    #: ``GET /api/skills/match-log`` and flips this off on measured numbers,
+    #: rather than on a hunch about a layer that can rewrite a turn's
+    #: instructions.
+    relevance_shadow: bool = True
+
+    #: Weakest band allowed to capture a turn. Anything below stays a
+    #: suggestion the model may ignore.
+    auto_fire_min_band: Literal["fire", "narrow"] = "fire"
+
+    #: Optional threshold overrides. ``None`` keeps the calibrated
+    #: corpus-derived defaults from jarvis/skills/relevance.py — set these only
+    #: with a number from scripts/skill_relevance_calibrate.py, never to make a
+    #: single over-fire go away (AP-27).
+    fire_threshold: float | None = None
+    hint_threshold: float | None = None
+
+    #: How many narrowed candidates ride the per-turn context on a NARROW turn.
+    narrow_candidates: int = 3
 
 
 class JarvisAgentNotificationConfig(BaseModel):
@@ -1755,6 +1873,55 @@ class VisionContextConfig(BaseModel):
     timeout_s: float = 0.25     # mandate: 250 ms latency cap per spawn
 
 
+class ScreenContextConfig(BaseModel):
+    """Top-level ``[screen_context]`` config — one-shot, on-request screen look.
+
+    Governs ``jarvis/screen_context/``: when the user unambiguously asks Jarvis
+    to look at the screen, exactly one capture is taken of the monitor under the
+    mouse cursor, filtered, handed to the turn, and dropped. There is no setting
+    here that enables continuous or silent monitoring, because no such code path
+    exists — see ``docs/screen-context.md``.
+
+    Every key below is read by ``ScreenContextService`` (AP-31: no config that
+    nothing honours).
+    """
+    model_config = {"extra": "allow"}
+
+    #: Master switch. When off, an explicit "look at this" is answered with an
+    #: honest "screen context is switched off" rather than silently ignored.
+    enabled: bool = True
+
+    #: App names or window-title fragments that are NEVER captured — not
+    #: captured and redacted, but not captured at all. Case-insensitive
+    #: substring match against both the app name and the window title, so a
+    #: version bump ("1Password" -> "1Password 8") cannot silently stop
+    #: protecting. Empty by default: shipping a guess about what a stranger
+    #: considers sensitive is worse than letting them state it (§3).
+    denylist: list[str] = Field(default_factory=list)
+
+    #: Extra ``"label:regex"`` rules on top of the shipped set (card numbers,
+    #: IBANs, API-key shapes, auth headers, private-key headers). The label is
+    #: what the user sees in the redaction report, so it should be a word.
+    sensitive_patterns: list[str] = Field(default_factory=list)
+
+    #: Whether the shipped default patterns apply. Off only makes sense for a
+    #: user who has written a complete replacement set.
+    include_default_patterns: bool = True
+
+    #: Character budget for on-screen text handed to the model. Text beyond it
+    #: is cut and the cut is reported, never silently dropped.
+    max_text_chars: int = 4000
+
+    #: Seconds an unconsumed capture stays in memory before it is discarded.
+    #: A capture is also discarded on first use, whichever comes first.
+    ttl_s: float = 120.0
+
+    #: OCR supplement for windows whose accessibility layer exposes no text.
+    #: Off by default and dependency-free: the base install stays torch-free
+    #: (§3), so this only does anything when a local OCR engine is present.
+    ocr_enabled: bool = False
+
+
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
@@ -2082,6 +2249,110 @@ class WikiIntegrationConfig(BaseModel):
     subscribe_idle: bool = True              # listen for IdleEntered
     fallback_to_direct_ingest: bool = True   # when scheduler is missing
 
+    # Languages the search-alias bridge writes into each page
+    # (jarvis/memory/wiki/search_aliases.py). Pages are written in English by
+    # the fact extractor, so a user who ASKS in another language cannot reach
+    # them by keyword ("Flugzeuge" never matches "aircraft"). Listing that
+    # language here makes every page carry the words its owner would actually
+    # say. Empty = derive from the other language signals (reply_language, UI,
+    # STT); those are frequently all "en"/"auto" even for a non-English
+    # speaker, which is why this explicit list exists rather than a guess.
+    search_alias_languages: list[str] = Field(default_factory=list)
+
+
+class UltraWikiConfig(BaseModel):
+    """UltraWiki — the semantic memory mode (design: UltraWiki/*.md).
+
+    ``enabled`` is the either-or mode switch of the Wiki section (decision
+    D-5): False = the normal wiki captures and answers, True = UltraWiki
+    does. Switching is non-destructive in both directions (D-9).
+
+    Provider slots follow the bring-your-own doctrine (D-2): empty string =
+    unconfigured, chosen deliberately in the activation wizard. The embedding
+    pair is semi-permanent (D-3 — changing it re-embeds the corpus), so it is
+    only ever written through the guarded settings route. The Postgres
+    connection string is a CREDENTIAL and lives in the secret chain under
+    ``ultrawiki_db_url`` (AP-12), never here.
+
+    ``extra="allow"`` is mandatory (AP-16): future sub-keys must survive the
+    self-mod pre-validate round-trip.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    db_backend: str = "sqlite"  # "sqlite" (universal floor) | "postgres"
+    # The named storage preset behind ``db_backend`` — "sqlite" | "supabase" |
+    # "neon" | "postgres". Presentation only (jarvis.ultrawiki.provider_catalog
+    # maps it back to db_backend): it selects the card's help text, dashboard
+    # link and connect flow. Deliberately NOT a second functional enum, so the
+    # store keeps exactly two code paths (AP-4 / BUG-008).
+    storage_provider: str = "sqlite"
+    embedding_provider: str = ""  # "ollama" | "gemini" | "openai" | "voyage" | "mistral" | "cohere"
+    embedding_model: str = ""
+    distill_provider: str = ""  # empty = key-aware brain chain decides
+    distill_model: str = ""
+    rerank_provider: str = ""  # "llm" | "voyage" | "cohere"; empty = stage skipped
+    rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
+    ollama_endpoint: str = "http://localhost:11434"
+
+    # Share of ONE core the ingest pipeline may occupy (0.01-1.0).
+    #
+    # Indexing a corpus is real work, but it is work nobody is waiting for,
+    # and it used to take whatever it could get: a full core, permanently,
+    # with the whole machine sluggish behind it. The worker now sleeps in
+    # proportion to how long each pass ran, so this is an honest ceiling on
+    # any CPU — the same guarantee on a headless VPS as on a workstation.
+    # Raise it to index faster on a machine nobody is sitting at; lower it if
+    # even this is noticeable. See jarvis.ultrawiki.pipeline.
+    cpu_share: float = 0.05
+
+    # How hard the background lane works at turning pictures into words and
+    # recordings into transcripts:
+    #   "frugal" (default) - one item at a time, and only while every other
+    #                        stage is idle. A photo library is tens of
+    #                        thousands of model calls, so this must never race
+    #                        the import it follows.
+    #   "eager"            - same lane, still one at a time, but it also runs
+    #                        while other stages have work.
+    #   "off"              - nothing is described or transcribed. Photos stay
+    #                        findable by filename, folder and capture date.
+    # Nothing here is a hard requirement: an install with no vision-capable
+    # provider simply keeps its backlog until one appears.
+    media_enrich: str = "frugal"
+
+    # Where the readable Markdown projection is written (the Obsidian vault).
+    # Empty = "wiki/ultrawiki-vault" under the data dir — beside the normal
+    # wiki's own vault and never inside it: UltraWiki writes to its own files,
+    # which is what keeps the mode switch reversible.
+    vault_path: str = ""
+
+    # -- ranking knobs (design: UltraWiki ranking pipeline, 2026-07-25) ------
+    # The absolute 0-10 relevance floor an UNSOLICITED surface (context
+    # injection, volunteered voice answers) must clear. Explicit searches --
+    # the Ask view, the REST route, the CLI -- never apply it: the user asked
+    # and sees the evidence. 0 disables the floor everywhere.
+    rerank_min_score: float = 4.0
+    # Per-leg RRF weights: score(d) = sum(weight / (60 + rank)). 1.0 each is
+    # the article's default; 0 silences a leg without removing it.
+    rrf_keyword_weight: float = 1.0
+    rrf_vector_weight: float = 1.0
+    # The episodic-event leg (jarvis/ultrawiki/events.py). Events are
+    # precomputed answers to "when did X happen", so they are weighted like
+    # any other list rather than allowed to veto one: consensus still decides
+    # (design doc 01, principle 5). 0 silences the leg.
+    rrf_event_weight: float = 1.0
+
+    # -- episodic events (design doc 01, uw_events) --------------------------
+    # Derive events from the distillation that already ran. Costs no extra
+    # model call and nothing on the read path; false stops the derivation and
+    # leaves existing rows untouched.
+    events_enabled: bool = True
+    # Age decay on the fused score: 0.5 ** (age_days / half_life). Stale
+    # answers lose when relevance is otherwise equal. 0 disables the decay
+    # (the epsilon-sized recency tiebreak still settles exact ties).
+    recency_half_life_days: float = 180.0
+
 
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).
@@ -2105,6 +2376,26 @@ class WikiContextConfig(BaseModel):
     max_chars: int = 1500
     latency_budget_ms: int = 80
     min_keyword_length: int = 4
+
+    # Relevance gate (jarvis/brain/wiki_relevance.py). Retrieval always
+    # returns a ranked list, so without a gate every unrelated question gets
+    # a personal note welded onto its answer. ``relevance_gate = false``
+    # restores the pre-gate behaviour: search every turn, inject every hit.
+    relevance_gate: bool = True
+    # Share of the question's content terms a hit must cover to be injected.
+    min_coverage: float = 0.5
+    # Share of the best hit's score (within the SAME search call) a hit must
+    # reach. Relative by design — the vault's scores are only comparable
+    # within one call, so an absolute cutoff would be noise.
+    min_relative_score: float = 0.35
+
+    # Ambient personal knowledge — the standing identity card
+    # (jarvis/brain/identity_card.py). Unlike the per-turn snippets above this
+    # is a precomputed, LLM-free distillation of the user's own profile that
+    # rides in the CACHED system-prompt prefix. ``false`` removes the block
+    # entirely; the cap is an upper bound only (never raises the hard 600).
+    identity_card: bool = True
+    identity_card_max_chars: int = 600
 
 
 class VoiceConfig(BaseModel):
@@ -2283,6 +2574,550 @@ class SpeechConfig(BaseModel):
     vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
 
 
+#: Every language the speech recogniser can transcribe, as ISO-639-1 codes (a
+#: few three-letter Whisper codes have no two-letter form). ONE source for both
+#: ``[stt].language`` and ``[dictation].language`` — the REST routes
+#: (``/api/settings/stt-language``, ``/api/dictation/settings``) and the frontend
+#: pickers all read it from here, so the list cannot drift between layers (AP-4).
+#:
+#: Deliberately NOT limited to the three product locales (de/en/es). Those govern
+#: what Jarvis SAYS BACK; what it can HEAR is a different question, and capping it
+#: at three meant a Mandarin or Japanese speaker could not dictate at all —
+#: exactly the maintainer's-config-is-not-the-baseline trap (CLAUDE.md §3). The
+#: order is the recogniser's own; the UI sorts by localized name at render time
+#: so no language is listed "first" by nationality.
+RECOGNITION_LANGUAGES: tuple[str, ...] = (
+    "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs",
+    "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi",
+    "fo", "fr", "gl", "gu", "ha", "haw", "he", "hi", "hr", "ht", "hu", "hy",
+    "id", "is", "it", "ja", "jw", "ka", "kk", "km", "kn", "ko", "la", "lb",
+    "ln", "lo", "lt", "lv", "mg", "mi", "mk", "ml", "mn", "mr", "ms", "mt",
+    "my", "ne", "nl", "nn", "no", "oc", "pa", "pl", "ps", "pt", "ro", "ru",
+    "sa", "sd", "si", "sk", "sl", "sn", "so", "sq", "sr", "su", "sv", "sw",
+    "ta", "te", "tg", "th", "tk", "tl", "tr", "tt", "uk", "ur", "uz", "vi",
+    "yi", "yo", "yue", "zh",
+)
+
+#: The value that asks for per-utterance DETECTION instead of a fixed language.
+#: Passed through to the provider verbatim — an absent argument means "no
+#: opinion" there and inherits the configured pin, which is the whole reason
+#: dictation's auto mode used to transcribe German speech as English.
+AUTO_LANGUAGE = "auto"
+
+#: The values a recognition-language setting accepts: detect, or any one of the
+#: languages above.
+RECOGNITION_LANGUAGE_CHOICES: tuple[str, ...] = (AUTO_LANGUAGE, *RECOGNITION_LANGUAGES)
+
+#: The values ``[dictation].language`` accepts. Same set as the voice recogniser:
+#: one microphone, one list of languages it understands.
+DICTATION_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
+
+#: The values ``[dictation].translate_target`` accepts — the language a dictation
+#: is DELIVERED in. The recognition list without ``auto``: "detect it" is a
+#: coherent answer to "what am I speaking" and no answer at all to "what should
+#: come out", so offering it would be a dropdown entry that silently does
+#: nothing (AP-31). One derivation, not a second hand-typed list (AP-4).
+TRANSLATION_TARGETS: tuple[str, ...] = RECOGNITION_LANGUAGES
+
+#: The registers the dictation polish pass may be asked to write in — the cheap
+#: analogue of the per-application tone commercial dictation tools switch on.
+#: Mirrors the ``polish_style`` ``Literal`` below (which is what Pydantic and the
+#: OpenAPI schema read) so the validator and the UI have a list to iterate; the
+#: two are pinned together by a parity test, because a vocabulary spelled twice
+#: is the AP-4 drift shape.
+POLISH_STYLES: tuple[str, ...] = ("neutral", "messaging", "email")
+
+
+def _clamped_polish_int(value: object, *, default: int, low: int, high: int) -> int:
+    """Pull a hand-edited integer back into range instead of rejecting it.
+
+    The bounds are declared on the ``Field`` as well, so the schema still
+    states the real range — but a value outside it arrives here first and is
+    clamped, because a stale or hand-edited ``jarvis.toml`` must never fail
+    validation and cost a boot (AP-16). Anything that is not a number at all
+    (a typo, ``None``, NaN, ``inf``) falls back to the shipped default, which
+    is by definition a working value.
+    """
+    try:
+        number = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(low, min(high, number))
+
+
+def _clamped_polish_float(
+    value: object, *, default: float, low: float, high: float
+) -> float:
+    """The float twin of :func:`_clamped_polish_int` — same AP-16 contract."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if number != number or number in (float("inf"), float("-inf")):  # NaN / ±inf
+        return default
+    return max(low, min(high, number))
+
+
+class DictationConfig(BaseModel):
+    """Dictation mode: speak into whatever text field currently has focus.
+
+    TOML path: ``[dictation]`` · Attribute path: ``JarvisConfig.dictation``
+
+    The shortcut itself lives in ``[trigger].hotkey_dictate`` with every other
+    keybind; this block owns the behaviour. ``extra="allow"`` keeps the self-mod
+    pre-validate pipeline safe when a future key is added (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: ``hold`` = record while the key is down, submit on release (the mode
+    #: every reference tool ships and the one people expect). ``toggle`` = one
+    #: press starts, the next stops — kept for accessibility and long dictations
+    #: where holding a key for minutes is not reasonable.
+    mode: Literal["hold", "toggle"] = "hold"
+
+    #: Where the finished transcript goes. ``auto`` inserts into the focused
+    #: field of whatever application is in front, EXCEPT when that application
+    #: is Jarvis itself — then it goes to the app's own input, because inserting
+    #: into the window the user just left is both surprising and unrecoverable.
+    #: ``insert`` always inserts, ``chat`` never does (transcript event only).
+    target: Literal["auto", "insert", "chat"] = "auto"
+
+    #: ``clipboard`` writes the text, sends the paste chord and restores the
+    #: previous clipboard — one keystroke regardless of length, and it survives
+    #: editor autocomplete. ``type`` synthesises the text character by character;
+    #: correct for the rare control that ignores paste, but ~40 ms per character
+    #: on Windows and easily mangled by autocomplete, so it is opt-in.
+    insert_method: Literal["clipboard", "type"] = "clipboard"
+
+    #: Which paste chord to send. ``auto`` = Cmd+V on macOS, Ctrl+V elsewhere.
+    #: Many terminals do not paste on Ctrl+V, which is why the curated
+    #: alternatives exist (``ctrl_v`` | ``ctrl_shift_v`` | ``shift_insert`` |
+    #: ``cmd_v``, all in ``jarvis.dictation.insert.PASTE_CHORDS``).
+    #:
+    #: A recorded combination is also accepted, written with ``+``
+    #: (``"ctrl+shift+insert"``) — the paste shortcut of whatever application
+    #: you dictate into. It is a plain ``str`` rather than a ``Literal`` for
+    #: exactly that reason; the validator below normalizes it and falls back to
+    #: ``auto`` on anything it cannot send, because a hand-edited config must
+    #: never fail validation (AP-16). A custom chord is reported honestly at
+    #: delivery time: Jarvis cannot know whether the target app pasted, so the
+    #: outcome is ``paste_sent``, not ``inserted``.
+    paste_chord: str = "auto"
+
+    #: Pause after writing the clipboard, before sending the chord. Too short
+    #: and the target app pastes the PREVIOUS clipboard content.
+    paste_delay_ms: int = Field(default=120, ge=0, le=2000)
+
+    #: Pause after the chord, before restoring the previous clipboard. Too short
+    #: and the target app has not read the clipboard yet.
+    paste_delay_after_ms: int = Field(default=120, ge=0, le=2000)
+
+    #: Put back whatever was on the clipboard before dictation. Text only — the
+    #: platform clipboard layer does not carry images, so an image on the
+    #: clipboard is lost either way; turning this off at least leaves the
+    #: transcript there.
+    restore_clipboard: bool = True
+
+    #: Remove filler sounds with the deterministic per-language rules in
+    #: ``jarvis.dictation.cleanup``. No model call, no rephrasing.
+    remove_fillers: bool = True
+
+    #: Safety ceiling for the cleanup: if the rules would drop more than this
+    #: fraction of the words, the RAW transcript is used instead. A cleanup that
+    #: eats a quarter of a sentence is a bug, not a cleanup.
+    filler_max_removed_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
+
+    #: Ceiling on ONE dictation, in seconds. ``0`` removes it entirely.
+    #:
+    #: This is not a provider limit and never was. No speech-to-text request
+    #: carries the whole recording: the final pass cuts the audio at its
+    #: quietest points into segment-sized pieces, so a provider's file-size
+    #: ceiling is reached by a SEGMENT, never by a long dictation. The only
+    #: real cost of speaking longer is the buffer held in memory — 16 kHz
+    #: 16-bit mono is ~1.9 MB per minute, so half an hour is ~58 MB.
+    #:
+    #: The default used to be five minutes, which is shorter than plenty of
+    #: genuine dictations and cut them off mid-sentence. It is now half an
+    #: hour: long enough that nobody speaking normally will ever meet it, short
+    #: enough that a toggle-mode recording somebody forgot about does not eat
+    #: the machine. Set ``0`` if you would rather have no ceiling at all —
+    #: then only releasing the key, the stop event or a hangup ends a
+    #: recording. The wake word is protected separately either way (see
+    #: ``_dictation_wake_block_until``), so an unbounded dictation can never
+    #: leave it deaf.
+    max_seconds: float = Field(default=1800.0, ge=0.0, le=86_400.0)
+
+    #: Live-transcript refresh interval while speaking. ``0`` disables the live
+    #: preview entirely (the final transcription still happens).
+    partial_interval_s: float = Field(default=1.2, ge=0.0, le=10.0)
+
+    #: Segment length for the LIVE line while you speak. The old dictation lane
+    #: re-transcribed the whole growing buffer on every tick, which costs
+    #: O(n²) audio-seconds and, on a paid API, real money. Closed segments are
+    #: transcribed once and never again; only the open tail is re-sent.
+    #: ``0`` restores the legacy full-buffer behaviour.
+    #:
+    #: With ``final_quality_pass`` on (the default), what these short segments
+    #: produce is a PREVIEW and never the delivered text — see below for why
+    #: that distinction is the whole of the multilingual repair.
+    segment_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+
+    #: Re-transcribe the WHOLE recording once, in long windows, after the key
+    #: is released — and deliver that instead of the stitched-together short
+    #: segments.
+    #:
+    #: A recognizer detects the spoken language from the audio it is handed.
+    #: On an eight-second segment it is not sure, and an unsure model does not
+    #: merely mislabel the language — it TRANSLATES. That is why one continuous
+    #: recording used to arrive with one paragraph in the language spoken and
+    #: the next in English, and why a sentence that switches language halfway
+    #: through could not survive at all: each segment was decided separately.
+    #: Long windows remove the cause rather than patching the symptom.
+    #:
+    #: The cost is one extra pass over the audio. It is paid back by the live
+    #: line moving to the on-device preview engine where there is one, so a
+    #: desktop install sends FEWER requests than before; a host without a local
+    #: engine sends the short segments as before and this pass on top.
+    final_quality_pass: bool = True
+
+    #: Length of one final-pass window, in seconds. Long enough for reliable
+    #: language detection, short enough to stay inside every provider's upload
+    #: limit and to keep one failed window cheap.
+    final_window_seconds: float = Field(default=25.0, ge=5.0, le=60.0)
+
+    #: How much audio consecutive windows share. The overlap is what stops a
+    #: word that straddles a boundary from being cut in half; the duplicate it
+    #: creates is removed from the TEXT afterwards, which is possible, while
+    #: recovering half a word is not. ``0`` disables the overlap.
+    final_overlap_seconds: float = Field(default=1.5, ge=0.0, le=5.0)
+
+    #: Allow the language to change WITHIN one dictation.
+    #:
+    #: While this is on (the default), the final pass asks the recognizer to
+    #: detect the language from each long window instead of being told one, so
+    #: a sentence that starts in one language and finishes in another is
+    #: transcribed as it was spoken. ``language`` above then still governs how
+    #: the finished text is treated — which filler rules run, which language
+    #: the polish pass writes in — but it no longer LOCKS the recognizer, which
+    #: is what used to turn a pin into a translation of everything else said.
+    #:
+    #: Turn it off to hand the pinned language to the recognizer outright. That
+    #: is the right choice when you only ever dictate in one language and the
+    #: provider keeps guessing wrong; it is the wrong choice for anyone who
+    #: mixes languages, which is why it is not the default.
+    code_switching: bool = True
+
+    #: Keep a local history of dictations (raw + cleaned, for auditing what the
+    #: cleanup changed). Dictated text is among the most sensitive data this app
+    #: holds, so it is local-only, capped, and purgeable from the UI.
+    history_enabled: bool = True
+    history_max_entries: int = Field(default=200, ge=0, le=5000)
+    history_retention_days: int = Field(default=30, ge=0, le=3650)
+
+    #: Which language the dictation transcription is pinned to. ``auto`` (the
+    #: default, and the right answer for almost everyone) lets the provider
+    #: detect it per utterance. Pinning helps only when the provider keeps
+    #: guessing wrong; on a model that was not trained for the pinned language
+    #: it makes recognition WORSE, so the UI says so out loud.
+    #:
+    #: Deliberately independent of ``[stt].language`` (the voice-turn language)
+    #: and ``[wake].language`` — dictating in one language while talking to the
+    #: assistant in another is a normal thing to want.
+    language: str = "auto"
+
+    #: Keep the raw audio of a dictation that produced nothing usable
+    #: (``failed`` / ``cancelled`` / ``empty``) so the Restore button can
+    #: transcribe it again. NEVER kept for a successful dictation: audio is the
+    #: most sensitive thing this application stores, so it is only ever written
+    #: when it buys back something the user actually lost. Local-only, capped by
+    #: the two keys below, deleted with the history entry and purged when the
+    #: history is cleared. Its own key, not a rider on ``history_enabled``, so
+    #: it can be turned off on its own.
+    keep_failed_audio: bool = True
+    #: Delete kept audio older than this many days. ``0`` disables the age cap.
+    audio_retention_days: int = Field(default=7, ge=0, le=365)
+    #: Keep at most this many audio files. ``0`` disables the count cap (the
+    #: age cap still applies); it does not mean "delete everything".
+    audio_max_files: int = Field(default=20, ge=0, le=1000)
+
+    # ------------------------------------------------------------------
+    # The polish pass — a second, generative read-over of the transcript
+    # ------------------------------------------------------------------
+    # Deterministic filler removal cannot punctuate a sentence, repair the
+    # capitalisation a segment boundary broke, or resolve a spoken
+    # self-correction ("at 2, actually 3"). So a small, fast text model reads
+    # the FINISHED transcript once — not once per segment — and writes down
+    # what the speaker would have written. Every knob below exists to keep
+    # that pass a no-op rather than a loss: on a timeout, an error, a missing
+    # key or a failed drift guard the raw transcript is what gets delivered,
+    # and the raw text stays on the history row either way.
+
+    #: Master switch, and it ships ON. That is safe on a fresh clone with no
+    #: credentials at all, which is the whole point: ``polish_provider =
+    #: "auto"`` resolves through the key-aware, family-crossing chain, and
+    #: that chain comes back EMPTY when the user holds no text-model key in
+    #: any family. Such an install reports ``unavailable`` and delivers
+    #: byte-identical text to a build without the feature — so the
+    #: maintainer's keys are not what makes the default safe (AP-23).
+    #: Defaulting it off would instead ship the punctuation defect to
+    #: everyone who never reads a release note.
+    polish: bool = True
+
+    #: Which model family writes the polished text. ``auto`` (the default)
+    #: takes whatever the user actually has, best-latency family first, and
+    #: crosses to a DIFFERENT family when one is depleted, rate-limited or
+    #: unreachable (AP-22). A concrete id pins the chain to that family. It is
+    #: a user preference, never a code branch — the transport is chosen by
+    #: wire format, not by provider name (AP-21).
+    polish_provider: str = "auto"
+
+    #: Model id inside the chosen family. Empty means the family default,
+    #: which is right for almost everyone: the defaults are picked to fit the
+    #: latency budget below, and a slower "better" model spends the whole
+    #: budget and then delivers the raw text anyway.
+    polish_model: str = ""
+
+    #: Hard wall-clock ceiling for the whole pass, in milliseconds. It runs
+    #: AFTER the final transcription, so every millisecond here is felt as a
+    #: delay before the text appears; on expiry the call is cancelled and the
+    #: raw transcript is delivered. 1200 ms is the honest p95 target for a
+    #: consumer client talking to a cloud model over the open internet.
+    polish_timeout_ms: int = Field(default=1200, ge=200, le=5000)
+
+    #: Skip the pass above this many characters. ``0`` — the default — means
+    #: no cap.
+    #:
+    #: This started at 4000 on the theory that long dictations are where a
+    #: rewrite goes wrong most expensively. That reasoning does not survive
+    #: contact with the guards it duplicates: latency is already bounded by
+    #: ``polish_timeout_ms`` (a slow answer delivers the raw text), drift is
+    #: already caught per-transcript by the word-ratio band and the number and
+    #: protected-term checks, and the cost of a long input is measured in
+    #: hundredths of a cent. What the cap actually did was silently skip the
+    #: pass on exactly the dictations that need it most — four minutes of
+    #: speech is roughly where a transcript stops being one sentence and starts
+    #: being something the recognizer has broken into paragraphs at arbitrary
+    #: points. A ceiling that switches a feature off without saying so is worse
+    #: than the risk it was guarding against, and the guards that DO speak are
+    #: still in front of it.
+    #:
+    #: Raise it above 0 if you would rather bound the pass by input size than
+    #: by the clock; the value is honoured either way.
+    polish_max_input_chars: int = Field(default=0, ge=0, le=1_000_000)
+
+    #: Skip the pass below this many words. There is nothing to format in
+    #: "yes" or "call me back", and skipping saves a whole round-trip on the
+    #: most common short dictation. ``0`` polishes everything.
+    polish_min_words: int = Field(default=4, ge=0, le=100)
+
+    #: Output ceiling handed to the model. Bounds the cost and stops a model
+    #: that decided to ANSWER the transcript from running away; a truncated
+    #: answer then fails the drift guards, so the user still gets the raw
+    #: text rather than half a reply.
+    polish_max_output_tokens: int = Field(default=1200, ge=64, le=8192)
+
+    #: Sampling temperature. ``0.0`` on purpose: this is a formatter, not a
+    #: writer. The same transcript should come back the same way twice, and
+    #: every bit of creativity here is a word the speaker did not say.
+    polish_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+
+    #: The band the polished word count must land in, as a fraction of the
+    #: raw word count; outside it the raw transcript wins and the history row
+    #: says the polish was rejected. Deliberately asymmetric — a formatter
+    #: shrinks (fillers, false starts, repetitions) or stays flat, so the
+    #: floor is generous while the ceiling is tight: growth is what an
+    #: answer, a translation or an explanation looks like, and over-rewriting
+    #: is the documented failure direction of every tool that does this.
+    polish_drift_max_shrink: float = Field(default=0.55, ge=0.0, le=1.0)
+    polish_drift_max_growth: float = Field(default=1.20, ge=1.0, le=3.0)
+
+    #: The register the formatter writes in. ``neutral`` adds nothing to the
+    #: prompt, ``messaging`` asks for a casual line without salutations,
+    #: ``email`` for a written-correspondence register. Tone only — no style
+    #: ever licenses a change of meaning.
+    polish_style: Literal["neutral", "messaging", "email"] = "neutral"
+
+    # ------------------------------------------------------------------
+    # The translate pass — speak one language, deliver another
+    # ------------------------------------------------------------------
+    # Dictate in whatever language you think in and have the text arrive in the
+    # one you write in. It runs inside the SAME model call as the polish pass
+    # (one round trip, not two) and under the same fail-open contract: on a
+    # timeout, a dead provider or a failed guard the transcript is delivered as
+    # spoken, and the history row says why.
+
+    #: Master switch, and it ships OFF — the one switch in this block that
+    #: does. The polish pass can default on because it only changes how the
+    #: user's words are WRITTEN; this changes which words come out at all, and
+    #: a person who never read a release note must not discover that their
+    #: German dictation now arrives in English. Turning it on is a deliberate
+    #: act, and it is the only thing standing between the two behaviours.
+    translate: bool = False
+
+    #: The language every dictation is delivered in while ``translate`` is on,
+    #: whatever language was actually spoken. One fixed target rather than a
+    #: per-source-language table: the overwhelmingly common want is "I think in
+    #: my own language and write in this one", and a rule table would trade
+    #: that one clear switch for a screen of pairs nobody audits.
+    #:
+    #: The decision reads THIS BLOCK only (``resolve_translate_target``), never
+    #: the language the recognizer reported. Skipping the translation whenever
+    #: the recognized language already matched the target sounded like a saved
+    #: round trip and behaved like a coin flip — that tag is documented to be
+    #: wrong — so the delivered language alternated with nothing the user
+    #: touched explaining it. The one exception is ``language`` above: a PIN is
+    #: a deliberate statement, so pinning it to this target means "I dictate in
+    #: it already" and nothing is translated.
+    #:
+    #: Unrelated to ``[brain].reply_language``, which governs what the
+    #: assistant SAYS BACK. Dictating into an English document while being
+    #: answered in German is a normal thing to want.
+    translate_target: str = "en"
+
+    #: The band the translated word count must land in, as a fraction of the
+    #: spoken word count. Far wider than the polish band above, and that is the
+    #: point rather than a weaker guard: a faithful translation legitimately
+    #: changes length in both directions (German compounds collapse into one
+    #: English word; English phrasal verbs expand into German subclauses), so
+    #: the polish band would reject correct translations by construction. What
+    #: survives still catches the failure that matters — a model that answered
+    #: the transcript instead of translating it.
+    translate_drift_max_shrink: float = Field(default=0.40, ge=0.0, le=1.0)
+    translate_drift_max_growth: float = Field(default=2.50, ge=1.0, le=10.0)
+
+    @field_validator("paste_chord", mode="before")
+    @classmethod
+    def _coerce_paste_chord(cls, value: object) -> str:
+        """Normalize only — an unusable value falls back to ``auto``.
+
+        The rejection message is thrown away here on purpose: this validator
+        runs on every config load, including one triggered by the self-mod
+        pipeline, and an exception there costs a boot (AP-16). The REST layer
+        calls ``normalize_paste_chord`` directly so a user who types a bad
+        chord gets the sentence instead of a silent fallback.
+        """
+        from jarvis.dictation.insert import normalize_paste_chord
+
+        return normalize_paste_chord(str(value or ""))[0]
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _coerce_dictation_language(cls, value: object) -> str:
+        """Normalize only — an unknown value falls back to ``auto``.
+
+        A stale or hand-edited config must never fail validation (AP-16), and
+        ``auto`` is always a working answer.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in DICTATION_LANGUAGES else "auto"
+
+    @field_validator("translate_target", mode="before")
+    @classmethod
+    def _coerce_translate_target(cls, value: object) -> str:
+        """Normalize only — an unusable target falls back to ``en``.
+
+        Same AP-16 contract as ``_coerce_dictation_language``: a stale or
+        hand-edited config must never fail validation. The fallback is a real
+        language rather than ``auto`` because this field has no "detect it"
+        answer — while ``translate`` is off nothing reads it, and while it is on
+        it has to name somewhere for the words to go.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in TRANSLATION_TARGETS else "en"
+
+    @field_validator("polish_provider", mode="before")
+    @classmethod
+    def _coerce_polish_provider(cls, value: object) -> str:
+        """Normalize only — an empty or unusable pin falls back to ``auto``.
+
+        Deliberately NOT checked against the list of families. That list is
+        the single source of truth in the polish client, and importing it
+        here would put a provider module on the config-load path (AP-26) and
+        mirror a vocabulary into a second place (AP-4). A pin nothing answers
+        to resolves exactly like ``auto`` in the chain, which is the working
+        value AP-16 asks for.
+        """
+        text = str(value or "").strip().lower()
+        return text or "auto"
+
+    @field_validator("polish_model", mode="before")
+    @classmethod
+    def _coerce_polish_model(cls, value: object) -> str:
+        """Normalize only — anything unusable becomes the family default.
+
+        Case is preserved on purpose: model ids are case-sensitive on several
+        families (``Qwen/Qwen3-32B``), so only surrounding whitespace goes.
+        """
+        return str(value or "").strip()
+
+    @field_validator("polish_style", mode="before")
+    @classmethod
+    def _coerce_polish_style(cls, value: object) -> str:
+        """Normalize only — an unknown style falls back to ``neutral``.
+
+        Mirrors ``_coerce_dictation_language`` above, for the same reason: a
+        stale or hand-edited config must never fail validation (AP-16), and
+        ``neutral`` — append nothing to the prompt — always works.
+        """
+        text = str(value or "").strip().lower()
+        return text if text in POLISH_STYLES else "neutral"
+
+    # The numeric knobs below are CLAMPED rather than rejected. Their bounds
+    # are declared on the ``Field`` too, so the schema keeps stating the real
+    # range, but an out-of-range value is pulled back in instead of raising:
+    # nobody should lose a boot to a typo in a latency budget (AP-16). The
+    # visible consequence is that a bad value sent through
+    # ``PUT /api/dictation/settings`` comes back corrected on the next GET
+    # rather than as a 400 — for knobs that only trade latency against text
+    # quality, that is the friendlier failure.
+
+    @field_validator("polish_timeout_ms", mode="before")
+    @classmethod
+    def _clamp_polish_timeout_ms(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=1200, low=200, high=5000)
+
+    @field_validator("polish_max_input_chars", mode="before")
+    @classmethod
+    def _clamp_polish_max_input_chars(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=0, low=0, high=1_000_000)
+
+    @field_validator("polish_min_words", mode="before")
+    @classmethod
+    def _clamp_polish_min_words(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=4, low=0, high=100)
+
+    @field_validator("polish_max_output_tokens", mode="before")
+    @classmethod
+    def _clamp_polish_max_output_tokens(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=1200, low=64, high=8192)
+
+    @field_validator("polish_temperature", mode="before")
+    @classmethod
+    def _clamp_polish_temperature(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.0, low=0.0, high=2.0)
+
+    @field_validator("polish_drift_max_shrink", mode="before")
+    @classmethod
+    def _clamp_polish_drift_max_shrink(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.55, low=0.0, high=1.0)
+
+    @field_validator("polish_drift_max_growth", mode="before")
+    @classmethod
+    def _clamp_polish_drift_max_growth(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=1.20, low=1.0, high=3.0)
+
+    @field_validator("translate_drift_max_shrink", mode="before")
+    @classmethod
+    def _clamp_translate_drift_max_shrink(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=0.40, low=0.0, high=1.0)
+
+    @field_validator("translate_drift_max_growth", mode="before")
+    @classmethod
+    def _clamp_translate_drift_max_growth(cls, value: object) -> float:
+        return _clamped_polish_float(value, default=2.50, low=1.0, high=10.0)
+
+
 class MarketplaceConfig(BaseModel):
     """Plugin-marketplace connect settings (OAuth redirect mode).
 
@@ -2345,6 +3180,172 @@ class TeamProxyConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class Phase6SafetyConfig(BaseModel):
+    """``[phase6.safety]`` — mission-worker safety knobs (ADR-0031).
+
+    First Pydantic-modeled slice of the ``[phase6.*]`` tables (they were
+    documentation-plus-intent before; ``bootstrap_missions`` kwargs stay the
+    wiring for the older flags). ``extra="allow"`` so pre-existing raw keys
+    keep loading (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    injection_scanner_enabled: bool = True
+    destructive_confirm_enabled: bool = True
+    extra_blocked_globs: list[str] = Field(default_factory=list)
+    # Mission-scoped tool pre-authorization (ADR-0031). When enabled, tools a
+    # mission's broker grant contains AND that appear below are auto-approved
+    # for THAT mission's calls only — the gate is answered on the bus (full
+    # Proposed→Approved→Executed audit), never bypassed. ``False`` restores
+    # the pre-ADR-0031 behavior (every ask-tier call waits for a human).
+    worker_tool_auto_approve: bool = True
+    # Exact tool names, or an MCP server family as ``server/`` (trailing
+    # slash). Prefer EXACT names: a server prefix silently authorizes every
+    # future tool that server adds, including destructive ones. Messaging /
+    # mail / social-send families deliberately stay OUT of the default —
+    # widen only by explicit operator choice. The shipped default lists
+    # read-only knowledge tools so a plausibility-escalated call can never
+    # stall an unattended mission.
+    auto_approve_tool_families: list[str] = Field(
+        default_factory=lambda: [
+            "search_web",
+            "wiki-list",
+            "wiki-recall",
+            "wiki-page-read",
+            "wiki-ingest",
+            "session-latest-turn",
+        ]
+    )
+
+
+class Phase6Config(BaseModel):
+    """``[phase6]`` root — mission subsystem configuration.
+
+    Only ``safety`` is typed so far; the other tables (orchestrator, budget,
+    voice, cleanup) remain raw TOML consumed via ``bootstrap_missions``
+    defaults and stay loadable through ``extra="allow"`` (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
+
+
+class GlmCodingPlanConfig(BaseModel):
+    """Where a GLM pane sends its traffic, and which model ids it asks for.
+
+    The GLM Coding Plan has no CLI of its own: the vendor's own instructions are
+    to run the ordinary Claude Code binary against a different endpoint. So a
+    "GLM" pane is that binary plus this environment — which makes every value
+    here load-bearing, and every one of them a *setting* rather than a constant.
+
+    Why nothing is hardcoded:
+
+    * ``base_url`` — accounts registered in mainland China use a different host
+      from the international ones, and the two are not interchangeable. A fixed
+      URL simply locks out whichever half of the world it is not.
+    * the model ids — vendor documentation disagrees with itself about the
+      current names, and a wrong id fails at request time in a way that reads
+      like our bug. Empty means "send no model override at all" and let the
+      endpoint apply its own mapping, which is the only default that cannot be
+      wrong. Fill them in to pin a specific model.
+    * ``request_timeout_ms`` — the CLI's stock timeout is tuned for a different
+      backend and expires mid-answer here, which surfaces as a hang rather than
+      as an error.
+
+    The API key is deliberately NOT in this model: it lives in the credential
+    store under ``zai_api_key`` (ENV fallback ``ZAI_API_KEY``), because a key in
+    ``jarvis.toml`` is a key in a file that gets copied, shared and pasted into
+    bug reports (AP-12).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    base_url: str = Field(
+        default="https://api.z.ai/api/anthropic",
+        description=(
+            "Anthropic-compatible endpoint a GLM pane talks to. Use "
+            "https://open.bigmodel.cn/api/anthropic for a mainland-China account."
+        ),
+    )
+    opus_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'opus' tier. Empty = let the endpoint decide.",
+    )
+    sonnet_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'sonnet' tier. Empty = let the endpoint decide.",
+    )
+    haiku_model: str = Field(
+        default="",
+        description="Model id for the CLI's 'haiku' tier. Empty = let the endpoint decide.",
+    )
+    request_timeout_ms: int = Field(
+        default=3_000_000,
+        ge=60_000,
+        description=(
+            "Per-request timeout handed to the CLI. The stock value is far too "
+            "short for this backend's long agentic runs and expires mid-answer."
+        ),
+    )
+
+
+class AgenticIdeConfig(BaseModel):
+    """Agentic IDE behaviour that is not per-workspace state."""
+
+    # AP-16: a key written by a NEWER install must not fail this one's boot.
+    model_config = ConfigDict(extra="allow")
+
+    glm: GlmCodingPlanConfig = Field(default_factory=GlmCodingPlanConfig)
+
+    prompt_writer: str = Field(
+        default="auto",
+        description=(
+            "Who writes Agentic IDE task briefs: 'auto' (a connected coding "
+            "subscription if there is one, else the API-billed quality tier), "
+            "'subscription', 'api', or a specific brain provider id."
+        ),
+    )
+
+    smart_recaps: bool = Field(
+        default=True,
+        description=(
+            "Let a model write each pane's header recap — what the pane set out "
+            "to do, where it stands, what is outstanding. Off falls back to the "
+            "transcript-derived one, which costs nothing and says much less. An "
+            "install with no reachable provider gets the fallback either way."
+        ),
+    )
+
+    pane_notifications: bool = Field(
+        default=True,
+        description=(
+            "Collect a notification whenever a terminal stops working, asks a "
+            "question, or its agent exits — the bell in the Agentic IDE header. "
+            "Off stops the background sweep entirely; the bell then only shows "
+            "what was already collected."
+        ),
+    )
+
+    @field_validator("prompt_writer", mode="before")
+    @classmethod
+    def _usable_writer(cls, value: object) -> str:
+        """Anything unusable becomes 'auto' instead of blocking the boot.
+
+        Whether a named provider EXISTS is decided at resolve time, not here: a
+        config naming a provider this build does not ship has to degrade to the
+        normal chain, never stop the app that config belongs to from starting.
+        """
+        text = str(value or "").strip()
+        # A provider id always starts with a letter; a bare number reaching here
+        # is a mis-typed or mis-serialised value, not a provider nobody has heard
+        # of yet.
+        if not text or not text[0].isalpha():
+            return "auto"
+        return text if text.replace("-", "").replace("_", "").isalnum() else "auto"
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     # populate_by_name=True lets callers use Python field names alongside
@@ -2359,7 +3360,9 @@ class JarvisConfig(BaseModel):
     brain: BrainConfig = Field(default_factory=BrainConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    agentic_ide: AgenticIdeConfig = Field(default_factory=AgenticIdeConfig)
     mcp_server: MCPServerConfig = Field(default_factory=MCPServerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
@@ -2380,8 +3383,11 @@ class JarvisConfig(BaseModel):
     # Wave 2 — plugin-marketplace OAuth connect (hosted vs loopback callback).
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     board: BoardConfig = Field(default_factory=BoardConfig)
-    # Persona-Mandat Phase 5: top-level ``[vision]``-Section.
+    # Persona mandate, Phase 5: top-level ``[vision]`` section.
     vision: VisionContextConfig = Field(default_factory=VisionContextConfig)
+    # One-shot, intent-driven screen look (jarvis/screen_context/). Distinct
+    # from ``[vision]`` above, which governs the always-on observation path.
+    screen_context: ScreenContextConfig = Field(default_factory=ScreenContextConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the
@@ -2389,6 +3395,8 @@ class JarvisConfig(BaseModel):
     local_action: LocalActionConfig = Field(default_factory=LocalActionConfig)
     # Phase 8.4 — review pipeline configuration.
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    # Phase 6 — mission subsystem ([phase6.safety] typed; rest raw, AP-16).
+    phase6: Phase6Config = Field(default_factory=Phase6Config)
     # Latency sprint 1 (2026-04-30) — master switches for performance levers.
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     # Wave 0 (omni-latency) — hot-path latency span instrumentation toggle.
@@ -2398,6 +3406,8 @@ class JarvisConfig(BaseModel):
     awareness: AwarenessConfig = Field(default_factory=AwarenessConfig)
     # Phase B5 — wiki write-wiring: SessionRollupWorker + WikiCurator bootstrap (Agent A).
     wiki_integration: WikiIntegrationConfig = Field(default_factory=WikiIntegrationConfig)
+    # UltraWiki — the semantic memory mode of the Wiki section (UltraWiki/*.md).
+    ultrawiki: UltraWikiConfig = Field(default_factory=UltraWikiConfig)
     # Phase B5 — CuratorScheduler (Agent D). Top-level field — Wave-2 cleanup task
     # is to move this into ``WikiIntegrationConfig.scheduler`` and migrate callers.
     wiki_scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -2414,6 +3424,8 @@ class JarvisConfig(BaseModel):
     # Speech pipeline sub-configs (completeness classifier, …).
     # TOML path: [speech] / [speech.completeness]
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
+    # Dictation mode (hold to speak, transcript lands in the focused field).
+    dictation: DictationConfig = Field(default_factory=DictationConfig)
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
@@ -2432,7 +3444,82 @@ class JarvisConfig(BaseModel):
 # Loading logic
 # ----------------------------------------------------------------------
 
+#: Parsed ``jarvis.toml`` payloads, keyed by path → (identity, data).
+#:
+#: ``load_config`` is called from over a hundred sites, several of them on the
+#: event loop that also serves every WebSocket — a provider building its client
+#: calls it per instantiation, and a fallback chain instantiates several
+#: providers per turn. Re-reading and re-parsing a 50 KB TOML there costs ~8 ms
+#: of blocked loop each time, and far worse than the milliseconds: ``tomllib``
+#: allocates thousands of short-lived objects per parse, so in a long-running
+#: process holding a large object graph the garbage collector starts dominating
+#: and a single parse can stall for minutes. Measured live 2026-07-28: the
+#: backend thread sat in ``tomllib`` at a fixed byte offset for over ten
+#: minutes at 88 % of a core with ``/api/health`` timing out, while the very
+#: same file parsed in 8 ms in a fresh process. The window title said
+#: "Not responding" and keystrokes typed into an Agentic-IDE pane arrived
+#: seconds late, because they queue behind this on the one loop.
+_TOML_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
+_TOML_CACHE_LOCK = threading.Lock()
+
+
+def _copy_toml_data(value: Any) -> Any:
+    """Structural copy of a parsed TOML payload.
+
+    Handing out the cached object itself is not an option: ``_apply_env_overrides``
+    writes overrides straight into the dict it is given, so the cache would
+    accumulate every override ever applied and answer later callers with a
+    config that was never on disk.
+
+    A hand-rolled walk rather than ``copy.deepcopy`` because TOML yields only
+    dicts, lists and immutable scalars (including ``datetime``), so none of
+    deepcopy's memo bookkeeping or ``__deepcopy__`` dispatch buys anything here
+    — and it is what keeps the copy cheap enough to be worth caching at all
+    (0.10 ms against 0.73 ms and an 8.18 ms parse).
+    """
+    if type(value) is dict:
+        return {key: _copy_toml_data(item) for key, item in value.items()}
+    if type(value) is list:
+        return [_copy_toml_data(item) for item in value]
+    return value
+
+
+def clear_config_cache() -> None:
+    """Forget everything derived from the config file.
+
+    Both caches invalidate themselves off the file's identity, so this exists
+    for the two cases that identity cannot see: a test that rewrites a fixture
+    within one filesystem timestamp tick, and :mod:`jarvis.core.config_writer`
+    announcing a write it just made rather than waiting to be found out.
+
+    The endpoint-routing cache is cleared with it, and must stay that way: it is
+    derived from the same file, so anything that can leave one stale leaves the
+    other stale too — and a stale route sends a provider's traffic to an address
+    the user has already changed.
+    """
+    with _TOML_CACHE_LOCK:
+        _TOML_CACHE.clear()
+        _ENDPOINT_ROUTE_CACHE.clear()
+
+
 def _load_toml(path: Path) -> dict[str, Any]:
+    # Modification time AND size, because either alone is forgeable by an
+    # ordinary edit: a rewrite within the same timestamp tick keeps the mtime,
+    # and flipping a single flag keeps the size. A file we cannot stat is
+    # simply not cached — the read below then reports the real error.
+    identity: tuple[int, int] | None = None
+    try:
+        info = path.stat()
+        identity = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        identity = None
+
+    if identity is not None:
+        with _TOML_CACHE_LOCK:
+            cached = _TOML_CACHE.get(path)
+        if cached is not None and cached[0] == identity:
+            return _copy_toml_data(cached[1])
+
     # tomllib does not accept UTF-8 BOM; Windows editors (Notepad etc.)
     # write it automatically on Save-As. If the file is otherwise readable,
     # we should not silently cripple the entire brain stack — so strip the
@@ -2440,7 +3527,15 @@ def _load_toml(path: Path) -> dict[str, Any]:
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:]
-    return tomllib.loads(raw.decode("utf-8"))
+    data = tomllib.loads(raw.decode("utf-8"))
+
+    if identity is not None:
+        with _TOML_CACHE_LOCK:
+            _TOML_CACHE[path] = (identity, data)
+        # The stored payload must stay the pristine parse, so the caller gets
+        # its own copy to mutate rather than the object the cache keeps.
+        return _copy_toml_data(data)
+    return data
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -2552,25 +3647,122 @@ def refresh_persisted_env_from_user_registry(
     return changed
 
 
+def _base_model_type(annotation: Any) -> type[BaseModel] | None:
+    """Return the BaseModel carried by an annotation, including unions."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for candidate in get_args(annotation):
+        model_type = _base_model_type(candidate)
+        if model_type is not None:
+            return model_type
+    return None
+
+
+def _container_type(annotation: Any) -> type[dict] | type[list] | None:
+    """Return the mapping/list shape carried by a field annotation."""
+    origin = get_origin(annotation)
+    candidate = origin or annotation
+    if isinstance(candidate, type) and issubclass(candidate, Mapping):
+        return dict
+    if candidate is list:
+        return list
+    for nested in get_args(annotation):
+        container_type = _container_type(nested)
+        if container_type is not None:
+            return container_type
+    return None
+
+
+@lru_cache(maxsize=256)
+def _expected_env_container(path: tuple[str, ...]) -> type[dict] | type[list] | None:
+    """Resolve a structured ENV target from the Pydantic config schema."""
+    model_type: type[BaseModel] = JarvisConfig
+    for index, segment in enumerate(path):
+        field = model_type.model_fields.get(segment)
+        if field is None:
+            return None
+        if index == len(path) - 1:
+            return _container_type(field.annotation)
+        nested_model = _base_model_type(field.annotation)
+        if nested_model is None:
+            return None
+        model_type = nested_model
+    return None
+
+
 def _apply_env_overrides(data: dict[str, Any], prefix: str = "JARVIS__") -> dict[str, Any]:
     """Override config with env variables in the format JARVIS__SECTION__KEY=value.
 
     Example: JARVIS__BRAIN__PRIMARY=openrouter → config["brain"]["primary"]
     """
-    for env_key, env_val in os.environ.items():
+    stt_section = data.get("stt")
+    stt_provider_user_selected = bool(
+        isinstance(stt_section, dict)
+        and stt_section.get("provider_user_selected") is True
+    )
+    for env_key, env_val in tuple(os.environ.items()):
         if not env_key.startswith(prefix):
             continue
         path = env_key[len(prefix):].lower().split("__")
+        if path == ["stt", "provider"] and stt_provider_user_selected:
+            logging.getLogger(__name__).debug(
+                "Ignoring %s because the persisted STT provider was user-selected",
+                env_key,
+            )
+            continue
         cursor = data
+        blocked = False
         for segment in path[:-1]:
-            cursor = cursor.setdefault(segment, {})
-        cursor[path[-1]] = _coerce_env_value(env_val)
+            existing_segment = cursor.get(segment)
+            if existing_segment is None:
+                existing_segment = {}
+                cursor[segment] = existing_segment
+            if not isinstance(existing_segment, dict):
+                blocked = True
+                break
+            cursor = existing_segment
+        if blocked:
+            os.environ.pop(env_key, None)
+            logging.getLogger(__name__).warning(
+                "Ignoring config override %s because its path crosses a scalar",
+                env_key,
+            )
+            continue
+        value = _coerce_env_value(env_val)
+        existing_value = cursor.get(path[-1])
+        expected_container = _expected_env_container(tuple(path))
+        mapping_conflict = (
+            expected_container is dict or isinstance(existing_value, dict)
+        ) and not isinstance(value, dict)
+        list_conflict = (
+            expected_container is list or isinstance(existing_value, list)
+        ) and not isinstance(value, list)
+        if mapping_conflict or list_conflict:
+            # An older drift-guard serialized structured JSON as a PowerShell
+            # string such as "@{provider=model}". Replacing a TOML mapping/list
+            # with that scalar bricks Pydantic validation and desktop startup.
+            os.environ.pop(env_key, None)
+            logging.getLogger(__name__).warning(
+                "Ignoring scalar config override %s for a structured value",
+                env_key,
+            )
+            continue
+        cursor[path[-1]] = value
     return data
 
 
 def _coerce_env_value(v: str) -> Any:
-    """Coerce a string env value to bool/int/float/str."""
+    """Coerce an environment string to JSON containers or a scalar."""
     lv = v.strip().lower()
+    if lv.startswith(("{", "[")):
+        try:
+            parsed = json.loads(v)
+        except (TypeError, ValueError):
+            # Invalid JSON-shaped input intentionally falls through to scalar coercion.
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                return parsed
     if lv in ("true", "yes", "1"):
         return True
     if lv in ("false", "no", "0"):
@@ -2584,6 +3776,36 @@ def _coerce_env_value(v: str) -> Any:
     except ValueError:
         pass
     return v
+
+
+def _dedupe_worker_tier_tables(data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the [brain.worker] vs legacy [brain.sub_jarvis] split-brain.
+
+    Both tables populate the SAME field (``BrainConfig.worker`` via
+    ``AliasChoices``); a file carrying both is a latent conflict whose winner
+    would otherwise be an artifact of alias ordering. Make it explicit code:
+    the canonical ``[brain.worker]`` wins, the legacy table is dropped from
+    the parsed dict, and ONE warning names both values so the operator can
+    see what was ignored. A file with only the legacy table stays untouched
+    (read-compat for pre-rename installs). The on-disk heal lives in
+    ``config_writer.migrate_worker_tier_table`` (called at boot).
+    """
+    brain = data.get("brain")
+    if not isinstance(brain, dict):
+        return data
+    worker = brain.get("worker")
+    legacy = brain.get("sub_jarvis")
+    if isinstance(worker, dict) and isinstance(legacy, dict):
+        logging.getLogger(__name__).warning(
+            "config: both [brain.worker] (provider=%r) and legacy "
+            "[brain.sub_jarvis] (provider=%r) are present — [brain.worker] "
+            "wins; the legacy table is ignored and will be merged away at "
+            "the next boot heal.",
+            worker.get("provider"),
+            legacy.get("provider"),
+        )
+        brain.pop("sub_jarvis", None)
+    return data
 
 
 def _migrate_worker_env_vars() -> None:
@@ -2604,6 +3826,30 @@ def _migrate_worker_env_vars() -> None:
             os.environ[new_name] = old_val  # process-local only, no setx
 
 
+#: Paths whose dictation-shortcut backfill has already been attempted in THIS
+#: process. The on-disk marker is the durable guard; this only keeps a hot
+#: ``load_config`` loop from re-reading the file for a migration that is done.
+_DICTATION_HOTKEY_HEALED: set[Path] = set()
+
+
+def _heal_dictation_hotkeys_once(path: Path) -> None:
+    """Run the one-time dictation-shortcut backfill. Never raises, never blocks.
+
+    Kept to one cheap file read per process: the writer itself short-circuits
+    on a string probe once the marker is in the file, and this set stops even
+    that read from repeating.
+    """
+    if path in _DICTATION_HOTKEY_HEALED:
+        return
+    _DICTATION_HOTKEY_HEALED.add(path)
+    try:
+        from jarvis.core.config_writer import migrate_dictation_hotkey_defaults
+
+        migrate_dictation_hotkey_defaults(path=path)
+    except Exception:  # noqa: BLE001, S110 — a boot heal must never block a load
+        pass
+
+
 def load_config(
     config_file: Path | None = None,
     profile: str | None = None,
@@ -2621,6 +3867,13 @@ def load_config(
     """
     if config_file is None:
         config_file = resolve_config_path()
+        # One-time dictation-shortcut backfill BEFORE the file is read, so the
+        # very first boot after the update already sees the healed values
+        # (BUG-010 config drift; see config_writer for why a marker and not an
+        # empty-means-default rule). Only for the RESOLVED path: a caller that
+        # names a file explicitly — a test, a doctor script — gets it read, not
+        # rewritten. Process-local guard so repeated loads cost nothing.
+        _heal_dictation_hotkeys_once(config_file)
     if not config_file.exists():
         # No config file → pure defaults (useful for tests)
         data: dict[str, Any] = {}
@@ -2635,6 +3888,9 @@ def load_config(
         if profile_file.exists():
             data = _deep_merge(data, _load_yaml(profile_file))
 
+    # Deterministic winner for the worker-tier split-brain BEFORE env
+    # overrides land (env writes into brain.worker and wins regardless).
+    data = _dedupe_worker_tier_tables(data)
     # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
     # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
     _migrate_worker_env_vars()
@@ -3183,6 +4439,78 @@ class ResolvedEndpoint:
     via_proxy: bool
 
 
+@dataclass(frozen=True)
+class _EndpointRoute:
+    """Where a provider's traffic goes — the part decided purely by config."""
+
+    base_url: str | None
+    via_proxy: bool
+
+
+#: Config-derived routing per (config identity, provider, vendor default).
+#:
+#: This is the OTHER half of the freeze whose TOML half ``_TOML_CACHE`` fixed.
+#: ``resolve_provider_endpoint`` runs on every provider client build, on the
+#: event loop, and a key-aware fallback chain builds several providers per turn.
+#: Reaching ``load_config()`` for it rebuilt the whole ``JarvisConfig`` model
+#: each time: 281 fresh objects per call, handed straight to the garbage
+#: collector. Measured live on 2026-07-28 (two independent sessions, same
+#: verdict): the backend thread sat ``active+gil`` inside ``JarvisConfig(**data)``
+#: reached through exactly this function, and while it did, the Tk-drawn overlay
+#: stopped pumping and Windows replaced the frozen window with a ``Ghost``
+#: (BUG-118). Caching the model itself is not an option — a hundred sites mutate
+#: the object they are handed — but the routing decision is small, immutable and
+#: derived only from the file, so it can be remembered safely.
+_ENDPOINT_ROUTE_CACHE: dict[
+    tuple[tuple[int, int] | None, str, str | None], _EndpointRoute
+] = {}
+
+
+def _endpoint_route(
+    cfg_obj: JarvisConfig,
+    provider_id: str,
+    vendor_default_base_url: str | None,
+) -> _EndpointRoute:
+    """Pure routing decision for one provider — no secrets, no I/O."""
+    team = cfg_obj.team_proxy
+    if team.enabled and team.url and provider_id not in team.local_providers:
+        return _EndpointRoute(
+            base_url=f"{team.url.rstrip('/')}/p/{provider_id}", via_proxy=True
+        )
+    prov = cfg_obj.brain.providers.get(provider_id)
+    override = prov.base_url if prov is not None and prov.base_url else None
+    return _EndpointRoute(base_url=override or vendor_default_base_url, via_proxy=False)
+
+
+def _cached_endpoint_route(
+    provider_id: str,
+    vendor_default_base_url: str | None,
+) -> _EndpointRoute:
+    """The routing decision, without rebuilding the config model to get it.
+
+    Keyed on the config file's identity, so an edit is picked up exactly as it
+    was before — and ``clear_config_cache`` drops this alongside the parsed TOML,
+    which is what ``config_writer`` announces after every write.
+    """
+    identity: tuple[int, int] | None = None
+    try:
+        info = resolve_config_path().stat()
+        identity = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        identity = None
+
+    key = (identity, provider_id, vendor_default_base_url)
+    if identity is not None:
+        cached = _ENDPOINT_ROUTE_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    route = _endpoint_route(load_config(), provider_id, vendor_default_base_url)
+    if identity is not None:
+        _ENDPOINT_ROUTE_CACHE[key] = route
+    return route
+
+
 def resolve_provider_endpoint(
     provider_id: str,
     *,
@@ -3205,21 +4533,22 @@ def resolve_provider_endpoint(
     ``{url}/p/{provider_id}`` and the credential becomes the per-user team token
     (``team_proxy_token``) — the same flip for every provider class.
     """
-    cfg_obj = config if config is not None else load_config()
+    if config is not None:
+        route = _endpoint_route(config, provider_id, vendor_default_base_url)
+    else:
+        route = _cached_endpoint_route(provider_id, vendor_default_base_url)
 
-    team = cfg_obj.team_proxy
-    if team.enabled and team.url and provider_id not in team.local_providers:
-        base_url = f"{team.url.rstrip('/')}/p/{provider_id}"
+    # The credential is deliberately NOT part of what is remembered above. It
+    # comes from the keyring and can be replaced, revoked or repaired while the
+    # app runs — a cached one would keep a provider dead after the user fixed
+    # its key in the UI, which is the opposite of what this project promises.
+    if route.via_proxy:
         token = get_secret("team_proxy_token", "TEAM_PROXY_TOKEN")
-        return ResolvedEndpoint(base_url=base_url, credential=token, via_proxy=True)
-
-    override: str | None = None
-    prov = cfg_obj.brain.providers.get(provider_id)
-    if prov is not None and prov.base_url:
-        override = prov.base_url
-    base_url = override or vendor_default_base_url
+        return ResolvedEndpoint(base_url=route.base_url, credential=token, via_proxy=True)
     credential = get_provider_secret(provider_id)
-    return ResolvedEndpoint(base_url=base_url, credential=credential, via_proxy=False)
+    return ResolvedEndpoint(
+        base_url=route.base_url, credential=credential, via_proxy=False
+    )
 
 
 def set_secret(key: str, value: str) -> bool:

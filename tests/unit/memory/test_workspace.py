@@ -80,7 +80,7 @@ class TestPersonSlug:
     """Slug rules: lowercase, umlauts expanded, non-safe chars removed."""
 
     def test_basic_umlaut_expansion(self) -> None:
-        assert person_slug("Laura Müller") == "laura_mueller"  # i18n-allow: German umlaut name, matched by the slug-normalization logic under test
+        assert person_slug("Casey Müller") == "casey_mueller"  # i18n-allow: German umlaut name, matched by the slug-normalization logic under test
 
     def test_dots_and_whitespace_stripped(self) -> None:
         assert person_slug("Dr. Paul O.") == "dr_paul_o"
@@ -101,14 +101,14 @@ class TestPersonSlug:
         assert person_slug("???") == "unknown"
 
     def test_leading_trailing_whitespace_stripped(self) -> None:
-        assert person_slug("  Ruben  ") == "ruben"
+        assert person_slug("  Alex  ") == "alex"
 
     def test_sharp_s_expanded_to_ss(self) -> None:
         assert person_slug("Weißbier") == "weissbier"  # i18n-allow: German word testing sharp-s (ß) expansion, matched by the slug-normalization logic under test
 
     def test_case_insensitive_result(self) -> None:
-        assert person_slug("RUBEN") == "ruben"
-        assert person_slug("ruben") == "ruben"
+        assert person_slug("ALEX") == "alex"
+        assert person_slug("alex") == "alex"
 
 
 # ======================================================================

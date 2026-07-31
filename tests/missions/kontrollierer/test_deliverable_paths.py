@@ -35,16 +35,18 @@ _REAL_JUNK = [
     "qa-artifacts/chrome-profile-215c81b1bed945dbb720aeb3f32b38d3/Variations",
     "qa-artifacts/chrome-profile-53f907ebce1e41fe82c76f8894c64cf0/first_party_sets.db-journal",
     "qa-artifacts/chrome-profile-2889ad51367a4d8c9ae31efac95bb17f/Crashpad/settings.dat",
+    ".uv-cache-audit/wheels-v6/pypi/fastapi/fastapi-0.138.0-py3-none-any.lock",
+    ".uv-cache-wiki/builds-v0/.tmp123/Lib/site-packages/_virtualenv.py",
 ]
 
 # Real genuine deliverables from the SAME mission — every one must survive
-# (False == "is a deliverable"). Note: melbourne-plan-render.png lives INSIDE
+# (False == "is a deliverable"). Note: example-city-plan-render.png lives INSIDE
 # qa-artifacts/ next to the junk, so we must exclude the chrome-profile subtrees
 # WITHOUT excluding all of qa-artifacts/.
 _REAL_DELIVERABLES = [
     "index.html",
     "scripts/qa.mjs",
-    "qa-artifacts/melbourne-plan-render.png",
+    "qa-artifacts/example-city-plan-render.png",
     "qa-artifacts/.gitignore",
 ]
 
@@ -60,6 +62,8 @@ _LEGIT_LOOKALIKES = [
     "output.log",                   # gitignored log IS a deliverable
     "data_0",                       # a bare data_N file outside a profile
     "scoped_directory/main.py",     # 'scoped_dir' prefix but not a temp profile
+    "reports/uv-cache-analysis.md", # ordinary report name, not a hidden cache root
+    ".uv-cache-audit.md",           # final filename, not a directory segment
 ]
 
 
@@ -114,7 +118,7 @@ def test_empty_and_root_paths() -> None:
 
 # --- find_generator_scripts: the 2026-06-22 generator-script leak --------------
 # Live forensic (mission_019ef099): the user asked by voice for "one HTML file"
-# and got THREE deliverables — melbourne_guide.html PLUS its Python generator
+# and got THREE deliverables — example_city_guide.html PLUS its Python generator
 # generate_guide.py (which embeds the whole HTML as a string literal and writes
 # the sibling .html) PLUS a hero image. The user opened the .py and "only saw
 # code". A generator/build script is process scratch, not the thing asked for.
@@ -127,11 +131,11 @@ def _reader(mapping: dict[str, str]):
 
 
 def test_generator_script_emitting_sibling_html_is_detected() -> None:
-    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
+    files = ["generate_guide.py", "example_city_guide.html", "example_city_hero.jpg"]
     text = {
         "generate_guide.py": (
             'html_content = """<!DOCTYPE html><html lang="de">...</html>"""\n'
-            'with open("melbourne_guide.html", "w", encoding="utf-8") as f:\n'
+            'with open("example_city_guide.html", "w", encoding="utf-8") as f:\n'
             "    f.write(html_content)\n"
         ),
     }
@@ -141,15 +145,15 @@ def test_generator_script_emitting_sibling_html_is_detected() -> None:
 
 
 def test_emitted_doc_and_its_asset_are_never_dropped() -> None:
-    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
+    files = ["generate_guide.py", "example_city_guide.html", "example_city_hero.jpg"]
     text = {
         "generate_guide.py": (
-            '<!DOCTYPE html>\nopen("melbourne_guide.html", "w").write(page)\n'
+            '<!DOCTYPE html>\nopen("example_city_guide.html", "w").write(page)\n'
         )
     }
     gen = find_generator_scripts(files, _reader(text))
-    assert "melbourne_guide.html" not in gen  # the real deliverable survives
-    assert "melbourne_hero.jpg" not in gen  # its asset survives
+    assert "example_city_guide.html" not in gen  # the real deliverable survives
+    assert "example_city_hero.jpg" not in gen  # its asset survives
 
 
 def test_standalone_script_with_no_sibling_doc_is_kept() -> None:

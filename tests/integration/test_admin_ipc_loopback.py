@@ -16,6 +16,7 @@ import pytest
 from jarvis.admin.executor import AdminExecutor
 from jarvis.admin.ipc import AdminPipeClient, AdminPipeServer
 from jarvis.admin.schema import ReadRegistryOp
+from jarvis.admin.transport import current_user_sid
 
 pytestmark = [pytest.mark.phase5, pytest.mark.skip_ci]
 
@@ -30,7 +31,7 @@ async def test_read_registry_roundtrip():
     secret = b"X" * 32
     pipe_name = rf"\\.\pipe\jarvis-admin-test-{uuid.uuid4().hex}"
     executor = AdminExecutor()
-    server = AdminPipeServer(secret, pipe_name, executor, sid="S-1-5-18")
+    server = AdminPipeServer(secret, pipe_name, executor, sid=current_user_sid())
     client = AdminPipeClient(secret, pipe_name, io_timeout_s=10.0)
 
     serve_task = asyncio.create_task(server.serve_forever(), name="serve")
@@ -56,7 +57,4 @@ async def test_read_registry_roundtrip():
             )
     finally:
         server.stop()
-        try:
-            await asyncio.wait_for(serve_task, timeout=5.0)
-        except asyncio.TimeoutError:
-            serve_task.cancel()
+        await asyncio.wait_for(serve_task, timeout=2.0)

@@ -90,7 +90,7 @@ export async function registerObsidianVault(
  *
  * @param vaultRoot - Absolute configured Jarvis vault root.
  * @param vaultRelPath - Vault-relative POSIX path such as
- *   `"entities/harald.md"`. May be the empty string to open the root.
+ *   `"entities/morgan.md"`. May be the empty string to open the root.
  */
 export function buildObsidianUrl(
   vaultRoot: string,

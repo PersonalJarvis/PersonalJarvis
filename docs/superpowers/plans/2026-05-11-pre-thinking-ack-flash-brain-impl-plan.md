@@ -871,7 +871,7 @@ Du:   "Mache ich, Spotify öffnet sich gleich."  <!-- i18n-allow -->
 User: "Wann wird Albel eingestellt?"  <!-- i18n-allow -->
 Du:   "Lass mich kurz nachschauen."
 
-User: "Such mir Flüge nach San Francisco für morgen."  <!-- i18n-allow -->
+User: "Such mir Flüge nach Example City für morgen."  <!-- i18n-allow -->
 Du:   "Klar Chef, ich gebe das an OpenClaw weiter."  <!-- i18n-allow -->
 
 User: "Hallo Jarvis."
@@ -922,7 +922,7 @@ You:  "On it, opening Spotify."
 User: "When does Albel start?"
 You:  "Let me check on that."
 
-User: "Find me flights to San Francisco for tomorrow."
+User: "Find me flights to Example City for tomorrow."
 You:  "Got it, handing this to OpenClaw."
 
 User: "Hi Jarvis."
@@ -3565,14 +3565,14 @@ $Utterances = @{
     "de" = @(
         "Mach Spotify auf",
         "Wann wird Albel eingestellt?",  <!-- i18n-allow -->
-        "Such mir Fluege nach San Francisco fuer morgen",  <!-- i18n-allow -->
+        "Such mir Fluege nach Example City fuer morgen",  <!-- i18n-allow -->
         "Hallo Jarvis",
         "Sei still"
     )
     "en" = @(
         "Open Spotify",
         "When does Albel start?",
-        "Find me flights to San Francisco for tomorrow",
+        "Find me flights to Example City for tomorrow",
         "Hi Jarvis",
         "Be quiet"
     )

@@ -1,0 +1,552 @@
+# Golden routing set for the deterministic skill matcher.
+#
+# Every `text` here is a SIMULATED USER UTTERANCE — matching data, the content
+# under test, not project prose. That is why this file is German-heavy.
+#
+# Rules this file must obey (enforced by tests/unit/skills/test_skill_routing_offline.py):
+#
+#  1. A positive must NOT match the skill's own voice-trigger regex. If it
+#     does, it proves nothing about the relevance layer — it would have fired
+#     in 2025 already. The anti-echo test rejects such entries.
+#  2. `min_band` records the WEAKEST acceptable outcome, and it is a MEASURED
+#     baseline, not an aspiration. Raising one is a real improvement; lowering
+#     one is a regression that must be visible in a diff.
+#  3. Cross-skill negatives are GENERATED, not written: every skill's positives
+#     are automatically hard negatives for every other skill.
+#  4. `global_negatives` must reach band `none` for EVERY skill. These are the
+#     turns the assistant owns itself — smalltalk, knowledge questions, coding
+#     help, and the local-action commands the deterministic desktop gate owns.
+#
+# Provenance markers: `authored` = written for this file, `eval` = lifted from
+# scripts/skill_routing_eval.py, `forensic` = a real utterance quoted in a bug
+# comment. A skill whose positives are 100 % `authored` gets a warning: real
+# paraphrases come from real transcripts.
+
+skills:
+  deep-work-mode:
+    positives:
+      - text: "aktiviere bitte den konzentrationsmodus"
+        channel: relevance
+        lang: de
+        min_band: fire
+        source: authored
+      - text: "ich will jetzt in den fokus modus"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "put me into deep work for the next hour"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "starte mir bitte einen fokus sprint"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was bedeutet eigentlich deep work als konzept"
+        reason: definitional question about the topic, not a request to enter it
+      - text: "erzaehl mir was ueber konzentration und produktivitaet"
+        reason: knowledge question, no activation intent
+
+  morning-routine:
+    positives:
+      - text: "gib mir bitte den tagesueberblick"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "mach mir mein morgen briefing"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "run my morning briefing please"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist eine morgenroutine ueberhaupt"
+        reason: definitional question
+
+  plugin-gmail:
+    positives:
+      - text: "lies mir meine neuen nachrichten im posteingang vor"
+        channel: trigger
+        lang: de
+        min_band: fire
+        source: authored
+      - text: "gibt es was neues in meinem postfach"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "check my inbox for anything important"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "schreib eine mail an das team"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist Gmail eigentlich fuer ein dienst"
+        reason: definitional question about the app
+
+  plugin-github:
+    positives:
+      - text: "zeig mir meine offenen pull requests"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "gibt es neue kommentare am repository"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "list the open issues in the repo"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist eigentlich GitHub fuer eine plattform?"
+        reason: definitional question (negative control, skill-routing eval)
+
+  plugin-google_calendar:
+    positives:
+      - text: "was steht denn heute so im kalender"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "verschieb meinen termin auf morgen nachmittag"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "do i have any meetings this afternoon"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-slack:
+    positives:
+      - text: "poste das kurz in den slack kanal"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "any new messages in my slack workspace"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-stripe:
+    positives:
+      - text: "wie sieht mein guthaben bei stripe aus"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "zeig mir die offenen rechnungen und zahlungen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "show me this month's payments and refunds"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist Stripe ueberhaupt und wofuer nutzt man das?"
+        reason: definitional question (negative control, skill-routing eval)
+
+  cli-gcloud:
+    positives:
+      - text: "wie viel kostet mich gerade meine google cloud diesen monat?"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: eval
+      - text: "zeig mir meine gcloud projekte und buckets"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "what is my google cloud billing at right now"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-notion:
+    positives:
+      - text: "such mir die seite in notion raus"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "add this to my notion database"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-linear:
+    positives:
+      - text: "welche linear tickets sind mir zugewiesen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "close that linear issue for me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-vercel:
+    positives:
+      - text: "ist das letzte deployment durchgelaufen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "check the vercel build status"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-supabase:
+    positives:
+      - text: "fuehr mir die migration auf der supabase datenbank aus"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "query the supabase table for me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-discord:
+    positives:
+      - text: "schreib das in den discord kanal"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "read the latest messages on my discord server"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-asana:
+    positives:
+      - text: "welche asana aufgaben stehen noch offen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "assign that asana task to me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-cloudflare:
+    positives:
+      - text: "aendere den dns eintrag bei cloudflare"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "check my cloudflare zone settings"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-google_drive:
+    positives:
+      - text: "such die datei in meinem google drive"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      # Genuine cross-skill collision, not a scorer defect: since plugin-dropbox
+      # started shipping, "share that <x> folder" describes both skills equally
+      # well and Dropbox wins on "share"/"folder". A human would ask which one
+      # too. Recorded as a gap rather than papered over with a threshold change.
+      - text: "share that drive folder with the team"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+        known_gap: true
+
+  plugin-dropbox:
+    positives:
+      - text: "lade die datei in meine dropbox hoch"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "share the dropbox link with me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "such den vertrag in meiner dropbox"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "share that dropbox folder with anna"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-home_assistant:
+    positives:
+      - text: "mach bitte das licht im wohnzimmer aus"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "turn the kitchen lights off please"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "stell die heizung im schlafzimmer auf 21 grad"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist home assistant eigentlich fuer eine software"
+        reason: definitional question about the product, not a request to act
+
+  plugin-todoist:
+    positives:
+      - text: "trag das bitte in todoist ein"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "what is on my todoist list today"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "setz milch auf meine todoist liste"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "what's due in todoist today"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-clickup:
+    positives:
+      - text: "zeig mir die offenen clickup tasks"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "create a clickup task for that"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "zeig mir meine clickup aufgaben"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "create a clickup task for the rewrite"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-airtable:
+    positives:
+      - text: "schreib die zeile in die airtable basis"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "read the airtable records for me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "welche eintraege stehen in meiner airtable basis"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "update that airtable record"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-canva:
+    positives:
+      - text: "mach mir ein neues design in canva"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "export that canva design as a pdf"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "mach mir ein canva poster fuer den vortrag"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "export my canva design as a pdf"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-cal_com:
+    positives:
+      - text: "wann ist mein naechster termin bei cal com"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "book a slot in cal com"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "welche buchungen habe ich morgen in calcom"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "cancel my calcom booking on friday"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  skill-creator:
+    positives:
+      - text: "ich moechte einen neuen skill bauen"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "turn this workflow into a skill"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+
+  # --- Known gaps -------------------------------------------------------
+  # This skill carries no voice trigger AND thin, English-only vocabulary, so
+  # a German request loses to a plugin whose product noun happens to collide.
+  # Reported by the eval, never scored, never silently dropped. The fix is the
+  # skill's own vocabulary, not a threshold change — which is exactly what the
+  # quality gate is for.
+  #
+  # (jarvis-doc-author would belong here too, but it is on disk WITHOUT being
+  # in BUILTIN_SKILL_NAMES, so a fresh install never receives it. The registry
+  # coverage test caught that; do not add it back without shipping it first.)
+  control-api:
+    positives:
+      - text: "aendere die antwortsprache auf englisch"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+        known_gap: true
+
+# ---------------------------------------------------------------------------
+# Utterances that must fire NOTHING, whatever is installed.
+# ---------------------------------------------------------------------------
+global_negatives:
+  # -- smalltalk / conversation -------------------------------------------
+  - text: "wie ist das wetter heute in berlin"
+    channel: relevance
+    reason: smalltalk
+  - text: "erzaehl mir einen witz"
+    channel: relevance
+    reason: smalltalk
+  - text: "guten abend, wie war dein tag"
+    channel: relevance
+    reason: smalltalk
+  - text: "danke dir, das war sehr hilfreich"
+    channel: relevance
+    reason: acknowledgement
+  # -- knowledge questions -------------------------------------------------
+  - text: "kannst du mir kurz erklaeren wie photosynthese funktioniert"
+    channel: relevance
+    reason: knowledge question
+  - text: "was haeltst du von rust als programmiersprache"
+    channel: relevance
+    reason: opinion question
+  - text: "wer hat den zweiten weltkrieg beendet"
+    channel: relevance
+    reason: knowledge question
+  - text: "was ist die hauptstadt von australien"
+    channel: relevance
+    reason: knowledge question
+  # -- deliberation the assistant must answer, never act on ----------------
+  - text: "kann ich dagegen rechtlich eigentlich was machen?"
+    channel: relevance
+    reason: forensic — user deliberating, not tasking (turn_planner)
+  - text: "soll ich es einfach kaufen oder noch warten"
+    channel: relevance
+    reason: decision help, not an action request
+  - text: "ich hab da mal eine frage, was wuerdest du mir empfehlen?"
+    channel: relevance
+    reason: forensic — conversational opener (manager.py force-spawn bug)
+  # -- coding help ---------------------------------------------------------
+  - text: "schreib mir eine funktion die eine liste sortiert"
+    channel: relevance
+    reason: coding request, no skill involved
+  - text: "warum wirft mein python skript einen keyerror"
+    channel: relevance
+    reason: debugging question
+  # -- local actions the deterministic desktop gate owns -------------------
+  - text: "mach mal lauter"
+    channel: relevance
+    reason: local action, owned by the local-action gate
+  - text: "mach einen screenshot"
+    channel: relevance
+    reason: local action
+  - text: "schliess das fenster"
+    channel: relevance
+    reason: local action
+  # -- mission vocabulary (AD-S9 owns these) -------------------------------
+  - text: "spawne einen sub-agent der das recherchiert"
+    channel: relevance
+    reason: explicit heavy-work request, the mission path owns it

@@ -26,7 +26,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from jarvis.core.redact import safe_preview
@@ -121,29 +121,27 @@ def _exception_summary(exc: Exception) -> str:
     diagnosis = _SAFE_DIAGNOSIS_RE.search(str(exc))
     return f"{summary} ({diagnosis.group(0)})" if diagnosis else summary
 
-def _cli_login_ready(provider: str) -> bool | None:
-    """Login-readiness of a subscription-CLI provider; ``None`` = not CLI-backed.
+def subscription_login_ready(provider: str, *, registry: Any = None) -> bool | None:
+    """Subscription-login readiness; ``None`` means no such capability.
 
-    Codex and Antigravity are callable WITHOUT an API key — but only when
-    their official CLI is installed and logged in. Without this probe an
-    uninstalled/logged-out CLI provider entered every wiki chain and failed
-    on every single call (live 2026-07-18: antigravity produced chain errors
-    on machines that never installed it). A probe failure returns ``None``
-    (unknown) so an auth-service hiccup can never empty the chain.
+    Subscription-backed brains advertise a ``subscription_connected`` class
+    capability. Resolving it through the provider registry keeps the chain open
+    to future CLIs without another vendor-name branch (AP-21). A failed probe
+    stays unknown rather than false so one status-service fault cannot empty an
+    otherwise usable fallback chain.
     """
     try:
-        if provider == "codex":
-            from jarvis.codex_auth import CodexAuthService
+        if registry is None:
+            from jarvis.brain.provider_registry import BrainProviderRegistry
 
-            return bool(CodexAuthService().status().connected)
-        if provider == "antigravity":
-            from jarvis.google_cli.auth_service import GoogleCliAuthService
-
-            status = GoogleCliAuthService().status()
-            return bool(status.installed and status.connected)
-    except Exception:  # noqa: BLE001 — a probe failure must never empty the chain
+            registry = BrainProviderRegistry()
+        provider_class = registry.get_class(provider)
+        probe = getattr(provider_class, "subscription_connected", None)
+        if not callable(probe):
+            return None
+        return bool(probe())
+    except Exception:  # noqa: BLE001 - a probe failure must never empty the chain
         return None
-    return None
 
 
 def credential_ready_wiki_providers(
@@ -161,14 +159,16 @@ def credential_ready_wiki_providers(
     WITH a key mapping is also admitted when its CLI login is connected, so a
     keyless Codex-subscription user keeps the wiki working.
     """
+    from jarvis.brain.provider_registry import BrainProviderRegistry
     from jarvis.core.config import (
         PROVIDER_SECRET_CANDIDATES,
         resolve_provider_endpoint,
     )
 
     ready: set[str] = set()
+    registry = BrainProviderRegistry()
     for provider in available:
-        cli_ready = _cli_login_ready(provider)
+        cli_ready = subscription_login_ready(provider, registry=registry)
         if provider not in PROVIDER_SECRET_CANDIDATES:
             if cli_ready is False:
                 continue
@@ -233,6 +233,7 @@ async def complete_with_fallback(
     allow_last_rejection: Callable[[str], bool] | None = None,
     allow_lone_rejection: Callable[[str], bool] | None = None,
     content_verdict: Callable[[str], bool] | None = None,
+    provider_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -287,7 +288,11 @@ async def complete_with_fallback(
     for index, (provider, model) in enumerate(ordered):
         try:
             brain = instantiate_curator_brain(
-                registry, provider, model, cli_timeout_s=timeout_s,
+                registry,
+                provider,
+                model,
+                cli_timeout_s=timeout_s,
+                provider_options=(provider_options or {}).get(provider),
             )
         except Exception as exc:  # noqa: BLE001 — a bad provider must not abort the chain
             detail = _exception_summary(exc)
@@ -517,4 +522,5 @@ __all__ = [
     "complete_with_fallback",
     "credential_ready_wiki_providers",
     "reset_provider_failure_memory",
+    "subscription_login_ready",
 ]

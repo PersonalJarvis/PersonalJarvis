@@ -198,26 +198,59 @@ def test_wake_high_accuracy_defaults_to_cpu():
 # --------------------------------------------------------------------------
 
 
-def test_stt_language_list_parity_python_ts():
-    # If the Python accepted set (settings_routes._STT_LANGUAGES) and the TS
-    # SttLanguage union drift, the Languages view offers a value the backend
-    # rejects (or vice versa). Set-equality (order-independent) so a
-    # re-ordering never false-fails.
-    import re
+async def test_the_stt_language_list_has_exactly_one_source():
+    # This used to compare the Python accepted set against a hand-mirrored TS
+    # union. That mirror is gone on purpose: once recognition widened from
+    # auto/de/en/es to ~100 languages, a copied union was no longer a guard but
+    # the drift trap itself (AP-4) — the day a language is added to one side the
+    # other silently rejects it. The list is now shipped over the wire and the
+    # UI hydrates from it, so the thing worth pinning is that ONE source exists.
+    #
+    # Half one: the backend actually hands out the whole accepted set, because a
+    # client that cannot fetch the options has no way to build a correct picker.
+    from jarvis.ui.web.settings_routes import _STT_LANGUAGES, get_stt_language
 
-    from jarvis.ui.web.settings_routes import _STT_LANGUAGES
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=None)))
+    body = await get_stt_language(request)  # type: ignore[arg-type]
+    assert body["options"] == list(_STT_LANGUAGES), (
+        "GET /api/settings/stt-language must ship the full accepted set — it is "
+        "the only place the UI can learn which languages are selectable."
+    )
+    assert len(_STT_LANGUAGES) >= 50, "the recogniser list collapsed back to a handful"
+
+
+def test_the_frontend_never_re_mirrors_the_stt_language_list():
+    # Half two: the copy must not come back. `SttLanguage` stays a plain string
+    # and the only hardcoded list is the one-entry placeholder rendered before
+    # the fetch resolves — anything longer is a second source of truth.
+    import re
 
     ts_path = (
         Path(__file__).resolve().parents[3]
         / "jarvis" / "ui" / "web" / "frontend" / "src" / "i18n" / "index.ts"
     )
     text = ts_path.read_text(encoding="utf-8")
+
     m = re.search(r"export type SttLanguage\s*=\s*([^;]+);", text)
-    assert m, "SttLanguage type union not found in i18n/index.ts"
-    ts_langs = set(re.findall(r"[\"']([a-z]+)[\"']", m.group(1)))
-    assert ts_langs == set(_STT_LANGUAGES), (
-        f"TS {ts_langs} != Python {set(_STT_LANGUAGES)} — keep the STT language "
-        "list in lockstep (settings_routes._STT_LANGUAGES ↔ i18n SttLanguage)."
+    assert m, "SttLanguage type not found in i18n/index.ts"
+    declared = m.group(1).strip()
+    assert declared == "string", (
+        f"SttLanguage is {declared!r} — a union of codes here is a hand-mirrored "
+        "copy of settings_routes._STT_LANGUAGES and will drift (AP-4). The "
+        "accepted set is fetched from the backend instead."
+    )
+
+    fallback = re.search(r"STT_FALLBACK_OPTIONS[^=]*=\s*\[([^\]]*)\]", text)
+    assert fallback, "STT_FALLBACK_OPTIONS placeholder not found in i18n/index.ts"
+    codes = re.findall(r"[\"']([a-z-]+)[\"']", fallback.group(1))
+    assert codes == ["auto"], (
+        f"the pre-fetch placeholder grew into a real list ({codes}) — it is one "
+        "render's worth of fallback, not a second source of truth."
+    )
+
+    assert "body.options" in text, (
+        "hydrateSttLanguage must consume the options the backend ships, or the "
+        "picker silently falls back to the placeholder forever."
     )
 
 

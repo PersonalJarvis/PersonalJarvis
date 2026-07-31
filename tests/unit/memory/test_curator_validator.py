@@ -3,8 +3,8 @@
 Focus — the validator is the **last line of defense** against subject confusion:
 
 - Confidence thresholds: <0.5 → reject, 0.5-0.7 → review, >=0.7 → accept.
-- Laura scenario: `subject="user", field="name", value="Laura"` when
-  `people/laura.md` already exists → REJECT due to collision.
+- Casey scenario: `subject="user", field="name", value="Casey"` when
+  `people/casey.md` already exists → REJECT due to collision.
 - Pronoun false positives (`person:er`, `person:sie`) → REJECT.
 - Do-not-record keywords (politics, mental health, MBTI) → REJECT.
 - Overwrite protection: existing name + new name at conf<0.85 → REVIEW.
@@ -30,10 +30,10 @@ def _user_cand(
     *,
     cluster: str = "identity",
     field: str = "name",
-    value: Any = "Ruben",
+    value: Any = "Alex",
     confidence: float = 0.9,
     operation: str = "set",
-    evidence: str = "User: 'ich heisse Ruben'",
+    evidence: str = "User: 'ich heisse Alex'",
 ) -> Candidate:
     return Candidate(
         subject="user",
@@ -55,7 +55,7 @@ def _person_cand(
     confidence: float = 0.9,
     operation: str = "set",
     evidence: str = "User: 'meine Freundin ist Designerin'",
-    relationship: str = "partner",
+    relationship: str = "colleague",
 ) -> Candidate:
     return Candidate(
         subject=f"person:{name}",
@@ -114,33 +114,33 @@ class TestConfidenceThresholds:
 
 
 # ======================================================================
-# Laura-Szenario — die CRUCIAL-Regression
+# Casey-Szenario — die CRUCIAL-Regression
 # ======================================================================
 
-class TestLauraScenario:
-    """If `people/laura.md` exists, 'Laura' must NOT pass as user.name."""
+class TestCaseyScenario:
+    """If `people/casey.md` exists, 'Casey' must NOT pass as user.name."""
 
-    def test_rejects_laura_as_user_name_when_laura_exists_as_person(
+    def test_rejects_casey_as_user_name_when_casey_exists_as_person(
         self, validator: Validator, person_store
     ) -> None:
-        # Setup: Laura liegt bereits als Person vor (z.B. frueher extrahiert)
-        person_store.get_or_create("Laura", relationship="partner")
+        # Setup: Casey liegt bereits als Person vor (z.B. frueher extrahiert)
+        person_store.get_or_create("Casey", relationship="colleague")
 
-        # LLM slippt: behauptet Laura sei der User-Name
-        cand = _user_cand(field="name", value="Laura", confidence=0.9)
+        # LLM slippt: behauptet Casey sei der User-Name
+        cand = _user_cand(field="name", value="Casey", confidence=0.9)
         result = validator.validate([cand])
 
-        assert len(result.rejected) == 1, f"Laura must be rejected: {result}"
+        assert len(result.rejected) == 1, f"Casey must be rejected: {result}"
         _, reason = result.rejected[0]
         assert "kollision" in reason.lower() or "name-koll" in reason.lower()
 
-    def test_ruben_as_user_name_is_accepted_even_with_laura_person_present(
+    def test_alex_as_user_name_is_accepted_even_with_casey_person_present(
         self, validator: Validator, person_store
     ) -> None:
         """Counter-check: unrelated person names don't block the real user name."""
-        person_store.get_or_create("Laura", relationship="partner")
+        person_store.get_or_create("Casey", relationship="colleague")
 
-        cand = _user_cand(field="name", value="Ruben", confidence=0.95)
+        cand = _user_cand(field="name", value="Alex", confidence=0.95)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 
@@ -187,9 +187,9 @@ class TestSubjectSanity:
         assert len(result.rejected) == 1
 
     def test_rejects_person_equal_to_user_name(self, validator: Validator, profile) -> None:
-        """If the user's name is "Ruben", subject=person:Ruben must not be accepted."""
-        profile.set("identity", "name", "Ruben")
-        cand = _person_cand("Ruben", confidence=0.9)
+        """If the user's name is "Alex", subject=person:Alex must not be accepted."""
+        profile.set("identity", "name", "Alex")
+        cand = _person_cand("Alex", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.rejected) == 1
 
@@ -254,8 +254,8 @@ class TestOverwriteProtection:
     def test_existing_name_new_value_below_overwrite_threshold_goes_to_review(
         self, validator: Validator, profile
     ) -> None:
-        """Bestehender Name 'Ruben', neuer Name 'Paul' mit conf=0.75 → REVIEW."""
-        profile.set("identity", "name", "Ruben")
+        """Bestehender Name 'Alex', neuer Name 'Paul' mit conf=0.75 → REVIEW."""
+        profile.set("identity", "name", "Alex")
 
         cand = _user_cand(field="name", value="Paul", confidence=0.75)
         result = validator.validate([cand])
@@ -263,13 +263,13 @@ class TestOverwriteProtection:
         assert len(result.review) == 1, f"Erwarte review, got: {result}"
         assert len(result.accepted) == 0
         _, reason = result.review[0]
-        assert "ueberschreibung" in reason.lower() or "ruben" in reason.lower()
+        assert "ueberschreibung" in reason.lower() or "alex" in reason.lower()
 
     def test_existing_name_new_value_at_overwrite_threshold_is_accepted(
         self, validator: Validator, profile
     ) -> None:
         """Bestehender Name + neuer Name bei conf=0.9 → accepted."""
-        profile.set("identity", "name", "Ruben")
+        profile.set("identity", "name", "Alex")
 
         cand = _user_cand(
             field="name",
@@ -283,8 +283,8 @@ class TestOverwriteProtection:
         self, validator: Validator, profile
     ) -> None:
         """New name == existing name → no conflict."""
-        profile.set("identity", "name", "Ruben")
-        cand = _user_cand(field="name", value="Ruben", confidence=0.9)
+        profile.set("identity", "name", "Alex")
+        cand = _user_cand(field="name", value="Alex", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 
@@ -313,12 +313,12 @@ class TestBatchValidation:
         self, validator: Validator, person_store
     ) -> None:
         """A mix of accept/review/reject lands in the right buckets."""
-        person_store.get_or_create("Laura", relationship="partner")
+        person_store.get_or_create("Casey", relationship="colleague")
 
         accepted_cand = _user_cand(
             cluster="communication", field="verbosity", value="tldr", confidence=0.9
         )
-        rejected_cand = _user_cand(field="name", value="Laura", confidence=0.9)
+        rejected_cand = _user_cand(field="name", value="Casey", confidence=0.9)
         low_conf_cand = _user_cand(confidence=0.2)
 
         result = validator.validate([accepted_cand, rejected_cand, low_conf_cand])

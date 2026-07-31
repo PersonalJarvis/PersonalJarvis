@@ -13,6 +13,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
+import { installNewlineBridge } from "../agentic/terminalNewline";
+import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 
 type Status = "connecting" | "live" | "exited" | "error";
 
@@ -51,7 +53,7 @@ export function WorkspaceTerminal({
 
     const term = new Terminal({
       convertEol: false,
-      fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+      fontFamily: TERMINAL_FONT_STACK,
       fontSize: 12,
       lineHeight: 1.15,
       cursorBlink: true,
@@ -67,6 +69,11 @@ export function WorkspaceTerminal({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(container);
+    // Shift+Enter breaks the line instead of sending a half-written
+    // instruction — the same binding the Agentic IDE panes have, because it is
+    // the same kind of agent prompt on the other end (see
+    // ../agentic/terminalNewline).
+    const disposeNewlineBridge = installNewlineBridge(term);
     try {
       fit.fit();
     } catch {
@@ -87,6 +94,16 @@ export function WorkspaceTerminal({
         ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
       }
     };
+
+    // The fit above measured whatever font had loaded by then. If the display
+    // font lands afterwards, the grid keeps the fallback's cell width while the
+    // real glyphs are drawn wider, and the text smears out of its columns — see
+    // ../../lib/terminalFont.
+    const disposeFontSync = syncTerminalFont(term, () => {
+      if (disposed) return;
+      term.clearTextureAtlas?.();
+      sendResize();
+    });
 
     {
       const params: Record<string, string> = {
@@ -163,6 +180,8 @@ export function WorkspaceTerminal({
       disposed = true;
       window.removeEventListener("resize", sendResize);
       ro.disconnect();
+      disposeFontSync();
+      disposeNewlineBridge();
       try {
         ws?.close();
       } catch {

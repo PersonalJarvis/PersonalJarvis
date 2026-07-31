@@ -100,11 +100,15 @@ _BILLING_MARKERS = BILLING_LIMIT_MARKERS
 
 # "No key stored" shapes from the plugins' own _ensure_client guards.
 _MISSING_KEY_MARKERS = (
-    ("kein", "gefunden"),          # "Kein OpenAI-API-Key gefunden ..."
+    ("kein", "gefunden"),  # i18n-allow: legacy German key-error shape
     ("no api key",),               # "No API key found ..."
     ("no key found",),
     ("not configured",),
     ("missing api key",),
+    # Local OpenAI-compatible provider without a configured server URL —
+    # "enter the address on the card", the same actionable amber as a
+    # missing key (see jarvis/plugins/brain/local_openai.py).
+    ("needs a server url",),
 )
 
 # Reachability failures (no HTTP status code present).
@@ -118,6 +122,16 @@ _UNREACHABLE_MARKERS = (
     "network",
     "econnrefused",
     "name or service not known",
+    # Local providers phrase it honestly ("Ollama not reachable at … — is it
+    # running?"); the classifier must land on UNREACHABLE, not a red ERROR.
+    "not reachable",
+)
+
+# A reachable LOCAL server with nothing to run — the fix is a pull/load, not
+# a key or a network check (see the local brain plugins' error texts).
+_NO_LOCAL_MODEL_MARKERS = (
+    "no models installed",
+    "lists no models",
 )
 
 
@@ -160,6 +174,10 @@ def classify_provider_error(message: str | None) -> str:
         return UNREACHABLE
 
     # No HTTP status code in the message.
+    if any(m in msg for m in _NO_LOCAL_MODEL_MARKERS):
+        # Reachable local server, nothing loaded — "pull a model", not an
+        # integration bug and not a connectivity problem.
+        return MODEL_UNAVAILABLE
     if any(m in msg for m in _UNREACHABLE_MARKERS):
         return UNREACHABLE
     if _has_billing(msg):
@@ -275,6 +293,20 @@ def _default_make_tts(cfg: Any, provider: str) -> Any:
     return _build_provider(cfg.tts, provider)
 
 
+def _local_readiness(provider: str) -> Any:
+    """On-disk readiness of an on-device provider; ``None`` for cloud ones.
+
+    Lazily imported and defensively wrapped: a probe failure must not turn the
+    provider test into an integration error about the probe itself.
+    """
+    try:
+        from jarvis.speech.local_models import local_status
+
+        return local_status(provider)
+    except Exception:  # noqa: BLE001 — an unavailable probe means "not local"
+        return None
+
+
 def _default_make_stt(cfg: Any, provider: str) -> Any:
     import copy as _copy
 
@@ -380,6 +412,15 @@ async def run_provider_test(
         if not is_present:
             return ProviderTestResult(provider, NOT_CONFIGURED, "No credential stored.")
 
+    # On-device providers: the equivalent question is not "is there a key" but
+    # "are the engine and the model actually on this machine". Asked BEFORE
+    # anything is built, because building an on-device provider is deliberately
+    # cheap — the weights load on first use (AP-26), so a successful
+    # construction proves nothing at all about whether it can run.
+    local_state = _local_readiness(provider)
+    if local_state is not None and not local_state.ready:
+        return ProviderTestResult(provider, NOT_CONFIGURED, local_state.detail)
+
     # Default 1-token probe, shared by the brain tier AND the realtime tier below.
     if brain_probe is None:
         async def brain_probe(p: str, m: str) -> Any:  # type: ignore[misc]
@@ -468,6 +509,22 @@ async def run_provider_test(
             detail = f"{type(exc).__name__}: {exc}"
             return ProviderTestResult(provider, classify_provider_error(detail), str(exc), dur)
 
+    if spec.tier == "dictation":
+        # This tier is probed by the dictation layer, which owns the wording
+        # pass and is the only place allowed to call it — a call site under
+        # jarvis/brain/ would put a model call one import away from the spoken
+        # hot path (AP-11, guarded by test_polish_boot_safety.py).
+        #
+        # The refusal is explicit rather than a fall-through: without it the
+        # card dropped into the STT branch below and reported the user's SPEECH
+        # RECOGNIZER under a wording-provider's name — four cards reading red
+        # over a broken local model while every one of them worked.
+        return ProviderTestResult(
+            provider,
+            ERROR,
+            "This card is tested by the dictation layer, not by the provider test.",
+        )
+
     # stt
     builder = make_stt or _default_make_stt
     try:
@@ -476,31 +533,48 @@ async def run_provider_test(
         # (and the whole API-Keys screen) while a test/section-health check runs.
         inst = await asyncio.to_thread(builder, cfg, provider)
     except (ImportError, ModuleNotFoundError):
-        # M5: the local faster-whisper STT needs the [desktop] extra. On a headless
-        # base install the import raises — that is "not installed", an actionable
-        # amber chip, NOT a red "integration bug".
+        # The on-device engines are optional packages a base install omits. That
+        # is "not installed" — an actionable amber chip pointing at the in-app
+        # install, NOT a red "integration bug".
         return ProviderTestResult(
             provider,
             NOT_CONFIGURED,
-            "Local STT not installed — add the [desktop] extra (pip install -e '.[desktop]').",
+            "The local speech engine is not installed. Install it from this card.",
         )
     except Exception as exc:  # noqa: BLE001
         detail = f"{type(exc).__name__}: {exc}"
         return ProviderTestResult(provider, classify_provider_error(detail), str(exc))
 
-    if spec.auth_mode == "none":
-        # Local provider (faster-whisper): a successful build loads the model;
-        # we do not run a network call. Building it IS the test.
-        return ProviderTestResult(provider, OK, "Local provider built.")
-
+    # An on-device recogniser has to LOAD its model before it can answer, and a
+    # multi-gigabyte checkpoint reads from disk for tens of seconds the first
+    # time. Held to a network-shaped ceiling it would report "unreachable" while
+    # working perfectly, so the local path gets a longer one.
+    stt_timeout = max(timeout_s, 180.0) if local_state is not None else timeout_s
     start = perf_counter()
     try:
-        tr = await asyncio.wait_for(inst.transcribe(_silence_chunks()), timeout=timeout_s)
+        tr = await asyncio.wait_for(
+            inst.transcribe(_silence_chunks()), timeout=stt_timeout
+        )
         dur = (perf_counter() - start) * 1000.0
         text = (getattr(tr, "text", "") or "").strip()
-        return ProviderTestResult(provider, OK, f"transcript={text!r}", dur)
+        # Silence in, silence out: an empty transcript is the CORRECT answer
+        # here, and the run itself is the proof — the model loaded and decoded.
+        detail = (
+            f"Ran on this machine — {local_state.model_label} loaded and decoded."
+            if local_state is not None
+            else f"transcript={text!r}"
+        )
+        return ProviderTestResult(provider, OK, detail, dur)
     except TimeoutError:
         dur = (perf_counter() - start) * 1000.0
+        if local_state is not None:
+            return ProviderTestResult(
+                provider,
+                ERROR,
+                f"{local_state.model_label} did not finish loading within "
+                f"{stt_timeout:.0f}s on this machine.",
+                dur,
+            )
         return ProviderTestResult(provider, UNREACHABLE, f"timeout after {timeout_s:.0f}s", dur)
     except Exception as exc:  # noqa: BLE001
         dur = (perf_counter() - start) * 1000.0

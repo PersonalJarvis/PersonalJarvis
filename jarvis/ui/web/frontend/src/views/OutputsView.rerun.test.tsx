@@ -240,6 +240,44 @@ describe("OutputsView rerun button gating", () => {
 });
 
 describe("OutputsView artifact actions", () => {
+  it("shows clean paths with primary files before nested assets", async () => {
+    installFetchMock(
+      [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
+      [
+        {
+          path: "tasks/019edf/artifacts/files/assets/site.css",
+          size: 10,
+          mtime: 1_750_000_003,
+          is_text: true,
+          preview: "body {}",
+        },
+        {
+          path: "tasks/019edf/artifacts/files/report10.md",
+          size: 10,
+          mtime: 1_750_000_002,
+          is_text: true,
+          preview: "# Ten",
+        },
+        {
+          path: "tasks/019edf/artifacts/files/report2.md",
+          size: 10,
+          mtime: 1_750_000_001,
+          is_text: true,
+          preview: "# Two",
+        },
+      ],
+    );
+
+    renderView();
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("artifact-path")).toHaveLength(3),
+    );
+    expect(
+      screen.getAllByTestId("artifact-path").map((node) => node.textContent),
+    ).toEqual(["report2.md", "report10.md", "assets/site.css"]);
+  });
+
   it("does not render a direct download action for saved mission artifacts", async () => {
     installFetchMock(
       [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
@@ -257,10 +295,11 @@ describe("OutputsView artifact actions", () => {
     renderView();
 
     await waitFor(() =>
-      expect(
-        screen.getByText("tasks/019edf/artifacts/files/report.md"),
-      ).toBeDefined(),
+      expect(screen.getByText("report.md")).toBeDefined(),
     );
+    expect(
+      screen.queryByText("tasks/019edf/artifacts/files/report.md"),
+    ).toBeNull();
 
     expect(screen.queryByTitle("Download")).toBeNull();
     // The artifact opens in an app of the user's choice (chooser), not a fixed
@@ -294,9 +333,7 @@ describe("OutputsView artifact actions", () => {
     renderView();
 
     await waitFor(() =>
-      expect(
-        screen.getByText("tasks/019edf/artifacts/files/report.md"),
-      ).toBeDefined(),
+      expect(screen.getByText("report.md")).toBeDefined(),
     );
 
     fireEvent.click(screen.getByTitle("Change how this opens"));
@@ -339,9 +376,7 @@ describe("OutputsView artifact actions", () => {
     renderView();
 
     await waitFor(() =>
-      expect(
-        screen.getByText("tasks/019edf/artifacts/files/report.md"),
-      ).toBeDefined(),
+      expect(screen.getByText("report.md")).toBeDefined(),
     );
 
     fireEvent.click(screen.getByTitle("Open"));

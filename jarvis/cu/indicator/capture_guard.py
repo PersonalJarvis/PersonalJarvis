@@ -1,9 +1,9 @@
 """Keep the indicator out of Computer-Use's own perception frames.
 
-On Windows the sidecar windows carry ``WDA_EXCLUDEFROMCAPTURE`` and are
-invisible to every grab — this module stays a no-op there. On macOS/Linux
-no such API exists, so the controller registers a hook that hides the
-border for the split second of each frame grab (blank → grab → unblank).
+On Windows the sidecar windows carry ``WDA_EXCLUDEFROMCAPTURE`` as a fast
+path. Every OS also registers this correctness backstop: it hides the border
+for the split second of each frame grab (blank → grab → unblank). This covers
+Windows hosts where display affinity is unsupported or silently rejected.
 
 Fail-open by design: a missing hook, a dead sidecar, or a late ack must
 NEVER delay or break the grab beyond the small ack timeout — a border
@@ -59,8 +59,7 @@ def indicator_suppressed() -> Iterator[None]:
     # shape resumed the generator into a SECOND yield whenever the hook's
     # __exit__ raised (dead sidecar, late ack), which @contextmanager turns
     # into ``RuntimeError: generator didn't stop`` — killing the very frame
-    # grab this guard exists to protect (macOS/Linux path; Windows uses
-    # WDA_EXCLUDEFROMCAPTURE and never registers a hook).
+    # grab this guard exists to protect.
     try:
         yield
     finally:

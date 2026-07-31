@@ -14,7 +14,8 @@ from __future__ import annotations
 import pytest
 
 from jarvis.core.protocols import Observation, VisionSource
-from jarvis.vision.atspi_tree import AtspiTreeSource
+from jarvis.vision.atspi_tree import AtspiTreeSource, _atspi_flatten
+from jarvis.vision.pruning import RawNode
 from tests.fakes.fake_atspi import (
     FakeAtspiAccessible,
     build_fake_atspi_traverser,
@@ -102,6 +103,59 @@ async def test_focused_and_password_states_reach_the_nodes() -> None:
     assert by_name["url"].is_password is False
     assert by_name["pass"].is_password is True
     assert by_name["pass"].focused is False
+
+
+@pytest.mark.asyncio
+async def test_password_role_never_queries_its_text() -> None:
+    password = FakeAtspiAccessible(
+        role_token="ROLE_PASSWORD_TEXT",
+        name="pass",
+        extents=(10, 50, 600, 30),
+        states={"STATE_ENABLED"},
+    )
+
+    def _secret_getter():
+        raise AssertionError("secure text must never be queried")
+
+    password.queryText = _secret_getter
+    tree = FakeAtspiAccessible(
+        role_token="ROLE_FRAME",
+        name="win",
+        extents=(0, 0, 1200, 800),
+        states={"STATE_ACTIVE"},
+        children=[password],
+    )
+    src = AtspiTreeSource(
+        traverser=build_fake_atspi_traverser(tree, window_title="win"),
+        bus_check=lambda: True,
+        monitor_bounds=(0, 0, 1920, 1080),
+    )
+
+    observation = await src.observe()
+
+    node = next(item for item in observation.nodes if item.name == "pass")
+    assert node.is_password is True
+    assert node.value == ""
+
+
+def test_unknown_role_never_queries_text_value() -> None:
+    element = FakeAtspiAccessible(
+        role_token="",
+        name="unknown",
+        text="must-not-be-read",
+    )
+
+    def _secret_getter():
+        raise AssertionError("unknown secure state must block the Text interface")
+
+    element.queryText = _secret_getter
+    out: list[RawNode] = []
+
+    _atspi_flatten(
+        element, depth=0, max_depth=0, parent_index=-1, out=out
+    )
+
+    assert out[0].value == ""
 
 
 @pytest.mark.asyncio

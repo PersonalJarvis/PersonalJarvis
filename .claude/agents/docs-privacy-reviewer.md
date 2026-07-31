@@ -28,7 +28,7 @@ You are the *semantic* half of a two-layer defence. The *deterministic* half is 
 
 **(B) Maintainer identity** — any private email address (a real mailbox at a consumer provider such as gmail/gmx/outlook/web — demo addresses must use `@example.com` per RFC 2606), a personal GitHub login, an alternate real-world name, or `owner: <personal-name>` frontmatter. The deterministic scan in step 1 holds the concrete patterns; this file deliberately does NOT spell them out, because an identity dossier written into a public config publishes exactly what it is meant to protect. The maintainer's author byline in `README.md` and the public X handle are intentional and exempt — see `scrub-exempt.txt`.
 
-**(C) Personal filesystem / machine identifiers** — `C:\Users\Administrator\…`, personal OneDrive paths, the `C--Users-Administrator-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.
+**(C) Personal filesystem / machine identifiers** — `<USER_HOME>`, personal cloud-drive paths, private memory-directory slugs, Windows SIDs, machine/account names, and internal cloud project ids.
 
 **(D) Private life details used as examples** — real relocation/move facts (specific city-to-city moves, emigration or visa status), real family facts (a named relative, a real birth year tied to a person), home address, personal phone numbers. These read as harmless "demo data" but are real biography — the deterministic scrub never catches them. Scrutinize example tasks, Wiki/contact demo pages, test fixtures, and TTS sample sentences hardest.
 

@@ -4,6 +4,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* App-wide scrollbars — PLAIN (non-@layer) CSS on purpose, same reason as the
+   xterm rules below: a `@layer` rule keyed on an element rather than a class
+   is not guaranteed to survive Tailwind's purge.
+   The native WebView2 bar is a light-grey 17 px column with arrow buttons —
+   it reads as somebody else's chrome bolted onto a matte-black app, and it
+   was the single loudest non-theme surface left on screen. This makes every
+   scroll container in the app agree: a thin dark thumb floating on the
+   content, no track, no buttons. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  /* The transparent border + content-box clip is what makes the thumb read as
+     a floating pill rather than a filled gutter. */
+  background-color: hsl(var(--border));
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground));
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 /* xterm.js viewport scrollbar — PLAIN (non-@layer) CSS on purpose. Tailwind
    tree-shakes `@layer utilities` by class usage, and `.xterm-viewport` is
    created by xterm.js at runtime (it never appears in the source), so a rule
@@ -28,33 +65,78 @@
   display: none;
 }
 
+/* Agentic IDE scroll ownership is explicit. A normal xterm buffer exposes its
+   exact native scrollback. A full-screen application owns the alternate
+   buffer and mouse wheel, so its inert browser track is hidden while xterm
+   continues relaying wheel reports to the application. `data-scroll-owner`
+   is synchronized in terminalScrollSurface.ts from xterm's real parser state.
+   Keep these rules top-level because xterm creates the viewport at runtime. */
+.agentic-terminal-host .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+.agentic-terminal-host[data-scroll-owner="application"] .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.agentic-terminal-host[data-scroll-owner="application"]
+  .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* While a boundary is being dragged, the terminal inside a pane keeps the size
+   it had — a terminal is a grid of whole character cells, and re-cutting that
+   grid means telling the agent to redraw its entire screen, which is far too
+   expensive to do per frame (see AgenticTerminal's `layoutBusy`). So for the
+   length of the gesture the pane is a frame around contents of the old size,
+   and the only question is where the difference shows.
+
+   Anchoring the contents to the BOTTOM is what makes it look right: an agent
+   draws its input box at the bottom of its screen, so the strip of unused
+   ground ends up above the output instead of below the input — a terminal with
+   room over it reads as normal, one with its prompt floating in the middle
+   reads as broken. That was the reported symptom. Dragging the other way trims
+   the oldest rows off the top, which is the direction a terminal grows anyway.
+
+   Only during the drag: the moment it ends the pane refits and the contents
+   fill the frame again. */
+.agentic-terminal-host[data-layout-busy="true"] {
+  display: flex;
+  align-items: flex-end;
+}
+
+.agentic-terminal-host[data-layout-busy="true"] > .xterm {
+  width: 100%;
+}
+
 @layer base {
   :root {
     /* Jarvis — Schwarz/Gelb Theme (matte, signal-yellow) */
-    --background: 0 0% 4%;              /* #0A0A0A matte-black */
-    --foreground: 0 0% 96%;              /* #F4F4F5 */
-    --card: 0 0% 6%;                     /* #0F0F0F */
+    --background: 0 0% 4%; /* #0A0A0A matte-black */
+    --foreground: 0 0% 96%; /* #F4F4F5 */
+    --card: 0 0% 6%; /* #0F0F0F */
     --card-foreground: 0 0% 96%;
     --popover: 0 0% 6%;
     --popover-foreground: 0 0% 96%;
-    --primary: 50 100% 52%;              /* #FFD60A signal-yellow */
-    --primary-foreground: 0 0% 4%;       /* schwarz auf gelb */
-    --secondary: 0 0% 10%;               /* #1A1A1A */
+    --primary: 50 100% 52%; /* #FFD60A signal-yellow */
+    --primary-foreground: 0 0% 4%; /* schwarz auf gelb */
+    --secondary: 0 0% 10%; /* #1A1A1A */
     --secondary-foreground: 0 0% 96%;
     --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 56%;        /* #8F8F8F */
+    --muted-foreground: 0 0% 56%; /* #8F8F8F */
     --accent: 50 100% 52%;
     --accent-foreground: 0 0% 4%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 96%;
-    --border: 0 0% 14%;                  /* #242424 */
+    --border: 0 0% 14%; /* #242424 */
     --input: 0 0% 10%;
     --ring: 50 100% 52%;
     --radius: 0.75rem;
 
     /* Jarvis-specific custom tokens */
-    --jarvis-yellow: 255 214 10;         /* #FFD60A for rgba() */
-    --jarvis-yellow-dim: 230 190 40;     /* dimmed yellow */
+    --jarvis-yellow: 255 214 10; /* #FFD60A for rgba() */
+    --jarvis-yellow-dim: 230 190 40; /* dimmed yellow */
     --jarvis-grid: 0 0% 12%;
   }
 
@@ -78,7 +160,13 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family:
+      "Inter",
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     overflow-x: hidden;
   }
@@ -173,7 +261,8 @@
 
   /* Pulse animation for state badges */
   @keyframes jarvis-pulse {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
       box-shadow: 0 0 0 0 rgba(255, 214, 10, 0.4);
     }
@@ -192,8 +281,12 @@
      pulses with two expanding rings; the card glow breathes.
      =========================================================== */
   @keyframes thinking-shimmer {
-    0% { background-position: 200% 50%; }
-    100% { background-position: -200% 50%; }
+    0% {
+      background-position: 200% 50%;
+    }
+    100% {
+      background-position: -200% 50%;
+    }
   }
   .thinking-shimmer {
     background: linear-gradient(
@@ -211,8 +304,14 @@
     animation: thinking-shimmer 2.4s linear infinite;
   }
   @keyframes thinking-ring {
-    0% { transform: scale(0.6); opacity: 0.8; }
-    100% { transform: scale(2.4); opacity: 0; }
+    0% {
+      transform: scale(0.6);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(2.4);
+      opacity: 0;
+    }
   }
   .thinking-ring {
     animation: thinking-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
@@ -221,8 +320,13 @@
     box-shadow: 0 0 12px 2px rgba(255, 214, 10, 0.45);
   }
   @keyframes thinking-breathe {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
   }
   .thinking-breathe {
     animation: thinking-breathe 3.4s ease-in-out infinite;
@@ -241,8 +345,13 @@
 
   /* Soft float animation for the hero orb */
   @keyframes jarvis-float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-14px); }
+    0%,
+    100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-14px);
+    }
   }
   .animate-jarvis-float {
     animation: jarvis-float 6s ease-in-out infinite;
@@ -250,8 +359,12 @@
 
   /* Slow spin for subtle rotations */
   @keyframes jarvis-spin-slow {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
   .animate-jarvis-spin-slow {
     animation: jarvis-spin-slow 40s linear infinite;
@@ -259,26 +372,27 @@
 
   /* Text gradient for the hero */
   .text-gradient-yellow {
-    background: linear-gradient(135deg, #FFE552 0%, #FFD60A 50%, #B8960A 100%);
+    background: linear-gradient(135deg, #ffe552 0%, #ffd60a 50%, #b8960a 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
-  /* Custom scrollbar — matching the theme */
+  /* Quieter than the app-wide default at the top of this file — for dense
+     lists where even the default pill is one line of noise too many. The
+     app-wide rules already cover track, buttons and corner. */
   .scrollbar-jarvis::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .scrollbar-jarvis::-webkit-scrollbar-track {
-    background: transparent;
+    width: 8px;
+    height: 8px;
   }
   .scrollbar-jarvis::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
-    border-radius: 3px;
+    background-color: hsl(var(--border));
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
   }
   .scrollbar-jarvis::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background-color: hsl(var(--muted-foreground));
   }
 
   /* ===========================================================
@@ -317,8 +431,15 @@
     animation: gigi-auto-blink 7s ease-in-out infinite;
   }
   @keyframes gigi-auto-blink {
-    0%, 92%, 95%, 100% { transform: scaleY(1); }
-    93.5%              { transform: scaleY(0.08); }
+    0%,
+    92%,
+    95%,
+    100% {
+      transform: scaleY(1);
+    }
+    93.5% {
+      transform: scaleY(0.08);
+    }
   }
 
   /* Pupil drift: subtle eye movement during idle */
@@ -327,11 +448,22 @@
     transform-origin: 50% 50%;
   }
   @keyframes gigi-pupil-drift {
-    0%, 100% { transform: translate(0, 0); }
-    18%      { transform: translate(-1.2px, 0); }
-    42%      { transform: translate(0.8px, 0.4px); }
-    68%      { transform: translate(1.2px, -0.3px); }
-    85%      { transform: translate(-0.6px, 0.2px); }
+    0%,
+    100% {
+      transform: translate(0, 0);
+    }
+    18% {
+      transform: translate(-1.2px, 0);
+    }
+    42% {
+      transform: translate(0.8px, 0.4px);
+    }
+    68% {
+      transform: translate(1.2px, -0.3px);
+    }
+    85% {
+      transform: translate(-0.6px, 0.2px);
+    }
   }
 
   /* Mouth: subtle "breathing" */
@@ -341,17 +473,32 @@
     animation: gigi-mouth-idle 5.8s ease-in-out infinite;
   }
   @keyframes gigi-mouth-idle {
-    0%, 100% { transform: scale(1, 1); }
-    50%      { transform: scale(0.94, 1.06); }
+    0%,
+    100% {
+      transform: scale(1, 1);
+    }
+    50% {
+      transform: scale(0.94, 1.06);
+    }
   }
 
   @keyframes gigi-float {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-3px); }
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-3px);
+    }
   }
   @keyframes gigi-breath {
-    0%, 100% { transform: scale(1); }
-    50%      { transform: scale(1.025); }
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.025);
+    }
   }
 
   /* --- Action: Blink (eyes close briefly) --- */
@@ -362,8 +509,14 @@
     transform-origin: 50% 108px;
   }
   @keyframes gigi-blink {
-    0%, 100% { transform: scaleY(1); }
-    45%, 60% { transform: scaleY(0.08); }
+    0%,
+    100% {
+      transform: scaleY(1);
+    }
+    45%,
+    60% {
+      transform: scaleY(0.08);
+    }
   }
 
   /* --- Action: Wave (left arm waves) ---
@@ -383,16 +536,36 @@
     animation: gigi-wave 1.8s cubic-bezier(0.4, 0, 0.2, 1);
   }
   @keyframes gigi-wave {
-    0%   { transform: rotate(0deg); }
-    12%  { transform: rotate(-95deg); }    /* arm up */
-    22%  { transform: rotate(-75deg); }    /* wave 1 */
-    32%  { transform: rotate(-110deg); }
-    42%  { transform: rotate(-75deg); }    /* wave 2 */
-    52%  { transform: rotate(-110deg); }
-    62%  { transform: rotate(-75deg); }    /* wave 3 */
-    72%  { transform: rotate(-110deg); }
-    82%  { transform: rotate(-90deg); }    /* wave ends */
-    100% { transform: rotate(0deg); }      /* back down */
+    0% {
+      transform: rotate(0deg);
+    }
+    12% {
+      transform: rotate(-95deg);
+    } /* arm up */
+    22% {
+      transform: rotate(-75deg);
+    } /* wave 1 */
+    32% {
+      transform: rotate(-110deg);
+    }
+    42% {
+      transform: rotate(-75deg);
+    } /* wave 2 */
+    52% {
+      transform: rotate(-110deg);
+    }
+    62% {
+      transform: rotate(-75deg);
+    } /* wave 3 */
+    72% {
+      transform: rotate(-110deg);
+    }
+    82% {
+      transform: rotate(-90deg);
+    } /* wave ends */
+    100% {
+      transform: rotate(0deg);
+    } /* back down */
   }
 
   /* --- Action: Spin (whole figure spins) --- */
@@ -400,8 +573,12 @@
     animation: gigi-spin 0.85s cubic-bezier(0.65, 0, 0.35, 1);
   }
   @keyframes gigi-spin {
-    0%   { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
   }
 
   /* --- Action: Jump (hop up) --- */
@@ -409,10 +586,19 @@
     animation: gigi-jump 0.65s cubic-bezier(0.4, 0, 0.2, 1);
   }
   @keyframes gigi-jump {
-    0%, 100% { transform: translateY(0) scale(1, 1); }
-    20%      { transform: translateY(2px) scale(1.08, 0.92); }
-    55%      { transform: translateY(-14px) scale(0.95, 1.05); }
-    80%      { transform: translateY(1px) scale(1.05, 0.95); }
+    0%,
+    100% {
+      transform: translateY(0) scale(1, 1);
+    }
+    20% {
+      transform: translateY(2px) scale(1.08, 0.92);
+    }
+    55% {
+      transform: translateY(-14px) scale(0.95, 1.05);
+    }
+    80% {
+      transform: translateY(1px) scale(1.05, 0.95);
+    }
   }
 
   /* --- Action: Shake (head shaking) --- */
@@ -420,11 +606,22 @@
     animation: gigi-shake 0.55s ease-in-out;
   }
   @keyframes gigi-shake {
-    0%, 100% { transform: translateX(0) rotate(0deg); }
-    15%      { transform: translateX(-4px) rotate(-3deg); }
-    35%      { transform: translateX(4px) rotate(3deg); }
-    55%      { transform: translateX(-3px) rotate(-2deg); }
-    75%      { transform: translateX(3px) rotate(2deg); }
+    0%,
+    100% {
+      transform: translateX(0) rotate(0deg);
+    }
+    15% {
+      transform: translateX(-4px) rotate(-3deg);
+    }
+    35% {
+      transform: translateX(4px) rotate(3deg);
+    }
+    55% {
+      transform: translateX(-3px) rotate(-2deg);
+    }
+    75% {
+      transform: translateX(3px) rotate(2deg);
+    }
   }
 
   /* --- Action: Look-Left / Look-Right (pupils look) --- */
@@ -435,12 +632,24 @@
     animation: gigi-look-right 0.85s ease-in-out;
   }
   @keyframes gigi-look-left {
-    0%, 100% { transform: translateX(0); }
-    30%, 70% { transform: translateX(-4px); }
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    30%,
+    70% {
+      transform: translateX(-4px);
+    }
   }
   @keyframes gigi-look-right {
-    0%, 100% { transform: translateX(0); }
-    30%, 70% { transform: translateX(4px); }
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    30%,
+    70% {
+      transform: translateX(4px);
+    }
   }
 
   /* --- Action: Glitch (brief digital disruption) --- */
@@ -452,17 +661,43 @@
     animation: gigi-glitch-pixels 0.42s steps(4, end);
   }
   @keyframes gigi-glitch {
-    0%   { transform: translate(0, 0) skewX(0); filter: none; }
-    20%  { transform: translate(-3px, 1px) skewX(-4deg); filter: hue-rotate(-20deg); }
-    40%  { transform: translate(3px, -1px) skewX(4deg); }
-    60%  { transform: translate(-2px, 0) skewX(-2deg); filter: hue-rotate(20deg); }
-    80%  { transform: translate(2px, 1px) skewX(2deg); }
-    100% { transform: translate(0, 0) skewX(0); filter: none; }
+    0% {
+      transform: translate(0, 0) skewX(0);
+      filter: none;
+    }
+    20% {
+      transform: translate(-3px, 1px) skewX(-4deg);
+      filter: hue-rotate(-20deg);
+    }
+    40% {
+      transform: translate(3px, -1px) skewX(4deg);
+    }
+    60% {
+      transform: translate(-2px, 0) skewX(-2deg);
+      filter: hue-rotate(20deg);
+    }
+    80% {
+      transform: translate(2px, 1px) skewX(2deg);
+    }
+    100% {
+      transform: translate(0, 0) skewX(0);
+      filter: none;
+    }
   }
   @keyframes gigi-glitch-pixels {
-    0%, 100% { opacity: 1; transform: translateX(0); }
-    25%      { opacity: 0.3; transform: translateX(-4px); }
-    75%      { opacity: 0.8; transform: translateX(4px); }
+    0%,
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    25% {
+      opacity: 0.3;
+      transform: translateX(-4px);
+    }
+    75% {
+      opacity: 0.8;
+      transform: translateX(4px);
+    }
   }
 
   /* --- Voice-state reactions --- */
@@ -470,16 +705,28 @@
     animation: gigi-ear-prick 1.2s ease-in-out infinite;
   }
   @keyframes gigi-ear-prick {
-    0%, 100% { transform: scale(1); }
-    50%      { transform: scale(1.08); }
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.08);
+    }
   }
 
   .gigi-voice-thinking .gigi-svg {
-    animation: gigi-breath 3.8s ease-in-out infinite, gigi-thinking-tilt 2.4s ease-in-out infinite;
+    animation:
+      gigi-breath 3.8s ease-in-out infinite,
+      gigi-thinking-tilt 2.4s ease-in-out infinite;
   }
   @keyframes gigi-thinking-tilt {
-    0%, 100% { transform: rotate(0deg); }
-    50%      { transform: rotate(-6deg); }
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    50% {
+      transform: rotate(-6deg);
+    }
   }
 
   .gigi-voice-speaking .gigi-mouth {
@@ -487,8 +734,12 @@
     transform-origin: 50% 146px;
   }
   @keyframes gigi-speak {
-    0%   { transform: scaleY(0.7); }
-    100% { transform: scaleY(1.25); }
+    0% {
+      transform: scaleY(0.7);
+    }
+    100% {
+      transform: scaleY(1.25);
+    }
   }
 
   .gigi-voice-error .gigi-svg {
@@ -508,7 +759,9 @@
     border-radius: 10px;
     background: hsl(var(--card));
     border: 1px solid rgba(255, 214, 10, 0.45);
-    box-shadow: 0 0 18px rgba(255, 214, 10, 0.18), 0 4px 14px rgba(0, 0, 0, 0.45);
+    box-shadow:
+      0 0 18px rgba(255, 214, 10, 0.18),
+      0 4px 14px rgba(0, 0, 0, 0.45);
     font-size: 11.5px;
     line-height: 1.35;
     color: hsl(var(--foreground));
@@ -582,8 +835,14 @@
     white-space: pre-wrap;
   }
   @keyframes gigi-bubble-pop {
-    0%   { opacity: 0; transform: translateY(-50%) scale(0.55); }
-    100% { opacity: 1; transform: translateY(-50%) scale(1); }
+    0% {
+      opacity: 0;
+      transform: translateY(-50%) scale(0.55);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(-50%) scale(1);
+    }
   }
 
   /* Reduced-motion friendly: all animations off */
@@ -663,6 +922,92 @@
 
   @media (prefers-reduced-motion: reduce) {
     .jarvis-dock-catch {
+      animation: none;
+    }
+  }
+}
+
+@layer components {
+  /*
+   * Unfinished material in the UltraWiki intake bar. The texture says "there
+   * is work left here"; the ANIMATION says "and it is moving right now", so
+   * it is applied separately (.uw-hatch-live) and only when the backend
+   * reports the pipeline actually processing. A hatch scrolling over a paused
+   * queue would be the same false reassurance the section was rebuilt to
+   * remove.
+   */
+  .uw-hatch {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.14) 0px,
+      rgba(255, 255, 255, 0.14) 2px,
+      transparent 2px,
+      transparent 6px
+    );
+    background-size: 8.49px 8.49px;
+  }
+
+  .uw-hatch-live {
+    animation: uw-hatch-drift 1.1s linear infinite;
+  }
+
+  /*
+   * The Explore stage — the surface the topic map is drawn on.
+   *
+   * The map used to be a 224 px letterbox above a wall of text, which is the
+   * one arrangement that makes a network unreadable: a force layout needs
+   * area, not width. It now owns the middle of the screen, and these three
+   * layers are what stop that area from reading as an empty black rectangle.
+   * All of it is behind the canvas and none of it carries data — the grid
+   * gives the depth a floating cloud of dots has nothing to sit on, the glow
+   * marks the centre of gravity, the vignette pulls the eye off the edges.
+   */
+  .uw-stage {
+    background-color: hsl(var(--background));
+    background-image:
+      linear-gradient(rgba(255, 214, 10, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 214, 10, 0.028) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .uw-stage-glow {
+    background: radial-gradient(
+      circle at 50% 46%,
+      rgba(255, 214, 10, 0.13) 0%,
+      rgba(255, 214, 10, 0.04) 34%,
+      transparent 66%
+    );
+    filter: blur(46px);
+  }
+
+  .uw-stage-vignette {
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      transparent 42%,
+      rgba(0, 0, 0, 0.5) 100%
+    );
+  }
+
+  /* The floating control pills over the stage (floor slider, legend, counts).
+     Glass rather than a solid card: the map has to stay visible underneath,
+     or the controls become a second letterbox. */
+  .uw-stage-pill {
+    background: rgba(10, 10, 10, 0.66);
+    border: 1px solid hsl(var(--border));
+    backdrop-filter: blur(10px);
+  }
+
+  @keyframes uw-hatch-drift {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 8.49px 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .uw-hatch-live {
       animation: none;
     }
   }

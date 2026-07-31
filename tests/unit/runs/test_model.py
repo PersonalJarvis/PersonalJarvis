@@ -6,7 +6,7 @@ from jarvis.runs.model import (
 
 def test_run_turn_defaults_are_safe():
     t = RunTurn(idx=0, trace_id="t1")
-    assert t.timeline == [] and t.latency == [] and t.tools == []
+    assert t.events == [] and t.latency == [] and t.tools == []
     assert t.decision_path == [] and t.errors == []
     assert t.extras.interrupted is False
 

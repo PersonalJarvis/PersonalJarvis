@@ -23,7 +23,7 @@ def fake_cfg() -> JarvisConfig:
     cfg.integrations.twilio = TwilioConfig(
         enabled=True,
         account_sid="AC0123456789abcdef0123456789abcdef",
-        phone_number="+49301234567",
+        phone_number="+12025550102",
         public_base_url="https://jarvis.example.com",
         language_code="de-DE",
         max_call_seconds=600,
@@ -101,7 +101,7 @@ def test_config_get_returns_non_secret_fields(app, secret_store):
         r = client.get("/api/telephony/config")
     assert r.status_code == 200
     body = r.json()
-    assert body["phone_number"] == "+49301234567"
+    assert body["phone_number"] == "+12025550102"
     assert body["auth_token_set"] is True
     assert "auth_token" not in body  # never leak the secret value
 
@@ -341,16 +341,16 @@ def test_outbound_route_places_call(app, secret_store, fake_cfg, monkeypatch):
     with TestClient(app) as client:
         r = client.post(
             "/api/telephony/outbound",
-            json={"to": "+4915112345678", "opening": "Hallo Christoph."},
+            json={"to": "+12025550101", "opening": "Hallo Christoph."},
         )
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["call_sid"] == "CA_OUT_42"
     # The route resolved config + secret and dialed a raw number.
-    assert captured["to"] == "+4915112345678"
+    assert captured["to"] == "+12025550101"
     assert captured["opening"] == "Hallo Christoph."
-    assert captured["from_number"] == "+49301234567"
+    assert captured["from_number"] == "+12025550102"
     assert captured["public_base_url"] == "https://jarvis.example.com"
     assert captured["account_sid"] == "AC0123456789abcdef0123456789abcdef"
     assert captured["auth_token"] == "supersecrettoken"
@@ -366,7 +366,7 @@ def test_outbound_route_rejects_non_e164(app, secret_store):
 def test_outbound_route_409_when_disabled(app, secret_store, fake_cfg):
     fake_cfg.integrations.twilio.enabled = False
     with TestClient(app) as client:
-        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+        r = client.post("/api/telephony/outbound", json={"to": "+12025550101"})
     assert r.status_code == 409
     assert "error" in r.json()
 
@@ -374,14 +374,14 @@ def test_outbound_route_409_when_disabled(app, secret_store, fake_cfg):
 def test_outbound_route_409_when_no_token(app, monkeypatch):
     monkeypatch.setattr(routes, "get_secret", lambda *a, **k: None)
     with TestClient(app) as client:
-        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+        r = client.post("/api/telephony/outbound", json={"to": "+12025550101"})
     assert r.status_code == 409
 
 
 def test_outbound_route_graceful_when_twilio_missing(app, secret_store, monkeypatch):
     monkeypatch.setattr(routes, "is_available", lambda: False)
     with TestClient(app) as client:
-        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+        r = client.post("/api/telephony/outbound", json={"to": "+12025550101"})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False
@@ -396,7 +396,7 @@ def test_outbound_route_surfaces_provision_error(app, secret_store, monkeypatch)
 
     monkeypatch.setattr("jarvis.telephony.outbound.place_call", boom)
     with TestClient(app) as client:
-        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678", "opening": "Hi"})
+        r = client.post("/api/telephony/outbound", json={"to": "+12025550101", "opening": "Hi"})
     assert r.status_code == 409
     assert r.json()["ok"] is False
     assert "nope" in r.json()["error"]
@@ -409,8 +409,8 @@ def test_voice_webhook_outbound_branch_returns_opening(app, secret_store, fake_c
     url = f"https://jarvis.example.com/api/telephony/voice?{query}"
     params = {
         "CallSid": "CAOUT9",
-        "From": "+49301234567",
-        "To": "+4915112345678",
+        "From": "+12025550102",
+        "To": "+12025550101",
         "Direction": "outbound-api",
     }
     sig = RequestValidator(secret_store["twilio_auth_token"]).compute_signature(url, params)

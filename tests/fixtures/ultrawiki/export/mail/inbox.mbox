@@ -1,0 +1,19 @@
+From ada@example.com Mon Jan 01 09:00:00 2024
+Message-ID: <mail-001@example.com>
+From: Ada Lovelace <ada@example.com>
+To: Bruno Marek <bruno@example.com>
+Date: Mon, 01 Jan 2024 09:00:00 +0000
+Subject: Quarterly ledger
+Content-Type: text/plain; charset="utf-8"
+
+The quarterly ledger reconciliation is finished.
+
+From bruno@example.com Tue Jan 02 11:30:00 2024
+Message-ID: <mail-002@example.com>
+From: Bruno Marek <bruno@example.com>
+To: Ada Lovelace <ada@example.com>
+Date: Tue, 02 Jan 2024 11:30:00 +0000
+Subject: Re: Quarterly ledger
+Content-Type: text/plain; charset="utf-8"
+
+Thanks - I filed it under the telescope maintenance budget.

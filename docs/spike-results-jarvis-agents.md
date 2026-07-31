@@ -62,7 +62,7 @@ Example output (`google/gemini-3-flash-preview`, exit code 0, duration 7.9s):
     "durationMs": 7906,
     "agentMeta": {
       "sessionId": "1379cb33-b74b-4ae9-8103-d6cb710dd51a",
-      "sessionFile": "C:\\Users\\...\\.openclaw\\agents\\main\\sessions\\1379cb33-...jsonl",
+      "sessionFile": "<USER_HOME>\\.openclaw\\agents\\main\\sessions\\1379cb33-...jsonl",
       "provider": "google",
       "model": "gemini-3-flash-preview",
       "contextTokens": 1048576,
@@ -80,7 +80,7 @@ Example output (`google/gemini-3-flash-preview`, exit code 0, duration 7.9s):
     "systemPromptReport": {
       "provider": "google",
       "model": "gemini-3-flash-preview",
-      "workspaceDir": "C:\\Users\\...\\.openclaw\\workspace",
+      "workspaceDir": "<USER_HOME>\\.openclaw\\workspace",
       "bootstrapMaxChars": 12000,
       "systemPrompt": { "chars": 35400, "projectContextChars": 13783 },
       "injectedWorkspaceFiles": [

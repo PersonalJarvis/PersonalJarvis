@@ -4,9 +4,12 @@
 ``OrbBusBridge`` drives, but renders nothing itself: it spawns
 ``python -m jarvis.ui.jarvisbar.host`` — whose MAIN thread may legally own
 Aqua-Tk — and forwards every surface call as one JSON line on the child's
-stdin. Child events (talk, hang-up, mute toggle, feedback, show-window) stream
-back on stdout. Voice actions are executed against the live parent-process
-pipeline; bridge-owned actions are dispatched to its registered callbacks.
+stdin. Child events (talk, hang-up, mute toggle, feedback, show-window, drop)
+stream back on stdout. Voice actions are executed against the live
+parent-process pipeline; bridge-owned actions are dispatched to its registered
+callbacks. A forwarded drop is replayed onto THIS process's drop bridge (the
+brain lives here, not in the host) and its verdict is sent back down so the
+hosted bar can confirm the drop on screen.
 
 Failure contract: while the host is down, every method degrades to a one-log
 no-op (``NullOverlay`` behavior) — the bar is cosmetic and must never take
@@ -31,14 +34,43 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from typing import IO, Any
 
+# The SAME coarse-mode tuple every other layer validates against — imported,
+# never copied. ``jarvis.ui.jarvisbar.modes`` has no imports at all, so this
+# stays a pure IPC proxy with no numpy/PIL in the parent process. The
+# hand-copied predecessor is precisely why ``show("dictate")`` was a silent
+# no-op on the macOS surface for weeks (AP-4 / BUG-008).
+from jarvis.ui.jarvisbar.modes import MODES as _MODES
+
 log = logging.getLogger("jarvis.ui.jarvisbar")
 
-# Kept in sync with renderer.MODES without importing numpy/PIL into the
-# parent for a pure IPC proxy; the host-side bar re-validates every mode.
-_MODES = ("idle", "listen", "speak", "think")
+
+def _respawn_after_backoff_weakly(
+    weak_surface: weakref.ReferenceType[SubprocessBarOverlay],
+    attempt: int,
+    backoff: float,
+) -> None:
+    """Serve a respawn backoff without keeping the overlay alive.
+
+    Deliberately a module function taking a weak reference, not a bound
+    method: a sleeping thread that holds the surface strongly resurrects an
+    overlay nobody wants anymore, and spawns a REAL host process — with a real
+    window — once the sleep ends. An overlay that has been dropped has no bar
+    to restore, so the correct respawn is none.
+    """
+    time.sleep(backoff)
+    surface = weak_surface()
+    if surface is None:
+        log.debug(
+            "JarvisBar respawn attempt %d abandoned — the overlay it belonged "
+            "to was released during the backoff.",
+            attempt,
+        )
+        return
+    surface._respawn_after_backoff(attempt)
 
 _HOST_MODULE = "jarvis.ui.jarvisbar.host"
 
@@ -176,6 +208,14 @@ class SubprocessBarOverlay:
         # is this flag — it must be set even when there is no live process
         # to tear down right now.
         self._stopping = True
+        # Release the drop return leg: a swap to another surface installs its
+        # own sink, and a stale one would write to a host that is going away.
+        try:
+            from jarvis.overlay.drop_bridge import set_drop_result_sink
+
+            set_drop_result_sink(None)
+        except Exception:  # noqa: BLE001 — teardown must never raise
+            log.debug("drop result sink release failed", exc_info=True)
         proc = self._proc
         if proc is None:
             return
@@ -369,22 +409,30 @@ class SubprocessBarOverlay:
                 self._RESPAWN_MAX_ATTEMPTS,
                 self._RESPAWN_BACKOFF_SECONDS,
             )
+            # The thread must NOT hold this surface alive across the backoff.
+            # A bound method would: the sleeping thread keeps a strong ref, so
+            # an overlay nobody wants anymore still reaches Popen minutes later
+            # and puts a real bar window on the user's screen. That is exactly
+            # how a unit run leaked a second, permanently visible bar — the
+            # test's Popen fake was long unpatched by the time the sleep ended.
+            # A weakref makes "nobody holds this overlay" mean "no respawn".
             threading.Thread(
-                target=self._respawn_after_backoff,
-                args=(attempt,),
+                target=_respawn_after_backoff_weakly,
+                args=(weakref.ref(self), attempt, self._RESPAWN_BACKOFF_SECONDS),
                 name=f"{self._RESPAWN_THREAD_NAME}-{attempt}",
                 daemon=True,
             ).start()
 
     def _respawn_after_backoff(self, attempt: int) -> None:
-        """Wait out the backoff, then respawn — runs on its own daemon thread.
+        """Respawn the host — runs on its own daemon thread, backoff already served.
 
-        Never touches the caller's thread or the app's event loop: the sleep
-        and the Popen call both happen here. A death within the backoff
-        window (``stop()`` called while waiting) aborts the attempt instead
-        of spawning a host nobody wants anymore.
+        Never touches the caller's thread or the app's event loop: the Popen
+        call happens here. The backoff itself is served by
+        :func:`_respawn_after_backoff_weakly`, which holds only a weak
+        reference while it sleeps. A death within that window (``stop()``
+        called while waiting) aborts the attempt instead of spawning a host
+        nobody wants anymore.
         """
-        time.sleep(self._RESPAWN_BACKOFF_SECONDS)
         if self._stopping:
             return
 
@@ -469,8 +517,38 @@ class SubprocessBarOverlay:
                 cb_show = self._on_show_window
                 if cb_show is not None:
                     cb_show()
+            elif event == "drop":
+                self._dispatch_drop_event(msg)
         except Exception:  # noqa: BLE001 — a bad callback must not kill the pump
             log.exception("bar host event callback failed: %r", event)
+
+    def _dispatch_drop_event(self, msg: dict[str, Any]) -> None:
+        """Re-dispatch a drop the hosted bar received, here in the parent.
+
+        The child process has no brain and no asyncio loop — its bridge only
+        forwards. This process has the real handler (installed by the desktop
+        app), so the drop is replayed onto the parent-side bridge and the
+        verdict is sent back down as a ``drop_result`` command, which the host
+        turns into the bar's visible confirmation.
+        """
+        from jarvis.overlay.drop_bridge import dispatch_drop, set_drop_result_sink
+
+        paths = [str(p) for p in (msg.get("paths") or [])]
+        text = str(msg.get("text") or "")
+        # Install the return leg lazily and idempotently: it can only be
+        # answered while a host is alive, and binding it here keeps it on the
+        # instance that actually received the drop.
+        set_drop_result_sink(self._send_drop_result)
+        if not dispatch_drop(paths, text):
+            # No handler in this process either (headless embedder, or a drop
+            # that beat the desktop wiring). Say so rather than leaving the bar
+            # waiting on a confirmation that will never come.
+            log.debug("bar host drop had no parent-side handler")
+            self._send_drop_result(False)
+
+    def _send_drop_result(self, accepted: bool) -> None:
+        """Send a drop verdict down to the hosted bar (never raises)."""
+        self._send({"op": "drop_result", "accepted": bool(accepted)})
 
     def _dispatch_talk_action(self) -> None:
         """Start a voice session in the parent process.

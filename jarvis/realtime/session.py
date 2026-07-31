@@ -35,7 +35,7 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
-from jarvis.brain.turn_planner import TurnPlan, plan_turn
+from jarvis.brain.turn_planner import TurnPath, TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
@@ -44,6 +44,7 @@ from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
+    HANGUP_DESKTOP_FALLBACK,
     HANGUP_VOICE_PATTERN,
     SPOKEN_KIND_PROGRESS,
     SPOKEN_KIND_REPLY,
@@ -183,6 +184,41 @@ def _is_public_knowledge_question(text: str) -> bool:
     return bool(_PUBLIC_KNOWLEDGE_QUESTION_RE.search(str(text or "").strip()))
 
 
+def _dictionary_corrected(text: str) -> str:
+    """The user's STT dictionary, applied to a realtime input transcript.
+
+    A realtime provider transcribes INSIDE the model, so no ``STTProvider`` is
+    ever built for this audio and the pipeline's ``DictionaryCorrectingSTT``
+    decorator — which is what makes the dictionary work at all — never sees the
+    text. The user's own vocabulary therefore silently did not apply in realtime
+    mode, and on 2026-07-27 that cost a pane: "one Claude Code terminal" was
+    transcribed "one Cloude code terminal", the spawn parser matched no CLI in
+    it, and the group was dropped without a word. ``claude`` was in the user's
+    dictionary the whole time.
+
+    Correcting here is the one place every consumer reads from: the echo judge,
+    the language resolver, the turn plan, the delegate, the tool bridge, the
+    hang-up matcher and the transcript published to the UI all take this string,
+    so none of them can disagree about what was said.
+
+    Provider-agnostic on purpose (AP-21): it repairs whatever the model heard
+    rather than asking a provider for a decoder-bias hook only some of them
+    offer. Pure regex plus a bounded edit distance — no model call, no network,
+    nothing that belongs off a hot path (AP-11 doctrine). A dictionary that
+    cannot be read returns the transcript untouched: a custom word is never
+    worth a lost turn.
+    """
+    if not text:
+        return text
+    try:
+        from jarvis.speech.stt_dictionary import get_corrector
+
+        return get_corrector().correct(text)
+    except Exception:  # noqa: BLE001 - the dictionary is an add-on, never a gate
+        log.debug("realtime: STT dictionary unavailable", exc_info=True)
+        return text
+
+
 class _LoopLagProbe:
     """Sample event-loop scheduling lag so audio-stall logs can tell a
     silent provider from a starved receive loop.
@@ -310,6 +346,14 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "was started, completed, saved, opened, or changed unless the latest "
     "successful jarvis_action result explicitly supports that claim. A promise "
     "or an intention is not a result. "
+    "When a request names SEVERAL targets — several coding agents, files, "
+    "people, or items — report ONLY the ones the result actually names as "
+    "done. Never carry a name over from the user's own question into your "
+    "answer: if they asked for two and the result names one, say which one it "
+    "was and that the other was not reached. Reporting two because two were "
+    "asked for is the exact failure this rule exists for (live 2026-07-26: one "
+    "of two coding agents was briefed and the user was told both were "
+    "working). "
     "For some turns the Jarvis orchestrator takes over and injects a trusted "
     "result on its own; a separate instruction tells you when that is the case, "
     "and only then do you wait instead of calling. The function returns "
@@ -415,6 +459,13 @@ def _requires_jarvis_action(text: str) -> bool:
     return plan_turn(text).requires_orchestrator
 
 
+# Ceiling for a delegate reply injected into the provider context. ~4 000
+# characters is roughly three spoken minutes — far beyond any real voice
+# answer, small enough to stop a runaway tool result from riding along in
+# every later turn of the call.
+_DELEGATE_RESULT_MAX_CHARS = 4_000
+
+
 def _delegate_result_prompt(
     text: str,
     *,
@@ -432,6 +483,17 @@ def _delegate_result_prompt(
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     status = "success" if success else "failure"
+    # The injected result lives in the provider context for the REST OF THE
+    # CALL and is re-billed as input on every later turn (at audio-session
+    # rates). A spoken reply is short by design; only a pathological
+    # delegate answer exceeds this, and its tail would never be voiced
+    # anyway. Cut at a sentence boundary where one exists.
+    if len(text) > _DELEGATE_RESULT_MAX_CHARS:
+        cut = text[:_DELEGATE_RESULT_MAX_CHARS]
+        dot = cut.rfind(". ")
+        if dot > _DELEGATE_RESULT_MAX_CHARS // 2:
+            cut = cut[: dot + 1]
+        text = cut + " [result shortened]"
     framing = (
         (
             "This is the outcome of the user's earlier request, which finished "
@@ -678,6 +740,27 @@ _TOOL_ROLE_DIRECTIVE = (
 # a few hundred characters and pass through untouched.
 _PREFERENCES_MAX_CHARS = 4000
 
+#: Cap on a skill body injected straight into the live session. Tighter than the
+#: preferences cap above by precedent, not by guess: that block is the user's own
+#: standing file and carries the comment that a pathologically large one must not
+#: bloat the per-turn update. A skill body is less trusted and far more variable,
+#: so it gets less room.
+#:
+#: Over the cap the turn falls back to the delegate. It is NEVER truncated — a
+#: half-injected instruction list produces a half-executed skill, which is
+#: strictly worse than a slow correct answer.
+_REALTIME_SKILL_MAX_CHARS = 1500
+
+#: A body mentioning tools cannot be honoured by a model that only has
+#: `jarvis_action` and `end_call`. An author declaring `requires_tools: []` while
+#: writing "use the Gmail tool" is a plausible slip given the corpus, so the
+#: qualification fails closed to the delegate rather than trusting the field.
+_REALTIME_SKILL_TOOL_WORD_RE = re.compile(
+    r"\b(tool|tools|call the|run-skill|spawn|mission|worker"
+    r"|werkzeug|herramienta)\b",  # i18n-allow: matching data
+    re.IGNORECASE,
+)
+
 
 def _preferences_block(config: Any) -> str:
     """The user's standing-instructions block (``Ruben.md`` equivalent).
@@ -708,6 +791,8 @@ def _session_instructions(
     language_is_pinned: bool = True,
     tool_directive: str = "",
     preferences: str = "",
+    skill_directive: str = "",
+    workspace_directive: str = "",
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -797,6 +882,16 @@ def _session_instructions(
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
         tool_directive,
+        # The live workspace roster sits with the tool directive because it is
+        # a routing rule, not background colour: it names the one class of word
+        # that must always reach the action function instead of the model's own
+        # knowledge.
+        workspace_directive,
+        # A matched skill's own instructions, when the turn qualified for direct
+        # injection. Placed AFTER the tool directive and BEFORE the safety
+        # appendix on purpose: the skill refines HOW to answer this turn, and
+        # safety must still frame it from below.
+        skill_directive,
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
         clock_line,
@@ -972,6 +1067,13 @@ class RealtimeVoiceSession:
         self._failure_detail = ""
         self._active_model = ""
         self._active_voice = ""
+        # Live-channel token usage accumulated since the last published turn.
+        # Providers report one "usage" event per finished generation; a turn
+        # may span several generations (tool call + rendering), so the fold
+        # is a plain per-key sum. Without this the Live API's own spend —
+        # audio in AND out, re-billed context included — never reached the
+        # recorder at all (2026-07-28 cost audit: 100% unmetered).
+        self._turn_usage: dict[str, int] = {}
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker: Any = None
@@ -1005,6 +1107,9 @@ class RealtimeVoiceSession:
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
+        # True once the surface TTS spoke anything in THIS turn, so the turn is
+        # answered and the no-audio rescue must not speak over it.
+        self._surface_spoke_this_turn = False
         self._drop_provider_output_until_new_response = False
         # Set when a surface fallback already spoke a delegate reply: a very
         # late provider rendering of that same reply may arrive AFTER its turn
@@ -1105,15 +1210,229 @@ class RealtimeVoiceSession:
             getattr(self._config, "brain", None), "evidence_domains", None
         )
         evidence_domains = getattr(evidence_cfg, "domains", None)
-        return plan_turn(
-            text,
-            capability_registry=registry,
-            tool_names=tool_names,
-            evidence_domains=(
-                evidence_domains if isinstance(evidence_domains, dict) else None
-            ),
-            context=context,
+        try:
+            return plan_turn(
+                text,
+                capability_registry=registry,
+                tool_names=tool_names,
+                evidence_domains=(
+                    evidence_domains if isinstance(evidence_domains, dict) else None
+                ),
+                context=context,
+                skill_index=self._skill_match_index(),
+                workspace_names=self._workspace_call_signs(),
+            )
+        except Exception:  # noqa: BLE001 — routing must never end a live call
+            # Planning only chooses a route, and both routes can answer. The
+            # pump treats any exception as a dead provider socket, so letting
+            # one escape here costs the whole call: live incident 2026-07-25
+            # 15:35, where a planner signature mismatch raised on every
+            # committed turn, burned the rebuild budget and left four spoken
+            # turns unanswered and inaudible. Degrade to the native route —
+            # the model answers immediately, which is what the caller hears.
+            log.warning(
+                "realtime[%s] turn planning failed — routing this turn "
+                "natively instead of ending the call",
+                self.session_id,
+                exc_info=True,
+            )
+            return TurnPlan(path=TurnPath.NATIVE_REALTIME)
+
+    @staticmethod
+    def _workspace_call_signs() -> tuple[str, ...]:
+        """Call-signs of the open Agentic-IDE workspace, or ``()``.
+
+        Pure in-memory read of the process-wide registry, so it is free on the
+        hot path. Any fault answers "no workspace": the coding surface is
+        optional and must never be able to break a live call.
+        """
+        try:
+            from jarvis.agentic_ide.session import running_call_signs
+
+            return tuple(running_call_signs())
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return ()
+
+    def _workspace_directive(self) -> str:
+        """Tell the live model which coding agents are running, by name.
+
+        The live 2026-07-27 miss in one sentence: asked what a named pane had
+        done, the model said it did not know which person that was — and it was
+        right not to know, because its instructions never mentioned that a
+        coding agent by that name was running in front of the user. It only
+        answered correctly after the user said the words "agentic IDE" out
+        loud, which is not a workflow anybody should have to learn.
+
+        So the roster goes into the per-turn instructions: the model cannot
+        route a name it has never heard of. Deliberately only the NAMES and
+        their state — what each agent actually printed stays with the
+        orchestrator, which holds the full focus-context block and the terminal
+        report tool. Sending transcripts here would re-send several kilobytes on
+        every single turn for an answer the model still could not verify.
+
+        The directive is the belt to the planner's braces: the planner routes
+        such a turn deterministically (``TurnReason.WORKSPACE``), and this makes
+        the model WANT the same thing, so a phrasing the detectors miss still
+        lands.
+        """
+        names = self._workspace_call_signs()
+        if not names:
+            return ""
+        roster = ", ".join(names)
+        return (
+            "[Agentic IDE — coding agents are running right now]\n"
+            f"Terminals open in the user's coding workspace: {roster}.\n"
+            "Those are RUNNING CODING AGENTS, not people you know. Each is "
+            "named T plus its place in the grid, and the user says that "
+            "number however a number is said — \"T2\", \"terminal two\", "
+            "\"the second terminal\" all mean the same pane. Never answer "
+            "that you do not know who that is, never guess what it is doing, "
+            "and never treat it as a public figure. Call your action function "
+            "so the workspace answers from what that terminal actually "
+            "printed, and say its name back in your reply.\n"
+            "Never say a terminal has been told, briefed, prompted or asked "
+            "anything unless your action function reported that it happened. "
+            "Live failure 2026-07-27: this model answered \"I have let T1 "
+            "know\" on a turn where nothing had reached T1, and the user "
+            "found the pane still at its startup banner. If you do not know "
+            "that the work went out, say what you actually did instead."
         )
+
+    def _skill_directive(self, text: str) -> str:
+        """A matched skill's instructions, injected straight into this turn.
+
+        The latency fix. A qualifying skill is answered at native realtime speed
+        instead of paying the delegate round trip, which BUG-087 measured at
+        9.6 s to first audio. It costs no extra round trip either: the per-turn
+        ``update_session`` already fires on every final transcript, so this only
+        makes that payload a little larger.
+
+        Qualifies only when ALL of these hold — the conditions are the safety
+        argument, not decoration:
+
+        * the deterministic match is FIRE band with a clear winner;
+        * ``execution: inline`` — a mission skill must dispatch a worker, which
+          this path cannot do;
+        * ``requires_tools`` is empty and the class is instruction-only;
+        * the risk tier is not ``block`` or ``ask`` (``ask`` needs the voice
+          confirmation machinery that lives in the orchestrator);
+        * the rendered body does not mention tools (see the regex above);
+        * the body fits the cap — over it, fall back, never truncate;
+        * no delegate from an earlier turn is still pending, because two
+          competing instruction sets guarantee an incoherent reply.
+
+        Returns "" whenever anything does not hold, which is the common case.
+        """
+        if not text:
+            return ""
+        try:
+            from jarvis.skills.autofire_policy import CLASS_INSTRUCTION, classify
+            from jarvis.skills.match_eval import BAND_FIRE, evaluate_match
+            from jarvis.skills.schema import SkillInvoked
+            from jarvis.skills.skill_context import try_get_skill_context
+        except Exception:  # noqa: BLE001
+            return ""
+
+        if self._has_pending_delegate_from_earlier_turn():
+            return ""
+        try:
+            context = try_get_skill_context()
+            if context is None:
+                return ""
+            decision = evaluate_match(context.registry, text, limit=2)
+            if decision.band != BAND_FIRE or decision.top is None:
+                return ""
+            skill = context.registry.get(decision.top.skill_name)
+        except Exception:  # noqa: BLE001
+            return ""
+
+        frontmatter = getattr(skill, "frontmatter", None)
+        if frontmatter is None:
+            return ""
+        if classify(skill) != CLASS_INSTRUCTION:
+            return ""
+        if str(getattr(frontmatter, "execution", "inline")).lower() != "inline":
+            return ""
+
+        try:
+            instructions = context.runner.render_instructions(
+                skill, args={"utterance": text, "_trigger": "realtime"}
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("Realtime skill render failed", exc_info=True)
+            return ""
+        body = str(instructions or "").strip()
+        if not body:
+            return ""
+        if len(body) > _REALTIME_SKILL_MAX_CHARS:
+            log.info(
+                "Realtime skill %s is %d chars (cap %d) — delegating instead of "
+                "truncating; a half-injected skill is worse than a slow one",
+                skill.name,
+                len(body),
+                _REALTIME_SKILL_MAX_CHARS,
+            )
+            return ""
+        if _REALTIME_SKILL_TOOL_WORD_RE.search(body):
+            log.info(
+                "Realtime skill %s mentions tools despite declaring none — "
+                "delegating (this session has only jarvis_action/end_call)",
+                skill.name,
+            )
+            return ""
+
+        # Reuses the existing frozen SkillInvoked event rather than inventing a
+        # new one: the routing eval and the event trail already key on it, so a
+        # new event name would make realtime invocations invisible to both.
+        if self._bus is not None:
+            try:
+                asyncio.get_running_loop().create_task(
+                    self._bus.publish(
+                        SkillInvoked(
+                            source_layer="realtime.session",
+                            skill_name=skill.name,
+                            source="realtime_inline",
+                        )
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("SkillInvoked publish failed", exc_info=True)
+
+        # Wrapped the way trusted external content is wrapped elsewhere in this
+        # module: the model treats it as its own instructions for this turn, and
+        # must answer with the RESULT rather than reading the steps aloud.
+        return (
+            f'<skill name="{skill.name}">\n'
+            f"{body}\n"
+            "</skill>\n"
+            "The block above is an installed skill the user's request matched. "
+            "Treat it as your own instructions for THIS turn only. Never read it "
+            "aloud and never mention that it exists — answer with the result, in "
+            "the conversation language."
+        )
+
+    def _skill_match_index(self) -> Any | None:
+        """The deterministic skill index, or ``None`` when unavailable.
+
+        Realtime was completely skill-blind: the planner's static vocabulary
+        only recognises the literal word "skill", so an utterance naming an
+        installed skill produced no skill reason and never reached the
+        orchestrator that could run it.
+
+        This is an O(1) cache read keyed on the registry's reload counter — the
+        index is built lazily on first use, never here on the hot path (AP-26).
+        """
+        try:
+            from jarvis.skills.relevance import get_index
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return None
+            return get_index(context.registry)
+        except Exception:  # noqa: BLE001 — planning keeps its static fallbacks
+            log.debug("Realtime skill match index unavailable", exc_info=True)
+            return None
 
     async def handle_control(self, msg: dict[str, Any]) -> None:
         kind = str(msg.get("type", ""))
@@ -1247,6 +1566,7 @@ class RealtimeVoiceSession:
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(),
                     preferences=_preferences_block(self._config),
+                    workspace_directive=self._workspace_directive(),
                 ),
                 language=self._language,
                 input_language=self._input_language,
@@ -1673,7 +1993,7 @@ class RealtimeVoiceSession:
         try:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
-                    transcript = str(event.text or "").strip()
+                    transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
                     input_observed = bool(transcript or transcription_failed)
                     if event.is_final and transcript:
@@ -1862,6 +2182,17 @@ class RealtimeVoiceSession:
                                     ),
                                 ),
                                 preferences=_preferences_block(self._config),
+                                # Zero extra round trips: this update already
+                                # fires on every final transcript, so a
+                                # qualifying skill rides along instead of paying
+                                # the delegate boundary wait.
+                                skill_directive=self._skill_directive(
+                                    self._last_user_text or ""
+                                ),
+                                # Rebuilt per turn: panes open and close mid
+                                # call, and a roster naming a terminal that is
+                                # gone is worse than none.
+                                workspace_directive=self._workspace_directive(),
                             ),
                             "language": new_language,
                         }
@@ -2091,6 +2422,12 @@ class RealtimeVoiceSession:
                     )
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
+                elif event.type == "usage" and event.usage is not None:
+                    for key, value in event.usage.items():
+                        if isinstance(value, int) and value > 0:
+                            self._turn_usage[key] = (
+                                self._turn_usage.get(key, 0) + value
+                            )
                 elif event.type == "audio_delta" and event.audio is not None:
                     delegate_state = self._delegate_turns.get(self._turn_id)
                     if (
@@ -2205,6 +2542,7 @@ class RealtimeVoiceSession:
                         self._turn_id not in self._delegate_turns
                         and self._output_transcript
                         and not self._scrub_cancelled_for_turn
+                        and not self._surface_spoke_this_turn
                         and not self._output_active
                         and self._output_samples_sent == 0
                     ):
@@ -2904,6 +3242,11 @@ class RealtimeVoiceSession:
         # apologies are exactly what the Mac loop transcribed back as "user"
         # input (BUG-089).
         self._register_spoken_reference(text, estimate_playback=True)
+        # This turn is no longer silent. The no-audio rescue at ``turn_complete``
+        # reads ``_output_transcript``, which a surface line joins to keep the
+        # exported transcript honest — so without this the rescue speaks the
+        # same sentence a second time.
+        self._surface_spoke_this_turn = True
         message: dict[str, Any] = {
             "type": "error_spoken",
             "text": text,
@@ -3215,6 +3558,65 @@ class RealtimeVoiceSession:
             else {}
         )
 
+    async def _publish_live_usage(self) -> None:
+        """Meter the Live channel's own tokens into the current turn.
+
+        Audio tokens bill at 4-40x the text rate, so the split matters;
+        counts the provider could not split are priced as text — a floor,
+        never an overstatement. Cached input (OpenAI reports it) bills at a
+        tenth of the fresh text rate. The recorder SUMS BrainTurnCompleted
+        events per turn, so this adds cleanly on top of any delegate spend.
+        Accumulation resets here; usage between turns folds into the next
+        published turn rather than vanishing.
+        """
+        usage, self._turn_usage = self._turn_usage, {}
+        if not usage or self._bus is None:
+            return
+        try:
+            from jarvis.brain.cost import (
+                PRICING_USD_PER_MTOK,
+                calculate_realtime_cost_usd,
+            )
+            from jarvis.core.events import BrainTurnCompleted
+
+            text_in = usage.get("input_text", 0)
+            audio_in = usage.get("input_audio", 0)
+            text_out = usage.get("output_text", 0)
+            audio_out = usage.get("output_audio", 0)
+            cached_in = usage.get("input_cached", 0)
+            total_in = max(usage.get("input_total", 0), text_in + audio_in)
+            total_out = max(usage.get("output_total", 0), text_out + audio_out)
+            unsplit_in = max(0, total_in - text_in - audio_in)
+            unsplit_out = max(0, total_out - text_out - audio_out)
+            fresh_text_in = max(0, text_in + unsplit_in - cached_in)
+            cost = calculate_realtime_cost_usd(
+                self._active_model,
+                fresh_text_in,
+                text_out + unsplit_out,
+                audio_in,
+                audio_out,
+            )
+            rates = PRICING_USD_PER_MTOK.get(self._active_model)
+            if cached_in > 0 and rates is not None:
+                cost += cached_in * rates[0] * 0.1 / 1_000_000
+            await self._bus.publish(
+                BrainTurnCompleted(
+                    **self._event_trace_kwargs(),
+                    source_layer=f"realtime.{self.active_provider}",
+                    tokens_in=total_in,
+                    tokens_out=total_out,
+                    cost_usd=cost,
+                    finish_reason="realtime_usage",
+                    provider=self.active_provider,
+                    model=self._active_model,
+                )
+            )
+        except Exception:  # noqa: BLE001 -- metering never breaks the call
+            log.debug(
+                "realtime[%s] failed to publish live usage", self.session_id,
+                exc_info=True,
+            )
+
     def _turn_has_activity(self) -> bool:
         return bool(
             self._input_turn_observed
@@ -3507,6 +3909,7 @@ class RealtimeVoiceSession:
                     VoiceTurnCompleted,
                 )
 
+                await self._publish_live_usage()
                 if external_update is not None:
                     # This was an out-of-band status/readback, not a user turn.
                     # Preserve the existing SpeechSpoken track while recording
@@ -3671,6 +4074,7 @@ class RealtimeVoiceSession:
         self._executed_tool_names.clear()
         self._direct_tool_results.clear()
         self._turn_final_text = ""
+        self._surface_spoke_this_turn = False
         self._delegate_required_for_turn = False
         self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
@@ -3887,6 +4291,66 @@ class RealtimeVoiceSession:
             for turn_id, tasks in self._delegate_tasks_by_turn.items()
         )
 
+    def _workspace_owns_turn(self, text: str) -> bool:
+        """True when THIS utterance addresses an open Agentic-IDE pane itself.
+
+        The workspace's own precedence rule (``intent.owns_turn``), reused
+        rather than re-derived, so a turn that really does name another pane
+        ("Blake soll das auch machen")  # i18n-allow: quoted spoken example
+        can never be mistaken for an earlier order coming back around. It is
+        a regex sweep over an in-memory roster: no
+        IO and no model call, so it is free on the hot path (AP-9/AP-11), and
+        any fault answers "no" — the coding surface is optional and must never
+        decide a live call by failing.
+        """
+        if not str(text or "").strip():
+            return False
+        try:
+            from jarvis.agentic_ide.intent import owns_turn
+
+            return owns_turn(text, names=list(self._workspace_call_signs()))
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return False
+
+    def _order_already_executing(self, local_plan: TurnPlan) -> bool:
+        """True when a provider action call can only repeat a running order.
+
+        The live 2026-07-27 20:12 failure in one line: ONE spoken order reached
+        the coding workspace twice. The orchestrator dispatched it
+        deterministically at 20:12:09 because the shared planner wanted an
+        action; the provider then finished its own pass over the same audio,
+        opened a FRESH turn, and called ``jarvis_action`` for it at 20:12:20 —
+        so pane Ellis was briefed with two different tasks 42 s apart while two
+        idle panes got nothing. Pane Grace collected the same duplicate at
+        11:47 that morning. This is a shape, not an accident.
+
+        Nothing about it is workspace-specific: an order executed twice sends
+        two emails or curates the Wiki twice just as readily. The existing
+        de-duplication keys on the TURN (``_delegate_turns``), which is exactly
+        what a provider answering one turn late steps around.
+
+        The session instructions already forbid it (``_DELEGATE_PENDING_DIRECTIVE``)
+        and the model called anyway — prompt compliance is not a correctness
+        boundary. Enforced here instead, and deliberately narrow: the refusal
+        needs THREE independent probes to agree that this turn asked for
+        nothing of its own — the orchestrator did not claim it, the shared
+        planner finds no action in the user's own words, and the utterance
+        addresses no open pane. Only then can the provider's request have come
+        out of the conversation rather than out of the user's mouth, and the
+        only order in that conversation is the one already running.
+        """
+        if self._delegate_required_for_turn or local_plan.requires_orchestrator:
+            return False
+        if self._workspace_owns_turn(self._last_user_text):
+            return False
+        # A produced-but-unspoken result counts as much as a running task: the
+        # action HAS happened, so calling it again is a second execution rather
+        # than a retry of one that never landed.
+        return bool(
+            self._has_pending_delegate_from_earlier_turn()
+            or self._late_delegate_results
+        )
+
     def _queue_late_delegate_result(self, turn_state: _DelegateTurnState) -> None:
         """Keep a trusted result whose turn closed before the action finished.
 
@@ -4008,17 +4472,19 @@ class RealtimeVoiceSession:
         return True
 
     async def _speak_pending_action_status(self) -> None:
-        """Answer a bare presence check deterministically while an action runs.
+        """Answer a turn deterministically while an earlier action still runs.
 
-        A thin are-you-there probe spoken into the silent wait for a
-        still-running delegated action needs exactly one honest answer: still
+        Two callers, one situation: a thin are-you-there probe spoken into the
+        silent wait, and a provider action call refused as a repeat of the
+        order already executing. Both need exactly one honest answer — still
         working on it. The provider cannot be trusted to give it (live
         forensic 2026-07-17 09:23: it greeted like a fresh conversation
-        instead), so the orchestrator speaks a progress line from the closed
-        bridge pool through the surface TTS and drops the provider's
-        freestyle response for this turn. The late-result flush still
-        delivers the real answer once the session is at rest — both drop
-        flags are cleared by that injection path.
+        instead) and its output is being withheld anyway while a delegate is
+        in flight, so a turn left to it is a SILENT turn. The orchestrator
+        speaks a progress line from the closed bridge pool through the surface
+        TTS and drops the provider's freestyle response for this turn. The
+        late-result flush still delivers the real answer once the session is
+        at rest — both drop flags are cleared by that injection path.
         """
         status_text = _pick_delegate_bridge_text(self._language)
         self._response_requested_for_turn = True
@@ -4028,7 +4494,7 @@ class RealtimeVoiceSession:
         # re-dispatching the interjection as a brain turn.
         self._output_transcript.append(status_text)
         log.info(
-            "realtime[%s] presence check while an earlier action is still "
+            "realtime[%s] turn spoken while an earlier action is still "
             "running — answering with the deterministic progress line",
             self.session_id,
         )
@@ -4096,6 +4562,33 @@ class RealtimeVoiceSession:
                         ),
                     },
                 )
+                return
+            if self._order_already_executing(local_plan):
+                log.info(
+                    "realtime[%s] refused a delegate call that repeats an "
+                    "order already executing",
+                    self.session_id,
+                )
+                await self._session.send_tool_result(
+                    call_id,
+                    wire_name,
+                    {
+                        "success": False,
+                        "error": (
+                            "The user's request is already being executed by "
+                            "the Jarvis orchestrator and has no result yet. Do "
+                            "not start it again. Say only that you are still "
+                            "working on it; the trusted result will be "
+                            "injected as soon as it is ready."
+                        ),
+                    },
+                )
+                # Refusing alone would trade the duplicate for a SILENT turn:
+                # provider output is withheld while a delegate is in flight, so
+                # whatever the model says about the refusal never reaches the
+                # user. The orchestrator answers this turn itself, and the real
+                # outcome follows from the late-result flush.
+                await self._speak_pending_action_status()
                 return
             turn_id = self._turn_id
             turn_state = self._delegate_turns.setdefault(
@@ -5153,8 +5646,32 @@ class RealtimeVoiceSession:
         # the second event with the same session_id as a natural no-op, and
         # the redundancy keeps the wiki completeness sweep alive even when
         # one layer misses its teardown.
-        if self._bus is not None and (
-            self._surface != "browser" or self._browser_session_started
+        #
+        # ONE exception: a desktop engine handover is not an end at all. When
+        # no realtime provider can open a session (or the duplex stream dies
+        # before a turn is committed), the classic pipeline picks the SAME call
+        # up under the SAME session_id and publishes the one real end when it
+        # actually finishes. Announcing an end here told every subscriber that
+        # tracks session boundaries the call was over: the orb bridge armed its
+        # post-hangup latch and dropped every later LISTENING/THINKING/SPEAKING
+        # of the live call as a stray, so the JarvisBar froze mid-call until the
+        # next wake word, and the recorder closed the row with turns=0 (live
+        # 2026-07-26 — both providers out of credit, so EVERY session fell back
+        # and the bar was dead for the whole conversation). The browser keeps
+        # its fallback end: nothing else would ever close its row.
+        handover_to_classic = (
+            reason == HANGUP_DESKTOP_FALLBACK and self._surface != "browser"
+        )
+        if handover_to_classic:
+            log.info(
+                "realtime[%s] handing this call to the classic pipeline — "
+                "no session end published (the pipeline owns it).",
+                self.session_id,
+            )
+        if (
+            self._bus is not None
+            and not handover_to_classic
+            and (self._surface != "browser" or self._browser_session_started)
         ):
             try:
                 from jarvis.core.events import VoiceSessionEnded

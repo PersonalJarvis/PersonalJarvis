@@ -96,7 +96,7 @@ When `selectedSlug` becomes non-null, switch the centre tab to "Page" automatica
 ```
 [[sam]]     → [sam](#wiki:sam)
 [[entities/sam]] → [sam](#wiki:sam)
-[[sam|the father]] → [the father](#wiki:sam)
+[[sam|the mentor]] → [the mentor](#wiki:sam)
 ```
 
 Then in `react-markdown`'s `components.a` override, detect `href.startsWith("#wiki:")`, render as a custom `<a class="wikilink">…</a>`, and on click call `props.onWikilinkClick(href.slice(6))` — do not navigate.

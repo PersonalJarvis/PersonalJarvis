@@ -1,9 +1,31 @@
 """Local skill search + sidebar filter routing for ``POST /api/skills/query``.
 
-This is the module the skills REST route imports. It deliberately does **not**
-require SQLite FTS5 or an LLM: the installed skill set is small (tens of
-entries), so a single in-memory pass with token scoring is both fast and
-cloud-first (runs on a 1-vCPU VPS with no GPU, no native extension).
+This is the module the skills REST route imports. It requires no SQLite FTS5 and
+no LLM: the installed skill set is small, so ranking happens in memory and the
+call never blocks on the network (it runs on a 1-vCPU VPS with no GPU and no
+native extension).
+
+**It no longer owns a scoring function.** Ranking is delegated to
+:mod:`jarvis.skills.relevance`, the same scorer the voice path uses. That is the
+whole point of this module's current shape: two independent scorers over the same
+corpus drift, and the drift is invisible — the UI search box would keep finding
+skills the assistant cannot, or the reverse, with nothing to catch it. A parity
+test pins the two surfaces to identical scores.
+
+The old local scorer also demonstrated the cost concretely: it weighted only
+name, tags, category and description, so it had no channel for trigger literals,
+``when_to_use`` or ``intent_objects``. Searching the box for a German trigger
+word a skill genuinely declares found nothing.
+
+Two deliberate differences remain between the surfaces, and both are structural
+rather than incidental:
+
+* The UI index includes INACTIVE skills — you must be able to find a draft in
+  order to promote it. The voice index does not (AP-15). One boolean, applied at
+  index-BUILD time rather than filtered at query time, so a draft is absent from
+  the voice vocabulary entirely instead of relying on a later check.
+* The structural filters below (category / state / risk / builtin / tags) are
+  UI-only sidebar concerns and have no business in the voice scorer.
 
 Contract expected by ``jarvis/ui/web/skills_routes.py``:
 
@@ -11,31 +33,14 @@ Contract expected by ``jarvis/ui/web/skills_routes.py``:
 - ``LocalSkillSearch(registry=..., brain=...)`` exposing ``_registry`` and ``_brain``
 - ``await searcher.query(filters) -> tuple[list[SkillHit], bool]`` where each hit
   carries ``.name`` / ``.score`` / ``.reason`` and the bool is ``brain_used``.
-
-With an empty query the call acts as a pure filter router (category / state /
-risk / builtin / tags). With a query it additionally token-scores name,
-description, tags and category and drops non-matching skills.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
-
-# Field weights for query token scoring. Name matches are the strongest signal,
-# tags next, then category and free-text description.
-_WEIGHT_NAME = 3.0
-_WEIGHT_TAG = 2.0
-_WEIGHT_CATEGORY = 1.0
-_WEIGHT_DESCRIPTION = 1.0
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+from jarvis.skills.relevance import build_index
 
 
 @dataclass(frozen=True)
@@ -105,65 +110,45 @@ class LocalSkillSearch:
                 return False
         return True
 
-    def _score(self, skill: Any, query_tokens: list[str]) -> tuple[float, str]:
-        """Token-overlap score + a short human-readable reason.
-
-        Returns ``(0.0, "")`` when the query matches nothing in this skill so
-        the caller can drop it.
-        """
-        fm = getattr(skill, "frontmatter", None)
-        name_tokens = set(_tokens(skill.name))
-        desc_tokens = set(_tokens(getattr(fm, "description", "") or "")) if fm else set()
-        cat_tokens = set(_tokens(getattr(fm, "category", "") or "")) if fm else set()
-        tag_tokens = (
-            {t for tag in (getattr(fm, "tags", []) or []) for t in _tokens(tag)}
-            if fm
-            else set()
-        )
-
-        score = 0.0
-        matched_fields: list[str] = []
-        for tok in set(query_tokens):
-            if tok in name_tokens:
-                score += _WEIGHT_NAME
-                matched_fields.append("name")
-            if tok in tag_tokens:
-                score += _WEIGHT_TAG
-                matched_fields.append("tag")
-            if tok in cat_tokens:
-                score += _WEIGHT_CATEGORY
-                matched_fields.append("category")
-            if tok in desc_tokens:
-                score += _WEIGHT_DESCRIPTION
-                matched_fields.append("description")
-
-        if score == 0.0:
-            return 0.0, ""
-        ordered = list(dict.fromkeys(matched_fields))  # de-dupe, keep order
-        return score, "matched " + ", ".join(ordered)
-
     async def query(self, filters: LocalSearchFilters) -> tuple[list[SkillHit], bool]:
-        """Filter + (optionally) rank the registry. Never raises on empty data."""
-        skills = list(self._registry.list())
-        query_tokens = _tokens(filters.q)
+        """Filter, then rank with the shared scorer. Never raises on empty data."""
+        try:
+            skills = list(self._registry.list())
+        except Exception:  # noqa: BLE001 — an empty registry is not an error
+            skills = []
 
-        hits: list[SkillHit] = []
-        for skill in skills:
-            if not self._passes_filters(skill, filters):
-                continue
-            if query_tokens:
-                score, reason = self._score(skill, query_tokens)
-                if score == 0.0:
-                    continue
-            else:
-                score, reason = 0.0, "filter match"
-            hits.append(SkillHit(name=skill.name, score=score, reason=reason))
+        candidates = [s for s in skills if self._passes_filters(s, filters)]
+        if not filters.q.strip():
+            # Pure filter routing for the sidebar: no query, no ranking, so the
+            # order is deterministic by name.
+            hits = [
+                SkillHit(name=s.name, score=0.0, reason="filter match")
+                for s in sorted(candidates, key=lambda s: s.name.lower())
+            ]
+            return self._limit(hits, filters), False
 
-        # Highest score first; stable tie-break by name for deterministic output.
-        hits.sort(key=lambda h: (-h.score, h.name))
-        if filters.limit and filters.limit > 0:
-            hits = hits[: filters.limit]
+        # Build over the FILTERED set so IDF reflects what the user is actually
+        # searching in — narrowing to one category should make that category's
+        # shared vocabulary less distinctive, not more.
+        index = build_index(candidates)
+        ranking = index.rank(filters.q, limit=max(1, filters.limit or 30))
+        hits = [
+            SkillHit(
+                name=scored.name,
+                score=round(scored.score, 6),
+                reason=scored.reason or "matched",
+            )
+            for scored in ranking.ranked
+        ]
 
         # No LLM rerank — keep the voice/UI path off the network (cloud-first).
-        brain_used = False
-        return hits, brain_used
+        return self._limit(hits, filters), False
+
+    @staticmethod
+    def _limit(hits: list[SkillHit], filters: LocalSearchFilters) -> list[SkillHit]:
+        if filters.limit and filters.limit > 0:
+            return hits[: filters.limit]
+        return hits
+
+
+__all__ = ["LocalSearchFilters", "LocalSkillSearch", "SkillHit"]

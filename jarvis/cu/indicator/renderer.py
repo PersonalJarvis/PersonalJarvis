@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from collections import deque
 from contextlib import suppress
 
 from PySide6.QtCore import (
@@ -187,6 +188,8 @@ class Renderer(QObject):
         self._hint = ""
         self._active = False  # "show" was requested and not yet "hide"
         self._blanked = False  # capture guard currently hiding the border
+        self._commands: deque[dict] = deque()
+        self._processing_commands = False
 
         # Breathing pulse: 0 → 1 → 0 per period, applied as a factor on
         # top of the master fade so show/hide and breathing compose.
@@ -213,23 +216,43 @@ class Renderer(QObject):
         payload = protocol.decode_command(raw)
         if payload is None:
             return
-        cmd = payload["cmd"]
-        if cmd == protocol.CMD_SHOW:
-            self._show(str(payload.get("hint", "")))
-        elif cmd == protocol.CMD_HIDE:
-            self._hide()
-        elif cmd == protocol.CMD_BLANK:
-            # hide() reaches the platform window synchronously and the
-            # subsequent grab travels through the same display-server
-            # queue, so an immediate ack keeps ordering AND correctness.
-            self._blank()
-        elif cmd == protocol.CMD_UNBLANK:
-            self._unblank()
-        elif cmd == protocol.CMD_QUIT:
-            _ack(cmd)
-            self._app.quit()
+        self._commands.append(payload)
+        if self._processing_commands:
             return
-        _ack(cmd)
+        self._drain_commands()
+
+    def _drain_commands(self) -> None:
+        """Apply and acknowledge commands in wire order.
+
+        ``processEvents()`` is needed to flush native show/hide work before an
+        acknowledgement, but it may re-enter :meth:`on_line`. Keeping a local
+        FIFO and one active drain prevents nested calls from acknowledging a
+        later command first.
+        """
+        self._processing_commands = True
+        try:
+            while self._commands:
+                payload = self._commands.popleft()
+                cmd = payload["cmd"]
+                if cmd == protocol.CMD_SHOW:
+                    self._show(str(payload.get("hint", "")))
+                elif cmd == protocol.CMD_HIDE:
+                    self._hide()
+                elif cmd == protocol.CMD_BLANK:
+                    self._blank()
+                elif cmd == protocol.CMD_UNBLANK:
+                    self._unblank()
+                elif cmd == protocol.CMD_QUIT:
+                    _ack(cmd)
+                    self._app.quit()
+                    self._commands.clear()
+                    return
+                # The controller treats SHOW as a privacy boundary: flush the
+                # native window-system work before reporting it as visible.
+                self._app.processEvents()
+                _ack(cmd)
+        finally:
+            self._processing_commands = False
 
     # -- commands ----------------------------------------------------------
     def _show(self, hint: str) -> None:
@@ -240,6 +263,10 @@ class Renderer(QObject):
         for win in self._windows:
             win.set_hint(hint)
             win.show()
+        # A fade starting at zero can ACK while still fully transparent. Put a
+        # small visible floor on screen synchronously, then continue the fade.
+        self._master_value = max(self._master_value, 0.25)
+        self._apply_opacity()
         self._pulse.start()
         self._fade_to(1.0)
 

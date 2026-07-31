@@ -40,6 +40,25 @@ interface ApiKeyFormProps {
 }
 
 /**
+ * Tell every mounted surface that this credential slot changed.
+ *
+ * The parent card's `onChanged` only refreshes the card the form sits on. The
+ * same key is shown by other screens (the API-Keys view and the voice
+ * section's "API Keys" tab render the same provider block), and the section
+ * health rollup has to re-check too. `useProviders` and `useSectionHealth`
+ * already listen for this event, so one dispatch keeps them all honest without
+ * waiting for a backend broadcast to arrive over the WebSocket. Established
+ * in-repo pattern (TelephonyView). Only the key NAME travels — never a value.
+ */
+function announceSecretChange(secretKey: string, action: "set" | "delete") {
+  window.dispatchEvent(
+    new CustomEvent("jarvis:secret-configured", {
+      detail: { key: secretKey, action },
+    }),
+  );
+}
+
+/**
  * Single-key input form: password input + "Save" + delete action for an
  * existing value. Writes directly to POST /api/secrets/{key}; the value
  * never leaves the frontend again after submit (read-only flag in the backend).
@@ -70,6 +89,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       setEditing(false);
       onChanged?.();
       onSavedActivate?.();
+      announceSecretChange(secretKey, "set");
     } catch (e) {
       pushToast("error", `${t("common.save_failed")}: ${(e as Error).message}`);
     } finally {
@@ -92,6 +112,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       pushToast("info", `${secretKey} removed`);
       setEditing(true);
       onChanged?.();
+      announceSecretChange(secretKey, "delete");
     } catch (e) {
       pushToast("error", `${t("common.delete_failed")}: ${(e as Error).message}`);
     } finally {

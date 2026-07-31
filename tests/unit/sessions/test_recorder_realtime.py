@@ -280,6 +280,233 @@ async def test_realtime_bridge_accumulates_thinking_and_speaking_segments(
 
 
 @pytest.mark.asyncio
+async def test_final_transcript_without_turn_started_becomes_its_own_turn(
+    tmp_path,
+) -> None:
+    """An utterance whose VoiceTurnStarted never arrived still gets a turn.
+
+    The realtime layer opens a turn silently while an out-of-band readback is
+    speaking and withholds VoiceTurnStarted; the same gap appears when the bus
+    abandons this wildcard subscriber on its timeout. The transcript used to
+    drop such an utterance completely and report one turn too few.
+    """
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                timestamp_ns=1_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="unannounced-turn",
+                wake_keyword="hotkey",
+                language="de",
+            )
+        )
+        await bus.publish(
+            VoiceTurnStarted(
+                timestamp_ns=1_100_000_000,
+                source_layer="realtime.fake-live",
+                session_id="unannounced-turn",
+                turn_id="announced-turn",
+                turn_index=0,
+            )
+        )
+        await bus.publish(
+            TranscriptionUpdate(
+                timestamp_ns=1_200_000_000,
+                source_layer="realtime.fake-live",
+                text="What was the record?",
+                is_final=True,
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                timestamp_ns=2_000_000_000,
+                source_layer="realtime.fake-live",
+                session_id="unannounced-turn",
+                turn_id="announced-turn",
+                user_text="What was the record?",
+                user_lang="en",
+                jarvis_text="Just under 24 hours.",
+                jarvis_lang="en",
+                tier="realtime",
+                provider="fake-live",
+                model="live-model",
+            )
+        )
+        # No VoiceTurnStarted for this one — the layer opened it silently.
+        await bus.publish(
+            TranscriptionUpdate(
+                timestamp_ns=3_000_000_000,
+                source_layer="realtime.fake-live",
+                text="And how many kilometres on average?",
+                is_final=True,
+            )
+        )
+        await bus.publish(
+            ResponseGenerated(
+                timestamp_ns=4_000_000_000,
+                source_layer="realtime.fake-live",
+                text="About six hundred.",
+                language="en",
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                timestamp_ns=5_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="unannounced-turn",
+                hangup_reason="hotkey",
+                turn_count=2,
+            )
+        )
+
+        turns = store.get_turns("unannounced-turn")
+        assert [turn.user_text for turn in turns] == [
+            "What was the record?",
+            "And how many kilometres on average?",
+        ]
+        assert turns[1].jarvis_text == "About six hundred."
+        assert len({turn.idx for turn in turns}) == 2
+        session = store.get_session("unannounced-turn")
+        assert session is not None
+        assert session.turn_count == 2
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovered_and_announced_turns_never_share_an_index(tmp_path) -> None:
+    """Provider numbering and recorder-invented turns share one allocator."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                timestamp_ns=1_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="index-collision",
+                wake_keyword="hotkey",
+                language="de",
+            )
+        )
+        # The realtime layer counts silent readback turns too, so its indices
+        # arrive with gaps; the recorder-invented turn in between must not
+        # reuse an index the provider already handed out.
+        for offset, (turn_id, turn_index) in enumerate(
+            (("turn-a", 3), ("turn-b", 7)), start=1
+        ):
+            await bus.publish(
+                VoiceTurnStarted(
+                    timestamp_ns=1_000_000_000 + offset * 1_000_000_000,
+                    source_layer="realtime.fake-live",
+                    session_id="index-collision",
+                    turn_id=turn_id,
+                    turn_index=turn_index,
+                )
+            )
+            await bus.publish(
+                TranscriptionUpdate(
+                    timestamp_ns=1_100_000_000 + offset * 1_000_000_000,
+                    source_layer="realtime.fake-live",
+                    text=f"utterance {turn_id}",
+                    is_final=True,
+                )
+            )
+            await bus.publish(
+                VoiceTurnCompleted(
+                    timestamp_ns=1_500_000_000 + offset * 1_000_000_000,
+                    source_layer="realtime.fake-live",
+                    session_id="index-collision",
+                    turn_id=turn_id,
+                    user_text=f"utterance {turn_id}",
+                    user_lang="en",
+                    jarvis_text="ok",
+                    jarvis_lang="en",
+                    tier="realtime",
+                    provider="fake-live",
+                    model="live-model",
+                )
+            )
+            # An unannounced utterance right after each completed turn.
+            await bus.publish(
+                TranscriptionUpdate(
+                    timestamp_ns=1_800_000_000 + offset * 1_000_000_000,
+                    source_layer="realtime.fake-live",
+                    text=f"recovered after {turn_id}",
+                    is_final=True,
+                )
+            )
+        await bus.publish(
+            VoiceSessionEnded(
+                timestamp_ns=9_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="index-collision",
+                hangup_reason="hotkey",
+                turn_count=4,
+            )
+        )
+
+        turns = store.get_turns("index-collision")
+        indices = [turn.idx for turn in turns]
+        assert len(indices) == 4
+        assert len(set(indices)) == 4, indices
+        assert indices == sorted(indices)
+        assert [turn.user_text for turn in turns] == [
+            "utterance turn-a",
+            "recovered after turn-a",
+            "utterance turn-b",
+            "recovered after turn-b",
+        ]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_classic_pipeline_partials_never_invent_a_turn(tmp_path) -> None:
+    """Without an explicit turn lifecycle, TranscriptFinal stays the owner."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                timestamp_ns=1_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="classic-pipeline",
+                wake_keyword="hotkey",
+                language="de",
+            )
+        )
+        await bus.publish(
+            TranscriptionUpdate(
+                timestamp_ns=1_200_000_000,
+                source_layer="stt.whisper",
+                text="a stray final from the classic path",
+                is_final=True,
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                timestamp_ns=2_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="classic-pipeline",
+                hangup_reason="hotkey",
+                turn_count=0,
+            )
+        )
+
+        assert store.get_turns("classic-pipeline") == []
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_realtime_progress_bridge_survives_into_plain_export(tmp_path) -> None:
     """Every audible bridge line must precede the final reply in the export."""
     store = SessionStore(tmp_path / "sessions.db")

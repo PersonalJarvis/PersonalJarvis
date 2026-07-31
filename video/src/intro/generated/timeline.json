@@ -10,7 +10,7 @@
         {
           "id": "intro_1",
           "kind": "narration",
-          "text": "Hey — I'm Ruben's AI assistant.",
+          "text": "Hey — I'm your AI assistant.",
           "file": "vo/intro_1.mp3",
           "localStart": 9,
           "dur": 69
@@ -18,7 +18,7 @@
         {
           "id": "intro_2",
           "kind": "narration",
-          "text": "Ruben built me — a developer from Germany — and put it all on GitHub.",
+          "text": "An open-source community built me and put it all on GitHub.",
           "file": "vo/intro_2.mp3",
           "localStart": 85,
           "dur": 131
@@ -178,7 +178,7 @@
         {
           "id": "wake_2",
           "kind": "narration",
-          "text": "I chose Hey Ruben. You can pick anything you like.",
+          "text": "For example, choose Hey Nova. You can pick anything you like.",
           "file": "vo/wake_2.mp3",
           "localStart": 124,
           "dur": 94

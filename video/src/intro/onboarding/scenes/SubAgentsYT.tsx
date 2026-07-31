@@ -29,7 +29,7 @@ export const SubAgentsYT: React.FC<{ scene: TimelineScene }> = ({ scene }) => {
         </Title>
 
         <Sequence from={commandAt} layout="none">
-          <SpokenCommand text="Write me a deep-dive report on the global EV market." speaker="user" size={24} compact wake="Hey Ruben" />
+          <SpokenCommand text="Write me a deep-dive report on the global EV market." speaker="user" size={24} compact wake="Hey Nova" />
         </Sequence>
 
         <Sequence from={jobAt} layout="none">

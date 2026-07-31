@@ -60,10 +60,14 @@ def test_oldest_pending_ms_ignores_consolidated_rows(tmp_path: Path) -> None:
 
 
 def test_default_consolidation_threshold_is_three() -> None:
+    # 3 since the 2026-07-28 cost audit: one Stage-2 judge run per
+    # conversation burst instead of one per candidate; the 10-minute age
+    # flush below is what keeps a LONE candidate's visibility bounded
+    # (spec A4's promise rests on the PAIR, not on the threshold alone).
     from jarvis.core.config import SchedulerConfig
 
     cfg = SchedulerConfig()
-    assert cfg.consolidate_after_candidates == 1
+    assert cfg.consolidate_after_candidates == 3
     assert cfg.flush_pending_max_age_minutes == 10
 
 

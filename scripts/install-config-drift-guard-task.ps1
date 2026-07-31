@@ -14,7 +14,7 @@
     Wiederhol-Intervall in Minuten. Default: 5.
 
 .PARAMETER RepoRoot
-    Pfad zum Repo-Root. Default: C:\Users\Administrator\Desktop\Personal Jarvis
+    Repository root. Defaults to the parent of this script directory.
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-config-drift-guard-task.ps1
@@ -26,7 +26,7 @@
 [CmdletBinding()]
 param(
     [int]$IntervalMinutes = 5,
-    [string]$RepoRoot     = "C:\Users\Administrator\Desktop\Personal Jarvis"
+    [string]$RepoRoot     = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"

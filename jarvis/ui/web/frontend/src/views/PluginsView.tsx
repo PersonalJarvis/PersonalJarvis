@@ -44,7 +44,13 @@ type AuthMode =
   | "hosted_mcp_allowlist";
 
 type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
-type Category = "Developer" | "Productivity" | "Communication";
+/** Deliberately a plain string, mirroring the backend. The catalog serves the
+ *  section order (`category_order`), so adding a category is a backend-only
+ *  change and an unknown one renders in its own section instead of crashing
+ *  the view — the previous hardcoded record threw on any value it did not
+ *  already know. */
+type Category = string;
+type Longevity = "permanent" | "self_renewing" | "provider_limited";
 
 interface CatalogPlugin {
   id: string;
@@ -55,6 +61,9 @@ interface CatalogPlugin {
   logo_color?: string | null;
   logo_url?: string | null;
   featured?: boolean;
+  longevity?: Longevity;
+  longevity_note?: string | null;
+  oauth_client_family?: string | null;
   auth: { mode: AuthMode; [key: string]: unknown };
   status: PluginStatus;
   live_callable?: boolean;
@@ -63,6 +72,7 @@ interface CatalogPlugin {
 interface CatalogResponse {
   version: number;
   schema_version: string;
+  category_order?: string[];
   plugins: CatalogPlugin[];
   total: number;
   connected: number;
@@ -73,6 +83,14 @@ interface PatPasteAuthDetail {
   token_creation_url: string;
   token_prefix: string;
   instruction_md: string;
+  /** Present for self-hosted services (Home Assistant, Jellyfin, Nextcloud…):
+   *  the server address is the user's own, so the catalog can only describe
+   *  the field, never fill it. */
+  instance_url?: {
+    label: string;
+    placeholder: string;
+    help_md?: string | null;
+  } | null;
 }
 
 interface Plugin {
@@ -90,6 +108,9 @@ interface Plugin {
   status: PluginStatus;
   featured?: boolean;
   liveCallable?: boolean;
+  longevity: Longevity;
+  longevityNote?: string;
+  oauthClientFamily?: string;
 }
 
 function adapt(p: CatalogPlugin): Plugin {
@@ -106,13 +127,75 @@ function adapt(p: CatalogPlugin): Plugin {
     status: p.status,
     featured: p.featured ?? false,
     liveCallable: p.live_callable ?? false,
+    longevity: p.longevity ?? "self_renewing",
+    longevityNote: p.longevity_note ?? undefined,
+    oauthClientFamily: p.oauth_client_family ?? undefined,
   };
 }
 
-function resolveLogoUrl(p: { logoUrl?: string; logoSlug: string; logoColor?: string }): string {
-  if (p.logoUrl) return p.logoUrl;
-  return `https://cdn.simpleicons.org/${p.logoSlug}${p.logoColor ? `/${p.logoColor}` : ""}`;
+// --- Brand marks -----------------------------------------------------------
+// Three tiers, tried in order, so a card is never blank and never a broken
+// image:
+//   1. a full-colour SVG bundled in the app (offline-safe, no third party)
+//   2. the Simple Icons glyph in white on the brand's own colour tile
+//   3. a monogram on the brand tile — used when tier 2 cannot load at all
+//      (offline, locked-down network, or an icon the CDN has dropped)
+// Tier 2 is what makes the store look intentional before every brand mark has
+// been sourced: a coloured tile with a white glyph reads as a product decision,
+// a black glyph on a white square reads as a placeholder.
+const BUNDLED_BRAND_LOGOS = import.meta.glob("../assets/brands/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+function bundledLogo(pluginId: string): string | undefined {
+  return BUNDLED_BRAND_LOGOS[`../assets/brands/${pluginId}.svg`];
 }
+
+const DEFAULT_BRAND_TILE = "#3F3F46";
+
+function brandTile(p: { logoColor?: string }): string {
+  const raw = (p.logoColor ?? "").trim();
+  if (!raw) return DEFAULT_BRAND_TILE;
+  return raw.startsWith("#") ? raw : `#${raw}`;
+}
+
+/** Pick a glyph colour that stays legible on the brand tile. A few brand
+ *  colours are near-white (and a couple are near-black), so a fixed white
+ *  glyph would vanish on them. */
+function glyphColor(tileHex: string): string {
+  const hex = tileHex.replace("#", "");
+  if (hex.length !== 6) return "ffffff";
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return luminance > 0.6 ? "111111" : "ffffff";
+}
+
+function resolveLogoUrl(p: {
+  id?: string;
+  logoUrl?: string;
+  logoSlug: string;
+  logoColor?: string;
+}): string {
+  const bundled = p.id ? bundledLogo(p.id) : undefined;
+  if (bundled) return bundled;
+  if (p.logoUrl) return p.logoUrl;
+  return `https://cdn.simpleicons.org/${p.logoSlug}/${glyphColor(brandTile(p))}`;
+}
+
+/** True when the mark is a full-colour asset that must sit on a neutral tile
+ *  rather than on the brand colour (its own colours already carry the brand). */
+function isFullColourMark(p: { id?: string; logoUrl?: string }): boolean {
+  return Boolean((p.id && bundledLogo(p.id)) || p.logoUrl);
+}
+
+const LONGEVITY_LABEL: Record<Longevity, string> = {
+  permanent: "Stays connected",
+  self_renewing: "Renews itself",
+  provider_limited: "Sign in again periodically",
+};
 
 async function fetchCatalog(): Promise<CatalogResponse> {
   // `cache: "no-store"` forces the embedded WebView2 (desktop app) to bypass
@@ -150,14 +233,36 @@ const COMING_SOON = [
 // OWN production client here (the durable fix for provider-side refresh-token
 // expiry — e.g. Google revokes a "Testing" app's token after 7 days). The Google
 // family shares ONE client pair; slack and asana each have their own. Mirrors
-// `marketplace.connect_helpers._OAUTH_CLIENT_FAMILY` — keep in sync.
-const OAUTH_CLIENT_FAMILY: Record<string, { family: string; label: string }> = {
-  gmail: { family: "google", label: "Google" },
-  google_drive: { family: "google", label: "Google" },
-  google_calendar: { family: "google", label: "Google" },
-  slack: { family: "slack", label: "Slack" },
-  asana: { family: "asana", label: "Asana" },
+// The catalog now declares this per plugin (`oauth_client_family`), so a new
+// plugin no longer needs a frontend release to get the "use your own OAuth
+// client" affordance — the omission that silently removed it before. This table
+// only supplies the human label for a family and stays as the fallback for a
+// user's `data/` catalog written before the field existed.
+const OAUTH_CLIENT_FAMILY_FALLBACK: Record<string, string> = {
+  gmail: "google",
+  google_drive: "google",
+  google_calendar: "google",
+  slack: "slack",
+  asana: "asana",
 };
+
+const OAUTH_FAMILY_LABEL: Record<string, string> = {
+  google: "Google",
+  slack: "Slack",
+  asana: "Asana",
+  microsoft: "Microsoft",
+};
+
+function oauthClientFamily(
+  plugin: Plugin,
+): { family: string; label: string } | undefined {
+  const family = plugin.oauthClientFamily ?? OAUTH_CLIENT_FAMILY_FALLBACK[plugin.id];
+  if (!family) return undefined;
+  return {
+    family,
+    label: OAUTH_FAMILY_LABEL[family] ?? family[0].toUpperCase() + family.slice(1),
+  };
+}
 
 // Where the user creates/manages their own OAuth client per family.
 const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
@@ -169,12 +274,19 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
 type TabId = "browse" | "installed";
 type FilterId = "all" | Category;
 
-const FILTERS: { id: FilterId; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "Developer", label: "Developer" },
-  { id: "Productivity", label: "Productivity" },
-  { id: "Communication", label: "Communication" },
-];
+/** Section order for the store, straight from the catalog. Any category the
+ *  backend serves that the order does not mention is appended, so a new
+ *  category needs no frontend release. */
+function orderedCategories(
+  catalog: CatalogResponse | undefined,
+  plugins: Plugin[],
+): string[] {
+  const declared = catalog?.category_order ?? [];
+  const present = new Set(plugins.map((p) => p.category));
+  const known = declared.filter((c) => present.has(c));
+  const extra = [...present].filter((c) => !declared.includes(c)).sort();
+  return [...known, ...extra];
+}
 
 export function PluginsView() {
   const qc = useQueryClient();
@@ -199,13 +311,20 @@ export function PluginsView() {
       pluginId,
       token,
       allowedUserId,
+      instanceUrl,
     }: {
       pluginId: string;
       token: string;
       allowedUserId?: number | null;
+      instanceUrl?: string | null;
     }) => {
-      const body: { token: string; allowed_user_id?: number } = { token };
+      const body: {
+        token: string;
+        allowed_user_id?: number;
+        instance_url?: string;
+      } = { token };
       if (allowedUserId != null) body.allowed_user_id = allowedUserId;
+      if (instanceUrl) body.instance_url = instanceUrl;
       const res = await fetch(`/api/marketplace/plugins/${pluginId}/connect/pat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -360,6 +479,10 @@ export function PluginsView() {
     () => data?.plugins.map(adapt) ?? [],
     [data],
   );
+  const categoryOrder = useMemo(
+    () => orderedCategories(data, allPlugins),
+    [data, allPlugins],
+  );
   // "Installed" keeps every plugin the user ever connected — including a revoked
   // (needs_reauth) or errored one — so a dead token surfaces a Reconnect prompt
   // here instead of silently dropping back into Browse as a plain "+".
@@ -486,6 +609,7 @@ export function PluginsView() {
             <BrowseLayout
               plugins={visible}
               query={query}
+              categoryOrder={categoryOrder}
               setQuery={setQuery}
               filter={filter}
               setFilter={setFilter}
@@ -499,6 +623,7 @@ export function PluginsView() {
               plugins={visible}
               totalAvailable={allPlugins.length}
               query={query}
+              categoryOrder={categoryOrder}
               setQuery={setQuery}
               filter={filter}
               setFilter={setFilter}
@@ -518,11 +643,12 @@ export function PluginsView() {
             setConnectingPlugin(null);
             connectMutation.reset();
           }}
-          onSubmit={(token, allowedUserId) =>
+          onSubmit={(token, allowedUserId, instanceUrl) =>
             connectMutation.mutate({
               pluginId: connectingPlugin.id,
               token,
               allowedUserId,
+              instanceUrl,
             })
           }
           isPending={connectMutation.isPending}
@@ -664,12 +790,14 @@ interface SearchControlsProps {
 function BrowseLayout({
   plugins,
   query,
+  categoryOrder,
   setQuery,
   filter,
   setFilter,
   onConnect,
   onDisconnect,
-}: { plugins: Plugin[] } & SearchControlsProps & ConnectHandlers) {
+}: { plugins: Plugin[]; categoryOrder: string[] } & SearchControlsProps &
+  ConnectHandlers) {
   return (
     <>
       <Hero query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
@@ -677,6 +805,7 @@ function BrowseLayout({
       <CategorizedList
         plugins={plugins}
         query={query}
+        categoryOrder={categoryOrder}
         onConnect={onConnect}
         onDisconnect={onDisconnect}
       />
@@ -689,12 +818,18 @@ function InstalledLayout({
   plugins,
   totalAvailable,
   query,
+  categoryOrder,
   setQuery,
   filter,
   setFilter,
   onConnect,
   onDisconnect,
-}: { plugins: Plugin[]; totalAvailable: number } & SearchControlsProps & ConnectHandlers) {
+}: {
+  plugins: Plugin[];
+  totalAvailable: number;
+  categoryOrder: string[];
+} & SearchControlsProps &
+  ConnectHandlers) {
   return (
     <>
       <Hero
@@ -711,6 +846,7 @@ function InstalledLayout({
         <CategorizedList
           plugins={plugins}
           query={query}
+          categoryOrder={categoryOrder}
           onConnect={onConnect}
           onDisconnect={onDisconnect}
         />
@@ -759,6 +895,11 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
 }
 
 function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: FilterId) => void }) {
+  // Reads the already-cached catalog rather than taking the categories through
+  // three intermediate components. React Query dedupes on the shared key, so
+  // this subscribes to existing data and issues no extra request.
+  const { data } = useQuery({ queryKey: ["marketplace-plugins"], queryFn: fetchCatalog });
+  const categories = orderedCategories(data, (data?.plugins ?? []).map(adapt));
   return (
     <div className="relative">
       <select
@@ -766,9 +907,10 @@ function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: Fi
         onChange={(e) => setFilter(e.target.value as FilterId)}
         className="h-9 cursor-pointer appearance-none rounded-full border border-border bg-card/60 px-4 pr-7 text-xs font-medium text-foreground hover:border-primary/40 focus:border-primary/40 focus:outline-none"
       >
-        {FILTERS.map((f) => (
-          <option key={f.id} value={f.id}>
-            {f.label}
+        <option value="all">All</option>
+        {categories.map((c) => (
+          <option key={c} value={c}>
+            {c}
           </option>
         ))}
       </select>
@@ -981,24 +1123,35 @@ function CarouselSlideView({ slide, active }: { slide: CarouselSlide; active: bo
 function CategorizedList({
   plugins,
   query,
+  categoryOrder,
   onConnect,
   onDisconnect,
-}: { plugins: Plugin[]; query: string } & ConnectHandlers) {
+}: {
+  plugins: Plugin[];
+  query: string;
+  categoryOrder: string[];
+} & ConnectHandlers) {
   if (plugins.length === 0) {
     if (!query.trim()) return null;
     return <EmptyHits query={query} />;
   }
 
   const featured = plugins.filter((p) => p.featured);
-  const byCat: Record<Category, Plugin[]> = {
-    Developer: [],
-    Productivity: [],
-    Communication: [],
-  };
+  // Built from the data, not from a fixed record. The previous fixed record
+  // meant a category the backend added but the UI did not know threw on
+  // `byCat[p.category].push(...)` and blanked the whole view behind its error
+  // boundary.
+  const byCat = new Map<string, Plugin[]>();
   for (const p of plugins) {
     if (p.featured) continue;
-    byCat[p.category].push(p);
+    const bucket = byCat.get(p.category);
+    if (bucket) bucket.push(p);
+    else byCat.set(p.category, [p]);
   }
+  const sections = [
+    ...categoryOrder.filter((c) => byCat.has(c)),
+    ...[...byCat.keys()].filter((c) => !categoryOrder.includes(c)).sort(),
+  ];
 
   return (
     <div className="space-y-10">
@@ -1014,20 +1167,18 @@ function CategorizedList({
           ))}
         </Section>
       )}
-      {(Object.keys(byCat) as Category[])
-        .filter((c) => byCat[c].length > 0)
-        .map((c) => (
-          <Section key={c} title={c}>
-            {byCat[c].map((p) => (
-              <PluginRow
-                key={p.id}
-                plugin={p}
-                onConnect={onConnect}
-                onDisconnect={onDisconnect}
-              />
-            ))}
-          </Section>
-        ))}
+      {sections.map((c) => (
+        <Section key={c} title={c}>
+          {(byCat.get(c) ?? []).map((p) => (
+            <PluginRow
+              key={p.id}
+              plugin={p}
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+            />
+          ))}
+        </Section>
+      ))}
     </div>
   );
 }
@@ -1043,8 +1194,83 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** The card's brand mark.
+ *
+ *  A full-colour asset carries the brand itself and sits on a neutral surface.
+ *  A single-colour glyph sits ON the brand's own colour — that inversion is
+ *  what makes the store read as a product catalog rather than a settings list;
+ *  a dark glyph on a white square reads as a placeholder.
+ *
+ *  When the mark cannot load at all — offline, a locked-down network, or an
+ *  icon the CDN has dropped — the tile falls back to a monogram instead of a
+ *  broken image, so a card is never blank.
+ */
+export function BrandTile({ plugin }: { plugin: Plugin }) {
+  const [failed, setFailed] = useState(false);
+  const tile = brandTile(plugin);
+  const fullColour = isFullColourMark(plugin);
+  const showMonogram = failed || !plugin.logoSlug;
+
+  return (
+    <div
+      className={cn(
+        "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border",
+        // A bundled mark sits on a dark plate, not a white one: a row of white
+        // squares reads as pasted-in on this UI. The plate is a touch lighter
+        // than the card so the mark still has something to sit on. Brands whose
+        // own logo is near-black ship a light variant for exactly this case —
+        // see LOGOS.md; without one, a dark mark would vanish here.
+        fullColour && !showMonogram
+          ? "border-white/10 bg-white/[0.07]"
+          : "border-border/60",
+      )}
+      style={fullColour && !showMonogram ? undefined : { backgroundColor: tile }}
+    >
+      {showMonogram ? (
+        <span
+          className="text-sm font-semibold"
+          style={{ color: `#${glyphColor(tile)}` }}
+        >
+          {plugin.name.slice(0, 1).toUpperCase()}
+        </span>
+      ) : (
+        <img
+          src={resolveLogoUrl(plugin)}
+          alt=""
+          className={cn(fullColour ? "h-7 w-7" : "h-5 w-5")}
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** How long the connection will last, stated BEFORE the user connects.
+ *
+ *  Most providers keep a connection alive indefinitely; a few force a periodic
+ *  re-login and no amount of engineering on our side can extend that. Saying so
+ *  on the card is the difference between an informed choice and a connection
+ *  that quietly dies weeks later. `provider_limited` carries a note explaining
+ *  how often — a warning without an answer would be worse than none.
+ */
+export function LongevityBadge({ plugin }: { plugin: Plugin }) {
+  const limited = plugin.longevity === "provider_limited";
+  return (
+    <span
+      title={plugin.longevityNote ?? LONGEVITY_LABEL[plugin.longevity]}
+      className={cn(
+        "text-[9px] font-medium uppercase tracking-wider",
+        limited ? "text-amber-500/80" : "text-muted-foreground/45",
+      )}
+    >
+      {LONGEVITY_LABEL[plugin.longevity]}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// PluginRow — bigger tile + bigger icon for multicolor logos
+// PluginRow — brand tile + status and longevity badges
 // ---------------------------------------------------------------------------
 
 function PluginRow({
@@ -1055,7 +1281,6 @@ function PluginRow({
   const isConnected = plugin.status === "connected";
   const needsReauth = plugin.status === "needs_reauth";
   const isError = plugin.status === "error";
-  const isMulticolor = !!plugin.logoUrl;
 
   return (
     <article
@@ -1074,14 +1299,7 @@ function PluginRow({
           "border-border hover:border-primary/40 hover:bg-card/70",
       )}
     >
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
-        <img
-          src={resolveLogoUrl(plugin)}
-          alt=""
-          className={cn(isMulticolor ? "h-7 w-7" : "h-5 w-5")}
-          loading="lazy"
-        />
-      </div>
+      <BrandTile plugin={plugin} />
 
       <div className="min-w-0 flex-1">
         {/* `flex-wrap` + `shrink-0` badges: when a connected plugin's
@@ -1119,12 +1337,15 @@ function PluginRow({
         <p className="truncate text-xs text-muted-foreground">{plugin.description}</p>
       </div>
 
-      <span
-        className="hidden text-[9px] font-medium uppercase tracking-wider text-muted-foreground/70 sm:block"
-        title={plugin.category}
-      >
-        {AUTH_LABELS[plugin.authMode]}
-      </span>
+      <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+        <span
+          className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/70"
+          title={plugin.category}
+        >
+          {AUTH_LABELS[plugin.authMode]}
+        </span>
+        <LongevityBadge plugin={plugin} />
+      </div>
 
       <ConnectIconButton
         status={plugin.status}
@@ -1697,7 +1918,7 @@ export function PkceConnectDialog({
   onClose: () => void;
   onProceed: () => void | Promise<void>;
 }) {
-  const fam = OAUTH_CLIENT_FAMILY[plugin.id];
+  const fam = oauthClientFamily(plugin);
   const isGoogle = fam?.family === "google";
   const [showClient, setShowClient] = useState(false);
   const [clientId, setClientId] = useState("");
@@ -2032,22 +2253,34 @@ export function PatConnectDialog({
 }: {
   plugin: Plugin;
   onClose: () => void;
-  onSubmit: (token: string, allowedUserId: number | null) => void;
+  onSubmit: (
+    token: string,
+    allowedUserId: number | null,
+    instanceUrl: string | null,
+  ) => void;
   isPending: boolean;
   errorMessage: string | null;
 }) {
   const [token, setToken] = useState("");
   const [userId, setUserId] = useState("");
+  const [instanceUrl, setInstanceUrl] = useState("");
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
+  const instanceField = auth.instance_url ?? null;
   const expectedPrefix = auth.token_prefix ?? "";
   const prefixOk = !expectedPrefix || token.trim().startsWith(`${expectedPrefix}_`);
   const userIdTrimmed = userId.trim();
   const userIdOk = !ownerLock || userIdTrimmed === "" || /^\d+$/.test(userIdTrimmed);
   const parsedUserId =
     ownerLock && /^\d+$/.test(userIdTrimmed) ? Number(userIdTrimmed) : null;
-  const canSubmit = token.trim().length > 0 && prefixOk && userIdOk && !isPending;
-  const submit = () => onSubmit(token.trim(), parsedUserId);
+  // A self-hosted plugin cannot be reached at all without its address, so the
+  // field is required rather than optional — the backend would reject it a
+  // round-trip later otherwise.
+  const instanceOk = !instanceField || instanceUrl.trim().length > 0;
+  const canSubmit =
+    token.trim().length > 0 && prefixOk && userIdOk && instanceOk && !isPending;
+  const submit = () =>
+    onSubmit(token.trim(), parsedUserId, instanceField ? instanceUrl.trim() : null);
 
   // Close on Escape — small but expected affordance.
   useEffect(() => {
@@ -2128,7 +2361,26 @@ export function PatConnectDialog({
             </div>
           </Step>
 
-          <Step num={2} title="Paste the token below">
+          {instanceField && (
+            <Step num={2} title={instanceField.label} body={instanceField.help_md ?? undefined}>
+              <input
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                value={instanceUrl}
+                onChange={(e) => setInstanceUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && canSubmit) submit();
+                }}
+                placeholder={instanceField.placeholder}
+                className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                disabled={isPending}
+              />
+            </Step>
+          )}
+
+          <Step num={instanceField ? 3 : 2} title="Paste the token below">
             <input
               type="password"
               autoComplete="off"

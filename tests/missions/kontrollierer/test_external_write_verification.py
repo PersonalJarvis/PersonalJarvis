@@ -2,7 +2,7 @@
 
 Root cause of mission_019e7abd (2026-05-30, live voice failure): the worker
 wrote the requested HTML file to an absolute path OUTSIDE its git worktree
-(`C:\\Users\\Administrator\\Desktop\\M\\hello.html`, exactly as the task
+(`C:\\external-output\\hello.html`, exactly as the task
 demanded). `_capture_diff` is worktree-scoped, so the captured diff was empty;
 the Critic's GROUND-TRUTH-RULE then deterministically failed the mission 3×
 with `critic_loop_exhausted` even though the file existed and was correct.
@@ -42,7 +42,9 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
         check=False,
         capture_output=True,
         text=True,
-        timeout=15.0,
+        # Worktree materialization can exceed 15 seconds on large checkouts or
+        # while another local test briefly holds the repository lock.
+        timeout=60.0,
     )
 
 

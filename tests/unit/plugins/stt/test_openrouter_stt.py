@@ -113,7 +113,16 @@ async def test_language_is_sent_when_set_and_omitted_when_auto() -> None:
 
 
 @pytest.mark.asyncio
-async def test_temperature_omitted_by_default_and_sent_when_configured() -> None:
+async def test_temperature_is_pinned_to_zero_by_default() -> None:
+    """A transcription is a measurement, so it has to repeat.
+
+    The field used to be omitted unless configured, on portability grounds —
+    one backend that rejected it would have cost the whole utterance. That
+    reasoning is gone now the body is narrowed on a 400 (see
+    ``test_a_rejected_field_is_dropped_and_the_call_retried``), and what the
+    omission actually bought was a gateway default that samples: the same
+    recording came back as a different sentence on a retry.
+    """
     captured: dict[str, dict] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -125,16 +134,41 @@ async def test_temperature_omitted_by_default_and_sent_when_configured() -> None
         await stt.transcribe_pcm(_silent_pcm())
     finally:
         await stt.aclose()
-    assert "temperature" not in captured["body"]
+    assert captured["body"]["temperature"] == 0.0
 
+
+@pytest.mark.asyncio
+async def test_bias_prompt_uses_capability_scoped_provider_options() -> None:
+    captured: dict[str, dict] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = __import__("json").loads(request.content)
+        return httpx.Response(200, json=_JSON_OK)
+
+    stt = OpenRouterSTT(
+        api_key="k",
+        prompt="Nova, PostgreSQL, São Paulo",
+        http_client=_mock_client(handler),
+    )
+    try:
+        await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert captured["body"]["provider"] == {
+        "options": {"groq": {"prompt": "Nova, PostgreSQL, São Paulo"}}
+    }
+
+    # An explicit None is still "say nothing about it" — the escape hatch for a
+    # deployment that wants the backend's own default.
     stt2 = OpenRouterSTT(
-        api_key="k", temperature=0.0, http_client=_mock_client(handler)
+        api_key="k", temperature=None, http_client=_mock_client(handler)
     )
     try:
         await stt2.transcribe_pcm(_silent_pcm())
     finally:
         await stt2.aclose()
-    assert captured["body"]["temperature"] == 0.0
+    assert "temperature" not in captured["body"]
 
 
 @pytest.mark.asyncio
@@ -177,6 +211,76 @@ async def test_response_text_is_parsed_into_transcript() -> None:
     assert result.confidence == 1.0
     assert result.is_partial is False
     assert result.segments == ()
+    assert stt.last_usage_cost_usd == pytest.approx(0.00003)
+
+
+@pytest.mark.asyncio
+async def test_missing_gateway_cost_does_not_reuse_the_previous_request() -> None:
+    responses = iter((_JSON_OK, {"text": "second"}))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(responses))
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        await stt.transcribe_pcm(_silent_pcm())
+        assert stt.last_usage_cost_usd == pytest.approx(0.00003)
+        await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert stt.last_usage_cost_usd is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_artifacts_are_cleaned_and_the_raw_text_is_kept() -> None:
+    """The payload text is filtered on the way into the Transcript.
+
+    One response carries all three artifact classes the filter exists for: an
+    outer quote pair the model added, a hesitation sound, and a decoder loop.
+    ``raw_text`` keeps the gateway's own string so the dictation lane — which
+    owns a user switch for filler removal — still transcribes from it.
+    """
+    payload = {
+        "text": '"Umm, turn on the light. Thank you. Thank you. Thank you."',
+        "language": "English",
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        result = await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert result.text == "Turn on the light. Thank you."
+    assert result.raw_text == payload["text"]
+    assert result.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_never_reports_silence_for_audio_that_had_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confidence follows the RAW text: a filter bug must not read as silence."""
+    monkeypatch.setattr(
+        "jarvis.plugins.stt.transcript_filter.clean_stt_text",
+        lambda *_a, **_k: "",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_JSON_OK)
+
+    stt = OpenRouterSTT(api_key="k", http_client=_mock_client(handler))
+    try:
+        result = await stt.transcribe_pcm(_silent_pcm())
+    finally:
+        await stt.aclose()
+
+    assert result.confidence == 1.0
+    assert result.raw_text == "hello world"
 
 
 @pytest.mark.asyncio

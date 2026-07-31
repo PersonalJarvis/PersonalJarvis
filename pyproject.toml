@@ -9,13 +9,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.1.5"
+version = "1.2.0"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Ruben Lütke" }]  # i18n-allow: maintainer proper name (umlaut)
+authors = [{ name = "Personal Jarvis Contributors" }]
 keywords = [
     "voice-assistant",
     "ai-agent",
@@ -207,9 +207,23 @@ dependencies = [
     "watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
     # Atomic TOML edits from the desktop app (Phase 1b: provider persistence)
     "tomlkit>=0.12",
-    # === F-FRIENDS [F0+F1] · feature/friends-section · ruben-2026-04-30 ===
+    # === F-FRIENDS [F0+F1] · feature/friends-section · maintainer-2026-04-30 ===
     # Phase F0 — async SQLite for FriendRegistry (previously transitive via chromadb).
     "aiosqlite>=0.21",
+    # UltraWiki semantic store: sqlite-vec is the loadable SQLite extension that
+    # provides vector search over the local UltraWiki DB (plain SQL, no vector-DB
+    # SDK — UltraWiki/01-architecture.md). Tiny prebuilt wheels for win/mac/linux;
+    # lazy-imported in jarvis/ultrawiki/store.py so base `import jarvis` stays
+    # clean, and search degrades honestly to FTS-only where the extension cannot
+    # load. No Windows ARM64 wheel upstream — same guard marker as vosk (AP-23).
+    "sqlite-vec>=0.1.9; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    # UltraWiki export-import connector (standards-based universal ingestion,
+    # UltraWiki/02): pypdf extracts text from PDF exports, icalendar parses the
+    # RFC 5545 ICS calendars every provider exports. Both pure-Python universal
+    # wheels; lazy-imported in jarvis/ultrawiki/connectors/export_import.py with
+    # honest per-file degradation when absent (mail/zip/csv ride the stdlib).
+    "pypdf>=5.1",
+    "icalendar>=6.0",
     # Phase F1 — Telegram channel bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
 ]
@@ -247,7 +261,16 @@ dev = [
 # native-engine-minimal floor for CI and tiny headless servers; users are pointed
 # at [full].
 full = [
-    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice]",
+    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice,ultrawiki-postgres]",
+]
+ultrawiki-postgres = [
+    # UltraWiki cloud/self-hosted store backend: psycopg 3 with bundled binary
+    # wheels reaches any Postgres host (Supabase, AWS RDS, Google Cloud SQL, an
+    # own server) through a plain connection string; vector search arrives as
+    # the pgvector DB extension queried via SQL — no vector-DB SDK (UltraWiki
+    # design D-2). Lazy-imported in jarvis/ultrawiki/store.py; the SQLite floor
+    # stays the universal base path, so this group is opt-in.
+    "psycopg[binary]>=3.2",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -329,6 +352,23 @@ desktop = [
 # base install never pulls them in. Linux's AT-SPI uses distro-packaged pyatspi
 # (``apt install python3-pyatspi gir1.2-atspi-2.0``), surfaced via the
 # ``capabilities.has_ax_tree`` runtime probe — it is NEVER a pip dependency.
+# Linux DESKTOP input extras — deliberately opt-in and NOT part of [full].
+#
+# Global hotkeys on Linux/X11 need pynput, and pynput hard-requires ``evdev``,
+# which ships source-only and compiles against the kernel headers. Pulling that
+# into [full] would break the one advertised install path on a stock
+# python:3.11-slim image — exactly what the cloud-first rule forbids. So it
+# lives here: a Linux desktop user who wants a global dictation/call shortcut
+# installs ``personal-jarvis[desktop-linux]`` (needs a C compiler and
+# linux-headers), and everyone else gets the honest, logged no-op instead of a
+# failed install.
+#
+# Wayland is a separate matter and this extra does NOT fix it: Wayland blocks
+# global key grabs by design, so shortcuts there belong to the compositor.
+# See docs/os-parity.md.
+desktop-linux = [
+    "pynput>=1.7; sys_platform == 'linux'",
+]
 desktop-macos = [
     # The managed-install app bundle keeps a native Mach-O launcher: a shell
     # CFBundleExecutable that execs external Python has no stable TCC
@@ -382,6 +422,14 @@ local-voice = [
     # PyAV 16+ raised its Apple-Silicon deployment floor to macOS 14. Version
     # 15.1 retains wheels for the supported macOS 13 floor and Python 3.11-3.13.
     "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
+    # ONNX-Runtime speech stack (Apache-2.0, torch-free) powering the on-device
+    # Nemotron recogniser and the Piper voices. The >=1.13.3 floor is
+    # LOAD-BEARING, not hygiene: multilingual Nemotron needs the prompt_index
+    # encoder input added in that release, and an older wheel loads the same
+    # files and then transcribes every language as English. Kept in step with
+    # jarvis/speech/local_models.py::SHERPA_ONNX_PACKAGE, which the in-app
+    # installer asks pip for.
+    "sherpa-onnx>=1.13.3",
 ]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
@@ -414,6 +462,15 @@ openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 # discovery; no provider ships until the streaming work lands.
 
 [project.entry-points."jarvis.stt"]
+# Local, keyless on-device transcription (faster-whisper / CTranslate2, torch-free).
+# Registered so the provider list, the activation gate and the runtime resolve it
+# the same way they resolve a cloud provider; whether it can actually RUN is a
+# separate question answered by jarvis.speech.local_models (engine installed +
+# checkpoint downloaded), never assumed from the entry-point's presence.
+faster-whisper = "jarvis.plugins.stt.fwhisper:FasterWhisperProvider"
+# Local streaming transcription (NVIDIA Nemotron 3.5 via sherpa-onnx / ONNX
+# Runtime). Multilingual and CPU-only; same readiness rule as above.
+nemotron-local = "jarvis.plugins.stt.nemotron_local:NemotronLocalSTT"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 # OpenRouter cloud transcription — reuses the shared openrouter_api_key.
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"
@@ -425,6 +482,10 @@ openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 gemini-api = "jarvis.plugins.stt.gemini_api:GeminiSTT"
 
 [project.entry-points."jarvis.tts"]
+# Local, keyless neural speech (Piper VITS voices via sherpa-onnx / ONNX
+# Runtime). The voices are plain ONNX files, deliberately NOT loaded through the
+# GPL-3 piper1-gpl library, so this MIT repo stays MIT.
+piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
@@ -442,8 +503,17 @@ openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
+# Anthropic subscription (Claude CLI, print mode). Sibling of codex/antigravity:
+# spends a plan login instead of a per-token key. Too slow to start (~10-12 s)
+# for a voice tier; it serves callers whose OUTPUT is the product.
+claude-cli = "jarvis.plugins.brain.claude_cli:ClaudeCliBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
-# Ollama provider removed on 2026-04-21; the runtime uses the API provider chain.
+# Keyless LOCAL providers (2026-07-25, local-first mandate): both talk to
+# self-hosted servers and are deliberately absent from
+# PROVIDER_SECRET_CANDIDATES. local-openai covers HuggingFace transformers
+# serve, llama.cpp llama-server, vLLM, and LM Studio with one adapter.
+ollama = "jarvis.plugins.brain.ollama:OllamaBrain"
+local-openai = "jarvis.plugins.brain.local_openai:LocalOpenAIBrain"
 
 [project.entry-points."jarvis.harness"]
 python-script = "jarvis.plugins.harness.python_script:PythonScriptHarness"
@@ -454,7 +524,7 @@ screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
 # Transport adapter between the UI layer and the orchestrator (Plan §17.3).
 # Web channel is the first; Telegram/WhatsApp follow in Phase 8+.
 web = "jarvis.channels.web:WebChannel"
-# === F-FRIENDS [F1] · feature/friends-section · ruben-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · maintainer-2026-04-30 ===
 # Phase F1 — bidirectional Telegram bot channel (long polling).
 # Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
 telegram = "jarvis.channels.telegram:TelegramChannel"
@@ -488,6 +558,13 @@ gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
 # router-tier, risk_tier "monitor" (read-only). A direct gated action, never a
 # spawn (AP-5/AP-14). See docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md.
 vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
+# Home Assistant (marketplace plugin, 2026-07-25) — list/read entities and call
+# services over the documented REST API. Native rather than MCP on purpose:
+# Home Assistant declined dynamic client registration and its MCP server is
+# scoped to its own Assist pipeline, so it exposes conversation instead of the
+# entity/service surface a voice assistant needs. risk_tier "ask" because a
+# service call physically changes something in the user's home.
+home_assistant = "jarvis.plugins.tool.home_assistant_rest:HomeAssistantRestTool"
 # Google Calendar (marketplace plugin, 2026-06-27) — read/create/update/delete
 # calendar events. The bot logic is a dependency-free Node script
 # (calendar_bot.mjs); this Python entry point is the OAuth bridge that reuses
@@ -586,16 +663,25 @@ wiki-page-read = "jarvis.plugins.tool.wiki_page_read:WikiPageReadTool"
 wiki-list = "jarvis.plugins.tool.wiki_list:WikiListTool"
 # Phase B5 follow-up — deterministic ingest tool (router-tier, write).
 wiki-ingest = "jarvis.plugins.tool.wiki_ingest:WikiIngestTool"
+# UltraWiki hybrid semantic search (ADR-0011 amendment "UltraWiki Search",
+# ADR-0030) — router-tier, read-only; brokered to mission workers when live.
+ultrawiki-search = "jarvis.plugins.tool.ultrawiki_search:UltraWikiSearchTool"
 # Profile-write (2026-05-30) — deterministic writer for the structured USER.md
 # clusters (the Knowledge matrix + per-turn system-prompt source). Router-tier,
 # write, monitor. Closes the gap left by the soft-disabled legacy Curator.
 update-profile = "jarvis.plugins.tool.profile_update:UpdateProfileTool"
-# Phase 7.5 — skill authoring (router-tier, ask). Spawns the
-# SkillAuthoringRunner over the Jarvis-Agent bridge. Implementation lives at
-# jarvis/brain/tools/skill_authoring.py since 2026-05-12; registration
-# was missing until the 2026-05-17 audit (CLAUDE.md flagged it as
-# "not yet registered in pyproject.toml" — this is that line landing).
-spawn-skill-author = "jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool"
+# NOTE (2026-07-25): `spawn-skill-author` used to be registered here and was a
+# PHANTOM — a registration that made three docs claim the tool was live while it
+# could never load. It is absent from ROUTER_TOOLS (the only allow-set, so
+# factory.py filtered it out), and its __init__ requires a `runner=` argument
+# the entry-point loader cannot supply, so the tempting one-line "just add it to
+# ROUTER_TOOLS" fix raises TypeError at tool load. The entry point is removed
+# rather than wired, because the capability is not missing: the `skill-creator`
+# builtin plus POST /api/skills/creator/{draft,refine,validate,commit} are the
+# live authoring path, already enforcing the AP-15 draft guard. A router tool
+# would be a third route to the same behaviour and a fourth place to forget that
+# guard. Enforced by
+# tests/unit/brain/test_router_tool_entrypoint_parity.py.
 # App-Control (2026-05-31) — gives the brain a complete overview of the Desktop
 # App and lets it change settings/providers/MCP by voice/chat. Router-tier;
 # direct safe/ask-gated actions, never a spawn (AP-5/AP-14). describe is read-only

@@ -1,4 +1,4 @@
-﻿"""REST API for Brain, TTS, STT, and Realtime providers and credentials.
+﻿"""REST API for the Brain, TTS, STT, Realtime and Dictation-polish providers.
 
 Endpoints:
     GET    /api/providers                    → list configured and active status
@@ -43,7 +43,14 @@ from jarvis.missions.worker_runtime.provider_map import (
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
-from .provider_spec import PROVIDERS, ProviderSpec, get_spec, provider_billing
+from .provider_spec import (
+    DICTATION_SPEC_ID_BY_FAMILY,
+    PROVIDERS,
+    ProviderSpec,
+    dictation_family_id,
+    get_spec,
+    provider_billing,
+)
 
 log = logging.getLogger(__name__)
 
@@ -240,6 +247,19 @@ class RealtimeOptionsSaveResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 
+def _polish_family(spec: ProviderSpec) -> Any | None:
+    """The dictation-polish family behind ``spec``, or ``None`` for any other card.
+
+    The lookup goes through the polish module's own registry so the family's
+    credential candidates are read where they are declared, never copied here.
+    """
+    if getattr(spec, "tier", None) != "dictation":
+        return None
+    from jarvis.dictation.polish_client import family_by_id
+
+    return family_by_id(dictation_family_id(spec.id))
+
+
 def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
     """Apply the credential check for the provider's authentication mode.
 
@@ -247,7 +267,22 @@ def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -
     (imported lazily) so the UI route and the brain's ``switch-provider`` tool
     use the *same* check — anti-drift, BUG-008 class. Name/signature preserved
     for the rest of this module.
+
+    ONE local addition: a dictation-polish card answers through its polish
+    FAMILY instead. Such a card renders a single key field, but the pass itself
+    accepts any slot in the family's candidate list — a Google user holding only
+    ``google_api_key`` has a perfectly working polish pass, and the single-slot
+    check would call that card "no key set" and offer a fix for a problem that
+    does not exist. The shared implementation is untouched because it never sees
+    these specs: ``apply_provider_switch`` rejects a dictation spec on its tier
+    long before the credential check.
     """
+    family = _polish_family(spec)
+    if family is not None:
+        from jarvis.dictation.polish_client import family_has_key
+
+        return family_has_key(family)
+
     from jarvis.brain.app_control import is_credential_present
 
     return is_credential_present(spec, binary_path)
@@ -287,6 +322,88 @@ def _codex_brain_usable() -> bool:
         return False
 
 
+def _stored_base_url(spec: ProviderSpec) -> str | None:
+    """The persisted ``[brain.providers.<id>].base_url`` override, or ``None``.
+
+    Only read for cards that expose the URL field; "" (the cleared state the
+    writer leaves behind) reports as ``None`` so the UI shows the placeholder.
+    """
+    if not spec.supports_base_url:
+        return None
+    try:
+        prov = cfg_mod.load_config().brain.providers.get(spec.id)
+    except Exception:  # noqa: BLE001 — a card list must never 500 on config trouble
+        return None
+    value = (getattr(prov, "base_url", None) or "").strip()
+    return value or None
+
+
+def _local_runtime_payload(
+    spec: ProviderSpec, *, model_override: str | None = None
+) -> dict[str, Any] | None:
+    """On-disk truth for a provider that runs locally; ``None`` for cloud cards.
+
+    The card cannot infer readiness from the absence of a key field: a local
+    provider has no credential to check, so without this probe every local card
+    would render as "ready" the moment it exists — the exact defect that forced
+    the local Whisper card off the list in 2026-07-03. Presence of a catalog
+    entry is what makes a provider local here; no code branches on its name
+    (AP-21).
+    """
+    try:
+        from jarvis.speech.local_models import local_status
+
+        status = local_status(spec.id, model_override=model_override)
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local-runtime probe for %s failed (%s); reporting none.", spec.id, exc)
+        return None
+    if status is None:
+        return None
+    return {
+        "runtime": status.runtime,
+        "engine_installed": status.engine_installed,
+        "model_present": status.model_present,
+        "model_label": status.model_label,
+        "ready": status.ready,
+        "detail": status.detail,
+    }
+
+
+def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
+    """Drop catalog entries whose files are not on this machine.
+
+    A no-op for cloud providers and for any local entry the model catalog does
+    not describe as a downloadable bundle, so it can be applied unconditionally
+    (AP-21: locality is a catalog fact, not a provider name).
+    """
+    try:
+        from jarvis.speech.local_models import (
+            SHERPA_BUNDLES,
+            bundle_present,
+            get_local_provider,
+        )
+
+        if get_local_provider(provider_id) is None:
+            return models
+        kept = [
+            m
+            for m in models
+            if getattr(m, "id", "") not in SHERPA_BUNDLES
+            or bundle_present(getattr(m, "id", ""))
+        ]
+    except Exception as exc:  # noqa: BLE001 — the picker must never 500
+        log.debug("Local model filter for %s failed (%s); listing all.", provider_id, exc)
+        return models
+    if len(kept) != len(models):
+        log.debug(
+            "Local provider %s: %d of %d catalogued models are downloaded.",
+            provider_id,
+            len(kept),
+            len(models),
+        )
+    return kept
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -295,6 +412,8 @@ def _spec_to_payload(
     active_stt: str | None,
     active_realtime: str | None = None,
     active_computer_use: str | None = None,
+    active_dictation: str | None = None,
+    local_model_override: str | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -302,6 +421,8 @@ def _spec_to_payload(
         active = spec.id == active_tts
     elif spec.tier == "realtime":
         active = spec.id == active_realtime
+    elif spec.tier == "dictation":
+        active = spec.id == active_dictation
     else:
         active = spec.id == active_stt
 
@@ -319,13 +440,18 @@ def _spec_to_payload(
         and len(spec.secret_keys) == 1
         and not all(secrets_set.values())
     ):
-        from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES
+        # A dictation-polish card has its own candidate list (polish_client),
+        # which the brain's alias map knows nothing about; ask the family.
+        if _polish_family(spec) is not None:
+            family_present = _is_credential_present(spec)
+        else:
+            from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES
 
-        alias = AUTH_PROVIDER_ALIASES.get(spec.id, spec.id)
-        try:
-            family_present = bool(cfg_mod.get_provider_secret(alias))
-        except Exception:  # noqa: BLE001 -- unknown family means no fallback
-            family_present = False
+            alias = AUTH_PROVIDER_ALIASES.get(spec.id, spec.id)
+            try:
+                family_present = bool(cfg_mod.get_provider_secret(alias))
+            except Exception:  # noqa: BLE001 -- unknown family means no fallback
+                family_present = False
         if family_present:
             secrets_effective = dict.fromkeys(spec.secret_keys, True)
     from .provider_spec import secret_slot_consumers
@@ -366,6 +492,11 @@ def _spec_to_payload(
         "credential_help": spec.credential_help,
         "signup_url": spec.signup_url,
         "billing": provider_billing(spec),
+        # Local/self-hosted cards: editable server URL
+        # (PUT /providers/{id}/base-url); None base_url = vendor default.
+        "supports_base_url": spec.supports_base_url,
+        "default_base_url": spec.default_base_url,
+        "base_url": _stored_base_url(spec),
         # Maintainer-recommended pick for this tier (UI badge) + the model it
         # points at. Presentation only — never gates behavior (AP-21).
         "recommended": spec.recommended,
@@ -373,6 +504,24 @@ def _spec_to_payload(
         # Inverse of recommended: a "Not recommended" caution badge + tooltip
         # (e.g. NVIDIA NIM's slow free tier). Presentation only (AP-21).
         "caution": spec.caution,
+        # This card powers a feature nothing else depends on. The UI renders an
+        # "Optional" chip, and the health rollup stays silent when it has no key
+        # instead of raising a permanent "needs setup" dot. Presentation +
+        # nag-suppression only — never a behavior gate (AP-21).
+        "optional": spec.optional,
+        # Dictation-polish cards only: the value ``[dictation].polish_provider``
+        # actually stores. The card id and the polish FAMILY id differ ("groq"
+        # is already the brain card), so a client pinning this tier must send
+        # THIS, not ``id`` — an unknown family id is ignored by
+        # ``resolve_polish_chain`` and the pin would silently do nothing.
+        # ``None`` on every other card.
+        "polish_family": dictation_family_id(spec.id) or None,
+        # On-device cards only: whether the engine and its weights are REALLY
+        # here, so the UI can offer the install instead of a false "ready".
+        # ``None`` on every cloud card.
+        "local_runtime": _local_runtime_payload(
+            spec, model_override=local_model_override
+        ),
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -496,6 +645,120 @@ def _active_realtime(request: Request) -> str | None:
         return None
 
 
+def _polish_enabled(cfg: Any) -> bool:
+    """Whether ``[dictation].polish`` is switched on. Never raises."""
+    dictation = getattr(cfg, "dictation", None) if cfg is not None else None
+    return bool(getattr(dictation, "polish", False))
+
+
+def _resolve_polish_subject(cfg: Any) -> str | None:
+    """Resolve the polish card id from *cfg*. BLOCKING — never call on the loop.
+
+    ``[dictation].polish_provider`` stores a polish FAMILY id ("groq"), while
+    every card, health section and subject id in this module is a ProviderSpec
+    id ("groq-polish"); the translation happens here so no other layer has to
+    know that the two vocabularies differ.
+
+    ``None`` — the pass is off, or the user holds no key in any family — is an
+    ORDINARY state, not a fault: the polish pass is optional and its absence
+    leaves dictation behaving exactly as it did before. The health rollup
+    renders it silently (see :func:`_dictation_section_health`). Any resolver
+    error also degrades to ``None``, because the health panel must never 500.
+    """
+    try:
+        if not _polish_enabled(cfg):
+            return None
+        from jarvis.dictation.polish_client import resolve_polish_chain
+
+        chain = resolve_polish_chain(getattr(cfg, "dictation", None))
+        if not chain:
+            return None
+        return DICTATION_SPEC_ID_BY_FAMILY.get(chain[0].id)
+    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
+        log.debug("active-polish resolution failed (%s); using None.", exc)
+        return None
+
+
+def _polish_subject_key(cfg: Any) -> tuple[Any, ...] | None:
+    """A cheap value that changes exactly when the polish subject could.
+
+    ``None`` means "not answerable right now", and its only effect is that the
+    memo below is neither read nor written — one extra resolve, never a stale
+    answer.
+
+    The expensive half is delegated to
+    :func:`jarvis.dictation.polish_client.polish_chain_fingerprint`, which is
+    the polish tier's OWN cache key (the credential revisions plus the identity
+    of the config file); reusing it means the health panel cannot disagree with
+    the dictation path about when the answer went stale. The ``polish`` switch
+    is added on top because this function answers ``None`` when the pass is
+    off, which the chain fingerprint does not model.
+    """
+    try:
+        from jarvis.dictation.polish_client import polish_chain_fingerprint
+
+        return (
+            _polish_enabled(cfg),
+            *polish_chain_fingerprint(getattr(cfg, "dictation", None)),
+        )
+    except Exception as exc:  # noqa: BLE001 — an unfingerprintable host re-resolves
+        log.debug("polish subject key unavailable (%s); resolving afresh.", exc)
+        return None
+
+
+async def _warm_active_polish(request: Request) -> None:
+    """Resolve the polish subject in a worker thread, so the read below is free.
+
+    :func:`_active_polish` is called from ``_section_health_subjects``, which is
+    synchronous and feeds the rollup's cache fingerprint — and the API-Keys
+    screen POLLS that rollup. The resolve behind it walks up to seven
+    credential slots (OS keyring, then ENV, then ``.env``) and reads the config
+    file; on a Linux desktop with a locked keyring or a slow D-Bus Secret
+    Service that blocks for SECONDS. This repo already has that exact bug in
+    its register — a ``load_config`` on the event loop stalling everything the
+    loop owns, the Jarvis Bar included — so the resolve happens here, off the
+    loop, before anything synchronous needs the answer.
+
+    Cheap on the common path: the memo is keyed on
+    :func:`_polish_subject_key`, so a poll that changed nothing does not even
+    reach the thread. Stored on ``app.state`` rather than in a module global so
+    two apps in one process (tests, an embedded second server) cannot answer
+    each other's questions.
+    """
+    cfg = _resolve_cfg(request)
+    key = _polish_subject_key(cfg)
+    if key is None:
+        return
+    cached = getattr(request.app.state, "_polish_subject_cache", None)
+    if isinstance(cached, tuple) and cached[0] == key:
+        return
+    request.app.state._polish_subject_cache = (
+        key,
+        await asyncio.to_thread(_resolve_polish_subject, cfg),
+    )
+
+
+def _active_polish(request: Request) -> str | None:
+    """The card currently powering the dictation polish pass, or ``None``.
+
+    A memo read whenever :func:`_warm_active_polish` already ran for the same
+    key — which is the case for both routes that ask, so the polling path pays
+    a handful of dict lookups and one ``stat``. It still resolves inline when
+    nothing warmed it, because an unwarmed caller deserves a correct answer
+    more than it deserves a fast one; that path is the one the direct unit
+    tests take.
+    """
+    cfg = _resolve_cfg(request)
+    key = _polish_subject_key(cfg)
+    cached = getattr(request.app.state, "_polish_subject_cache", None)
+    if key is not None and isinstance(cached, tuple) and cached[0] == key:
+        return cached[1]
+    subject = _resolve_polish_subject(cfg)
+    if key is not None:
+        request.app.state._polish_subject_cache = (key, subject)
+    return subject
+
+
 def _active_computer_use(request: Request) -> str | None:
     """The active dedicated Computer-Use planner provider.
 
@@ -604,6 +867,21 @@ async def list_providers(request: Request) -> dict[str, Any]:
     active_stt = _active_stt(request)
     active_realtime = _active_realtime(request)
     active_computer_use = _active_computer_use(request)
+    # Resolved in a worker thread first (keyring + config file); the read that
+    # follows is then a memo hit. See ``_warm_active_polish``.
+    await _warm_active_polish(request)
+    active_dictation = _active_polish(request)
+    # When a local STT provider is ALREADY the active one, its card must report
+    # on the checkpoint the config names — not the catalog default. Otherwise a
+    # user who pinned a different Whisper size in jarvis.toml would read a
+    # reassuring "ready" about a model their install never loads.
+    local_model_override: str | None = None
+    try:
+        stt_cfg = getattr(_resolve_cfg(request), "stt", None)
+        if (getattr(stt_cfg, "provider", "") or "").strip() == "faster-whisper":
+            local_model_override = (getattr(stt_cfg, "model", "") or "").strip() or None
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local STT model override lookup failed (%s); using the default.", exc)
 
     # Off the event loop: building the payload reads every secret slot from the
     # OS keyring and probes the Codex/Google CLI status — all synchronous. On the
@@ -619,6 +897,8 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 active_stt=active_stt,
                 active_realtime=active_realtime,
                 active_computer_use=active_computer_use,
+                active_dictation=active_dictation,
+                local_model_override=local_model_override,
             )
             for spec in PROVIDERS
         ]
@@ -630,6 +910,30 @@ async def list_providers(request: Request) -> dict[str, Any]:
 # timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
 # individual probe; this outer bound guarantees the HTTP response itself.
 _PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
+
+
+async def _run_tier_test(
+    spec: ProviderSpec, cfg: Any, *, model: str | None = None
+) -> Any:
+    """Dispatch a card to the probe that can actually judge it.
+
+    Every tier but one is judged by ``run_provider_test``. A dictation card is
+    NOT a speech-to-text provider, and it used to fall through to the STT branch
+    there — so "Test" on a wording card built the user's RECOGNIZER and reported
+    its verdict under the card's name (a broken local model turned four working
+    cloud cards red), while the keyless local card answered "ok" in 0.0 ms
+    having asked its server nothing at all.
+
+    The wording probe therefore lives in the dictation layer, which is the only
+    place allowed to call that pass (AP-11), and this function is the one seam
+    that knows which card goes where.
+    """
+    family = _polish_family(spec)
+    if family is not None:
+        from jarvis.dictation.polish_probe import probe_polish_family
+
+        return await probe_polish_family(family, cfg, model=model or "")
+    return await _provider_test.run_provider_test(spec, cfg, model=model)
 
 
 @router.post("/providers/{provider_id}/test")
@@ -661,7 +965,7 @@ async def test_provider_connection(
     # as an honest "unreachable" instead of a hung HTTP request.
     try:
         result = await asyncio.wait_for(
-            _provider_test.run_provider_test(spec, cfg),
+            _run_tier_test(spec, cfg),
             timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
         )
     except TimeoutError:
@@ -709,6 +1013,7 @@ _SECTION_HEALTH_KEYS = (
     "tts",
     "stt",
     "realtime",
+    "dictation",
     "subagents",
     "advanced",
 )
@@ -738,7 +1043,12 @@ class SectionHealthResponse(BaseModel):
 
 
 async def _tier_section_health(
-    cfg: Any, spec: ProviderSpec | None, *, model: str | None = None
+    cfg: Any,
+    spec: ProviderSpec | None,
+    *,
+    model: str | None = None,
+    optional: bool = False,
+    probe: bool = True,
 ) -> SectionHealth:
     """Health of one provider tier, derived from its ACTIVE provider only.
 
@@ -749,18 +1059,52 @@ async def _tier_section_health(
     ``model`` probes that exact model for a brain-tier spec — used by sections
     whose tier carries its own model pin (Tool Model), so the dot reflects what
     that tier actually runs, not the general brain model.
+
+    ``optional`` marks a tier the install does not depend on. A missing key then
+    reports ``ok``/``not_configured_optional`` instead of amber ``needs_setup``,
+    because the feature simply does not run and everything else is unaffected —
+    a tab that asks forever to be set up for something nothing is waiting on is
+    a defect, not a reminder. The caller passes it because the flag must survive
+    ``spec is None`` (no key anywhere = no active provider = exactly the state
+    that must stay silent); a spec that carries ``optional`` itself also counts.
+    An optional tier still turns RED when a key IS present and failing — the
+    rule suppresses nagging, never a real fault.
+
+    ``probe=False`` skips the live provider call and reports on credential
+    presence alone. For a tier whose credential is a key another tier already
+    owns and tests, a second network round-trip on every page open buys no
+    signal it does not already have.
     """
+    optional = optional or bool(getattr(spec, "optional", False))
     if spec is None:
+        if optional:
+            return SectionHealth(
+                status=_section_health.OK,
+                reason="not_configured_optional",
+                detail="Optional: not set up, and nothing depends on it",
+                subject_id=None,
+            )
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
             detail="No active provider selected",
             subject_id=None,
         )
-    # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
-    # the active provider it is usable. Skip the real test — it could force a heavy
-    # model load on page open for no signal we don't already have.
+    # Local providers have no key to be invalid — but "no key needed" is NOT the
+    # same as "usable", and reading it that way is how an on-device card comes to
+    # claim it works on a machine where its engine and weights were never
+    # installed. So ask the disk (a cheap file check, no model load) before
+    # calling the tier healthy. The real inference test still stays off the
+    # page-open path: it would force a multi-gigabyte load for no extra signal.
     if getattr(spec, "auth_mode", None) == "none":
+        local_state = _local_runtime_payload(spec)
+        if local_state is not None and not local_state["ready"]:
+            return SectionHealth(
+                status=_section_health.NEEDS_SETUP,
+                reason="not_installed",
+                detail=f"{spec.label}: {local_state['detail']}",
+                subject_id=spec.id,
+            )
         return SectionHealth(
             status=_section_health.OK,
             reason="local",
@@ -774,14 +1118,28 @@ async def _tier_section_health(
     except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
         configured = False
     if not configured:
+        if optional:
+            return SectionHealth(
+                status=_section_health.OK,
+                reason="not_configured_optional",
+                detail=f"{spec.label}: optional, no key set",
+                subject_id=spec.id,
+            )
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="not_configured",
             detail=f"{spec.label}: no key set",
             subject_id=spec.id,
         )
+    if not probe:
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="configured",
+            detail=f"{spec.label}: key set",
+            subject_id=spec.id,
+        )
     try:
-        result = await _provider_test.run_provider_test(spec, cfg, model=model)
+        result = await _run_tier_test(spec, cfg, model=model)
     except Exception as exc:  # noqa: BLE001
         log.warning("section-health test for %s failed: %s", spec.id, exc)
         return SectionHealth(
@@ -975,6 +1333,39 @@ async def _realtime_section_health(cfg: Any, spec: ProviderSpec | None) -> Secti
     return await _tier_section_health(cfg, spec)
 
 
+async def _dictation_section_health(
+    cfg: Any, spec: ProviderSpec | None, *, enabled: bool
+) -> SectionHealth:
+    """Dictation-polish tab: honest about readiness, never nagging.
+
+    The pass rewrites nothing the user depends on — with no key it reports
+    "unavailable" and delivers the raw transcript, which is byte-identical to
+    the behaviour before the feature existed. So this section deviates from the
+    other tiers twice, both deliberately:
+
+    * ``optional=True`` — no key anywhere stays silent instead of raising an
+      amber dot on every install forever. That dot would be the feature's most
+      visible effect on the majority of users, which is the opposite of what an
+      optional convenience should do.
+    * ``probe=False`` — no live call. The credential here is always a key some
+      other tier already owns and tests (the Groq speech-to-text key, the
+      Gemini/OpenAI/OpenRouter brain key), so probing again on page open would
+      duplicate a request without producing a signal we do not already have.
+
+    ``enabled`` is reported separately from "no key", because "you switched it
+    off" and "you have no key for it" are different answers to "why is nothing
+    happening" — and both must stay dot-free.
+    """
+    if not enabled:
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="disabled",
+            detail="Dictation polish is switched off",
+            subject_id=None,
+        )
+    return await _tier_section_health(cfg, spec, optional=True, probe=False)
+
+
 def _advanced_section_health(request: Request) -> SectionHealth:
     """Advanced tab: every integration here is OPTIONAL, so it never reports
     ``needs_setup`` — only ``error`` when something the user actually configured
@@ -1008,6 +1399,7 @@ def _section_health_subjects(request: Request, cfg: Any) -> dict[str, str | None
         "tts": _active_tts(request),
         "stt": _active_stt(request),
         "realtime": _active_realtime(request),
+        "dictation": _active_polish(request),
         "subagents": _selected_jarvis_agent_provider(cfg),
         "advanced": "telephony" if telephony is not None else None,
     }
@@ -1041,6 +1433,10 @@ def _section_health_fingerprint(
     tts_extra = getattr(tts, "model_extra", None)
     cartesia = tts_extra.get("cartesia") if isinstance(tts_extra, dict) else None
     cartesia_model = cartesia.get("model_id") if isinstance(cartesia, dict) else None
+    # The dictation section answers from config, not from a live probe, so its
+    # two inputs must enter the key themselves — otherwise flipping the polish
+    # switch shows the previous verdict for up to _SECTION_HEALTH_TTL_S.
+    dictation = getattr(cfg, "dictation", None) if cfg is not None else None
     configuration = (
         ("brain-model", _provider_value("brain", "model")),
         ("computer-use-model", _provider_value("computer-use", "tool_model")),
@@ -1052,6 +1448,8 @@ def _section_health_fingerprint(
         ("realtime-model", _provider_value("realtime", "model")),
         ("realtime-voice", _provider_value("realtime", "voice")),
         ("jarvis-agent-model", str(getattr(worker, "model", None) or "")),
+        ("dictation-polish", "1" if _polish_enabled(cfg) else "0"),
+        ("dictation-provider", str(getattr(dictation, "polish_provider", None) or "")),
         ("advanced-reachable", repr(reachable)),
     )
     return (
@@ -1084,6 +1482,11 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     """
     while True:
         cfg = _resolve_cfg(request)
+        # The dictation subject is the one subject whose resolution blocks (see
+        # ``_warm_active_polish``); every other one is an attribute read. Warm
+        # it off the loop BEFORE the snapshot is taken, because the snapshot
+        # feeds the cache fingerprint and this route is polled.
+        await _warm_active_polish(request)
         subjects = _section_health_subjects(request, cfg)
         fingerprint = _section_health_fingerprint(request, cfg, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
@@ -1139,6 +1542,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             raise
 
         current_cfg = _resolve_cfg(request)
+        await _warm_active_polish(request)
         current_subjects = _section_health_subjects(request, current_cfg)
         current_fingerprint = _section_health_fingerprint(
             request, current_cfg, current_subjects
@@ -1211,6 +1615,12 @@ async def _compute_section_health(
         "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or "")),
         "realtime": _realtime_section_health(
             cfg, get_spec(subjects["realtime"] or "")
+        ),
+        # Optional tier: silent without a key, never amber (see the function).
+        "dictation": _dictation_section_health(
+            cfg,
+            get_spec(subjects["dictation"] or ""),
+            enabled=_polish_enabled(cfg),
         ),
         "subagents": asyncio.to_thread(_jarvis_agent_section_health, cfg),
         "advanced": asyncio.to_thread(_advanced_section_health, request),
@@ -1376,7 +1786,9 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
     """The value currently in effect for ``provider_id``'s picker (tier-aware).
 
     Brain → the per-provider model; TTS → the global voice (``voice_de``) or model;
-    Cartesia → its own ``[tts.cartesia].model_id``; STT → the global ``stt.model``.
+    Cartesia → its own ``[tts.cartesia].model_id``; STT → its per-provider pin in
+    ``[stt.models]``, falling back to the global ``[stt] model`` (which is the
+    on-device checkpoint name, so it is only ever the right answer there).
     """
     if cat.tier == "brain":
         return _current_brain_model(cfg, provider_id)
@@ -1388,7 +1800,14 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
             return _cartesia_model(tts) or "sonic-3.5"
         return getattr(tts, "model", "") or ""
     if cat.tier == "stt":
-        return getattr(getattr(cfg, "stt", None), "model", "") or ""
+        stt = getattr(cfg, "stt", None)
+        pins = getattr(stt, "models", None) or {}
+        pinned = ""
+        if hasattr(pins, "get"):
+            pinned = str(pins.get(provider_id, "") or "")
+        if pinned:
+            return pinned
+        return getattr(stt, "model", "") or ""
     return ""
 
 
@@ -1431,16 +1850,23 @@ async def list_brain_models(
     catalog = _get_model_catalog(request)
     result = await catalog.list_models(provider_id, force_refresh=refresh)
     cfg = _resolve_cfg(request)
+    # On-device providers may only offer what is DOWNLOADED. The catalog lists
+    # every voice/model the provider can use, but a picker entry whose files are
+    # absent is an option that produces silence (TTS) or an error (STT) when
+    # chosen — the same "offered but not there" defect as a card claiming ready
+    # before it is installed. Filtered here rather than in the catalog so the
+    # catalog stays the complete list a download route can work from.
+    models = _installed_local_models(provider_id, result.models)
     current = _current_selection(cfg, provider_id, cat)
     # Safety net: for a curated TTS/STT list, never echo a value that isn't in the
     # list (e.g. a stale global value belonging to a different provider) — show the
     # placeholder instead. Brain keeps its value (custom model ids are allowed).
-    if cat.tier != "brain" and current and current not in {m.id for m in result.models}:
+    if cat.tier != "brain" and current and current not in {m.id for m in models}:
         current = ""
     return BrainModelsResponse(
         provider=provider_id,
         current_model=current,
-        models=[_brain_model_info(m) for m in result.models],
+        models=[_brain_model_info(m) for m in models],
         source=result.source,
         fetched_at=result.fetched_at,
         selects=result.selects,
@@ -1570,13 +1996,32 @@ def _apply_tts_selection(
 def _apply_stt_model(
     provider_id: str, value: str, body: BrainModelBody, request: Request
 ) -> BrainModelSaveResponse:
-    """Persist a STT model (global ``[stt] model``). Takes effect on voice restart."""
+    """Persist a STT model for ``provider_id``. Takes effect on voice restart.
+
+    Written to ``[stt.models].<provider id>`` — the slot the STT factory reads
+    (``jarvis.plugins.stt.resolve_stt_model``). The global ``[stt] model`` is
+    kept in step ONLY for an on-device recognizer, because that key holds a
+    faster-whisper checkpoint name and the local engine is its one consumer;
+    writing a cloud model id there would leave the local path pointing at a
+    checkpoint that does not exist.
+    """
+    on_device = False
+    try:
+        from jarvis.plugins.stt import provider_runs_on_device
+
+        on_device = provider_runs_on_device(provider_id)
+    except Exception as exc:  # noqa: BLE001 — an unknown provider is treated as cloud
+        log.debug("STT on-device probe failed for %s (%s); treating as cloud.",
+                  provider_id, exc)
+
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_stt_model
+            from jarvis.core.config_writer import set_stt_model, set_stt_provider_model
 
-            set_stt_model(value)
+            set_stt_provider_model(provider_id, value)
+            if on_device:
+                set_stt_model(value)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1588,7 +2033,14 @@ def _apply_stt_model(
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "stt", None) is not None:
         try:
-            cfg.stt.model = value  # type: ignore[attr-defined]
+            pins = dict(getattr(cfg.stt, "models", None) or {})  # type: ignore[attr-defined]
+            if value:
+                pins[provider_id] = value
+            else:
+                pins.pop(provider_id, None)
+            cfg.stt.models = pins  # type: ignore[attr-defined]
+            if on_device:
+                cfg.stt.model = value  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001
             log.debug("In-memory stt model update skipped: %s", exc)
 
@@ -1624,6 +2076,102 @@ async def set_brain_model(
     if cat.tier == "tts":
         return _apply_tts_selection(provider_id, value, cat.selects, body, request)
     return _apply_stt_model(provider_id, value, body, request)
+
+
+class BaseUrlBody(BaseModel):
+    # None or "" clears the override → back to the vendor default.
+    base_url: str | None = Field(default=None, max_length=500)
+
+
+class BaseUrlResponse(BaseModel):
+    ok: bool = True
+    provider: str
+    base_url: str | None
+    default_base_url: str | None
+
+
+@router.put("/providers/{provider_id}/base-url")
+async def set_provider_base_url(provider_id: str, body: BaseUrlBody) -> BaseUrlResponse:
+    """Set (or clear) the server URL of a local/self-hosted provider.
+
+    Only cards with ``supports_base_url`` accept one (400 otherwise). The URL
+    is normalized to a bare server root (a pasted ``…/v1`` suffix is stripped,
+    ``0.0.0.0`` maps to localhost) and persisted atomically to
+    ``[brain.providers.<id>].base_url``; clearing falls back to the vendor
+    default (ollama: OLLAMA_HOST → http://localhost:11434).
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    if not spec.supports_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{provider_id}' does not accept a server URL.",
+        )
+    cleaned = (body.base_url or "").strip()
+    if cleaned:
+        if not cleaned.lower().startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=422,
+                detail="The server URL must start with http:// or https://.",
+            )
+        from jarvis.plugins.brain.ollama import normalize_server_root
+
+        cleaned = normalize_server_root(cleaned)
+    from jarvis.core import config_writer
+
+    config_writer.set_provider_base_url(provider_id, cleaned or None)
+    return BaseUrlResponse(
+        provider=provider_id,
+        base_url=cleaned or None,
+        default_base_url=spec.default_base_url,
+    )
+
+
+@router.post("/providers/{provider_id}/local-install")
+async def start_local_install(provider_id: str) -> dict[str, Any]:
+    """Install an on-device provider's engine and download its model.
+
+    This is the §3 "recoverable in-app" contract for the local providers: the
+    engine is an optional pip package and the weights are a multi-gigabyte
+    download, and neither may require a terminal. Returns immediately with a
+    ``state`` the UI polls — a synchronous route would hold the request open
+    for minutes — and a second call while a run is in flight joins it instead
+    of starting a duplicate download.
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.speech.local_install import start_install
+
+    result = await asyncio.to_thread(start_install, provider_id)
+    if result.get("state") == "error" and "not a local provider" in result.get(
+        "message", ""
+    ):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@router.get("/providers/{provider_id}/local-install/status")
+async def get_local_install_status(provider_id: str) -> dict[str, Any]:
+    """Report install progress AND the independent on-disk readiness probe.
+
+    The probe is the authority: a provider installed by some other route (a
+    previous app run, the ``[full]`` extra, a manual pip) reads as ready even
+    though this process never installed anything, and a finished install whose
+    model turns out unreadable reads as an error rather than a false success.
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.speech.local_install import install_status
+
+    result = await asyncio.to_thread(install_status, provider_id)
+    if result.get("state") == "error" and "not a local provider" in result.get(
+        "message", ""
+    ):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
 
 
 @router.get("/providers/{provider_id}/cu-model")
@@ -2128,7 +2676,17 @@ async def realtime_voice_preview(
 
 @router.get("/codex/status")
 async def codex_status(request: Request) -> dict[str, Any]:
-    return CodexAuthService(_codex_binary_path(request)).status().to_dict()
+    """Honest snapshot of the Codex CLI login.
+
+    Off the event loop: the probe SPAWNS the CLI binary, which costs a few
+    hundred milliseconds. On the loop that pause froze everything else running
+    in this process — including the realtime voice socket, where it surfaced as
+    an audible hole mid-sentence (forensic 2026-07-27, see
+    ``jarvis.audio.player.DEFAULT_OUTPUT_BUFFER_S``).
+    """
+    service = CodexAuthService(_codex_binary_path(request))
+    status = await asyncio.to_thread(service.status)
+    return status.to_dict()
 
 
 @router.post("/codex/test")
@@ -2170,7 +2728,7 @@ async def codex_set_binary_path(body: CodexBinaryPathBody, request: Request) -> 
 @router.post("/codex/login")
 async def codex_login(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(
             status_code=409,
@@ -2194,10 +2752,10 @@ async def codex_login(request: Request) -> dict[str, Any]:
 @router.post("/codex/logout")
 async def codex_logout(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(status_code=409, detail="Codex CLI is not installed")
-    ok, error = service.logout_blocking()
+    ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Codex logout failed")
     return {"ok": True, "message": "Codex was disconnected"}
@@ -2253,6 +2811,9 @@ _SWITCH_ERROR_STATUS: dict[str, int] = {
     "wrong_tier": 400,
     "subagent_only": 409,
     "missing_credential": 409,
+    # Same shape as a missing credential, for the on-device providers: the
+    # engine or its model is not on this machine yet.
+    "not_installed": 409,
     "subagent_unavailable": 409,
     "airgapped_locked": 403,
     "persist_failed": 500,
@@ -2395,6 +2956,14 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Add its API key first."
             ),
         )
+    # Same reasoning as the STT switch: a local provider has no credential to
+    # check, so readiness must be asked of the disk. Activating a voice whose
+    # files are missing would turn every spoken reply into silence.
+    from jarvis.brain.app_control import local_readiness_error
+
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        raise HTTPException(status_code=409, detail=not_installed)
 
     if body.persist:
         try:
@@ -2712,11 +3281,12 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
 
 @router.post("/stt/switch")
 async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Persist the active STT provider in ``jarvis.toml``.
+    """Switch the active STT provider without restarting the app.
 
-    The SpeechPipeline constructs STT once because loading a Whisper model is
-    expensive. The selection therefore applies after the next voice or app
-    restart and the response reports ``restart_required: true``.
+    A running SpeechPipeline constructs the replacement first, then swaps the
+    voice recognizer and invalidates the prompt-free dictation cache as one
+    cut-over. An in-flight transcription keeps its old provider reference and
+    finishes normally; the next transcription uses the new provider.
     """
     spec = get_spec(body.provider)
     if spec is None:
@@ -2736,25 +3306,97 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Add its API key first."
             ),
         )
+    # A local provider passes the credential check trivially (it has no key), so
+    # readiness has to be asked separately — activating an engine that is not
+    # installed would leave voice input dead with no explanation. This is the
+    # gate the 2026-07-03 card lacked. Shared with the voice/CLI/tool switch
+    # path via ``local_readiness_error`` so the two can never disagree.
+    from jarvis.brain.app_control import local_readiness_error
 
+    not_installed = local_readiness_error(spec)
+    if not_installed:
+        raise HTTPException(status_code=409, detail=not_installed)
+
+    cfg = _resolve_cfg(request)
+    stt_cfg = getattr(cfg, "stt", None) if cfg is not None else None
+    if stt_cfg is None:
+        raise HTTPException(status_code=503, detail="STT configuration is unavailable.")
+
+    # Pin the checkpoint the local card promised and downloaded. Cloud
+    # providers keep their model in [stt.models] and leave this value alone.
+    from jarvis.speech.local_models import get_local_provider
+
+    local_entry = get_local_provider(body.provider)
+    local_model = (
+        local_entry.model_id
+        if local_entry is not None and local_entry.runtime == "faster-whisper"
+        else None
+    )
+    old_provider = str(getattr(stt_cfg, "provider", "") or "")
+    old_model = str(getattr(stt_cfg, "model", "") or "")
+
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    setter = getattr(pipeline, "set_stt_provider", None)
+    live_switched = False
+    if pipeline is not None:
+        if not callable(setter):
+            raise HTTPException(
+                status_code=503,
+                detail="The active speech pipeline cannot switch STT providers live.",
+            )
+        try:
+            live_switched = bool(setter(body.provider, model=local_model))
+        except Exception as exc:  # noqa: BLE001 — keep the old provider alive
+            log.error("STT live switch raised unexpectedly: %s", exc, exc_info=True)
+            live_switched = False
+        if not live_switched:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Provider '{body.provider}' could not be activated live. "
+                    "The previous STT provider is still active."
+                ),
+            )
+    else:
+        # Voice is not running (headless / disabled), so there is no stale live
+        # object to replace. The next pipeline construction reads this value;
+        # an application restart is neither needed nor useful.
+        try:
+            stt_cfg.provider = body.provider
+            if local_model is not None:
+                stt_cfg.model = local_model
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory STT provider update skipped: %s", exc)
+
+    persisted = False
     if body.persist:
         try:
             from jarvis.core.config_writer import set_stt_provider
 
             set_stt_provider(body.provider)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            if local_model is not None:
+                from jarvis.core.config_writer import set_stt_model
 
-    cfg = _resolve_cfg(request)
-    if cfg is not None and getattr(cfg, "stt", None) is not None:
-        try:
-            cfg.stt.provider = body.provider  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
-            log.debug("In-memory STT provider update skipped: %s", exc)
+                set_stt_model(local_model)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — roll live state back below
+            # Do not leave the card, live recognizer, and durable config naming
+            # three different providers when the atomic writer rejects a save.
+            try:
+                if live_switched and callable(setter):
+                    setter(old_provider, model=old_model)
+                else:
+                    stt_cfg.provider = old_provider
+                    stt_cfg.model = old_model
+            except Exception as rollback_exc:  # noqa: BLE001
+                log.error(
+                    "STT live-switch rollback failed after persistence error: %s",
+                    rollback_exc,
+                    exc_info=True,
+                )
+            raise HTTPException(
+                status_code=500, detail=f"STT provider save failed: {exc}"
+            ) from exc
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
@@ -2762,8 +3404,9 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist,
-        "restart_required": True,
+        "persisted": persisted,
+        "live_switched": live_switched,
+        "restart_required": False,
     }
 
 
