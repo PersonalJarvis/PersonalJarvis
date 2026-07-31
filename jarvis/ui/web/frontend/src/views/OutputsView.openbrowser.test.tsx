@@ -114,8 +114,9 @@ describe("OutputsView — Browser opener reaches the real browser", () => {
     renderView();
 
     // The single session auto-selects, so its artifact row is on screen.
-    await waitFor(() =>
-      expect(screen.getByText(REPORT.path)).toBeTruthy(),
+    await waitFor(() => expect(screen.getByText("report.md")).toBeTruthy());
+    expect(screen.getByTestId("artifact-path").getAttribute("title")).toBe(
+      REPORT.path,
     );
 
     // Open the "Open with…" chooser (the ChevronDown next to the open button).
