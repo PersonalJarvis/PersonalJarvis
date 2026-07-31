@@ -507,6 +507,36 @@ def test_a_described_account_never_carries_a_token() -> None:
     assert "supersecret" not in serialized
 
 
+def test_an_expired_access_token_beside_a_refresh_token_is_still_signed_in() -> None:
+    """A stale bearer between sessions is not a signed-out account.
+
+    Claude Code renews the access token the moment a terminal runs on the
+    directory, so for most of an idle day every healthy account holds an
+    expired bearer AND a live refresh token. Reporting that as disconnected
+    painted the whole switcher red and sent the user through pointless
+    re-logins (the "permanently logged out" report, 2026-07-31).
+    """
+    account = agent_accounts.create_account("claude", "Idle seat")
+    (account.config_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-old",
+                    "refreshToken": "sk-ant-ort-live",
+                    "subscriptionType": "max",
+                    "expiresAt": 1_000,  # long dead
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is True
+    assert snapshot.mode == "subscription"
+    serialized = json.dumps(snapshot.to_dict())
+    assert "sk-ant-ort-live" not in serialized
+
+
 def test_an_expired_claude_login_is_not_reported_as_connected() -> None:
     account = agent_accounts.create_account("claude", "Stale seat")
     (account.config_dir / ".credentials.json").write_text(

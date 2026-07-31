@@ -60,7 +60,12 @@ _BINARY_CANDIDATES: tuple[str, ...] = ("claude", "claude.cmd", "claude.exe")
 # TTL auth probe on later calls. A failed version probe is cached too, so an
 # absent/hanging Claude install never re-pays that timeout.
 _VERSION_CACHE: dict[str, str | None] = {}
-_AUTH_LOGIN_CACHE: dict[str, bool] = {}
+#: ``auth login --help`` output per binary, or ``None`` where the subcommand
+#: does not exist. The TEXT is cached rather than a boolean because it answers
+#: two capability questions: whether ``auth login`` exists at all, and whether
+#: it takes ``--email`` (older releases with the subcommand but not the flag
+#: would abort on an unknown option).
+_AUTH_LOGIN_CACHE: dict[str, str | None] = {}
 _AUTH_LOGOUT_CACHE: dict[str, bool] = {}
 _AUTH_STATUS_CACHE: dict[
     tuple[str, str, str, str, str], tuple[float, ClaudeCliAuthSnapshot | None]
@@ -516,8 +521,8 @@ class ClaudeAuthService:
         _AUTH_STATUS_CACHE[cache_key] = (now, snapshot)
         return snapshot
 
-    def _supports_auth_login(self, binary: str) -> bool:
-        """Whether this installed CLI exposes the modern ``auth login`` command."""
+    def _auth_login_help(self, binary: str) -> str | None:
+        """``auth login --help`` output, or ``None`` where the command is absent."""
         if binary in _AUTH_LOGIN_CACHE:
             return _AUTH_LOGIN_CACHE[binary]
         try:
@@ -530,11 +535,15 @@ class ClaudeAuthService:
                 text=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-            supported = proc.returncode == 0
+            help_text = (proc.stdout or "") if proc.returncode == 0 else None
         except (OSError, subprocess.SubprocessError):
-            supported = False
-        _AUTH_LOGIN_CACHE[binary] = supported
-        return supported
+            help_text = None
+        _AUTH_LOGIN_CACHE[binary] = help_text
+        return help_text
+
+    def _supports_auth_login(self, binary: str) -> bool:
+        """Whether this installed CLI exposes the modern ``auth login`` command."""
+        return self._auth_login_help(binary) is not None
 
     def _supports_auth_logout(self, binary: str) -> bool:
         """Whether the CLI can remove its own platform-native credentials."""
@@ -556,11 +565,24 @@ class ClaudeAuthService:
         _AUTH_LOGOUT_CACHE[binary] = supported
         return supported
 
-    def _login_argv(self, binary: str) -> list[str]:
-        """Capability-selected login argv, with a first-run fallback for old CLIs."""
+    def _login_argv(self, binary: str, *, email: str | None = None) -> list[str]:
+        """Capability-selected login argv, with a first-run fallback for old CLIs.
+
+        ``email`` names the account this sign-in is FOR. Passed through only
+        when the installed CLI advertises ``--email``: the OAuth page then
+        targets that account instead of silently re-authorizing whichever one
+        the browser is already signed in with at claude.com — which is how two
+        subscription rows ended up on the same plan (2026-07-27).
+        """
         prefix = self._cli_argv_prefix(binary)
         if self._supports_auth_login(binary):
-            return [*prefix, "auth", "login", "--claudeai"]
+            argv = [*prefix, "auth", "login", "--claudeai"]
+            # Gated on the flag being ADVERTISED: a release with the subcommand
+            # but not the option would abort on it, and a failed login argv
+            # reads to the user as a rejected account.
+            if email and "--email" in (self._auth_login_help(binary) or ""):
+                argv += ["--email", email]
+            return argv
         # Older Claude Code releases have no auth subcommand. A bare interactive
         # start is their documented first-run login flow; passing ``/login`` as
         # a positional argv value incorrectly treats it as an initial prompt.

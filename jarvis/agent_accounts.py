@@ -920,6 +920,24 @@ def _describe_claude(account: AgentAccount) -> AccountSnapshot:
             email=email,
             tier=tier,
         )
+    if snapshot.status == "expired" and snapshot.refresh_token_present:
+        # A stale ACCESS token beside a refresh token is a signed-in account
+        # between sessions, not a signed-out one: the CLI renews the bearer the
+        # moment a terminal runs on this directory. Reporting it disconnected
+        # painted every idle account red for most of the day and pointed its
+        # owner at a Sign-in button that only ever re-authorized the browser's
+        # live session (the "permanently logged out" report, 2026-07-31).
+        label = subscription_label(tier)
+        return AccountSnapshot(
+            account=account,
+            connected=True,
+            mode="subscription",
+            message=(
+                f"Signed in via {label} ({email})." if email else f"Signed in via {label}."
+            ),
+            email=email,
+            tier=tier,
+        )
     if snapshot.status == "expired":
         return AccountSnapshot(
             account=account,
@@ -1090,13 +1108,23 @@ def start_login(account: AgentAccount) -> Any:
 
     env = env_overrides(account.platform, account.id)
     if account.platform == "claude":
-        from jarvis.claude_auth import ClaudeAuthService, claude_install_hint
+        from jarvis.claude_auth import (
+            ClaudeAuthService,
+            claude_account_identity,
+            claude_install_hint,
+        )
 
         service = ClaudeAuthService()
         binary = service._resolve_binary()  # noqa: SLF001 — the module's own seam
         if binary is None:
             raise FileNotFoundError(f"Claude CLI is not installed. {claude_install_hint()}")
-        argv = service._login_argv(binary)  # noqa: SLF001 — capability-selected argv
+        # Aim the sign-in at the identity this seat already holds (a re-login is
+        # the common case). Without the hint, a browser with a live claude.com
+        # session re-authorizes THAT account without ever asking — and a second
+        # row silently lands on the first row's plan. A first-ever sign-in has
+        # no recorded email yet, so there the hint is honestly absent.
+        known_email, _name = claude_account_identity(account.config_dir)
+        argv = service._login_argv(binary, email=known_email)  # noqa: SLF001 — capability-selected argv
         title = f"Claude sign-in — {account.label}"
     elif account.platform == "codex":
         from jarvis.codex_auth import CodexAuthService

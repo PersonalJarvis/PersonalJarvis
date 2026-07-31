@@ -1334,11 +1334,12 @@ class Registry:
         # changed.
         self._sessions: dict[str, Session] = {}
         self._active: str | None = None
-        # Which subscription NEW panes of each coding CLI open on, chosen in the
-        # workspace's own settings. Empty means "whatever the stored default
-        # says" — `active_account_id` is the only reader and owns that fallback,
-        # so an untouched install behaves exactly as it did before.
-        self._active_accounts: dict[str, str] = {}
+        # Which subscription NEW panes open on is deliberately NOT cached here.
+        # An in-memory copy was a second source of truth: once the workspace
+        # switcher had written it, a later switch on the app's own Subscriptions
+        # page (which only writes the store) never reached this registry, and
+        # new panes kept opening on the seat the user had just moved away from.
+        # `active_account_id` reads the one persisted store instead.
         # Injectable so tests can drive the registry against a fake PTY pool
         # without a real pseudo-terminal (and without a coding agent installed).
         self._pty: PtyManager | None = pty_manager
@@ -1414,14 +1415,17 @@ class Registry:
     def active_account_id(self, agent: str) -> str | None:
         """Which subscription of ``agent`` the next new pane opens on.
 
-        The workspace's own choice when one was made here, the stored default
-        otherwise — and an id that no longer resolves degrades to the built-in
-        login rather than to nothing (``resolve_account`` owns that fallback).
-        ``None`` only for something that is not a coding CLI with accounts.
+        Always the ONE persisted default (`jarvis.agent_accounts`), never a
+        registry-local copy — every surface that switches accounts writes that
+        store, so reading anything else lets two surfaces disagree about which
+        seat the next pane spends. An id that no longer resolves degrades to
+        the built-in login rather than to nothing (``resolve_account`` owns
+        that fallback). ``None`` only for something that is not a coding CLI
+        with accounts.
         """
         if not has_accounts(agent):
             return None
-        return resolve_account(agent, self._active_accounts.get(agent))
+        return resolve_account(agent, None)
 
     def active_accounts(self) -> list[dict[str, Any]]:
         """The active subscription of every coding CLI, as the UI shows it.
@@ -1468,13 +1472,13 @@ class Registry:
             raise SessionError(
                 f"{AGENT_DISPLAY.get(agent, agent)} has no account with id {account_id!r}."
             )
-        self._active_accounts[agent] = account.id
+        # The store is the ONE place the choice lives (see active_account_id),
+        # so a failure to write it means the switch did not happen — surfacing
+        # that honestly beats a success answer new panes then contradict.
         try:
             await asyncio.to_thread(agent_accounts.set_active, agent, account.id)  # type: ignore[arg-type]
         except agent_accounts.AccountError as exc:
-            # The pin above already governs this session; only its survival past
-            # a restart is lost, and that is worth a log rather than a failure.
-            logger.warning("Agentic IDE: the active account was not persisted: {}", exc)
+            raise SessionError(f"The account switch was not saved: {exc}") from exc
         logger.info("Agentic IDE: new {} terminals will use {!r}", agent, account.label)
         return account
 

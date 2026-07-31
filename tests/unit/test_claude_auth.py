@@ -413,6 +413,42 @@ def test_start_login_uses_modern_auth_command(monkeypatch) -> None:
     assert captured["kwargs"] == {"title": "Claude sign-in"}
 
 
+def test_login_argv_targets_the_accounts_email_when_the_cli_can(monkeypatch) -> None:
+    """`--email` aims the browser flow at the seat being signed in.
+
+    Without it, a browser holding a live claude.com session silently
+    re-authorizes THAT account — two subscription rows on one plan.
+    """
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(
+        svc,
+        "_auth_login_help",
+        lambda _binary: "Options:\n  --claudeai\n  --email <email>  Pre-populate",
+    )
+    assert svc._login_argv("/opt/claude", email="work@example.com") == [
+        "/opt/claude",
+        "auth",
+        "login",
+        "--claudeai",
+        "--email",
+        "work@example.com",
+    ]
+
+
+def test_login_argv_omits_email_when_the_cli_does_not_advertise_it(monkeypatch) -> None:
+    """A release with `auth login` but no `--email` must not be handed the flag."""
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(
+        svc, "_auth_login_help", lambda _binary: "Options:\n  --claudeai"
+    )
+    assert svc._login_argv("/opt/claude", email="work@example.com") == [
+        "/opt/claude",
+        "auth",
+        "login",
+        "--claudeai",
+    ]
+
+
 def test_start_login_old_cli_uses_bare_first_run(monkeypatch) -> None:
     captured: dict[str, object] = {}
     svc = ClaudeAuthService()

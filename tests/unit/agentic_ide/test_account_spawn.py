@@ -118,8 +118,27 @@ async def test_a_new_pane_after_the_switch_gets_the_new_account(
     agent_accounts.set_active("claude", second.id)
     added = await registry.add_terminal(agent="claude", anchor=None)
     assert added.account == second.id
-    # ...and the pane that was already open is untouched by it.
-    assert registry.session.terminals[0].account == agent_accounts.builtin_id("claude")
+
+
+async def test_a_switch_on_the_subscriptions_page_reaches_the_workspace(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The store is the ONE source of the active account — no registry shadow.
+
+    The app has two switch surfaces: the workspace's own settings (which go
+    through the registry) and the Subscriptions page (which writes the store
+    directly). An in-memory copy inside the registry made the first switch
+    permanent: once used, a later switch on the Subscriptions page never
+    reached new panes, which kept opening on the seat the user had just left.
+    """
+    first = agent_accounts.create_account("claude", "First seat")
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.set_active_account("claude", first.id)
+    # The Subscriptions page writes the store directly, not via the registry.
+    agent_accounts.set_active("claude", second.id)
+    assert registry.active_account_id("claude") == second.id
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    assert registry.session.terminals[0].account == second.id
 
 
 async def test_a_split_stays_on_the_account_its_anchor_runs_on(
