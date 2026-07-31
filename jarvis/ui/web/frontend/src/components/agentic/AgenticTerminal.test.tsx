@@ -346,7 +346,7 @@ describe("pane header actions", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps every action visible when the pane is not focused", () => {
+  it("recedes on an unfocused pane but stays reachable by hover and keyboard", () => {
     render(
       <AgenticTerminal
         name="Dana"
@@ -363,11 +363,35 @@ describe("pane header actions", () => {
     const actions = screen.getByTestId("pane-maximize-Dana").parentElement;
 
     expect(actions).not.toBeNull();
-    expect(actions?.className).toContain("opacity-100");
-    expect(actions?.className).not.toContain("opacity-0");
+    // Hidden by opacity only — the buttons stay in the DOM, so a header hover
+    // or tabbing into the cluster reveals the same elements this test finds.
+    expect(actions?.className).toContain("opacity-0");
+    expect(actions?.className).toContain("group-hover/header:opacity-100");
+    expect(actions?.className).toContain("focus-within:opacity-100");
     expect(screen.getByTestId("pane-split-right-Dana")).toBeTruthy();
     expect(screen.getByTestId("pane-split-down-Dana")).toBeTruthy();
     expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
+  });
+
+  it("keeps every action visible on the focused pane", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        focused
+        onToggleMaximize={() => undefined}
+        onSplit={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    const actions = screen.getByTestId("pane-maximize-Dana").parentElement;
+
+    expect(actions).not.toBeNull();
+    expect(actions?.className).toContain("opacity-100");
+    expect(actions?.className).not.toContain("opacity-0 ");
   });
 });
 

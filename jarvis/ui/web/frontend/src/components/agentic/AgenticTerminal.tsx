@@ -1163,10 +1163,12 @@ export function AgenticTerminal({
       onMouseDown={onFocus}
       {...dragHandlers}
       className={cn(
+        // One quiet border per pane; the focused one carries the workspace's
+        // only standing accent. The old per-pane drop shadows made a grid of
+        // twelve read as twelve floating cards — a tiling terminal is a wall,
+        // and a wall needs edges, not elevation.
         "relative flex h-full w-full flex-col overflow-hidden rounded-lg border transition-shadow",
-        focused
-          ? "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.35),0_8px_24px_-12px_rgba(0,0,0,0.5)]"
-          : "shadow-[0_4px_16px_-10px_rgba(0,0,0,0.4)]",
+        focused && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
         // A prompt just landed here. Two seconds of ring, for the one job the
         // receipt below cannot do: telling the user WHICH pane out of eight to
@@ -1412,12 +1414,15 @@ function PaneHeader({
           : undefined
       }
       className={cn(
-        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-1",
+        // No tinted strip of its own: the header shares the terminal's ground
+        // and the border underneath is enough to say where the output begins.
+        // Twelve tinted bands across the workspace were twelve horizontal
+        // stripes the eye had to skip on the way to the text that matters.
+        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-0.5",
         onArrangeStart && (arranging ? "cursor-grabbing" : "cursor-grab"),
       )}
       style={{
         borderColor: PANE_CHROME[appearance].border,
-        background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
         // Claims the touch gesture for the drag. Without it a touch that starts
         // on the header scrolls the workspace instead of lifting the pane, and
         // the drag never begins at all.
@@ -1496,20 +1501,15 @@ function PaneHeader({
               // it. The pencil beside it is what makes the feature findable.
               onDoubleClick={onRename ? () => setDraft(name) : undefined}
               title={onRename ? `${name} — double-click to rename` : undefined}
+              // The focused pane's call-sign is the workspace's one standing
+              // accent; every other name is plain text. A filled badge on all
+              // twelve panes marked nothing, because a marker everyone wears
+              // is a uniform.
               className={cn(
-                "shrink-0 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
+                "shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold tracking-tight",
                 focused ? "bg-primary/20 text-primary" : "",
               )}
-              style={
-                focused
-                  ? undefined
-                  : {
-                      color: light ? "#2b2b33" : "#e8e8ec",
-                      background: light
-                        ? "rgba(0,0,0,0.05)"
-                        : "rgba(255,255,255,0.06)",
-                    }
-              }
+              style={focused ? undefined : { color: light ? "#2b2b33" : "#e8e8ec" }}
             >
               {name}
             </span>
@@ -1568,26 +1568,42 @@ function PaneHeader({
         )}
       </div>
 
-      {/* Pane actions stay visible in every terminal, including panes that are
-          not focused, so the controls can be found without probing by hover. */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-100">
-        {dead && (
-          <button
-            type="button"
-            aria-label={`Restart ${name}`}
-            title={`Start a fresh ${displayName} in ${name}`}
-            data-testid={`pane-restart-${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRestart?.();
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="mr-1 flex items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Restart
-          </button>
+      {/* Restart is an EVENT, not furniture — a dead agent must announce
+          itself whether or not anyone hovers, so it sits outside the cluster
+          that hides. */}
+      {dead && (
+        <button
+          type="button"
+          aria-label={`Restart ${name}`}
+          title={`Start a fresh ${displayName} in ${name}`}
+          data-testid={`pane-restart-${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestart?.();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="mr-1 flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Restart
+        </button>
+      )}
+
+      {/* Pane actions appear where the eye already is: on the pane under the
+          pointer, on the focused pane, and while one of their menus is open.
+          Five buttons on every header of a twelve-pane wall were sixty
+          controls nobody was using at once — the redesign shows each pane's
+          five exactly when that pane is the one being worked. They stay in
+          the DOM throughout (opacity, not display), so keyboard focus and
+          tests reach them regardless. */}
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-0.5 transition-opacity",
+          focused || maximized || picking !== null
+            ? "opacity-100"
+            : "opacity-0 focus-within:opacity-100 group-hover/header:opacity-100",
         )}
+      >
         <PromptHistoryButton
           terminal={name}
           workspaceId={workspaceId}

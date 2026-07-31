@@ -33,6 +33,7 @@ import {
   Moon,
   Plus,
   Power,
+  SlidersHorizontal,
   Sun,
   Trash2,
   Type,
@@ -190,6 +191,25 @@ interface AgenticGridProps {
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+
+/*
+ * The one button style of the workspace toolbar.
+ *
+ * The row above a wall of terminals used to be a collection of bordered
+ * controls in three different shapes — labelled toggles, segmented pairs,
+ * outlined groups — and every one of them competed with the panes for the eye.
+ * The redesign extends the launcher's rule (see ./controls.tsx) to the running
+ * workspace: controls recede to quiet glyphs, colour is reserved for state
+ * that is ON, and the terminals are the only thing on screen with weight.
+ */
+const TOOLBAR_BTN =
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
+  "transition-colors hover:bg-secondary hover:text-foreground " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
+  "disabled:cursor-not-allowed disabled:opacity-40";
+
+/** The same button, switched ON — the only yellow the toolbar spends. */
+const TOOLBAR_BTN_ON = "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary";
 
 /**
  * The part of the hovered pane a drop would take, drawn as it will look.
@@ -1457,17 +1477,20 @@ export function AgenticGrid({
         {/* Which branch the agents are on. It stays even in the merged row —
             the workspace tab names the folder, not the checkout, and "which
             branch am I about to let a dozen agents commit to" is not a
-            question worth answering from memory. */}
+            question worth answering from memory. Plain muted text rather than
+            a chip: it is a fact to glance at, not a control to weigh. */}
         {branchLabel && (
           <span
-            className="chip hidden shrink-0 text-[10px] uppercase tracking-wide xl:inline-flex"
+            className="hidden shrink-0 font-mono text-[11px] text-muted-foreground xl:inline"
             title={session.folder}
           >
             {branchLabel}
           </span>
         )}
 
-        {/* Focus mode — the explicit switch into "Jarvis codes with me here". */}
+        {/* Focus mode — the explicit switch into "Jarvis codes with me here".
+            A quiet glyph that lights up while the mode is on; the one-time
+            intro dialog and the tooltip carry the explanation. */}
         <button
           type="button"
           onClick={() => onToggleFocus(!focusMode)}
@@ -1478,65 +1501,21 @@ export function AgenticGrid({
               ? "Focused coding mode is on — Jarvis answers inside this workspace. Click to leave."
               : "Turn on focused coding mode — Jarvis answers inside this workspace until you switch back."
           }
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
-            focusMode
-              ? "border-primary/60 bg-primary/15 text-primary"
-              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
-          )}
+          className={cn(TOOLBAR_BTN, focusMode && TOOLBAR_BTN_ON)}
         >
           <Brain className="h-4 w-4 shrink-0" />
-          <span className="hidden lg:inline">
-            {focusMode ? "Coding mode ON" : "Coding mode OFF"}
-          </span>
         </button>
 
-        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5">
-          <button
-            type="button"
-            aria-label="Light terminals"
-            aria-pressed={appearance === "light"}
-            onClick={() => setAppearance("light")}
-            className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-              appearance === "light" ? "bg-primary/20 text-primary" : "text-muted-foreground",
-            )}
-          >
-            <Sun className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Dark terminals"
-            aria-pressed={appearance === "dark"}
-            onClick={() => setAppearance("dark")}
-            className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-              appearance === "dark" ? "bg-primary/20 text-primary" : "text-muted-foreground",
-            )}
-          >
-            <Moon className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        <div className="hidden shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5 md:flex">
-          <button
-            type="button"
-            aria-label="Smaller text"
-            onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-          >
-            <Minus className="h-3.5 w-3.5" />
-          </button>
-          <Type className="h-3.5 w-3.5 text-muted-foreground" />
-          <button
-            type="button"
-            aria-label="Larger text"
-            onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* Terminal appearance and text size, one quiet button away. They are
+            set-and-forget preferences, not moment-to-moment controls — kept
+            permanently on the bar they cost seven bordered buttons of noise
+            for something touched once a week. */}
+        <ViewMenu
+          appearance={appearance}
+          onAppearance={setAppearance}
+          fontSize={fontSize}
+          onFontSize={setFontSize}
+        />
 
         {/* Which terminals stopped while you were looking at another one.
             Before "Continue" rather than after it, because the two answer the
@@ -1566,19 +1545,14 @@ export function AgenticGrid({
           aria-pressed={selectionMode}
           onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
           title={t("agentic_grid.selection.hint")}
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
+          aria-label={
             selectionMode
-              ? "border-primary/60 bg-primary/15 text-primary"
-              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
-          )}
+              ? t("agentic_grid.selection.finish")
+              : t("agentic_grid.selection.start")
+          }
+          className={cn(TOOLBAR_BTN, selectionMode && TOOLBAR_BTN_ON)}
         >
           <ListChecks className="h-4 w-4 shrink-0" />
-          <span className="hidden xl:inline">
-            {selectionMode
-              ? t("agentic_grid.selection.finish")
-              : t("agentic_grid.selection.start")}
-          </span>
         </button>
 
         {selectionMode && (
@@ -1640,12 +1614,12 @@ export function AgenticGrid({
           <Dialog.Trigger asChild>
             <button
               type="button"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-40"
+              className={cn(TOOLBAR_BTN, "hover:bg-destructive/10 hover:text-destructive")}
               disabled={busy}
+              aria-label="Close workspace"
               title="Close the workspace and stop every agent in it"
             >
               <Power className="h-4 w-4 shrink-0" />
-              <span className="hidden xl:inline">Close</span>
             </button>
           </Dialog.Trigger>
           <ConfirmWorkspaceClose
@@ -2054,7 +2028,7 @@ export function AgenticGrid({
                     "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
                     target === term.name
                       ? "border-primary/60 bg-primary/10 text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40",
+                      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
                   <span className="font-medium">{term.name}</span>
@@ -2157,6 +2131,114 @@ export function AgenticGrid({
                 )}
           </span>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Terminal appearance and text size, behind one quiet toolbar button.
+ *
+ * Both are remembered per browser profile and touched about once a week, so
+ * they earn a menu rather than seven permanent buttons on the bar. The controls
+ * inside keep the exact labels the standalone buttons had — a screen reader and
+ * a muscle memory both find the same names one click deeper.
+ */
+function ViewMenu({
+  appearance,
+  onAppearance,
+  fontSize,
+  onFontSize,
+}: {
+  appearance: TerminalAppearance;
+  onAppearance: (next: TerminalAppearance) => void;
+  fontSize: number;
+  onFontSize: (next: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        aria-label="Terminal appearance and text size"
+        aria-expanded={open}
+        data-testid="agentic-view-menu"
+        title="Terminal appearance and text size"
+        onClick={() => setOpen((value) => !value)}
+        className={cn(TOOLBAR_BTN, open && "bg-secondary text-foreground")}
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          {/* Same dismiss pattern as the pane split menu: anywhere else closes. */}
+          <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
+          <div
+            data-testid="agentic-view-menu-panel"
+            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">Terminals</span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  aria-label="Light terminals"
+                  aria-pressed={appearance === "light"}
+                  onClick={() => onAppearance("light")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    appearance === "light"
+                      ? "bg-primary/20 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Sun className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Dark terminals"
+                  aria-pressed={appearance === "dark"}
+                  onClick={() => onAppearance("dark")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    appearance === "dark"
+                      ? "bg-primary/20 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Moon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Type className="h-3.5 w-3.5" />
+                Text size
+              </span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  aria-label="Smaller text"
+                  onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <span className="w-8 text-center font-mono text-[11px] text-foreground">
+                  {fontSize}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Larger text"
+                  onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
