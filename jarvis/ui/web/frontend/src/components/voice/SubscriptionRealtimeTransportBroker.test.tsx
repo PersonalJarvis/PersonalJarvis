@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 
 const fakes = vi.hoisted(() => ({
   mode: "pipeline",
@@ -107,5 +107,23 @@ describe("SubscriptionRealtimeTransportBroker", () => {
     render(<SubscriptionRealtimeTransportBroker />);
 
     expect(fakes.constructed).toBe(0);
+  });
+
+  it("starts when the native host injects its capability after first render", () => {
+    fakes.mode = "realtime";
+    fakes.realtimeAvailable = true;
+    fakes.requiresWebRtcOffer = true;
+    delete window.__JARVIS_REALTIME_BROKER_TOKEN;
+
+    render(<SubscriptionRealtimeTransportBroker />);
+    expect(fakes.constructed).toBe(0);
+
+    act(() => {
+      window.__JARVIS_REALTIME_BROKER_TOKEN = "late-desktop-capability";
+      window.dispatchEvent(new Event("jarvis-token-ready"));
+    });
+
+    expect(fakes.constructed).toBe(1);
+    expect(fakes.start).toHaveBeenCalledOnce();
   });
 });
