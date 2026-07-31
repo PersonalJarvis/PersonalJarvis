@@ -38,10 +38,9 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  *
  * A finished agent and a terminal nobody has ever spoken to show the SAME still
  * screen. Calling both "done" would invent a job for the second one, and be
- * read as "your work is ready" for a pane that has done none. `tasked` — has
- * anything ever been sent here — is what separates them, and it is the same
- * evidence the notification bell uses before claiming a pane completed
- * anything.
+ * read as "your work is ready" for a pane that has done none. `worked` — has
+ * anything ever been asked of this pane, including the conversation it resumed
+ * — is what separates them.
  *
  * Nothing here claims the work is CORRECT. "done" means the pane went quiet,
  * which is all a terminal can prove.
@@ -151,12 +150,12 @@ const CONNECTED: Look = {
 function lookFor(
   status: string,
   activity: PaneActivity,
-  tasked: boolean,
+  worked: boolean,
 ): Look {
   if (status === "error") return BROKEN;
   if (status === "exited") return EXITED;
   if (status !== "live") return CONNECTING;
-  if (activity === "waiting") return tasked ? DONE : IDLE;
+  if (activity === "waiting") return worked ? DONE : IDLE;
   if (activity === "") return CONNECTED;
   return LOOK[activity];
 }
@@ -192,7 +191,7 @@ export function PaneActivityPill({
   detail,
   activity = "",
   since = 0,
-  tasked = false,
+  worked = false,
   now,
 }: {
   /** The socket's own view: `connecting`, `live`, `exited`, `error`. */
@@ -202,12 +201,12 @@ export function PaneActivityPill({
   activity?: PaneActivity;
   /** When the pane entered this state (epoch seconds); 0 when unknown. */
   since?: number;
-  /** Has this pane ever been given an instruction? */
-  tasked?: boolean;
+  /** Has anything ever been asked of this pane? */
+  worked?: boolean;
   /** Injectable clock, in milliseconds — the tests do not race the wall. */
   now?: number;
 }) {
-  const look = lookFor(status, activity, tasked);
+  const look = lookFor(status, activity, worked);
   // How long it has been in this state, when the backend knows. Only in the
   // tooltip: the badge itself sits in a 64-pixel column beside a call-sign, and
   // a number that changes every second there is movement without information.

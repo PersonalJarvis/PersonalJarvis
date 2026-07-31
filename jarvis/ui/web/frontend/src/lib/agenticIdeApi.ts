@@ -143,8 +143,8 @@ export interface TerminalState {
   activity?: PaneActivity;
   /** When it entered that state (epoch seconds); 0 when unknown. */
   activity_since?: number;
-  /** Has this pane ever been given an instruction? */
-  tasked?: boolean;
+  /** Has anything ever been asked of this pane? */
+  worked?: boolean;
 }
 
 /**
@@ -221,12 +221,13 @@ export interface TerminalRecap {
   /** When it entered that state (epoch seconds); 0 when unknown. */
   activity_since?: number;
   /**
-   * Has this pane ever been given an instruction?
+   * Has anything ever been asked of this pane — an instruction sent to it, or
+   * the conversation it resumed?
    *
    * What separates "this agent finished" from "nobody has asked this terminal
    * for anything" — the same still screen, and not the same news.
    */
-  tasked?: boolean;
+  worked?: boolean;
 }
 
 export interface RecapsResponse {

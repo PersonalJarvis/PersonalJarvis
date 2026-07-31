@@ -733,7 +733,7 @@ export function AgenticGrid({
     return {
       activity: row?.activity ?? term.activity ?? "",
       since: row?.activity_since ?? term.activity_since ?? 0,
-      tasked: row?.tasked ?? term.tasked ?? false,
+      worked: row?.worked ?? term.worked ?? false,
     };
   };
 
@@ -1921,63 +1921,104 @@ export function AgenticGrid({
               const marked = selectedTerminals.has(term.name);
               const active = chatSelected === term.name;
               return (
-                <button
-                  key={term.key}
-                  type="button"
-                  data-testid={`chat-rail-${term.name}`}
-                  aria-label={`${title}, ${term.display_name || term.agent}`}
-                  aria-pressed={selectionMode ? marked : active}
-                  onClick={() =>
-                    // Selection mode borrows the rail: in chat view the grid's
-                    // per-pane overlays are hidden with their panes, so the
-                    // rail is where a multi-close is composed.
-                    selectionMode
-                      ? toggleTerminalSelection(term.name)
-                      : selectChatPane(term.name, takesPrompts(term))
-                  }
-                  className={cn(
-                    "mb-1 w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
-                    selectionMode && marked
-                      ? "border-primary bg-primary/10"
-                      : active && !selectionMode
-                        ? "border-primary/50 bg-primary/10"
-                        : "border-transparent hover:bg-secondary",
-                  )}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {selectionMode && (
-                      <Check
-                        className={cn(
-                          "h-3.5 w-3.5 shrink-0",
-                          marked ? "text-primary" : "text-transparent",
-                        )}
-                      />
+                /*
+                 * The row and its close button are SIBLINGS, never nested: a
+                 * button inside a button is invalid HTML, and browsers resolve
+                 * it by dropping one of them — usually the one you wanted.
+                 */
+                <div key={term.key} className="group relative mb-1">
+                  <button
+                    type="button"
+                    data-testid={`chat-rail-${term.name}`}
+                    aria-label={`${title}, ${term.display_name || term.agent}`}
+                    aria-pressed={selectionMode ? marked : active}
+                    onClick={() =>
+                      // Selection mode borrows the rail: in chat view the grid's
+                      // per-pane overlays are hidden with their panes, so the
+                      // rail is where a multi-close is composed.
+                      selectionMode
+                        ? toggleTerminalSelection(term.name)
+                        : selectChatPane(term.name, takesPrompts(term))
+                    }
+                    className={cn(
+                      "w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
+                      selectionMode && marked
+                        ? "border-primary bg-primary/10"
+                        : active && !selectionMode
+                          ? "border-primary/50 bg-primary/10"
+                          : "border-transparent hover:bg-secondary",
                     )}
-                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <span
-                        data-testid={`chat-rail-title-${term.name}`}
-                        className="min-w-0 truncate text-xs font-semibold"
-                        title={title}
-                      >
-                        {title}
+                  >
+                    {/* The right padding is permanent, not applied on hover:
+                        the close button appears where the badge would otherwise
+                        be, and a status pill that jumps sideways under the
+                        cursor is a row nobody can aim at. */}
+                    <span className="flex items-center gap-1.5 pr-5">
+                      {selectionMode && (
+                        <Check
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            marked ? "text-primary" : "text-transparent",
+                          )}
+                        />
+                      )}
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span
+                          data-testid={`chat-rail-title-${term.name}`}
+                          className="min-w-0 truncate text-xs font-semibold"
+                          title={title}
+                        >
+                          {title}
+                        </span>
+                        <AgentMark
+                          agent={term.agent}
+                          label={term.display_name || term.agent}
+                          size="sm"
+                          className="h-5 w-5 rounded-[4px]"
+                        />
                       </span>
-                      <AgentMark
-                        agent={term.agent}
-                        label={term.display_name || term.agent}
-                        size="sm"
-                        className="h-5 w-5 rounded-[4px]"
+                      {/* Not "live". Every pane in this list is live, all day —
+                          what the user is scanning for is which of them still
+                          owes them something. See ./PaneActivityPill. */}
+                      <PaneActivityPill
+                        status={state?.status ?? "connecting"}
+                        detail={state?.detail}
+                        {...activityOf(term)}
                       />
                     </span>
-                    {/* Not "live". Every pane in this list is live, all day —
-                        what the user is scanning for is which of them still
-                        owes them something. See ./PaneActivityPill. */}
-                    <PaneActivityPill
-                      status={state?.status ?? "connecting"}
-                      detail={state?.detail}
-                      {...activityOf(term)}
-                    />
-                  </span>
-                </button>
+                  </button>
+                  {/*
+                    Closing one terminal from the list itself.
+                    Chat view hides every pane but the one on the stage, and with
+                    it the header that used to be the only place a single
+                    terminal could be closed — so the eleven panes you are NOT
+                    looking at could only be closed by switching to the grid or
+                    by composing a multi-select. This is the row's own button.
+
+                    Left out of selection mode on purpose: that mode is here to
+                    close SEVERAL, and a per-row close beside a checkbox is two
+                    answers to one question.
+                  */}
+                  {!selectionMode && (
+                    <button
+                      type="button"
+                      data-testid={`chat-rail-close-${term.name}`}
+                      disabled={busy || working}
+                      onClick={() => setPendingClose(term.name)}
+                      title={`Close ${term.name} and stop what is running in it`}
+                      aria-label={`Close ${term.name}`}
+                      className={cn(
+                        "absolute right-1 top-1.5 flex h-5 w-5 items-center justify-center rounded",
+                        "text-muted-foreground opacity-0 transition-opacity",
+                        "hover:bg-destructive/20 hover:text-destructive",
+                        "group-hover:opacity-100 group-focus-within:opacity-100",
+                        "focus-visible:opacity-100 disabled:cursor-not-allowed",
+                      )}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

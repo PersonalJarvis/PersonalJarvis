@@ -79,7 +79,7 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 
 from . import prompt_history, recap_engine, resume_store
-from .activity import NO_READING, Reading, has_been_tasked, observed
+from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -1113,7 +1113,7 @@ class Terminal:
             "activity_since": reading.since,
             # Whether a still screen means "finished" or "never asked for
             # anything" — the same picture, and not the same news.
-            "tasked": has_been_tasked(self),
+            "worked": has_work_behind_it(self),
             "resumed": self.resumed,
             # Continued its old conversation and has had no instruction since —
             # the pane a restart left standing still. Carried in the ordinary

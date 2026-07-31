@@ -2416,6 +2416,50 @@ describe("chat view", () => {
     expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
   });
 
+  /*
+   * Closing ONE terminal from the rail.
+   *
+   * Chat view shows a single pane and hides the other eleven — and with them
+   * the pane header that used to be the only per-terminal close. So the rail
+   * carries its own, and it goes through the same confirmation as the header:
+   * closing a pane kills whatever its agent was doing, and there is no undo.
+   */
+  it("closes one terminal from its row in the rail", async () => {
+    const survivors = sessionWith([
+      ["Mika", 0],
+      ["Nova", 1],
+      ["Kai", 3],
+    ]);
+    vi.mocked(api.closeTerminal).mockResolvedValue(survivors);
+    const { onSessionChanged } = renderGrid(FOUR);
+    toChat();
+
+    fireEvent.click(screen.getByTestId("chat-rail-close-Aria"));
+    // Asked, never done on the spot — closing a pane kills a working agent.
+    expect(api.closeTerminal).not.toHaveBeenCalled();
+    expect(screen.getByText(/Close Aria\?/)).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("confirm-close-terminal-confirm"));
+    await waitFor(() => expect(api.closeTerminal).toHaveBeenCalledWith("Aria"));
+    // The grid does not own the workspace; it reports the new one upwards.
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(survivors));
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-close-terminal")).toBeNull(),
+    );
+  });
+
+  it("keeps the rail's close out of selection mode", () => {
+    // That mode is here to close SEVERAL panes; a per-row close beside a
+    // checkbox is two answers to one question.
+    renderGrid(FOUR);
+    toChat();
+    expect(screen.getByTestId("chat-rail-close-Nova")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+
+    expect(screen.queryByTestId("chat-rail-close-Nova")).toBeNull();
+  });
+
   it("an emptied workspace asks the same question", async () => {
     // The message shown when every pane is closed opens a terminal too, and it
     // is the only way back — so it offers the same list rather than guessing.

@@ -50,14 +50,35 @@ own blinking cursor, keeps a clock in a status bar, or emits a heartbeat — any
 of which would have sunk this approach, which is why it was measured first.
 :data:`STILL_S` sits eight times above the longest observed gap.
 
-## Screen CONTENT, not bytes
+## Two signals, and why BOTH are needed
 
-Bytes arriving is the weaker signal and would be the tempting one, since it
-needs no state. A terminal receives plenty of bytes that change nothing a
-person can see: cursor moves, a row repainted with identical characters, replies
-to the emulator queries a CLI makes at startup. Fingerprinting the visible rows
-answers "did anything CHANGE", which is the question. (Bytes are still used as
-a fallback for a caller that has no previous screen to compare against.)
+**Either fresh output or a changed screen means working.** The first version
+used the screen alone, on the reasoning that a terminal receives plenty of bytes
+that change nothing a person can see — cursor moves, a row repainted with
+identical characters, replies to the emulator queries a CLI makes at startup —
+so fingerprinting the visible rows answers the sharper question.
+
+That reasoning was right about the noise and wrong about the cost. The
+fingerprint covers the BOTTOM :data:`TAIL_ROWS` rows, and a pane whose visible
+change happens anywhere else — an agent streaming its answer into a tall pane,
+a CLI whose busy row sits above the input box, a screen scrolling under a static
+footer — is a pane working in a blind spot. Measured on the maintainer's own
+workspace of eleven panes (2026-07-31), that read finished agents and working
+ones the same way, and the badge on half the list was wrong.
+
+The measurement that settles which signal to trust: in that same workspace,
+every RESTING pane had produced no output at all for between 19 and 69 seconds,
+and every WORKING pane had produced some within the last tenth of a second.
+There is no ambiguous middle, so bytes answer the question on their own — while
+the screen fingerprint stays as the second signal, because it survives one
+sweep longer than the byte stamp and holds the answer steady across the gap.
+
+The one thing this costs: a CLI that ticks at rest — a blinking cursor of its
+own, a clock in a status bar, a heartbeat — would read as permanently working.
+None of the four installed products does any of that (measured twice, above),
+and the failure would at least be VISIBLE rather than the silent one it
+replaces: a badge stuck on "working" gets reported, a badge wrongly saying
+"done" is believed.
 
 ## The one exclusion
 
@@ -215,26 +236,30 @@ def _typing_now(term: Any, moment: float) -> bool:
     return 0 <= since <= STILL_S
 
 
-def _moving(term: Any, moment: float, still_since: float | None) -> bool:
-    """Has this pane's screen changed recently enough to call it busy?
+def _fresh(moment: float, at: float | None) -> bool:
+    """Did ``at`` happen inside the window that counts as "just now"?
 
-    ``still_since`` is when the screen was last seen to CHANGE, tracked by the
-    caller across sweeps. Without it — a caller with no previous screen to
-    compare against — this falls back to "bytes arrived recently", which is the
-    weaker form of the same question and errs towards "busy".
+    A stamp in the FUTURE is not freshness — it is a clock that does not agree
+    with the caller's. Silence is the honest answer.
+    """
+    if not at:
+        return False
+    return 0 <= moment - float(at) <= STILL_S
+
+
+def _moving(term: Any, moment: float, still_since: float | None) -> bool:
+    """Is anything happening in this pane right now?
+
+    Either signal is enough (see the module docstring): output that has just
+    arrived, or a screen seen to CHANGE — the latter tracked by the caller
+    across sweeps and passed in as ``still_since``, since a single look cannot
+    see movement. A caller without that history simply asks the first question.
     """
     if _typing_now(term, moment):
         return False
-    if still_since is None:
-        last_out = getattr(term, "last_output_at", None)
-        if not last_out:
-            return False
-        since = moment - float(last_out)
-        return 0 <= since <= STILL_S
-    since = moment - float(still_since)
-    # A stamp in the FUTURE is not freshness — it is a clock that does not agree
-    # with the caller's. Silence is the honest answer.
-    return 0 <= since <= STILL_S
+    if _fresh(moment, getattr(term, "last_output_at", None)):
+        return True
+    return _fresh(moment, still_since)
 
 
 def read_activity(
@@ -340,27 +365,46 @@ def observed(term: Any, *, now: float | None = None) -> Reading:
     return Reading(read_activity(term, now=moment), 0.0)
 
 
-def has_been_tasked(term: Any) -> bool:
-    """Has anybody ever given this pane an instruction?
+def has_work_behind_it(term: Any) -> bool:
+    """Is this pane's stillness a FINISHED job, or an untouched terminal?
 
-    Two proofs, because a pane can be driven two ways and both count. A
-    timestamp from the moment something was submitted into it — by Jarvis or by
-    a person pressing Enter — and the counter of prompts Jarvis has sent, which
-    is the half that survives into a restored workspace where the timestamp does
-    not. A pane typed into by hand before a restart therefore starts its next
-    life unproven, and is described as merely idle rather than as finished: a
-    missing claim, rather than an invented one.
+    Both look identical on screen — a prompt and nothing moving — and they are
+    not the same news, so the word for them must not be the same either.
 
-    It is what separates "this agent finished the job" from "this terminal has
-    never been asked for anything", which are the same STILL SCREEN and must not
-    be the same word.
+    Three proofs, because a pane can be driven three ways:
+
+    * something was submitted into it, by Jarvis or by a person pressing Enter;
+    * Jarvis has sent it prompts (the half that survives a restored workspace
+      where the timestamp does not);
+    * or it CONTINUED an existing conversation when its process started, which
+      is only ever true of a conversation that really exists on disk — the
+      resume path checks (``has_conversation``) before claiming it, because a
+      pane opened and never used leaves nothing behind to continue.
+
+    That third one is deliberately NOT the same as "it holds a conversation
+    id": every pane is handed one at launch, used or not, so an id proves
+    nothing about whether anybody has spoken to it.
+
+    The third proof is why this is not the same question as the bell's
+    ``notifications._tasked``, which deliberately answers only the first two.
+    That one decides whether to ANNOUNCE a completion, and a restored pane
+    repainting itself would otherwise ring the bell for every terminal in the
+    workspace on every restart. This one only chooses a word for a pane already
+    standing still, where "it resumed a real conversation" is exactly the
+    evidence that its quiet screen is a finished job.
+
+    Getting that wrong is what this fixes: after a restart, every pane driven by
+    hand — the maintainer's whole workspace — was labelled "idle" next to a
+    recap saying it had worked for ten minutes.
     """
     if getattr(term, "last_submit_at", None):
         return True
     try:
-        return int(getattr(term, "prompts_sent", 0) or 0) > 0
+        if int(getattr(term, "prompts_sent", 0) or 0) > 0:
+            return True
     except (TypeError, ValueError):  # a test double may carry anything
-        return False
+        pass
+    return bool(getattr(term, "resumed", False))
 
 
 __all__ = [
@@ -372,7 +416,7 @@ __all__ = [
     "TAIL_ROWS",
     "Activity",
     "Reading",
-    "has_been_tasked",
+    "has_work_behind_it",
     "is_settled",
     "observed",
     "read_activity",

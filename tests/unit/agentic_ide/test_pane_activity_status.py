@@ -119,6 +119,49 @@ async def test_a_moving_pane_is_reported_as_working_whatever_it_runs(
     assert term.to_dict()["activity"] == "working"
 
 
+async def test_output_outside_the_fingerprint_still_counts_as_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A pane printing steadily is working, wherever on the screen it shows.
+
+    The reported bug. The fingerprint covers the BOTTOM rows only, so an agent
+    streaming an answer into a tall pane — or any CLI whose busy row sits above
+    its input box — was a pane working in a blind spot, and the badge said
+    "done" over a terminal that was mid-sentence. Fresh output is now a signal
+    in its own right: measured on eleven real panes, a resting one had printed
+    nothing for between 19 and 69 seconds.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    # Bytes arriving, fingerprint deliberately unchanged.
+    term.last_output_at = now
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "working"
+
+
+async def test_a_keystroke_echo_is_still_not_the_agent_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The one exclusion survives the wider signal.
+
+    A terminal echoes what a person types, so a pane being typed into is a pane
+    producing output — without this, writing a prompt by hand reads as a busy
+    agent, and the moment the user pauses the pane is reported finished.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    term.last_output_at = now
+    term.last_input_at = now
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "waiting"
+
+
 # --------------------------------------------- the reading reaches a client
 
 
@@ -192,7 +235,7 @@ async def test_a_pane_nobody_instructed_is_not_called_finished(
     state = term.to_dict()
 
     assert state["activity"] == "waiting"
-    assert state["tasked"] is False
+    assert state["worked"] is False
 
 
 async def test_a_pane_that_was_given_a_job_is(registry: Registry, tmp_path: Path) -> None:
@@ -202,7 +245,41 @@ async def test_a_pane_that_was_given_a_job_is(registry: Registry, tmp_path: Path
     term.transcript.feed(REST_SCREENS["claude"])
     _watched(registry, term, moves=False)
 
-    assert term.to_dict()["tasked"] is True
+    assert term.to_dict()["worked"] is True
+
+
+async def test_a_resumed_conversation_counts_as_work_behind_the_pane(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The bug the maintainer reported: a whole workspace labelled "idle".
+
+    Restarting the app gives every pane a fresh process, so the stamp saying
+    "somebody typed in here" is gone — and a workspace of agents that had each
+    worked for ten minutes came back describing itself as untouched. A resumed
+    conversation is proof somebody talked to this pane; nothing else needs to
+    survive the restart for the badge to be honest.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = None
+    term.prompts_sent = 0
+    term.resumed = True
+    term.transcript.feed(REST_SCREENS["claude"])
+    _watched(registry, term, moves=False)
+
+    assert term.to_dict()["worked"] is True
+
+
+async def test_the_bell_is_not_widened_with_it(registry: Registry, tmp_path: Path) -> None:
+    """The bell keeps the strict rule, and that difference is load-bearing.
+
+    A restored pane repaints its old transcript — which is "was working, then
+    stopped" — so accepting a resumed conversation as evidence THERE would file
+    a completion for every terminal in the workspace on every restart.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.resumed = True
+
+    assert notifications._tasked(term) is False
 
 
 async def test_the_two_readings_of_one_pane_agree(registry: Registry, tmp_path: Path) -> None:

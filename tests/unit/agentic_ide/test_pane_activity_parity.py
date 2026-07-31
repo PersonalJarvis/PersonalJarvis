@@ -59,7 +59,7 @@ def test_activity_python_typescript_and_ui_parity() -> None:
 
 def test_the_route_ships_the_reading() -> None:
     """A word nothing carries is a word the UI never sees."""
-    assert {"activity", "activity_since", "tasked"} <= set(TerminalRecap.model_fields)
+    assert {"activity", "activity_since", "worked"} <= set(TerminalRecap.model_fields)
 
 
 def test_activity_expected_vocabulary() -> None:

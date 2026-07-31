@@ -94,15 +94,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
-from .activity import (
-    STILL_S,
-    Activity,
-    has_been_tasked,
-    is_settled,
-    read_activity,
-    screen_digest,
-    stamp,
-)
+from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest, stamp
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Iterable, Mapping
@@ -619,15 +611,30 @@ class ActivityWatcher:
 
 
 def _tasked(term: Any) -> bool:
-    """Has anybody ever given this pane an instruction?
+    """Has anybody given this pane an instruction it could have finished?
 
-    The rule itself lives in :func:`~.activity.has_been_tasked`, because the
-    pane list asks the same question for the same reason: a still screen means
-    "finished" only for a pane that was given something to finish, and
-    "untouched" for one that never was. Two copies of that rule would drift into
-    a bell that reports a completion the pane list calls idle.
+    Two proofs, because a pane can be driven two ways and both count. A
+    timestamp from the moment something was submitted into it — by Jarvis or by
+    a person pressing Enter — and the counter of prompts Jarvis has sent, which
+    is the half that survives into a restored workspace where the timestamp does
+    not. A pane typed into by hand before a restart therefore starts its next
+    life unproven, and stays quiet until the next thing is typed into it: a
+    missing notice, rather than an invented one.
+
+    Deliberately STRICTER than :func:`~.activity.has_work_behind_it`, which the
+    pane list uses for the same-looking question. That one only picks a word for
+    a pane already standing still, so "it resumed a real conversation" is fair
+    evidence there. This one decides whether to interrupt somebody — and a
+    restored pane repainting its old transcript satisfies "was working, then
+    stopped" all by itself, so accepting the same evidence here would ring the
+    bell once per terminal on every restart.
     """
-    return has_been_tasked(term)
+    if getattr(term, "last_submit_at", None):
+        return True
+    try:
+        return int(getattr(term, "prompts_sent", 0) or 0) > 0
+    except (TypeError, ValueError):  # a test double may carry anything
+        return False
 
 
 def _is_agent(term: Any) -> bool:

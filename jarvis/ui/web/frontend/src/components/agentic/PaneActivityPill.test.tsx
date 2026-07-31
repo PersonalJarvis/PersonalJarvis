@@ -29,7 +29,7 @@ describe("what the badge says", () => {
 
   it("says done for a pane that was given a job and has stopped", () => {
     expect(
-      pill({ status: "live", activity: "waiting", tasked: true }).textContent,
+      pill({ status: "live", activity: "waiting", worked: true }).textContent,
     ).toBe("done");
   });
 
@@ -38,7 +38,7 @@ describe("what the badge says", () => {
     // job for a terminal that was never given one, and read as "your work is
     // ready" on a pane that has done none.
     expect(
-      pill({ status: "live", activity: "waiting", tasked: false }).textContent,
+      pill({ status: "live", activity: "waiting", worked: false }).textContent,
     ).toBe("idle");
   });
 
@@ -91,7 +91,7 @@ describe("how long it has been that way", () => {
     const badge = pill({
       status: "live",
       activity: "waiting",
-      tasked: true,
+      worked: true,
       since: NOW_S - 180,
     });
     expect(badge.textContent).toBe("done");

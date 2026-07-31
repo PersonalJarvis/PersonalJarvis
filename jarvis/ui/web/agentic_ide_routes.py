@@ -74,7 +74,7 @@ from jarvis.agentic_ide import (
     recents,
     resume_store,
 )
-from jarvis.agentic_ide.activity import has_been_tasked
+from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.fleet_actions import (
@@ -918,12 +918,13 @@ class TerminalRecap(BaseModel):
             "be shown with how long it has been waiting. 0 when unknown."
         ),
     )
-    tasked: bool = Field(
+    worked: bool = Field(
         default=False,
         description=(
-            "Has this pane ever been given an instruction? It is what separates "
-            "an agent that FINISHED from a terminal nobody has asked for "
-            "anything — the same still screen, and not the same news."
+            "Has anything ever been asked of this pane — an instruction sent to "
+            "it, or the conversation it resumed? It is what separates an agent "
+            "that FINISHED from a terminal nobody has asked for anything: the "
+            "same still screen, and not the same news."
         ),
     )
 
@@ -2063,7 +2064,7 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
         # pane itself; neither is recomputed here, or the two would drift.
         activity=reading.activity,
         activity_since=reading.since,
-        tasked=has_been_tasked(term),
+        worked=has_work_behind_it(term),
     )
 
 
