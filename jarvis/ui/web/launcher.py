@@ -1056,6 +1056,25 @@ def main(argv: list[str] | None = None) -> int:
 
     ensure_cli_paths()
 
+    # An app launched once from a coding-agent or CI shell inherits that shell's
+    # "colour is impossible here" declaration and hands it to every terminal it
+    # hosts — panes, and the external terminals opened through
+    # `jarvis.clis.external_terminal`, which pass no env of their own. The
+    # restart chain re-inherits it, so it survives indefinitely until dropped
+    # here. Dict lookups only, no import and no I/O (AP-26-safe).
+    from jarvis.core.colour_env import sanitize_process_environment
+
+    _dropped_colour_claims = sanitize_process_environment()
+    if _dropped_colour_claims:
+        import logging as _clog
+
+        _clog.getLogger(__name__).info(
+            "Dropped inherited colour-suppressing variables (%s) so hosted "
+            "terminals render in colour; this app was started from a shell that "
+            "declared it had none.",
+            ", ".join(_dropped_colour_claims),
+        )
+
     _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
 
