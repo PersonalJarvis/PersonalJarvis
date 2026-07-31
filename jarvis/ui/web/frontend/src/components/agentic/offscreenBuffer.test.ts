@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { OffscreenBuffer } from "./offscreenBuffer";
+import { OFFSCREEN_LIMIT_CHARS, OffscreenBuffer } from "./offscreenBuffer";
 
 describe("OffscreenBuffer", () => {
   it("hands back exactly what it was given, in order, once", () => {
@@ -48,6 +48,44 @@ describe("OffscreenBuffer", () => {
     // the pane would write on every single chunk from then on.
     buffer.drain();
     expect(buffer.full).toBe(false);
+  });
+
+  it("comes due once it has held its oldest chunk long enough", () => {
+    // The backstop for a pane that is wrong about being watched. Size alone
+    // could not provide it: a CLI that prints one line and waits never reaches
+    // the limit, so its pane held that line for as long as the agent stayed
+    // quiet — a terminal that had visibly stopped while the work ran on.
+    const buffer = new OffscreenBuffer(OFFSCREEN_LIMIT_CHARS, 1500);
+    const start = 10_000;
+
+    expect(buffer.stale(start)).toBe(false);
+    expect(buffer.dueIn(start)).toBeNull();
+
+    buffer.push("the agent said something", start);
+    expect(buffer.stale(start + 1499)).toBe(false);
+    expect(buffer.dueIn(start + 500)).toBe(1000);
+    expect(buffer.stale(start + 1500)).toBe(true);
+
+    // Draining answers it, exactly like `full` — otherwise a pane past its
+    // deadline would write on every chunk from then on rather than coalescing.
+    buffer.drain();
+    expect(buffer.stale(start + 5000)).toBe(false);
+    expect(buffer.dueIn(start + 5000)).toBeNull();
+  });
+
+  it("measures the deadline from the OLDEST chunk, not the newest", () => {
+    // A pane fed a steady trickle would otherwise push its own deadline back
+    // with every chunk and never come due — which is the busiest pane, and so
+    // exactly the one whose freeze a user notices.
+    const buffer = new OffscreenBuffer(OFFSCREEN_LIMIT_CHARS, 1500);
+    const start = 10_000;
+
+    buffer.push("first", start);
+    for (let at = start + 200; at <= start + 1400; at += 200) {
+      buffer.push("more", at);
+    }
+
+    expect(buffer.stale(start + 1500)).toBe(true);
   });
 
   it("stays bounded when its user drains on full", () => {

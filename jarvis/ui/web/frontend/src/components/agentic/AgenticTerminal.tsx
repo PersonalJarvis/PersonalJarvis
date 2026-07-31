@@ -543,12 +543,43 @@ export function AgenticTerminal({
     const offscreen = new OffscreenBuffer();
     /** When this pane last measured itself while parked (see `recheckParked`). */
     let parkedCheckedAt = 0;
+    /** The pending deadline flush, if this pane is holding anything. */
+    let holdTimer: number | undefined;
+
+    const cancelHoldTimer = () => {
+      if (holdTimer === undefined) return;
+      window.clearTimeout(holdTimer);
+      holdTimer = undefined;
+    };
+
+    /**
+     * Write what is held, whether or not this pane believes it is watched.
+     *
+     * The deadline half of parking (see ./offscreenBuffer): being wrong about
+     * visibility must cost a coalesced write, never a screen that stopped.
+     */
+    const flushHeld = () => {
+      cancelHoldTimer();
+      const held = offscreen.drain();
+      if (held) term.write(held);
+    };
+
+    /** Make sure the held output has a flush coming, without moving one nearer. */
+    const armHoldTimer = () => {
+      if (holdTimer !== undefined) return;
+      const due = offscreen.dueIn();
+      if (due === null) return;
+      holdTimer = window.setTimeout(() => {
+        holdTimer = undefined;
+        if (disposed) return;
+        flushHeld();
+      }, due);
+    };
 
     const showPane = () => {
       if (paneVisible) return;
       paneVisible = true;
-      const held = offscreen.drain();
-      if (held) term.write(held);
+      flushHeld();
     };
 
     const parkPane = () => {
@@ -624,7 +655,18 @@ export function AgenticTerminal({
       // the spinner row it rewrote last and blank rows where its prompt box
       // belongs. Parsing into a surface nobody is painting is the cheap half
       // of what parking avoids; a permanently broken screen is not.
-      if (offscreen.full) term.write(offscreen.drain());
+      //
+      // The same answer, for the same reason, once it has held long enough:
+      // this pane's belief that nobody is watching may simply be wrong, and
+      // that must cost a coalesced write rather than a frozen terminal. The
+      // timer covers the case this branch cannot — an agent that goes quiet
+      // right after saying something would otherwise hold that last word for
+      // as long as it stays quiet.
+      if (offscreen.full || offscreen.stale()) {
+        flushHeld();
+        return;
+      }
+      armHoldTimer();
     };
 
     /**
@@ -653,6 +695,9 @@ export function AgenticTerminal({
       // Parked output belongs to the screen this replay REPLACES, and it was
       // captured before it. Written afterwards it would paint the older screen
       // over the newer one; written before, it would be reset away regardless.
+      // The deadline goes with it — a flush firing after this would draw the
+      // screen this replay just replaced.
+      cancelHoldTimer();
       offscreen.drain();
       term.reset();
       // Through the ordinary path, so a replay arriving while nobody is looking
@@ -931,6 +976,9 @@ export function AgenticTerminal({
 
     return () => {
       disposed = true;
+      // Before the terminal is disposed below: a deadline flush one tick later
+      // would write into it after it is gone.
+      cancelHoldTimer();
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       // A queued reflow outlives the pane by up to a frame, and would then fit
       // a disposed terminal inside a detached element.
