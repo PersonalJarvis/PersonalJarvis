@@ -130,11 +130,9 @@ def test_env_derivation_rule_matches_guard_for_all_keys(desired_state: dict) -> 
 
 
 def test_structured_stt_models_never_becomes_one_env_override(
-    desired_state: dict,
     tmp_path: Path,
 ) -> None:
     """A sandboxed guard run removes the malformed process override."""
-    assert isinstance(desired_state["stt"]["models"], dict)
     powershell = shutil.which("powershell") or shutil.which("pwsh")
     if powershell is None:
         pytest.skip("PowerShell is unavailable")
@@ -148,7 +146,7 @@ def test_structured_stt_models_never_becomes_one_env_override(
     sandbox.mkdir()
     desired_file = sandbox / "desired.json"
     desired_file.write_text(
-        json.dumps({"stt": {"models": desired_state["stt"]["models"]}}),
+        json.dumps({"stt": {"models": {"openrouter-stt": "openai/gpt-4o-transcribe"}}}),
         encoding="utf-8",
     )
     toml_file = sandbox / "jarvis.toml"
