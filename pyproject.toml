@@ -269,8 +269,11 @@ ultrawiki-postgres = [
     # own server) through a plain connection string; vector search arrives as
     # the pgvector DB extension queried via SQL — no vector-DB SDK (UltraWiki
     # design D-2). Lazy-imported in jarvis/ultrawiki/store.py; the SQLite floor
-    # stays the universal base path, so this group is opt-in.
-    "psycopg[binary]>=3.2",
+    # stays the universal base path, so this group is opt-in. psycopg does not
+    # publish binary wheels for Windows ARM64, where its pure-Python wheel keeps
+    # the advertised full profile compiler-free and uses the system libpq.
+    "psycopg[binary]>=3.2; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "psycopg>=3.2; sys_platform == 'win32' and platform_machine == 'ARM64'",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -429,7 +432,9 @@ local-voice = [
     # files and then transcribes every language as English. Kept in step with
     # jarvis/speech/local_models.py::SHERPA_ONNX_PACKAGE, which the in-app
     # installer asks pip for.
-    "sherpa-onnx>=1.13.3",
+    # Upstream publishes no Windows ARM64 wheel. The providers already expose
+    # an honest unavailable state when the optional runtime is absent.
+    "sherpa-onnx>=1.13.3; sys_platform != 'win32' or platform_machine != 'ARM64'",
 ]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
