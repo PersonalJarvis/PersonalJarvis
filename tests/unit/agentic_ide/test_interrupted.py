@@ -378,7 +378,7 @@ async def test_a_pane_still_starting_is_continued_when_it_comes_up(
 
     # Now the grid gets round to it — the pane connects and its agent starts.
     await registry.attach("Blake", 100, 30, _noop, _noop_exit)
-    await _settle()
+    await _settle(session)
 
     assert fake_pty.typed.count(interrupted.CONTINUE_PROMPT) == 1, fake_pty.typed
     assert late.continue_when_ready is False
@@ -445,13 +445,11 @@ async def test_a_restored_pane_is_listed_before_its_agent_starts(
     assert waiting[0].starting is True
 
 
-async def _settle() -> None:
-    """Wait for the deferred continue task, rather than sleeping a guessed span."""
-    for _ in range(200):
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        if not pending:
-            return
-        await asyncio.wait(pending, timeout=1.0)
+async def _settle(session: Any) -> None:
+    """Wait only for this session's deferred work, never the whole test loop."""
+    pending = tuple(session.lookups)
+    if pending:
+        await asyncio.wait_for(asyncio.gather(*pending), timeout=2.0)
 
 
 # ----------------------------------------------------------------- the routes
