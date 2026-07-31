@@ -52,9 +52,13 @@ import {
   AgenticTerminal,
   PaneStatusPill,
   type PaneStatus,
-  type SplitAgentChoice,
   type SplitDirection,
 } from "./AgenticTerminal";
+import {
+  AgentPickerMenu,
+  offersAgentChoice,
+  type SplitAgentChoice,
+} from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
   bandCapacityFor,
@@ -549,6 +553,18 @@ export function AgenticGrid({
 
   const [maximized, setMaximized] = useState<string | null>(null);
 
+  /**
+   * Which "open a terminal" button has its CLI picker open, if any.
+   *
+   * The panes carry their own (see `AgenticTerminal`); these are the two places
+   * that open a terminal without a pane to hang it off — the chat view's rail,
+   * and the message an emptied workspace shows. Both used to start whatever CLI
+   * the backend listed first, so a chat-view workspace could only ever grow more
+   * panes of that one agent while the grid's split buttons were asking properly
+   * (maintainer report 2026-07-31).
+   */
+  const [picking, setPicking] = useState<"rail" | "empty" | null>(null);
+
   /*
    * Grid or chat — remembered per browser profile, like the appearance above:
    * which way someone reads their agents is a display preference of this
@@ -563,6 +579,9 @@ export function AgenticGrid({
     // Chat shows exactly one pane already; a leftover maximize from the grid
     // would silently pin the stage to a pane the rail no longer highlights.
     if (next === "chat") setMaximized(null);
+    // An open CLI picker belongs to the button that opened it, and that button
+    // just left the screen — it must not be waiting there on the way back.
+    setPicking(null);
   }, []);
   const chatView = viewMode === "chat";
 
@@ -1073,6 +1092,19 @@ export function AgenticGrid({
     } finally {
       setWorking(false);
     }
+  };
+
+  const offersChoice = offersAgentChoice(agents);
+
+  /**
+   * Open a terminal at the end of the row — asking WHAT first when the machine
+   * has more than one CLI installed. With a single one there is nothing to pick,
+   * so the click opens it straight away rather than showing a one-entry menu.
+   */
+  const openTerminal = (surface: "rail" | "empty") => {
+    if (offersChoice)
+      setPicking((current) => (current === surface ? null : surface));
+    else void split(null, "right");
   };
 
   /*
@@ -1779,7 +1811,8 @@ export function AgenticGrid({
             chatView ? "flex" : "hidden",
           )}
         >
-          <div className="flex items-center justify-between px-3 py-2">
+          {/* `relative` so the CLI picker hangs under the plus button. */}
+          <div className="relative flex items-center justify-between px-3 py-2">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Agents
             </span>
@@ -1788,12 +1821,28 @@ export function AgenticGrid({
               data-testid="chat-rail-new-terminal"
               className={TOOLBAR_BTN}
               disabled={atLimit || busy || working}
-              onClick={() => void split(null, "right")}
+              aria-expanded={offersChoice ? picking === "rail" : undefined}
+              onClick={() => openTerminal("rail")}
               title="Open another terminal"
               aria-label="Open another terminal"
             >
               <Plus className="h-4 w-4" />
             </button>
+            {picking === "rail" && (
+              <AgentPickerMenu
+                title="Open a terminal — what?"
+                ariaLabel="What should run in the new terminal?"
+                agents={agents ?? []}
+                testId="chat-rail-agent-menu"
+                itemTestId={(agent) => `chat-rail-new-${agent}`}
+                className="right-2 top-full"
+                onDismiss={() => setPicking(null)}
+                onPick={(agent) => {
+                  setPicking(null);
+                  void split(null, "right", agent);
+                }}
+              />
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
             {session.terminals.map((term) => {
@@ -2113,15 +2162,36 @@ export function AgenticGrid({
         {session.terminals.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             <span>Every terminal in this workspace is closed.</span>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busy || working}
-              onClick={() => void split(null, "right")}
-            >
-              <Plus className="h-4 w-4" />
-              Open a terminal
-            </button>
+            {/* `relative` so the picker hangs under the button rather than off
+                the grid canvas. */}
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="empty-workspace-new-terminal"
+                className="btn-primary"
+                disabled={busy || working}
+                aria-expanded={offersChoice ? picking === "empty" : undefined}
+                onClick={() => openTerminal("empty")}
+              >
+                <Plus className="h-4 w-4" />
+                Open a terminal
+              </button>
+              {picking === "empty" && (
+                <AgentPickerMenu
+                  title="Open a terminal — what?"
+                  ariaLabel="What should run in the new terminal?"
+                  agents={agents ?? []}
+                  testId="empty-workspace-agent-menu"
+                  itemTestId={(agent) => `empty-workspace-new-${agent}`}
+                  className="left-1/2 top-full mt-1 -translate-x-1/2"
+                  onDismiss={() => setPicking(null)}
+                  onPick={(agent) => {
+                    setPicking(null);
+                    void split(null, "right", agent);
+                  }}
+                />
+              )}
+            </div>
           </div>
         )}
       </div>

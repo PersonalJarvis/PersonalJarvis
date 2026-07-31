@@ -76,6 +76,11 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { usePaneFileDrag } from "./paneFileDrag";
+import {
+  AgentPickerMenu,
+  offersAgentChoice,
+  type SplitAgentChoice,
+} from "./AgentPicker";
 import { describeExit, explainExit } from "./paneExit";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
@@ -138,22 +143,15 @@ function documentHidden(): boolean {
   return typeof document !== "undefined" && document.hidden === true;
 }
 
-/** A coding CLI a split may start, as offered by the pane's split menu. */
-export interface SplitAgentChoice {
-  /** Backend id — "claude", "codex", "shell". */
-  name: string;
-  /** What the user reads — "Claude Code", "Plain Terminal". */
-  displayName: string;
-  installed: boolean;
-  /**
-   * `"cli"` for a coding agent, `"shell"` for a plain terminal on this
-   * machine's own shell. Carried so the menu can say what a choice actually
-   * opens without knowing any entry by name.
-   */
-  kind?: string;
-  /** One line under the name — the shell that would open, for instance. */
-  description?: string;
-}
+/**
+ * A coding CLI a split may start.
+ *
+ * Re-exported rather than declared here: the same list is offered by the chat
+ * view's rail and by an empty workspace, so it belongs to the picker they all
+ * share (see `AgentPicker`). Kept exported from this module because that is
+ * where every caller already imports it from.
+ */
+export type { SplitAgentChoice };
 
 export type SplitDirection = "right" | "down";
 
@@ -1379,7 +1377,7 @@ function PaneHeader({
   // With one installed CLI there is nothing to pick, so the button splits
   // straight away — a menu with a single entry is a click tax, not a choice.
   const choices = agents ?? [];
-  const offersChoice = choices.filter((a) => a.installed).length > 1;
+  const offersChoice = offersAgentChoice(choices);
 
   const startSplit = (direction: SplitDirection) => {
     if (offersChoice)
@@ -1654,10 +1652,15 @@ function PaneHeader({
       </div>
 
       {picking && (
-        <SplitAgentMenu
-          paneName={name}
-          direction={picking}
+        <AgentPickerMenu
+          title={
+            picking === "right" ? "Open beside — what?" : "Split below — what?"
+          }
+          ariaLabel={`What should run ${picking === "right" ? "beside" : "below"} ${name}?`}
           agents={choices}
+          testId={`pane-split-menu-${picking}-${name}`}
+          itemTestId={(agent) => `pane-split-${picking}-${name}-${agent}`}
+          className="right-2 top-full mt-1"
           onDismiss={() => setPicking(null)}
           onPick={(agent) => {
             setPicking(null);
@@ -1666,92 +1669,6 @@ function PaneHeader({
         />
       )}
     </header>
-  );
-}
-
-/**
- * The picker a split button opens: what should run in the new pane?
- *
- * Splitting used to inherit the anchor's agent silently, which made running a
- * Codex pane next to a Claude Code one impossible from the grid — you had to
- * close the workspace and start it again from the wizard. The backend always
- * accepted an agent per terminal; this is the surface that finally asks.
- *
- * The list is whatever the backend registered, so it is not a fixed pair of
- * CLIs: a plain terminal (this machine's own shell, no agent around it) sits in
- * the same menu, and a CLI registered later appears here without a change on
- * this side. An entry that is not installed stays listed but disabled, so the
- * absence is visible and explains itself rather than silently not being there.
- */
-function SplitAgentMenu({
-  paneName,
-  direction,
-  agents,
-  onPick,
-  onDismiss,
-}: {
-  paneName: string;
-  direction: SplitDirection;
-  agents: SplitAgentChoice[];
-  onPick: (agent: string) => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <>
-      {/* Click-anywhere-else to dismiss, without a global listener that would
-          outlive the pane. */}
-      <div className="fixed inset-0 z-40" onMouseDown={onDismiss} />
-      <div
-        role="menu"
-        aria-label={`What should run ${direction === "right" ? "beside" : "below"} ${paneName}?`}
-        data-testid={`pane-split-menu-${direction}-${paneName}`}
-        className="absolute right-2 top-full z-50 mt-1 w-60 rounded-lg border border-border bg-card p-1 shadow-xl"
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onDismiss();
-        }}
-      >
-        <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-          {direction === "right"
-            ? "Open beside — what?"
-            : "Split below — what?"}
-        </p>
-        {agents.map((agent) => (
-          <button
-            key={agent.name}
-            type="button"
-            role="menuitem"
-            autoFocus={
-              agent.installed && agent === agents.find((a) => a.installed)
-            }
-            disabled={!agent.installed}
-            data-testid={`pane-split-${direction}-${paneName}-${agent.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onPick(agent.name);
-            }}
-            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="min-w-0">
-              <span className="block truncate">{agent.displayName}</span>
-              {/* What this choice actually opens — "no agent, just a prompt"
-                  is the difference a user needs before clicking, and it is the
-                  entry's own words rather than a name this menu recognises. */}
-              {agent.description && (
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {agent.description}
-                </span>
-              )}
-            </span>
-            {!agent.installed && (
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {agent.kind === "shell" ? "no shell here" : "not installed"}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-    </>
   );
 }
 

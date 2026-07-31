@@ -1,0 +1,133 @@
+/**
+ * "What should run in the new terminal?" — the one menu behind every action
+ * that opens a pane.
+ *
+ * It lives on its own rather than inside the pane header because opening a
+ * terminal is not something only a pane does: the grid's split buttons ask it,
+ * the chat view's rail asks it, and an empty workspace asks it. Those surfaces
+ * used to disagree — a split offered the choice while the rail silently started
+ * whatever CLI happened to be first, so the chat view could only ever add more
+ * of the same agent (maintainer report 2026-07-31). One component keeps them
+ * telling the same story.
+ *
+ * Before any of them asked, a new pane inherited the anchor's agent silently,
+ * which made running a Codex pane next to a Claude Code one impossible from the
+ * workspace — you had to close it and start again from the wizard. The backend
+ * always accepted an agent per terminal; this is the surface that asks.
+ *
+ * The list is whatever the backend registered, so it is not a fixed pair of
+ * CLIs: a plain terminal (this machine's own shell, no agent around it) sits in
+ * the same menu, and a CLI registered later appears here without a change on
+ * this side. An entry that is not installed stays listed but disabled, so the
+ * absence is visible and explains itself rather than silently not being there.
+ */
+import { cn } from "@/lib/utils";
+
+/** A coding CLI an "open a terminal" action may start. */
+export interface SplitAgentChoice {
+  /** Backend id — "claude", "codex", "shell". */
+  name: string;
+  /** What the user reads — "Claude Code", "Plain Terminal". */
+  displayName: string;
+  installed: boolean;
+  /**
+   * `"cli"` for a coding agent, `"shell"` for a plain terminal on this
+   * machine's own shell. Carried so the menu can say what a choice actually
+   * opens without knowing any entry by name.
+   */
+  kind?: string;
+  /** One line under the name — the shell that would open, for instance. */
+  description?: string;
+}
+
+/**
+ * Is there anything to pick?
+ *
+ * With one installed CLI the menu would hold a single entry, which is a click
+ * tax rather than a choice — the caller opens that one straight away. Shared so
+ * every surface draws the same line instead of each counting for itself.
+ */
+export function offersAgentChoice(agents?: SplitAgentChoice[]): boolean {
+  return (agents ?? []).filter((a) => a.installed).length > 1;
+}
+
+export function AgentPickerMenu({
+  title,
+  ariaLabel,
+  agents,
+  onPick,
+  onDismiss,
+  testId,
+  itemTestId,
+  className,
+}: {
+  /** The line above the entries — "Open beside — what?". */
+  title: string;
+  ariaLabel: string;
+  agents: SplitAgentChoice[];
+  onPick: (agent: string) => void;
+  onDismiss: () => void;
+  testId: string;
+  /** Per-entry test id, so each surface keeps its own established names. */
+  itemTestId: (agent: string) => string;
+  /** Where the menu hangs — the caller owns the anchoring. */
+  className?: string;
+}) {
+  const first = agents.find((a) => a.installed);
+  return (
+    <>
+      {/* Click-anywhere-else to dismiss, without a global listener that would
+          outlive the surface that opened this. */}
+      <div className="fixed inset-0 z-40" onMouseDown={onDismiss} />
+      <div
+        role="menu"
+        aria-label={ariaLabel}
+        data-testid={testId}
+        className={cn(
+          "absolute z-50 w-60 rounded-lg border border-border bg-card p-1 shadow-xl",
+          className,
+        )}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onDismiss();
+        }}
+      >
+        <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+          {title}
+        </p>
+        {agents.map((agent) => (
+          <button
+            key={agent.name}
+            type="button"
+            role="menuitem"
+            autoFocus={agent === first}
+            disabled={!agent.installed}
+            data-testid={itemTestId(agent.name)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPick(agent.name);
+            }}
+            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <span className="min-w-0">
+              <span className="block truncate">{agent.displayName}</span>
+              {/* What this choice actually opens — "no agent, just a prompt"
+                  is the difference a user needs before clicking, and it is the
+                  entry's own words rather than a name this menu recognises. */}
+              {agent.description && (
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {agent.description}
+                </span>
+              )}
+            </span>
+            {!agent.installed && (
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {agent.kind === "shell" ? "no shell here" : "not installed"}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}

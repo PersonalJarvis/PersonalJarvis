@@ -2279,4 +2279,87 @@ describe("chat view", () => {
       }),
     );
   });
+
+  /*
+   * The rail's plus offers the same choice the grid's split buttons do.
+   *
+   * It used to open whatever CLI the backend listed first, so a workspace read
+   * in chat view could only ever grow more panes of that one agent — the one
+   * thing the grid had been asking about since the split menus landed.
+   */
+  const CLI_CHOICES = [
+    { name: "claude", displayName: "Claude Code", installed: true },
+    { name: "codex", displayName: "Codex", installed: true },
+    {
+      name: "shell",
+      displayName: "Plain Terminal",
+      installed: false,
+      kind: "shell",
+    },
+  ];
+
+  it("the rail's plus asks which CLI when more than one is installed", async () => {
+    renderGrid(FOUR, { agents: CLI_CHOICES });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+
+    // Uninstalled entries stay listed but disabled, so the absence is visible.
+    expect(
+      (screen.getByTestId("chat-rail-new-shell") as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByTestId("chat-rail-new-codex"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+    // The menu closes with the pick — it was a question, and it was answered.
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+  });
+
+  it("the rail's plus just opens one when a single CLI is installed", async () => {
+    // A menu with one entry is a click tax, not a choice.
+    renderGrid(FOUR, {
+      agents: [CLI_CHOICES[0], { ...CLI_CHOICES[1], installed: false }],
+    });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: undefined,
+      }),
+    );
+  });
+
+  it("leaving chat view closes an open picker", () => {
+    renderGrid(FOUR, { agents: CLI_CHOICES });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    expect(screen.getByTestId("chat-rail-agent-menu")).toBeTruthy();
+    toChat();
+    // The button that opened it just left the screen; it must not be waiting
+    // there on the way back.
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+  });
+
+  it("an emptied workspace asks the same question", async () => {
+    // The message shown when every pane is closed opens a terminal too, and it
+    // is the only way back — so it offers the same list rather than guessing.
+    renderGrid(sessionWith([]), { agents: CLI_CHOICES });
+    fireEvent.click(screen.getByTestId("empty-workspace-new-terminal"));
+    fireEvent.click(screen.getByTestId("empty-workspace-new-codex"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+  });
 });
