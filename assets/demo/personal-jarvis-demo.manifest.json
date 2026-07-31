@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "asset": "assets/demo/personal-jarvis-demo.gif",
+  "source": "assets/demo/personal-jarvis-demo.mp4",
+  "source_sha256": "63bc99bc2b0d3d9b58f4f21ba50ac0cd3205cb39a0bd3cd2e61033b5a6e4c991",
+  "source_duration_seconds": 153.016667,
+  "prompt": "Hey Ruben, can you please open my Windows settings and change my mode from dark mode to white mode, my display mode.",
+  "timeline": [
+    {
+      "kind": "prompt_card",
+      "source_frame_seconds": 11.0,
+      "duration_seconds": 4.2
+    },
+    {
+      "kind": "action",
+      "source_start_seconds": 11.05,
+      "source_end_seconds": 37.0,
+      "speed_multiplier": 2.8
+    },
+    {
+      "kind": "result_hold",
+      "source_frame_seconds": 37.0,
+      "duration_seconds": 1.8,
+      "fade_out_seconds": 0.6
+    }
+  ],
+  "export": {
+    "width": 1100,
+    "height": 618,
+    "frames_per_second": 14,
+    "frame_count": 216,
+    "duration_seconds": 15.43,
+    "palette_colors": 160,
+    "dither": "bayer:4",
+    "loop": true,
+    "size_bytes": 1119452,
+    "sha256": "31237f967744b764cc3ba70604d0263c6466dc2a9f5ac849675105ff88bccddd"
+  }
+}

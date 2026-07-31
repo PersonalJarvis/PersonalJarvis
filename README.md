@@ -52,7 +52,7 @@ and what they can do is *speak*, *run one tool*, *dispatch a harness*, or *run a
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo-poster.png" alt="Watch the Personal Jarvis demo — one voice command drives the whole PC" width="860" />
+    <img src="assets/demo/personal-jarvis-demo.gif" alt="Animated demo showing the spoken prompt, Jarvis opening Windows Settings, and switching display mode from dark to light" width="860" />
   </a>
 </p>
 
