@@ -166,17 +166,120 @@ async def test_loading_the_engine_never_counts_as_a_failure():
 
 def test_the_device_probe_falls_back_to_cpu_when_cuda_is_not_usable(monkeypatch):
     """CUDA present and CUDA usable are different questions (AP-21/AP-25)."""
-    import builtins
+    import sys
+    from types import SimpleNamespace
 
-    real_import = builtins.__import__
-
-    def _no_torch(name, *args, **kwargs):
-        if name == "torch":
-            raise ImportError("no torch here")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _no_torch)
+    monkeypatch.setitem(
+        sys.modules,
+        "ctranslate2",
+        SimpleNamespace(
+            get_supported_compute_types=lambda _device: (_ for _ in ()).throw(
+                RuntimeError("no CUDA here")
+            )
+        ),
+    )
     assert LocalPreviewTranscriber._pick_device() == ("cpu", "int8")
+
+
+def test_the_device_probe_asks_ctranslate2_not_torch(monkeypatch):
+    """The executing runtime decides; another loader may temporarily hide torch."""
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ctranslate2",
+        SimpleNamespace(
+            get_supported_compute_types=lambda device: (
+                {"int8", "int8_float16"} if device == "cuda" else {"int8"}
+            )
+        ),
+    )
+
+    assert LocalPreviewTranscriber._pick_device() == ("cuda", "int8_float16")
+
+
+def test_a_cuda_model_that_cannot_decode_falls_back_to_cpu(monkeypatch):
+    """A successful constructor is not proof that CUDA inference is usable."""
+    import jarvis.plugins.stt.fwhisper as fwhisper
+
+    calls: list[tuple[str, str]] = []
+    cpu_model = object()
+
+    class _Model:
+        def __init__(self, device: str) -> None:
+            self.device = device
+
+        def transcribe(self, _audio, **_kwargs):
+            if self.device == "cuda":
+                raise RuntimeError("CUDA decode failed")
+            return [], object()
+
+    def _build(_name: str, device: str, compute: str):
+        calls.append((device, compute))
+        if device == "cpu":
+            model = _Model(device)
+            model.marker = cpu_model
+            return model
+        return _Model(device)
+
+    monkeypatch.setattr(fwhisper, "_new_whisper_model", _build)
+    engine = LocalPreviewTranscriber()
+    engine._pick_device = lambda: ("cuda", "int8_float16")  # type: ignore[method-assign]
+
+    engine._load_model()
+
+    assert calls == [("cuda", "int8_float16"), ("cpu", "int8")]
+    assert getattr(engine._model, "marker", None) is cpu_model
+
+
+async def test_a_timed_out_native_call_keeps_the_engine_busy_until_it_really_ends():
+    """AP-24: the timeout bounds the wait; it does not stop the native thread."""
+    import jarvis.dictation.local_preview as mod
+
+    engine = _Engine(delay=0.15)
+    original = mod.PREVIEW_TIMEOUT_S
+    mod.PREVIEW_TIMEOUT_S = 0.02
+    try:
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert engine.calls == 1, "the still-running native call must own the engine"
+        await asyncio.sleep(0.2)
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert engine.calls == 2
+    finally:
+        mod.PREVIEW_TIMEOUT_S = original
+
+
+async def test_a_wedged_native_preview_rotates_to_a_fresh_model_and_guard():
+    """BUG-036: busy ticks must eventually orphan a never-returning engine."""
+    import threading
+
+    import jarvis.dictation.local_preview as mod
+
+    release = threading.Event()
+    engine = _Engine()
+
+    def _wedge(_pcm, _language):
+        engine.calls += 1
+        release.wait(timeout=5.0)
+        return "", "", 0.0
+
+    engine._transcribe_sync = _wedge  # type: ignore[method-assign]
+    old_guard = engine._busy
+    original = mod.PREVIEW_TIMEOUT_S
+    mod.PREVIEW_TIMEOUT_S = 0.02
+    try:
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert await engine.transcribe(b"\x00" * 32000) is None
+        assert engine.ready is False
+        assert engine._busy is not old_guard
+        assert engine.available is True
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+        mod.PREVIEW_TIMEOUT_S = original
 
 
 async def test_the_audio_language_reading_is_kept_not_discarded():
@@ -212,9 +315,11 @@ class _NativeModel:
     def __init__(self, text, language, probability):
         self._answer = (text, language, probability)
         self.asked_for: list[str | None] = []
+        self.options: list[dict[str, object]] = []
 
     def transcribe(self, samples, language=None, **kwargs):
         self.asked_for.append(language)
+        self.options.append(kwargs)
         text, detected, probability = self._answer
         return [_Segment(text)], _Info(detected, probability)
 
@@ -246,3 +351,4 @@ def test_an_unpinned_decode_reports_the_language_it_found():
 
     assert (detected, probability) == ("de", 0.98)
     assert text == "Hallo Welt"  # i18n-allow: German test fixture
+    assert engine._model.options[-1]["temperature"] == 0.0

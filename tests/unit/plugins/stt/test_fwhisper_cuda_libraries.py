@@ -24,11 +24,14 @@ from jarvis.plugins.stt import fwhisper
 def _reset_module_flag(monkeypatch):
     """Each test starts with the helper un-run."""
     monkeypatch.setattr(fwhisper, "_cuda_dll_path_prepared", False)
+    monkeypatch.setattr(fwhisper, "_cuda_dll_directory_handles", [])
+    monkeypatch.setattr(fwhisper, "_cuda_dll_library_handles", [])
 
 
 class TestItNeverCostsAnything:
     def test_it_is_a_no_op_where_there_is_no_dll_search_path(self, monkeypatch):
         """POSIX has no ``os.add_dll_directory`` — and needs none."""
+        monkeypatch.setattr(fwhisper.os, "name", "posix")
         monkeypatch.delattr(fwhisper.os, "add_dll_directory", raising=False)
 
         fwhisper.ensure_cuda_libraries_findable()
@@ -129,8 +132,14 @@ class TestItOnlyClaimsSuccessWhenItLoadedTheOne:
 
         added: list[str] = []
         loaded: list[str] = []
+        directory_token = object()
+
+        def _add(path: str):
+            added.append(path)
+            return directory_token
+
         monkeypatch.setattr(
-            fwhisper.os, "add_dll_directory", added.append, raising=False
+            fwhisper.os, "add_dll_directory", _add, raising=False
         )
         monkeypatch.setattr(
             "importlib.util.find_spec",
@@ -154,6 +163,47 @@ class TestItOnlyClaimsSuccessWhenItLoadedTheOne:
             "cublasLt64_12.dll",
             "cublas64_12.dll",
         ], "cublasLt must load before the cublas that depends on it"
+        assert fwhisper._cuda_dll_path_prepared is True
+        assert fwhisper._cuda_dll_directory_handles == [directory_token]
+        assert len(fwhisper._cuda_dll_library_handles) == 2
+
+    def test_namespace_nvidia_package_is_searched_by_full_submodule(
+        self, tmp_path, monkeypatch
+    ):
+        """PEP-420 ``nvidia`` has no origin; its cublas child owns ``bin``."""
+        package = tmp_path / "nvidia" / "cublas"
+        lib = package / "bin"
+        lib.mkdir(parents=True)
+        (lib / "cublas64_12.dll").write_bytes(b"")
+
+        searched: list[str] = []
+
+        def _find_spec(name: str):
+            searched.append(name)
+            if name == "nvidia.cublas":
+                return type(
+                    "S",
+                    (),
+                    {
+                        "origin": None,
+                        "submodule_search_locations": [str(package)],
+                    },
+                )()
+            return None
+
+        monkeypatch.setattr("importlib.util.find_spec", _find_spec)
+        monkeypatch.setattr(
+            fwhisper.os, "add_dll_directory", lambda _path: object(), raising=False
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "ctypes",
+            type("C", (), {"WinDLL": staticmethod(lambda _path: object())}),
+        )
+
+        fwhisper.ensure_cuda_libraries_findable()
+
+        assert "nvidia.cublas" in searched
         assert fwhisper._cuda_dll_path_prepared is True
 
     def test_a_library_that_will_not_load_is_survived(self, tmp_path, monkeypatch):
