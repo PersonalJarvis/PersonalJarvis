@@ -44,6 +44,13 @@ from jarvis.screen_context.ports import Rect
 
 log = logging.getLogger(__name__)
 
+_UNSAFE_CUSTOM_REGEX_RE = re.compile(
+    r"\\[1-9]|\(\?P=|"
+    r"\((?:\\.|[^()])*(?:[+*]|\{\d*,?\d*\})(?:\\.|[^()])*\)"
+    r"(?:[+*]|\{\d*,?\d*\})|"
+    r"\((?:\\.|[^()])*\|(?:\\.|[^()])*\)(?:[+*]|\{\d*,?\d*\})"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SensitivePattern:
@@ -57,13 +64,43 @@ class SensitivePattern:
         return f"[redacted:{self.label}]"
 
 
-def _compile(label: str, source: str) -> SensitivePattern | None:
+def validate_pattern_source(source: str) -> str | None:
+    """Return a validation error for custom regexes that can stall a turn."""
+    if len(source) > 500:
+        return "the expression exceeds 500 characters"
+    if _UNSAFE_CUSTOM_REGEX_RE.search(source):
+        return (
+            "nested repetition, repeated alternation, and backreferences are "
+            "not allowed in Screen Context patterns"
+        )
+    try:
+        re.compile(source, re.IGNORECASE)
+    except re.error as exc:
+        return str(exc)
+    return None
+
+
+def _compile(
+    label: str,
+    source: str,
+    *,
+    validate_custom: bool = False,
+) -> SensitivePattern | None:
     """Compile one configured pattern; a bad regex is skipped, never fatal.
 
     A user-supplied pattern that fails to compile must not brick the whole
     feature — but it must also not silently reduce protection, so it is logged
     at WARNING with the label (AP-30).
     """
+    validation_error = validate_pattern_source(source) if validate_custom else None
+    if validation_error is not None:
+        log.warning(
+            "screen_context: sensitive pattern %r was skipped because %s. "
+            "Content matching it will NOT be redacted.",
+            label,
+            validation_error,
+        )
+        return None
     try:
         return SensitivePattern(label=label, pattern=re.compile(source, re.IGNORECASE))
     except re.error as exc:
@@ -121,7 +158,11 @@ def build_patterns(extra: Iterable[str] = (), *, include_defaults: bool = True):
         label, _, source = raw.partition(":")
         if not source:
             label, source = "custom", raw
-        compiled = _compile(label.strip() or "custom", source.strip())
+        compiled = _compile(
+            label.strip() or "custom",
+            source.strip(),
+            validate_custom=True,
+        )
         if compiled is not None:
             patterns.append(compiled)
     return tuple(patterns)
@@ -254,6 +295,35 @@ def apply_image_redactions(image: Any, regions) -> tuple[Any, tuple[RedactionHit
     return image, tuple(hits)
 
 
+def local_text_regions_to_redact(
+    regions: Iterable[Any],
+    *,
+    patterns: Iterable[SensitivePattern],
+) -> tuple[tuple[Rect, RedactionRule, str], ...]:
+    """Image-local OCR line rectangles whose text matches a privacy rule."""
+    pattern_list = tuple(patterns)
+    out: list[tuple[Rect, RedactionRule, str]] = []
+    for region in regions:
+        text = str(getattr(region, "text", "") or "")
+        bounds = getattr(region, "bounds", None)
+        if not text or not bounds or len(bounds) != 4:
+            continue
+        left, top, width, height = (int(value) for value in bounds)
+        if width <= 0 or height <= 0:
+            continue
+        for pattern in pattern_list:
+            if pattern.pattern.search(text):
+                out.append(
+                    (
+                        (left, top, width, height),
+                        RedactionRule.SENSITIVE_PATTERN,
+                        pattern.label,
+                    )
+                )
+                break
+    return tuple(out)
+
+
 # --------------------------------------------------------------------------
 # Layer 3 — text
 # --------------------------------------------------------------------------
@@ -297,7 +367,9 @@ __all__ = [
     "blocked_by_denylist",
     "build_patterns",
     "default_patterns",
+    "local_text_regions_to_redact",
     "merge_reports",
     "regions_to_redact",
     "scrub_text",
+    "validate_pattern_source",
 ]

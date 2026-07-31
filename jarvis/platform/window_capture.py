@@ -11,12 +11,9 @@ rect in input units.
 
 Per platform:
 
-* **Windows** — deliberately ``None``: the DPI-pinned GDI rect grab of the
-  DWM extended frame bounds IS the native path here (physical virtual-desktop
-  pixels under PER_MONITOR_AWARE_V2). ``PrintWindow`` would add
-  occluded-window capture at the cost of per-app quirks (GPU-composited
-  windows render black) — CU always raises its target first, so the rect
-  grab sees exactly the window.
+* **Windows** — Pillow's HWND capture path captures only the requested
+  window, so an overlapping window cannot leak into the result. A framing or
+  DPI-size mismatch fails closed to ``None``.
 * **macOS** — ScreenCaptureKit by CGWindowID (``SCScreenshotManager``,
   macOS 14+; pyobjc ``[desktop-macos]`` extra): captures the window on
   whatever display it sits, at native backing resolution, independent of
@@ -36,6 +33,7 @@ frameworks are imported lazily inside the darwin path. Every failure returns
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from jarvis.platform import detect_platform
@@ -59,12 +57,97 @@ def grab_window(
     """
     try:
         plat = detect_platform()
+        if plat == "win32":
+            return _grab_window_windows(int(handle), bbox)
         if plat == "darwin":
             return _grab_window_macos(int(handle))
         return None
     except Exception:  # noqa: BLE001 — capture seam must never raise
         log.debug("grab_window failed (non-fatal)", exc_info=True)
         return None
+
+
+def _grab_window_windows(
+    hwnd: int, bbox: dict[str, int],
+) -> tuple[tuple[int, int], bytes] | None:
+    """Capture exactly one HWND without desktop-compositing overlap."""
+    if os.name != "nt" or not hwnd:
+        return None
+
+    from jarvis.core.win32_dpi import per_monitor_dpi_context  # noqa: PLC0415
+
+    try:
+        from PIL import Image, ImageGrab  # noqa: PLC0415
+    except ImportError:
+        log.debug("Pillow ImageGrab unavailable")
+        return None
+
+    expected = (int(bbox.get("width", 0)), int(bbox.get("height", 0)))
+    if expected[0] <= 0 or expected[1] <= 0:
+        return None
+    with per_monitor_dpi_context():
+        image = ImageGrab.grab(window=hwnd)
+    if tuple(image.size) != expected:
+        from jarvis.platform.window_state import (  # noqa: PLC0415
+            _window_client_rect_windows,
+            _window_rect_windows,
+        )
+
+        outer = _window_rect_windows(hwnd)
+        client = _window_client_rect_windows(hwnd)
+        crop_box = None
+        if outer is not None and tuple(image.size) == outer[2:]:
+            left = int(bbox.get("left", 0)) - outer[0]
+            top = int(bbox.get("top", 0)) - outer[1]
+            crop_box = (left, top, left + expected[0], top + expected[1])
+            if (
+                crop_box[0] < 0
+                or crop_box[1] < 0
+                or crop_box[2] > image.size[0]
+                or crop_box[3] > image.size[1]
+            ):
+                crop_box = None
+        if crop_box is not None:
+            cropped = image.crop(crop_box)
+            image.close()
+            image = cropped
+        elif client is not None and tuple(image.size) == client[2:]:
+            client_left = client[0] - int(bbox.get("left", 0))
+            client_top = client[1] - int(bbox.get("top", 0))
+            if (
+                client_left < 0
+                or client_top < 0
+                or client_left + image.size[0] > expected[0]
+                or client_top + image.size[1] > expected[1]
+            ):
+                image.close()
+                return None
+            canvas = Image.new("RGB", expected, color=(0, 0, 0))
+            client_image = image.convert("RGB")
+            try:
+                canvas.paste(client_image, (client_left, client_top))
+            finally:
+                if client_image is not image:
+                    client_image.close()
+                image.close()
+            image = canvas
+        else:
+            log.debug(
+                "HWND capture size %s does not match frame bounds %s",
+                image.size,
+                expected,
+            )
+            image.close()
+            return None
+    try:
+        rgb = image.convert("RGB")
+        try:
+            return (expected, rgb.tobytes())
+        finally:
+            if rgb is not image:
+                rgb.close()
+    finally:
+        image.close()
 
 
 def _grab_window_macos(window_id: int) -> tuple[tuple[int, int], bytes] | None:

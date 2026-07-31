@@ -122,11 +122,29 @@ def _monitor_name(monitor: dict, monitors: list[dict]) -> str:
     return "?"
 
 
-def _window_rect_is_usable(rect: Rect | None) -> bool:
+def _window_rect_is_usable(rect: Rect | None, monitors: list[dict]) -> bool:
     if rect is None:
         return False
-    _left, _top, width, height = rect
-    return width >= _MIN_WINDOW_EXTENT_PX and height >= _MIN_WINDOW_EXTENT_PX
+    left, top, width, height = rect
+    if width < _MIN_WINDOW_EXTENT_PX or height < _MIN_WINDOW_EXTENT_PX:
+        return False
+    physical = monitors[1:] if len(monitors) > 1 else monitors
+    for monitor in physical:
+        monitor_left, monitor_top, monitor_width, monitor_height = _rect_of(monitor)
+        visible_width = min(left + width, monitor_left + monitor_width) - max(
+            left,
+            monitor_left,
+        )
+        visible_height = min(top + height, monitor_top + monitor_height) - max(
+            top,
+            monitor_top,
+        )
+        if (
+            visible_width >= _MIN_WINDOW_EXTENT_PX
+            and visible_height >= _MIN_WINDOW_EXTENT_PX
+        ):
+            return True
+    return False
 
 
 def resolve_target(
@@ -165,7 +183,7 @@ def resolve_target(
 
     # ---- Window scope: only when the user actually scoped it there --------
     if intent is VisualIntent.WINDOW:
-        if _window_rect_is_usable(facts.frame_rect):
+        if _window_rect_is_usable(facts.frame_rect, monitors):
             assert facts.frame_rect is not None  # narrowed by the check above
             return (
                 CaptureTarget(

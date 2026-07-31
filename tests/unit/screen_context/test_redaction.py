@@ -16,6 +16,7 @@ from jarvis.screen_context.redaction import (
     merge_reports,
     regions_to_redact,
     scrub_text,
+    validate_pattern_source,
 )
 
 
@@ -185,6 +186,17 @@ def test_invalid_custom_pattern_is_skipped_not_fatal() -> None:
     patterns = build_patterns(["broken:([unclosed"])
     scrubbed, _ = scrub_text("4111 1111 1111 1111", patterns)
     assert "[redacted:card]" in scrubbed, "defaults must still apply"
+
+
+def test_custom_pattern_rejects_nested_repetition() -> None:
+    source = r"(a+)+$"
+
+    assert validate_pattern_source(source) is not None
+    assert build_patterns([f"unsafe:{source}"], include_defaults=False) == ()
+
+
+def test_bounded_custom_pattern_remains_available() -> None:
+    assert validate_pattern_source(r"CUST-[0-9]+") is None
 
 
 def test_defaults_can_be_replaced_entirely() -> None:

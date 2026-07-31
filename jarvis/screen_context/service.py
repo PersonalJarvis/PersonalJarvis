@@ -6,11 +6,10 @@ capture, grabs pixels exactly once, redacts them, and hands back a short-lived
 handle. Every piece of platform knowledge lives below it in ``ports.py``, so
 this module is fully unit-testable with fakes and needs no display.
 
-**Single capture, by construction.** There is no loop, no timer, no cached
-frame, and no "refresh". :meth:`ScreenContextService.capture` grabs once and
-returns; the only way to get another capture is another explicit call. That is
-not a policy the code merely follows — there is no code path here that could
-capture twice.
+**Single capture, by construction.** There is no capture loop, cached frame, or
+"refresh". :meth:`ScreenContextService.capture` grabs once and returns; the
+only way to get another capture is another explicit call. The only timer is a
+destructive TTL callback for an unconsumed handle.
 
 **Retention.** A finished :class:`~jarvis.screen_context.models.ScreenContext`
 lives in a :class:`_Handle` in memory, keyed by an opaque id, and is removed on
@@ -28,7 +27,9 @@ import asyncio
 import contextlib
 import io
 import logging
+import math
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -74,6 +75,7 @@ _MIN_JPEG_QUALITY = 50
 #: degradation is recorded rather than the capture being abandoned.
 _ANNOUNCE_TIMEOUT_S = 1.5
 _INDICATOR_DWELL_S = 0.12
+_UI_TEXT_TIMEOUT_S = 2.0
 
 CaptureStatus = Literal["captured", "clarify", "refused", "not_requested"]
 
@@ -180,8 +182,12 @@ class ScreenContextService:
         self._capturer = capturer
         self._ui_text_reader = ui_text_reader
         self._permission_probe = permission_probe or capture_permission_error
-        self._clock = clock or time.time_ns
+        self._clock = clock or time.monotonic_ns
+        self._wall_clock = time.time_ns
         self._handles: dict[str, _Handle] = {}
+        self._expiry_timers: dict[str, asyncio.TimerHandle | threading.Timer] = {}
+        self._handle_lock = threading.RLock()
+        self._closed = False
         self._patterns = redaction.build_patterns(
             self._settings.extra_patterns,
             include_defaults=self._settings.include_default_patterns,
@@ -316,6 +322,14 @@ class ScreenContextService:
     ) -> CaptureOutcome:
         """Take exactly one capture. Assumes intent is already established."""
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
+        if self._closed:
+            return CaptureOutcome(
+                status="refused",
+                verdict=verdict,
+                reason_kind="technical",
+                reason_code="capture_backend_unavailable",
+                message="Screen Context settings changed before capture could start.",
+            )
 
         permission_issue = await asyncio.to_thread(self._permission_probe)
         if permission_issue:
@@ -568,7 +582,30 @@ class ScreenContextService:
                 expected_window_handle=window_handle,
             )
 
-            handle_id = self.store(context)
+            if self._closed:
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code="capture_backend_unavailable",
+                    message=(
+                        "Screen Context settings changed during capture, so the "
+                        "image was discarded. Ask again to use the new settings."
+                    ),
+                )
+            try:
+                handle_id = self.store(context)
+            except RuntimeError:
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code="capture_backend_unavailable",
+                    message=(
+                        "Screen Context settings changed during capture, so the "
+                        "image was discarded. Ask again to use the new settings."
+                    ),
+                )
             await self._publish_completed(context, trace_id=event_trace_id)
             log.info("screen_context: %s", context.describe())
             return CaptureOutcome(
@@ -640,17 +677,39 @@ class ScreenContextService:
                 Degradation(code=DegradationCode.NO_UI_TEXT, message=access_error)
             )
         else:
-            text, text_source, nodes, text_degradations = await uitext.read_ui_text(
-                self.ui_text_reader,
-                target_rect=target.bbox,
-                max_chars=self._settings.max_text_chars,
-                keep_unbounded_nodes=target.kind is TargetKind.WINDOW,
-                window_title_filter=(
-                    target.window.title if target.kind is TargetKind.WINDOW else None
-                ),
-                expected_pid=target.window.pid,
-                expected_window_title=target.window.title,
-            )
+            try:
+                text, text_source, nodes, text_degradations = await asyncio.wait_for(
+                    uitext.read_ui_text(
+                        self.ui_text_reader,
+                        target_rect=target.bbox,
+                        max_chars=self._settings.max_text_chars,
+                        keep_unbounded_nodes=target.kind is TargetKind.WINDOW,
+                        window_title_filter=(
+                            target.window.title
+                            if target.kind is TargetKind.WINDOW
+                            else None
+                        ),
+                        expected_pid=target.window.pid,
+                        expected_window_title=target.window.title,
+                    ),
+                    timeout=_UI_TEXT_TIMEOUT_S,
+                )
+            except TimeoutError:
+                text, text_source, nodes, text_degradations = "", "none", (), ()
+                degradations.append(
+                    Degradation(
+                        code=DegradationCode.NO_UI_TEXT,
+                        message=(
+                            "On-screen text took too long to read, so this turn "
+                            "continued with the image only."
+                        ),
+                    )
+                )
+                log.warning(
+                    "screen_context: accessibility read exceeded %.1fs; "
+                    "continuing image-only",
+                    _UI_TEXT_TIMEOUT_S,
+                )
             degradations.extend(text_degradations)
             if nodes and not await asyncio.to_thread(
                 self._foreground_still_matches,
@@ -683,22 +742,44 @@ class ScreenContextService:
         # -- text scrubbing --------------------------------------------------
         scrubbed_text, text_hits = redaction.scrub_text(text, self._patterns)
 
-        # -- OCR, only to fill a genuine gap ---------------------------------
-        if self._settings.ocr_enabled and uitext.text_is_sparse(scrubbed_text):
-            ocr_text, ocr_degradation = await asyncio.to_thread(
-                uitext.ocr_supplement, image
+        # -- OCR -------------------------------------------------------------
+        # When enabled, OCR always runs once so matches can be burned out of
+        # pixels even when accessibility already returned enough model text.
+        # OCR text itself supplements only genuinely sparse accessibility.
+        ocr_region_hits = ()
+        if self._settings.ocr_enabled:
+            ocr_result = await asyncio.to_thread(
+                uitext.ocr_supplement_with_regions,
+                image,
             )
-            if ocr_degradation is not None:
-                degradations.append(ocr_degradation)
-            elif ocr_text:
-                ocr_scrubbed, ocr_hits = redaction.scrub_text(ocr_text, self._patterns)
-                scrubbed_text = (
-                    f"{scrubbed_text}\n{ocr_scrubbed}".strip()
-                    if scrubbed_text
-                    else ocr_scrubbed
+            if ocr_result.degradation is not None:
+                degradations.append(ocr_result.degradation)
+            else:
+                ocr_regions = redaction.local_text_regions_to_redact(
+                    ocr_result.regions,
+                    patterns=self._patterns,
                 )
-                text_hits = text_hits + ocr_hits
-                text_source = "ocr" if text_source == "none" else "accessibility+ocr"
+                image, ocr_region_hits = redaction.apply_image_redactions(
+                    image,
+                    ocr_regions,
+                )
+                if ocr_result.text and uitext.text_is_sparse(
+                    scrubbed_text,
+                    image_size=raw_size,
+                ):
+                    ocr_scrubbed, ocr_hits = redaction.scrub_text(
+                        ocr_result.text,
+                        self._patterns,
+                    )
+                    scrubbed_text = (
+                        f"{scrubbed_text}\n{ocr_scrubbed}".strip()
+                        if scrubbed_text
+                        else ocr_scrubbed
+                    )
+                    text_hits = text_hits + ocr_hits
+                    text_source = (
+                        "ocr" if text_source == "none" else "accessibility+ocr"
+                    )
 
         image_bytes, encoded_size = _encode(image)
 
@@ -709,9 +790,13 @@ class ScreenContextService:
             target=target,
             ui_text=scrubbed_text,
             ui_text_source=text_source,
-            redactions=redaction.merge_reports(region_hits, text_hits),
+            redactions=redaction.merge_reports(
+                region_hits,
+                ocr_region_hits,
+                text_hits,
+            ),
             degradations=tuple(degradations),
-            captured_at_ns=self._clock(),
+            captured_at_ns=self._wall_clock(),
         )
 
     def _foreground_still_matches(
@@ -745,13 +830,20 @@ class ScreenContextService:
 
     def store(self, context: ScreenContext) -> str:
         """Park a context behind an opaque, single-use id."""
-        self.sweep()
-        handle_id = secrets.token_urlsafe(12)
-        self._handles[handle_id] = _Handle(
-            context=context,
-            expires_at_ns=self._clock() + int(self._settings.ttl_s * 1_000_000_000),
-        )
-        return handle_id
+        with self._handle_lock:
+            if self._closed:
+                raise RuntimeError("Screen Context service is closed")
+            self.sweep()
+            handle_id = secrets.token_urlsafe(12)
+            expires_at_ns = self._clock() + int(
+                self._settings.ttl_s * 1_000_000_000
+            )
+            self._handles[handle_id] = _Handle(
+                context=context,
+                expires_at_ns=expires_at_ns,
+            )
+            self._schedule_expiry(handle_id, expires_at_ns)
+            return handle_id
 
     def consume(self, handle_id: str) -> ScreenContext | None:
         """Take a context out. A second call for the same id gets ``None``.
@@ -760,36 +852,117 @@ class ScreenContextService:
         hold an id and re-fetch the picture later, and nothing has to remember
         to clean up.
         """
-        self.sweep()
-        handle = self._handles.pop(handle_id, None)
-        return handle.context if handle is not None else None
+        with self._handle_lock:
+            self.sweep()
+            handle = self._handles.pop(handle_id, None)
+            self._cancel_expiry(handle_id)
+            return handle.context if handle is not None else None
 
     def peek(self, handle_id: str) -> ScreenContext | None:
         """Metadata read WITHOUT consuming — used by the receipt endpoint."""
-        self.sweep()
-        handle = self._handles.get(handle_id)
-        return handle.context if handle is not None else None
+        with self._handle_lock:
+            self.sweep()
+            handle = self._handles.get(handle_id)
+            return handle.context if handle is not None else None
+
+    def discard(self, handle_id: str) -> bool:
+        """Remove one held capture without returning its pixels."""
+        with self._handle_lock:
+            removed = self._handles.pop(handle_id, None) is not None
+            self._cancel_expiry(handle_id)
+            return removed
 
     def sweep(self) -> int:
         """Drop expired handles. Returns how many were dropped."""
-        now = self._clock()
-        expired = [k for k, h in self._handles.items() if h.expires_at_ns <= now]
-        for key in expired:
-            self._handles.pop(key, None)
+        with self._handle_lock:
+            now = self._clock()
+            expired = [
+                key
+                for key, handle in self._handles.items()
+                if handle.expires_at_ns <= now
+            ]
+            for key in expired:
+                self._handles.pop(key, None)
+                self._cancel_expiry(key)
         if expired:
             log.debug("screen_context: dropped %d expired capture(s)", len(expired))
         return len(expired)
 
+    def _schedule_expiry(
+        self,
+        handle_id: str,
+        expires_at_ns: int,
+        *,
+        delay_s: float | None = None,
+    ) -> None:
+        """Own the TTL lifecycle instead of waiting for another API call."""
+        delay_s = max(
+            0.0,
+            self._settings.ttl_s if delay_s is None else delay_s,
+        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            timer = threading.Timer(
+                delay_s,
+                self._expire_handle,
+                args=(handle_id, expires_at_ns),
+            )
+            timer.daemon = True
+            self._expiry_timers[handle_id] = timer
+            timer.start()
+        else:
+            self._expiry_timers[handle_id] = loop.call_later(
+                delay_s,
+                self._expire_handle,
+                handle_id,
+                expires_at_ns,
+            )
+
+    def _expire_handle(self, handle_id: str, expires_at_ns: int) -> None:
+        with self._handle_lock:
+            handle = self._handles.get(handle_id)
+            if handle is None or handle.expires_at_ns != expires_at_ns:
+                return
+            if handle.expires_at_ns > self._clock():
+                # A fake or adjusted clock has not reached the deadline yet.
+                remaining_s = (handle.expires_at_ns - self._clock()) / 1_000_000_000
+                self._schedule_expiry(
+                    handle_id,
+                    expires_at_ns,
+                    delay_s=remaining_s,
+                )
+                return
+            self._handles.pop(handle_id, None)
+            self._expiry_timers.pop(handle_id, None)
+        log.debug("screen_context: expired capture %s", handle_id)
+
+    def _cancel_expiry(self, handle_id: str) -> None:
+        timer = self._expiry_timers.pop(handle_id, None)
+        if timer is not None:
+            timer.cancel()
+
     def discard_all(self) -> int:
         """Drop every held capture immediately (the panic button)."""
-        count = len(self._handles)
-        self._handles.clear()
-        return count
+        with self._handle_lock:
+            count = len(self._handles)
+            self._handles.clear()
+            for timer in self._expiry_timers.values():
+                timer.cancel()
+            self._expiry_timers.clear()
+            return count
+
+    def close(self) -> int:
+        """Reject in-flight stores and remove every pixel held by this instance."""
+        with self._handle_lock:
+            self._closed = True
+            return self.discard_all()
 
     @property
     def held_count(self) -> int:
-        self.sweep()
-        return len(self._handles)
+        with self._handle_lock:
+            self.sweep()
+            return len(self._handles)
 
     # ---- bus -------------------------------------------------------------
 
@@ -936,9 +1109,23 @@ def _encode(image: Any) -> tuple[bytes, tuple[int, int]]:
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=quality, optimize=True)
         data = buffer.getvalue()
-        if len(data) <= _MAX_IMAGE_BYTES or quality <= _MIN_JPEG_QUALITY:
+        if len(data) <= _MAX_IMAGE_BYTES:
             return data, image.size
-        quality -= 10
+        if quality > _MIN_JPEG_QUALITY:
+            quality = max(_MIN_JPEG_QUALITY, quality - 10)
+            continue
+
+        # High-entropy frames remain large even at the minimum useful JPEG
+        # quality. Continue shrinking until the advertised byte ceiling is a
+        # fact, not a best effort.
+        shrink = min(0.9, math.sqrt(_MAX_IMAGE_BYTES / len(data)) * 0.95)
+        new_size = (
+            max(1, int(image.size[0] * shrink)),
+            max(1, int(image.size[1] * shrink)),
+        )
+        if new_size == image.size:
+            return data, image.size
+        image = image.resize(new_size, resample=Image.Resampling.LANCZOS)
 
 
 def _rects_intersect_or_unknown(

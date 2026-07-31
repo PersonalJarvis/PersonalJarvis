@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import types
+from contextlib import nullcontext
 
 from jarvis.platform import window_state as ws
 from jarvis.platform.window_state import WindowInfo
@@ -159,14 +160,80 @@ def test_windows_frame_rect_without_handle_is_none(monkeypatch):
 # Native per-window capture seam (jarvis.platform.window_capture)
 # ---------------------------------------------------------------------------
 
-def test_grab_window_returns_none_on_windows(monkeypatch):
-    # Windows' native path IS the DPI-pinned rect grab (GDI) — no separate
-    # per-window bitmap; callers keep the rect grabber.
+def test_grab_window_dispatches_to_native_windows_capture(monkeypatch):
     from jarvis.platform import window_capture as wc
 
     monkeypatch.setattr(wc, "detect_platform", lambda: "win32")
+    monkeypatch.setattr(
+        wc,
+        "_grab_window_windows",
+        lambda handle, bbox: ((bbox["width"], bbox["height"]), b"rgb"),
+    )
     assert wc.grab_window(1234, {"left": 0, "top": 0,
-                                 "width": 100, "height": 100}) is None
+                                 "width": 100, "height": 100}) == (
+        (100, 100), b"rgb"
+    )
+
+
+def test_offscreen_rects_do_not_intersect_virtual_desktop():
+    assert ws._rects_intersect((10, 10, 100, 100), (0, 0, 1920, 1080))
+    assert not ws._rects_intersect((-32000, -32000, 160, 30), (0, 0, 1920, 1080))
+
+
+def test_windows_capture_uses_hwnd_and_rejects_ambiguous_framing(monkeypatch):
+    from jarvis.core import win32_dpi
+    from jarvis.platform import window_capture as wc
+
+    calls: list[int] = []
+
+    class _Image:
+        size = (101, 100)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(wc, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(win32_dpi, "per_monitor_dpi_context", nullcontext)
+    monkeypatch.setattr(
+        "PIL.ImageGrab.grab",
+        lambda *, window: calls.append(window) or _Image(),
+    )
+
+    assert wc._grab_window_windows(
+        0x1_0000_1234,
+        {"left": 0, "top": 0, "width": 100, "height": 100},
+    ) is None
+    assert calls == [0x1_0000_1234]
+
+
+def test_windows_client_capture_is_padded_into_frame_coordinates(monkeypatch):
+    from PIL import Image
+
+    from jarvis.core import win32_dpi
+    from jarvis.platform import window_capture as wc
+
+    client_image = Image.new("RGB", (100, 80), color=(200, 10, 20))
+    monkeypatch.setattr(wc, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(win32_dpi, "per_monitor_dpi_context", nullcontext)
+    monkeypatch.setattr("PIL.ImageGrab.grab", lambda *, window: client_image.copy())
+    monkeypatch.setattr(ws, "_window_rect_windows", lambda _hwnd: None)
+    monkeypatch.setattr(
+        ws,
+        "_window_client_rect_windows",
+        lambda _hwnd: (0, 20, 100, 80),
+    )
+
+    result = wc._grab_window_windows(
+        0x1_0000_1234,
+        {"left": 0, "top": 0, "width": 100, "height": 100},
+    )
+
+    assert result is not None
+    size, rgb = result
+    framed = Image.frombytes("RGB", size, rgb)
+    assert size == (100, 100)
+    assert framed.getpixel((50, 10)) == (0, 0, 0)
+    assert framed.getpixel((50, 20)) == (200, 10, 20)
 
 
 def test_grab_window_macos_degrades_without_frameworks(monkeypatch):

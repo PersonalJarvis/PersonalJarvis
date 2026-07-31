@@ -22,12 +22,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import threading
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 from uuid import uuid4
 
 from jarvis.core.protocols import CancelToken, Observation, UIANode
+from jarvis.core.win32_dpi import per_monitor_dpi_context
 
 from .pruning import (
     DEFAULT_INTERESTING_ROLES,
@@ -62,7 +64,8 @@ def _run_traverser_with_com(
     import os  # noqa: PLC0415
 
     if os.name != "nt":
-        return traverser(max_depth, window_title_filter)
+        with per_monitor_dpi_context():
+            return traverser(max_depth, window_title_filter)
     try:
         import pythoncom  # type: ignore[import-not-found]  # noqa: PLC0415
     except ImportError:
@@ -81,13 +84,40 @@ def _run_traverser_with_com(
             # initialized as STA. UIA can traverse in that existing apartment;
             # it is not ours, so the finally block must not uninitialize it.
             logger.debug("UIA worker reusing its existing COM apartment")
-        return traverser(max_depth, window_title_filter)
+        with per_monitor_dpi_context():
+            return traverser(max_depth, window_title_filter)
     except Exception:  # noqa: BLE001 — traversal failure degrades to image-only
         logger.warning("UIA worker traversal failed", exc_info=True)
         return ("", 0, [])
     finally:
         if initialized:
             pythoncom.CoUninitialize()
+
+
+def _run_traverser_and_release(
+    gate: threading.Lock,
+    traverser: Callable[..., tuple[str, int, list[RawNode]]],
+    max_depth: int,
+    window_title_filter: str | None,
+) -> tuple[str, int, list[RawNode]]:
+    try:
+        return _run_traverser_with_com(traverser, max_depth, window_title_filter)
+    finally:
+        gate.release()
+
+
+def _consume_traversal_exception(future: asyncio.Future) -> None:
+    if future.cancelled():
+        return
+    try:
+        error = future.exception()
+        if error is not None:
+            logger.debug(
+                "Deferred UIA traversal failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+    except Exception:  # noqa: BLE001 - callback must never reach the event loop
+        logger.debug("Deferred UIA traversal failed", exc_info=True)
 
 
 class UIATreeSource:
@@ -112,6 +142,7 @@ class UIATreeSource:
         self._min_overlap = min_on_screen_overlap
         self._monitor_bounds = monitor_bounds  # None = detect at runtime
         self._traverser = traverser
+        self._traversal_gate = threading.Lock()
         self._closed = False
 
     # ---- Public API --------------------------------------------------------
@@ -153,12 +184,23 @@ class UIATreeSource:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise RuntimeError(f"cancelled: {cancel_token.reason}")
             traverse_fn = self._traverser or self._traverse_via_pywinauto
-            window_title, active_pid, raw_nodes = await asyncio.to_thread(
-                _run_traverser_with_com,
-                traverse_fn,
-                depth,
-                window_title_filter,
-            )
+            if not self._traversal_gate.acquire(blocking=False):
+                return self._fallback_observation(depth)
+            loop = asyncio.get_running_loop()
+            try:
+                traversal = loop.run_in_executor(
+                    None,
+                    _run_traverser_and_release,
+                    self._traversal_gate,
+                    traverse_fn,
+                    depth,
+                    window_title_filter,
+                )
+                traversal.add_done_callback(_consume_traversal_exception)
+            except Exception:
+                self._traversal_gate.release()
+                raise
+            window_title, active_pid, raw_nodes = await asyncio.shield(traversal)
             nodes_before = len(raw_nodes)
             pruned = prune_tree(
                 raw_nodes,
@@ -206,6 +248,24 @@ class UIATreeSource:
             },
         )
 
+    @staticmethod
+    def _fallback_observation(depth: int) -> Observation:
+        return Observation(
+            trace_id=uuid4(),
+            timestamp_ns=time.time_ns(),
+            screenshot_path=None,
+            screenshot_hash=UIATreeSource._hash_tree("", 0, ()),
+            nodes=(),
+            window_title="",
+            active_pid=0,
+            source="screenshot_only",
+            pruning_stats={
+                "nodes_before": 0,
+                "nodes_after": 0,
+                "depth_used": depth,
+            },
+        )
+
     async def close(self) -> None:
         self._closed = True
 
@@ -225,8 +285,12 @@ class UIATreeSource:
                 import ctypes  # noqa: PLC0415
 
                 user32 = ctypes.windll.user32
-                w = user32.GetSystemMetrics(0)
-                h = user32.GetSystemMetrics(1)
+                get_metric = user32.GetSystemMetrics
+                get_metric.argtypes = [ctypes.c_int]
+                get_metric.restype = ctypes.c_int
+                with per_monitor_dpi_context():
+                    w = get_metric(0)
+                    h = get_metric(1)
                 return (0, 0, int(w), int(h))
             except Exception:  # noqa: BLE001
                 # Fallback: FullHD. The only effect is that the OnScreen filter
@@ -245,6 +309,10 @@ class UIATreeSource:
         UIA unavailable) an empty result is returned —
         never an exception, so the pipeline stays robust.
         """
+        import os  # noqa: PLC0415
+
+        if os.name != "nt":
+            return ("", 0, [])
         try:
             from pywinauto.uia_element_info import UIAElementInfo  # noqa: PLC0415
         except ImportError:
@@ -255,8 +323,13 @@ class UIATreeSource:
             # Find the foreground window. UIAElementInfo() with no arguments is
             # the desktop root — we need the foreground window.
             import ctypes  # noqa: PLC0415
+            from ctypes import wintypes  # noqa: PLC0415
 
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            get_foreground = ctypes.windll.user32.GetForegroundWindow
+            get_foreground.argtypes = []
+            get_foreground.restype = wintypes.HWND
+            with per_monitor_dpi_context():
+                hwnd = get_foreground()
             if not hwnd:
                 return ("", 0, [])
             root = UIAElementInfo(hwnd)
