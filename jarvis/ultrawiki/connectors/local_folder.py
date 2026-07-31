@@ -206,6 +206,7 @@ def _is_linked_git_worktree(path: Path) -> bool:
     try:
         return (path / ".git").is_file()
     except OSError:
+        # An unreadable marker cannot prove that this is a linked worktree.
         return False
 
 

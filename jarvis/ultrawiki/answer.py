@@ -227,6 +227,7 @@ async def answer_question(
         try:
             _parse_provider_answer(text, len(evidence))
         except ValueError as exc:
+            # The validation diagnostic tells the fallback chain to try another provider.
             return str(exc)
         return None
 

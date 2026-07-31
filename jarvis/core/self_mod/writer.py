@@ -225,7 +225,11 @@ class AtomicConfigWriter:
             for path in root.glob(BACKUP_FILE_GLOB):
                 try:
                     stat = path.stat()
-                except OSError:
+                except FileNotFoundError:
+                    # Concurrent backup GC may remove the entry after globbing it.
+                    continue
+                except OSError as exc:
+                    _LOG.warning("Could not inspect self-mod backup %s: %s", path, exc)
                     continue
                 # The new, out-of-watchdog location wins if an old backup has
                 # the same generated filename. Legacy directories are read-only
@@ -272,6 +276,7 @@ class AtomicConfigWriter:
                 try:
                     candidate.relative_to(root.resolve())
                 except ValueError:
+                    # The resolved candidate escapes this allowed backup root.
                     continue
                 if candidate.is_file():
                     self._restore(candidate)
@@ -503,6 +508,7 @@ class AtomicConfigWriter:
                     os.replace(tmp_path, target)
                     return
                 except PermissionError as exc:
+                    # Retry transient sharing violations; the last failure is raised below.
                     last_error = exc
             if last_error is not None:
                 raise last_error

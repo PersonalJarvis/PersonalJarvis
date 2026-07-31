@@ -172,6 +172,7 @@ def _seconds_since(value: Any, now: datetime) -> float | None:
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
+        # An unusable persisted timestamp is treated as never synchronized.
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -181,7 +182,8 @@ def _seconds_since(value: Any, now: datetime) -> float | None:
 def _is_due(value: Any, interval_s: Any, now: datetime) -> bool:
     try:
         interval = float(interval_s)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        log.warning("UltraWiki ignored invalid synchronization interval %r: %s", interval_s, exc)
         return False
     if interval <= 0:
         return False
@@ -552,6 +554,7 @@ class UltraWikiService:
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=max(0.0, grace_s))
         except TimeoutError:
+            # The timeout is the expected signal that the startup grace elapsed.
             pass
         if cancel_event.is_set():
             return
@@ -567,6 +570,7 @@ class UltraWikiService:
                     cancel_event.wait(), timeout=FRESHNESS_TICK_S
                 )
             except TimeoutError:
+                # The timeout is the expected signal for the next scheduler tick.
                 pass
 
     async def _sync_due_sources(
@@ -699,8 +703,11 @@ class UltraWikiService:
                 freshness_task.cancel()
                 try:
                     await asyncio.wait_for(freshness_task, timeout=2.0)
-                except (TimeoutError, asyncio.CancelledError):
+                except asyncio.CancelledError:
+                    # Cancellation is the expected completion path during shutdown.
                     pass
+                except TimeoutError:
+                    log.warning("UltraWiki freshness task did not stop within 2 seconds")
                 except Exception as exc:  # noqa: BLE001 — shutdown best-effort
                     log.warning("UltraWiki freshness shutdown error: %s", exc)
                 self._freshness_task = None

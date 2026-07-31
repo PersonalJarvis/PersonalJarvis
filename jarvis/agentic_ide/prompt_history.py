@@ -47,6 +47,7 @@ class PromptHistoryEntry:
             sequence = int(value.get("sequence") or 0)
             at = float(value.get("at") or 0.0)
         except (TypeError, ValueError):
+            # Invalid persisted numeric metadata makes only this row unusable.
             return None
         submitted = value.get("submitted")
         if submitted not in (True, False, None):
@@ -96,6 +97,7 @@ def load(history_id: str) -> list[PromptHistoryEntry]:
                 try:
                     parsed = PromptHistoryEntry.from_dict(json.loads(line))
                 except (json.JSONDecodeError, UnicodeDecodeError):
+                    # A damaged row is counted and reported after the scan.
                     parsed = None
                 if parsed is None:
                     damaged += 1

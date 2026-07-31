@@ -3758,6 +3758,7 @@ def _coerce_env_value(v: str) -> Any:
         try:
             parsed = json.loads(v)
         except (TypeError, ValueError):
+            # Invalid JSON-shaped input intentionally falls through to scalar coercion.
             pass
         else:
             if isinstance(parsed, (dict, list)):
