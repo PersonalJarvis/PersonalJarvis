@@ -71,6 +71,20 @@ def _realtime_requires_webrtc_offer(cfg: object) -> bool:
     return realtime_requires_webrtc_offer(cfg)
 
 
+async def _realtime_transport_offer_ready(required: bool) -> bool | None:
+    """Return desktop offer readiness, or ``None`` when no offer is required."""
+    if not required:
+        return None
+    try:
+        from jarvis.realtime.offer_broker import (
+            get_realtime_transport_offer_broker,
+        )
+    except ImportError:  # Optional realtime support is absent on a minimal install.
+        return False
+    broker = get_realtime_transport_offer_broker()
+    return await broker.pending_count() > 0
+
+
 class ReplyLanguageBody(BaseModel):
     language: str = Field(..., min_length=1)
     persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
@@ -217,6 +231,9 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     requires_webrtc_offer = await asyncio.to_thread(
         _realtime_requires_webrtc_offer, cfg
     )
+    transport_offer_ready = await _realtime_transport_offer_ready(
+        requires_webrtc_offer
+    )
     prov_label, prov_model = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
@@ -225,6 +242,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "mode": mode,
         "realtime_available": prov is not None,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "transport_offer_ready": transport_offer_ready,
         "active_provider": prov,
         # Sidebar-footer display fields: the pretty provider name + the model
         # an idle realtime session would use (configured pin or catalog
