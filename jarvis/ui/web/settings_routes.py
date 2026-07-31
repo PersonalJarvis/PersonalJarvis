@@ -234,6 +234,16 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     transport_offer_ready = await _realtime_transport_offer_ready(
         requires_webrtc_offer
     )
+    transport_offer_detail: str | None = None
+    if requires_webrtc_offer:
+        transport_offer_detail = str(
+            getattr(request.app.state, "realtime_transport_broker_error", "")
+            or (
+                "Embedded desktop WebRTC offer is ready."
+                if transport_offer_ready
+                else "Waiting for the embedded desktop WebRTC offer."
+            )
+        )
     prov_label, prov_model = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
@@ -243,6 +253,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "realtime_available": prov is not None,
         "requires_webrtc_offer": requires_webrtc_offer,
         "transport_offer_ready": transport_offer_ready,
+        "transport_offer_detail": transport_offer_detail,
         "active_provider": prov,
         # Sidebar-footer display fields: the pretty provider name + the model
         # an idle realtime session would use (configured pin or catalog

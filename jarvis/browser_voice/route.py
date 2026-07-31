@@ -310,6 +310,7 @@ async def realtime_transport_ws(ws: WebSocket) -> None:
         ):
             await ws.close(code=4401, reason="invalid desktop capability")
             return
+        state.realtime_transport_broker_error = ""
         log.info("Embedded desktop Realtime transport broker authenticated.")
         owner_id = f"broker-ws-{id(ws):x}"
         while not socket_closed:
@@ -332,6 +333,10 @@ async def realtime_transport_ws(ws: WebSocket) -> None:
                 log.debug("realtime transport dropped malformed JSON")
                 continue
             if isinstance(payload, dict) and payload.get("type") == "unavailable":
+                state.realtime_transport_broker_error = (
+                    "The embedded desktop cannot create the WebRTC offer required "
+                    "for subscription Realtime voice."
+                )
                 log.warning(
                     "Embedded desktop cannot create the WebRTC offer required "
                     "for subscription Realtime voice."
@@ -355,6 +360,7 @@ async def realtime_transport_ws(ws: WebSocket) -> None:
                 log.warning("realtime transport rejected offer: %s", exc)
                 await ws.send_json({"type": "release", "offer_id": offer_id})
                 continue
+            state.realtime_transport_broker_error = ""
             log.info("Embedded desktop registered a Realtime WebRTC offer.")
 
             while registration is not None:

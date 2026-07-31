@@ -314,6 +314,7 @@ async def test_realtime_transport_reports_missing_desktop_webrtc(
         lambda: broker,
     )
     cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    state = _state(_RecSession(), cfg=cfg)
     ws = _FakeWS(
         [
             _broker_auth_message(),
@@ -325,13 +326,14 @@ async def test_realtime_transport_reports_missing_desktop_webrtc(
                 ),
             },
         ],
-        state=_state(_RecSession(), cfg=cfg),
+        state=state,
     )
 
     await realtime_transport_ws(ws)
 
     assert ws.closed == (1011, "WebRTC offer unavailable")
     assert await broker.pending_count() == 0
+    assert "cannot create the WebRTC offer" in state.realtime_transport_broker_error
 
 
 async def test_realtime_transport_rejects_remote_offer_hijack_even_with_valid_token(
