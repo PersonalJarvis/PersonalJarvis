@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
 import { AgenticGrid } from "@/components/agentic/AgenticGrid";
+import { VoicePanel } from "@/components/agentic/VoicePanel";
 import {
   WorkspaceLauncher,
   type PlannedTerminal,
@@ -708,32 +709,41 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   if (session && !addingNew) {
     return (
       <div className="flex h-full flex-col">
-        <div className="min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1">
+          <div className="min-h-0 min-w-0 flex-1">
+            {/*
+              Keyed by workspace, so switching tabs REPLACES the grid instead of
+              re-using it. That is deliberate: each pane's terminal is wired to
+              one call-sign for its whole life, and re-using the component across
+              workspaces would leave xterm instances pointed at the panes of the
+              workspace that just left.
+            */}
+            <AgenticGrid
+              key={session.id}
+              session={session}
+              workspaceBar={renderBar(true)}
+              appActions={<TopBarActions />}
+              onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+              jumpTo={jumpTo}
+              focusMode={focusMode}
+              onToggleFocus={(v) => void toggleFocus(v)}
+              onClose={() => void close()}
+              busy={busy}
+              maxTerminals={maxTerminals}
+              agents={splitChoices}
+              onSessionChanged={setSession}
+              accounts={ideAccounts}
+              onStateChanged={applyStateFromSettings}
+              onScreen={onScreen}
+            />
+          </div>
           {/*
-            Keyed by workspace, so switching tabs REPLACES the grid instead of
-            re-using it. That is deliberate: each pane's terminal is wired to
-            one call-sign for its whole life, and re-using the component across
-            workspaces would leave xterm instances pointed at the panes of the
-            workspace that just left.
+            The voice column: talk to the assistant while the agents work.
+            OUTSIDE the per-workspace grid on purpose — the conversation
+            belongs to the app, not to a workspace, so switching tabs must not
+            reset the orb mid-sentence.
           */}
-          <AgenticGrid
-            key={session.id}
-            session={session}
-            workspaceBar={renderBar(true)}
-            appActions={<TopBarActions />}
-            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-            jumpTo={jumpTo}
-            focusMode={focusMode}
-            onToggleFocus={(v) => void toggleFocus(v)}
-            onClose={() => void close()}
-            busy={busy}
-            maxTerminals={maxTerminals}
-            agents={splitChoices}
-            onSessionChanged={setSession}
-            accounts={ideAccounts}
-            onStateChanged={applyStateFromSettings}
-            onScreen={onScreen}
-          />
+          <VoicePanel />
         </div>
         {modeIntroFor === session.id && (
           <CodingModeIntro

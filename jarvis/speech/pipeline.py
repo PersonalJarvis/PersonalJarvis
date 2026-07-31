@@ -5865,6 +5865,22 @@ class SpeechPipeline:
         self._explicit_call_pending = True
         return self._arm_call_event()
 
+    def request_voice_hangup(self) -> bool:
+        """Hang up the voice channel from outside the audio path.
+
+        The voice orb's click and ``jarvis api voice hangup`` land here — the
+        same absolute-kill contract as the hangup hotkey (2026-05-20: no matter
+        what is playing or queued, the voice channel goes silent now). Safe to
+        call while idle; answers ``False`` instead of raising so a UI click can
+        report honestly rather than 500.
+        """
+        try:
+            self._trigger_voice_hangup()
+            return True
+        except Exception:  # noqa: BLE001 — a failed hangup must report, never raise
+            log.warning("request_voice_hangup failed", exc_info=True)
+            return False
+
     def _arm_call_event(self) -> bool:
         """Set the call edge on its owning asyncio loop.
 

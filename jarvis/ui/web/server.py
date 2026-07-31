@@ -360,6 +360,7 @@ class WebServer:
         from .ultrawiki_identity_routes import router as ultrawiki_identity_router
         from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
+        from .voice_call_routes import router as voice_call_router
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
@@ -449,6 +450,8 @@ class WebServer:
         # Mounted so every action is also `jarvis api dictation <op>`, which is
         # the documented Wayland path (no app-owned global shortcuts there).
         app.include_router(dictation_router)
+        # The voice orb's click — call / hangup without speaking the wake word.
+        app.include_router(voice_call_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
