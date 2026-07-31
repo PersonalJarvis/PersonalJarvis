@@ -4,8 +4,11 @@ import {
   evenSeam,
   evenWeights,
   MIN_SEAM_PANE_PX,
+  paneArrangement,
   paneLayout,
+  panesFromArrangement,
   remapColumnWeights,
+  sameArrangement,
   weightsAfterSplit,
   type PaneSeam,
   type PaneWeights,
@@ -258,5 +261,35 @@ describe("remapColumnWeights", () => {
     const after = [pane("A", 0)];
     const weights: PaneWeights = { ...evenWeights(), panes: { A: 2, B: 3 } };
     expect(remapColumnWeights(weights, before, after).panes).toEqual({ A: 2 });
+  });
+});
+
+describe("paneArrangement", () => {
+  it("maps each pane to its column index with gaps closed", () => {
+    // Backend column NUMBERS may have holes mid-close; the weights are keyed
+    // by packed index, so the arrangement must speak the same language.
+    const panes = [pane("A", 0), pane("B", 4), pane("C", 4, 1)];
+    expect(paneArrangement(panes)).toEqual({ A: 0, B: 1, C: 1 });
+  });
+
+  it("round-trips through panesFromArrangement into remapColumnWeights", () => {
+    // The restart story: only the arrangement survived (as stored JSON), the
+    // pane objects did not — the synthesized list must carry a width the same
+    // way the live list would have.
+    const stored = paneArrangement([pane("A", 0), pane("B", 1), pane("C", 2)]);
+    const wide: PaneWeights = { ...evenWeights(), columns: [1, 1, 4] };
+    const after = [pane("B", 0), pane("C", 1)];
+    expect(
+      remapColumnWeights(wide, panesFromArrangement(stored), after).columns,
+    ).toEqual([1, 4]);
+  });
+});
+
+describe("sameArrangement", () => {
+  it("accepts identical mappings and rejects moved or exchanged panes", () => {
+    expect(sameArrangement({ A: 0, B: 1 }, { B: 1, A: 0 })).toBe(true);
+    expect(sameArrangement({ A: 0, B: 1 }, { A: 0, B: 2 })).toBe(false);
+    expect(sameArrangement({ A: 0 }, { A: 0, B: 1 })).toBe(false);
+    expect(sameArrangement({ A: 0, B: 1 }, { A: 0, C: 1 })).toBe(false);
   });
 });

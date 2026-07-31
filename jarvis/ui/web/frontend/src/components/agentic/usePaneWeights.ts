@@ -22,6 +22,18 @@ import {
 
 const STORAGE_PREFIX = "jarvis.agenticIde.paneWeights.v1.";
 
+/**
+ * Where each workspace's pane→column arrangement is remembered.
+ *
+ * Stored beside the weights because the two are one fact: column weights are
+ * keyed by column INDEX, so they only mean anything together with the mapping
+ * from panes to those indexes. A workspace reopened after the backend
+ * rearranged it (a restart, a voice-opened terminal, another client) reads
+ * this to carry every dragged width over to the pane that owned it, instead of
+ * letting index-keyed widths land on whichever pane holds that index now.
+ */
+const ARRANGEMENT_PREFIX = "jarvis.agenticIde.paneArrangement.v1.";
+
 /** How far one arrow-key press moves a seam. Matches `PaneResizer`. */
 const KEY_STEP_PX = 16;
 
@@ -55,6 +67,42 @@ function saveWeights(workspaceId: string, weights: PaneWeights): void {
     window.localStorage.setItem(storageKey(workspaceId), JSON.stringify(weights));
   } catch {
     /* quota / private mode — sizes simply will not survive this session */
+  }
+}
+
+/** The pane→column arrangement the stored weights are keyed to, if one was saved. */
+export function loadStoredArrangement(
+  workspaceId: string,
+): Record<string, number> | null {
+  try {
+    const raw = window.localStorage.getItem(ARRANGEMENT_PREFIX + workspaceId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, number] =>
+        Number.isFinite(entry[1]) && (entry[1] as number) >= 0,
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  } catch {
+    // Corrupt entry, private mode, storage disabled — without a remembered
+    // arrangement the weights are simply trusted as they are, which is the
+    // exact behaviour every workspace had before arrangements were stored.
+    return null;
+  }
+}
+
+/** Remember which panes the currently stored weights belong to. */
+export function saveStoredArrangement(
+  workspaceId: string,
+  arrangement: Record<string, number>,
+): void {
+  try {
+    window.localStorage.setItem(
+      ARRANGEMENT_PREFIX + workspaceId,
+      JSON.stringify(arrangement),
+    );
+  } catch {
+    /* quota / private mode — the arrangement will not survive this session */
   }
 }
 

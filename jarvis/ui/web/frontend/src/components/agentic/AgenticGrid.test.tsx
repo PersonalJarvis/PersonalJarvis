@@ -1582,6 +1582,84 @@ describe("resizing the workspace", () => {
 
     await waitFor(() => expect(stored().panes).toEqual({ Mika: 0.5, New: 0.5 }));
   });
+
+  /*
+   * The workspace changes WITHOUT this grid doing it.
+   *
+   * A terminal opened by voice, closed by another client, or rearranged by the
+   * backend resuming after a restart arrives here as nothing but a new
+   * `session` prop — no callback ran, so nothing remapped the index-keyed
+   * column weights. This is how a closed pane's dragged width ended up on a
+   * different pane's column (2026-07-31: one pane squeezed, its nearly empty
+   * neighbour twice as wide).
+   */
+  it("keeps dragged widths with their panes when the workspace changes from outside", async () => {
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(
+        sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
+      );
+      // Drag the seam between Nova and Aria so Aria is the wide one.
+      dragSeamBy("pane-seam-column:1:2", 1200, 900);
+      expect(widthOf("Aria")).toBe(50);
+
+      // Mika goes away without this grid being asked — every index shifts.
+      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+
+      // Aria keeps the width it was dragged to; index-keyed weights would have
+      // handed it to Nova and squeezed Aria instead.
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
+  it("carries dragged widths across a reload behind which the workspace changed", () => {
+    // What an earlier session left behind: Aria dragged wide while Mika still
+    // existed. The reload happens after Mika was closed elsewhere, so the
+    // stored index-keyed widths no longer match the session being mounted.
+    window.localStorage.setItem(
+      WEIGHTS_KEY,
+      JSON.stringify({ columns: [1, 0.5, 1.5], bands: [], panes: {} }),
+    );
+    window.localStorage.setItem(
+      "jarvis.agenticIde.paneArrangement.v1.ide_test",
+      JSON.stringify({ Mika: 0, Nova: 1, Aria: 2 }),
+    );
+    const restore = measured(1800, 600);
+    try {
+      renderGrid(sessionWith([["Nova", 0], ["Aria", 1]]));
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not read a rename as a rearrangement", async () => {
+    vi.mocked(api.renameTerminal).mockResolvedValue(
+      sessionWith([["Frontend", 0], ["Nova", 1]]),
+    );
+    const restore = measured(1000, 600);
+    try {
+      const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      expect(widthOf("Mika")).toBe(75);
+
+      fireEvent.click(screen.getByTestId("pane-rename-Mika"));
+      await waitFor(() =>
+        expect(api.renameTerminal).toHaveBeenCalledWith("Mika", "Frontend"),
+      );
+      rerender({ session: sessionWith([["Frontend", 0], ["Nova", 1]]) });
+
+      // The renamed pane keeps the width that was dragged for it — a remap
+      // here would have seen "Mika left, Frontend arrived" and reset it.
+      expect(widthOf("Frontend")).toBe(75);
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe("a workspace with far more panes than the window fits", () => {

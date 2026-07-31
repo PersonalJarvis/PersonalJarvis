@@ -385,6 +385,48 @@ function columnCount<T extends Sized>(panes: readonly T[]): number {
 }
 
 /**
+ * Which column each pane sits in, by call-sign, gaps closed.
+ *
+ * This is the ARRANGEMENT the column weights are keyed to: the weights store
+ * only "column 2 is wide", so they mean anything at all only together with the
+ * mapping from panes to those indexes. The grid keeps the arrangement its
+ * weights belong to and compares it against every new session — that is how it
+ * notices the backend renumbered columns underneath index-keyed widths, which
+ * happens on every open and close the grid itself did not perform (a terminal
+ * opened by voice, a second client, the backend resuming after a restart).
+ */
+export function paneArrangement<T extends Sized>(
+  panes: readonly T[],
+): Record<string, number> {
+  return Object.fromEntries(columnIndexes(panes));
+}
+
+/** Do two arrangements place exactly the same panes in the same columns? */
+export function sameArrangement(
+  a: Record<string, number>,
+  b: Record<string, number>,
+): boolean {
+  const names = Object.keys(a);
+  if (names.length !== Object.keys(b).length) return false;
+  return names.every((name) => b[name] === a[name]);
+}
+
+/**
+ * The pane list an arrangement describes — enough for `remapColumnWeights`.
+ *
+ * Column matching only reads names and columns, so every pane is slot 0.
+ */
+export function panesFromArrangement(
+  arrangement: Record<string, number>,
+): Sized[] {
+  return Object.entries(arrangement).map(([name, column]) => ({
+    name,
+    column,
+    slot: 0,
+  }));
+}
+
+/**
  * Carry column widths across a renumber.
  *
  * The backend packs column numbers on every open and close, so column 3 after a

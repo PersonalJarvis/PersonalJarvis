@@ -59,14 +59,21 @@ import {
   MIN_PANE_HEIGHT_PX,
 } from "./layout";
 import {
+  paneArrangement,
   paneLayout,
+  panesFromArrangement,
   remapColumnWeights,
+  sameArrangement,
   weightsAfterSplit,
   type PaneBox,
   type PaneSeam,
   type PaneWeights,
 } from "./paneLayout";
-import { usePaneWeights } from "./usePaneWeights";
+import {
+  loadStoredArrangement,
+  saveStoredArrangement,
+  usePaneWeights,
+} from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { PromptPreview } from "./PromptPreview";
@@ -822,6 +829,62 @@ export function AgenticGrid({
   );
 
   /*
+   * Which panes the current column weights are keyed to.
+   *
+   * Weights are stored by COLUMN INDEX (see `paneLayout`), and the backend
+   * renumbers columns on every open and close. The grid's own actions remap
+   * the weights in the same breath — but a workspace also changes from OUTSIDE
+   * this grid: a terminal opened by voice, a second client, the backend
+   * resuming after a restart. Those arrive as a new `session.terminals` with
+   * nothing else said, and index-keyed widths then land on whichever pane
+   * holds the index now (observed 2026-07-31: after a restart re-opened the
+   * workspace, one pane inherited the width its closed neighbour had been
+   * dragged to, and the pane that owned it was squeezed instead).
+   *
+   * So the arrangement the weights belong to is tracked in a ref — updated by
+   * every action that already remaps — and persisted beside the weights. The
+   * effect below answers any drift between it and the session with the same
+   * remap the grid's own actions use, which also covers a fresh mount whose
+   * stored weights were keyed to an arrangement that changed while no grid
+   * was watching.
+   */
+  const weightsBasis = useRef<Record<string, number> | null>(null);
+  const weightsBasisFor = useRef<string | null>(null);
+
+  /** Declare the weights remapped: they are keyed to ``terminals`` now. */
+  const rebaseWeights = useCallback(
+    (terminals: readonly { name: string; column: number; slot: number }[]) => {
+      const arrangement = paneArrangement(terminals);
+      weightsBasis.current = arrangement;
+      weightsBasisFor.current = session.id;
+      saveStoredArrangement(session.id, arrangement);
+    },
+    [session.id],
+  );
+
+  useEffect(() => {
+    // A workspace switch loads that workspace's weights (see `usePaneWeights`),
+    // so the basis switches with it: its stored arrangement when one survives,
+    // otherwise the session as it stands — never the outgoing workspace's.
+    if (weightsBasisFor.current !== session.id) {
+      weightsBasisFor.current = session.id;
+      weightsBasis.current =
+        loadStoredArrangement(session.id) ?? paneArrangement(session.terminals);
+    }
+    const basis = weightsBasis.current;
+    const current = paneArrangement(session.terminals);
+    if (basis && !sameArrangement(basis, current)) {
+      // Runs AFTER the hook's own load effect in the same commit, so on a
+      // workspace switch this updater already sees that workspace's weights.
+      sizes.setWeights((weights) =>
+        remapColumnWeights(weights, panesFromArrangement(basis), session.terminals),
+      );
+    }
+    weightsBasis.current = current;
+    saveStoredArrangement(session.id, current);
+  }, [session.id, session.terminals, sizes.setWeights]);
+
+  /*
    * Hold the dragged sizes against anything else that renders mid-gesture.
    *
    * A drag deliberately leaves state alone until the pointer is released, so
@@ -909,6 +972,7 @@ export function AgenticGrid({
             )
           : remapColumnWeights(current, session.terminals, next.terminals),
       );
+      rebaseWeights(next.terminals);
       // ...unless it is a plain terminal — that one is typed into by hand, and
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
@@ -939,6 +1003,7 @@ export function AgenticGrid({
         sizes.setWeights((current) =>
           remapColumnWeights(current, session.terminals, next.terminals),
         );
+        rebaseWeights(next.terminals);
         onSessionChanged?.(next);
       } catch (error) {
         pushToast("error", (error as Error).message);
@@ -946,7 +1011,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast, session.terminals, sizes.setWeights],
+    [onSessionChanged, pushToast, rebaseWeights, session.terminals, sizes.setWeights],
   );
 
   const arrange = usePaneArrange(
@@ -1104,6 +1169,18 @@ export function AgenticGrid({
         setStatuses((current) => rekey(current, from, to));
         setRecaps((current) => rekey(current, from, to));
         setRestartTokens((current) => rekey(current, from, to));
+        // The pane's dragged height is keyed by call-sign too, and the basis
+        // map is what stops the remap effect from reading a rename as "one
+        // pane left, another arrived" — which would put the lone column of a
+        // renamed pane back at its default width.
+        sizes.setWeights((current) => ({
+          ...current,
+          panes: rekey(current.panes, from, to),
+        }));
+        if (weightsBasis.current) {
+          weightsBasis.current = rekey(weightsBasis.current, from, to);
+          saveStoredArrangement(session.id, weightsBasis.current);
+        }
         setTarget((current) => (current === from ? to : current));
         setMaximized((current) => (current === from ? to : current));
         setPendingClose((current) => (current === from ? to : current));
@@ -1128,7 +1205,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast],
+    [onSessionChanged, pushToast, session.id, sizes.setWeights],
   );
 
   /** Where the bell's "jump to pane" goes — here, or via the view for a tab. */
@@ -1169,6 +1246,7 @@ export function AgenticGrid({
       sizes.setWeights((current) =>
         remapColumnWeights(current, session.terminals, next.terminals),
       );
+      rebaseWeights(next.terminals);
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
     } catch (e) {
@@ -1187,6 +1265,7 @@ export function AgenticGrid({
       sizes.setWeights((current) =>
         remapColumnWeights(current, session.terminals, result.session.terminals),
       );
+      rebaseWeights(result.session.terminals);
       onSessionChanged?.(result.session);
       const remaining = new Set(result.session.terminals.map((term) => term.name));
       if (maximized && !remaining.has(maximized)) setMaximized(null);
