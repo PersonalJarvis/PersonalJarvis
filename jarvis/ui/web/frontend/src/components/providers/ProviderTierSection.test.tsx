@@ -15,7 +15,7 @@
  * No jest-dom in this repo — assertions use toBeTruthy()/toBeNull().
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ProviderCard } from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
@@ -125,11 +125,11 @@ function codexRealtimeCard(
   };
 }
 
-function renderCard(descriptor: ProviderDescriptor) {
+function renderCard(descriptor: ProviderDescriptor, onChanged: () => void = () => {}) {
   return render(
     <ProviderCard
       descriptor={descriptor}
-      onChanged={() => {}}
+      onChanged={onChanged}
       onActivateOptimistic={() => {}}
       autoActivateOnSave={false}
     />,
@@ -312,7 +312,10 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     useI18nStore.getState().setUi("en", { push: false });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
 
   it("shows login setup without rendering an API key field", () => {
     installFetchMock();
@@ -363,6 +366,37 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it("keeps refreshing until a slow browser login becomes visible", async () => {
+    vi.useFakeTimers();
+    const onChanged = vi.fn();
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Sign in required.",
+        },
+      }),
+      onChanged,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect with ChatGPT" }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onChanged).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_000);
+    });
+    expect(onChanged.mock.calls.length).toBeGreaterThanOrEqual(3);
+    vi.useRealTimers();
   });
 
   it("disconnects only the isolated subscription voice login", async () => {

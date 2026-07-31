@@ -217,18 +217,30 @@ export function useProviders() {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
 
   const refetch = useCallback(async () => {
+    const version = ++requestVersion.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     setError(null);
     try {
-      const res = await fetch("/api/providers");
+      const res = await fetch("/api/providers", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ProvidersResponse = await res.json();
-      setProviders(data.providers);
+      if (version === requestVersion.current) setProviders(data.providers);
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
+        setError((e as Error).message);
+      }
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
+      if (requestController.current === controller) requestController.current = null;
     }
   }, []);
 
@@ -269,6 +281,9 @@ export function useProviders() {
     window.addEventListener("jarvis:computer-use-switched", onComputerUse);
     window.addEventListener("jarvis:dictation-polish-switched", onDictationPolish);
     return () => {
+      ++requestVersion.current;
+      requestController.current?.abort();
+      requestController.current = null;
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
       window.removeEventListener("jarvis:tts-switched", onTts);

@@ -1604,6 +1604,7 @@ function CodexAuthWidget({
 }) {
   const t = useT();
   const [pending, setPending] = useState<"login" | "logout" | "copy" | null>(null);
+  const [loginPolling, setLoginPolling] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const status = descriptor.codex_status;
   const installCommand = descriptor.install_hint ?? "npm i -g @openai/codex";
@@ -1623,6 +1624,28 @@ function CodexAuthWidget({
           ? "apikeys_codex.status_not_installed"
           : "apikeys_codex.status_login_required";
 
+  useEffect(() => {
+    if (!loginPolling || loginReady) return;
+    let stopped = false;
+    const deadline = Date.now() + 5 * 60_000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = () => {
+      if (stopped) return;
+      onChanged();
+      if (Date.now() < deadline) {
+        timer = window.setTimeout(poll, 5_000);
+      } else {
+        setLoginPolling(false);
+      }
+    };
+    timer = window.setTimeout(poll, 1_000);
+    return () => {
+      stopped = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [loginPolling, loginReady, onChanged]);
+
   async function handleCopy() {
     setPending("copy");
     try {
@@ -1641,13 +1664,10 @@ function CodexAuthWidget({
     try {
       await startCodexLogin(subscriptionOnly);
       pushToast("info", t("apikeys_codex.login_started"));
-      // `codex login` opens the browser OAuth flow; it only completes once the
-      // user clicks through (seconds later). Poll a few times so the card flips
-      // to the compact "connected" state on its own once auth.json appears —
-      // no manual refresh needed.
-      [1500, 4000, 8000, 15000, 25000].forEach((ms) =>
-        window.setTimeout(onChanged, ms),
-      );
+      // OAuth has no fixed completion time. Keep polling until the parent sees
+      // connected truth instead of leaving a successful slow login invisible.
+      onChanged();
+      setLoginPolling(true);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -1657,6 +1677,7 @@ function CodexAuthWidget({
 
   async function handleLogout() {
     setPending("logout");
+    setLoginPolling(false);
     try {
       await codexLogout(subscriptionOnly);
       pushToast("info", t("apikeys_codex.disconnected"));
@@ -1733,7 +1754,11 @@ function CodexAuthWidget({
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
+        <Button
+          size="sm"
+          onClick={handleLogin}
+          disabled={pending !== null || loginPolling || !status?.installed}
+        >
           <LogIn className="h-3.5 w-3.5" />
           {t("apikeys_codex.connect_chatgpt")}
         </Button>
