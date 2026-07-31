@@ -150,7 +150,15 @@ def _quiet_since(term: Any, at: float) -> None:
     term.last_input_at = None
 
 
-def _busy(watcher: Any, registry: Registry, term: Any, *, start: float, sweeps: int = 3) -> float:
+def _busy(
+    watcher: Any,
+    registry: Registry,
+    term: Any,
+    *,
+    start: float,
+    sweeps: int = 3,
+    tasked: bool = True,
+) -> float:
     """Drive a pane through ``sweeps`` sweeps of a MOVING screen.
 
     A pane is busy because its picture keeps changing, so making one busy in a
@@ -163,7 +171,9 @@ def _busy(watcher: Any, registry: Registry, term: Any, *, start: float, sweeps: 
     while it is starting up, which is the case
     `test_a_starting_cli_painting_itself_is_not_a_finished_job` covers.
     """
-    term.last_submit_at = start - 0.1
+    if tasked:
+        term.last_submit_at = start - 0.1
+        term.submit_generation = term.process_generation
     at = start
     for step in range(sweeps):
         at = start + step * notifications.SWEEP_INTERVAL_S
@@ -433,9 +443,37 @@ async def test_a_restored_pane_painting_itself_keeps_its_continue_offer(
     term.continuation_pending = True
     assert term.idle_seen is False, "a freshly spawned process has settled nothing"
 
-    _busy(watcher, registry, term, start=100.0)
+    _busy(watcher, registry, term, start=100.0, tasked=False)
 
     assert term.continuation_pending is True, "a CLI drawing itself is not the agent working"
+
+
+async def test_a_new_process_for_the_same_pane_discards_the_old_screen_observation(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A replacement PTY must not inherit the previous process's still screen."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+
+    _rest(watcher, registry, term, IDLE_SCREEN, at=100.0, emit=False)
+    assert term.idle_seen is True
+
+    term.continuation_pending = True
+    term.resume_continuation_needed = False
+    term.process_generation += 1
+    term.idle_seen = False
+
+    # A replacement CLI initially redraws the same prompt as its predecessor.
+    watcher.poll(registry, now=200.0, emit=False)
+    assert term.idle_seen is False
+    assert term.continuation_pending is True
+    assert term.resume_continuation_needed is False
+
+    term.transcript.clear()
+    _draw(term, BUSY_SCREEN)
+    watcher.poll(registry, now=200.0 + notifications.SWEEP_INTERVAL_S, emit=False)
+    assert term.continuation_pending is True
+    assert term.resume_continuation_needed is False
 
 
 async def test_movement_after_the_pane_settled_does_retract_the_offer(

@@ -333,6 +333,10 @@ class _PaneWatch:
     #: is the watcher's own bookkeeping — nothing else has any use for it.
     digest: str = ""
     changed_at: float = 0.0
+    #: Process identity whose screen the fingerprint describes. A pane can
+    #: survive several PTYs; reusing the previous one's digest fabricates a
+    #: still observation for the replacement process.
+    process_generation: int = 0
 
 
 def _detail(term: Any) -> str:
@@ -440,8 +444,9 @@ class ActivityWatcher:
         # movement can only be seen by comparing against the previous sweep —
         # so the fingerprint is taken first and the answer is derived from it.
         watch = self._panes.get(ident)
+        process_generation = int(getattr(term, "process_generation", 0))
         digest = screen_digest(term)
-        if watch is None:
+        if watch is None or watch.process_generation != process_generation:
             # First sight. Nothing is filed: the pane may have been sitting
             # finished for an hour before this watcher existed, and announcing
             # that on startup would fill the bell with history.
@@ -464,6 +469,7 @@ class ActivityWatcher:
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
                 digest=digest,
                 changed_at=settled_at,
+                process_generation=process_generation,
             )
             self._panes[ident] = watch
             self._checkpoint_resume_state(term, activity, watch, now)
@@ -539,14 +545,18 @@ class ActivityWatcher:
         preserved while it waits at its prompt.
         """
         if activity == "working":
-            if getattr(term, "idle_seen", False):
-                # It stood still and then moved again, so somebody put this pane
-                # back to work and the offer to continue it is spent.
-                term.continuation_pending = False
-            # Otherwise this is the pane's CLI painting itself back onto the
-            # screen after a restart — the exact seconds in which the offer is
-            # needed, and where retracting it made the button report zero for
-            # every restored pane, for ever (see `Terminal.idle_seen`).
+            instructed_here = getattr(term, "submit_generation", -1) == getattr(
+                term, "process_generation", 0
+            )
+            if not getattr(term, "idle_seen", False) and not instructed_here:
+                # This is the pane's CLI painting itself back onto the screen
+                # after a restart. Preserve both resume flags until this
+                # process has genuinely stood still once or receives a real
+                # instruction of its own.
+                return
+            # It stood still and then moved again, so somebody put this pane
+            # back to work and the offer to continue it is spent.
+            term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
         if activity in {"asking", "failed"}:

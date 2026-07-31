@@ -935,6 +935,14 @@ class Terminal:
     # looks, never a single one), cleared on every spawn. Never persisted — it
     # describes the process now running in the pane.
     idle_seen: bool = False
+    # Monotonic identity for the process currently occupying this pane. The
+    # notification watcher outlives PTYs, so it uses this to discard the old
+    # process's screen fingerprint before interpreting a replacement process.
+    process_generation: int = 0
+    # The process generation that most recently received a real instruction.
+    # A startup repaint has no such stamp, even if the pane resumes an old
+    # conversation whose historical prompt count is non-zero.
+    submit_generation: int = -1
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -2458,6 +2466,11 @@ class Registry:
         if not term.resumed:
             term.resume_continuation_needed = False
 
+        # Everything below belongs to a new process attempt. Reset this before
+        # spawning so neither early output nor a concurrent notification sweep
+        # can inherit the previous PTY's settled-screen evidence.
+        term.process_generation += 1
+        term.idle_seen = False
         term.transcript.resize(cols, rows)
         # A fresh process draws a fresh screen: anything the previous one left
         # in the replay buffer belongs to a terminal that no longer exists, and
@@ -2577,7 +2590,6 @@ class Registry:
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
-        term.idle_seen = False
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
@@ -2818,6 +2830,7 @@ class Registry:
             # never goes through `send_prompt`, so without this hook the bell
             # would stay silent for everybody who types their own prompts.
             term.last_submit_at = term.last_input_at
+            term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -3467,6 +3480,7 @@ class Registry:
         # way. Set even for a hard False: the text is in the pane's input box,
         # and whatever it does next was still asked of it.
         term.last_submit_at = term.last_prompt_at
+        term.submit_generation = term.process_generation
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         history_entry = prompt_history.PromptHistoryEntry(
