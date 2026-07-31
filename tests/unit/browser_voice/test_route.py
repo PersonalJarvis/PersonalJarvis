@@ -304,6 +304,36 @@ async def test_realtime_transport_rejects_invalid_desktop_capability(
     assert await broker.pending_count() == 0
 
 
+async def test_realtime_transport_reports_missing_desktop_webrtc(
+    monkeypatch,
+) -> None:
+    broker = RealtimeTransportOfferBroker()
+    monkeypatch.setattr(
+        offer_broker_mod,
+        "get_realtime_transport_offer_broker",
+        lambda: broker,
+    )
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    ws = _FakeWS(
+        [
+            _broker_auth_message(),
+            {
+                "type": "websocket.receive",
+                "text": (
+                    '{"type":"unavailable",'
+                    '"reason":"webrtc_offer_unavailable"}'
+                ),
+            },
+        ],
+        state=_state(_RecSession(), cfg=cfg),
+    )
+
+    await realtime_transport_ws(ws)
+
+    assert ws.closed == (1011, "WebRTC offer unavailable")
+    assert await broker.pending_count() == 0
+
+
 async def test_realtime_transport_rejects_remote_offer_hijack_even_with_valid_token(
     monkeypatch,
 ) -> None:

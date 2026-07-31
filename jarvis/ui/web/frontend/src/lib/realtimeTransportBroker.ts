@@ -132,16 +132,27 @@ export class RealtimeTransportBroker {
     try {
       const sdp = await transport.createOffer();
       if (
-        !sdp ||
         this.stopped ||
         this.socket !== socket ||
         generation !== this.generation ||
         socket.readyState !== WS_OPEN
       ) {
-        if (!sdp) {
-          console.info("This browser cannot broker a WebRTC subscription transport.");
-        }
         if (this.transport === transport) this.releaseTransport();
+        return;
+      }
+      if (!sdp) {
+        console.info("This browser cannot broker a WebRTC subscription transport.");
+        socket.send(
+          JSON.stringify({
+            type: "unavailable",
+            reason: "webrtc_offer_unavailable",
+          }),
+        );
+        // A missing RTCPeerConnection is a page capability failure, not a
+        // transient socket failure. Report it once and stop the reconnect loop.
+        this.stopped = true;
+        if (this.transport === transport) this.releaseTransport();
+        socket.close();
         return;
       }
       const offerId = this.deps.createOfferId();

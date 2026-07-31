@@ -128,4 +128,33 @@ describe("realtime transport broker", () => {
     expect(transports[1].close).toHaveBeenCalledOnce();
     expect(socket.close).toHaveBeenCalledOnce();
   });
+
+  it("reports an unavailable WebRTC capability without reconnecting forever", async () => {
+    vi.stubGlobal("window", {
+      location: { protocol: "https:", host: "app.example" },
+    });
+    const socket = new FakeSocket("wss://app.example/ws/realtime-transport");
+    const schedules: Array<() => void> = [];
+    const broker = new RealtimeTransportBroker({
+      mintTicket: vi.fn(async () => "ticket-1"),
+      readDesktopCapability: () => "desktop-only",
+      createSocket: () => socket as unknown as WebSocket,
+      createTransport: () => new FakeTransport(""),
+      schedule: (callback) => {
+        schedules.push(callback);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+    });
+
+    broker.start();
+    await vi.waitFor(() => expect(socket.onopen).not.toBeNull());
+    socket.open();
+    await vi.waitFor(() => expect(socket.close).toHaveBeenCalledOnce());
+
+    expect(JSON.parse(socket.sent[1])).toEqual({
+      type: "unavailable",
+      reason: "webrtc_offer_unavailable",
+    });
+    expect(schedules).toHaveLength(0);
+  });
 });
