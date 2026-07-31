@@ -58,17 +58,6 @@ import {
 } from "@/lib/agenticIdeApi";
 
 /**
- * The running workspace's one-line toolbar plus its default collapsed composer.
- *
- * The wizard measures the whole slot before either exists, while the terminal
- * layout measures only the grid between them. Removing their stable default
- * height lets the preview make the same width-and-height decision the live grid
- * will make. An opened composer is deliberately excluded: it is a later user
- * resize, and the live grid responds to that measurement itself.
- */
-const WORKSPACE_GRID_CHROME_PX = 64;
-
-/**
  * Terminal plan for ``count`` panes, preserving whatever the user already chose
  * for the panes that still exist.
  *
@@ -297,35 +286,30 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [modeIntroFor, setModeIntroFor] = useState<string | null>(null);
 
   /*
-   * How large the workspace will be — measured here, in the wizard, because
+   * How wide the workspace will be — measured here, in the wizard, because
    * the preview must promise the arrangement the grid will actually produce.
    *
-   * Width stops panes becoming unreadably narrow; height stops full-screen TUIs
-   * becoming tall shafts with their answer at the top and their input at the
-   * bottom. A preview computing columns from the count alone drifts apart from
-   * the running grid on either axis. The wizard shell sits in the same slot the
-   * grid will occupy, so measuring it here answers the same question.
+   * Width is what stops panes becoming unreadably narrow, and it is the ONLY
+   * thing that wraps a workspace: which panes share a row is otherwise the
+   * user's own choice, made through the split buttons. A preview computing
+   * columns from the count alone drifts apart from the running grid. The
+   * wizard shell sits in the same slot the grid will occupy, so measuring it
+   * here answers the same question.
    *
    * The readout names the width condition rather than silently assuming it —
-   * see WorkspaceShape. Measuring the area makes the picture correct for the
-   * window it was shown in; saying so is what keeps it honest after a resize.
+   * see WorkspaceShape. Measuring makes the picture correct for the window it
+   * was shown in; saying so is what keeps it honest after a resize.
    */
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [shellWidth, setShellWidth] = useState(0);
-  const [shellHeight, setShellHeight] = useState(0);
   useEffect(() => {
     const node = shellRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
     setShellWidth(node.clientWidth);
-    setShellHeight(Math.round(node.clientHeight / 16) * 16);
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? node.clientWidth;
-      const height = entries[0]?.contentRect.height ?? node.clientHeight;
       // Same 16 px step the grid rounds to, so both sides flip at one width.
       setShellWidth(Math.round(width / 16) * 16);
-      // Height can now move a whole terminal band too; keep the decision stable
-      // through one-pixel WebView resize noise just as width already does.
-      setShellHeight(Math.round(height / 16) * 16);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -812,7 +796,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           maxTerminals={maxTerminals}
           suggestedNames={suggested}
           workspaceWidthPx={shellWidth}
-          workspaceHeightPx={Math.max(0, shellHeight - WORKSPACE_GRID_CHROME_PX)}
           onCount={chooseCount}
           planned={planned}
           onPlanned={setPlanned}

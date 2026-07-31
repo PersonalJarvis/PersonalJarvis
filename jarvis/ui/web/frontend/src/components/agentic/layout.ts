@@ -78,23 +78,6 @@ export const MIN_PANE_WIDTH_PX = 380;
 export const MIN_PANE_HEIGHT_PX = 240;
 
 /**
- * Tallest useful shape for a full-screen coding-agent terminal, width / height.
- *
- * Width alone is not enough to decide how many panes belong on one line. A
- * Claude Code or Codex TUI keeps its live status and input at the BOTTOM of the
- * PTY while completed output stays above it. Four panes across a merely wide
- * desktop can each be roughly 450 x 1,050 px: every line is still readable, so
- * the width floor accepts the layout, but half the pane becomes blank ground
- * between the last answer and the status bar. Four ordinary tiled terminals
- * would be 2 x 2 instead.
- *
- * 0.58 keeps three panes side by side in the reported 2K window, wraps four to
- * 2 x 2 there, and still permits four across on a genuinely ultrawide display.
- * This is a shape floor, not a preferred ratio: wider panes remain untouched.
- */
-export const MIN_PANE_ASPECT_RATIO = 0.58;
-
-/**
  * Horizontal padding of the rendered grid — 4 px on each side.
  *
  * It mirrors `GRID_GAP_PX` in AgenticGrid, and the two must not drift: the
@@ -120,49 +103,6 @@ export function bandCapacityFor(
 }
 
 /**
- * Width capacity refined by the height the panes would have to fill.
- *
- * The return value remains the input expected by {@link paneColumns}; it is a
- * ceiling, not necessarily the final column count. This matters for four panes:
- * lowering the ceiling from four to three lets `paneColumns` balance them as
- * two bands of two instead of producing a three-plus-one stub.
- *
- * Unknown height keeps the width-only answer. That is both the SSR/test-safe
- * fallback and the least surprising first paint before ResizeObserver reports
- * the real viewport.
- */
-export function bandCapacityForArea(
-  widthPx: number,
-  heightPx: number,
-  columnCount: number,
-  minPaneWidth: number = MIN_PANE_WIDTH_PX,
-  minPaneAspect: number = MIN_PANE_ASPECT_RATIO,
-): number {
-  const widthCapacity = bandCapacityFor(widthPx, minPaneWidth);
-  if (
-    !Number.isFinite(widthPx) ||
-    widthPx <= 0 ||
-    !Number.isFinite(heightPx) ||
-    heightPx <= 0 ||
-    !Number.isFinite(columnCount) ||
-    columnCount <= 1 ||
-    !Number.isFinite(minPaneAspect) ||
-    minPaneAspect <= 0
-  ) {
-    return widthCapacity;
-  }
-
-  const count = Math.max(1, Math.trunc(columnCount));
-  for (let capacity = widthCapacity; capacity > 1; capacity -= 1) {
-    const columns = paneColumns(count, capacity);
-    const bands = Math.ceil(count / Math.max(1, columns));
-    const paneAspect = (widthPx / columns) / (heightPx / bands);
-    if (paneAspect >= minPaneAspect) return capacity;
-  }
-  return 1;
-}
-
-/**
  * Columns that fit inside the grid's content box.
  *
  * `clientWidth` includes padding while CSS grid tracks occupy the content box.
@@ -172,19 +112,6 @@ export function bandCapacityForArea(
 export function workspaceBandCapacityFor(containerWidthPx: number): number {
   return bandCapacityFor(
     Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX),
-  );
-}
-
-/** Area-aware counterpart for an outer box that still includes grid padding. */
-export function workspaceBandCapacityForArea(
-  containerWidthPx: number,
-  heightPx: number,
-  columnCount: number,
-): number {
-  return bandCapacityForArea(
-    Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX),
-    heightPx,
-    columnCount,
   );
 }
 
@@ -267,12 +194,20 @@ export interface PaneGrid {
  *
  * Also the wizard's preview width, which is the point — the dots the user sees
  * before starting are the arrangement they get.
+ *
+ * Bands fill up GREEDILY: the first band takes the full capacity and only the
+ * overflow starts a new one. An earlier version balanced the bands instead
+ * (7 columns at capacity 6 became 4 + 3), which read as tidier in a static
+ * picture but moved panes the user never touched: splitting a pane to the
+ * right re-dealt the whole workspace, and a terminal that was mid-read jumped
+ * to another row (reported 2026-07-31). Which panes share a row is the user's
+ * decision — the split buttons are exactly that choice — so the layout's only
+ * job is the readability wrap, done with the least possible movement: every
+ * existing column keeps its place, and only the newest can start a band.
  */
 export function paneColumns(count: number, maxPerBand: number = MAX_PANES_PER_BAND): number {
   if (count <= 0) return 0;
-  const cap = Math.max(1, maxPerBand);
-  const bands = Math.ceil(count / cap);
-  return Math.ceil(count / bands);
+  return Math.min(count, Math.max(1, maxPerBand));
 }
 
 /**

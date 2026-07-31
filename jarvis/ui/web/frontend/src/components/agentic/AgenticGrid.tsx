@@ -55,7 +55,7 @@ import {
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  bandCapacityForArea,
+  bandCapacityFor,
   GRID_HORIZONTAL_PADDING_PX,
   MIN_PANE_HEIGHT_PX,
 } from "./layout";
@@ -750,21 +750,13 @@ export function AgenticGrid({
     resizeComposer(composerCollapsed ? COMPOSER_DEFAULT_PX : COMPOSER_COLLAPSED_PX);
   }, [composerCollapsed, resizeComposer]);
 
-  // A split-down pane adds height inside an existing column; it must not make
-  // the whole workspace re-wrap. Only independent side-by-side columns decide
-  // the band shape.
-  const layoutColumnCount = useMemo(
-    () => new Set(session.terminals.map((term) => term.column)).size,
-    [session.terminals],
-  );
-  // Height now influences wrapping too, so give it the same coarse step as
-  // width. A one-pixel WebView animation must not flip a whole band back and
-  // forth around the aspect threshold.
-  const layoutHeight = Math.round(gridHeight / 16) * 16;
-  const perBand = useMemo(
-    () => bandCapacityForArea(gridWidth, layoutHeight, layoutColumnCount),
-    [gridWidth, layoutHeight, layoutColumnCount],
-  );
+  // How many columns share a row depends on WIDTH alone — the readability
+  // floor under each pane. It once also shrank with the window's aspect ratio
+  // ("four tall panes waste their lower half, wrap them 2 x 2"), which second-
+  // guessed the split buttons: the fourth split re-dealt the workspace and a
+  // pane the user was reading jumped to another row. Rows are the user's
+  // choice; the layout only wraps when panes would become unreadable.
+  const perBand = bandCapacityFor(gridWidth);
 
   /*
    * The sizes the panes are drawn at, and the seams between them.

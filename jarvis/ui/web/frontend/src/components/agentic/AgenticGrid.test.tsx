@@ -500,7 +500,11 @@ describe("grid layout", () => {
     expect(box("Kai").left).toBe(75);
   });
 
-  it("wraps four tall full-screen TUIs into two balanced bands", async () => {
+  it("keeps four splits side by side — the row is the user's choice", async () => {
+    // Reported 2026-07-31: an aspect-ratio rule re-wrapped the workspace to
+    // 2 x 2 on the fourth "split right", moving a pane the user was reading to
+    // another row. The rule is gone — width alone wraps a workspace, so four
+    // panes in a 2K window stay in the one row the user built.
     const previous = globalThis.ResizeObserver;
     class AreaObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
@@ -517,9 +521,9 @@ describe("grid layout", () => {
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
       await waitFor(() =>
-        expect(box("Aria")).toMatchObject({ left: 0, top: 50, width: 50, height: 50 }),
+        expect(box("Aria")).toMatchObject({ left: 50, top: 0, width: 25, height: 100 }),
       );
-      expect(box("Kai")).toMatchObject({ left: 50, top: 50, width: 50, height: 50 });
+      expect(box("Kai")).toMatchObject({ left: 75, top: 0, width: 25, height: 100 });
     } finally {
       globalThis.ResizeObserver = previous;
     }
@@ -546,13 +550,14 @@ describe("grid layout", () => {
     expect(box("Vega").width).toBe(box("Nova").width);
   });
 
-  it("wraps a crowded workspace into two even bands", () => {
-    // 12 columns side by side are too narrow to read anything in, so they break
-    // into 6 above and 6 below.
+  it("wraps a crowded workspace by overflow, never by re-dealing", () => {
+    // 12 columns are past the ten-per-band ceiling, so the overflow starts a
+    // second band: ten above, two below. The first ten keep their places —
+    // filling greedily is what stops an opened pane from moving the others.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
     expect(box("T1")).toMatchObject({ left: 0, top: 0 });
-    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
     // Same parent for every pane — a pane that moves to another parent element
     // is remounted, and remounting kills the agent behind it.
     expect(screen.getByTestId("pane-cell-T12").parentElement).toBe(
@@ -582,7 +587,7 @@ describe("grid layout", () => {
     renderGrid(sessionWith(panes));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
-    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
   });
 });
 

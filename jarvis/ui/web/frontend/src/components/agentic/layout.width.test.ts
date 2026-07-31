@@ -3,7 +3,6 @@ import {
   MAX_PANES_PER_BAND,
   MIN_PANE_WIDTH_PX,
   bandCapacityFor,
-  bandCapacityForArea,
   paneColumns,
   paneGrid,
 } from "./layout";
@@ -51,32 +50,15 @@ describe("bandCapacityFor", () => {
   });
 });
 
-describe("bandCapacityForArea", () => {
-  it("turns four tall terminal columns into a balanced two-by-two workspace", () => {
-    // Reported 2026-07-30: at roughly this 2K desktop size, Claude Code kept
-    // its status at the bottom of each full-height TUI and its answer at the
-    // top. The width-only layout accepted four 500 x 1,100 panes, leaving a
-    // conspicuous empty half-screen between them.
-    const capacity = bandCapacityForArea(2048, 1100, 4);
-    expect(paneColumns(4, capacity)).toBe(2);
-  });
-
-  it("keeps three panes side by side in the same window", () => {
-    const capacity = bandCapacityForArea(2048, 1100, 3);
-    expect(paneColumns(3, capacity)).toBe(3);
-  });
-
-  it("still permits four across on a genuinely ultrawide display", () => {
-    const capacity = bandCapacityForArea(3840, 1000, 4);
+describe("splitting stays in the row", () => {
+  it("keeps four splits side by side on a 2K desktop", () => {
+    // Reported 2026-07-31: the fourth "split right" re-wrapped the workspace
+    // to 2 x 2 — a pane the user was reading jumped to a lower row, and the
+    // new one appeared above. An aspect-ratio rule used to force that wrap;
+    // it is gone, because the split buttons ARE the user's row choice. Width
+    // is the only thing that may wrap a workspace.
+    const capacity = bandCapacityFor(2048);
     expect(paneColumns(4, capacity)).toBe(4);
-  });
-
-  it("uses the width-only layout until height has been measured", () => {
-    expect(bandCapacityForArea(2048, 0, 4)).toBe(bandCapacityFor(2048));
-  });
-
-  it("does not collapse to one column before width has been measured", () => {
-    expect(bandCapacityForArea(0, 1100, 4)).toBe(MAX_PANES_PER_BAND);
   });
 });
 
@@ -91,9 +73,10 @@ describe("wrapping with a measured capacity", () => {
     expect(bands.size).toBeGreaterThan(1);
   });
 
-  it("balances the bands instead of leaving a stub row", () => {
-    // 8 panes at capacity 5 → 4 + 4, not 5 + 3.
-    expect(paneColumns(8, 5)).toBe(4);
+  it("fills the first band before starting the next", () => {
+    // 8 panes at capacity 5 → 5 + 3, never a re-balanced 4 + 4: balancing
+    // moved existing panes to another row whenever one was added.
+    expect(paneColumns(8, 5)).toBe(5);
   });
 
   it("still places every pane exactly once", () => {
