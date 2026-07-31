@@ -1637,6 +1637,51 @@ describe("resizing the workspace", () => {
     }
   });
 
+  it("does not remap a second time when the session catches up with the grid's own action", async () => {
+    // The grid's own split remaps (and rebases) in the same breath as the
+    // request; the session prop then arrives describing the same arrangement.
+    // Reading that as fresh drift would remap already-remapped weights.
+    const next = sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]]);
+    vi.mocked(api.addTerminal).mockResolvedValue(next);
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
+      await waitFor(() => expect(stored().columns).toEqual([0.5, 0.5, 1]));
+
+      rerender({ session: next });
+
+      expect(stored().columns).toEqual([0.5, 0.5, 1]);
+      expect(widthOf("Mika")).toBe(25);
+      expect(widthOf("Nova")).toBe(50);
+    } finally {
+      restore();
+    }
+  });
+
+  it("waits out a seam drag before answering outside drift, then answers it", async () => {
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(
+        sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
+      );
+      dragSeamBy("pane-seam-column:1:2", 1200, 900);
+      expect(widthOf("Aria")).toBe(50);
+
+      // Grab a seam and, while the pointer is down, let the workspace change
+      // under the gesture. The remap must not fight the drag's direct painting
+      // — and must still land once the pointer is released.
+      holdSeam("pane-seam-column:0:1", 600);
+      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+      act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
   it("does not read a rename as a rearrangement", async () => {
     vi.mocked(api.renameTerminal).mockResolvedValue(
       sessionWith([["Frontend", 0], ["Nova", 1]]),

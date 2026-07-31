@@ -865,24 +865,33 @@ export function AgenticGrid({
   useEffect(() => {
     // A workspace switch loads that workspace's weights (see `usePaneWeights`),
     // so the basis switches with it: its stored arrangement when one survives,
-    // otherwise the session as it stands — never the outgoing workspace's.
+    // otherwise the session as it stands — never the outgoing workspace's. A
+    // workspace seen for the first time stores its arrangement right away,
+    // because the stored copy is what makes the weights readable after a
+    // restart behind which the workspace changed.
     if (weightsBasisFor.current !== session.id) {
       weightsBasisFor.current = session.id;
-      weightsBasis.current =
-        loadStoredArrangement(session.id) ?? paneArrangement(session.terminals);
+      const stored = loadStoredArrangement(session.id);
+      weightsBasis.current = stored ?? paneArrangement(session.terminals);
+      if (!stored) saveStoredArrangement(session.id, weightsBasis.current);
     }
     const basis = weightsBasis.current;
     const current = paneArrangement(session.terminals);
-    if (basis && !sameArrangement(basis, current)) {
-      // Runs AFTER the hook's own load effect in the same commit, so on a
-      // workspace switch this updater already sees that workspace's weights.
-      sizes.setWeights((weights) =>
-        remapColumnWeights(weights, panesFromArrangement(basis), session.terminals),
-      );
-    }
+    if (!basis || sameArrangement(basis, current)) return;
+    // Never mid-drag. The gesture paints the panes directly and commits its
+    // weights from a snapshot taken at pointer-down (see `usePaneWeights`), so
+    // a remap here would both be clobbered by that commit and re-render every
+    // live terminal under the pointer. `sizes.dragging` is a dependency, so
+    // the drift is answered the moment the pointer is released.
+    if (sizes.dragging !== null) return;
+    // Runs AFTER the hook's own load effect in the same commit, so on a
+    // workspace switch this updater already sees that workspace's weights.
+    sizes.setWeights((weights) =>
+      remapColumnWeights(weights, panesFromArrangement(basis), session.terminals),
+    );
     weightsBasis.current = current;
     saveStoredArrangement(session.id, current);
-  }, [session.id, session.terminals, sizes.setWeights]);
+  }, [session.id, session.terminals, sizes.dragging, sizes.setWeights]);
 
   /*
    * Hold the dragged sizes against anything else that renders mid-gesture.
