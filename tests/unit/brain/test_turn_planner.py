@@ -134,6 +134,34 @@ def test_empty_turn_stays_native() -> None:
 
 
 @pytest.mark.parametrize(
+    "utterance",
+    [
+        "Take a screenshot.",
+        "What is that?",
+        "Schau dir bitte meinen Bildschirm an.",  # i18n-allow: DE input
+        "Analiza esta captura de pantalla.",  # i18n-allow: ES input
+    ],
+)
+def test_screen_context_turns_use_the_orchestrator(utterance: str) -> None:
+    plan = plan_turn(utterance)
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.SCREEN_CONTEXT in plan.reasons
+    assert plan.requires_evidence is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "How can you look at my screen?",
+        "Wie kann ich dir meinen Bildschirm zeigen?",  # i18n-allow: DE input
+        "Como puedes ver mi pantalla?",  # i18n-allow: ES input
+    ],
+)
+def test_screen_context_how_to_questions_stay_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
     ("utterance", "context"),
     [
         (

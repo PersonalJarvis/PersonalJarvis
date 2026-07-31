@@ -35,7 +35,7 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
-from jarvis.brain.turn_planner import TurnPath, TurnPlan, plan_turn
+from jarvis.brain.turn_planner import TurnPath, TurnPlan, TurnReason, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
@@ -2152,7 +2152,15 @@ class RealtimeVoiceSession:
                                 f"path={turn_plan.path.value};reasons={reasons}"
                             ),
                         )
-                        if self._delegate_enabled and self._last_user_text:
+                        screen_context_turn = (
+                            TurnReason.SCREEN_CONTEXT in turn_plan.reasons
+                        )
+                        deterministic_delegate_available = callable(self._brain)
+                        if (
+                            self._last_user_text
+                            and deterministic_delegate_available
+                            and (self._delegate_enabled or screen_context_turn)
+                        ):
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
                                 or turn_plan.requires_orchestrator

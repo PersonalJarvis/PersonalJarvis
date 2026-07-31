@@ -3876,6 +3876,30 @@ async def test_garbled_wiki_follow_up_inherits_session_context_and_delegates():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_mode", ["delegate", "direct"])
+async def test_screen_context_always_uses_deterministic_brain_turn(tool_mode: str):
+    """The realtime model never answers a visual turn without the image."""
+    utterance = "Schau dir bitte meinen Bildschirm an."  # i18n-allow: DE input
+    brain = FakeBrain(replies=("The current screen shows the settings view.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text=utterance, is_final=True),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain, tool_mode=tool_mode)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert provider.session.response_requests == 0
+    assert brain.calls[0][0] == utterance
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_native_realtime_promise_without_tool_recovers_via_orchestrator():
     """A provider violation starts the action instead of ending on a promise."""
     utterance = "Was steht im Mainim drin?"  # i18n-allow: exact German forensic STT
