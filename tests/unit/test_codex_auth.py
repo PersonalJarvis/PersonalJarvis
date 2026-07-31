@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+import jarvis.codex_auth as codex_auth_module
 from jarvis.codex_auth import CodexAuthService, CodexAuthStatus, _derive_auth
 
 
@@ -84,6 +85,26 @@ def test_status_to_dict_contains_frontend_contract_fields() -> None:
 # ----------------------------------------------------------------------
 # CodexAuthService.status() — composes binary + auth.json
 # ----------------------------------------------------------------------
+
+
+def test_windows_generic_binary_prefers_the_official_npm_shim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def which(name: str) -> str | None:
+        calls.append(name)
+        return {
+            "codex.cmd": r"C:\npm\codex.cmd",
+            "codex": r"C:\WindowsApps\codex.exe",
+        }.get(name)
+
+    monkeypatch.setattr(codex_auth_module.sys, "platform", "win32")
+    monkeypatch.setattr(codex_auth_module.shutil, "which", which)
+    monkeypatch.setattr("jarvis.core.path_augment.ensure_cli_paths", lambda: [])
+
+    assert CodexAuthService()._resolve_binary() == r"C:\npm\codex.cmd"
+    assert calls == ["codex.cmd"]
 
 
 def test_status_not_installed_when_binary_missing(monkeypatch: pytest.MonkeyPatch) -> None:

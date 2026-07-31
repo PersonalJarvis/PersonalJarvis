@@ -46,9 +46,9 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
 
-# A binary name with a Windows shim variant. ``shutil.which`` honors PATHEXT, so
-# the bare "codex" usually resolves, but the explicit variants are belt-and-
-# suspenders for installs where only ``codex.cmd`` is on PATH.
+# Windows exposes Store app aliases as bare ``codex.exe`` entries. The official
+# npm shim is ``codex.cmd``, so it must win when a generic ``codex`` selection
+# could resolve to either installation. Explicit absolute paths still win.
 _BINARY_CANDIDATES: tuple[str, ...] = ("codex", "codex.cmd", "codex.exe")
 
 # Process-lifetime cache of ``codex --version`` keyed by resolved binary path.
@@ -473,10 +473,22 @@ class CodexAuthService:
         except Exception:  # noqa: BLE001 — a probe helper must never break status
             log.debug("Codex CLI path augmentation failed", exc_info=True)
 
-        candidates = (self._binary_path, *_BINARY_CANDIDATES)
+        generic_candidates = (
+            ("codex.cmd", "codex", "codex.exe")
+            if sys.platform == "win32"
+            else _BINARY_CANDIDATES
+        )
+        candidates = (
+            generic_candidates
+            if self._binary_path == "codex"
+            else (self._binary_path, *generic_candidates)
+        )
+        seen: set[str] = set()
         for name in candidates:
-            if not name:
+            normalized = os.path.normcase(str(name or "").strip())
+            if not normalized or normalized in seen:
                 continue
+            seen.add(normalized)
             resolved = shutil.which(name)
             if resolved:
                 return resolved
