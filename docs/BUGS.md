@@ -8421,3 +8421,69 @@ time the wait from the EVENT that makes the tool write, never from the moment we
 happened to start it — and never let the last attempt be silent. Two of the four
 CLIs here were pinned by tests that pre-created the session file and set the
 delay to zero, which proved the mechanism and hid the timing entirely.
+
+---
+
+## BUG-122: "Continue interrupted" always reports zero — a restored pane redrawing its own screen is mistaken for an agent already at work (HIGH, FIXED 2026-07-31)
+
+**Symptom (maintainer field report).** After restarting the app and resuming the
+workspace, the "Continue interrupted" dialog says *"Nothing was interrupted —
+every pane has been given something to do since it started"* and offers
+**Continue all (0)**, with a grid of panes visibly sitting at their prompts
+holding half-finished jobs behind it. Never once did the control list a pane.
+The restore point on disk disagreed: `last_session.json` carried
+`continuation_needed: true` for several panes at the very moment the dialog
+claimed none.
+
+**Root cause — start-up drawing reads as work.** The evidence chain is:
+`ActivityWatcher` observes a pane working, the resume snapshot records
+`continuation_needed`, restoring raises `Terminal.continuation_pending`, and the
+scan lists every pane still carrying it. That chain was sound up to the restore.
+What broke it was the FIRST sweep after the resumed pane's agent came up.
+
+`activity.read_activity` deliberately reads nothing but screen MOVEMENT — the
+one property that is not a claim about any particular coding CLI (see the module
+docstring, and BUG-037's class of transcript-content traps). A restored CLI
+repaints its banner, its model line and its whole old transcript over several
+seconds before it settles at its prompt, and that burst is frame-for-frame
+identical to an agent at work. Both consumers of the reading then drew the same
+wrong conclusion in the same window:
+
+* `notifications._checkpoint_resume_state` cleared `continuation_pending` on
+  sight of `working` ("a resumed CLI that is already working carried on by
+  itself"). Sweeps run every 2 s, so this landed within two sweeps of every
+  resumed pane coming back — before any human could open the dialog.
+* `interrupted.scan` filtered the pane out for the same reason, using the
+  weaker byte-based fallback (`last_output_at`), which a repainting pane
+  refreshes continuously.
+
+Both are unconditional, so the offer could not survive a restart, and the count
+behind the button was structurally zero for every user, on every platform.
+
+**Fix — movement only counts once the pane has been SEEN standing still.**
+`Terminal.idle_seen` records whether this pane's screen has been observed still
+since its CURRENT process started; it is cleared on every spawn (beside
+`last_output_at`) and raised by the notification sweep on a settled reading from
+a real two-look comparison, never from the first-sight branch that has to ASSUME
+stillness. A start-up burst always ends at a prompt, so "has stood still once"
+separates painting from working without knowing anything about what any CLI
+draws. The checkpoint now retracts the offer only for movement after that point,
+and the scan applies its "already working" filter only then too. The question
+check moved off `read_activity` onto its own reading (`activity.shows_question`),
+because a pane can be repainting AND showing a trust prompt — and that is
+precisely a pane not to type into; `read_activity` answers `working` first and
+would have hidden the question.
+
+**Guards.** `tests/unit/agentic_ide/test_pane_notifications.py` — a restored
+pane painting itself keeps `continuation_pending`, and movement after it settled
+still retracts it. `tests/unit/agentic_ide/test_interrupted.py` — a resumed pane
+whose screen is moving is still offered while it has never been idle, and is
+correctly withheld once it has.
+
+**Class rule.** A detector built on one property must not let a SECOND consumer
+apply it to a different question without asking whether that question has the
+same blind spot. "Is the screen moving?" answers "is this agent busy?" only for
+a process that has already settled once; for a process that just started it
+answers "is this CLI drawing itself?", and every caller that conflates the two
+fails silently in exactly the seconds after a restart — which is when the
+feature is used.

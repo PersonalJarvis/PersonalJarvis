@@ -477,6 +477,12 @@ class ActivityWatcher:
         # ``now`` travels into the read as well, so a test can place a pane on
         # its own timeline instead of racing the wall clock.
         activity = read_activity(term, now=now, still_since=watch.changed_at)
+        if is_settled(activity):
+            # An OBSERVED still screen — two looks at the same picture, never
+            # the assumption the first-sight branch above has to make. From here
+            # on, movement in this pane is an agent working rather than its CLI
+            # drawing itself back onto the screen (see `Terminal.idle_seen`).
+            term.idle_seen = True
 
         if activity != watch.activity:
             if watch.activity == "working":
@@ -533,8 +539,14 @@ class ActivityWatcher:
         preserved while it waits at its prompt.
         """
         if activity == "working":
-            # A resumed CLI that is already working carried on by itself.
-            term.continuation_pending = False
+            if getattr(term, "idle_seen", False):
+                # It stood still and then moved again, so somebody put this pane
+                # back to work and the offer to continue it is spent.
+                term.continuation_pending = False
+            # Otherwise this is the pane's CLI painting itself back onto the
+            # screen after a restart — the exact seconds in which the offer is
+            # needed, and where retracting it made the button report zero for
+            # every restored pane, for ever (see `Terminal.idle_seen`).
             self._set_resume_needed(term, watch, True)
             return
         if activity in {"asking", "failed"}:

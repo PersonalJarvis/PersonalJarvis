@@ -173,6 +173,18 @@ def _contains(rows: Sequence[str], fragments: Sequence[str]) -> bool:
     return any(fragment in row for row in lowered for fragment in fragments)
 
 
+def shows_question(term: Any) -> bool:
+    """Is there a question or a choice on this pane's screen right now?
+
+    The same reading :func:`read_activity` uses for its ``asking`` word, asked
+    on its own — because a caller can need it while the pane is also MOVING, and
+    ``read_activity`` answers "working" first (movement is the stronger signal
+    for what it is for). A pane redrawing itself around a trust prompt is both,
+    and a caller deciding whether to type into it needs the question half.
+    """
+    return _contains(visible_rows(term), ASK_FRAGMENTS)
+
+
 def _typing_now(term: Any, moment: float) -> bool:
     """Is somebody at this pane's keyboard right now?
 
@@ -257,5 +269,6 @@ __all__ = [
     "is_settled",
     "read_activity",
     "screen_digest",
+    "shows_question",
     "visible_rows",
 ]

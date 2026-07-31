@@ -32,6 +32,13 @@ That matters, because the tempting heuristics are all wrong:
   empty. Whatever the old process printed died with its screen.
 * **"It was resumed"** alone — true of every pane in a restored workspace,
   including the ones somebody has already put back to work.
+* **"Its screen is moving, so it carried on by itself"** — the opposite
+  mistake, and the one that broke this feature outright. A restored CLI
+  repaints its banner and its old transcript for several seconds before it
+  settles at a prompt; reading that as work retracted the offer for every
+  restored pane within two sweeps of it coming back, so the button reported
+  zero for ever. Movement only counts once the pane has been SEEN standing
+  still (:attr:`Terminal.idle_seen`).
 
 ## What the nudge is
 
@@ -57,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from .activity import read_activity
+from .activity import read_activity, shows_question
 from .recap import condense
 from .session import SessionError, accepts_prompts
 
@@ -243,9 +250,21 @@ def scan(registry: Registry) -> list[InterruptedPane]:
         for term in session.terminals:
             if not term.continuation_pending:
                 continue
-            if term.status == "live" and read_activity(term) != "waiting":
-                # A pane already working needs no nudge, and a pane asking a
-                # question needs an answer rather than a blind "continue".
+            if term.status == "live" and shows_question(term):
+                # A pane asking something needs an ANSWER, not a blind
+                # "continue". Read straight off the screen rather than through
+                # `read_activity`, which answers "working" first — a pane can be
+                # repainting itself around a trust prompt, and that is precisely
+                # a pane not to type into.
+                continue
+            if term.status == "live" and term.idle_seen and read_activity(term) != "waiting":
+                # A pane already working needs no nudge.
+                #
+                # Only once the pane has been SEEN standing still, though. Until
+                # then its screen is moving because its CLI is drawing itself
+                # back onto it — which is what a restored pane does for its
+                # first few seconds, and reading that as work hid every pane
+                # this list exists to show (see `Terminal.idle_seen`).
                 continue
             if not accepts_prompts(term.agent):
                 # A plain terminal is a shell. Jarvis does not type into one, so

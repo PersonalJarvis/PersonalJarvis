@@ -913,6 +913,28 @@ class Terminal:
     # answer worn differently. So the wish is REMEMBERED here and spent by
     # `attach` the moment that pane's agent exists.
     continue_when_ready: bool = False
+    # Has this pane's screen been observed STANDING STILL since its current
+    # process started?
+    #
+    # The line between "the agent carried on by itself" and "its CLI is drawing
+    # itself back onto the screen". Both are movement, and movement is the only
+    # thing the activity detector reads (see `.activity`) — so a resumed pane
+    # repainting its banner and its old transcript reads exactly like an agent
+    # at work, for the several seconds that takes.
+    #
+    # **The bug this fixes.** Both readers of that signal got it wrong in the
+    # same window: the notification sweep retracted `continuation_pending`
+    # ("it is already working, it needs no nudge") and the scan filtered the
+    # pane out — so every restored pane lost its offer to continue within two
+    # sweeps of coming back, and the button reported zero for ever. Reported as
+    # "the Continue feature does not work".
+    #
+    # A start-up burst always ends at a prompt, so "has stood still at least
+    # once" separates the two without knowing anything about what any CLI
+    # draws. Raised by the notification sweep on an observed still screen (two
+    # looks, never a single one), cleared on every spawn. Never persisted — it
+    # describes the process now running in the pane.
+    idle_seen: bool = False
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -2552,6 +2574,10 @@ class Registry:
         # Cleared rather than left alone so a restarted pane cannot inherit the
         # previous process's last output either.
         term.last_output_at = None
+        # And this process has not stood still yet, whatever the previous one
+        # did. Everything it is about to draw is a CLI painting itself, not an
+        # agent working — see the field.
+        term.idle_seen = False
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
