@@ -769,6 +769,16 @@ def _behind_win_shim(
 
 
 @dataclass(slots=True)
+class PaneViewer:
+    """One attached screen and the geometry it most recently reported."""
+
+    output: Any
+    exit: Any
+    cols: int
+    rows: int
+
+
+@dataclass(slots=True)
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
 
@@ -979,9 +989,11 @@ class Terminal:
     # Bound at spawn, cleared on detach, replaced on re-attach.
     viewer_output: Any = None
     viewer_exit: Any = None
-    # EVERY viewer currently attached to this pane, as ``(output, exit)`` pairs,
-    # newest last. ``viewer_output`` above is the newest of them — the OWNER,
-    # which is a different question from who gets to see the screen.
+    # EVERY viewer currently attached to this pane, newest last. Each entry
+    # keeps its callbacks plus its most recently reported geometry, so promoting
+    # an older viewer restores the one shared PTY to the screen now watching it.
+    # ``viewer_output`` above is the newest entry — the OWNER — which is a
+    # different question from who gets to see the screen.
     #
     # One slot was enough only while a pane could be open in one place. It can
     # be open in several: the desktop app and a browser tab, two windows, a
@@ -996,7 +1008,7 @@ class Terminal:
     # Output is therefore fanned out to all of them, while the OWNER keeps the
     # decisions that must have exactly one answer: the pseudo-terminal's size,
     # and who is allowed to hand the slot back (see ``resize`` and ``detach``).
-    watchers: list[tuple[Any, Any]] = field(default_factory=list, repr=False, compare=False)
+    watchers: list[PaneViewer] = field(default_factory=list, repr=False, compare=False)
     # Viewers that want to be TOLD when this pane is handed a prompt, rather
     # than having to notice it in the output stream.
     #
@@ -1312,14 +1324,20 @@ def _same_viewer(left: Any, right: Any) -> bool:
     return left is right or left == right
 
 
-def _watch(term: Terminal, on_output: Any, on_exit: Any) -> None:
+def _watch(
+    term: Terminal,
+    on_output: Any,
+    on_exit: Any,
+    cols: int,
+    rows: int,
+) -> None:
     """Attach a viewer to ``term`` and make it the owner.
 
     Newest last, and never twice: a socket that re-attaches (a resize, a resume
     retry) replaces its own entry rather than being fed the same bytes twice.
     """
-    term.watchers = [w for w in term.watchers if not _same_viewer(w[0], on_output)]
-    term.watchers.append((on_output, on_exit))
+    term.watchers = [w for w in term.watchers if not _same_viewer(w.output, on_output)]
+    term.watchers.append(PaneViewer(on_output, on_exit, cols, rows))
     if len(term.watchers) > MAX_WATCHERS:
         del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
     term.viewer_output = on_output
@@ -1333,14 +1351,14 @@ def _viewers(term: Terminal) -> list[Any]:
     caller) that sets ``viewer_output`` by hand still gets its output.
     """
     if term.watchers:
-        return [out for out, _ in term.watchers]
+        return [viewer.output for viewer in term.watchers]
     return [term.viewer_output] if term.viewer_output is not None else []
 
 
 def _exit_viewers(term: Terminal) -> list[Any]:
     """The same, for the one-shot "the agent stopped" callback."""
     if term.watchers:
-        return [done for _, done in term.watchers if done is not None]
+        return [viewer.exit for viewer in term.watchers if viewer.exit is not None]
     return [term.viewer_exit] if term.viewer_exit is not None else []
 
 
@@ -2409,7 +2427,7 @@ class Registry:
             # Winning the slot is about OWNERSHIP (the size, the handover), not
             # about who may look: a viewer that was here first keeps receiving
             # this pane's output until its own socket goes away.
-            _watch(term, on_output, on_exit)
+            _watch(term, on_output, on_exit, cols, rows)
             term.reattached = True
             term.stopping = False
             geometry_changed = (term.transcript.cols, term.transcript.rows) != (
@@ -2518,7 +2536,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
-        _watch(term, on_output, on_exit)
+        _watch(term, on_output, on_exit, cols, rows)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
         term.stopping = False
@@ -2950,6 +2968,19 @@ class Registry:
         term = found[1]
         if not term.pty_id:
             return False
+        # Remember what EVERY attached viewer currently needs, including one
+        # that is temporarily displaced from the ownership slot. If the newer
+        # owner closes while this message is in flight, ``detach`` promotes the
+        # survivor and restores exactly this geometry. Without that memory, the
+        # survivor believed it had already announced its size while the PTY was
+        # left at the departing window's dimensions: a maximized pane with the
+        # agent still drawing in a narrow strip (reported again 2026-07-31).
+        if viewer is not None:
+            for watched in term.watchers:
+                if _same_viewer(watched.output, viewer):
+                    watched.cols = cols
+                    watched.rows = rows
+                    break
         current = term.viewer_output
         # Equality, not only identity — a bound method is a fresh object on
         # every attribute access (see `detach`).
@@ -3013,7 +3044,7 @@ class Registry:
         # displaced from the slot but is still WATCHING must not keep being
         # written to after its socket closed.
         if viewer is not None:
-            term.watchers = [w for w in term.watchers if not _same_viewer(w[0], viewer)]
+            term.watchers = [w for w in term.watchers if not _same_viewer(w.output, viewer)]
         current = term.viewer_output
         # Compared by equality, not only by identity: a bound method is a brand
         # new object on every attribute access, so `is` would answer "you are
@@ -3035,7 +3066,25 @@ class Registry:
         # pane", full stop. A teardown says that, and promoting a survivor there
         # would leave a torn-down pane holding callbacks.
         if viewer is not None and term.watchers:
-            term.viewer_output, term.viewer_exit = term.watchers[-1]
+            survivor = term.watchers[-1]
+            term.viewer_output = survivor.output
+            term.viewer_exit = survivor.exit
+            # Ownership and geometry are one handover. The previous owner may
+            # have resized the one shared PTY after this viewer last reported,
+            # and the promoted viewer has no DOM change that would make it send
+            # the same size again. Restore its remembered size now instead of
+            # waiting for an unrelated window resize to repair the screen.
+            if not self.resize(
+                term.key,
+                survivor.cols,
+                survivor.rows,
+                workspace_id,
+                viewer=survivor.output,
+            ):
+                logger.debug(
+                    "Agentic IDE: could not restore {} to its promoted viewer's geometry",
+                    term.name,
+                )
             return
         term.viewer_output = None
         term.viewer_exit = None
