@@ -852,6 +852,47 @@ def _resolve_cfg(request: Request):
         return None
 
 
+def _select_pipeline_voice_mode(
+    request: Request, *, persist: bool
+) -> tuple[bool, bool]:
+    """Make a successful STT/TTS selection the active voice engine.
+
+    Provider cards are an engine choice, not only dormant configuration:
+    realtime cards already select ``realtime``, so STT and TTS cards must
+    symmetrically select the classic ``pipeline``. Without this coupling the
+    UI can truthfully show a local model as active while the next call still
+    opens a stale realtime provider and never reaches that model.
+
+    Returns ``(voice_mode_persisted, session_restarted)``. A persistence
+    failure is reported in the route response but does not discard the valid
+    live provider switch; this mirrors the realtime-provider route.
+    """
+    voice_mode_persisted = False
+    if persist:
+        try:
+            from jarvis.core.config_writer import set_voice_mode
+
+            set_voice_mode("pipeline")
+            voice_mode_persisted = True
+        except Exception as exc:  # noqa: BLE001 — live selection remains valid
+            log.warning(
+                "voice-mode persist failed after pipeline provider switch: %s",
+                exc,
+            )
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.mode = "pipeline"  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory voice.mode update skipped: %s", exc)
+
+    from jarvis.ui.web.voice_runtime import apply_voice_mode
+
+    session_restarted = apply_voice_mode(request, "pipeline")
+    return voice_mode_persisted, session_restarted
+
+
 def _codex_binary_path(request: Request | None = None) -> str | None:
     cfg = _resolve_cfg(request) if request is not None else None
     if cfg is None:
@@ -3210,15 +3251,22 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             )
             restart_required = True
 
+    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
+        request, persist=body.persist
+    )
+
     await _emit(request, SecretConfigured(key="tts.provider", action="set"))
+    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist,
+        "persisted": body.persist and voice_mode_persisted,
+        "voice_mode_persisted": voice_mode_persisted,
         "live_switched": live_switched,
         "restart_required": restart_required,
+        "session_restarted": session_restarted,
     }
 
 
@@ -3595,15 +3643,23 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 status_code=500, detail=f"STT provider save failed: {exc}"
             ) from exc
 
+    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
+        request, persist=body.persist
+    )
+    persisted = persisted and voice_mode_persisted
+
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
+    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
         "persisted": persisted,
+        "voice_mode_persisted": voice_mode_persisted,
         "live_switched": live_switched,
         "restart_required": False,
+        "session_restarted": session_restarted,
     }
 
 
