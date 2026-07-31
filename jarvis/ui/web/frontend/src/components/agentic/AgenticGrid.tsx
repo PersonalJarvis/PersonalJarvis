@@ -27,8 +27,10 @@ import {
   FolderGit2,
   GripVertical,
   Image as ImageIcon,
+  LayoutGrid,
   ListChecks,
   Loader2,
+  MessagesSquare,
   Minus,
   Moon,
   Plus,
@@ -396,6 +398,26 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 
+/**
+ * The two ways of looking at one workspace.
+ *
+ * `grid` is the wall of terminals — every pane visible at once, sized by the
+ * dragged seams. `chat` is the same workspace read like a conversation: a rail
+ * of agents on the left, ONE terminal on a calm centred stage, and the prompt
+ * bar underneath as the composer. Neither mode owns the panes — switching is a
+ * pure restyle of the same mounted elements, because unmounting a pane kills
+ * the coding agent behind it (see the grid container's comment below).
+ */
+type WorkspaceView = "grid" | "chat";
+
+const VIEW_KEY = "jarvis.agenticIde.workspaceView";
+
+function storedViewMode(): WorkspaceView | null {
+  return readStored(VIEW_KEY, (raw) =>
+    raw === "grid" || raw === "chat" ? raw : null,
+  );
+}
+
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
   try {
     const raw = window.localStorage.getItem(key);
@@ -526,6 +548,33 @@ export function AgenticGrid({
   }, []);
 
   const [maximized, setMaximized] = useState<string | null>(null);
+
+  /*
+   * Grid or chat — remembered per browser profile, like the appearance above:
+   * which way someone reads their agents is a display preference of this
+   * screen, not workspace state worth a round-trip.
+   */
+  const [viewMode, setViewModeState] = useState<WorkspaceView>(
+    () => storedViewMode() ?? "grid",
+  );
+  const setViewMode = useCallback((next: WorkspaceView) => {
+    setViewModeState(next);
+    writeStored(VIEW_KEY, next);
+    // Chat shows exactly one pane already; a leftover maximize from the grid
+    // would silently pin the stage to a pane the rail no longer highlights.
+    if (next === "chat") setMaximized(null);
+  }, []);
+  const chatView = viewMode === "chat";
+
+  /*
+   * Which pane the chat stage shows. Kept apart from `target` (the pane the
+   * prompt bar types into) because the two answer different questions: a plain
+   * shell pane can be WATCHED on the stage but never prompted, and looking at
+   * it must not silently redirect the next instruction into a pane that
+   * refuses it. The effective selection is derived rather than repaired in
+   * effects, so a pane closed by another client simply falls back.
+   */
+  const [chatPane, setChatPane] = useState<string | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(
@@ -960,6 +1009,23 @@ export function AgenticGrid({
 
   const atLimit = session.terminals.length >= maxTerminals;
 
+  /** The pane on the chat stage: the chosen one while it lives, else a fallback. */
+  const chatSelected = useMemo(() => {
+    const names = session.terminals.map((term) => term.name);
+    if (chatPane && names.includes(chatPane)) return chatPane;
+    if (target && names.includes(target)) return target;
+    return names[0] ?? null;
+  }, [chatPane, target, session.terminals]);
+
+  /** Rail click: show the pane, and aim the composer at it when it can listen. */
+  const selectChatPane = useCallback(
+    (name: string, promptable: boolean) => {
+      setChatPane(name);
+      if (promptable) setTarget(name);
+    },
+    [],
+  );
+
   const split = async (
     anchor: string | null,
     direction: SplitDirection,
@@ -998,6 +1064,10 @@ export function AgenticGrid({
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
       if (added && takesPrompts(added)) setTarget(added.name);
+      // The chat stage shows what was just opened — in the grid the new pane
+      // simply appears, but on a one-pane stage an unshown terminal would read
+      // as a split that did nothing.
+      if (added) setChatPane(added.name);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -1097,6 +1167,11 @@ export function AgenticGrid({
     const fresh = names.filter((name) => !known.has(name));
     if (fresh.length === 0) return;
     setJustOpened(new Set(fresh));
+    // On the chat stage, "seen appearing" means TAKING the stage: a pane
+    // opened by voice would otherwise exist only as a rail entry behind the
+    // one being read, which is the 2026-07-28 "terminals just don't load"
+    // report in new clothes.
+    if (chatView) setChatPane(fresh[fresh.length - 1]);
     // The LAST one: panes are appended, so the newest is the one whose arrival
     // could have pushed the grid past its viewport. Probed rather than assumed —
     // `scrollIntoView` is absent in jsdom and in some embedded WebViews, and the
@@ -1140,7 +1215,10 @@ export function AgenticGrid({
       pushToast("warning", t("agentic_grid.notifications.gone").replace("{0}", wanted));
       return;
     }
-    setMaximized(wanted);
+    // The jump means "let me READ that pane". In the grid that is a maximize;
+    // on the chat stage it is the stage showing that pane.
+    if (chatView) setChatPane(wanted);
+    else setMaximized(wanted);
     setJustOpened(new Set([wanted]));
     const node = paneNodes.current.get(wanted);
     // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
@@ -1251,6 +1329,7 @@ export function AgenticGrid({
    */
   const canArrange =
     !selectionMode &&
+    !chatView &&
     maximized === null &&
     !busy &&
     !working &&
@@ -1498,6 +1577,34 @@ export function AgenticGrid({
           <Brain className="h-4 w-4 shrink-0" />
         </button>
 
+        {/* Grid or chat — how the same agents are read. The chat side opens
+            the composer with it: a conversation surface without an input box
+            is a screenshot, not a chat. */}
+        <button
+          type="button"
+          data-testid="agentic-view-mode-toggle"
+          aria-pressed={chatView}
+          onClick={() => {
+            const next: WorkspaceView = chatView ? "grid" : "chat";
+            setViewMode(next);
+            if (next === "chat" && composerCollapsed) {
+              resizeComposer(COMPOSER_DEFAULT_PX);
+            }
+          }}
+          title={
+            chatView
+              ? "Chat view is on — one agent at a time, like a conversation. Click for the terminal grid."
+              : "Switch to chat view — read one agent at a time, like a conversation."
+          }
+          className={cn(TOOLBAR_BTN, chatView && TOOLBAR_BTN_ON)}
+        >
+          {chatView ? (
+            <LayoutGrid className="h-4 w-4 shrink-0" />
+          ) : (
+            <MessagesSquare className="h-4 w-4 shrink-0" />
+          )}
+        </button>
+
         {/* Terminal appearance and text size, one quiet button away. They are
             set-and-forget preferences, not moment-to-moment controls — kept
             permanently on the bar they cost seven bordered buttons of noise
@@ -1656,23 +1763,113 @@ export function AgenticGrid({
         The same reasoning covers maximizing: the other panes are HIDDEN with
         CSS, never removed, and the maximized one is told to fill the container
         instead of keeping its own rectangle.
+
+        Chat view is the same trick one step further: the rail on the left is
+        ALWAYS in the tree (hidden in grid mode), and switching modes only
+        flips class names — the scroller and every cell keep their place in
+        the element tree, so React re-parents nothing and no agent dies for a
+        change of clothes.
       */}
+      <div className="flex min-h-0 flex-1">
+        {/* ------------------------------------------------------ chat rail */}
+        <aside
+          data-testid="agentic-chat-rail"
+          className={cn(
+            "w-64 shrink-0 flex-col border-r border-border",
+            chatView ? "flex" : "hidden",
+          )}
+        >
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Agents
+            </span>
+            <button
+              type="button"
+              data-testid="chat-rail-new-terminal"
+              className={TOOLBAR_BTN}
+              disabled={atLimit || busy || working}
+              onClick={() => void split(null, "right")}
+              title="Open another terminal"
+              aria-label="Open another terminal"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
+            {session.terminals.map((term) => {
+              const state = statuses[term.name];
+              const headline = recaps[term.name]?.recap ?? term.recap;
+              const marked = selectedTerminals.has(term.name);
+              const active = chatSelected === term.name;
+              return (
+                <button
+                  key={term.key}
+                  type="button"
+                  data-testid={`chat-rail-${term.name}`}
+                  aria-pressed={selectionMode ? marked : active}
+                  onClick={() =>
+                    // Selection mode borrows the rail: in chat view the grid's
+                    // per-pane overlays are hidden with their panes, so the
+                    // rail is where a multi-close is composed.
+                    selectionMode
+                      ? toggleTerminalSelection(term.name)
+                      : selectChatPane(term.name, takesPrompts(term))
+                  }
+                  className={cn(
+                    "mb-1 w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
+                    selectionMode && marked
+                      ? "border-primary bg-primary/10"
+                      : active && !selectionMode
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-transparent hover:bg-secondary",
+                  )}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {selectionMode && (
+                      <Check
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0",
+                          marked ? "text-primary" : "text-transparent",
+                        )}
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+                      {term.display_name || term.name}
+                    </span>
+                    <PaneStatusPill
+                      status={state?.status ?? "connecting"}
+                      detail={state?.detail}
+                    />
+                  </span>
+                  {headline && (
+                    <span className="mt-1 block truncate text-[11px] leading-snug text-muted-foreground">
+                      {headline}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </aside>
       <div
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "relative min-h-0 flex-1",
+          "relative min-h-0 min-w-0 flex-1",
           // Scrolls only once the panes would be squeezed below a readable
           // height. With a workspace that fits, this is `overflow-hidden`
-          // behaviour and nothing moves.
-          maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
+          // behaviour and nothing moves. The chat stage never scrolls — its
+          // one pane fills it, and the terminal scrolls inside itself.
+          chatView || maximized !== null
+            ? "overflow-hidden"
+            : "overflow-y-auto scrollbar-jarvis",
           // A drag across the grid would otherwise sweep a text selection over
           // every header and label it crosses.
           arrange.held !== null && "select-none",
         )}
         // Inline rather than a utility class so ONE number drives both the
         // rendered outer margin and the width the column count is computed from.
-        style={{ padding: GRID_GAP_PX }}
+        style={{ padding: chatView ? 12 : GRID_GAP_PX }}
       >
       {/*
         The surface the fractions resolve against.
@@ -1685,12 +1882,18 @@ export function AgenticGrid({
       <div
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
-        className="relative w-full"
-        style={{ height: canvasHeight || undefined }}
+        className={cn(
+          "relative",
+          // The chat stage is a centred column — one conversation-sized card
+          // rather than a surface stretched across a widescreen window.
+          chatView ? "mx-auto h-full w-full max-w-[1100px]" : "w-full",
+        )}
+        style={{ height: chatView ? undefined : canvasHeight || undefined }}
       >
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
           const isMaximized = maximized === term.name;
+          const onStage = chatView && chatSelected === term.name;
           return (
             <div
               key={term.key}
@@ -1706,9 +1909,15 @@ export function AgenticGrid({
                 justOpened.has(term.name) &&
                   !selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
-                maximized !== null && !isMaximized && "hidden",
+                chatView
+                  ? onStage
+                    ? "rounded-xl border border-border shadow-lg"
+                    : "hidden"
+                  : maximized !== null && !isMaximized && "hidden",
               )}
-              style={isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
+              style={
+                chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)
+              }
             >
               <AgenticTerminal
                 name={term.name}
@@ -1754,9 +1963,19 @@ export function AgenticGrid({
                   if (takesPrompts(term)) setTarget(term.name);
                 }}
                 onStatus={(status, detail) => setStatus(term.name, status, detail)}
-                onToggleMaximize={() =>
-                  setMaximized((current) => (current === term.name ? null : term.name))
-                }
+                onToggleMaximize={() => {
+                  // On the chat stage the pane already fills the surface, so
+                  // "maximize" honestly means "give me the full-width grid
+                  // version of this pane".
+                  if (chatView) {
+                    setViewMode("grid");
+                    setMaximized(term.name);
+                  } else {
+                    setMaximized((current) =>
+                      current === term.name ? null : term.name,
+                    );
+                  }
+                }}
                 onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
@@ -1867,7 +2086,8 @@ export function AgenticGrid({
           panes are being selected or dragged (those gestures own the pointer),
           and, naturally, when there is only one pane.
         */}
-        {maximized === null &&
+        {!chatView &&
+          maximized === null &&
           !selectionMode &&
           arrange.held === null &&
           layout.seams.map((seam) => (
@@ -1904,6 +2124,7 @@ export function AgenticGrid({
             </button>
           </div>
         )}
+      </div>
       </div>
       </div>
 

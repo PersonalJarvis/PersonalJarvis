@@ -2187,3 +2187,96 @@ describe("renaming a pane", () => {
     expect(onSessionChanged).not.toHaveBeenCalled();
   });
 });
+
+describe("chat view", () => {
+  /*
+   * The workspace read like a conversation: a rail of agents on the left, one
+   * pane on a centred stage, the prompt bar as the composer. What these tests
+   * pin is not the styling but the two contracts underneath it — switching
+   * modes must not remount a pane (a remount kills the coding agent), and
+   * every action the grid offers keeps working from the other mode.
+   */
+  const FOUR = sessionWith([
+    ["Mika", 0],
+    ["Nova", 1],
+    ["Aria", 2],
+    ["Kai", 3],
+  ]);
+
+  const cellClass = (name: string) =>
+    screen.getByTestId(`pane-cell-${name}`).className;
+
+  const toChat = () => fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+
+  it("starts in the grid, with the rail hidden", () => {
+    renderGrid(FOUR);
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    for (const name of ["Mika", "Nova", "Aria", "Kai"]) {
+      expect(cellClass(name)).not.toContain("hidden");
+    }
+  });
+
+  it("shows one pane on the stage and the rest in the rail", () => {
+    renderGrid(FOUR);
+    toChat();
+    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
+    // Mika is the prompt target, so it takes the stage; the others hide.
+    expect(cellClass("Mika")).not.toContain("hidden");
+    for (const name of ["Nova", "Aria", "Kai"]) {
+      expect(cellClass(name)).toContain("hidden");
+      // Hidden, never unmounted — the agent behind the pane lives on.
+      expect(screen.getByTestId(`pane-${name}`)).toBeTruthy();
+      expect(screen.getByTestId(`chat-rail-${name}`)).toBeTruthy();
+    }
+  });
+
+  it("keeps the very same pane elements across a switch and back", () => {
+    renderGrid(FOUR);
+    const before = screen.getByTestId("pane-Nova");
+    toChat();
+    expect(screen.getByTestId("pane-Nova")).toBe(before);
+    toChat();
+    // Element identity is the mounting guarantee: a remounted pane would be a
+    // NEW element, and a new element means the WebSocket died with the old one.
+    expect(screen.getByTestId("pane-Nova")).toBe(before);
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    expect(cellClass("Kai")).not.toContain("hidden");
+  });
+
+  it("a rail click puts that pane on the stage", () => {
+    renderGrid(FOUR);
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
+    expect(cellClass("Aria")).not.toContain("hidden");
+    expect(cellClass("Mika")).toContain("hidden");
+  });
+
+  it("remembers the chosen view for the next workspace", () => {
+    renderGrid(FOUR);
+    toChat();
+    cleanup();
+    renderGrid(FOUR);
+    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
+  });
+
+  it("maximize on the stage hands over to the grid, maximized", () => {
+    renderGrid(FOUR);
+    toChat();
+    fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("yes");
+  });
+
+  it("the rail's plus opens a terminal at the end of the row", async () => {
+    renderGrid(FOUR);
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: undefined,
+      }),
+    );
+  });
+});
