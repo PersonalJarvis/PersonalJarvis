@@ -31,15 +31,29 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 export type DropZone = "swap" | "left" | "right" | "above" | "below";
 
 /**
- * How much of a pane's width/height each edge zone takes.
+ * The most of a pane's width/height one edge zone may claim.
  *
- * 0.3 leaves the middle 40 % × 40 % as the swap zone, and swap is deliberately
- * the biggest target: "these two are the wrong way round" is the move people
- * actually reach for, and it is the only one that leaves the rest of the grid
- * exactly as it was. The edges then still start well inside the pane, so hitting
- * "put it to the left of this one" never requires pixel accuracy.
+ * A share on its own was the whole of it once, and it made the common gesture
+ * unreliable: a workspace of five panes draws each one tall and narrow, so 0.3
+ * of the HEIGHT is a band far deeper than 0.3 of the width is wide, and the two
+ * horizontal bands together swallowed most of the pane. Carrying a pane sideways
+ * onto its neighbour — the ordinary "these two are the wrong way round" — then
+ * landed in `below` and stacked the pane under the target instead of exchanging
+ * the two, collapsing a column of the grid on the way (BUG-111).
  */
 export const EDGE_FRACTION = 0.3;
+
+/**
+ * The ceiling that keeps an edge zone from growing with the pane.
+ *
+ * An edge is a place a user AIMS at, and aiming does not get harder because the
+ * pane got taller — so past a point the band stops growing and the middle takes
+ * the rest. That restores what the share was always meant to buy: swap is the
+ * biggest target by a wide margin, because it is the move people actually reach
+ * for and the only one that leaves the rest of the grid exactly as it was, while
+ * the four edges stay wide enough to hit without pixel accuracy.
+ */
+export const EDGE_MAX_PX = 88;
 
 /** Pixels the pointer must travel before a click on a header becomes a drag. */
 export const DRAG_THRESHOLD_PX = 5;
@@ -52,7 +66,16 @@ export interface PaneRect {
   height: number;
 }
 
-/** Which drop a point inside ``rect`` means. */
+/**
+ * Which drop a point inside ``rect`` means.
+ *
+ * Every distance here is in PIXELS, and each edge is judged against its own
+ * band. Comparing shares instead — how far across the pane, rather than how far
+ * from the edge — reads a tall narrow pane as mostly top-and-bottom, so a point
+ * halfway down the middle of a grid column came out as `below` (BUG-111). A
+ * point belongs to an edge only when it is inside THAT edge's band; when it is
+ * inside none of them it is in the middle, which is a swap.
+ */
 export function zoneFor(
   rect: PaneRect,
   x: number,
@@ -63,21 +86,23 @@ export function zoneFor(
   // laid out yet) can still be pointed at in theory. Swap is the answer that
   // cannot produce a nonsensical layout, so it is the fallback.
   if (rect.width <= 0 || rect.height <= 0) return "swap";
-  const fx = (x - rect.left) / rect.width;
-  const fy = (y - rect.top) / rect.height;
-  const sides: Array<[DropZone, number]> = [
-    ["left", fx],
-    ["right", 1 - fx],
-    ["above", fy],
-    ["below", 1 - fy],
+  const bandX = Math.min(rect.width * edge, EDGE_MAX_PX);
+  const bandY = Math.min(rect.height * edge, EDGE_MAX_PX);
+  const sides: Array<[DropZone, number, number]> = [
+    ["left", x - rect.left, bandX],
+    ["right", rect.left + rect.width - x, bandX],
+    ["above", y - rect.top, bandY],
+    ["below", rect.top + rect.height - y, bandY],
   ];
-  // The nearest edge wins, which is what resolves the corners: a point in the
-  // top-left corner is closer to whichever of the two edges it is nearer to.
-  let best: [DropZone, number] = sides[0];
+  // Among the bands the point is actually in, the nearest edge wins — which is
+  // what resolves the corners: a point in the top-left corner belongs to
+  // whichever of the two edges it is nearer to.
+  let best: [DropZone, number, number] | null = null;
   for (const side of sides) {
-    if (side[1] < best[1]) best = side;
+    if (side[1] > side[2]) continue;
+    if (best === null || side[1] < best[1]) best = side;
   }
-  return best[1] > edge ? "swap" : best[0];
+  return best === null ? "swap" : best[0];
 }
 
 /** A pane the drag can be dropped on, as measured right now. */

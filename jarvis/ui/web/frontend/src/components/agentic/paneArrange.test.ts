@@ -8,10 +8,16 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { pickTarget, zoneFor, type PaneRect } from "./paneArrange";
+import { EDGE_MAX_PX, pickTarget, zoneFor, type PaneRect } from "./paneArrange";
 
 /** A 200×100 pane at the origin — round numbers so the fractions are readable. */
 const RECT: PaneRect = { left: 0, top: 0, width: 200, height: 100 };
+
+/**
+ * One column of a five-pane workspace, at the shape those actually have: tall
+ * and narrow. This is the geometry every regression below is about.
+ */
+const COLUMN: PaneRect = { left: 500, top: 40, width: 360, height: 900 };
 
 describe("zoneFor", () => {
   it("reads the middle of a pane as a swap", () => {
@@ -43,6 +49,43 @@ describe("zoneFor", () => {
     const offset: PaneRect = { left: 500, top: 300, width: 200, height: 100 };
     expect(zoneFor(offset, 600, 350)).toBe("swap");
     expect(zoneFor(offset, 505, 350)).toBe("left");
+  });
+
+  it("reads the middle of a TALL pane as a swap, at any height (BUG-111)", () => {
+    // The bug: carrying a pane sideways onto its neighbour and letting go
+    // anywhere below the pane's middle produced `below`, which stacked the two
+    // in one column instead of exchanging them. Nobody aims vertically while
+    // dragging horizontally, so the whole middle band has to be a swap.
+    for (const y of [200, 400, 490, 600, 700, 800]) {
+      expect(zoneFor(COLUMN, 680, y)).toBe("swap");
+    }
+  });
+
+  it("keeps an edge band the same size however tall the pane grows", () => {
+    // An edge is a place the user aims at; aiming does not get harder because
+    // the pane got taller, and a band that grows with it eats the middle.
+    const shortPane: PaneRect = { left: 0, top: 0, width: 360, height: 400 };
+    const insideBand = EDGE_MAX_PX - 10;
+    expect(zoneFor(COLUMN, 680, COLUMN.top + insideBand)).toBe("above");
+    expect(zoneFor(shortPane, 180, insideBand)).toBe("above");
+    // Just past the ceiling it is the middle again — in BOTH panes, which is
+    // the property a share alone could not give.
+    const pastBand = EDGE_MAX_PX + 10;
+    expect(zoneFor(COLUMN, 680, COLUMN.top + pastBand)).toBe("swap");
+    expect(zoneFor(shortPane, 180, pastBand)).toBe("swap");
+  });
+
+  it("still reads every edge of a tall pane as a placement", () => {
+    expect(zoneFor(COLUMN, 505, 500)).toBe("left");
+    expect(zoneFor(COLUMN, 855, 500)).toBe("right");
+    expect(zoneFor(COLUMN, 680, 45)).toBe("above");
+    expect(zoneFor(COLUMN, 680, 935)).toBe("below");
+  });
+
+  it("belongs to an edge only when it is inside THAT edge's band", () => {
+    // Deep in the left band but well clear of the top one: the nearest edge in
+    // raw distance is the top, yet the point is not in the top's band at all.
+    expect(zoneFor(COLUMN, 505, COLUMN.top + 200)).toBe("left");
   });
 
   it("falls back to swap for a pane with no measurable box", () => {
