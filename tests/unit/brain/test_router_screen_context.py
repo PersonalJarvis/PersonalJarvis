@@ -1,4 +1,4 @@
-"""RouterBrain × Screen Context: precedence, refusal, and the fallback rule.
+"""RouterBrain × Screen Context: precedence and fail-closed refusal.
 
 Pins the wiring added when Screen Context landed. The interesting cases are the
 ones where the two screen paths meet:
@@ -10,8 +10,8 @@ ones where the two screen paths meet:
   an image while asking whether it may look at one;
 * a privacy refusal must leave permanent vision shut, or the fallback
   photographs the exact window the rule protects;
-* a technical failure must NOT shut it, or every look-request on a headless host
-  turns into a refusal instead of an answer.
+* a technical failure must also shut alternate screen paths while explaining
+  the host limitation honestly.
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Screen Context — architecture, flow, privacy plan, MVP roadmap
 
-**Date:** 2026-07-29
+**Date:** 2026-07-31
 **Status:** Production implementation complete across the brain, desktop, REST,
 settings, indicator, receipt, privacy, and optional OCR paths
 **Scope:** a local, on-demand screen-context service for the on-screen bar and
@@ -49,7 +49,7 @@ them.
 | `jarvis/platform/mouse.py` | Cursor position, per-OS, `None` on headless/Wayland. |
 | `jarvis/platform/monitors.py` | `work_area_at`, primary resolution, virtual bounds. |
 | `jarvis/platform/window_state.py` | Foreground window, title, pid, frame rect. |
-| `jarvis/platform/window_capture.py` | Native per-window capture (macOS SCK). |
+| `jarvis/platform/window_capture.py` | Native per-window capture (Windows Graphics Capture, macOS SCK). |
 | `jarvis/vision/screenshot.py` | `capture_region`, DPI awareness, screen-recording probe. |
 | `jarvis/vision/tree_factory.py` | `make_ui_tree_source()` → UIA / AX / AT-SPI / Null. |
 | `jarvis/platform/permissions.py` | `PermissionId.SCREEN_RECORDING`, `.ACCESSIBILITY`. |
@@ -124,7 +124,7 @@ carried explicitly in `ScreenContext.degradations`.
 - `WindowFacts` — app name, window title, pid, frame rect.
 - `ScreenContext` — the finished, redacted artifact: image bytes + mime +
   dimensions, `ui_text`, `WindowFacts`, `RedactionReport`, `captured_at_ns`,
-  `expires_at_ns`, `degradations`.
+  `degradations`.
 - `RedactionReport` — what was removed and by which rule. Shipped *with* the
   context so the model is told the truth about its own evidence and the user
   can see it in the receipt.
@@ -164,7 +164,7 @@ user speaks
 [4] indicator.show()   ← visible BEFORE the shutter, dismissed after
     │
     ▼
-[5] capture ONCE  +  read window facts  +  read UI text (AX first, OCR only to fill a gap)
+[5] capture ONCE  +  read window facts  +  read UI text (accessibility first; optional OCR adds pixel boxes)
     │
     ▼
 [6] redaction.apply()   image regions blacked out, text scrubbed, report built
@@ -216,7 +216,9 @@ new locale is a data entry, not code):
   directions, so they get a question instead of a guess.
 - Everything else → `NONE`.
 
-Negative guards matter as much as the vocabulary. The existing `cu_gate` learned
+Negative guards matter as much as the vocabulary. Product how-to questions
+such as "How can you look at my screen?" are explicitly not capture consent.
+The existing `cu_gate` learned
 this the hard way: product names containing a vehicle token ("Open AI", "context
 window", "edge case") read as commands. Screen Context reuses that masking
 approach before matching, and adds its own: "see" in "I see" / "you see" /
@@ -265,11 +267,11 @@ the target rect (a monitor capture should not carry text from a window on
 another screen), stripped of `is_password` nodes at the source, and truncated to
 a configured character budget.
 
-OCR is a *supplement*, and only under three conditions simultaneously: the
-accessibility path yielded (near-)nothing, an OCR backend is actually installed,
-and the user enabled it. It never runs on the accessibility-rich path, because
-it costs hundreds of milliseconds and adds transcription errors to text the OS
-already knows exactly.
+OCR is optional and runs only when the user enables it and a backend is
+installed. When enabled, it always retains line geometry so matching sensitive
+text can be burned out of the pixels. Its extracted text is appended only when
+the accessibility result is sparse relative to the captured area, because the
+OS text is otherwise both faster and more accurate.
 
 ---
 
@@ -325,7 +327,8 @@ carries a label that appears in the redaction report.
 
 - Image bytes live in memory inside a `_Handle`, keyed by an opaque id.
 - One consumption. `consume()` removes the handle; a second call gets nothing.
-- TTL (default 120 s) sweeps unconsumed handles.
+- TTL (default 120 s) owns an active monotonic expiry callback; deletion does
+  not depend on a later API call. Conversation turns consume immediately.
 - There is no save endpoint. Screen Context has no code path that writes image
   bytes or extracted text to disk.
 - Nothing about a capture reaches the flight recorder except metadata: target
@@ -367,6 +370,11 @@ and isolated by conversation, so a reply in another web thread or on another
 surface cannot authorize a capture. The model-facing description rides in the
 dispatcher's existing `turn_context` channel.
 
+The shared `turn_planner` also assigns explicit and ambiguous visual turns to
+the orchestrator. Realtime therefore uses the same deterministic capture path
+in both delegate and direct-tool modes; the native live model never answers a
+screen question without receiving the one-shot image.
+
 Two decisions were made during implementation and are worth stating here,
 because both were wrong in the first draft:
 
@@ -376,19 +384,19 @@ fires on on-screen *action* turns ("click the button", "close this window"),
 which are not look-requests but still need an image. Replacing it would blind
 Computer-Use. The two gates answer different questions and both stay.
 
-**A refusal is typed, and the type decides the fallback.** The first draft
-ended the turn on any refusal, which would have turned every look-request on a
-headless or unpermitted host into a spoken refusal instead of a normal answer.
-Refusals are now:
+**A refusal is typed, but every requested look fails closed.** Policy and
+diagnostic categories stay distinct so the UI can give useful remediation.
+Neither category may fall through to permanent vision or Computer-Use: doing so
+would bypass the one-shot consent and privacy boundary.
 
 | Kind | Cause | Ends the turn? | Fallback path |
 |---|---|---|---|
 | `policy` | denylist match, feature switched off | yes, spoken | **shut** — falling through would photograph the very window the rule protects |
-| `technical-unavailable` | no display, no permission | no | **open** — the legacy path may answer normally, but its own capability gate still prevents capture |
+| `technical-unavailable` | no display, no permission | yes, spoken | **shut** — the host reports the limitation without starting another screen path |
 | `technical-failure` | unexpected classifier/capture failure | yes, spoken | **shut** — a second, unindicated screenshot attempt would violate the privacy contract |
 
-Collapsing those two fails in one of two quiet ways: leak a protected window,
-or break the feature on every machine without a screen.
+Collapsing their diagnostics would hide the remediation, while opening either
+fallback would risk a second, unindicated capture.
 
 An `AMBIGUOUS` turn also shuts the fallback — attaching an image while asking
 whether to look at one is exactly what the three-valued verdict exists to
@@ -413,15 +421,20 @@ OSes, or by a logged degradation naming why it could not be shown.
 
 ### Wave 4 — settings surface ✅ *implemented*
 
-A Screen Context group in Settings exposes the master switch, capability state,
+A Screen Context group in Settings exposes the master switch, structured
+end-to-end readiness (capture, permission, indicator, vision, accessibility,
+and OCR),
 denylist and redaction-pattern editors, default-rule and OCR toggles, retention
-promise, and an immediate discard action. The REST surface also exposes TTL and
+promise, an immediate discard action, and a one-capture test that deletes its
+own handle without returning pixels. The REST surface also exposes TTL and
 text-budget settings. Multi-field changes use one atomic config replacement.
 
 ### Wave 5 — OCR supplement ✅ *implemented*
 
-Optional local OCR behind a capability probe, used only when accessibility text
-is empty. Off by default, base install stays torch-free.
+Optional local OCR behind a capability probe. It contributes image-local boxes
+for pixel redaction on every enabled run and supplements model text only when
+accessibility coverage is sparse. Off by default; the base install stays
+torch-free.
 
 ---
 
