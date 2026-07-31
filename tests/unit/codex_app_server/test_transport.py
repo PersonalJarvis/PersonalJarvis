@@ -375,7 +375,7 @@ async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tre
 
 
 @pytest.mark.asyncio
-async def test_posix_child_inherits_the_profile_lock_descriptor(
+async def test_posix_child_runs_behind_parent_lifeline_and_inherits_profile_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(transport.sys, "platform", "linux")
@@ -384,8 +384,48 @@ async def test_posix_child_inherits_the_profile_lock_descriptor(
 
     await client.ensure_started()
 
-    assert harness.calls[0][1]["pass_fds"] == (91,)
+    argv, kwargs = harness.calls[0]
+    assert argv[0:2] == (sys.executable, "-I")
+    assert Path(argv[2]).name == "child_lifeline.py"
+    separator = argv.index("--")
+    assert argv[separator + 1 : separator + 6] == (
+        "codex-test",
+        "app-server",
+        "--strict-config",
+        "--enable",
+        "realtime_conversation",
+    )
+    assert kwargs["start_new_session"] is True
+    assert kwargs["pass_fds"][0] == 91
+    assert len(kwargs["pass_fds"]) == 2
+    assert client._lifeline_write_fd is not None
     await client.close()
+    assert client._lifeline_write_fd is None
+
+
+@pytest.mark.asyncio
+async def test_posix_lifeline_setup_failure_closes_both_pipe_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    harness = SpawnHarness(monkeypatch)
+    closed: list[int] = []
+    monkeypatch.setattr(transport.os, "pipe", lambda: (80, 81))
+    monkeypatch.setattr(transport.os, "set_inheritable", lambda *_args: None)
+    monkeypatch.setattr(transport.os, "close", closed.append)
+
+    def unavailable_lock(_client: CodexAppServerClient) -> tuple[int, ...]:
+        raise CodexSubscriptionUnavailable("profile lock unavailable")
+
+    monkeypatch.setattr(transport, "_subscription_transport_pass_fds", unavailable_lock)
+    client = CodexAppServerClient()
+
+    with pytest.raises(CodexSubscriptionUnavailable, match="profile lock unavailable"):
+        await client.ensure_started()
+
+    assert closed == [80, 81]
+    assert harness.calls == []
+    assert harness.all_trees[0].closed is True
 
 
 @pytest.mark.asyncio
@@ -1611,21 +1651,92 @@ def test_native_codex_version_and_hash_are_both_required(
         )
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux"])
-def test_subscription_transport_refuses_posix_without_parent_death_containment(
+def test_trusted_binary_discovery_recovers_from_a_windows_store_launcher(
     monkeypatch: pytest.MonkeyPatch,
-    platform: str,
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(transport.sys, "platform", platform)
+    launcher = tmp_path / "WindowsApps" / "codex.exe"
+    launcher.parent.mkdir()
+    launcher.write_bytes(b"store-alias")
+    npm_dir = tmp_path / "npm"
+    native = (
+        npm_dir
+        / "node_modules"
+        / "@openai"
+        / "codex"
+        / "node_modules"
+        / "@openai"
+        / "codex-win32-x64"
+        / "vendor"
+        / "x86_64-pc-windows-msvc"
+        / "bin"
+        / "codex.exe"
+    )
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"official-npm-binary")
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setenv("PATH", str(npm_dir))
+    monkeypatch.setattr("jarvis.core.path_augment.candidate_dirs", lambda: [])
+    monkeypatch.setattr(
+        transport,
+        "_sha256_file",
+        lambda path: "approved-hash" if path == native.resolve() else "wrong-hash",
+    )
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                "approved-hash",
+            )
+        },
+    )
 
-    with pytest.raises(
-        transport.CodexSubscriptionContainmentUnavailable,
-        match="kill-on-parent-exit",
-    ):
-        transport._trusted_native_codex_binary(
-            "/unused/codex",
-            transport._SUPPORTED_CODEX_VERSION,
-        )
+    assert transport._trusted_native_codex_binary(
+        str(launcher), transport._SUPPORTED_CODEX_VERSION
+    ) == str(native.resolve())
+
+
+@pytest.mark.parametrize(
+    ("runtime_platform", "machine", "variant", "triple"),
+    [
+        ("darwin", "arm64", "darwin-arm64", "aarch64-apple-darwin"),
+        ("linux", "x86_64", "linux-x64", "x86_64-unknown-linux-musl"),
+    ],
+)
+def test_subscription_transport_accepts_approved_posix_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    runtime_platform: str,
+    machine: str,
+    variant: str,
+    triple: str,
+) -> None:
+    binary = tmp_path / "codex"
+    binary.write_bytes(b"official-posix-binary")
+    monkeypatch.setattr(transport.sys, "platform", runtime_platform)
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: machine)
+    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "approved-hash")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            (runtime_platform, machine): (
+                variant,
+                triple,
+                "codex",
+                "approved-hash",
+            )
+        },
+    )
+
+    assert transport._trusted_native_codex_binary(
+        str(binary), transport._SUPPORTED_CODEX_VERSION
+    ) == str(binary.resolve())
 
 
 def test_dedicated_profile_rejects_hardlinked_auth_file(

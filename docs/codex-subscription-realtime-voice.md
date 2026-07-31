@@ -96,8 +96,9 @@ entries are rejected.
 At process launch Jarvis:
 
 1. Requires the exact official Codex 0.146.0 native executable and verifies its
-   SHA-256. The first experimental release is enabled on Windows only because
-   its Job Object provides kernel-enforced kill-on-parent-exit containment.
+   SHA-256. Windows uses a kill-on-close Job Object. macOS and Linux launch the
+   native binary behind a process-group supervisor whose parent-owned lifeline
+   pipe kills the group if Jarvis crashes.
 2. Forces file-backed auth and strips inherited OpenAI/API billing credentials,
    proxy/provider variables, and keyring-session variables.
 3. Supplies isolated temporary home, app-data, log, database, model-catalog,
@@ -126,11 +127,11 @@ the subscription voice card's Connect action. That launches a fresh interactive
 ChatGPT login for this feature only. No API key is requested through chat or
 voice.
 
-Windows supports the experimental subscription transport. macOS and Linux
-receive an explicit unavailable result until Jarvis has a verified
-kill-on-parent-exit supervisor for those systems; a hard crash must never leave
-an orphan Codex process holding the private profile indefinitely. This
-limitation does not affect API-backed realtime providers or standard voice.
+Windows, macOS, and Linux desktops support the experimental subscription
+transport on the approved architectures. Voice capture still follows the
+normal host audio capability gate, so a machine without usable audio degrades
+honestly. Unsupported architectures receive an explicit unavailable result
+without affecting API-backed realtime providers or standard voice.
 
 ## Upgrade policy
 

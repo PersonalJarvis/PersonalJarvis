@@ -50,6 +50,9 @@ _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
 _SUPPORTED_CODEX_VERSION: Final = "codex-cli 0.146.0"
+_CHILD_LIFELINE_SCRIPT: Final = str(
+    Path(__file__).parent / "core" / "child_lifeline.py"
+)
 
 # SHA-256 of the native executables in OpenAI's six official npm artifacts for
 # @openai/codex 0.146.0. The app-server protocol used below is experimental;
@@ -791,15 +794,37 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _codex_package_roots(launcher: Path) -> list[Path]:
+    """Return local npm package roots without invoking npm or trusting PATH order."""
+    search_dirs = [launcher.parent, *list(launcher.parents)[:8]]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry.strip():
+            search_dirs.append(Path(entry))
+    try:
+        from jarvis.core.path_augment import candidate_dirs
+
+        search_dirs.extend(Path(entry) for entry in candidate_dirs())
+    except Exception:  # noqa: BLE001 - optional discovery must stay fail-closed
+        log.debug("Codex package-root discovery could not read augmented paths", exc_info=True)
+
+    package_roots: list[Path] = []
+    for directory in search_dirs:
+        if directory.name == "codex" and directory.parent.name == "@openai":
+            package_roots.append(directory)
+        package_roots.extend(
+            (
+                directory / "node_modules" / "@openai" / "codex",
+                directory.parent / "node_modules" / "@openai" / "codex",
+                directory.parent / "lib" / "node_modules" / "@openai" / "codex",
+            )
+        )
+    return package_roots
+
+
 def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> str:
     if version != _SUPPORTED_CODEX_VERSION:
         raise CodexSubscriptionUnavailable(
             f"Subscription voice requires Codex CLI {_SUPPORTED_CODEX_VERSION}."
-        )
-    if sys.platform != "win32":
-        raise CodexSubscriptionContainmentUnavailable(
-            "Experimental Codex subscription voice is unavailable on this platform "
-            "until kill-on-parent-exit process containment is available."
         )
     target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     if target is None:
@@ -814,13 +839,7 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
         raise CodexSubscriptionUnavailable("The Codex CLI binary is unavailable.") from exc
 
     candidates: list[Path] = [launcher]
-    roots = [launcher.parent, *list(launcher.parents)[:8]]
-    package_roots: list[Path] = []
-    for root in roots:
-        if root.name == "codex" and root.parent.name == "@openai":
-            package_roots.append(root)
-        package_roots.append(root / "node_modules" / "@openai" / "codex")
-    for package_root in package_roots:
+    for package_root in _codex_package_roots(launcher):
         candidates.extend(
             (
                 package_root
@@ -1343,6 +1362,7 @@ class CodexAppServerClient:
         self._child_environment: dict[str, str] = {}
         self._process: asyncio.subprocess.Process | None = None
         self._process_tree: ProcessTree | None = None
+        self._lifeline_write_fd: int | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._start_lock = asyncio.Lock()
@@ -1899,10 +1919,8 @@ class CodexAppServerClient:
             "stderr": asyncio.subprocess.PIPE,
             "cwd": self._safe_thread_cwd(),
         }
-        if sys.platform != "win32":
-            kwargs["start_new_session"] = True
-            kwargs["pass_fds"] = _subscription_transport_pass_fds(self)
-
+        lifeline_read_fd: int | None = None
+        lifeline_write_fd: int | None = None
         tree = make_process_tree("codex-app-server")
         if not bool(getattr(tree, "supports_containment", False)):
             tree.close()
@@ -1910,38 +1928,69 @@ class CodexAppServerClient:
                 "Codex app-server process-tree containment is unavailable."
             )
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                creationflags=_windows_creationflags(allow_breakaway=True),
-                **kwargs,
-            )
-        except PermissionError:
             if sys.platform != "win32":
-                tree.close()
-                raise
-            log.warning(
-                "Codex app-server breakaway was denied; retrying with no-window process flags"
-            )
+                lifeline_read_fd, lifeline_write_fd = os.pipe()
+                os.set_inheritable(lifeline_read_fd, True)
+                os.set_inheritable(lifeline_write_fd, False)
+                command = [
+                    sys.executable,
+                    "-I",
+                    _CHILD_LIFELINE_SCRIPT,
+                    str(lifeline_read_fd),
+                    "--",
+                    *command,
+                ]
+                kwargs["start_new_session"] = True
+                kwargs["pass_fds"] = (
+                    *_subscription_transport_pass_fds(self),
+                    lifeline_read_fd,
+                )
+        except BaseException:
+            tree.close()
+            for descriptor in (lifeline_read_fd, lifeline_write_fd):
+                if descriptor is not None:
+                    with suppress(OSError):
+                        os.close(descriptor)
+            raise
+        try:
             try:
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    creationflags=_windows_creationflags(allow_breakaway=True),
+                    **kwargs,
+                )
+            except PermissionError:
+                if sys.platform != "win32":
+                    raise
+                log.warning(
+                    "Codex app-server breakaway was denied; retrying with no-window "
+                    "process flags"
+                )
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     creationflags=_windows_creationflags(allow_breakaway=False),
                     **kwargs,
                 )
-            except BaseException:
-                tree.close()
-                raise
         except BaseException:
             tree.close()
+            if lifeline_write_fd is not None:
+                with suppress(OSError):
+                    os.close(lifeline_write_fd)
             raise
+        finally:
+            if lifeline_read_fd is not None:
+                with suppress(OSError):
+                    os.close(lifeline_read_fd)
 
         self._process = process
         self._process_tree = tree
+        self._lifeline_write_fd = lifeline_write_fd
         try:
             tree.assign(process.pid)
         except Exception as exc:  # noqa: BLE001 - containment is mandatory
             self._process = None
             self._process_tree = None
+            self._close_lifeline()
             with suppress(ProcessLookupError, OSError):
                 process.kill()
             with suppress(Exception):
@@ -1957,6 +2006,13 @@ class CodexAppServerClient:
             self._stderr_loop(process), name="codex-app-server-stderr"
         )
         log.info("Codex app-server process started; account verification pending")
+
+    def _close_lifeline(self) -> None:
+        descriptor = self._lifeline_write_fd
+        self._lifeline_write_fd = None
+        if descriptor is not None:
+            with suppress(OSError):
+                os.close(descriptor)
 
     async def request(
         self,
@@ -2572,6 +2628,7 @@ class CodexAppServerClient:
         process = self._process
         if process is None:
             self._ready = False
+            self._close_lifeline()
             if self._profile_transport_reserved:
                 _release_subscription_transport(self)
                 self._profile_transport_reserved = False
@@ -2630,6 +2687,7 @@ class CodexAppServerClient:
                     await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
         if tree is not None:
             tree.close()
+        self._close_lifeline()
         if self._profile_transport_reserved:
             _release_subscription_transport(self)
             self._profile_transport_reserved = False
