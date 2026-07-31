@@ -784,7 +784,14 @@ def _sha256_file(path: Path) -> str:
             digest.update(chunk)
         completed = os.fstat(handle.fileno())
     final = path.stat()
-    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+    # Python 3.12 on Windows exposes different ctime semantics for fstat() and
+    # path stat(): the former may mirror mtime while the latter reports file
+    # creation time. Comparing them rejects an unchanged executable. Device,
+    # inode/file index, size, mtime, and the approved digest still bind the
+    # opened handle to the final path. POSIX ctime remains a useful extra guard.
+    if sys.platform != "win32":
+        stable_fields += ("st_ctime_ns",)
     if any(
         getattr(opened, field, None) != getattr(completed, field, None)
         or getattr(opened, field, None) != getattr(final, field, None)
@@ -913,7 +920,7 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
-            binary_path=None,
+            binary_path=resolved,
             version=version,
             reason=str(exc),
             reason_code="lifecycle_unavailable",
@@ -923,7 +930,7 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
-            binary_path=None,
+            binary_path=resolved,
             version=version,
             reason=str(exc),
             reason_code="setup_invalid",

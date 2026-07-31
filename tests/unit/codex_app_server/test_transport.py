@@ -1651,6 +1651,32 @@ def test_native_codex_version_and_hash_are_both_required(
         )
 
 
+def test_sha256_file_ignores_windows_fstat_ctime_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"official-test-binary")
+    original_stat = Path.stat
+
+    def stat_with_creation_time(path: Path, *args: object, **kwargs: object) -> object:
+        result = original_stat(path, *args, **kwargs)
+        return SimpleNamespace(
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_size=result.st_size,
+            st_mtime_ns=result.st_mtime_ns,
+            st_ctime_ns=result.st_ctime_ns + 1,
+        )
+
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "stat", stat_with_creation_time)
+
+    assert transport._sha256_file(binary) == (
+        "fad79da58e11e95a1ca016dff1191db5df37bd2ee8e15e7e66856f7a2c99450f"
+    )
+
+
 def test_trusted_binary_discovery_recovers_from_a_windows_store_launcher(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
