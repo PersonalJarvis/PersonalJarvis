@@ -23,6 +23,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /interrupted``                → panes that came back and were never restarted
 * ``POST   /interrupted/continue``       → tell them to carry on ("continue")
 * ``PUT    /mode``                       → focused coding mode on/off
+* ``GET    /ui-preferences``             → remembered terminal text size
+* ``PUT    /ui-preferences``             → remember another one (survives restarts)
 * ``GET    /accounts``                   → which subscription new terminals use
 * ``PUT    /accounts/active``            → switch it (open panes keep theirs)
 * ``POST   /terminals``                  → open one more pane (split)
@@ -283,6 +285,18 @@ class CloseTerminalsRequest(BaseModel):
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
+    )
+
+
+class TerminalTextSizeRequest(BaseModel):
+    """How large the text in the workspace's terminals should be, in pixels."""
+
+    terminal_font_size: int = Field(
+        description=(
+            "Terminal text size in pixels. Values outside the supported range "
+            "are clamped to the nearest usable one rather than rejected; the "
+            "response says what was actually stored."
+        )
     )
 
 
@@ -1718,6 +1732,53 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
             log.debug("AgenticIdeCodingModeChanged publish failed: %s", exc)
 
     return {"ok": True, "focus_mode": enabled}
+
+
+@router.get("/ui-preferences", summary="Remembered workspace display preferences")
+async def get_ui_preferences() -> dict:
+    """How the workspace should look, as this machine last left it.
+
+    Today that is one thing: the size of the terminal text. It is answered by
+    the backend rather than read from the page's own storage because the desktop
+    window is an embedded WebView that starts each run with an empty one — a
+    preference kept only in the browser is forgotten on every restart.
+
+    ``stored`` says whether a size was ever chosen here. A client that still
+    holds an older, browser-only choice uses it to hand that choice over instead
+    of letting the default overwrite it.
+    """
+    from jarvis.agentic_ide import ui_prefs
+
+    return {
+        "ok": True,
+        "terminal_font_size": await asyncio.to_thread(ui_prefs.terminal_font_size),
+        "stored": await asyncio.to_thread(ui_prefs.has_terminal_font_size),
+        "min": ui_prefs.FONT_MIN,
+        "max": ui_prefs.FONT_MAX,
+        "default": ui_prefs.FONT_DEFAULT,
+    }
+
+
+@router.put("/ui-preferences", summary="Remember a workspace display preference")
+async def set_ui_preferences(req: TerminalTextSizeRequest) -> dict:
+    """Remember the terminal text size until it is changed again.
+
+    Survives closing the workspace, closing the app and restarting the machine,
+    and applies to every terminal in every workspace — one person reads at one
+    size. Open panes are re-rendered by the UI immediately; nothing is restarted
+    and no agent is interrupted by the change.
+    """
+    from jarvis.agentic_ide import ui_prefs
+
+    size = await asyncio.to_thread(ui_prefs.set_terminal_font_size, req.terminal_font_size)
+    return {
+        "ok": True,
+        "terminal_font_size": size,
+        "stored": True,
+        "min": ui_prefs.FONT_MIN,
+        "max": ui_prefs.FONT_MAX,
+        "default": ui_prefs.FONT_DEFAULT,
+    }
 
 
 @router.get("/accounts", summary="Which subscription new terminals use")

@@ -401,6 +401,13 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  *
  * localStorage rather than config: this is a per-screen display preference of
  * this browser profile, not something worth a round-trip and a config write.
+ *
+ * The text size is the exception and is kept by the BACKEND as well (see
+ * `fetchTerminalUiPreferences`). The desktop window is an embedded WebView that
+ * starts every run with empty browser storage, so a size kept only here is
+ * forgotten on each restart â€” which reads as the control having stopped
+ * working. Its localStorage entry stays as the first-paint cache so the panes
+ * open at the remembered size instead of visibly resizing a moment later.
  */
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
@@ -529,6 +536,44 @@ export function AgenticGrid({
   const setFontSize = useCallback((next: number) => {
     setFontSizeState(next);
     writeStored(FONT_KEY, String(next));
+    // The backend is what makes the choice survive a restart; the line above is
+    // only this window's cache. A failed write is reported rather than
+    // swallowed â€” the panes still resize, they just would not remember it.
+    void saveTerminalFontSize(next).catch((err) => {
+      console.warn("Agentic IDE: terminal text size not remembered:", err);
+    });
+  }, []);
+
+  // Pick the remembered size back up. Runs once per mounted workspace: the size
+  // is one person's reading preference, not a property of a project, so it is
+  // the same in every workspace and never re-read on a switch.
+  useEffect(() => {
+    let alive = true;
+    fetchTerminalUiPreferences()
+      .then((prefs) => {
+        if (!alive) return;
+        if (prefs.stored) {
+          setFontSizeState(prefs.terminal_font_size);
+          writeStored(FONT_KEY, String(prefs.terminal_font_size));
+          return;
+        }
+        // Nothing stored yet, but this window still holds a size chosen before
+        // the backend kept them. Hand that choice over instead of letting the
+        // default silently replace it â€” otherwise upgrading resets it once.
+        const local = storedFontSize();
+        if (local === null) return;
+        void saveTerminalFontSize(local).catch((err) => {
+          console.warn("Agentic IDE: terminal text size not remembered:", err);
+        });
+      })
+      .catch((err) => {
+        // Older backend or a request that failed: keep the cached size and say
+        // why it may not stick, rather than looking like it worked.
+        console.warn("Agentic IDE: could not read the stored terminal text size:", err);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
   const [target, setTarget] = useState(
     session.terminals.find(takesPrompts)?.name ?? "",

@@ -89,6 +89,21 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     workspace_id: null,
     terminals: [],
   })),
+  // The remembered terminal text size, read once when the grid mounts.
+  fetchTerminalUiPreferences: vi.fn(async () => ({
+    terminal_font_size: 13,
+    stored: false,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
+  saveTerminalFontSize: vi.fn(async (size: number) => ({
+    terminal_font_size: size,
+    stored: true,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
 }));
 
 import { AgenticIdeView } from "./AgenticIdeView";

@@ -1110,6 +1110,46 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
+ * The workspace display preferences the backend remembers for this machine.
+ *
+ * `stored` is false until a size has actually been chosen — the difference
+ * between "the user picked 13" and "nobody ever picked anything", which is what
+ * lets an older choice living only in this page's `localStorage` be handed over
+ * rather than overwritten by the default.
+ */
+export interface TerminalUiPreferences {
+  terminal_font_size: number;
+  stored: boolean;
+  min: number;
+  max: number;
+  default: number;
+}
+
+/**
+ * Read the remembered terminal text size.
+ *
+ * Deliberately a backend read: the desktop window is an embedded WebView that
+ * starts every run with empty browser storage, so a preference kept only in
+ * `localStorage` is forgotten on each restart.
+ */
+export function fetchTerminalUiPreferences(): Promise<TerminalUiPreferences> {
+  return getJson<TerminalUiPreferences>("/api/agentic-ide/ui-preferences");
+}
+
+/** Remember a terminal text size until it is changed again. */
+export async function saveTerminalFontSize(
+  size: number,
+): Promise<TerminalUiPreferences> {
+  const res = await fetch("/api/agentic-ide/ui-preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terminal_font_size: size }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as TerminalUiPreferences;
+}
+
+/**
  * One dropped file after the backend has read what is actually in it.
  *
  * `detail` is the whole point: for an image it is a description written by a

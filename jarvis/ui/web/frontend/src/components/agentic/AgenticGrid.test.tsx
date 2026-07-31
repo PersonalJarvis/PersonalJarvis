@@ -69,6 +69,23 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   })),
   markPaneNotificationsRead: vi.fn(async () => 0),
   clearPaneNotifications: vi.fn(async () => undefined),
+  // The remembered terminal text size, read once per mounted workspace.
+  // Answers "nothing chosen yet" by default so these tests see the default
+  // size; the text-size tests give it a stored one.
+  fetchTerminalUiPreferences: vi.fn(async () => ({
+    terminal_font_size: 13,
+    stored: false,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
+  saveTerminalFontSize: vi.fn(async (size: number) => ({
+    terminal_font_size: size,
+    stored: true,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -105,6 +122,7 @@ vi.mock("./AgenticTerminal", () => ({
     onArrangeStart,
     arranging,
     layoutBusy,
+    fontSize,
   }: {
     name: string;
     maximized?: boolean;
@@ -121,6 +139,7 @@ vi.mock("./AgenticTerminal", () => ({
     onArrangeStart?: (event: PointerEventLike) => void;
     arranging?: boolean;
     layoutBusy?: boolean;
+    fontSize?: number;
   }) => {
     paneRenders.set(name, (paneRenders.get(name) ?? 0) + 1);
     return (
@@ -138,6 +157,9 @@ vi.mock("./AgenticTerminal", () => ({
       // The real pane stops refitting its terminal while this is on. Read here
       // because it is the grid's job to say WHEN the geometry is in motion.
       data-layout-busy={layoutBusy ? "yes" : "no"}
+      // The size the terminal text is drawn at. Read here because the point of
+      // remembering it is that the PANES come back at that size.
+      data-font-size={String(fontSize ?? "")}
     >
       {name}
       {/* Stands for the pane header, which is the grip in the real component. */}
@@ -2407,5 +2429,85 @@ describe("chat view", () => {
         agent: "codex",
       }),
     );
+  });
+});
+
+describe("terminal text size", () => {
+  const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
+
+  beforeEach(() => {
+    // Restated per test: `clearAllMocks` empties the call list but keeps the
+    // implementation, so a size one test stores would still be answered to the
+    // next one.
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 13,
+      stored: false,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(FONT_KEY);
+  });
+
+  const openViewMenu = () =>
+    fireEvent.click(screen.getByTestId("agentic-view-menu"));
+
+  it("opens the panes at the size the backend remembers", async () => {
+    // The reason this comes from the backend and not from localStorage: the
+    // desktop window is a WebView that starts every run with empty browser
+    // storage, so a size kept only in the page is gone after each restart.
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 17,
+      stored: true,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+    renderGrid();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("17"),
+    );
+    openViewMenu();
+    expect(screen.getByTestId("agentic-view-menu-panel").textContent).toContain("17");
+  });
+
+  it("hands a newly chosen size to the backend", async () => {
+    renderGrid();
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+
+    openViewMenu();
+    fireEvent.click(screen.getByLabelText("Larger text"));
+
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(14));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("14");
+  });
+
+  it("adopts a size chosen before the backend remembered them", async () => {
+    // Upgrade path. Somebody who set 16 in an older build has that number in
+    // this window's storage and nowhere else; the first read must hand it over
+    // rather than let the default quietly replace it.
+    window.localStorage.setItem(FONT_KEY, "16");
+    renderGrid();
+
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(16));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("16");
+  });
+
+  it("keeps working when the size cannot be read", async () => {
+    // An older backend, or a request that failed. The panes still open and the
+    // buttons still resize them â€” only the memory is missing.
+    vi.mocked(api.fetchTerminalUiPreferences).mockRejectedValue(new Error("404"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderGrid();
+
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    openViewMenu();
+    fireEvent.click(screen.getByLabelText("Smaller text"));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("12");
+    warn.mockRestore();
   });
 });
