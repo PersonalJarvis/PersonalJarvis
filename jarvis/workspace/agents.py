@@ -508,6 +508,13 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # only slow down behaviour that already works.
         needs_input_line_wait=False,
         instruction_filename="CLAUDE.md",
+        # Its footer row ("<folder> 🌿 <branch> <model> (1M context)") carries
+        # plenty of letters, so without these the deterministic recap of a busy
+        # pane quoted the footer as its "activity". The branch glyph is the
+        # stable marker; the tip prefix covers the rotating "Tip: Use /btw …"
+        # hint rows. The key-hint half of the footer already matches the shared
+        # "shift+tab" fragment.
+        chrome_fragments=("🌿", "tip: use"),
         spoken_aliases=("claude", "cloude", "claud", "clode", "klaude", "kloude"),
         spoken_aliases_needing_suffix=("cloud", "clawed", "clod", "loud"),
     ),

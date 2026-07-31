@@ -26,10 +26,12 @@ fallback rather than as the product:
 * **Bounded.** At most :data:`MAX_CONCURRENT` summaries are in flight across the
   whole app, each with its own timeout, and a pane whose summaries keep failing
   goes quiet for a while instead of retrying every poll.
-* **Optional by construction** (§3). No key, no reachable provider, a provider
-  that 429s — every one of those paths ends at the deterministic recap, which is
-  exactly what the pane showed before this module existed. Nothing here is
-  load-bearing, and nothing here may raise into a state read.
+* **Optional by construction** (§3). No key, no reachable provider — those
+  paths end at the deterministic recap, which is exactly what the pane showed
+  before this module existed. A provider that fails at CALL time (a depleted
+  key's 429, a 402) first crosses to the next provider FAMILY in the resolver
+  chain (AP-22) and only then falls back to the deterministic floor. Nothing
+  here is load-bearing, and nothing here may raise into a state read.
 
 Above the model sits one more layer, and it outranks both: **what the user
 wrote themselves**. No summarizer can know that a pane is "the branch I'm about
@@ -101,6 +103,13 @@ INPUT_TAIL_CHARS = INPUT_CHARS - INPUT_HEAD_CHARS
 #: recap nobody is waiting for does not deserve a long leash.
 CALL_TIMEOUT_S = 30.0
 
+#: How many provider FAMILIES a single summary may try before giving up. A
+#: depleted key fails at call time, after instantiating fine — the next try
+#: must come from a different family (AP-22), and two spare families cover
+#: every install that has anything to cross to without turning one recap into
+#: a tour of every configured provider.
+MAX_PROVIDER_TRIES = 3
+
 #: After this many consecutive failures a pane stops asking for a while. A
 #: depleted key, an unreachable provider, or a model that refuses the format
 #: fails for every pane and every poll; without this it would fail loudly and
@@ -164,6 +173,27 @@ NO_PROVIDER_NOTE = "No model is reachable to summarize this pane."
 #: providers put the API key in the request URL, and this string is rendered in
 #: the recap card — where a screenshot would carry it straight out of the app.
 _SECRET_RE = re.compile(r"(?i)(key|token|secret|password|authorization)=[^\s&\"']+")
+
+#: Failure shapes worth a plain sentence. The raw provider error is a wall of
+#: JSON — the screenshot-famous one opened with ``ClientError: 429 Too Many
+#: Requests. {'message': '{\\n "error": …`` — and the recap card is read by
+#: someone deciding what to DO, so the first words must say that. Matched
+#: against ``TypeName: message`` so an empty-message ``TimeoutError`` still
+#: lands on its sentence. First match wins; order the specific ones first.
+_FAILURE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?i)\b429\b|too many requests|rate.?limit|quota|depleted|exhausted"),
+        "Its provider is out of credits or rate-limited.",
+    ),
+    (
+        re.compile(r"(?i)\b40[13]\b|unauthorized|forbidden|api.?key|invalid.*credential"),
+        "Its provider rejected the credential.",
+    ),
+    (
+        re.compile(r"(?i)timeout|timed?[ -]?out"),
+        "Its provider did not answer in time.",
+    ),
+)
 _TITLE_WORD_RE = re.compile(r"\b[^\W\d_][\w'-]*\b", flags=re.UNICODE)
 _SHELL_FRAGMENT_RE = re.compile(r"(?:^|\s)--?[a-zA-Z]\w*|[*?][./\\\w]")
 _DETAIL_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
@@ -292,15 +322,22 @@ _inflight = 0
 def describe_failure(exc: BaseException) -> str:
     """A failed summary in one short line the recap card can show.
 
-    The type is always there, because a bare provider message is often empty or
-    a wall of JSON, and knowing it was an authentication error rather than a
-    timeout is most of the answer. Whatever the provider said follows, truncated
-    and with anything credential-shaped removed: this string ends up on screen,
-    and some providers put the API key in the URL they echo back (AP-2/AP-12).
+    A recognized shape — a depleted or rate-limited key, a rejected credential,
+    a timeout — leads with a plain sentence, because the card is read by someone
+    deciding what to do, not by someone parsing provider JSON. The type is
+    always there, because a bare provider message is often empty or a wall of
+    JSON, and knowing it was an authentication error rather than a timeout is
+    most of the answer. Whatever the provider said follows, truncated and with
+    anything credential-shaped removed: this string ends up on screen, and some
+    providers put the API key in the URL they echo back (AP-2/AP-12).
     """
     text = _SECRET_RE.sub(r"\1=…", str(exc or "").strip())
     kind = type(exc).__name__
-    return recap.condense(f"{kind}: {text}" if text else kind, 200)
+    raw = f"{kind}: {text}" if text else kind
+    for pattern, sentence in _FAILURE_HINTS:
+        if pattern.search(raw):
+            return recap.condense(f"{sentence} ({raw})", 200)
+    return recap.condense(raw, 200)
 
 
 def _state(key: str) -> _PaneState:
@@ -541,22 +578,29 @@ def _store(
     entry.note = ""
 
 
-def _resolve_brain():  # noqa: ANN202 - Brain | None, avoids an import cycle
-    """A model that can write the recap, or None when the install has none.
+def _resolve_brains() -> list[Any]:
+    """The brains that could write the recap, best first. Empty when none can.
 
     Resolution goes through ``jarvis.brain.resolver`` so this module never grows
-    its own opinion about providers (AP-21/AP-22): whatever single key the user
-    has is what writes the recap, and an install with none gets None and the
-    deterministic floor.
+    its own opinion about providers (AP-21/AP-22): whatever keys the user has
+    are what write the recap, and an install with none gets an empty list and
+    the deterministic floor. More than one candidate comes back because the
+    ordinary failure is CALL-time — a depleted key instantiates fine and only
+    429s when asked to write — and the retry must cross to a different family.
     """
     try:
-        from jarvis.brain.resolver import resolve_frontier_brain
+        from jarvis.brain.resolver import frontier_brain_candidates
         from jarvis.core.config import load_config
 
-        return resolve_frontier_brain(load_config())
+        candidates: list[Any] = []
+        for brain in frontier_brain_candidates(load_config()):
+            candidates.append(brain)
+            if len(candidates) >= MAX_PROVIDER_TRIES:
+                break
+        return candidates
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
-        return None
+        return []
 
 
 def _bounded_rows(
@@ -737,12 +781,37 @@ async def summarize_with_model(
 ) -> SmartRecap | None:
     """Ask a model what this pane has been doing. None when nothing can answer.
 
-    Raises only what the provider raises — the caller turns that into "keep the
-    previous sentence", which is the whole error handling this feature needs.
+    Walks the resolver's candidate chain rather than trusting its first pick:
+    the first brain in it is whatever the user configured, and the ordinary way
+    that brain fails is at call time — a depleted key instantiates fine and
+    429s when asked to write. Each further try is a different provider FAMILY
+    (AP-22), so the recap lands on whatever key the user actually has instead
+    of dying with the depleted one. Only when every candidate has failed does
+    this raise, and it raises the FIRST failure — the configured provider's,
+    which is the one the user can act on.
     """
-    brain = await asyncio.to_thread(_resolve_brain)
-    if brain is None:
+    brains = await asyncio.to_thread(_resolve_brains)
+    if not brains:
         return None
+    first_failure: Exception | None = None
+    for brain in brains:
+        try:
+            return await _summarize_on(brain, term, rows, folder=folder)
+        except Exception as exc:  # noqa: BLE001 - the next family is the handling
+            first_failure = first_failure or exc
+            logger.info(
+                "Agentic IDE recap: {} could not write it ({}) — crossing to the next provider",
+                getattr(brain, "model", "") or getattr(brain, "name", "") or type(brain).__name__,
+                type(exc).__name__,
+            )
+    assert first_failure is not None  # noqa: S101 - the loop above ran at least once
+    raise first_failure
+
+
+async def _summarize_on(
+    brain: Any, term: Any, rows: Sequence[str], *, folder: str = ""
+) -> SmartRecap:
+    """One summary on one brain. Raises whatever the provider raises."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
     request = BrainRequest(

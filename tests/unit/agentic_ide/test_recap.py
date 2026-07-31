@@ -86,6 +86,39 @@ def test_tui_chrome_never_becomes_the_headline() -> None:
     assert summarize(term).headline == "Writing jarvis/core/config_writer.py"
 
 
+def test_the_claude_code_footer_never_becomes_the_headline() -> None:
+    """The folder/branch/model footer is redrawn on every frame — pure chrome.
+
+    Observed live: a busy pane whose newest rows were all footer captioned
+    itself "Personal Jarvis 🌿 main Opus 5 (1M context)" — three facts the pane
+    header already shows elsewhere, and zero about the work.
+    """
+    term = _pane(status="live")
+    term.transcript.feed("Traced the stale process to yesterday\r\n")
+    term.transcript.feed("Tip: Use /btw to ask a quick side question\r\n")
+    term.transcript.feed("Personal Jarvis 🌿 main Opus 5 (1M context)\r\n")
+
+    assert summarize(term).headline == "Traced the stale process to yesterday"
+
+
+def test_a_hand_driven_busy_pane_does_not_claim_it_was_never_instructed() -> None:
+    """"No instruction yet" on a pane that worked for hours reads as broken."""
+    term = _pane(status="live", last_output_at=time.time())
+    term.transcript.feed("Ran 42 tests, all green\r\n")
+
+    detail = summarize(term).detail
+
+    assert "No instruction has been sent" not in detail
+    assert "driven directly in the terminal" in detail
+
+
+def test_a_live_pane_with_no_output_still_says_nothing_was_sent() -> None:
+    """The idle wording stays for a pane that truly has nothing going on."""
+    term = _pane(status="live")
+
+    assert "No instruction has been sent" in summarize(term).detail
+
+
 def test_the_input_line_never_becomes_the_headline() -> None:
     """The prompt box is what the USER is typing, not what the agent is doing."""
     term = _pane(status="live")

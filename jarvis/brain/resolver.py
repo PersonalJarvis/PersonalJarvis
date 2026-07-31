@@ -37,6 +37,8 @@ from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
 from jarvis.brain.provider_registry import BrainProviderRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from jarvis.core.bus import EventBus
     from jarvis.core.config import JarvisConfig
     from jarvis.core.protocols import Brain
@@ -147,6 +149,54 @@ def resolve_frontier_brain(
         "resolve_frontier_brain: all stages of the fallback chain failed. "
         f"Last error: {last_err!r}. Chain: {chain}"
     )
+
+
+def frontier_brain_candidates(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Iterator[Brain]:
+    """Instantiable frontier brains along the fallback chain, one per family.
+
+    ``resolve_frontier_brain`` answers "give me ONE brain" and crosses families
+    only when a stage cannot be *instantiated*. That gate misses the ordinary
+    depleted-key case: most providers construct their client happily without
+    checking the balance and only fail at CALL time (429/402). A caller that
+    wants the cross-family promise of AP-22 to hold at call time iterates this
+    instead: try the first candidate, and when the request itself fails, move
+    to the next FAMILY — a second model behind the same depleted key would
+    just fail the same way, so each provider appears at most once.
+
+    Lazy on purpose: a candidate is instantiated only when the caller reaches
+    it, and the shared cache keeps repeated walks free. Yields nothing when no
+    stage can be instantiated — the caller's "no provider" path, not an error.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("frontier_brain_candidates: chain could not be built", exc_info=True)
+        return
+    yielded: set[str] = set()
+    for provider, model in chain:
+        if provider in yielded:
+            continue
+        cache_key = (provider, model or "")
+        brain = _cache.get(cache_key)
+        if brain is None:
+            try:
+                brain = _get_registry().instantiate(
+                    provider, **({"model": model} if model else {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.info(
+                    "frontier_brain_candidates: %s/%s not instantiable (%s)",
+                    provider, model or "<default>", type(exc).__name__,
+                )
+                continue
+            _cache[cache_key] = brain
+        yielded.add(provider)
+        yield brain
 
 
 def _is_fast_tier(config: JarvisConfig, provider: str, model: str | None) -> bool:

@@ -304,12 +304,20 @@ def _typed_into(term: Any) -> bool:
     return spec is None or bool(getattr(spec, "is_coding_agent", True))
 
 
-def _task_sentence(task: str, *, sent: int) -> str:
-    """What this pane was told to do, or an honest note that nothing was."""
+def _task_sentence(task: str, *, sent: int, working: bool = False) -> str:
+    """What this pane was told to do, or an honest note that nothing was.
+
+    ``working`` distinguishes the two panes the no-instruction sentence used to
+    conflate: one that is genuinely idle, and one whose prompt was typed
+    straight into the terminal — busy the whole time, yet captioned with a
+    sentence that read like "nothing is happening here".
+    """
     if task:
         return f'Last asked to: "{task}".'
     if sent:
         return "Its last instruction came from Jarvis."
+    if working:
+        return "It is being driven directly in the terminal, not through Jarvis."
     return "No instruction has been sent to it from Jarvis yet."
 
 
@@ -335,15 +343,18 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     status = str(getattr(term, "status", "") or "pending")
     task = _task(term)
     sent = int(getattr(term, "prompts_sent", 0) or 0)
+    activity = _activity(tail)
+    idle = idle_phrase(term)
+    # A live pane that is visibly producing output but was never sent a prompt
+    # is being driven by hand — the caption must say that, not imply idleness.
+    working = status == "live" and bool(activity or idle)
     # One sentence about the instruction, computed once: every branch below
     # opens with it, and a plain terminal answers it differently.
     asked = (
-        _task_sentence(task, sent=sent)
+        _task_sentence(task, sent=sent, working=working)
         if _typed_into(term)
         else "This is a plain terminal — you type into it yourself."
     )
-    activity = _activity(tail)
-    idle = idle_phrase(term)
 
     if status == "error":
         problem = condense(getattr(term, "error", ""), HEADLINE_CHARS)

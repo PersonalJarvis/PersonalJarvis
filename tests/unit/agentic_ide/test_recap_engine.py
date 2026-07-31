@@ -303,7 +303,7 @@ def test_cli_debris_is_rejected_as_a_model_headline(answer: str) -> None:
 
 def test_an_install_with_no_provider_keeps_the_deterministic_recap(monkeypatch) -> None:
     """§3: one key, no key, a dead key — the pane header still says something."""
-    monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: None)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [])
 
     assert asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20))) is None
 
@@ -328,7 +328,7 @@ def test_the_recap_request_disables_internal_reasoning(monkeypatch) -> None:
             )
 
     brain = Brain()
-    monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: brain)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [brain])
 
     answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
 
@@ -361,7 +361,7 @@ def test_an_invalid_small_answer_retries_with_the_measured_larger_budget(monkeyp
             yield SimpleNamespace(content=content)
 
     brain = Brain()
-    monkeypatch.setattr(recap_engine, "_resolve_brain", lambda: brain)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [brain])
 
     answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
 
@@ -370,6 +370,71 @@ def test_an_invalid_small_answer_retries_with_the_measured_larger_budget(monkeyp
         recap_engine.MODEL_OUTPUT_TOKENS,
         recap_engine.MODEL_RETRY_OUTPUT_TOKENS,
     ]
+
+
+def test_a_depleted_provider_crosses_to_the_next_family(monkeypatch) -> None:
+    """AP-22 at call time: a key that 429s must not take the recap down with it."""
+
+    class Depleted:
+        model = "gemini-depleted"
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            raise RuntimeError("429 Too Many Requests: prepayment credits are depleted")
+            yield  # pragma: no cover - makes this an async generator
+
+    class Working:
+        model = "other-family"
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            yield SimpleNamespace(
+                content=(
+                    "HEADLINE: Pane recaps — cross-family fallback\n"
+                    "DETAIL: The goal is a recap that survives a depleted key. "
+                    "The second provider family wrote this one."
+                )
+            )
+
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [Depleted(), Working()])
+
+    answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert answer is not None
+    assert answer.headline == "Pane recaps — cross-family fallback"
+    assert answer.writer == "other-family"
+
+
+def test_when_every_family_fails_the_first_failure_is_reported(monkeypatch) -> None:
+    """The configured provider's error is the one the user can act on."""
+
+    def _dead(model: str, message: str):  # noqa: ANN202
+        class Dead:
+            async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+                raise RuntimeError(message)
+                yield  # pragma: no cover - makes this an async generator
+
+        Dead.model = model
+        return Dead()
+
+    monkeypatch.setattr(
+        recap_engine,
+        "_resolve_brains",
+        lambda: [_dead("first", "429 quota exceeded"), _dead("second", "connection refused")],
+    )
+
+    with pytest.raises(RuntimeError, match="429 quota exceeded"):
+        asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+
+def test_a_depleted_key_failure_reads_as_a_sentence_not_json() -> None:
+    """The screenshot case: the card led with a wall of provider JSON."""
+    note = recap_engine.describe_failure(
+        RuntimeError(
+            "429 Too Many Requests. {'message': '{\\n \"error\": {\\n \"code\": 429,"
+            "\\n \"message\": \"Your prepayment credits are depleted.\"}}'}"
+        )
+    )
+
+    assert note.startswith("Its provider is out of credits or rate-limited.")
 
 
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
