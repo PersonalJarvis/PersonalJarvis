@@ -24,6 +24,14 @@ DISABLES colour — a positive value is an escalation the user meant.
 ``COLORTERM`` counts only when EMPTY, because the common colour libraries read
 its mere presence as "sixteen colours": an empty one inherited from a pipe
 DOWNGRADES a 256-colour terminal, while a real value is authoritative.
+
+``NO_COLOR`` counts whenever it is PRESENT, empty value included. The published
+convention asks consumers to act only on a non-empty value, but consumers
+disagree in practice — several check presence alone — and the two readings
+point opposite ways for ``NO_COLOR=``. That ambiguity cannot express a user's
+intent either way: anyone who actually wants colour off writes a value, so an
+empty one reaching a terminal host is an inheritance artefact by construction.
+Dropping it removes the ambiguity instead of betting on which library reads it.
 """
 
 from __future__ import annotations
@@ -42,7 +50,7 @@ def stale_colour_claims(source: Mapping[str, str]) -> tuple[str, ...]:
     which lets callers skip copying it at all.
     """
     stale: list[str] = []
-    if source.get("NO_COLOR", "").strip():
+    if "NO_COLOR" in source:
         stale.append("NO_COLOR")
     if source.get("FORCE_COLOR", "").strip().lower() in _FORCE_COLOR_OFF:
         stale.append("FORCE_COLOR")
@@ -56,8 +64,11 @@ def sanitize_process_environment() -> tuple[str, ...]:
 
     Called once at start-up so that no child of the app can inherit them,
     whichever spawn path it takes. Returning the names rather than logging here
-    keeps the decision to log — and in whose voice — with the caller, which at
-    start-up is the only layer that knows whether logging is up yet.
+    keeps the decision to log — and in whose voice — with the caller. That
+    caller owes the user the line: an app that silently rewrites its own
+    environment and leaves no trace is the thing nobody can debug later, and at
+    start-up the stdlib root logger discards INFO records, so it takes a sink
+    that is live from import (`jarvis.ui.web.launcher` uses loguru).
 
     Cheap by construction: a few dict lookups, no import, no I/O, so it is safe
     on the boot critical path (AP-26).

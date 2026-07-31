@@ -19,13 +19,20 @@ def test_an_environment_that_says_nothing_about_colour_is_left_alone() -> None:
 
 
 def test_no_color_is_recognised_whatever_its_value() -> None:
-    """The convention is presence, not value — "0" still means no colour."""
+    """Presence is the trigger, not the value — "0" still means no colour."""
     assert stale_colour_claims({"NO_COLOR": "1"}) == ("NO_COLOR",)
     assert stale_colour_claims({"NO_COLOR": "0"}) == ("NO_COLOR",)
 
 
-def test_an_empty_no_color_is_not_a_claim() -> None:
-    assert stale_colour_claims({"NO_COLOR": ""}) == ()
+def test_an_empty_no_color_is_dropped_too() -> None:
+    """Consumers disagree on whether ``NO_COLOR=`` suppresses colour.
+
+    The published convention says a non-empty value is required; several
+    libraries check presence alone. An empty value therefore cannot express an
+    intent either way — and nobody who wants colour off writes one — so a
+    terminal host drops it rather than betting on the reader.
+    """
+    assert stale_colour_claims({"NO_COLOR": ""}) == ("NO_COLOR",)
 
 
 def test_force_color_counts_only_when_it_disables_colour() -> None:
@@ -74,3 +81,84 @@ def test_sanitizing_a_clean_environment_is_a_no_op(
     monkeypatch.setenv("COLORTERM", "truecolor")
 
     assert sanitize_process_environment() == ()
+
+
+# --------------------------------------------------------------------------
+# The wiring, not just the helper. Both defects this module was corrected for
+# lived in the seam between the two: a helper that is never called, or called
+# too late, passes every test above.
+# --------------------------------------------------------------------------
+
+
+def _main_stopped_at_arg_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run ``launcher.main`` up to the first thing that follows the drop.
+
+    Stopping at ``_parse_args`` is the assertion: everything the app does with
+    its environment happens after it, so a drop that still ran is a drop that
+    beat every spawn path.
+    """
+    import jarvis.core.path_augment as path_augment
+    import jarvis.ui.web.launcher as launcher
+
+    monkeypatch.setattr(path_augment, "ensure_cli_paths", lambda: None)
+
+    def _stop(_argv: object) -> None:
+        raise RuntimeError("stop: argument parsing reached")
+
+    monkeypatch.setattr(launcher, "_parse_args", _stop)
+    with pytest.raises(RuntimeError, match="argument parsing reached"):
+        launcher.main([])
+
+
+def test_start_up_drops_the_claims_before_anything_else_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("COLORTERM", "")
+
+    _main_stopped_at_arg_parsing(monkeypatch)
+
+    assert "NO_COLOR" not in os.environ
+    assert "COLORTERM" not in os.environ
+
+
+def test_the_drop_is_announced_somewhere_a_person_can_read_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An app that silently rewrites its own environment cannot be debugged.
+
+    Pinned against a live sink because the first version of this logged through
+    the stdlib root logger, which at that point in ``main`` discards INFO
+    outright — the line existed in the source and reached nobody.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    written: list[str] = []
+    sink = logger.add(written.append, level="INFO", format="{message}")
+    try:
+        _main_stopped_at_arg_parsing(monkeypatch)
+    finally:
+        logger.remove(sink)
+
+    assert any("NO_COLOR" in line for line in written), written
+
+
+def test_nothing_is_announced_when_there_was_nothing_to_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loguru import logger
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("COLORTERM", raising=False)
+    written: list[str] = []
+    sink = logger.add(written.append, level="INFO", format="{message}")
+    try:
+        _main_stopped_at_arg_parsing(monkeypatch)
+    finally:
+        logger.remove(sink)
+
+    assert not [line for line in written if "colour-suppressing" in line]

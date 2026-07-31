@@ -1066,10 +1066,15 @@ def main(argv: list[str] | None = None) -> int:
 
     _dropped_colour_claims = sanitize_process_environment()
     if _dropped_colour_claims:
-        import logging as _clog
+        # loguru, not stdlib logging: this runs before anything configures the
+        # stdlib root logger, whose default level then discards an INFO record
+        # outright — so the one line explaining why the app rewrote its own
+        # environment would never reach console or log file. loguru carries a
+        # live sink from import.
+        from loguru import logger as _clog
 
-        _clog.getLogger(__name__).info(
-            "Dropped inherited colour-suppressing variables (%s) so hosted "
+        _clog.info(
+            "Dropped inherited colour-suppressing variables ({}) so hosted "
             "terminals render in colour; this app was started from a shell that "
             "declared it had none.",
             ", ".join(_dropped_colour_claims),
