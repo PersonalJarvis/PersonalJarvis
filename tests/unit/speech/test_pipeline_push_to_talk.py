@@ -21,6 +21,7 @@ import asyncio
 import threading
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from jarvis.core.events import TranscriptionUpdate
@@ -242,18 +243,79 @@ async def _pump_state_loop_once(pipe: SpeechPipeline) -> None:
         pass
 
 
-async def test_wake_lock_discards_call_and_clears_ptt_mode():
-    """A PTT press whose call lands during the post-hangup wake-lock is
-    dropped by the state loop — and must NOT leave ``_ptt_mode`` armed, or the
-    next wake-word call would wrongly enter the keyless raw-recording path."""
+async def test_wake_lock_discards_wake_word_call():
+    """A WAKE-WORD call landing inside the post-hangup wake-lock is dropped:
+    the lock exists precisely so Jarvis' own speaker tail cannot re-trigger
+    the wake word. No explicit edge → the lock applies."""
     pipe = _make_pipeline()
     pipe._wake_lock_until = time.time() + 100.0  # lock wide open
-    pipe._ptt_mode = True
+    pipe._call_event.set()
+    ran = {"session": False}
+
+    async def fake_active_session(*, input_buffer=None):  # noqa: ANN001
+        ran["session"] = True
+        return HANGUP_TURN_COMPLETE
+
+    pipe._active_session = fake_active_session  # type: ignore[method-assign]
+
+    await _pump_state_loop_once(pipe)
+
+    assert ran["session"] is False
+    assert pipe._state == PipelineState.IDLE
+
+
+def _accepting_session_stub(pipe: SpeechPipeline) -> dict[str, bool]:
+    """Stub the capture + session so the state loop can ACCEPT a call without
+    real audio hardware; returns the record of whether the session ran."""
+    _silence_side_effects(pipe)
+    pipe._player = _RecordingPlayer()  # type: ignore[assignment]
+    ran = {"session": False}
+
+    @asynccontextmanager
+    async def fake_capture():
+        yield None
+
+    async def fake_active_session(*, input_buffer=None):  # noqa: ANN001
+        ran["session"] = True
+        return HANGUP_TURN_COMPLETE
+
+    pipe._capture_first_session_input = fake_capture  # type: ignore[method-assign]
+    pipe._active_session = fake_active_session  # type: ignore[method-assign]
+    return ran
+
+
+async def test_ptt_press_bypasses_post_hangup_wake_lock():
+    """REGRESSION (live 2026-07-31): a PTT press inside the post-hangup
+    wake-lock was silently dropped by the state loop; key-repeat then re-armed
+    it until the lock expired, so recording started 1-3 s AFTER the user began
+    talking and the opening words of the capture were missing. A deliberate
+    key press has no speaker-echo path — the lock must not gate it."""
+    pipe = _make_pipeline()
+    ran = _accepting_session_stub(pipe)
+    pipe._wake_lock_until = time.time() + 100.0  # lock wide open
+    pipe._on_ptt_press()
+
+    await _pump_state_loop_once(pipe)
+
+    assert ran["session"] is True, "explicit PTT press must open a session"
+    assert pipe._ptt_mode is False  # one-shot, disarmed by session teardown
+    assert pipe._state == PipelineState.IDLE
+
+
+async def test_call_hotkey_bypasses_post_hangup_wake_lock():
+    """The CALL hotkey is the same deliberate-press contract as PTT: what the
+    ``_hotkey_loop`` arms (explicit marker + call event) must survive the
+    wake lock."""
+    pipe = _make_pipeline()
+    ran = _accepting_session_stub(pipe)
+    pipe._wake_lock_until = time.time() + 100.0
+    pipe._explicit_call_pending = True  # what _hotkey_loop sets on "call"
     pipe._call_event.set()
 
     await _pump_state_loop_once(pipe)
 
-    assert pipe._ptt_mode is False
+    assert ran["session"] is True, "explicit CALL press must open a session"
+    assert pipe._explicit_call_pending is False, "marker is one-shot"
     assert pipe._state == PipelineState.IDLE
 
 

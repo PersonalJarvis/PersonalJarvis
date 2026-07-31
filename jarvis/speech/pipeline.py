@@ -1874,6 +1874,16 @@ class SpeechPipeline:
         self._ptt_mode = False
         self._ptt_release_event = asyncio.Event()
         self._ptt_max_hold_s = 60.0
+        # A DELIBERATE user activation edge (PTT down, CALL hotkey, the
+        # "Speak in this conversation" button) is pending in ``_call_event``.
+        # The state loop consumes this to exempt exactly that call from the
+        # post-hangup wake lock: the lock exists so Jarvis' own speaker tail
+        # cannot re-trigger the WAKE WORD (audio echo), and a key press has no
+        # echo path. Dropping explicit presses under the lock made recording
+        # start only after the lock expired — the user was already talking and
+        # the opening 1-3 s of every quick follow-up were missing (live
+        # 2026-07-31).
+        self._explicit_call_pending = False
         # While the key is held, re-transcribe the growing buffer every N
         # seconds and publish it as a non-final TranscriptionUpdate so the orb
         # bubble shows the live transcript (parity with the wake-word path,
@@ -5567,6 +5577,9 @@ class SpeechPipeline:
         async for event_name in trigger.events():
             if event_name == "call":
                 log.info("📞 CALL via Hotkey")
+                # A deliberate key press — exempt from the post-hangup wake
+                # lock (no speaker-echo path), same contract as PTT below.
+                self._explicit_call_pending = True
                 self._call_event.set()
             elif event_name == "ptt_press":
                 self._on_ptt_press()
@@ -5774,6 +5787,7 @@ class SpeechPipeline:
         log.info("🎙 PTT DOWN — recording (hold to talk, release to send)")
         self._ptt_mode = True
         self._ptt_release_event.clear()
+        self._explicit_call_pending = True
         self._arm_call_event()
 
     def _on_ptt_release(self) -> None:
@@ -5834,6 +5848,7 @@ class SpeechPipeline:
             "Voice session requested (wake-style, seeded=%d turns).",
             len(seed_messages or []),
         )
+        self._explicit_call_pending = True
         return self._arm_call_event()
 
     def _arm_call_event(self) -> bool:
@@ -6711,9 +6726,14 @@ class SpeechPipeline:
         # needs to re-arm fanout.
         ring_bytes = bytearray()
         RING_MAX = 16_000 * 2 * 3  # ~3 s
+        # Rolling overlap for the EXPLICIT (hotkey/PTT) handoff seed: it must
+        # cover the whole press-to-claim latency — key poll (~20 ms), the
+        # cross-thread call edge, one state-loop turn and the stop-event round
+        # trip — or the user's first syllables land in the wake detectors
+        # instead of the session.
         recent_chunks: deque[AudioChunk] = deque(
-            maxlen=capture_chunks_for_duration(0.2)
-        )  # ~200 ms overlap
+            maxlen=capture_chunks_for_duration(0.5)
+        )  # ~500 ms overlap
         wake_confirmed = False
         handoff_buffer: _SessionInputBuffer | None = None
 
@@ -6787,11 +6807,15 @@ class SpeechPipeline:
             else:
                 # An explicit click/hotkey may arrive while a wake candidate is
                 # still being verified. Preserve that already-visible interval;
-                # otherwise keep only one block around the explicit edge.
+                # otherwise seed the full rolling overlap. The user starts
+                # talking AT the press, and the press precedes this claim by
+                # the key-poll + call-edge + state-loop latency — seeding only
+                # the last block (the old behaviour) cut the first syllables
+                # off every "press and talk" capture.
                 initial = (
                     tuple(self._pending_session_preroll)
                     if self._wake_preroll_active
-                    else tuple(recent_chunks)[-1:]
+                    else tuple(recent_chunks)
                 )
                 self._discard_wake_preroll()
             handoff_buffer = _SessionInputBuffer(initial=initial)
@@ -7156,8 +7180,15 @@ class SpeechPipeline:
         while True:
             await self._call_event.wait()
             self._call_event.clear()
-            # Ignore activation edges that arrive inside the speaker-echo lock.
             now = time.time()
+            # Consume the explicit-edge marker for THIS call before any gate
+            # decides. ``_ptt_mode`` is included defensively: it is only ever
+            # armed by a genuine press from IDLE, so it carries the same
+            # deliberate-user-action meaning even if the marker was lost.
+            explicit_call = bool(
+                getattr(self, "_explicit_call_pending", False)
+            ) or bool(getattr(self, "_ptt_mode", False))
+            self._explicit_call_pending = False
             if not self._activation_allowed():
                 # Resolved, never guessed: this backstop closes for a mute and
                 # for a running dictation too, and a log line that names the
@@ -7172,7 +7203,12 @@ class SpeechPipeline:
                 self._ptt_mode = False
                 await self._abort_pending_wake_handoff()
                 continue
-            if now < self._wake_lock_until:
+            if now < self._wake_lock_until and not explicit_call:
+                # The speaker-echo lock gates only WAKE-WORD calls: the tail of
+                # Jarvis' own TTS can re-trigger the wake word, but it cannot
+                # press a key. Dropping explicit presses here made a quick
+                # follow-up ("press and talk") record nothing until the lock
+                # expired — the opening words of the capture were missing.
                 remaining = self._wake_lock_until - now
                 log.info("Wake lock active; ignoring call for %.1fs.", remaining)
                 self._ptt_mode = False
