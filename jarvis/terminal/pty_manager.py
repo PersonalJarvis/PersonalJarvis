@@ -149,20 +149,61 @@ UNKNOWN_EXIT_CODE = -1
 _INTERACTIVE_TERM = "xterm-256color"
 
 
+def _stale_colour_claims(source: Mapping[str, str]) -> tuple[str, ...]:
+    """Inherited "colour is impossible here" declarations that are now false.
+
+    Each of these describes the LAUNCHER's own stdout, and each stops being
+    true at this boundary for the same reason ``TERM=dumb`` does: the child is
+    attached to a PTY drawn by xterm.js with a full sixteen-colour theme.  They
+    matter more than the terminal type, because every mainstream CLI colour
+    library obeys them unconditionally — a pane that inherits ``NO_COLOR``
+    renders its agent in plain monochrome no matter how capable ``TERM`` says
+    the terminal is.
+
+    This is not a hypothetical: an app started once from a coding agent's own
+    shell inherits that shell's ``TERM=dumb`` + ``NO_COLOR=1``, hands it to
+    every pane it opens, and passes it on across each in-app restart.
+
+    Deliberate settings survive.  ``FORCE_COLOR`` is dropped only when it
+    DISABLES colour; a positive value is an escalation the user meant.
+    ``COLORTERM`` is dropped only when EMPTY — the common colour libraries read
+    its mere presence as "sixteen colours", so an empty one inherited from a
+    pipe downgrades a 256-colour pane, while a real value stays authoritative.
+    """
+    stale: list[str] = []
+    if source.get("NO_COLOR", "").strip():
+        stale.append("NO_COLOR")
+    if source.get("FORCE_COLOR", "").strip().lower() in {"0", "false"}:
+        stale.append("FORCE_COLOR")
+    if "COLORTERM" in source and not source["COLORTERM"].strip():
+        stale.append("COLORTERM")
+    return tuple(stale)
+
+
 def _interactive_child_env(env: Mapping[str, str] | None) -> Mapping[str, str] | None:
-    """Replace a missing/``dumb`` parent TERM at the PTY capability boundary.
+    """Correct the parent's non-interactive claims at the PTY capability boundary.
+
+    Two corrections, both describing what the child is ACTUALLY connected to: a
+    missing/``dumb`` TERM becomes the xterm.js terminal type, and the inherited
+    colour-suppressing variables listed by :func:`_stale_colour_claims` are
+    dropped.
 
     ``env`` is a complete replacement when supplied to either backend.  Only
-    materialize one when TERM needs correction; otherwise preserve the old
+    materialize one when something needs correcting; otherwise preserve the old
     inheritance/identity behaviour exactly.  A meaningful caller-selected
     terminal type (for example ``screen-256color``) remains authoritative.
     """
     source = os.environ if env is None else env
     term = source.get("TERM", "").strip()
-    if term and term.lower() != "dumb":
+    term_is_stale = not term or term.lower() == "dumb"
+    colour_claims = _stale_colour_claims(source)
+    if not term_is_stale and not colour_claims:
         return env
     child_env = dict(source)
-    child_env["TERM"] = _INTERACTIVE_TERM
+    if term_is_stale:
+        child_env["TERM"] = _INTERACTIVE_TERM
+    for key in colour_claims:
+        child_env.pop(key, None)
     return child_env
 
 
@@ -348,10 +389,11 @@ class PtyManager:
         a choice made here), so a caller passing one must hand over a COMPLETE
         environment — typically ``os.environ`` plus its own keys. Building that
         overlay is what `jarvis.agent_accounts.spawn_env` exists for. ``None``
-        normally inherits this process's environment. The one correction made at
-        this layer is replacing a missing/``dumb`` TERM with the xterm.js terminal
-        type the child is actually connected to; doing that requires a complete
-        snapshot of the inherited environment.
+        normally inherits this process's environment. The corrections made at
+        this layer describe what the child is actually connected to — the
+        xterm.js terminal type in place of a missing/``dumb`` TERM, and no
+        inherited claim that colour is impossible (`_interactive_child_env`);
+        both require a complete snapshot of the inherited environment.
         """
         backend = make_pty_backend()
         child_env = _interactive_child_env(env)
