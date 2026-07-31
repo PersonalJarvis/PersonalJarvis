@@ -2543,6 +2543,17 @@ export function AgenticGrid({
                   arrange.hover.target,
                 )}
           </span>
+          {/* Exchanging two panes is a real move, just not the one dragging
+              means — so it is offered here, where someone mid-drag can see it,
+              rather than left to be discovered by accident. */}
+          {arrange.hover !== null && !arrange.swapping && (
+            <span
+              data-testid="agentic-arrange-swap-hint"
+              className="font-normal text-muted-foreground/70"
+            >
+              {t("agentic_grid.arrange.swap_hint")}
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -3664,7 +3664,8 @@
       "left": "Left of {0}",
       "right": "Right of {0}",
       "above": "Above {0}",
-      "below": "Below {0}"
+      "below": "Below {0}",
+      "swap_hint": "· Shift to swap"
     },
     "history": {
       "open": "View prompt history for {0}",

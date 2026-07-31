@@ -6,10 +6,10 @@
     "single_turn_mode": false
   },
   "tts": {
-    "provider": "openrouter-tts",
+    "provider": "grok-voice",
     "fallback": "grok-voice",
-    "voice_de": "Kore",
-    "voice_en": "Kore",
+    "voice_de": "leo",
+    "voice_en": "leo",
     "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
@@ -33,17 +33,17 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "gemini",
-    "fallback": "gemini",
-    "deep_brain": "gemini",
-    "routing_provider": "gemini",
-    "routing_model": "gemini-3.5-flash"
+    "primary": "grok",
+    "fallback": "openrouter",
+    "deep_brain": "claude-cli",
+    "routing_provider": "grok",
+    "routing_model": "grok-4.20-0309-non-reasoning"
   },
   "brain.router": {
-    "provider": "gemini",
-    "model": "gemini-3.5-flash",
-    "fallback_provider": "gemini",
-    "fallback_model": "gemini-3.5-flash"
+    "provider": "grok",
+    "model": "grok-4.20-0309-non-reasoning",
+    "fallback_provider": "openrouter",
+    "fallback_model": "google/gemini-3.5-flash"
   },
   "brain.providers.gemini": {
     "model": "gemini-3.5-flash",
@@ -64,15 +64,18 @@
     "fallback_model_2": "gemini-3-pro-preview"
   },
   "stt": {
-    "provider": "nemotron-local",
-    "model": "whisper-large-v3",
+    "provider": "groq-api",
+    "model": "large-v3",
     "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
-    "language": "auto"
+    "language": "auto",
+    "models": {
+      "openrouter-stt": "openai/gpt-4o-transcribe"
+    }
   },
   "ack_brain": {
     "enabled": true,
-    "provider": "gemini",
-    "fallback_provider": "gemini",
+    "provider": "grok",
+    "fallback_provider": "openrouter",
     "timeout_ms": 4000,
     "preamble_enabled": false
   },
@@ -107,10 +110,10 @@
     "voice": "cedar"
   },
   "brain.tool_model": {
-    "provider": "gemini"
+    "provider": "grok"
   },
   "brain.computer_use": {
-    "provider": "openrouter"
+    "provider": "ollama"
   },
   "brain.providers.grok-realtime": {
     "voice": "lux"

@@ -1,91 +1,82 @@
 /**
  * What a drop MEANS — the half of pane dragging that can be wrong silently.
  *
- * Every failure here looks like the grid ignoring the user: a corner that
- * resolves to the wrong edge puts a pane one column off, and a centre zone that
- * is too small turns "swap these two" into "move it to the left of that one",
- * which rearranges the whole row instead of exchanging two panes.
+ * Every failure here looks like the grid ignoring the user, or worse, doing
+ * something they did not ask for: dragging is how a person says "put this pane
+ * over there", and the one answer that must never come back unbidden is a swap,
+ * which sends the target the other way and moves TWO panes (BUG-111).
  */
 import { describe, expect, it } from "vitest";
 
 import { EDGE_MAX_PX, pickTarget, zoneFor, type PaneRect } from "./paneArrange";
 
-/** A 200×100 pane at the origin — round numbers so the fractions are readable. */
+/** A 200×100 pane at the origin — round numbers so the arithmetic is readable. */
 const RECT: PaneRect = { left: 0, top: 0, width: 200, height: 100 };
 
 /**
  * One column of a five-pane workspace, at the shape those actually have: tall
- * and narrow. This is the geometry every regression below is about.
+ * and narrow. This is the geometry the regressions below are about.
  */
 const COLUMN: PaneRect = { left: 500, top: 40, width: 360, height: 900 };
 
 describe("zoneFor", () => {
-  it("reads the middle of a pane as a swap", () => {
-    expect(zoneFor(RECT, 100, 50)).toBe("swap");
+  it("reads the halves of a pane as the side to land on", () => {
+    expect(zoneFor(RECT, 40, 50)).toBe("left");
+    expect(zoneFor(RECT, 160, 50)).toBe("right");
   });
 
-  it("keeps the swap zone big enough to hit without aiming", () => {
-    // Anywhere in the middle 40 % × 40 %, which is a large target on purpose:
-    // swapping two panes is the move people reach for.
-    expect(zoneFor(RECT, 65, 35)).toBe("swap");
-    expect(zoneFor(RECT, 135, 65)).toBe("swap");
-  });
-
-  it("reads each edge as a placement on that side", () => {
-    expect(zoneFor(RECT, 5, 50)).toBe("left");
-    expect(zoneFor(RECT, 195, 50)).toBe("right");
-    expect(zoneFor(RECT, 100, 3)).toBe("above");
-    expect(zoneFor(RECT, 100, 97)).toBe("below");
-  });
-
-  it("resolves a corner to the edge it is actually nearer", () => {
-    // 4 % across, 20 % down: closer to the left edge than to the top one.
-    expect(zoneFor(RECT, 8, 20)).toBe("left");
-    // 20 % across, 4 % down: the other way round.
-    expect(zoneFor(RECT, 40, 4)).toBe("above");
-  });
-
-  it("respects a pane that is not at the origin", () => {
-    const offset: PaneRect = { left: 500, top: 300, width: 200, height: 100 };
-    expect(zoneFor(offset, 600, 350)).toBe("swap");
-    expect(zoneFor(offset, 505, 350)).toBe("left");
-  });
-
-  it("reads the middle of a TALL pane as a swap, at any height (BUG-111)", () => {
-    // The bug: carrying a pane sideways onto its neighbour and letting go
-    // anywhere below the pane's middle produced `below`, which stacked the two
-    // in one column instead of exchanging them. Nobody aims vertically while
-    // dragging horizontally, so the whole middle band has to be a swap.
-    for (const y of [200, 400, 490, 600, 700, 800]) {
-      expect(zoneFor(COLUMN, 680, y)).toBe("swap");
+  it("never answers a plain drag with a swap (BUG-111)", () => {
+    // Dragging MOVES one pane. Answering "put it over there" with an exchange
+    // sends the target back the other way, so the user asked for one pane to
+    // move and two of them did.
+    for (const x of [10, 60, 100, 140, 190]) {
+      for (const y of [50, 60, 40]) {
+        expect(zoneFor(RECT, x, y)).not.toBe("swap");
+      }
     }
   });
 
-  it("keeps an edge band the same size however tall the pane grows", () => {
-    // An edge is a place the user aims at; aiming does not get harder because
-    // the pane got taller, and a band that grows with it eats the middle.
-    const shortPane: PaneRect = { left: 0, top: 0, width: 360, height: 400 };
-    const insideBand = EDGE_MAX_PX - 10;
-    expect(zoneFor(COLUMN, 680, COLUMN.top + insideBand)).toBe("above");
-    expect(zoneFor(shortPane, 180, insideBand)).toBe("above");
-    // Just past the ceiling it is the middle again — in BOTH panes, which is
-    // the property a share alone could not give.
-    const pastBand = EDGE_MAX_PX + 10;
-    expect(zoneFor(COLUMN, 680, COLUMN.top + pastBand)).toBe("swap");
-    expect(zoneFor(shortPane, 180, pastBand)).toBe("swap");
+  it("gives every point in a TALL pane a side, at any height", () => {
+    // Nobody aims vertically while dragging sideways, so the whole middle of a
+    // grid column has to be a landing place rather than a dead zone.
+    for (const y of [200, 400, 490, 600, 700, 800]) {
+      expect(zoneFor(COLUMN, 560, y)).toBe("left");
+      expect(zoneFor(COLUMN, 800, y)).toBe("right");
+    }
   });
 
-  it("still reads every edge of a tall pane as a placement", () => {
-    expect(zoneFor(COLUMN, 505, 500)).toBe("left");
-    expect(zoneFor(COLUMN, 855, 500)).toBe("right");
+  it("keeps the top and bottom edges for joining the target's column", () => {
+    expect(zoneFor(RECT, 100, 3)).toBe("above");
+    expect(zoneFor(RECT, 100, 97)).toBe("below");
     expect(zoneFor(COLUMN, 680, 45)).toBe("above");
     expect(zoneFor(COLUMN, 680, 935)).toBe("below");
   });
 
-  it("belongs to an edge only when it is inside THAT edge's band", () => {
-    // Deep in the left band but well clear of the top one: the nearest edge in
-    // raw distance is the top, yet the point is not in the top's band at all.
-    expect(zoneFor(COLUMN, 505, COLUMN.top + 200)).toBe("left");
+  it("keeps a stack-it band the same size however tall the pane grows", () => {
+    // An edge is a place the user aims at; aiming does not get harder because
+    // the pane got taller, and a band that grows with it eats the whole drag.
+    const shortPane: PaneRect = { left: 0, top: 0, width: 360, height: 400 };
+    const insideBand = EDGE_MAX_PX - 10;
+    expect(zoneFor(COLUMN, 680, COLUMN.top + insideBand)).toBe("above");
+    expect(zoneFor(shortPane, 180, insideBand)).toBe("above");
+    // Just past the ceiling it is a sideways landing again — in BOTH panes,
+    // which is the property a share alone could not give.
+    const pastBand = EDGE_MAX_PX + 10;
+    expect(zoneFor(COLUMN, 560, COLUMN.top + pastBand)).toBe("left");
+    expect(zoneFor(shortPane, 100, pastBand)).toBe("left");
+  });
+
+  it("swaps only when the modifier asks for it", () => {
+    expect(zoneFor(RECT, 40, 50, { swap: true })).toBe("swap");
+    // Even on an edge: the modifier is the user saying what they want, and it
+    // outranks where they happen to be pointing.
+    expect(zoneFor(RECT, 100, 3, { swap: true })).toBe("swap");
+  });
+
+  it("respects a pane that is not at the origin", () => {
+    const offset: PaneRect = { left: 500, top: 300, width: 200, height: 100 };
+    expect(zoneFor(offset, 505, 350)).toBe("left");
+    expect(zoneFor(offset, 695, 350)).toBe("right");
   });
 
   it("falls back to swap for a pane with no measurable box", () => {
@@ -102,7 +93,14 @@ describe("pickTarget", () => {
   ];
 
   it("names the pane under the pointer and what a drop would do", () => {
-    expect(pickTarget(targets, "Mika", 300, 50)).toEqual({
+    expect(pickTarget(targets, "Mika", 380, 50)).toEqual({
+      target: "Nova",
+      zone: "right",
+    });
+  });
+
+  it("carries the swap modifier through to the answer", () => {
+    expect(pickTarget(targets, "Mika", 380, 50, { swap: true })).toEqual({
       target: "Nova",
       zone: "swap",
     });

@@ -3663,7 +3663,8 @@
       "left": "A la izquierda de {0}",
       "right": "A la derecha de {0}",
       "above": "Encima de {0}",
-      "below": "Debajo de {0}"
+      "below": "Debajo de {0}",
+      "swap_hint": "· Mayús para intercambiar"
     },
     "history": {
       "open": "Ver el historial de prompts de {0}",

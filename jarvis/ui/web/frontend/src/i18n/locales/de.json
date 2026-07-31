@@ -3663,7 +3663,8 @@
       "left": "Links von {0}",
       "right": "Rechts von {0}",
       "above": "Über {0}",
-      "below": "Unter {0}"
+      "below": "Unter {0}",
+      "swap_hint": "· Umschalt zum Tauschen"
     },
     "history": {
       "open": "Prompt-Verlauf für {0} öffnen",

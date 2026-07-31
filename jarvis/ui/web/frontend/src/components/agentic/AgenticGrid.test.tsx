@@ -1919,40 +1919,89 @@ describe("rearranging panes", () => {
     });
   }
 
-  it("swaps two panes when one is dropped in the middle of the other", async () => {
-    const swapped = sessionWith([
+  it("MOVES a pane past another one rather than exchanging the two", async () => {
+    // The whole point of dragging: one pane goes where it was dropped. A swap
+    // would send Nova back the other way, which nobody asked for (BUG-111).
+    const moved = sessionWith([
       ["Nova", 0],
       ["Mika", 1],
     ]);
-    vi.mocked(api.moveTerminal).mockResolvedValue(swapped);
+    vi.mocked(api.moveTerminal).mockResolvedValue(moved);
     const { onSessionChanged } = twoPlacedPanes();
 
     press("Mika", 100, 50);
-    move(300, 50); // the middle of Nova
+    move(380, 50); // carried well into Nova's right half
 
     // Mid-drag the grid says what the drop would do, before it happens.
-    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("swap");
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
     expect(screen.getByTestId("agentic-arrange-ghost").textContent).toContain("Mika");
     expect(screen.getByTestId("pane-Mika").dataset.arranging).toBe("yes");
 
     await release();
 
-    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "swap");
-    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(swapped));
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "right");
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(moved));
   });
 
-  it("places a pane beside another when it is dropped near an edge", async () => {
+  it("lands on the half of the target the pointer is in", async () => {
     vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
     twoPlacedPanes();
 
     press("Mika", 100, 50);
-    move(205, 50); // hard against Nova's left edge
+    move(240, 50); // Nova's left half
 
     expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("left");
 
     await release();
 
     expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "left");
+  });
+
+  it("swaps two panes when the drop is made with Shift held", async () => {
+    // Exchanging two panes is still worth having — it is the only move that
+    // leaves the grid's shape untouched — so it lives on the modifier, where it
+    // cannot happen to someone who did not ask for it.
+    const swapped = sessionWith([
+      ["Nova", 0],
+      ["Mika", 1],
+    ]);
+    vi.mocked(api.moveTerminal).mockResolvedValue(swapped);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
+    expect(screen.getByTestId("agentic-arrange-swap-hint")).toBeTruthy();
+
+    // The preview answers the modifier without the pointer moving at all.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+    });
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("swap");
+    expect(screen.queryByTestId("agentic-arrange-swap-hint")).toBeNull();
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "swap");
+  });
+
+  it("goes back to moving when Shift is let go mid-drag", async () => {
+    vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+    });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift" }));
+    });
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "right");
   });
 
   it("reads the bottom of a pane as 'put it underneath'", async () => {
