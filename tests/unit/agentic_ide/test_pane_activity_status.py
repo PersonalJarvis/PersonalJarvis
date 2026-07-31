@@ -282,6 +282,37 @@ async def test_the_bell_is_not_widened_with_it(registry: Registry, tmp_path: Pat
     assert notifications._tasked(term) is False
 
 
+async def test_the_caption_never_contradicts_the_badge(registry: Registry, tmp_path: Path) -> None:
+    """The sentence under the pane and the word beside it describe one pane.
+
+    Reported together with the badge itself: the caption said "Working now" for
+    a terminal that had been finished for twenty minutes, one line under a badge
+    correctly saying it had stopped. It claimed work from "has this pane ever
+    printed anything", which is true of every pane that has ever run.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _watched(registry, term, moves=False)
+
+    state = term.to_dict()
+
+    assert state["activity"] == "waiting"
+    assert "Working now" not in state["recap_detail"]
+    assert "waiting at its prompt" in state["recap_detail"]
+
+
+async def test_the_caption_says_working_when_it_is(registry: Registry, tmp_path: Path) -> None:
+    """And the other way round, or the wording would just be pessimistic."""
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _watched(registry, term, moves=True)
+
+    state = term.to_dict()
+
+    assert state["activity"] == "working"
+    assert "Working now" in state["recap_detail"]
+
+
 async def test_the_two_readings_of_one_pane_agree(registry: Registry, tmp_path: Path) -> None:
     """The workspace state and the pane-list poll describe the same pane alike.
 

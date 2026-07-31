@@ -45,6 +45,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .activity import observed
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
 
@@ -349,13 +351,17 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     sent = int(getattr(term, "prompts_sent", 0) or 0)
     activity = _activity(tail)
     idle = idle_phrase(term)
-    # A live pane that is visibly producing output but was never sent a prompt
-    # is being driven by hand — the caption must say that, not imply idleness.
-    working = status == "live" and bool(activity or idle)
+    # Is this pane's agent STILL AT IT, from the one detector that answers that
+    # (see .activity)? Asked rather than guessed from "has it ever printed
+    # anything", which is what this used to do — and which called a pane that
+    # had been finished for twenty minutes "Working now", one line under a badge
+    # correctly saying it had stopped. Two descriptions of one pane, disagreeing
+    # inside a single payload.
+    doing = observed(term).activity
     # One sentence about the instruction, computed once: every branch below
     # opens with it, and a plain terminal answers it differently.
     asked = (
-        _task_sentence(task, sent=sent, working=working)
+        _task_sentence(task, sent=sent, working=status == "live" and bool(activity or idle))
         if _typed_into(term)
         else "This is a plain terminal — you type into it yourself."
     )
@@ -413,11 +419,23 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     else:
         headline = "Running — no work visible yet"
 
-    now = (
-        f"Working now, last output {idle}: {activity}."
-        if idle and activity
-        else (f"Working now: {activity}." if activity else "Running, with nothing printed yet.")
-    )
+    # What it is doing RIGHT NOW, in the same words the pane's badge uses. The
+    # last row it printed rides along in every case: it is the evidence for the
+    # claim, and it is what the reader checks the claim against.
+    printed = f"Last printed{' ' + idle if idle else ''}: {activity}." if activity else ""
+    if not activity:
+        now = "Running, with nothing printed yet."
+    elif doing == "working":
+        now = f"Working now. {printed}"
+    elif doing == "asking":
+        now = f"Stopped with a question on screen, waiting for your answer. {printed}"
+    elif doing == "waiting":
+        now = f"Not working right now — waiting at its prompt. {printed}"
+    else:
+        # No confident reading: a pane whose process this caller cannot see, or
+        # one still taking the terminal. The evidence stands on its own rather
+        # than being dressed up as a claim about what the agent is doing.
+        now = printed
     return Recap(
         headline=condense(headline, HEADLINE_CHARS),
         detail=_sentences(asked, now),
