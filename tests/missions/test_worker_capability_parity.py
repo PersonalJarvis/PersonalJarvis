@@ -87,6 +87,7 @@ def test_registry_drives_the_restricted_worker_command_surface() -> None:
         "wake-word-get",
         "audio-devices-list",
         "wiki-ingest",
+        "ultrawiki-ask",
         "session-latest-turn",
         "tools-list",
         "missions-list",
