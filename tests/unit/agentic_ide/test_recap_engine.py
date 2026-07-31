@@ -437,6 +437,37 @@ def test_a_depleted_key_failure_reads_as_a_sentence_not_json() -> None:
     assert note.startswith("Its provider is out of credits or rate-limited.")
 
 
+def test_a_connected_subscription_is_the_last_candidate(monkeypatch) -> None:
+    """One depleted API key + a signed-in coding CLI must still produce recaps."""
+    from jarvis.brain import resolver
+
+    api = SimpleNamespace(model="depleted-api")
+    subscription = SimpleNamespace(model="coding-cli")
+    monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
+    monkeypatch.setattr(
+        resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription
+    )
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
+
+    assert recap_engine._resolve_brains() == [api, subscription]  # noqa: SLF001
+
+
+def test_a_full_api_chain_never_pays_for_the_cli_probe(monkeypatch) -> None:
+    """The subscription is a last resort, not a fourth opinion."""
+    from jarvis.brain import resolver
+
+    brains = [SimpleNamespace(model=f"api-{n}") for n in range(recap_engine.MAX_PROVIDER_TRIES)]
+    monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter(brains))
+
+    def never(cfg, **kwargs):  # noqa: ANN001, ANN202
+        raise AssertionError("the CLI probe must not run when the chain is full")
+
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", never)
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
+
+    assert recap_engine._resolve_brains() == brains  # noqa: SLF001
+
+
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
     """A provider that raises costs the refresh, never the recap on screen."""
 

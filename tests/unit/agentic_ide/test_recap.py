@@ -97,6 +97,7 @@ def test_the_claude_code_footer_never_becomes_the_headline() -> None:
     term.transcript.feed("Traced the stale process to yesterday\r\n")
     term.transcript.feed("Tip: Use /btw to ask a quick side question\r\n")
     term.transcript.feed("Personal Jarvis 🌿 main Opus 5 (1M context)\r\n")
+    term.transcript.feed("auto mode on · 1 shell\r\n")
 
     assert summarize(term).headline == "Traced the stale process to yesterday"
 

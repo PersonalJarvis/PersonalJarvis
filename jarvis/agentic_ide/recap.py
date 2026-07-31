@@ -93,6 +93,10 @@ _CHROME_FRAGMENTS = (
     "accept edits on",
     "bypassing permissions",
     "plan mode on",
+    # The collapsed permission-mode footer ("auto mode on · 1 shell") carries
+    # none of the key hints above, so it needs its own entry — observed live as
+    # the headline of a busy pane.
+    "auto mode on",
 )
 
 
