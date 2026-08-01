@@ -488,11 +488,13 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # they target dedicated translation/transcription sessions, not the general
 # duplex voice-agent protocol implemented by this adapter.
 REALTIME_MODELS: dict[str, list[ModelInfo]] = {
-    # Codex 0.146's experimental v1 subscription transport has its own fixed
-    # model/voice contract. Keep it separate from the metered OpenAI Realtime
-    # API catalog: their accepted voice sets are not interchangeable.
+    # ChatGPT-Live (Codex v3): the SERVER chooses the model — a client
+    # `session.model` is rejected outright, and the old v1 protocol (which
+    # accepted a model) answers 403 since the ChatGPT-Live launch (both
+    # verified live 2026-08-01). One honest entry instead of a fake choice;
+    # model selection lives on the metered OpenAI Realtime card.
     "codex-subscription-realtime": _curated(
-        [("gpt-realtime-1.5", "GPT Realtime 1.5 (Codex default)")]
+        [("auto", "ChatGPT-Live (model chosen by OpenAI)")]
     ),
     "openai-realtime": _curated(
         [

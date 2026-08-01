@@ -200,9 +200,12 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
         "output_modality": "audio",
         "offer_sdp": "v=0\r\no=browser-offer",
         "prompt": "",
-        "model": "gpt-realtime-1.5",
+        # v3 (ChatGPT-Live): the server chooses the model — the client must
+        # not send one (rejected with "Field `session.model` is not allowed",
+        # verified live 2026-08-01).
+        "model": None,
         "voice": "cove",
-        "version": "v1",
+        "version": "v3",
         "include_startup_context": False,
         "client_managed_handoffs": True,
     }
@@ -240,28 +243,43 @@ async def test_timed_out_remote_cleanup_poisons_the_entire_client(
     assert client.poison_calls == 1
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("model", "gpt-4o-realtime-preview"), ("voice", "marin")],
-)
 @pytest.mark.asyncio
-async def test_stale_api_v2_selection_fails_before_subscription_realtime_start(
-    field: str,
-    value: str,
-) -> None:
+async def test_stale_api_voice_selection_fails_before_subscription_realtime_start() -> None:
+    """A voice outside the server-confirmed v3 roster fails before start."""
     client = _Client()
     provider = CodexSubscriptionRealtimeProvider(client=client)
     config = RealtimeSessionConfig(
         transport_offer_sdp="v=0\r\no=browser-offer",
-        **{field: value},
+        voice="marin",
     )
 
-    with pytest.raises(RuntimeError, match="unsupported V1"):
+    with pytest.raises(RuntimeError, match="unsupported voice"):
         await provider.open_session(config)
 
     assert client.realtime_starts == []
     assert client.stops == ["thread-1"]
     assert client.unsubscribes == ["thread-1"]
+
+
+@pytest.mark.asyncio
+async def test_stale_model_pin_is_ignored_not_fatal() -> None:
+    """v3 chooses the model server-side: a leftover pin from the metered API
+    (or the dead v1 era) must not brick the call — it is dropped, and no
+    model field reaches the server."""
+    client = _Client()
+    provider = CodexSubscriptionRealtimeProvider(client=client)
+    config = RealtimeSessionConfig(
+        transport_offer_sdp="v=0\r\no=browser-offer",
+        model="gpt-4o-realtime-preview",
+    )
+
+    session = await provider.open_session(config)
+
+    assert len(client.realtime_starts) == 1
+    _thread, start = client.realtime_starts[0]
+    assert start["model"] is None
+    assert start["version"] == "v3"
+    await session.close()
 
 
 @pytest.mark.asyncio

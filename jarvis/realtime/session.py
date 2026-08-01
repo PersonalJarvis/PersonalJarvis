@@ -1569,7 +1569,22 @@ class RealtimeVoiceSession:
 
     async def _open(self) -> None:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+        # A provider may DECLARE a larger handshake need (a capability, never
+        # a provider-name check — AP-21): the Codex subscription transport
+        # legitimately spends 15-30s on a cold start (app-server spawn, live
+        # account verification, WebRTC negotiation), and the shared 12s
+        # ceiling beheaded every cold call into a pipeline fallback.
+        declared_total = max(
+            (
+                float(getattr(provider, "handshake_budget_s", 0.0) or 0.0)
+                for provider in self._providers
+                if self._provider_is_available(provider)
+            ),
+            default=0.0,
+        )
+        deadline = loop.time() + max(
+            _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S, declared_total
+        )
         for provider in self._providers:
             if not self._provider_is_available(provider):
                 continue
@@ -1623,6 +1638,13 @@ class RealtimeVoiceSession:
                 if remaining <= 0:
                     raise TimeoutError("realtime handshake budget exhausted")
                 provider_budget = remaining / max(1, providers_left)
+                declared = float(
+                    getattr(provider, "handshake_budget_s", 0.0) or 0.0
+                )
+                if declared > provider_budget:
+                    # Honor the declared need up to what the (already
+                    # stretched) overall deadline still allows.
+                    provider_budget = min(declared, remaining)
 
                 async def _probe_and_open(
                     candidate: Any = provider,

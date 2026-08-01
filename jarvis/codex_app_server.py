@@ -3068,13 +3068,38 @@ class CodexAppServerClient:
             )
             answer_sdp: str | None = None
             if sdp_subscription is not None:
-                notification = await sdp_subscription.wait_for(
-                    "thread/realtime/sdp", timeout_s=sdp_timeout_s
-                )
-                candidate = notification.params.get("sdp")
-                if not isinstance(candidate, str) or not candidate:
-                    raise CodexAppServerError("Codex app-server returned an invalid WebRTC answer.")
-                answer_sdp = candidate
+                # Wait for the answer, but FAIL FAST on a realtime error or
+                # close: the upstream refusal (for example the 403 that ended
+                # the experimental v1 protocol) used to hide behind a blind
+                # 15s timeout instead of reaching the user as its honest text.
+                deadline = asyncio.get_running_loop().time() + sdp_timeout_s
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise CodexAppServerTimeout(
+                            "Timed out waiting for the Codex WebRTC answer."
+                        )
+                    notification = await sdp_subscription.get(remaining)
+                    if notification.method == "thread/realtime/sdp":
+                        candidate = notification.params.get("sdp")
+                        if not isinstance(candidate, str) or not candidate:
+                            raise CodexAppServerError(
+                                "Codex app-server returned an invalid WebRTC answer."
+                            )
+                        answer_sdp = candidate
+                        break
+                    if notification.method == "thread/realtime/error":
+                        message = " ".join(
+                            str(notification.params.get("message", "") or "").split()
+                        )[:300]
+                        raise CodexAppServerError(
+                            "Codex realtime start failed: "
+                            + (message or "unspecified realtime error")
+                        )
+                    if notification.method == "thread/realtime/closed":
+                        raise CodexAppServerError(
+                            "Codex realtime transport closed before answering."
+                        )
             return CodexRealtimeStartResult(response=response, answer_sdp=answer_sdp)
         finally:
             if sdp_subscription is not None:

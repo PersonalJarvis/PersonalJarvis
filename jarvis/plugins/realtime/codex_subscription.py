@@ -29,9 +29,17 @@ _OUTPUT_QUIESCENCE_S = 0.5
 _NORMALIZATION_QUEUE_MAX = 128
 _REMOTE_CLEANUP_TIMEOUT_S = 1.5
 _TURN_INTERRUPT_TIMEOUT_S = 1.5
-_V1_MODEL = "gpt-realtime-1.5"
-_V1_DEFAULT_VOICE = "cove"
-_V1_VOICES = frozenset(
+# The experimental v1 protocol was shut off server-side with the ChatGPT-Live
+# launch (every v1 start now answers "403 Voice session access denied",
+# verified live 2026-08-01). v3 is the ChatGPT-Live protocol: the SERVER
+# chooses the model (a client `model` field is rejected outright), the client
+# only picks the voice. The legacy model id is still accepted in config as a
+# no-op so older pins keep working.
+_LEGACY_V1_MODEL = "gpt-realtime-1.5"
+_DEFAULT_VOICE = "cove"
+# Server-confirmed v3 roster (the refusal for an unknown voice lists exactly
+# these nine, verified live 2026-08-01).
+_V3_VOICES = frozenset(
     {
         "arbor",
         "breeze",
@@ -714,6 +722,11 @@ class CodexSubscriptionRealtimeProvider:
     supports_realtime = True
     implicit_usage_fallback_allowed = False
     requires_webrtc_offer = True
+    # Declared handshake need (capability, AP-21): a COLD start spawns
+    # app-server, verifies the live account, re-audits config, and negotiates
+    # WebRTC — measured 15-25s on a mid-range desktop. The shared 12s ceiling
+    # beheaded every cold call into a pipeline fallback (log 2026-08-01).
+    handshake_budget_s = 45.0
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates: tuple[tuple[str, str | None], ...] = ()
@@ -843,30 +856,38 @@ class CodexSubscriptionRealtimeProvider:
                 raise RuntimeError("Codex app-server did not return a thread id")
             subscription = client.subscribe(thread_id)
 
-            model = str(getattr(cfg, "model", "") or "").strip() or _V1_MODEL
+            configured_model = str(getattr(cfg, "model", "") or "").strip()
+            if configured_model and configured_model not in {
+                "auto",
+                _LEGACY_V1_MODEL,
+            }:
+                # v3 rejects a client model outright; an unknown leftover pin
+                # must not brick the call — the server chooses the model.
+                log.info(
+                    "Codex subscription realtime ignores the configured model "
+                    "%r: ChatGPT-Live (v3) selects the model server-side",
+                    configured_model,
+                )
             voice = (
                 str(getattr(cfg, "voice", "") or "").strip().lower()
-                or _V1_DEFAULT_VOICE
+                or _DEFAULT_VOICE
             )
-            if model != _V1_MODEL:
+            if voice not in _V3_VOICES:
                 raise RuntimeError(
-                    "Codex subscription realtime has an unsupported V1 model configured"
-                )
-            if voice not in _V1_VOICES:
-                raise RuntimeError(
-                    "Codex subscription realtime has an unsupported V1 voice configured"
+                    "Codex subscription realtime has an unsupported voice configured"
                 )
             start = await client.realtime_start(
                 thread_id,
                 output_modality="audio",
                 offer_sdp=offer_sdp,
                 prompt="",
-                model=model,
+                # v3 (ChatGPT-Live): the server chooses the model; sending a
+                # client model is rejected with "Field `session.model` is not
+                # allowed" (verified live 2026-08-01). The dead v1 protocol
+                # answered every start with 403 since the ChatGPT-Live launch.
+                model=None,
                 voice=voice,
-                # Codex 0.146 deliberately ignores the configured voice for a
-                # WebRTC start whose version is omitted. V1 is the current
-                # supported protocol and preserves the selected voice.
-                version="v1",
+                version="v3",
                 include_startup_context=False,
                 client_managed_handoffs=True,
             )
