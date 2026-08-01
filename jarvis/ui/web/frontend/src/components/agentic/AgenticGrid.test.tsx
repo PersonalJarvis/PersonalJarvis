@@ -1254,6 +1254,12 @@ describe("prompt bar seam", () => {
     expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();
     expect(screen.getByTestId("agentic-composer-reopen")).toBeTruthy();
     expect(screen.getByTestId("pane-resizer-horizontal")).toBeTruthy();
+    expect(
+      screen
+        .getByLabelText("Instruction for Mika")
+        .closest('[aria-hidden="true"]')
+        ?.classList.contains("hidden"),
+    ).toBe(true);
   });
 
   it("dragging the seam to the bottom collapses an opened bar to a strip", () => {

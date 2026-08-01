@@ -2465,7 +2465,8 @@ export function AgenticGrid({
             void attach({ paths: [], files: images });
           }}
           className={cn(
-            "relative flex shrink-0 flex-col overflow-hidden px-3 py-2 transition-colors",
+            "relative shrink-0 flex-col overflow-hidden px-3 py-2 transition-colors",
+            composerCollapsed ? "hidden" : "flex",
             dragging && "bg-primary/5 ring-1 ring-inset ring-primary/50",
           )}
         >
