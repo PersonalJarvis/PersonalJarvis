@@ -26,6 +26,7 @@ import * as api from "@/lib/voiceApi";
 const pushToast = vi.fn();
 
 beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   window.localStorage.clear();
   for (const key of Object.keys(storeState)) delete storeState[key];
   Object.assign(storeState, {
@@ -39,13 +40,16 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe("voice panel", () => {
   it("shows the orb, ready, with the wake-word hint", () => {
     render(<VoicePanel />);
     expect(screen.getByTestId("voice-panel")).toBeTruthy();
-    expect(screen.getByTestId("voice-orb-canvas")).toBeTruthy();
+    const orb = screen.getByTestId("voice-orb-canvas");
+    expect(orb.getAttribute("data-state")).toBe("idle");
+    expect(orb.getAttribute("style")).toContain("width: 208px");
     expect(screen.getByTestId("voice-panel-status").textContent).toBe("Ready");
     // The brand rule: the assistant's own name, never a hardcoded one.
     expect(screen.getByTestId("voice-orb-button").getAttribute("title")).toContain(
