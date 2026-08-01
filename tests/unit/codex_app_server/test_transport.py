@@ -2378,6 +2378,38 @@ def test_failure_memo_is_not_served_on_the_stale_path(
     assert "owned elsewhere" in snapshot.reason
 
 
+@pytest.mark.asyncio
+async def test_live_account_gate_records_the_plan_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sticky diagnosis is written where the truth is discovered — the
+    live account gate — so a plan that turns unsupported AFTER activation
+    still flips every status surface, not just the activation route."""
+    client = CodexAppServerClient("codex-test")
+
+    async def no_start() -> None:
+        return None
+
+    async def refuse() -> None:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    async def no_close(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(client, "ensure_started", no_start)
+    monkeypatch.setattr(client, "_verify_live_chatgpt_account", refuse)
+    monkeypatch.setattr(client, "_close_process", no_close)
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.require_chatgpt_login()
+
+    assert transport.codex_subscription_activation_block() == (
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+
+
 def test_activation_block_sticks_until_invalidated() -> None:
     transport.set_codex_subscription_activation_block(
         "Subscription voice permits only personal ChatGPT accounts."

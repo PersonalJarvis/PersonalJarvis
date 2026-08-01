@@ -768,18 +768,28 @@ export function ProviderCard({
       return;
     }
     if (!assumeConfigured && !descriptor.configured) {
-      // A transient busy probe means "state unknown for a moment" — telling
-      // the user to redo a working ChatGPT login here would contradict the
-      // card's own "checking" line (and the backend's 409 for this case).
-      if (descriptor.codex_status?.reason_code === "busy") {
-        pushToast("info", t("apikeys_codex.status_busy"));
+      const codexReason = descriptor.codex_status?.reason_code;
+      // Transient/in-flight states are notes, not faults — and telling the
+      // user to redo a working ChatGPT login would contradict the card's own
+      // "checking" / "finish the login" line (and the backend's 409s).
+      if (codexReason === "busy" || codexReason === "login_in_progress") {
+        pushToast("info", t(CODEX_STATUS_KEY_BY_REASON[codexReason]));
         return;
       }
       pushToast(
         "warning",
         descriptor.auth_mode === "codex"
           ? isSubscriptionLoginOnly
-            ? t("apikeys_codex.subscription_login_required")
+            ? // The reason-specific line names the actual remedy (install the
+              // pinned release, unsupported OS, unsupported plan…) — a blank
+              // "connect first" would be wrong for most of those states.
+              t(
+                (codexReason &&
+                  (CODEX_STATUS_KEY_BY_REASON as Record<string, string>)[
+                    codexReason
+                  ]) ||
+                  "apikeys_codex.subscription_login_required",
+              )
             : t("apikeys_codex.needs_codex_full").replace("{0}", descriptor.label)
           : descriptor.auth_mode === "antigravity"
             ? t("apikeys_antigravity.needs_login_full").replace("{0}", descriptor.label)
@@ -1310,8 +1320,14 @@ export function ActiveControl({
       ? disabledReason ?? "Provider cannot be activated"
       : descriptor.configured
         ? "Activate this provider"
-        : descriptor.codex_status?.reason_code === "busy"
-          ? t("apikeys_codex.status_busy")
+        : descriptor.codex_status?.reason_code
+          ? // The reason-specific line names the actual remedy; a generic
+            // "connect first" is wrong for most non-ready codex states.
+            t(
+              (CODEX_STATUS_KEY_BY_REASON as Record<string, string>)[
+                descriptor.codex_status.reason_code
+              ] ?? "apikeys_view.needs_credentials",
+            )
           : t("apikeys_view.needs_credentials");
 
   return (
@@ -2014,6 +2030,9 @@ export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) 
     // exactly the bug this state exists to prevent.
     if (status?.reason_code === "busy")
       return <StateChip tone="neutral">checking</StateChip>;
+    // Nothing is "missing" on an OS the feature does not support at all.
+    if (status?.reason_code === "lifecycle_unavailable")
+      return <StateChip tone="neutral">unavailable</StateChip>;
     if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
     if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
     return <StateChip tone="neutral">not connected</StateChip>;

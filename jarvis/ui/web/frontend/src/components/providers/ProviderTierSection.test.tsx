@@ -590,6 +590,10 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
       name: "Connect with ChatGPT",
     }) as HTMLButtonElement;
     expect(connect.disabled).toBe(true);
+    // The state chip stays neutral — nothing is "missing" on an OS the
+    // feature does not support.
+    expect(screen.queryByText("missing")).toBeNull();
+    expect(screen.getByText("unavailable")).toBeTruthy();
   });
 
   it("shows the sticky plan diagnosis after a refused activation", () => {

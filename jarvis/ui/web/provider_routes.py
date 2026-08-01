@@ -1138,16 +1138,19 @@ async def _run_tier_test(
             _codex_subscription_status_payload,
             getattr(getattr(cfg, "codex", None), "binary_path", "") or None,
         )
-        if payload.get("reason_code") == "busy":
-            # Transient — the same instant renders "checking" on the card and
-            # unknown on the tab dot; a not_configured verdict here would be
-            # the one dissenting surface. rate_limited is the existing
-            # "transient, integration fine" status in the test vocabulary.
+        if payload.get("reason_code") in {"busy", "login_in_progress"}:
+            # Transient — the same instant renders "checking" (or "finish the
+            # login") on the card and unknown on the tab dot; a not_configured
+            # verdict here would be the one dissenting surface. rate_limited
+            # is the existing "transient, integration fine" status in the
+            # test vocabulary, and the payload message carries the honest
+            # wording for whichever transient state this is.
             return _provider_test.ProviderTestResult(
                 spec.id,
                 _provider_test.RATE_LIMITED,
-                "The ChatGPT voice status is still being checked — try again "
-                "in a moment.",
+                str(payload.get("message") or "")
+                or "The ChatGPT voice status is still being checked — try "
+                "again in a moment.",
             )
         isolated_status = SimpleNamespace(
             connected=bool(payload.get("connected")),
@@ -1359,6 +1362,18 @@ async def _tier_section_health(
                     status=_section_health.UNKNOWN,
                     reason="login_in_progress",
                     detail=f"{spec.label}: login in progress",
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") == "plan_unsupported":
+                # Connected but permanently refused: "not connected or
+                # configured" would name the wrong remedy in the hover text.
+                return SectionHealth(
+                    status=_section_health.NEEDS_SETUP,
+                    reason="plan_unsupported",
+                    detail=(
+                        f"{spec.label}: "
+                        f"{codex_payload.get('message') or 'ChatGPT plan not supported'}"
+                    ),
                     subject_id=spec.id,
                 )
             configured = bool(codex_payload.get("connected"))
@@ -3843,17 +3858,8 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ),
         ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
-        if spec.id == "codex-subscription-realtime":
-            from jarvis.codex_app_server import (
-                CodexSubscriptionPlanUnsupported,
-                set_codex_subscription_activation_block,
-            )
-
-            if isinstance(exc, CodexSubscriptionPlanUnsupported):
-                # Sticky: the one honest toast fades in seconds, but this
-                # account can never activate — every surface must stop
-                # claiming "ready" until a different login exists.
-                set_codex_subscription_activation_block(str(exc))
+        # A refused plan already recorded its sticky diagnosis where it was
+        # discovered (require_chatgpt_login) — the live call path shares it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if spec.id == "codex-subscription-realtime":
         from jarvis.codex_app_server import set_codex_subscription_activation_block

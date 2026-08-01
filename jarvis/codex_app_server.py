@@ -1033,6 +1033,23 @@ _CLI_VERSION_RE: Final = re.compile(
 )
 
 
+def _login_required_reason_code() -> CodexSubscriptionReasonCode:
+    """The honest "please log in" state for THIS host.
+
+    On a headless Linux host the interactive browser login is impossible, so
+    inviting it would only produce an error toast after the click — the
+    pre-click truth there is ``lifecycle_unavailable`` (visible degradation,
+    CLAUDE.md §3). An EXISTING login still reports ready on such hosts.
+    """
+    if (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return "lifecycle_unavailable"
+    return "login_required"
+
+
 def _displayable_cli_version(raw: str | None) -> str | None:
     """Return the probe output only when it is an actual version string.
 
@@ -1124,7 +1141,7 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             binary_path=resolved_binary,
             version=version,
             reason=str(exc),
-            reason_code="login_required",
+            reason_code=_login_required_reason_code(),
         )
     except CodexSubscriptionUnavailable as exc:  # Unsafe profile state becomes a status snapshot.
         return CodexAppServerCapability(
@@ -1163,7 +1180,7 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             binary_path=resolved_binary,
             version=version,
             reason=str(exc),
-            reason_code="login_required",
+            reason_code=_login_required_reason_code(),
         )
     except CodexSubscriptionUnavailable as exc:  # Profile validation failure is returned to the UI.
         return CodexAppServerCapability(
@@ -1199,7 +1216,7 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             if chatgpt_login
             else "Use Jarvis's subscription-voice login to connect ChatGPT."
         ),
-        reason_code="ready" if chatgpt_login else "login_required",
+        reason_code="ready" if chatgpt_login else _login_required_reason_code(),
     )
 
 
@@ -1845,7 +1862,13 @@ class CodexAppServerClient:
         await self.ensure_started()
         try:
             await self._verify_live_chatgpt_account()
-        except CodexSubscriptionUnavailable:
+        except CodexSubscriptionUnavailable as exc:
+            if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                # Recorded where the truth is discovered — this gate is also
+                # the LIVE call path, so a plan that turns unsupported after
+                # activation still flips every status surface to the sticky
+                # diagnosis instead of leaving them all claiming "ready".
+                set_codex_subscription_activation_block(str(exc))
             await self._close_process(
                 CodexAppServerDisconnected(
                     "Codex app-server authentication is not ChatGPT."
@@ -3904,7 +3927,11 @@ __all__ = [
     "CodexRealtimeStartResult",
     "CodexSubscriptionProfileMissing",
     "CodexSubscriptionContainmentUnavailable",
+    "CodexSubscriptionBinaryUnsupported",
+    "CodexSubscriptionPlanUnsupported",
     "CodexSubscriptionUnavailable",
+    "codex_subscription_activation_block",
+    "set_codex_subscription_activation_block",
     "codex_subscription_auth_snapshot",
     "codex_subscription_home",
     "codex_subscription_login_ready",

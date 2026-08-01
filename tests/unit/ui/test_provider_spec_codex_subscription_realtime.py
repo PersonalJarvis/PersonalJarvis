@@ -581,6 +581,116 @@ async def test_tier_test_reports_busy_as_transient_not_as_unconfigured(
     assert "being checked" in result.detail
 
 
+@pytest.mark.asyncio
+async def test_tier_test_reports_login_in_progress_as_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """During a running login the Test button must not dissent from the card."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated ChatGPT subscription login is in progress.",
+            "reason_code": "login_in_progress",
+        },
+    )
+
+    result = await routes._run_tier_test(spec, SimpleNamespace())
+
+    assert result.status == "rate_limited"
+    assert "login is in progress" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_section_health_reports_login_in_progress_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated ChatGPT subscription login is in progress.",
+            "reason_code": "login_in_progress",
+        },
+    )
+
+    health = await routes._tier_section_health(
+        SimpleNamespace(), spec, binary_path="codex-custom"
+    )
+
+    assert health.status == "unknown"
+    assert health.reason == "login_in_progress"
+
+
+@pytest.mark.asyncio
+async def test_section_health_names_the_plan_as_the_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Subscription voice permits only personal ChatGPT accounts.",
+            "reason_code": "plan_unsupported",
+        },
+    )
+
+    health = await routes._tier_section_health(
+        SimpleNamespace(), spec, binary_path="codex-custom"
+    )
+
+    assert health.status == "needs_setup"
+    assert health.reason == "plan_unsupported"
+    # The hover detail names the actual blocker, not "not connected".
+    assert "personal ChatGPT accounts" in health.detail
+
+
+@pytest.mark.asyncio
+async def test_realtime_activation_asks_to_finish_a_running_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated ChatGPT subscription login is in progress.",
+            "reason_code": "login_in_progress",
+        },
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await routes.realtime_switch(
+            routes.SwitchBody(
+                provider="codex-subscription-realtime",
+                persist=False,
+                accept_experimental=True,
+            ),
+            object(),
+        )
+
+    assert caught.value.status_code == 409
+    assert "Finish" in str(caught.value.detail)
+
+
 def test_install_hint_pins_the_supported_release() -> None:
     """The card's install command must name the pinned release — a silent
     unpin would send users to a version the trust gate rejects."""
