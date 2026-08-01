@@ -267,6 +267,7 @@ class _CodexSubscriptionRealtimeSession:
         thread_id: str,
         answer_sdp: str,
         audio_endpoint: Any = None,
+        input_transcriber: Any = None,
         language: str = "en",
     ) -> None:
         self._client = client
@@ -277,6 +278,10 @@ class _CodexSubscriptionRealtimeSession:
         self.realtime_version = ""
         # Owns the media path: ChatGPT-Live carries audio ONLY over WebRTC.
         self._audio_endpoint = audio_endpoint
+        # ChatGPT-Live never transcribes the USER, so Jarvis does it locally.
+        # Without this the bar stays blank and every transcript-driven
+        # integration (delegate, wiki, project files, hang-up phrase) is deaf.
+        self._input_transcriber = input_transcriber
         self._closed = False
         self._last_input_item_id = ""
         self._assistant_delta_text = ""
@@ -328,6 +333,8 @@ class _CodexSubscriptionRealtimeSession:
         # the retired v1 protocol used is rejected outright ("Invalid value:
         # 'input_audio.append'"). Microphone audio rides the media track.
         self._audio_endpoint.send_pcm(pcm, sample_rate)
+        if self._input_transcriber is not None:
+            self._input_transcriber.feed(pcm, sample_rate)
 
     async def receive(self) -> AsyncIterator[_ProviderEvent]:
         # Stay below app-server's bounded subscription queue so a stalled
@@ -354,6 +361,29 @@ class _CodexSubscriptionRealtimeSession:
                 await queue.put(("stream_error", exc))
             else:
                 await queue.put(("stream_end", None))
+
+        async def _pump_local_input() -> None:
+            """Feed locally recognized USER speech into the same event stream.
+
+            Other providers deliver these; ChatGPT-Live does not. Emitting
+            them here is what makes the bar show live text, the indicators
+            move, and every transcript-driven Jarvis integration work.
+            """
+            transcriber = self._input_transcriber
+            if transcriber is None:
+                return
+            try:
+                while True:
+                    event = await transcriber.next_event()
+                    if event is None:
+                        return
+                    await queue.put(("local_input", event))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a deaf bar must not kill the call
+                log.warning(
+                    "Local input transcription stream ended early", exc_info=True
+                )
 
         async def _pump_media_audio() -> None:
             """Feed decoded RTP audio into the same normalized event stream.
@@ -406,9 +436,26 @@ class _CodexSubscriptionRealtimeSession:
             _pump_media_audio(),
             name=f"codex-realtime-media-{self._thread_id}",
         )
+        input_task = asyncio.create_task(
+            _pump_local_input(),
+            name=f"codex-realtime-local-input-{self._thread_id}",
+        )
         try:
             while True:
                 queue_kind, payload = await queue.get()
+                if queue_kind == "local_input":
+                    if payload.kind == "speech_started":
+                        _cancel_completion()
+                        completion_emitted = False
+                        self._assistant_delta_text = ""
+                        yield _ProviderEvent(type="speech_started")
+                    else:
+                        yield _ProviderEvent(
+                            type="input_transcript",
+                            text=payload.text,
+                            is_final=payload.is_final,
+                        )
+                    continue
                 if queue_kind == "media_audio":
                     # Real provider audio keeps the turn alive exactly like the
                     # old sideband deltas did (quiescence timer, Orb state,
@@ -703,7 +750,7 @@ class _CodexSubscriptionRealtimeSession:
             )
         finally:
             _cancel_completion()
-            for pump in (pump_task, media_task):
+            for pump in (pump_task, media_task, input_task):
                 if not pump.done():
                     pump.cancel()
             for task in tuple(timer_tasks):
@@ -712,6 +759,7 @@ class _CodexSubscriptionRealtimeSession:
             await asyncio.gather(
                 pump_task,
                 media_task,
+                input_task,
                 *tuple(timer_tasks),
                 return_exceptions=True,
             )
@@ -800,8 +848,12 @@ class _CodexSubscriptionRealtimeSession:
             try:
                 await _close_subscription(self._subscription)
             finally:
-                if self._audio_endpoint is not None:
-                    await self._audio_endpoint.close()
+                try:
+                    if self._input_transcriber is not None:
+                        await self._input_transcriber.close()
+                finally:
+                    if self._audio_endpoint is not None:
+                        await self._audio_endpoint.close()
 
 
 class CodexSubscriptionRealtimeProvider:
@@ -853,11 +905,13 @@ class CodexSubscriptionRealtimeProvider:
         *,
         client: Any = None,
         audio_endpoint_factory: Any = None,
+        input_transcriber_factory: Any = None,
         binary_path: str | None = None,
     ) -> None:
         self._client = client
         # Injected in tests; production builds the in-process WebRTC endpoint.
         self._audio_endpoint_factory = audio_endpoint_factory
+        self._input_transcriber_factory = input_transcriber_factory
         self._binary_path = str(binary_path or "").strip() or None
 
     @classmethod
@@ -938,6 +992,26 @@ class CodexSubscriptionRealtimeProvider:
         raise RuntimeError(  # pragma: no cover - the loop always returns or raises
             "Codex subscription realtime could not open a media path"
         ) from last_error
+
+    def _build_input_transcriber(self) -> Any:
+        """Local user-speech recognition, or ``None`` when unavailable.
+
+        ChatGPT-Live sends assistant transcripts only, so without this the
+        provider is deaf to Jarvis: the model talks, but the bar, the
+        indicators and every transcript-driven integration stay idle.
+        """
+        if self._input_transcriber_factory is not None:
+            return self._input_transcriber_factory()
+        try:
+            module = importlib.import_module("jarvis.realtime.input_transcription")
+            return module.LocalInputTranscriber(sample_rate=_INPUT_RATE)
+        except Exception:  # noqa: BLE001 - the call still works, just deaf
+            log.warning(
+                "Local input transcription could not be started; the voice "
+                "answers but Jarvis-side transcript features stay idle",
+                exc_info=True,
+            )
+            return None
 
     async def _open_session_once(
         self, cfg: Any, ice_servers: Any
@@ -1026,6 +1100,7 @@ class CodexSubscriptionRealtimeProvider:
                 thread_id=thread_id,
                 answer_sdp=answer_sdp,
                 audio_endpoint=audio_endpoint,
+                input_transcriber=self._build_input_transcriber(),
                 language=str(getattr(cfg, "language", "en") or "en"),
             )
             # Identity FIRST: the model must know who it is and what this
