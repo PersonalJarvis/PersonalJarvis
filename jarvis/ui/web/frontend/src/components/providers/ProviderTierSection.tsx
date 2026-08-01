@@ -20,6 +20,7 @@ import {
   type ProviderTestStatus,
   type ProviderTier,
   type SectionHealth,
+  PROVIDER_BACKEND_UNREACHABLE,
   saveProviderBaseUrl,
   sectionHealthForSubject,
   startCodexLogin,
@@ -604,7 +605,9 @@ export function ProviderCategory({
         <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4" />
           <div>
-            {t("apikeys_view.load_error")} ({error}).
+            {error === PROVIDER_BACKEND_UNREACHABLE
+              ? t("apikeys_view.backend_unavailable")
+              : `${t("apikeys_view.load_error")} (${error}).`}
             <button onClick={() => onChanged()} className="ml-2 underline">
               {t("apikeys_view.retry")}
             </button>
@@ -1307,7 +1310,9 @@ export function ActiveControl({
       ? disabledReason ?? "Provider cannot be activated"
       : descriptor.configured
         ? "Activate this provider"
-        : t("apikeys_view.needs_credentials");
+        : descriptor.codex_status?.reason_code === "busy"
+          ? t("apikeys_codex.status_busy")
+          : t("apikeys_view.needs_credentials");
 
   return (
     <label
@@ -1636,7 +1641,12 @@ function CodexAuthWidget({
   const subscriptionStatusKey = !status
     ? "apikeys_codex.status_loading"
     : status.reason_code && status.reason_code !== "login_required"
-      ? CODEX_STATUS_KEY_BY_REASON[status.reason_code]
+      ? // Runtime fallback for a backend value the union does not know yet —
+        // the Record enforces exhaustiveness at compile time, but a newer
+        // backend must not render t(undefined).
+        ((CODEX_STATUS_KEY_BY_REASON as Record<string, string>)[
+          status.reason_code
+        ] ?? "apikeys_codex.status_loading")
       : !status.installed
         ? "apikeys_codex.status_not_installed"
         : "apikeys_codex.status_login_required";
@@ -1760,7 +1770,8 @@ function CodexAuthWidget({
             example the exact required Codex version). Hiding it behind the
             generic sentence left users guessing what to fix. */}
         {subscriptionOnly &&
-          status?.reason_code === "setup_invalid" &&
+          (status?.reason_code === "setup_invalid" ||
+            status?.reason_code === "not_installed") &&
           status.message && (
             <div
               data-testid="codex-setup-detail"

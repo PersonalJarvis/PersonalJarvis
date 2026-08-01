@@ -515,6 +515,35 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     );
   });
 
+  it("shows the pinned install path for a wrong codex release", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        install_hint: "npm i -g @openai/codex@0.146.0",
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Subscription voice requires Codex CLI 0.146.0.",
+          reason_code: "not_installed",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "Install the supported Codex version before connecting ChatGPT.",
+      ),
+    ).toBeTruthy();
+    // The actionable fix — the pinned command — must render, and the precise
+    // requirement appears as the diagnostic detail.
+    expect(screen.getByText("npm i -g @openai/codex@0.146.0")).toBeTruthy();
+    expect(screen.getByTestId("codex-setup-detail").textContent).toContain(
+      "Subscription voice requires Codex CLI 0.146.0.",
+    );
+  });
+
   it("asks for a ChatGPT subscription login without suggesting an API key", () => {
     installFetchMock();
     renderCard(

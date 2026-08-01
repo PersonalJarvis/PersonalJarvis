@@ -277,6 +277,13 @@ def test_subscription_status_payload_maps_busy_without_claiming_missing_install(
 ) -> None:
     from jarvis import codex_app_server
 
+    class _PresenceService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex"
+
     snapshot = codex_app_server.CodexAppServerCapability(
         available=False,
         chatgpt_authenticated=False,
@@ -290,11 +297,14 @@ def test_subscription_status_payload_maps_busy_without_claiming_missing_install(
         "codex_subscription_auth_snapshot",
         lambda _binary_path: snapshot,
     )
+    monkeypatch.setattr(routes, "CodexAuthService", _PresenceService)
 
     payload = routes._codex_subscription_status_payload(None)
 
     assert payload["reason_code"] == "busy"
     assert payload["connected"] is False
+    # The name of this test is a promise: busy must not read as a missing CLI.
+    assert payload["installed"] is True
     assert payload["message"] == (
         "Dedicated subscription voice status is being checked or changed."
     )
@@ -414,6 +424,102 @@ async def test_tier_test_judges_the_isolated_voice_profile(
     assert result.status == "ok"
     assert "subscription voice login is ready" in result.detail
     assert "codex_status" in captured
+
+
+def test_login_window_keeps_the_cli_reported_as_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """During the minutes-long interactive login the snapshot is silent about
+    the CLI; the card must not tell the user to reinstall mid-login."""
+    from jarvis import codex_app_server
+
+    class _PresenceService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex"
+
+    snapshot = codex_app_server.CodexAppServerCapability(
+        available=False,
+        chatgpt_authenticated=False,
+        binary_path=None,
+        version=None,
+        reason="Dedicated ChatGPT subscription login is in progress.",
+        reason_code="login_required",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary_path: snapshot,
+    )
+    monkeypatch.setattr(routes, "CodexAuthService", _PresenceService)
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "login_required"
+    assert payload["installed"] is True
+
+
+def test_wrong_release_payload_shows_the_install_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong codex release must surface the install flow, not a profile
+    warning: installed=False drives the pinned npm command on the card."""
+    from jarvis import codex_app_server
+
+    snapshot = codex_app_server.CodexAppServerCapability(
+        available=False,
+        chatgpt_authenticated=False,
+        binary_path="codex",
+        version="codex-cli 0.150.0",
+        reason="Subscription voice requires Codex CLI 0.146.0.",
+        reason_code="not_installed",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary_path: snapshot,
+    )
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "not_installed"
+    assert payload["installed"] is False
+    assert "requires Codex CLI 0.146.0" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_tier_test_reports_busy_as_transient_not_as_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Test button must not issue a setup verdict for a transient window."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated subscription voice status is being checked or changed.",
+            "reason_code": "busy",
+        },
+    )
+
+    result = await routes._run_tier_test(spec, SimpleNamespace())
+
+    assert result.status == "rate_limited"
+    assert "being checked" in result.detail
+
+
+def test_install_hint_pins_the_supported_release() -> None:
+    """The card's install command must name the pinned release — a silent
+    unpin would send users to a version the trust gate rejects."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    assert spec.install_hint == "npm i -g @openai/codex@0.146.0"
 
 
 def test_reason_code_vocabulary_is_pinned() -> None:

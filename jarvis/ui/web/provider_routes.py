@@ -302,7 +302,10 @@ def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -
 
 def _cli_installed(spec: ProviderSpec) -> bool | None:
     if spec.auth_mode == "codex":
-        return CodexAuthService().status().installed
+        # Honor a configured custom binary path; the default-constructed
+        # service would report the PATH install even when the user pinned a
+        # different binary.
+        return CodexAuthService(_codex_binary_path()).status().installed
     return None
 
 
@@ -887,6 +890,7 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     the experimental provider or starts a call.
     """
     from jarvis.codex_app_server import (
+        CODEX_SUBSCRIPTION_REASON_CODES,
         CodexAppServerCapability,
         codex_subscription_auth_snapshot,
     )
@@ -910,6 +914,29 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
             reason_code="busy",
         )
     installed = bool(snapshot.available or snapshot.version)
+    if snapshot.reason_code == "not_installed":
+        # The pinned release is absent. SOME codex may have answered the
+        # version probe, but the actionable truth is "install the supported
+        # release" — the card's install row keys off this flag.
+        installed = False
+    elif (
+        not installed
+        and snapshot.binary_path is None
+        and snapshot.reason_code in {"busy", "login_required"}
+    ):
+        # Ownership windows (login in flight, busy probe) are silent about
+        # the CLI itself. A pure PATH resolution answers "is it installed"
+        # without touching the owned profile — the card must never tell a
+        # user mid-login to reinstall the CLI that is running their login.
+        try:
+            installed = (
+                CodexAuthService(binary_path)._resolve_binary() is not None
+            )
+        except Exception:  # noqa: BLE001 — presence stays unknown, not fatal
+            log.debug(
+                "Codex CLI presence probe failed during an ownership window",
+                exc_info=True,
+            )
     connected = bool(snapshot.available and snapshot.chatgpt_authenticated)
     if connected:
         message = "Dedicated ChatGPT subscription voice login is ready."
@@ -917,12 +944,18 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
         message = "Connect the dedicated ChatGPT subscription voice login."
     else:
         message = snapshot.reason
+    reason_code = "ready" if connected else snapshot.reason_code
+    if reason_code not in CODEX_SUBSCRIPTION_REASON_CODES:
+        # Five-layer drift guard (BUG-008 class): an unknown vocabulary value
+        # must degrade to a transient state, never reach the UI unmapped.
+        log.warning("Unknown codex subscription reason_code %r", reason_code)
+        reason_code = "busy"
     return {
         "installed": installed,
         "connected": connected,
         "mode": "chatgpt" if connected else "not_connected",
         "message": message,
-        "reason_code": "ready" if connected else snapshot.reason_code,
+        "reason_code": reason_code,
         "version": snapshot.version,
         "accountLabel": "ChatGPT subscription voice" if connected else None,
         "user_email": None,
@@ -1092,6 +1125,17 @@ async def _run_tier_test(
             _codex_subscription_status_payload,
             getattr(getattr(cfg, "codex", None), "binary_path", "") or None,
         )
+        if payload.get("reason_code") == "busy":
+            # Transient — the same instant renders "checking" on the card and
+            # unknown on the tab dot; a not_configured verdict here would be
+            # the one dissenting surface. rate_limited is the existing
+            # "transient, integration fine" status in the test vocabulary.
+            return _provider_test.ProviderTestResult(
+                spec.id,
+                _provider_test.RATE_LIMITED,
+                "The ChatGPT voice status is still being checked — try again "
+                "in a moment.",
+            )
         isolated_status = SimpleNamespace(
             connected=bool(payload.get("connected")),
             message=str(payload.get("message") or ""),

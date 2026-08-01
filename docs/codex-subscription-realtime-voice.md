@@ -86,8 +86,9 @@ The subscription transport never relabels those calls as ChatGPT-plan usage.
 The dedicated login lives under Jarvis's data directory in
 `codex-subscription-voice`. It is not the user's normal Codex profile. Jarvis
 allows only its marker plus the exact files the pinned Codex binary owns:
-`auth.json`, a persistent UUID in `installation_id`, and the bounded
-`tmp/arg0` process-launch tree. Codex sends that UUID as a pseudonymous
+`auth.json`, a persistent UUID in `installation_id`, the CLI's tiny one-time
+`.sandbox_migration` marker (size-bounded), and the bounded `tmp/arg0`
+process-launch tree. Codex sends that UUID as a pseudonymous
 installation identifier. Jarvis never copies or links credentials into a
 second runtime profile. Unexpected config, session, agent, or model files make
 startup fail closed, and unsafe linked, reparse-point, or multiply-linked

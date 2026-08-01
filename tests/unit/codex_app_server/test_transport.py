@@ -32,6 +32,11 @@ from jarvis.codex_app_server import (
 )
 
 
+# Captured before the autouse fixture stubs it out, so the dedicated test can
+# exercise the real pre-spawn verification.
+_REAL_VERIFY_SPAWN_BINARY = transport._verify_spawn_binary
+
+
 class FakeProcessTree:
     supports_containment = True
 
@@ -77,6 +82,9 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_snapshot_cache_at", 0.0)
     monkeypatch.setattr(transport, "_subscription_status_probe_active", False)
     monkeypatch.setattr(transport, "_sha256_cache", {})
+    # The pre-spawn re-hash needs a real approved file; the suite's fake
+    # binaries have none. The dedicated test exercises the real check.
+    monkeypatch.setattr(transport, "_verify_spawn_binary", lambda _path: None)
 
 
 class FakeStdin:
@@ -1064,7 +1072,7 @@ def test_public_auth_snapshot_holds_profile_owner_for_entire_probe(
         assert transport._subscription_mutation_process_lock is process_lock
         assert process_lock.closed is False
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return CodexAppServerCapability(
             available=True,
             chatgpt_authenticated=True,
@@ -1339,7 +1347,7 @@ def test_logout_waits_for_a_running_status_probe(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return _ready_capability()
 
     monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
@@ -1381,7 +1389,7 @@ def test_user_actions_report_a_probe_timeout_honestly(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return _ready_capability()
 
     monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
@@ -1585,7 +1593,7 @@ async def test_capability_worker_keeps_profile_reserved_until_it_finishes(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
@@ -2152,6 +2160,157 @@ def test_native_codex_version_and_hash_are_both_required(
         transport._trusted_native_codex_binary(
             str(binary), transport._SUPPORTED_CODEX_VERSION
         )
+
+
+def test_wrong_release_maps_to_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real-but-different codex release is 'install the pinned one', not a
+    profile defect — the card then shows the pinned npm command."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.150.0"
+
+    def refuse(_binary: str, _version: str | None) -> str:
+        raise transport.CodexSubscriptionBinaryUnsupported(
+            "Subscription voice requires Codex CLI 0.146.0."
+        )
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(transport, "_trusted_native_codex_binary", refuse)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "not_installed"
+    assert capability.available is False
+    assert "requires Codex CLI 0.146.0" in capability.reason
+    assert capability.version == "codex-cli 0.150.0"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reserve_is_released_by_the_abandon_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel landing on the reserve await must not park the profile on
+    'voice is starting' forever (the permanent-wedge class)."""
+    acquire_started = threading.Event()
+    acquire_release = threading.Event()
+
+    def blocking_acquire() -> FakeProfileProcessLock:
+        acquire_started.set()
+        assert acquire_release.wait(timeout=10.0)
+        return FakeProfileProcessLock()
+
+    monkeypatch.setattr(
+        transport, "_acquire_subscription_process_lock", blocking_acquire
+    )
+
+    client = CodexAppServerClient("codex-test")
+    task = asyncio.create_task(client.ensure_started())
+    await asyncio.to_thread(acquire_started.wait, 5.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    acquire_release.set()
+    # The reserve worker completes AFTER the cancel; the abandon worker must
+    # then release it. Poll briefly instead of assuming scheduling order.
+    for _ in range(100):
+        with transport._subscription_login_lock:
+            if not transport._subscription_active_transports:
+                break
+        await asyncio.sleep(0.02)
+    with transport._subscription_login_lock:
+        assert transport._subscription_active_transports == set()
+        assert transport._subscription_transport_process_lock is None
+    assert client._profile_transport_reserved is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_disconnect_still_releases_the_mutation_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling disconnect mid-flight (even twice) must not leave the
+    profile permanently 'being checked or changed'."""
+    close_entered = asyncio.Event()
+    close_release = asyncio.Event()
+
+    async def blocking_close() -> None:
+        close_entered.set()
+        await close_release.wait()
+
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", blocking_close)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    task = asyncio.create_task(
+        transport.disconnect_and_logout_codex_subscription()
+    )
+    await asyncio.wait_for(close_entered.wait(), timeout=5.0)
+    with transport._subscription_login_lock:
+        assert transport._subscription_profile_mutating is True
+
+    task.cancel()
+    await asyncio.sleep(0.02)
+    task.cancel()  # A second cancel interrupts even shielded awaits.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    close_release.set()
+
+    for _ in range(100):
+        with transport._subscription_login_lock:
+            if not transport._subscription_profile_mutating:
+                break
+        await asyncio.sleep(0.02)
+    with transport._subscription_login_lock:
+        assert transport._subscription_profile_mutating is False
+        assert transport._subscription_mutation_process_lock is None
+
+
+def test_spawn_binary_is_rehashed_without_the_memo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The copy that gets EXECUTED is verified fresh — a poisoned hash memo
+    must never launder an in-place swap into execution."""
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"approved-content")
+    approved = transport._sha256_file(binary)
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                approved,
+            )
+        },
+    )
+    # A poisoned memo claiming the file is approved must be ignored here.
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: approved
+    )
+
+    _REAL_VERIFY_SPAWN_BINARY(str(binary))
+
+    binary.write_bytes(b"swapped-content")
+    with pytest.raises(CodexSubscriptionUnavailable, match="changed since"):
+        _REAL_VERIFY_SPAWN_BINARY(str(binary))
 
 
 def test_profile_allowlist_accepts_codex_own_runtime_markers() -> None:

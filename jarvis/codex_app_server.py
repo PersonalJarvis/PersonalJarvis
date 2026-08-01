@@ -223,6 +223,15 @@ class CodexSubscriptionProfileMissing(CodexSubscriptionUnavailable):
     """The dedicated subscription-voice profile does not exist yet."""
 
 
+class CodexSubscriptionBinaryUnsupported(CodexSubscriptionUnavailable):
+    """No installed Codex matches the pinned, hash-approved release.
+
+    Maps to ``reason_code="not_installed"``: the actionable truth for a
+    wrong-version or unknown build is "install the supported release", with
+    the pinned install command — not "your profile needs attention".
+    """
+
+
 class CodexAppServerDisconnected(CodexAppServerError):
     """The app-server process exited or its JSONL stream broke."""
 
@@ -735,6 +744,19 @@ def _validated_subscription_home(
             _SUBSCRIPTION_PROFILE_MARKER,
         }:
             _validate_regular_private_file(entry)
+        if entry.name == ".sandbox_migration":
+            # A tiny one-time CLI marker; anything larger is not that file.
+            try:
+                oversized = entry.stat().st_size > 4096
+            except OSError as exc:
+                raise CodexSubscriptionUnavailable(
+                    "The dedicated Codex voice profile could not be inspected."
+                ) from exc
+            if oversized:
+                raise CodexSubscriptionUnavailable(
+                    "The dedicated Codex voice profile contains an unexpected "
+                    "runtime file."
+                )
 
     _validate_codex_runtime_state(
         canonical_home,
@@ -827,7 +849,8 @@ def _sha256_file(path: Path) -> str:
 
 
 _SHA256_CACHE_MAX_ENTRIES: Final = 16
-_sha256_cache: dict[str, tuple[tuple[int, int, int, int], str]] = {}
+_SHA256_CACHE_TTL_S: Final = 60.0
+_sha256_cache: dict[str, tuple[tuple[int, int, int, int, int], float, str]] = {}
 _sha256_cache_lock = threading.Lock()
 
 
@@ -836,9 +859,11 @@ def _sha256_file_cached(path: Path) -> str:
 
     Hashing the ~100 MB native Codex binary dominates the cost of every status
     probe, and probes run on each UI refresh. The signature (device, inode,
-    size, mtime_ns) is read fresh on every call, so a replaced or modified
-    executable is re-hashed; ``_sha256_file`` itself still guards the actual
-    read against mid-read swaps whenever it runs.
+    size, mtime_ns, ctime_ns) is read fresh on every call and the entry
+    expires after a short TTL, bounding how long an in-place swap that forges
+    the timestamps could ride a stale digest. This memo serves STATUS reads
+    only — the copy that gets executed is re-hashed without the memo right
+    before spawn (see ``ensure_started``).
     """
     try:
         identity = path.stat()
@@ -850,17 +875,39 @@ def _sha256_file_cached(path: Path) -> str:
         identity.st_ino,
         identity.st_size,
         identity.st_mtime_ns,
+        # POSIX ctime changes on every write regardless of utimes-forgery; on
+        # Windows this is creation time and merely harmless extra identity.
+        identity.st_ctime_ns,
     )
+    now = time.monotonic()
     with _sha256_cache_lock:
         entry = _sha256_cache.get(key)
-        if entry is not None and entry[0] == signature:
-            return entry[1]
+        if (
+            entry is not None
+            and entry[0] == signature
+            and now - entry[1] <= _SHA256_CACHE_TTL_S
+        ):
+            return entry[2]
     digest = _sha256_file(path)
     with _sha256_cache_lock:
         if len(_sha256_cache) >= _SHA256_CACHE_MAX_ENTRIES:
             _sha256_cache.clear()
-        _sha256_cache[key] = (signature, digest)
+        _sha256_cache[key] = (signature, now, digest)
     return digest
+
+
+def _verify_spawn_binary(binary_path: str) -> None:
+    """Full, un-memoized hash check of the exact file about to be executed.
+
+    The memoized hash is fine for status polling; the copy that runs with the
+    user's ChatGPT identity gets one fresh verification right before spawn so
+    a stale memo can never launder an in-place swap into execution.
+    """
+    target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
+    if target is None or _sha256_file(Path(binary_path)) != target[3]:
+        raise CodexSubscriptionUnavailable(
+            "The Codex executable changed since it was verified."
+        )
 
 
 def _codex_package_roots(launcher: Path) -> list[Path]:
@@ -901,7 +948,9 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
     """
     target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     if target is None:
-        raise CodexSubscriptionUnavailable(
+        # A platform gate, not a setup defect: maps to lifecycle_unavailable,
+        # whose card text says the feature is not available on this OS yet.
+        raise CodexSubscriptionContainmentUnavailable(
             "This operating-system architecture is not approved for the experimental "
             "Codex subscription voice transport."
         )
@@ -951,12 +1000,18 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
     ):
         # The launcher answered with a real but different release — name the
         # required one instead of a generic hash complaint.
-        raise CodexSubscriptionUnavailable(
-            f"Subscription voice requires Codex CLI {_SUPPORTED_CODEX_VERSION}."
+        raise CodexSubscriptionBinaryUnsupported(
+            "Subscription voice requires Codex CLI "
+            f"{_SUPPORTED_CODEX_VERSION.removeprefix('codex-cli ')}."
         )
-    raise CodexSubscriptionUnavailable(
+    raise CodexSubscriptionBinaryUnsupported(
         "The installed Codex 0.146 executable does not match an official approved build."
     )
+
+
+_CLI_VERSION_RE: Final = re.compile(
+    r"codex-cli \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+)?"
+)
 
 
 def _displayable_cli_version(raw: str | None) -> str | None:
@@ -964,10 +1019,11 @@ def _displayable_cli_version(raw: str | None) -> str | None:
 
     The npm launcher prints a localized shell error instead of a version when
     ``node`` is missing; that text must never reach the UI's version chip or
-    count as an installed version.
+    count as an installed version. The strict pattern also keeps ANSI noise
+    and unbounded output off the chip.
     """
     text = " ".join(str(raw or "").split())
-    return text if text.startswith("codex-cli ") else None
+    return text if _CLI_VERSION_RE.fullmatch(text) else None
 
 
 def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
@@ -1013,6 +1069,18 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             version=version,
             reason=str(exc),
             reason_code="lifecycle_unavailable",
+        )
+    except CodexSubscriptionBinaryUnsupported as exc:
+        # The pinned release is absent (wrong version or unknown build). The
+        # actionable state is "install the supported release" — the card then
+        # shows the pinned npm command instead of a profile warning.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved,
+            version=version,
+            reason=str(exc),
+            reason_code="not_installed",
         )
     except CodexSubscriptionUnavailable as exc:
         # Convert setup failure into a safe status snapshot.
@@ -1499,7 +1567,13 @@ class CodexAppServerClient:
         return loop
 
     async def capability_status(self) -> CodexAppServerCapability:
-        """Return a bounded, PII-free ChatGPT-login capability snapshot."""
+        """Return a bounded, PII-free ChatGPT-login capability snapshot.
+
+        The caller must already own the profile (``ensure_started`` reserves
+        the transport first): this probe runs the Codex CLI against
+        ``CODEX_HOME`` and racing it with a login, logout, or another probe
+        can corrupt the profile's auth and runtime files.
+        """
         try:
             # The subprocesses inside this synchronous probe each have their own
             # hard timeout.  Do not wrap ``to_thread`` in ``wait_for``: cancelling
@@ -1522,13 +1596,15 @@ class CodexAppServerClient:
 
             return await asyncio.to_thread(_probe_and_publish)
         except TimeoutError:  # The returned status reports this bounded probe failure.
+            # Transiently unknown — everywhere else a failed PROBE maps to
+            # busy, never to a proven-broken setup.
             return CodexAppServerCapability(
                 available=False,
                 chatgpt_authenticated=False,
                 binary_path=None,
                 version=None,
-                reason="Codex login status timed out.",
-                reason_code="setup_invalid",
+                reason="Codex login status timed out; retrying shortly.",
+                reason_code="busy",
             )
         except Exception as exc:  # noqa: BLE001 - status must degrade honestly
             log.warning(
@@ -1540,8 +1616,8 @@ class CodexAppServerClient:
                 chatgpt_authenticated=False,
                 binary_path=None,
                 version=None,
-                reason="Codex login status could not be verified.",
-                reason_code="setup_invalid",
+                reason="Codex login status could not be verified; retrying shortly.",
+                reason_code="busy",
             )
 
     @property
@@ -1569,38 +1645,69 @@ class CodexAppServerClient:
                 )
 
             # Off the event loop: reserving may wait out a running status
-            # probe. The flag is set BEFORE the await: asyncio.to_thread does
-            # not stop the worker on cancellation, so a cancel landing on the
-            # await after the thread reserved would otherwise strand the
-            # reservation forever (every later status answers busy, and even
-            # disconnect-and-logout hands the orphaned lock back). With the
-            # flag already set, _close_process releases the orphan —
-            # _release_subscription_transport is a safe no-op when the thread
-            # never got as far as reserving.
+            # probe. Cancellation safety lives entirely in worker threads: a
+            # cancel can interrupt any await here (even a shielded one, on a
+            # second cancel), so no loop-side variable may decide whether the
+            # reservation needs releasing. The reserve worker records its own
+            # outcome; on cancellation a detached worker waits for it to
+            # settle and releases the orphan, so the profile can never stay
+            # parked on "voice is starting" forever.
+            reserve_settled = threading.Event()
+            reserve_failed: list[BaseException] = []
+
+            def _reserve() -> None:
+                try:
+                    _reserve_subscription_transport(self)
+                except BaseException as exc:
+                    reserve_failed.append(exc)
+                    raise
+                finally:
+                    reserve_settled.set()
+
+            def _abandon_reservation() -> None:
+                if not reserve_settled.wait(timeout=60.0):
+                    log.error(
+                        "Cancelled subscription reserve never settled; "
+                        "leaving it for the next start or disconnect"
+                    )
+                    return
+                self._profile_transport_reserved = False
+                if not reserve_failed:
+                    _release_subscription_transport(self)
+
             self._profile_transport_reserved = True
+            reserve_future = asyncio.get_running_loop().run_in_executor(
+                None, _reserve
+            )
             try:
-                await asyncio.to_thread(_reserve_subscription_transport, self)
+                await asyncio.shield(reserve_future)
             except asyncio.CancelledError:
-                # The worker may still complete the reservation after this
-                # cancel; keep the flag so a later close releases either way.
+                threading.Thread(
+                    target=_abandon_reservation,
+                    name="codex-reserve-abandon",
+                    daemon=True,
+                ).start()
                 raise
             except BaseException:
                 self._profile_transport_reserved = False
                 raise
 
+            async def _release_after_failure() -> None:
+                self._profile_transport_reserved = False
+                await asyncio.shield(
+                    asyncio.to_thread(_release_subscription_transport, self)
+                )
+
             try:
                 capability = await self.capability_status()
             except BaseException:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise
             if not capability.available:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise CodexSubscriptionUnavailable(capability.reason)
             if not capability.binary_path:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise CodexSubscriptionUnavailable("Codex CLI binary is unavailable.")
             try:
                 self._trusted_binary_path = capability.binary_path
@@ -1619,6 +1726,9 @@ class CodexAppServerClient:
                     self._workspace,
                 )
                 await self._ensure_sink_started()
+                await asyncio.to_thread(
+                    _verify_spawn_binary, capability.binary_path
+                )
                 await self._spawn(capability.binary_path)
                 await self._initialize_live_process()
                 await self._verify_live_chatgpt_account()
@@ -1639,11 +1749,13 @@ class CodexAppServerClient:
                     # Status callers waiting out the "voice is starting"
                     # window can now read the ready transport state directly.
                     # Off-loop: the login mutex can be held across filesystem
-                    # work by a probe thread.
+                    # work by a probe thread. Shielded so a cancellation
+                    # cannot drop the job from the executor queue and leave
+                    # waiters running into their timeout.
                     with _subscription_login_lock:
                         _subscription_state_changed.notify_all()
 
-                await asyncio.to_thread(_announce_ready)
+                await asyncio.shield(asyncio.to_thread(_announce_ready))
             except BaseException:
                 await self._close_process(
                     CodexAppServerDisconnected("Codex app-server initialization failed."),
@@ -2780,11 +2892,14 @@ class CodexAppServerClient:
             self._ready = False
             self._close_lifeline()
             if self._profile_transport_reserved:
-                # Flag first, release off-loop: the login mutex can be held
-                # across filesystem work, and the worker thread finishes the
-                # release even if this coroutine is cancelled at the await.
+                # Flag first, release off-loop and shielded: a cancellation
+                # must neither skip the release nor drop the queued job (a
+                # queued to_thread future CAN be cancelled before its thread
+                # starts — shield keeps it alive).
                 self._profile_transport_reserved = False
-                await asyncio.to_thread(_release_subscription_transport, self)
+                await asyncio.shield(
+                    asyncio.to_thread(_release_subscription_transport, self)
+                )
             return
         self._process = None
         self._ready = False
@@ -2842,9 +2957,12 @@ class CodexAppServerClient:
             tree.close()
         self._close_lifeline()
         if self._profile_transport_reserved:
-            # Flag first, release off-loop (see the early-return branch above).
+            # Flag first, release off-loop and shielded (see the early-return
+            # branch above for why both matter).
             self._profile_transport_reserved = False
-            await asyncio.to_thread(_release_subscription_transport, self)
+            await asyncio.shield(
+                asyncio.to_thread(_release_subscription_transport, self)
+            )
         if not expected:
             log.warning("Codex app-server connection reset")
 
@@ -3580,36 +3698,59 @@ async def disconnect_and_logout_codex_subscription(
     """Atomically block starts, close the transport, and delete its login."""
     del binary_path  # Kept for the stable route/helper signature.
 
-    # ``claimed`` binds cleanup to OUR claim only: _begin... raising because a
-    # FOREIGN owner is mutating must not clear that owner's state, so the flag
-    # flips inside the worker AFTER the claim succeeded. Cancellation cannot
-    # strand the claim: a worker thread keeps running through a cancel, and
-    # the finally waits for it to settle before deciding, then shields the
-    # release so a second cancellation cannot interrupt it.
-    claimed = False
+    # Cleanup binds to OUR claim only: _begin... raising because a FOREIGN
+    # owner is mutating must not clear that owner's state. The whole
+    # decide-and-release lives in worker threads synchronized by a
+    # threading.Event — never in a loop-side variable — because a SECOND
+    # task cancellation interrupts even a shielded await, and a decision
+    # read on the loop at that moment would miss a claim the worker is
+    # about to complete (the permanent-wedge class).
+    claim_settled = threading.Event()
+    claim_failed: list[BaseException] = []
 
     def _claim() -> None:
-        nonlocal claimed
-        _begin_subscription_disconnect_mutation()
-        claimed = True
+        try:
+            _begin_subscription_disconnect_mutation()
+        except BaseException as exc:
+            claim_failed.append(exc)
+            raise
+        finally:
+            claim_settled.set()
+
+    def _settle() -> None:
+        # Off-loop: waits for the claim thread to settle, then releases our
+        # claim. Once this thread starts it always finishes, whatever happens
+        # to the coroutine that spawned it.
+        if not claim_settled.wait(timeout=60.0):
+            log.error(
+                "Subscription disconnect claim never settled; leaving state "
+                "for the next disconnect to recover"
+            )
+            return
+        if not claim_failed:
+            _finish_subscription_disconnect_mutation()
 
     claim_future = asyncio.get_running_loop().run_in_executor(None, _claim)
     try:
         await asyncio.shield(claim_future)
-        await close_shared_codex_app_servers()
+        await asyncio.shield(close_shared_codex_app_servers())
         return await asyncio.to_thread(_delete_codex_subscription_auth_locked)
     finally:
-        if not claim_future.done():
-            with suppress(BaseException):
-                await asyncio.shield(claim_future)
-        if claimed:
-            await asyncio.shield(
-                asyncio.to_thread(_finish_subscription_disconnect_mutation)
-            )
+        # Shield keeps the settle job alive even if this await is interrupted
+        # by another cancellation; the job itself cannot be skipped because
+        # nothing can cancel an executor future the loop never cancels.
+        await asyncio.shield(asyncio.to_thread(_settle))
 
 
 async def codex_subscription_login_ready(binary_path: str | None = None) -> bool:
-    """Return the lightweight dedicated-profile login snapshot."""
+    """Return the lightweight dedicated-profile login snapshot.
+
+    Transient ``busy`` fails OPEN, mirroring the realtime provider's
+    ``external_login_ready``: a caller acting on this answer performs the
+    authoritative live account verification anyway, while failing closed here
+    turns a healthy install into "connect this provider first" for the busy
+    window.
+    """
     try:
         snapshot = await asyncio.to_thread(
             codex_subscription_auth_snapshot,
@@ -3618,6 +3759,8 @@ async def codex_subscription_login_ready(binary_path: str | None = None) -> bool
     except (CodexAppServerError, OSError):
         # Readiness probes fail closed without starting transport.
         return False
+    if snapshot.reason_code == "busy":
+        return True
     return bool(snapshot.available and snapshot.chatgpt_authenticated)
 
 
