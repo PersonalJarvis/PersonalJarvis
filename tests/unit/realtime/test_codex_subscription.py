@@ -258,8 +258,23 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
     thread_start = client.thread_starts[0]
     assert thread_start["ephemeral"] is True
     assert "extra" not in thread_start
-    assert "transport" in thread_start["base_instructions"].lower()
-    assert "tools" in thread_start["developer_instructions"].lower()
+    # The execution boundary is the security invariant: the Codex agent is
+    # the VOICE, never the executor — every action goes out as a handoff.
+    base = thread_start["base_instructions"].lower()
+    developer = thread_start["developer_instructions"].lower()
+    assert "never run tools" in base
+    assert "handoff" in base
+    assert "do not call tools" in developer
+    assert "filesystem" in developer
+    # …but it must no longer be told it is a dumb pipe: without an identity
+    # the voice knew nothing about its own project.
+    assert "persona" in base
+
+    # Jarvis's own persona/context reaches the model as developer context —
+    # ChatGPT-Live has no client-settable session-instructions field.
+    assert client.text_appends == [
+        ("thread-1", "Speak concise English.", "developer")
+    ]
     _thread_id, start = client.realtime_starts[0]
     assert start == {
         "output_modality": "audio",

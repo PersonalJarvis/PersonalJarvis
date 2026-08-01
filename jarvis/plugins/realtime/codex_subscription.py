@@ -54,15 +54,29 @@ _V3_VOICES = frozenset(
 )
 
 _THREAD_BASE_INSTRUCTIONS = (
-    "This ephemeral thread exists only to carry a realtime voice transport. "
-    "Never use tools, inspect files, access the network, or perform actions. "
-    "Never answer a realtime handoff as a Codex agent; the client-owned Jarvis "
-    "supervisor handles every handoff."
+    # The thread used to be told it was a dumb pipe ("never perform actions"),
+    # which is why the voice had no identity, no project knowledge and no idea
+    # that actions exist. The SECURITY boundary is unchanged — the Codex agent
+    # itself still never touches tools or the filesystem — but the assistant
+    # is now allowed to be an assistant. Its real persona, capabilities and
+    # project context arrive as developer context at the start of every call.
+    "You are the live voice of the user's own assistant on an open call. "
+    "Speak naturally and conversationally, in short spoken sentences — never "
+    "read out lists, markup, or boilerplate. Your persona, your capabilities "
+    "and the current project context are delivered as developer context at "
+    "the start of this call: follow them as your own identity and knowledge. "
+    "Boundary: you are the VOICE, not the executor. Never run tools, shell "
+    "commands, applications, plugins, skills, web search, MCP servers, or "
+    "other agents yourself, and never read or write the filesystem. When the "
+    "user asks for something to be DONE, request a handoff — the user's own "
+    "supervisor performs it and reports back through you."
 )
 _THREAD_DEVELOPER_INSTRUCTIONS = (
-    "Transport-only boundary: do not call tools, shell commands, applications, "
-    "plugins, skills, web search, MCP servers, or other agents. Do not read or "
-    "write the filesystem. Yield all realtime handoffs to the client."
+    "Execution boundary: do not call tools, shell commands, applications, "
+    "plugins, skills, web search, MCP servers, or other agents, and do not "
+    "read or write the filesystem. Every action goes to the client through a "
+    "handoff. Conversation itself — answering, explaining, remembering what "
+    "was said, using the developer context you were given — is your job."
 )
 _LANGUAGE_UPDATE_TEXT = {
     "de": (
@@ -269,6 +283,9 @@ class _CodexSubscriptionRealtimeSession:
         self._language = str(language or "en").strip().lower()
         self._active_codex_turn_id = ""
         self._handoff_interrupt_pending = False
+        # Last persona/context text actually delivered, so a re-issued
+        # identical one is not sent again mid-call.
+        self._delivered_context = ""
 
     async def _interrupt_active_codex_turn(self) -> None:
         turn_id = self._active_codex_turn_id
@@ -706,11 +723,14 @@ class _CodexSubscriptionRealtimeSession:
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
-        # Dynamic tools/instructions are intentionally unsupported; the shared
-        # Jarvis supervisor remains the only action boundary. The exact API
-        # does support developer-role appendText, which is the safe per-turn
-        # boundary for the canonical de/en/es resolver.
-        del instructions, tools
+        # Tools stay unsupported by design: the Jarvis supervisor remains the
+        # only action boundary. INSTRUCTIONS, however, are the assistant's
+        # identity and project knowledge — dropping them was why the voice
+        # knew nothing about its own project. ChatGPT-Live accepts developer
+        # context (session.context.append), so a changed persona is delivered
+        # mid-call instead of being discarded.
+        del tools
+        await self._deliver_context(instructions)
         normalized = str(language or "").strip().lower()
         if normalized not in _LANGUAGE_UPDATE_TEXT or normalized == self._language:
             return
@@ -720,6 +740,30 @@ class _CodexSubscriptionRealtimeSession:
             role="developer",
         )
         self._language = normalized
+
+    async def _deliver_context(self, instructions: str | None) -> None:
+        """Give the model Jarvis's own persona, capabilities and context.
+
+        ChatGPT-Live has no session-instructions field a client may set, but
+        it does accept developer context — which is how the assistant learns
+        who it is and what this project is. Delivered once per distinct text
+        so a re-issued identical persona costs nothing.
+        """
+        text = str(instructions or "").strip()
+        if not text or text == self._delivered_context:
+            return
+        try:
+            await self._client.realtime_append_text(
+                self._thread_id, text, role="developer"
+            )
+        except Exception:  # noqa: BLE001 - a mute persona must not kill the call
+            log.warning(
+                "Codex subscription realtime could not deliver its context; "
+                "the assistant continues without the persona",
+                exc_info=True,
+            )
+            return
+        self._delivered_context = text
 
     async def request_response(self, *, required_tool: str | None = None) -> None:
         # The upstream VAD creates responses automatically.  A required tool
@@ -976,7 +1020,7 @@ class CodexSubscriptionRealtimeProvider:
             # Fail here rather than mid-call: without a live media path the
             # session would look connected and stay mute in both directions.
             await audio_endpoint.wait_connected()
-            return _CodexSubscriptionRealtimeSession(
+            session = _CodexSubscriptionRealtimeSession(
                 client=client,
                 subscription=subscription,
                 thread_id=thread_id,
@@ -984,6 +1028,10 @@ class CodexSubscriptionRealtimeProvider:
                 audio_endpoint=audio_endpoint,
                 language=str(getattr(cfg, "language", "en") or "en"),
             )
+            # Identity FIRST: the model must know who it is and what this
+            # project is before the user's first word arrives.
+            await session._deliver_context(getattr(cfg, "instructions", ""))
+            return session
         except BaseException:
             try:
                 await _cleanup_remote_thread(client, thread_id)

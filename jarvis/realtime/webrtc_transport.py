@@ -135,22 +135,46 @@ def _build_sender_track(base: Any) -> Any:
     return _SenderTrack()
 
 
-def _upsample_to_wire(pcm: bytes, source_rate: int) -> bytes:
-    """Convert mono int16 PCM to the 48 kHz wire rate."""
-    import numpy as np  # noqa: PLC0415
+class _MicResampler:
+    """Stateful mic resampler to the 48 kHz wire rate.
 
-    if source_rate == _WIRE_RATE or not pcm:
-        return pcm
-    samples = np.frombuffer(pcm, dtype=np.int16)
-    if samples.size == 0:
-        return b""
-    ratio = _WIRE_RATE / float(source_rate)
-    target_len = max(1, int(round(samples.size * ratio)))
-    # Linear interpolation: cheap, artifact-free enough for speech, and it
-    # keeps this hot path free of a heavy resampler dependency.
-    positions = np.linspace(0, samples.size - 1, target_len)
-    resampled = np.interp(positions, np.arange(samples.size), samples)
-    return resampled.astype(np.int16).tobytes()
+    Statefulness is the point: resampling each 20 ms chunk INDEPENDENTLY
+    restarts the interpolation at every boundary, which stamps a periodic
+    discontinuity into the stream 50 times a second — audible as a robotic
+    buzz and, worse, degrading what the model's transcriber hears. One
+    resampler carried across chunks produces a continuous signal.
+    """
+
+    def __init__(self) -> None:
+        self._resampler: Any = None
+        self._source_rate = 0
+        self._pts = 0
+
+    def convert(self, pcm: bytes, source_rate: int) -> bytes:
+        if not pcm:
+            return b""
+        if source_rate == _WIRE_RATE:
+            return pcm
+        import numpy as np  # noqa: PLC0415
+        from av import AudioFrame  # noqa: PLC0415
+        from av.audio.resampler import AudioResampler  # noqa: PLC0415
+
+        if self._resampler is None or source_rate != self._source_rate:
+            self._resampler = AudioResampler(
+                format="s16", layout="mono", rate=_WIRE_RATE
+            )
+            self._source_rate = source_rate
+            self._pts = 0
+        samples = np.frombuffer(pcm, dtype=np.int16).reshape(1, -1)
+        frame = AudioFrame.from_ndarray(samples, format="s16", layout="mono")
+        frame.sample_rate = source_rate
+        frame.pts = self._pts
+        frame.time_base = fractions.Fraction(1, source_rate)
+        self._pts += samples.shape[1]
+        out = bytearray()
+        for resampled in self._resampler.resample(frame):
+            out += bytes(resampled.planes[0])[: resampled.samples * 2]
+        return bytes(out)
 
 
 class RealtimeWebRtcAudioEndpoint:
@@ -180,6 +204,7 @@ class RealtimeWebRtcAudioEndpoint:
             maxsize=_RECV_QUEUE_MAX
         )
         self._reader_task: asyncio.Task[None] | None = None
+        self._mic_resampler = _MicResampler()
         self._closed = False
 
         @self._pc.on("track")
@@ -272,7 +297,9 @@ class RealtimeWebRtcAudioEndpoint:
         """Queue one mono int16 PCM chunk for the outgoing media track."""
         if self._closed or not pcm:
             return
-        payload = _upsample_to_wire(pcm, int(sample_rate or _JARVIS_RATE))
+        payload = self._mic_resampler.convert(pcm, int(sample_rate or _JARVIS_RATE))
+        if not payload:
+            return
         try:
             self._sender.queue.put_nowait(payload)
         except asyncio.QueueFull:
