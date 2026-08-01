@@ -1067,6 +1067,10 @@ class Terminal:
         reading = self.reading()
         return {
             "key": self.key,
+            # The call-sign key is reusable after a pane closes. The chat rail
+            # needs the pane lifetime to keep arrival order honest across a
+            # workspace remount and to put a replacement T1 at the bottom.
+            "history_id": self.history_id,
             "name": self.name,
             "agent": self.agent,
             "display_name": self.display_name,

@@ -38,8 +38,10 @@ def test_a_pane_that_was_never_prompted_says_so() -> None:
     term = pane()
 
     assert term.last_prompt_at is None
-    assert term.to_dict()["last_prompt_at"] is None
-    assert term.to_dict()["last_prompt_chars"] == 0
+    state = term.to_dict()
+    assert state["last_prompt_at"] is None
+    assert state["last_prompt_chars"] == 0
+    assert state["history_id"] == term.history_id
 
 
 def test_the_state_carries_when_a_prompt_arrived_and_how_long_it_was() -> None:
