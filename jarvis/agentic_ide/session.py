@@ -945,24 +945,12 @@ class Terminal:
     # Has this pane's screen been observed STANDING STILL since its current
     # process started?
     #
-    # The line between "the agent carried on by itself" and "its CLI is drawing
-    # itself back onto the screen". Both are movement, and movement is the only
-    # thing the activity detector reads (see `.activity`) — so a resumed pane
-    # repainting its banner and its old transcript reads exactly like an agent
-    # at work, for the several seconds that takes.
-    #
-    # **The bug this fixes.** Both readers of that signal got it wrong in the
-    # same window: the notification sweep retracted `continuation_pending`
-    # ("it is already working, it needs no nudge") and the scan filtered the
-    # pane out — so every restored pane lost its offer to continue within two
-    # sweeps of coming back, and the button reported zero for ever. Reported as
-    # "the Continue feature does not work".
-    #
-    # A start-up burst always ends at a prompt, so "has stood still at least
-    # once" separates the two without knowing anything about what any CLI
-    # draws. Raised by the notification sweep on an observed still screen (two
-    # looks, never a single one), cleared on every spawn. Never persisted — it
-    # describes the process now running in the pane.
+    # This says only that restore/startup repainting has settled. It never proves
+    # work: that requires a submission stamped with this process generation.
+    # Keeping the claims separate prevents both startup replay and later MCP or
+    # status redraws from retracting a valid Continue offer. Raised by the
+    # notification sweep on an observed still screen (two looks, never one),
+    # cleared on every spawn, and never persisted.
     idle_seen: bool = False
     # What this pane is DOING, as the activity sweep last observed it: working,
     # waiting, asking, starting, exited, failed (see `.activity`). Empty until

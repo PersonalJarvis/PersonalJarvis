@@ -75,6 +75,12 @@ def _sweep(registry: Registry, at: float) -> None:
     notifications.watcher().poll(registry, now=at, emit=False)
 
 
+def _instruct(term: Any, at: float) -> None:
+    """Prove the current process received the work represented by a test."""
+    term.last_submit_at = at
+    term.submit_generation = term.process_generation
+
+
 def _watched(registry: Registry, term: Any, *, moves: bool) -> None:
     """Two sweeps on the REAL clock — one look cannot see movement.
 
@@ -112,6 +118,7 @@ async def test_a_moving_pane_is_reported_as_working_whatever_it_runs(
 ) -> None:
     """And one whose picture keeps changing is still on the job."""
     _session, term = await _pane(registry, tmp_path, agent=agent, name="Px")
+    _instruct(term, time.time() - 1)
     term.transcript.feed(screen)
 
     _watched(registry, term, moves=True)
@@ -132,6 +139,7 @@ async def test_output_outside_the_fingerprint_still_counts_as_working(
     nothing for between 19 and 69 seconds.
     """
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
     term.transcript.feed(REST_SCREENS["claude"])
     now = time.time()
     _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
@@ -197,6 +205,7 @@ async def test_output_after_the_resize_shadow_still_counts_as_working(
     otherwise a resize would hide real work instead of a repaint.
     """
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
     term.transcript.feed(REST_SCREENS["claude"])
     now = time.time()
     _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
@@ -230,6 +239,7 @@ async def test_the_state_carries_what_the_sweep_saw(registry: Registry, tmp_path
     single look.
     """
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, 499.0)
     term.transcript.feed("\r\n· Scurrying… (2m 4s)\r\n")
     _sweep(registry, 500.0)
     term.transcript.clear()
@@ -361,6 +371,7 @@ async def test_the_caption_never_contradicts_the_badge(registry: Registry, tmp_p
 async def test_the_caption_says_working_when_it_is(registry: Registry, tmp_path: Path) -> None:
     """And the other way round, or the wording would just be pessimistic."""
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
     term.transcript.feed(REST_SCREENS["claude"])
     _watched(registry, term, moves=True)
 

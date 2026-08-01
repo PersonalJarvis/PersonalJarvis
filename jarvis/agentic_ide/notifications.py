@@ -94,7 +94,16 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
-from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest, stamp
+from .activity import (
+    RESIZE_SHADOW_S,
+    STILL_S,
+    Activity,
+    is_moving,
+    is_settled,
+    read_activity,
+    screen_digest,
+    stamp,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Iterable, Mapping
@@ -478,17 +487,25 @@ class ActivityWatcher:
 
         if digest != watch.digest:
             watch.digest = digest
-            watch.changed_at = now
+            # A changed picture is movement — unless it is the redraw a resize
+            # just caused. The shadow on the pane is judged against the moment
+            # the redraw ARRIVED, but this comparison only sees it at sweep
+            # time, up to a full interval later — so the observation window is
+            # the shadow plus one sweep, or a repaint landing between two
+            # sweeps escapes whenever the next sweep runs late.
+            resized_at = float(getattr(term, "last_resize_at", 0.0) or 0.0)
+            if not (0 <= now - resized_at <= RESIZE_SHADOW_S + SWEEP_INTERVAL_S):
+                watch.changed_at = now
         if not watch.tasked and _tasked(term):
             watch.tasked = True
         # ``now`` travels into the read as well, so a test can place a pane on
         # its own timeline instead of racing the wall clock.
         activity = read_activity(term, now=now, still_since=watch.changed_at)
-        if is_settled(activity):
+        if is_settled(activity) and not is_moving(term, now, watch.changed_at):
             # An OBSERVED still screen — two looks at the same picture, never
-            # the assumption the first-sight branch above has to make. From here
-            # on, movement in this pane is an agent working rather than its CLI
-            # drawing itself back onto the screen (see `Terminal.idle_seen`).
+            # the assumption the first-sight branch above has to make. This
+            # proves only that restore/startup repainting has settled; a matching
+            # current-process submission remains the proof of actual work.
             term.idle_seen = True
 
         if activity != watch.activity:
@@ -551,17 +568,8 @@ class ActivityWatcher:
         preserved while it waits at its prompt.
         """
         if activity == "working":
-            instructed_here = getattr(term, "submit_generation", -1) == getattr(
-                term, "process_generation", 0
-            )
-            if not getattr(term, "idle_seen", False) and not instructed_here:
-                # This is the pane's CLI painting itself back onto the screen
-                # after a restart. Preserve both resume flags until this
-                # process has genuinely stood still once or receives a real
-                # instruction of its own.
-                return
-            # It stood still and then moved again, so somebody put this pane
-            # back to work and the offer to continue it is spent.
+            # `read_activity` reaches this state only after a submission stamped
+            # for the live process. The offer to continue is therefore spent.
             term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
@@ -675,6 +683,23 @@ def enabled() -> bool:
     return value
 
 
+async def _enabled_off_loop() -> bool:
+    """The same switch, with the TOML parse kept off the event loop.
+
+    ``enabled()`` answers from its cache almost always; the miss parses
+    ``jarvis.toml``, which is file IO plus a TOML parse on the loop that also
+    carries the wake microphone — the freeze class this repo keeps re-finding
+    (AP-9/AP-26). A late sweep is not only slow, it is WRONG: stamps age past
+    ``STAMP_FRESH_S`` and every reader falls back to a one-look answer that
+    cannot see movement. So the sweep asks through here: cache hits stay
+    synchronous, and only the rare miss pays for a thread hop.
+    """
+    cached_at, value = _switch
+    if time.monotonic() - cached_at < SWITCH_TTL_S:
+        return value
+    return await asyncio.to_thread(enabled)
+
+
 def reset_switch_cache() -> None:
     """Forget the cached switch — for tests, and for a live config change."""
     global _switch
@@ -731,7 +756,7 @@ async def _run(registry: Registry) -> None:
                 # Resume evidence is independent of the optional bell. Even
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
-                _WATCHER.poll(registry, emit=enabled())
+                _WATCHER.poll(registry, emit=await _enabled_off_loop())
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
             except Exception as exc:  # noqa: BLE001 - one bad pane must not end the sweep

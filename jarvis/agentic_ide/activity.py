@@ -11,12 +11,11 @@ had been finished for nineteen of them.
 
 ## The rule: read the TERMINAL, never the product
 
-**A pane is working while its screen keeps changing, and waiting once the
-screen has stood still.** That is the whole detector, and it is deliberately a
-property of the terminal rather than of whatever is running inside it. A
-workspace opens five different coding CLIs today and an unknown number
-tomorrow; a rule that knows what any of them prints is a rule that breaks on
-the next one, in the next release, or in the next language.
+**A pane is working while its screen keeps changing after the current process
+received an instruction, and waiting once the screen has stood still.** Both
+halves are required. Movement remains a property of the terminal rather than
+of whichever product is running inside it, while the submit stamp prevents a
+CLI's own background redraws from inventing work nobody requested.
 
 Two earlier versions proved that the hard way:
 
@@ -73,12 +72,12 @@ There is no ambiguous middle, so bytes answer the question on their own — whil
 the screen fingerprint stays as the second signal, because it survives one
 sweep longer than the byte stamp and holds the answer steady across the gap.
 
-The one thing this costs: a CLI that ticks at rest — a blinking cursor of its
-own, a clock in a status bar, a heartbeat — would read as permanently working.
-None of the four installed products does any of that (measured twice, above),
-and the failure would at least be VISIBLE rather than the silent one it
-replaces: a badge stuck on "working" gets reported, a badge wrongly saying
-"done" is believed.
+That measurement is useful but not a universal contract. Claude Code can emit
+background terminal traffic for an MCP authentication warning before anybody
+gives the pane a task. Movement therefore becomes ``working`` only after a
+submission to the current process; a CLI repainting its own idle state cannot
+invent work. The rule remains provider-neutral because the proof is input
+history, never wording on the screen.
 
 ## The two exclusions
 
@@ -288,7 +287,7 @@ def _resize_shadowed(term: Any, at: float | None) -> bool:
     return 0 <= float(at) - float(resized_at) <= RESIZE_SHADOW_S
 
 
-def _moving(term: Any, moment: float, still_since: float | None) -> bool:
+def is_moving(term: Any, moment: float, still_since: float | None) -> bool:
     """Is anything happening in this pane right now?
 
     Either signal is enough (see the module docstring): output that has just
@@ -303,6 +302,25 @@ def _moving(term: Any, moment: float, still_since: float | None) -> bool:
     if _fresh(moment, out_at) and not _resize_shadowed(term, out_at):
         return True
     return _fresh(moment, still_since) and not _resize_shadowed(term, still_since)
+
+
+def _has_current_instruction(term: Any) -> bool:
+    """Did somebody submit work to the agent process that is live now?
+
+    Historical prompt counters, resumed conversations, and prior idle periods
+    prove that a pane has been used, but not that its replacement process is
+    currently working. The generation pair is stamped on manual, injected, and
+    Continue submissions and is reset by spawning a new process, so it is the
+    narrow proof required before movement may become a live ``working`` claim.
+    """
+    if not getattr(term, "last_submit_at", None):
+        return False
+    try:
+        return int(getattr(term, "submit_generation", -1)) == int(
+            getattr(term, "process_generation", 0)
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def read_activity(
@@ -327,7 +345,7 @@ def read_activity(
         return "starting"
 
     moment = time.time() if now is None else now
-    if _moving(term, moment, still_since):
+    if _has_current_instruction(term) and is_moving(term, moment, still_since):
         return "working"
     if _contains(visible_rows(term), ASK_FRAGMENTS):
         return "asking"
@@ -461,6 +479,7 @@ __all__ = [
     "Activity",
     "Reading",
     "has_work_behind_it",
+    "is_moving",
     "is_settled",
     "observed",
     "read_activity",
