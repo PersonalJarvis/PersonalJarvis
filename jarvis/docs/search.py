@@ -5,7 +5,10 @@ account required, no frontend index bundle bloat. ~50-100 Markdown files in a
 single-user app fit easily into one SQLite file (~500 KB).
 
 A single-connection pattern is fine for SQLite (WAL mode + multi-thread). The
-registry holds one instance; REST routes read through its methods.
+registry holds one instance; REST routes read through its methods. Production
+uses an in-memory database because this is a derived index rebuilt at every
+start. Tests and offline tooling may still pass a path when persistence itself
+is the behavior under test.
 """
 from __future__ import annotations
 
@@ -41,9 +44,10 @@ class DocSearch:
     thread.
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path: Path | None) -> None:
+        self.db_path = Path(db_path) if db_path is not None else None
+        if self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         # ``check_same_thread=False`` because watchdog wants to upsert from a
         # different thread. We serialise access via the lock.
@@ -55,9 +59,11 @@ class DocSearch:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _connect(path: Path) -> sqlite3.Connection:
+    def _connect(path: Path | None) -> sqlite3.Connection:
         return sqlite3.connect(
-            str(path), check_same_thread=False, isolation_level=None,
+            ":memory:" if path is None else str(path),
+            check_same_thread=False,
+            isolation_level=None,
         )
 
     @staticmethod
@@ -87,7 +93,10 @@ class DocSearch:
 
     def _init_schema(self) -> None:
         with self._lock:
-            self._configure_connection(self._conn, use_wal=True)
+            self._configure_connection(
+                self._conn,
+                use_wal=self.db_path is not None,
+            )
 
     # ------------------------------------------------------------------
     # Upsert / Delete
@@ -120,11 +129,11 @@ class DocSearch:
             self._conn.execute("DELETE FROM docs_index WHERE slug = ?", (slug,))
 
     def replace_all(self, docs: list[Doc]) -> None:
-        """Atomically replace the index with a newly built SQLite file.
+        """Atomically replace the index with a newly built SQLite database.
 
-        Deleting FTS rows leaves their previous pages recoverable in SQLite's
-        free list and WAL. Building a fresh file prevents retired engineering
-        docs or local paths from surviving a scope reduction in raw bytes.
+        Deleting FTS rows leaves previous pages recoverable in SQLite's free
+        list and WAL. Building a fresh connection or file prevents retired
+        engineering docs or local paths from surviving a scope reduction.
         """
         rows = [
             (
@@ -139,10 +148,27 @@ class DocSearch:
             for doc in docs
         ]
         with self._lock:
+            if self.db_path is None:
+                # The production index is derived and rebuilt on every start.
+                # Swap a fully populated in-memory connection so concurrent
+                # desktop starts, test runs, and dev worktrees never contend
+                # for one user-global SQLite WAL on Windows.
+                replacement = self._connect(None)
+                try:
+                    self._populate_replacement(replacement, rows)
+                except Exception:
+                    replacement.close()
+                    raise
+                previous = self._conn
+                self._conn = replacement
+                previous.close()
+                return
+
+            db_path = self.db_path
             descriptor, raw_temp_path = tempfile.mkstemp(
-                prefix=f".{self.db_path.name}.",
+                prefix=f".{db_path.name}.",
                 suffix=".tmp",
-                dir=self.db_path.parent,
+                dir=db_path.parent,
             )
             os.close(descriptor)
             temp_path = Path(raw_temp_path)
@@ -150,19 +176,7 @@ class DocSearch:
             current_connection_closed = False
             try:
                 temp_connection = self._connect(temp_path)
-                # DELETE mode keeps the completed replacement self-contained;
-                # no temporary WAL can be orphaned during the rename.
-                self._configure_connection(temp_connection, use_wal=False)
-                temp_connection.execute("BEGIN IMMEDIATE")
-                temp_connection.executemany(
-                    """
-                    INSERT INTO docs_index
-                        (slug, title, diataxis, phase, tags, headings, body)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    rows,
-                )
-                temp_connection.execute("COMMIT")
+                self._populate_replacement(temp_connection, rows)
                 temp_connection.close()
                 temp_connection = None
 
@@ -176,10 +190,10 @@ class DocSearch:
                     self._conn.close()
                 finally:
                     current_connection_closed = True
-                self._remove_sidecars(self.db_path)
-                os.replace(temp_path, self.db_path)
+                self._remove_sidecars(db_path)
+                os.replace(temp_path, db_path)
 
-                self._conn = self._connect(self.db_path)
+                self._conn = self._connect(db_path)
                 current_connection_closed = False
                 self._configure_connection(self._conn, use_wal=True)
             except Exception:
@@ -190,7 +204,7 @@ class DocSearch:
                         pass
                 if current_connection_closed:
                     # A failed swap must leave the previous database usable.
-                    self._conn = self._connect(self.db_path)
+                    self._conn = self._connect(db_path)
                     current_connection_closed = False
                     self._configure_connection(self._conn, use_wal=True)
                 raise
@@ -199,6 +213,32 @@ class DocSearch:
                     temp_connection.close()
                 temp_path.unlink(missing_ok=True)
                 self._remove_sidecars(temp_path)
+
+    @classmethod
+    def _populate_replacement(
+        cls,
+        connection: sqlite3.Connection,
+        rows: list[tuple[str, str, str, str, str, str, str]],
+    ) -> None:
+        """Build a complete replacement without exposing a partial index."""
+        # DELETE mode keeps a file-backed replacement self-contained; no
+        # temporary WAL can be orphaned during its rename. It is harmless for
+        # an in-memory database.
+        cls._configure_connection(connection, use_wal=False)
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.executemany(
+                """
+                INSERT INTO docs_index
+                    (slug, title, diataxis, phase, tags, headings, body)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _remove_sidecars(path: Path) -> None:

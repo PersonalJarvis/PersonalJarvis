@@ -102,8 +102,8 @@ class WebServer:
         # Skill registry: watched on user_skills_dir() after first-run bootstrap.
         # The watcher starts in ``start()`` once the event loop is running.
         self._skill_registry: Any | None = None
-        # Doc registry: watched on default_doc_roots(); FTS5 index under
-        # docs_index_db_path(). Watcher also starts in ``start()``.
+        # Doc registry: watched on default_doc_roots(); its derived FTS5 index
+        # is process-local. Watcher also starts in ``start()``.
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
@@ -762,19 +762,21 @@ class WebServer:
         """Bring up the doc registry + populate the FTS5 index initially.
 
         Roots = ``default_doc_roots()`` (see ``jarvis/core/paths.py``).
-        The index DB lives under ``user_data_dir()/data/docs_index.sqlite``.
+        The derived FTS index is process-local and rebuilt on every start. A
+        shared on-disk WAL made unrelated dev worktrees and overlapping restart
+        processes block the Docs view indefinitely on Windows.
 
-        Failure cases (read-only FS, index-DB lock) are not fatal — the UI
-        surfaces a retryable load error instead of crashing.
+        Failure cases (unreadable roots, unavailable FTS5 support) are not
+        fatal — the UI surfaces a retryable load error instead of crashing.
         """
         try:
-            from jarvis.core.paths import default_doc_roots, docs_index_db_path
+            from jarvis.core.paths import default_doc_roots
             from jarvis.docs.registry import DocRegistry
 
             roots = default_doc_roots()
             registry = DocRegistry(
                 roots=roots,
-                index_db=docs_index_db_path(),
+                index_db=None,
                 bus=self.bus,
             )
             self._doc_registry = registry
