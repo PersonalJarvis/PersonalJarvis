@@ -32,6 +32,7 @@ _CURRENT_IDENTITY = {
     "WINDOWS_AUTOSTART_DESCRIPTION": "Personal Jarvis (Autostart)",
     "WINDOWS_BRANDED_LAUNCHER_FILE_NAME": "PersonalJarvis.exe",
     "WINDOWS_BRANDED_LAUNCHER_DIR_NAME": "PersonalJarvis",
+    "WINDOWS_BRANDED_LAUNCH_ENV_VAR": "JARVIS_BRANDED_LAUNCH",
     "MACOS_APP_NAME": "Personal Jarvis",
     "MACOS_APP_DIR_NAME": "Personal Jarvis.app",
     "MACOS_EXECUTABLE_NAME": "PersonalJarvis",

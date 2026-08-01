@@ -22,6 +22,7 @@ from jarvis.core.branding import (
 )
 from jarvis.core.branding import (
     LINUX_WM_CLASS,
+    WINDOWS_BRANDED_LAUNCH_ENV_VAR,
     WINDOWS_BRANDED_LAUNCHER_DIR_NAME,
 )
 from jarvis.core.branding import (
@@ -79,7 +80,7 @@ _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 # ``ensure_branded_launcher_exe`` + ``maybe_reexec_through_branded_launcher``.
 # Set in the child's env when we re-exec through the branded exe, so the child
 # does not re-exec again (loop guard).
-_BRANDED_LAUNCH_ENV = "JARVIS_BRANDED_LAUNCH"
+_BRANDED_LAUNCH_ENV = WINDOWS_BRANDED_LAUNCH_ENV_VAR
 
 
 def register_windows_app_user_model_id(
