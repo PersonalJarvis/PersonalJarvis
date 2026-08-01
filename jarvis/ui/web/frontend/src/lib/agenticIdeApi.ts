@@ -139,7 +139,7 @@ export interface TerminalState {
    * and a recap goes stale in seconds. `fetchTerminalRecaps` keeps it current.
    */
   recap?: string;
-  /** The one-or-two-sentence version, shown when the header line is hovered. */
+  /** The one-or-two-sentence version, shown when the header line is opened. */
   recap_detail?: string;
   /** Is its agent still on the job? The OPENING value, like `recap` above. */
   activity?: PaneActivity;
