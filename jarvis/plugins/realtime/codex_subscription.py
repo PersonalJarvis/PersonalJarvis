@@ -716,12 +716,22 @@ class CodexSubscriptionRealtimeProvider:
 
     @classmethod
     async def verify_activation(cls, cfg: Any) -> None:
-        """Run the provider's authoritative account/config activation gate."""
+        """Run the provider's authoritative account/config activation gate.
+
+        The gate starts app-server just to judge the account, so it must also
+        clean up after itself: leaving the transport reservation and an idle
+        Codex child running would make the card's reconnect button answer
+        "disconnect active subscription voice" after every activation. A call
+        that starts later simply re-runs ``ensure_started``.
+        """
         app_server_module = importlib.import_module("jarvis.codex_app_server")
         codex_cfg = getattr(cfg, "codex", None)
         binary_path = str(getattr(codex_cfg, "binary_path", "") or "").strip() or None
         client = app_server_module.get_shared_codex_app_server(binary_path)
-        await client.require_chatgpt_login()
+        try:
+            await client.require_chatgpt_login()
+        finally:
+            await client.close()
     requires_webrtc_offer = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE

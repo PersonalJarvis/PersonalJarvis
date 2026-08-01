@@ -204,7 +204,62 @@ async def test_realtime_activation_rejects_codex_api_key_mode(
         )
 
     assert caught.value.status_code == 409
-    assert "Connect or configure this provider first" in str(caught.value.detail)
+    # The precise payload diagnosis, never the generic credential sentence.
+    assert "dedicated ChatGPT subscription voice login" in str(caught.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_plan_unsupported_activation_retries_the_live_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """plan_unsupported must reach verify_activation (the only path that can
+    CLEAR the sticky block) and answer with the plan diagnosis on re-refusal."""
+    import jarvis.core.registry as registry
+    from jarvis.codex_app_server import CodexSubscriptionPlanUnsupported
+
+    monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Subscription voice permits only personal ChatGPT accounts.",
+            "reason_code": "plan_unsupported",
+        },
+    )
+
+    gate_calls: list[object] = []
+
+    class _Provider:
+        @classmethod
+        async def verify_activation(cls, cfg: object) -> None:
+            gate_calls.append(cfg)
+            raise CodexSubscriptionPlanUnsupported(
+                "Subscription voice permits only personal ChatGPT accounts."
+            )
+
+    monkeypatch.setattr(registry, "load", lambda *_args, **_kwargs: _Provider)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(config=None, cfg=None))
+    )
+    with pytest.raises(HTTPException) as caught:
+        await routes.realtime_switch(
+            routes.SwitchBody(
+                provider="codex-subscription-realtime",
+                persist=False,
+                accept_experimental=True,
+            ),
+            request,
+        )
+
+    assert gate_calls, "the live gate must re-judge a plan-blocked account"
+    assert caught.value.status_code == 409
+    detail = str(caught.value.detail)
+    assert "personal ChatGPT accounts" in detail
+    assert "no configured credentials" not in detail
 
 
 @pytest.mark.asyncio

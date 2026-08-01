@@ -318,6 +318,35 @@ async def test_orchestrator_capability_check_does_not_repeat_cli_auth_probe(
     assert await provider.can_open_duplex_session() is True
 
 
+@pytest.mark.asyncio
+async def test_verify_activation_cleans_up_its_own_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate starts app-server only to judge the account; leaving the
+    reservation and an idle child running would 409 the card's reconnect
+    button after every activation."""
+    from jarvis import codex_app_server
+
+    events: list[str] = []
+
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            events.append("verified")
+
+        async def close(self) -> None:
+            events.append("closed")
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda _binary: _Client(),
+    )
+
+    await CodexSubscriptionRealtimeProvider.verify_activation(SimpleNamespace())
+
+    assert events == ["verified", "closed"]
+
+
 @pytest.mark.parametrize(
     ("reason_code", "available", "authenticated", "expected"),
     [

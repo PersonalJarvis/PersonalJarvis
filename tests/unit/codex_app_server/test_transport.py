@@ -2410,6 +2410,42 @@ async def test_live_account_gate_records_the_plan_block(
     )
 
 
+def test_unreadable_profile_reports_busy_not_setup_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An antivirus-locked or slow-disk profile read is transiently unknown —
+    never 'create a fresh voice-only login'."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+    def unreadable(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        )
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(transport, "_validated_subscription_home", unreadable)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "busy"
+    assert "could not be inspected" in capability.reason
+
+
 def test_activation_block_sticks_until_invalidated() -> None:
     transport.set_codex_subscription_activation_block(
         "Subscription voice permits only personal ChatGPT accounts."

@@ -240,6 +240,15 @@ class CodexSubscriptionPlanUnsupported(CodexSubscriptionUnavailable):
     """
 
 
+class CodexSubscriptionInspectionFailed(CodexSubscriptionUnavailable):
+    """An OS read error prevented judging the profile — transiently unknown.
+
+    Distinct from a genuinely invalid profile: an antivirus-locked directory
+    or a slow disk must surface as ``busy`` ("checking"), never as "create a
+    fresh voice-only login".
+    """
+
+
 class CodexAppServerDisconnected(CodexAppServerError):
     """The app-server process exited or its JSONL stream broke."""
 
@@ -559,7 +568,7 @@ def _validate_arg0_runtime_dir(
     try:
         children = {entry.name: entry for entry in path.iterdir()}
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice profile runtime could not be inspected."
         ) from exc
     expected = {".lock"}
@@ -646,7 +655,7 @@ def _validate_codex_runtime_state(
     try:
         runtime_children = {entry.name: entry for entry in runtime_root.iterdir()}
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice runtime could not be inspected."
         ) from exc
     if set(runtime_children) != {"arg0"}:
@@ -661,7 +670,7 @@ def _validate_codex_runtime_state(
     try:
         process_dirs = tuple(arg0_root.iterdir())
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice runtime could not be inspected."
         ) from exc
     if len(process_dirs) > _MAX_ARG0_RUNTIME_DIRS:
@@ -709,7 +718,7 @@ def _validated_subscription_home(
     try:
         canonical_root = root.resolve(strict=True)
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "Jarvis's private data directory could not be verified."
         ) from exc
     candidate = canonical_root / _SUBSCRIPTION_HOME_DIRNAME
@@ -738,7 +747,7 @@ def _validated_subscription_home(
     try:
         entries = tuple(canonical_home.iterdir())
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice profile could not be inspected."
         ) from exc
     unexpected = [
@@ -763,7 +772,7 @@ def _validated_subscription_home(
             try:
                 oversized = entry.stat().st_size > 4096
             except OSError as exc:
-                raise CodexSubscriptionUnavailable(
+                raise CodexSubscriptionInspectionFailed(
                     "The dedicated Codex voice profile could not be inspected."
                 ) from exc
             if oversized:
@@ -1143,6 +1152,17 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason=str(exc),
             reason_code=_login_required_reason_code(),
         )
+    except CodexSubscriptionInspectionFailed as exc:
+        # An OS read hiccup is transiently unknown, never a proven-broken
+        # profile that tells the user to recreate their login.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved_binary,
+            version=version,
+            reason=f"{exc} Retrying shortly.",
+            reason_code="busy",
+        )
     except CodexSubscriptionUnavailable as exc:  # Unsafe profile state becomes a status snapshot.
         return CodexAppServerCapability(
             available=False,
@@ -1181,6 +1201,16 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             version=version,
             reason=str(exc),
             reason_code=_login_required_reason_code(),
+        )
+    except CodexSubscriptionInspectionFailed as exc:
+        # Transiently unreadable, not proven-broken (see the first block).
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved_binary,
+            version=version,
+            reason=f"{exc} Retrying shortly.",
+            reason_code="busy",
         )
     except CodexSubscriptionUnavailable as exc:  # Profile validation failure is returned to the UI.
         return CodexAppServerCapability(
@@ -1723,6 +1753,11 @@ class CodexAppServerClient:
             reserve_future = asyncio.get_running_loop().run_in_executor(
                 None, _reserve
             )
+            # A cancelled awaiter leaves the worker's exception unretrieved;
+            # consume it so asyncio does not log a spurious GC error.
+            reserve_future.add_done_callback(
+                lambda f: None if f.cancelled() else f.exception()
+            )
             try:
                 await asyncio.shield(reserve_future)
             except asyncio.CancelledError:
@@ -1733,12 +1768,17 @@ class CodexAppServerClient:
                         self._profile_transport_epoch = None
                 if epoch is not None:
                     # Already published before the cancel: release off-loop.
-                    threading.Thread(
-                        target=_release_subscription_transport,
-                        args=(self, epoch),
-                        name="codex-reserve-abandon",
-                        daemon=True,
-                    ).start()
+                    try:
+                        threading.Thread(
+                            target=_release_subscription_transport,
+                            args=(self, epoch),
+                            name="codex-reserve-abandon",
+                            daemon=True,
+                        ).start()
+                    except RuntimeError:
+                        # Thread exhaustion: a brief inline release beats
+                        # leaking the reservation until restart.
+                        _release_subscription_transport(self, epoch)
                 raise
 
             async def _release_after_failure() -> None:
@@ -1868,7 +1908,11 @@ class CodexAppServerClient:
                 # the LIVE call path, so a plan that turns unsupported after
                 # activation still flips every status surface to the sticky
                 # diagnosis instead of leaving them all claiming "ready".
-                set_codex_subscription_activation_block(str(exc))
+                # Off-loop: the helper takes the login mutex, which worker
+                # threads may hold across filesystem work.
+                await asyncio.to_thread(
+                    set_codex_subscription_activation_block, str(exc)
+                )
             await self._close_process(
                 CodexAppServerDisconnected(
                     "Codex app-server authentication is not ChatGPT."
@@ -2989,48 +3033,57 @@ class CodexAppServerClient:
             with suppress(Exception):
                 stdin.close()
 
-        current = asyncio.current_task()
-        tasks = [
-            task
-            for task in (reader_task, stderr_task)
-            if task is not None and task is not current and not task.done()
-        ]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # Everything past stdin-close awaits repeatedly; a SECOND cancellation
+        # landing on any of those awaits must still run the resource cleanup
+        # (job-object handle, lifeline FD, reservation epoch) — hence the
+        # try/finally around the whole reaping tail.
+        try:
+            current = asyncio.current_task()
+            tasks = [
+                task
+                for task in (reader_task, stderr_task)
+                if task is not None and task is not current and not task.done()
+            ]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
-        if process.returncode is None:
-            # EOF is Codex's graceful app-server shutdown path. Give its
-            # Arg0PathEntryGuard time to remove the locked tmp/arg0 directory
-            # before terminating the contained tree.
-            with suppress(TimeoutError):
-                await asyncio.wait_for(
-                    process.wait(), timeout=_SHUTDOWN_TIMEOUT_S
-                )
-        if process.returncode is None:
-            with suppress(ProcessLookupError, OSError):
-                process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
-            except TimeoutError:  # The grace expired, so hard-kill the contained tree.
+            if process.returncode is None:
+                # EOF is Codex's graceful app-server shutdown path. Give its
+                # Arg0PathEntryGuard time to remove the locked tmp/arg0
+                # directory before terminating the contained tree.
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        process.wait(), timeout=_SHUTDOWN_TIMEOUT_S
+                    )
+            if process.returncode is None:
                 with suppress(ProcessLookupError, OSError):
-                    process.kill()
+                    process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
+                except TimeoutError:  # The grace expired, so hard-kill the contained tree.
+                    with suppress(ProcessLookupError, OSError):
+                        process.kill()
                 with suppress(Exception):
                     await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
-        if tree is not None:
-            tree.close()
-        self._close_lifeline()
-        if self._profile_transport_epoch is not None:
-            # Epoch first, release off-loop and shielded (see the early-return
-            # branch above for why both matter).
-            epoch = self._profile_transport_epoch
-            self._profile_transport_epoch = None
-            await asyncio.shield(
-                asyncio.to_thread(_release_subscription_transport, self, epoch)
-            )
-        if not expected:
-            log.warning("Codex app-server connection reset")
+        finally:
+            # Sync resource cleanup first (safe under any cancellation), the
+            # awaited release last: its shield keeps the queued job alive even
+            # if this await is interrupted again.
+            if tree is not None:
+                tree.close()
+            self._close_lifeline()
+            if self._profile_transport_epoch is not None:
+                # Epoch first, release off-loop and shielded (see the
+                # early-return branch above for why both matter).
+                epoch = self._profile_transport_epoch
+                self._profile_transport_epoch = None
+                await asyncio.shield(
+                    asyncio.to_thread(_release_subscription_transport, self, epoch)
+                )
+            if not expected:
+                log.warning("Codex app-server connection reset")
 
     async def close(self) -> None:
         """Reap the app-server tree and release local temporary state."""
@@ -3851,6 +3904,11 @@ async def disconnect_and_logout_codex_subscription(
             _finish_subscription_disconnect_mutation()
 
     claim_future = asyncio.get_running_loop().run_in_executor(None, _claim)
+    # A cancelled awaiter leaves the worker's exception unretrieved; consume
+    # it so asyncio does not log a spurious GC error.
+    claim_future.add_done_callback(
+        lambda f: None if f.cancelled() else f.exception()
+    )
     try:
         await asyncio.shield(claim_future)
         await asyncio.shield(close_shared_codex_app_servers())
@@ -3898,6 +3956,20 @@ async def close_shared_codex_app_servers() -> None:
             elif owner_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(client.close(), owner_loop)
                 await asyncio.wrap_future(future)
+            elif owner_loop.is_closed():
+                # The owner loop is gone for good; this entry can never be
+                # closed properly again. Escalating forever would make every
+                # later logout answer 409 for the process lifetime — drop the
+                # entry and free its reservation best-effort instead.
+                log.warning(
+                    "Dropping Codex app-server entry whose owner loop is closed"
+                )
+                epoch = client._profile_transport_epoch
+                client._profile_transport_epoch = None
+                if epoch is not None:
+                    await asyncio.to_thread(
+                        _release_subscription_transport, client, epoch
+                    )
             else:
                 raise CodexSubscriptionUnavailable(
                     "A Codex app-server owner loop is unavailable for safe shutdown."
@@ -3928,8 +4000,10 @@ __all__ = [
     "CodexSubscriptionProfileMissing",
     "CodexSubscriptionContainmentUnavailable",
     "CodexSubscriptionBinaryUnsupported",
+    "CodexSubscriptionInspectionFailed",
     "CodexSubscriptionPlanUnsupported",
     "CodexSubscriptionUnavailable",
+    "CODEX_SUBSCRIPTION_REASON_CODES",
     "codex_subscription_activation_block",
     "set_codex_subscription_activation_block",
     "codex_subscription_auth_snapshot",

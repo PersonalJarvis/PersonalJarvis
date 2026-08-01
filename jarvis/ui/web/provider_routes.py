@@ -3821,7 +3821,22 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "it in the browser window, then activate."
                 ),
             )
-        credential_present = bool(codex_payload.get("connected"))
+        if codex_payload.get("reason_code") != "plan_unsupported" and not (
+            codex_payload.get("connected")
+        ):
+            # Answer with the payload's precise diagnosis — the generic "no
+            # configured credentials" would be wrong for most codex states.
+            raise HTTPException(
+                status_code=409,
+                detail=str(
+                    codex_payload.get("message")
+                    or "Connect the dedicated ChatGPT subscription voice login."
+                ),
+            )
+        # plan_unsupported deliberately passes through: verify_activation
+        # re-judges the LIVE account, which is the only way the sticky block
+        # can clear when the plan changed back.
+        credential_present = True
     else:
         credential_present = await _provider_credential_present_async(spec, request)
     if not credential_present:
@@ -3864,8 +3879,10 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if spec.id == "codex-subscription-realtime":
         from jarvis.codex_app_server import set_codex_subscription_activation_block
 
-        # A passed activation is the proof the account works again.
-        set_codex_subscription_activation_block(None)
+        # A passed activation is the proof the account works again. Off-loop:
+        # the helper takes the login mutex, which worker threads may hold
+        # across filesystem work.
+        await asyncio.to_thread(set_codex_subscription_activation_block, None)
 
     if body.persist:
         try:

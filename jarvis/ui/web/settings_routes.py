@@ -312,9 +312,14 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
                     ),
                 )
             if not payload.get("connected"):
+                # The payload's precise diagnosis (plan refused, login
+                # required, …) beats the generic sentence.
                 raise HTTPException(
                     status_code=400,
-                    detail="no realtime provider is configured and ready",
+                    detail=str(
+                        payload.get("message")
+                        or "no realtime provider is configured and ready"
+                    ),
                 )
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
