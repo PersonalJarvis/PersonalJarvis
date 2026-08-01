@@ -1872,9 +1872,11 @@ function CodexAuthWidget({
             {t("apikeys_codex.install_codex")}
           </a>
         </Button>
-        {/* A plan-refused login is stored but unusable — offer the exit even
-            though the connected panel (with its Disconnect) never renders. */}
-        {status?.reason_code === "plan_unsupported" && (
+        {/* A plan-refused or invalid profile is stored but unusable — offer
+            the in-app exit the backend implements, even though the connected
+            panel (with its Disconnect) never renders in these states. */}
+        {(status?.reason_code === "plan_unsupported" ||
+          status?.reason_code === "setup_invalid") && (
           <Button
             size="sm"
             variant="ghost"

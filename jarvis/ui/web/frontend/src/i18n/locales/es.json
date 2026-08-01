@@ -1909,7 +1909,7 @@
     "status_login_required": "Conecta tu suscripción de ChatGPT para usar este proveedor de voz.",
     "status_not_installed": "Instala la versión compatible de Codex antes de conectar ChatGPT.",
     "status_lifecycle_unavailable": "La voz por suscripción aún no está disponible en este sistema operativo. API Realtime y la voz estándar siguen funcionando.",
-    "status_setup_invalid": "El perfil protegido de voz de Codex necesita atención. Revisa la guía de configuración y vuelve a conectarlo.",
+    "status_setup_invalid": "El perfil protegido de voz de Codex ya no es válido. \"Conectar con ChatGPT\" lo reconstruye desde cero.",
     "status_busy": "Comprobando el estado de voz de ChatGPT — un momento.",
     "status_login_in_progress": "El inicio de sesión de ChatGPT está en curso — termínalo en la ventana del navegador.",
     "status_plan_unsupported": "Este plan de ChatGPT no admite la voz por suscripción.",

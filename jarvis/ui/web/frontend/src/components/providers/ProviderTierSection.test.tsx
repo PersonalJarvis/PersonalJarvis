@@ -125,12 +125,16 @@ function codexRealtimeCard(
   };
 }
 
-function renderCard(descriptor: ProviderDescriptor, onChanged: () => void = () => {}) {
+function renderCard(
+  descriptor: ProviderDescriptor,
+  onChanged: () => void = () => {},
+  onActivateOptimistic: (tier: string, id: string) => void = () => {},
+) {
   return render(
     <ProviderCard
       descriptor={descriptor}
       onChanged={onChanged}
-      onActivateOptimistic={() => {}}
+      onActivateOptimistic={onActivateOptimistic}
       autoActivateOnSave={false}
     />,
   );
@@ -465,7 +469,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
     expect(
       screen.queryByText(
-        "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
+        "The protected Codex voice profile is no longer valid. Connect with ChatGPT rebuilds it fresh.",
       ),
     ).toBeNull();
     // The state chip next to the provider name must not shout "missing" (red)
@@ -505,7 +509,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
     expect(
       screen.getByText(
-        "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
+        "The protected Codex voice profile is no longer valid. Connect with ChatGPT rebuilds it fresh.",
       ),
     ).toBeTruthy();
     const detail = screen.getByTestId("codex-setup-detail").textContent ?? "";
@@ -756,7 +760,8 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
   it("does not activate until the user accepts the experimental boundary", async () => {
     const calls = installFetchMock();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    renderCard(codexRealtimeCard());
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
 
@@ -767,5 +772,25 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
           candidate.method === "POST" && candidate.url === "/api/realtime/switch",
       ),
     ).toBe(false);
+    // The consent dialog comes BEFORE the optimistic radio flip: a declined
+    // dialog used to leave the highlight stuck on the new card with no
+    // refetch to roll it back.
+    expect(optimistic).not.toHaveBeenCalled();
+  });
+
+  it("flips the radio optimistically only after the consent is accepted", async () => {
+    installFetchMock();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() =>
+      expect(optimistic).toHaveBeenCalledWith(
+        "realtime",
+        "codex-subscription-realtime",
+      ),
+    );
   });
 });

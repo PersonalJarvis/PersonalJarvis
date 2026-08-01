@@ -687,10 +687,35 @@ async def test_section_health_reports_login_in_progress_as_unknown(
     assert health.reason == "login_in_progress"
 
 
+@pytest.mark.parametrize(
+    ("reason_code", "message", "expected_fragment"),
+    [
+        (
+            "plan_unsupported",
+            "Subscription voice permits only personal ChatGPT accounts.",
+            "personal ChatGPT accounts",
+        ),
+        (
+            "lifecycle_unavailable",
+            "Interactive subscription-voice login is unavailable on headless Linux.",
+            "headless Linux",
+        ),
+        (
+            "not_installed",
+            "Subscription voice requires Codex CLI 0.146.0.",
+            "requires Codex CLI 0.146.0",
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_section_health_names_the_plan_as_the_blocker(
+async def test_section_health_hover_names_the_real_remedy(
     monkeypatch: pytest.MonkeyPatch,
+    reason_code: str,
+    message: str,
+    expected_fragment: str,
 ) -> None:
+    """The amber dot's hover must never say "not connected or configured"
+    when the actual remedy is a plan change, another host, or an install."""
     spec = get_spec("codex-subscription-realtime")
     assert spec is not None
     monkeypatch.setattr(
@@ -700,8 +725,8 @@ async def test_section_health_names_the_plan_as_the_blocker(
             "installed": True,
             "connected": False,
             "mode": "not_connected",
-            "message": "Subscription voice permits only personal ChatGPT accounts.",
-            "reason_code": "plan_unsupported",
+            "message": message,
+            "reason_code": reason_code,
         },
     )
 
@@ -710,9 +735,9 @@ async def test_section_health_names_the_plan_as_the_blocker(
     )
 
     assert health.status == "needs_setup"
-    assert health.reason == "plan_unsupported"
-    # The hover detail names the actual blocker, not "not connected".
-    assert "personal ChatGPT accounts" in health.detail
+    assert health.reason == reason_code
+    assert expected_fragment in health.detail
+    assert "not connected or configured" not in health.detail
 
 
 @pytest.mark.asyncio

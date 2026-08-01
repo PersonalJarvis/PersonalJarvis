@@ -554,7 +554,13 @@ def _validate_unix_arg0_alias(
     *,
     trusted_binary_path: str | None = None,
 ) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # Transiently unreadable, not proven-broken (see the sibling wraps).
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile runtime could not be inspected."
+        ) from exc
     if not stat.S_ISLNK(metadata.st_mode):
         raise CodexSubscriptionUnavailable(
             "The dedicated Codex voice profile contains an invalid runtime alias."
@@ -841,11 +847,13 @@ def _rebuild_invalid_subscription_home() -> None:
         ) from exc
     candidate = root / _SUBSCRIPTION_HOME_DIRNAME
     try:
-        if candidate.is_symlink():
+        if not candidate.exists() and not candidate.is_symlink():
+            return
+        if _is_link_or_reparse(candidate):
+            # Detach the link/junction itself; never follow it.
             candidate.unlink()
             return
-        if candidate.exists():
-            shutil.rmtree(candidate)
+        shutil.rmtree(candidate)
     except OSError as exc:
         raise CodexSubscriptionUnavailable(
             "The invalid Codex voice profile could not be removed. Delete the "
@@ -862,9 +870,25 @@ def _prepare_subscription_login_home() -> Path:
         raise
     except CodexSubscriptionUnavailable:
         # The profile is invalid and the user explicitly asked for a fresh
-        # login — rebuild the Jarvis-owned directory from scratch.
+        # login — rebuild the Jarvis-owned directory from scratch. The short
+        # retry rides out Windows' delete-pending window (an indexer or AV
+        # briefly holding the freshly removed directory open).
         _rebuild_invalid_subscription_home()
-        home = _validated_subscription_home(create=True, require_marker=False)
+        last_error: CodexSubscriptionUnavailable | None = None
+        for _attempt in range(3):
+            try:
+                home = _validated_subscription_home(
+                    create=True, require_marker=False
+                )
+                break
+            except CodexSubscriptionUnavailable as exc:  # Retried: Windows delete-pending briefly blocks the recreate.
+                last_error = exc
+                time.sleep(0.2)
+        else:
+            raise CodexSubscriptionUnavailable(
+                "The Codex voice profile could not be rebuilt. "
+                "Try Connect again in a moment."
+            ) from last_error
     marker = home / _SUBSCRIPTION_PROFILE_MARKER
     auth_file = home / "auth.json"
     if not marker.exists() and auth_file.exists():
@@ -2003,10 +2027,13 @@ class CodexAppServerClient:
                 # the LIVE call path, so a plan that turns unsupported after
                 # activation still flips every status surface to the sticky
                 # diagnosis instead of leaving them all claiming "ready".
-                # Off-loop: the helper takes the login mutex, which worker
-                # threads may hold across filesystem work.
-                await asyncio.to_thread(
-                    set_codex_subscription_activation_block, str(exc)
+                # Off-loop and shielded like its cold-start and warm-path
+                # siblings: an activation timeout must not drop the queued
+                # recording job.
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        set_codex_subscription_activation_block, str(exc)
+                    )
                 )
             await self._close_process(
                 CodexAppServerDisconnected(
@@ -3468,6 +3495,26 @@ def _reserve_subscription_transport(client: CodexAppServerClient) -> int:
         return _subscription_transport_epoch
 
 
+def _force_drop_subscription_transport(client: CodexAppServerClient) -> None:
+    """Unconditionally drop a dead client's reservation (no epoch check).
+
+    Safe ONLY for a client whose owner loop is closed: it can never reserve
+    again, and no other client can hold the reservation while its id is in
+    the set. Without this, a close that nulled the epoch before its loop died
+    left the profile permanently "starting" with login/logout refused.
+    """
+    global _subscription_transport_process_lock
+
+    with _subscription_login_lock:
+        _subscription_active_transports.discard(id(client))
+        if not _subscription_active_transports:
+            process_lock = _subscription_transport_process_lock
+            _subscription_transport_process_lock = None
+            if process_lock is not None:
+                process_lock.close()
+            _subscription_state_changed.notify_all()
+
+
 def _release_subscription_transport(
     client: CodexAppServerClient, epoch: int
 ) -> None:
@@ -3915,7 +3962,12 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
     auth_file = home / "auth.json"
     if not auth_file.exists() and not auth_file.is_symlink():
         return True, None
-    _validate_regular_private_file(auth_file)
+    try:
+        _validate_regular_private_file(auth_file)
+    except CodexSubscriptionInspectionFailed as exc:
+        # Same contract as the profile-level branch above: transiently
+        # unreadable refuses honestly instead of escaping as a raw error.
+        return False, f"{exc} Try again in a moment."
     try:
         auth_file.unlink()
     except OSError as exc:  # Return a path-free deletion error to the authenticated caller.
@@ -3924,7 +3976,15 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
             "Dedicated subscription credentials could not be removed "
             f"({type(exc).__name__}).",
         )
-    _validated_subscription_home(create=False, require_marker=True)
+    try:
+        _validated_subscription_home(create=False, require_marker=True)
+    except CodexSubscriptionUnavailable:  # noqa: S110 - the logout already succeeded; this recheck is advisory.
+        # The credential IS deleted — reporting failure here would show a
+        # 409 for a logout that actually happened.
+        log.warning(
+            "Post-logout profile revalidation failed; the login file is gone",
+            exc_info=True,
+        )
     return True, None
 
 
@@ -4140,17 +4200,14 @@ async def close_shared_codex_app_servers() -> None:
                         orphan_tree.close()
                 with suppress(Exception):
                     client._close_lifeline()
-                epoch = client._profile_transport_epoch
+                # Unconditional: a close that nulled the epoch before its
+                # loop died would otherwise leave the reservation forever.
                 client._profile_transport_epoch = None
-                if epoch is not None:
-                    # Shielded like every other epoch release: a cancellation
-                    # after the attribute was nulled must not strand the
-                    # reservation.
-                    await asyncio.shield(
-                        asyncio.to_thread(
-                            _release_subscription_transport, client, epoch
-                        )
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        _force_drop_subscription_transport, client
                     )
+                )
             else:
                 raise CodexSubscriptionUnavailable(
                     "A Codex app-server owner loop is unavailable for safe shutdown."
