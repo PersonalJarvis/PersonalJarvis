@@ -17,8 +17,10 @@ import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import type { VoiceState } from "@/store/events";
 
 interface Motion {
-  /** Pace of the slowly evolving cloud field. */
-  speed: number;
+  /** Horizontal travel through the procedural weather field. */
+  flowX: number;
+  /** Vertical travel through the procedural weather field. */
+  flowY: number;
   /** Whole-sphere breathing depth, as a scale fraction. */
   breathAmp: number;
   /** Whole-sphere breathing rate in hertz. */
@@ -27,14 +29,56 @@ interface Motion {
   turbulence: number;
   /** Brightness of the cream cloud highlights. */
   energy: number;
+  /** Strength of the assistant-speech envelope. */
+  voiceImpact: number;
 }
 
 const MOTIONS: Record<VoiceState, Motion> = {
-  idle: { speed: 0.18, breathAmp: 0.006, breathHz: 0.16, turbulence: 0.82, energy: 0.86 },
-  listening: { speed: 0.52, breathAmp: 0.02, breathHz: 0.62, turbulence: 1, energy: 1 },
-  thinking: { speed: 0.36, breathAmp: 0.012, breathHz: 0.32, turbulence: 0.96, energy: 0.94 },
-  speaking: { speed: 0.82, breathAmp: 0.028, breathHz: 1.05, turbulence: 1.04, energy: 1 },
-  error: { speed: 0.12, breathAmp: 0.004, breathHz: 0.12, turbulence: 0.72, energy: 0.72 },
+  idle: {
+    flowX: 0.025,
+    flowY: 0.008,
+    breathAmp: 0.004,
+    breathHz: 0.14,
+    turbulence: 0.8,
+    energy: 0.86,
+    voiceImpact: 0,
+  },
+  listening: {
+    flowX: 0.075,
+    flowY: 0.025,
+    breathAmp: 0.01,
+    breathHz: 0.58,
+    turbulence: 0.94,
+    energy: 0.98,
+    voiceImpact: 0,
+  },
+  thinking: {
+    flowX: 0.24,
+    flowY: -0.11,
+    breathAmp: 0.005,
+    breathHz: 0.2,
+    turbulence: 1.08,
+    energy: 0.95,
+    voiceImpact: 0,
+  },
+  speaking: {
+    flowX: 0.3,
+    flowY: 0.075,
+    breathAmp: 0.01,
+    breathHz: 0.72,
+    turbulence: 1.02,
+    energy: 1,
+    voiceImpact: 0.028,
+  },
+  error: {
+    flowX: 0.012,
+    flowY: 0,
+    breathAmp: 0.003,
+    breathHz: 0.12,
+    turbulence: 0.7,
+    energy: 0.72,
+    voiceImpact: 0,
+  },
 };
 
 type Rgb = readonly [number, number, number];
@@ -62,6 +106,19 @@ function clamp(value: number, min = 0, max = 1): number {
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const position = clamp((value - edge0) / (edge1 - edge0));
   return position * position * (3 - 2 * position);
+}
+
+/** Irregular syllable-like movement without pretending it is measured audio. */
+function speechEnvelope(elapsed: number): number {
+  const cadence = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 5.4 + Math.sin(elapsed * 1.7) * 0.8);
+  const articulation = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 9.2 + 1.3);
+  return smoothstep(0.38, 0.86, cadence * 0.74 + articulation * 0.26);
+}
+
+/** One soft outward beat when assistant speech begins. */
+function speakingOnset(age: number): number {
+  if (age < 0 || age >= 0.24) return 0;
+  return Math.sin((age / 0.24) * Math.PI) * Math.exp(-age * 2.4);
 }
 
 /** A stable tile of pseudo-random values avoids expensive trigonometry per pixel. */
@@ -105,21 +162,35 @@ function fractalNoise(x: number, y: number): number {
   return value / normalizer;
 }
 
-function paintWeather(image: ImageData, weatherPhase: number, motion: Motion): void {
-  const phase = weatherPhase * 0.1;
+function paintWeather(
+  image: ImageData,
+  phaseX: number,
+  phaseY: number,
+  motion: Motion,
+  impact: number,
+): void {
   const data = image.data;
 
   for (let y = 0; y < TEXTURE_SIZE; y += 1) {
     const ny = (y / (TEXTURE_SIZE - 1)) * 2 - 1;
     for (let x = 0; x < TEXTURE_SIZE; x += 1) {
       const nx = (x / (TEXTURE_SIZE - 1)) * 2 - 1;
-      const warpX = fractalNoise(nx * 1.3 + phase + 8.2, ny * 1.22 - phase * 0.7 + 3.4);
-      const warpY = fractalNoise(nx * 1.18 - phase * 0.55 + 19.7, ny * 1.35 + phase + 12.1);
-      const cloudField = fractalNoise(
-        nx * 1.85 + warpX * motion.turbulence * 1.35 + phase,
-        ny * 1.72 + warpY * motion.turbulence * 1.2 - phase * 0.8,
+      // Speech briefly compresses the material while the silhouette expands.
+      const sampleX = nx * (1 + impact * 0.055);
+      const sampleY = ny * (1 - impact * 0.035);
+      const warpX = fractalNoise(sampleX * 1.3 + phaseX + 8.2, sampleY * 1.22 + phaseY + 3.4);
+      const warpY = fractalNoise(
+        sampleX * 1.18 - phaseX * 0.55 + 19.7,
+        sampleY * 1.35 + phaseY * 0.8 + 12.1,
       );
-      const detail = fractalNoise(nx * 3.15 - phase * 0.45 + 31.2, ny * 2.9 + phase * 0.35);
+      const cloudField = fractalNoise(
+        sampleX * 1.85 + warpX * motion.turbulence * 1.35 + phaseX,
+        sampleY * 1.72 + warpY * motion.turbulence * 1.2 + phaseY,
+      );
+      const detail = fractalNoise(
+        sampleX * 3.15 - phaseX * 0.45 + 31.2,
+        sampleY * 2.9 + phaseY * 0.35,
+      );
       const weather = cloudField * 0.76 + detail * 0.24;
 
       // Warping the vertical color position removes the synthetic horizon band.
@@ -236,29 +307,51 @@ export function VoiceOrb({
 
     const live: Motion = { ...MOTIONS[stateRef.current] };
     let last = performance.now();
-    let weatherPhase = 0;
+    let phaseX = 0;
+    let phaseY = 0;
     let breathPhase = 0;
+    let activityElapsed = 0;
+    let activeState = stateRef.current;
+    let speakingAge = Number.POSITIVE_INFINITY;
+    let liveImpact = 0;
 
     const drawFrame = (now: number) => {
       const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
       last = now;
 
       const target = MOTIONS[stateRef.current] ?? MOTIONS.idle;
+      if (stateRef.current !== activeState) {
+        activeState = stateRef.current;
+        speakingAge = activeState === "speaking" ? 0 : Number.POSITIVE_INFINITY;
+      }
       const ease = 1 - Math.exp(-dt * 3.2);
       for (const key of Object.keys(live) as (keyof Motion)[]) {
         live[key] = mix(live[key], target[key], ease);
       }
-      weatherPhase += dt * live.speed;
+      phaseX += dt * live.flowX;
+      phaseY += dt * live.flowY;
       breathPhase += dt * live.breathHz * Math.PI * 2;
+      activityElapsed += dt;
+      if (Number.isFinite(speakingAge)) speakingAge += dt;
+
+      // The panel receives lifecycle states on every platform, but no reliable
+      // normalized TTS output level. This choreography reacts to the truthful
+      // speaking state without masquerading as a measured audio waveform.
+      const speech = activeState === "speaking" ? speechEnvelope(activityElapsed) : 0;
+      const onset = activeState === "speaking" ? speakingOnset(speakingAge) : 0;
+      const impactTarget = live.voiceImpact * speech + 0.032 * onset;
+      const impactEase = 1 - Math.exp(-dt * (impactTarget > liveImpact ? 22 : 8));
+      liveImpact = mix(liveImpact, impactTarget, impactEase);
 
       const breath =
-        1 -
+        0.965 -
         live.breathAmp * 0.65 +
         live.breathAmp * 0.52 * Math.sin(breathPhase) +
-        live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4);
-      const radius = (half - 0.75 * dpr) * breath;
+        live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4) +
+        liveImpact;
+      const radius = (half - 0.75 * dpr) * Math.min(1, breath);
 
-      paintWeather(weather, weatherPhase, live);
+      paintWeather(weather, phaseX, phaseY, live, liveImpact);
       textureCtx.putImageData(weather, 0, 0);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);

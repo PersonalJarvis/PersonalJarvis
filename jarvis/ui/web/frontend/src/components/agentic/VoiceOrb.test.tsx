@@ -112,16 +112,88 @@ describe("voice orb renderer", () => {
 
     render(<VoiceOrb state="idle" />);
     expect(display.drawImage).toHaveBeenCalledTimes(1);
-    nextFrame?.(20);
+    nextFrame?.(49);
     expect(display.drawImage).toHaveBeenCalledTimes(1);
-    nextFrame?.(600_050);
+    nextFrame?.(50);
     expect(display.drawImage).toHaveBeenCalledTimes(2);
+    nextFrame?.(99);
+    expect(display.drawImage).toHaveBeenCalledTimes(2);
+    nextFrame?.(100);
+    expect(display.drawImage).toHaveBeenCalledTimes(3);
+    nextFrame?.(600_150);
+    expect(display.drawImage).toHaveBeenCalledTimes(4);
 
-    const meanDelta = snapshots[0].reduce(
-      (total, value, index) => total + Math.abs(value - snapshots[1][index]),
+    const meanDelta = snapshots[2].reduce(
+      (total, value, index) => total + Math.abs(value - snapshots[3][index]),
       0,
-    ) / snapshots[0].length;
+    ) / snapshots[2].length;
     expect(meanDelta).toBeLessThan(2);
+  });
+
+  it("moves the internal weather faster while thinking than while idle", () => {
+    setReducedMotion(false);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const snapshots: number[][] = [];
+    const { texture } = installCanvasContexts();
+    vi.mocked(texture.putImageData).mockImplementation((image) => {
+      snapshots.push(Array.from(image.data));
+    });
+    let nextFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      nextFrame = callback;
+      return 31;
+    });
+
+    const { rerender } = render(<VoiceOrb state="idle" />);
+    for (let now = 50; now <= 500; now += 50) nextFrame?.(now);
+
+    const idleStart = snapshots[0];
+    const idleEnd = snapshots[snapshots.length - 1];
+    const idleDelta = idleStart.reduce(
+      (total, value, index) => total + Math.abs(value - idleEnd[index]),
+      0,
+    ) / idleStart.length;
+
+    rerender(<VoiceOrb state="thinking" />);
+    for (let now = 550; now <= 1_050; now += 50) nextFrame?.(now);
+    const thinkingEnd = snapshots[snapshots.length - 1];
+    const thinkingDelta = idleEnd.reduce(
+      (total, value, index) => total + Math.abs(value - thinkingEnd[index]),
+      0,
+    ) / idleEnd.length;
+
+    expect(thinkingDelta).toBeGreaterThan(idleDelta * 2);
+  });
+
+  it("adds and releases a soft speaking impulse without snapping on exit", () => {
+    setReducedMotion(false);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const { display } = installCanvasContexts();
+    let nextFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      nextFrame = callback;
+      return 41;
+    });
+
+    const { rerender } = render(<VoiceOrb state="idle" />);
+    const idleRadius = vi.mocked(display.arc).mock.calls[0][2];
+    rerender(<VoiceOrb state="speaking" />);
+    nextFrame?.(60);
+    let calls = vi.mocked(display.arc).mock.calls;
+    const onsetRadius = calls[calls.length - 1][2];
+
+    for (let now = 110; now <= 310; now += 50) nextFrame?.(now);
+    calls = vi.mocked(display.arc).mock.calls;
+    const settledRadius = calls[calls.length - 1][2];
+
+    rerender(<VoiceOrb state="thinking" />);
+    nextFrame?.(360);
+    calls = vi.mocked(display.arc).mock.calls;
+    const exitRadius = calls[calls.length - 1][2];
+
+    expect(onsetRadius).toBeGreaterThan(idleRadius * 1.01);
+    expect(settledRadius).toBeLessThan(onsetRadius * 0.995);
+    expect(Math.abs(exitRadius - settledRadius) / settledRadius).toBeLessThan(0.015);
   });
 
   it("cancels animation when hidden and again when unmounted", () => {
