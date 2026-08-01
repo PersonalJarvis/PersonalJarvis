@@ -515,6 +515,107 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     );
   });
 
+  it("keeps model and voice pickers mounted through a busy window", async () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated subscription voice status is being checked or changed.",
+          reason_code: "busy",
+        },
+      }),
+    );
+
+    // The realtime options control mounts (it loads its options async) even
+    // while the card is only transiently unsure about the login — the card
+    // must not visibly flicker its pickers away during "one moment".
+    expect(await screen.findByLabelText(/model/i)).toBeTruthy();
+  });
+
+  it("tells the user to finish a running login instead of restarting it", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated ChatGPT subscription login is in progress.",
+          reason_code: "login_in_progress",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "The ChatGPT login is running — finish it in the browser window.",
+      ),
+    ).toBeTruthy();
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+  });
+
+  it("treats an unsupported OS as terminal, not as a missing install", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "This operating-system architecture is not approved.",
+          reason_code: "lifecycle_unavailable",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "Subscription voice is not yet available on this operating system. API Realtime and standard voice still work.",
+      ),
+    ).toBeTruthy();
+    // No install invitation for a CLI that would not help, and no active
+    // Connect button that can only end in an error toast.
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+  });
+
+  it("shows the sticky plan diagnosis after a refused activation", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message:
+            "Subscription voice permits only personal ChatGPT accounts; workspace, enterprise, education, and unknown plans are refused.",
+          reason_code: "plan_unsupported",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText("This ChatGPT plan does not support subscription voice."),
+    ).toBeTruthy();
+    expect(screen.getByTestId("codex-setup-detail").textContent).toContain(
+      "personal ChatGPT accounts",
+    );
+  });
+
   it("shows the pinned install path for a wrong codex release", () => {
     installFetchMock();
     renderCard(

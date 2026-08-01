@@ -176,6 +176,66 @@ def test_get_voice_mode_no_realtime_key_anywhere(monkeypatch):
     assert body["active_model"] is None
 
 
+def test_put_voice_mode_codex_busy_answers_409_and_persists_nothing(monkeypatch):
+    """The availability bool fails open on busy; the standing mode decision
+    must not — it asks the payload and answers 'try again' instead."""
+    from jarvis.ui.web import provider_routes, settings_routes
+
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_available_provider",
+        lambda _cfg: "codex-subscription-realtime",
+    )
+    monkeypatch.setattr(
+        provider_routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated subscription voice status is being checked or changed.",
+            "reason_code": "busy",
+        },
+    )
+    client = TestClient(_app(mode="pipeline"))
+
+    r = client.put(
+        "/api/settings/voice-mode", json={"mode": "realtime", "persist": True}
+    )
+
+    assert r.status_code == 409
+    assert "being checked" in r.json()["detail"]
+
+
+def test_put_voice_mode_codex_logged_out_is_400(monkeypatch):
+    """A pinned but logged-out provider must not be persisted as the mode."""
+    from jarvis.ui.web import provider_routes, settings_routes
+
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_available_provider",
+        lambda _cfg: "codex-subscription-realtime",
+    )
+    monkeypatch.setattr(
+        provider_routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Connect the dedicated ChatGPT subscription voice login.",
+            "reason_code": "login_required",
+        },
+    )
+    client = TestClient(_app(mode="pipeline"))
+
+    r = client.put(
+        "/api/settings/voice-mode", json={"mode": "realtime", "persist": True}
+    )
+
+    assert r.status_code == 400
+
+
 def test_put_voice_mode_invalid_is_400():
     client = TestClient(_app())
     r = client.put("/api/settings/voice-mode", json={"mode": "bogus", "persist": False})

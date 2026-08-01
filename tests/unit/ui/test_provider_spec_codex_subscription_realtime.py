@@ -446,7 +446,7 @@ def test_login_window_keeps_the_cli_reported_as_installed(
         binary_path=None,
         version=None,
         reason="Dedicated ChatGPT subscription login is in progress.",
-        reason_code="login_required",
+        reason_code="login_in_progress",
     )
     monkeypatch.setattr(
         codex_app_server,
@@ -457,7 +457,74 @@ def test_login_window_keeps_the_cli_reported_as_installed(
 
     payload = routes._codex_subscription_status_payload(None)
 
-    assert payload["reason_code"] == "login_required"
+    assert payload["reason_code"] == "login_in_progress"
+    assert payload["installed"] is True
+
+
+def test_plan_block_turns_a_ready_login_into_plan_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a refused activation, surfaces must stop claiming ready."""
+    from jarvis import codex_app_server
+
+    snapshot = codex_app_server.CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path="codex",
+        version="codex-cli 0.146.0",
+        reason="Dedicated ChatGPT login is available.",
+        reason_code="ready",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary_path: snapshot,
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "_subscription_activation_block",
+        "Subscription voice permits only personal ChatGPT accounts.",
+    )
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "plan_unsupported"
+    assert payload["connected"] is False
+    assert "personal ChatGPT accounts" in payload["message"]
+
+
+def test_lifecycle_unavailable_does_not_claim_missing_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsupported OS must not render the install prompt for a CLI that
+    would not help anyway."""
+    from jarvis import codex_app_server
+
+    class _PresenceService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex"
+
+    snapshot = codex_app_server.CodexAppServerCapability(
+        available=False,
+        chatgpt_authenticated=False,
+        binary_path=None,
+        version=None,
+        reason="This operating-system architecture is not approved.",
+        reason_code="lifecycle_unavailable",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary_path: snapshot,
+    )
+    monkeypatch.setattr(routes, "CodexAuthService", _PresenceService)
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "lifecycle_unavailable"
     assert payload["installed"] is True
 
 
@@ -534,9 +601,11 @@ def test_reason_code_vocabulary_is_pinned() -> None:
     assert set(get_args(hints["reason_code"])) == {
         "ready",
         "login_required",
+        "login_in_progress",
         "lifecycle_unavailable",
         "not_installed",
         "setup_invalid",
+        "plan_unsupported",
         "busy",
     }
 

@@ -232,6 +232,14 @@ class CodexSubscriptionBinaryUnsupported(CodexSubscriptionUnavailable):
     """
 
 
+class CodexSubscriptionPlanUnsupported(CodexSubscriptionUnavailable):
+    """The live account check refused this ChatGPT plan permanently.
+
+    A transient startup failure must NOT carry this class: activation stores
+    it as the sticky ``plan_unsupported`` diagnosis that outlives the toast.
+    """
+
+
 class CodexAppServerDisconnected(CodexAppServerError):
     """The app-server process exited or its JSONL stream broke."""
 
@@ -265,9 +273,15 @@ class CodexAppServerRPCError(CodexAppServerError):
 CodexSubscriptionReasonCode = Literal[
     "ready",
     "login_required",
+    # An interactive login is running right now: the card must invite the
+    # user to FINISH it in the browser, never to start a second one.
+    "login_in_progress",
     "lifecycle_unavailable",
     "not_installed",
     "setup_invalid",
+    # The connected ChatGPT account can never activate this provider (for
+    # example a business/enterprise plan) — sticky until login/logout.
+    "plan_unsupported",
     "busy",
 ]
 CODEX_SUBSCRIPTION_REASON_CODES: Final = frozenset(
@@ -861,9 +875,11 @@ def _sha256_file_cached(path: Path) -> str:
     probe, and probes run on each UI refresh. The signature (device, inode,
     size, mtime_ns, ctime_ns) is read fresh on every call and the entry
     expires after a short TTL, bounding how long an in-place swap that forges
-    the timestamps could ride a stale digest. This memo serves STATUS reads
-    only — the copy that gets executed is re-hashed without the memo right
-    before spawn (see ``ensure_started``).
+    the timestamps could ride a stale digest. This memo authorizes STATUS
+    reads — which do spawn the CLI for ``login status`` probes within the TTL
+    window — while the app-server copy that runs with the user's ChatGPT
+    identity is re-hashed without the memo right before spawn (see
+    ``ensure_started``).
     """
     try:
         identity = path.stat()
@@ -901,7 +917,10 @@ def _verify_spawn_binary(binary_path: str) -> None:
 
     The memoized hash is fine for status polling; the copy that runs with the
     user's ChatGPT identity gets one fresh verification right before spawn so
-    a stale memo can never launder an in-place swap into execution.
+    a stale memo can never launder an in-place swap into execution. A
+    microsecond rename-over between this check and exec remains possible on
+    every platform (no portable fexecve); the guard binds the hash to the
+    path at verification time, which is the strongest portable guarantee.
     """
     target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     if target is None or _sha256_file(Path(binary_path)) != target[3]:
@@ -1551,7 +1570,10 @@ class CodexAppServerClient:
         self._sink_server: asyncio.Server | None = None
         self._sink_base_url: str | None = None
         self._trusted_binary_path: str | None = None
-        self._profile_transport_reserved = False
+        # Ownership epoch of this client's profile reservation; None when the
+        # client holds none. Releases quote it so stale teardown can never
+        # touch a newer reservation.
+        self._profile_transport_epoch: int | None = None
         self._owner_loop: asyncio.AbstractEventLoop | None = None
         self._transport_provider_id = f"jarvis_voice_{secrets.token_hex(16)}"
         self._ready = False
@@ -1610,6 +1632,7 @@ class CodexAppServerClient:
             log.warning(
                 "Codex subscription status failed (%s); app-server stays disabled",
                 type(exc).__name__,
+                exc_info=True,
             )
             return CodexAppServerCapability(
                 available=False,
@@ -1652,51 +1675,64 @@ class CodexAppServerClient:
             # outcome; on cancellation a detached worker waits for it to
             # settle and releases the orphan, so the profile can never stay
             # parked on "voice is starting" forever.
-            reserve_settled = threading.Event()
+            # Exactly-one-decider contract: the reserve worker and the
+            # abandoner agree under a tiny lock who releases the epoch, so no
+            # interleaving of cancellation, executor scheduling, or a second
+            # ensure_started can leak the reservation OR release a newer one
+            # (the epoch token makes stale releases no-ops). No timeouts: a
+            # give-up path would turn executor saturation into a permanent
+            # claim leak, because the worker would still claim later with
+            # nobody left to release.
+            decision_lock = threading.Lock()
+            abandoned = threading.Event()
             reserve_failed: list[BaseException] = []
+            published_epoch: list[int] = []
 
             def _reserve() -> None:
                 try:
-                    _reserve_subscription_transport(self)
+                    epoch = _reserve_subscription_transport(self)
                 except BaseException as exc:
                     reserve_failed.append(exc)
                     raise
-                finally:
-                    reserve_settled.set()
+                with decision_lock:
+                    if not abandoned.is_set():
+                        self._profile_transport_epoch = epoch
+                        published_epoch.append(epoch)
+                        return
+                # The caller was cancelled before we finished: nobody will
+                # ever use this reservation, so this worker releases it.
+                _release_subscription_transport(self, epoch)
 
-            def _abandon_reservation() -> None:
-                if not reserve_settled.wait(timeout=60.0):
-                    log.error(
-                        "Cancelled subscription reserve never settled; "
-                        "leaving it for the next start or disconnect"
-                    )
-                    return
-                self._profile_transport_reserved = False
-                if not reserve_failed:
-                    _release_subscription_transport(self)
-
-            self._profile_transport_reserved = True
             reserve_future = asyncio.get_running_loop().run_in_executor(
                 None, _reserve
             )
             try:
                 await asyncio.shield(reserve_future)
             except asyncio.CancelledError:
-                threading.Thread(
-                    target=_abandon_reservation,
-                    name="codex-reserve-abandon",
-                    daemon=True,
-                ).start()
-                raise
-            except BaseException:
-                self._profile_transport_reserved = False
+                with decision_lock:
+                    abandoned.set()
+                    epoch = published_epoch[0] if published_epoch else None
+                    if epoch is not None and self._profile_transport_epoch == epoch:
+                        self._profile_transport_epoch = None
+                if epoch is not None:
+                    # Already published before the cancel: release off-loop.
+                    threading.Thread(
+                        target=_release_subscription_transport,
+                        args=(self, epoch),
+                        name="codex-reserve-abandon",
+                        daemon=True,
+                    ).start()
                 raise
 
             async def _release_after_failure() -> None:
-                self._profile_transport_reserved = False
-                await asyncio.shield(
-                    asyncio.to_thread(_release_subscription_transport, self)
-                )
+                epoch = self._profile_transport_epoch
+                self._profile_transport_epoch = None
+                if epoch is not None:
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            _release_subscription_transport, self, epoch
+                        )
+                    )
 
             try:
                 capability = await self.capability_status()
@@ -1799,7 +1835,7 @@ class CodexAppServerClient:
             )
         plan_type = account.get("planType") if isinstance(account, Mapping) else None
         if plan_type not in _PERSONAL_CHATGPT_PLANS:
-            raise CodexSubscriptionUnavailable(
+            raise CodexSubscriptionPlanUnsupported(
                 "Subscription voice permits only personal ChatGPT accounts; workspace, "
                 "enterprise, education, and unknown plans are refused."
             )
@@ -2203,8 +2239,13 @@ class CodexAppServerClient:
                     *command,
                 ]
                 kwargs["start_new_session"] = True
+                # Off-loop: the login mutex this helper takes can be held by a
+                # probe thread across filesystem work; the audio loop must not
+                # wait on it.
                 kwargs["pass_fds"] = (
-                    *_subscription_transport_pass_fds(self),
+                    *await asyncio.to_thread(
+                        _subscription_transport_pass_fds, self
+                    ),
                     lifeline_read_fd,
                 )
         except BaseException:
@@ -2891,14 +2932,15 @@ class CodexAppServerClient:
         if process is None:
             self._ready = False
             self._close_lifeline()
-            if self._profile_transport_reserved:
-                # Flag first, release off-loop and shielded: a cancellation
+            if self._profile_transport_epoch is not None:
+                # Epoch first, release off-loop and shielded: a cancellation
                 # must neither skip the release nor drop the queued job (a
                 # queued to_thread future CAN be cancelled before its thread
                 # starts — shield keeps it alive).
-                self._profile_transport_reserved = False
+                epoch = self._profile_transport_epoch
+                self._profile_transport_epoch = None
                 await asyncio.shield(
-                    asyncio.to_thread(_release_subscription_transport, self)
+                    asyncio.to_thread(_release_subscription_transport, self, epoch)
                 )
             return
         self._process = None
@@ -2956,12 +2998,13 @@ class CodexAppServerClient:
         if tree is not None:
             tree.close()
         self._close_lifeline()
-        if self._profile_transport_reserved:
-            # Flag first, release off-loop and shielded (see the early-return
+        if self._profile_transport_epoch is not None:
+            # Epoch first, release off-loop and shielded (see the early-return
             # branch above for why both matter).
-            self._profile_transport_reserved = False
+            epoch = self._profile_transport_epoch
+            self._profile_transport_epoch = None
             await asyncio.shield(
-                asyncio.to_thread(_release_subscription_transport, self)
+                asyncio.to_thread(_release_subscription_transport, self, epoch)
             )
         if not expected:
             log.warning("Codex app-server connection reset")
@@ -2997,15 +3040,21 @@ _shared_clients: dict[
     tuple[str, asyncio.AbstractEventLoop], CodexAppServerClient
 ] = {}
 _shared_clients_lock = threading.Lock()
-# Invariant: this lock is also acquired from event-loop threads, so nothing
-# slow may ever run under it — no IO, no CLI spawn, no untimed Condition.wait.
-# The cross-process profile lock acquired under it is strictly non-blocking.
+# Invariant: WORKER threads may hold this lock across filesystem work (the
+# cross-process profile lock is acquired under it: mkdir, resolve, ACL
+# validation — its OS locking call itself is non-blocking). Event-loop code
+# must therefore NEVER take this lock directly — always go through
+# asyncio.to_thread (shielded where a cancellation must not drop the job).
 _subscription_login_lock = threading.Lock()
 _subscription_login_in_flight = False
 _subscription_login_process: Any | None = None
 _subscription_profile_mutating = False
 _subscription_active_transports: set[int] = set()
 _subscription_transport_process_lock: Any | None = None
+# Monotonic ownership token for the transport reservation: bumped on every
+# reserve (including same-client adoption), quoted by every release. A stale
+# holder's release becomes a no-op instead of tearing down a live reservation.
+_subscription_transport_epoch: int = 0
 _subscription_mutation_process_lock: Any | None = None
 
 # Status probes must never report a broken setup just because the profile is
@@ -3097,11 +3146,35 @@ def _invalidate_subscription_snapshot_locked() -> None:
     global _subscription_snapshot_cache, _subscription_snapshot_cache_key
     global _subscription_snapshot_cache_at
     global _subscription_snapshot_cache_is_failure
+    global _subscription_activation_block
 
     _subscription_snapshot_cache = None
     _subscription_snapshot_cache_key = ""
     _subscription_snapshot_cache_at = 0.0
     _subscription_snapshot_cache_is_failure = False
+    # A login/logout may change the account, so the sticky "this plan can
+    # never activate" diagnosis must be re-earned by the next activation.
+    _subscription_activation_block = None
+
+
+# Sticky reason the connected login cannot activate (for example a
+# business/enterprise ChatGPT plan, refused by the live account check). The
+# one honest 409 toast fades in seconds; without this, every surface keeps
+# claiming "ready" for an account that can never work.
+_subscription_activation_block: str | None = None
+
+
+def set_codex_subscription_activation_block(message: str | None) -> None:
+    """Record (or clear with ``None``) why activation is impossible."""
+    global _subscription_activation_block
+
+    with _subscription_login_lock:
+        _subscription_activation_block = (message or "").strip() or None
+
+
+def codex_subscription_activation_block() -> str | None:
+    with _subscription_login_lock:
+        return _subscription_activation_block
 
 
 def _await_status_probe_completion_locked() -> None:
@@ -3150,8 +3223,16 @@ def _subscription_transport_pass_fds(
         return (descriptor,)
 
 
-def _reserve_subscription_transport(client: CodexAppServerClient) -> None:
-    global _subscription_transport_process_lock
+def _reserve_subscription_transport(client: CodexAppServerClient) -> int:
+    """Reserve the profile for this client and return an ownership epoch.
+
+    The epoch is the anti-stale-release token: every reservation (including a
+    re-reservation by the same client after a crash or cancelled start) bumps
+    it, and ``_release_subscription_transport`` only honors the CURRENT epoch.
+    Without it, an abandon worker or a slow ``_close_process`` from a previous
+    life could tear down a reservation a newer start legitimately owns.
+    """
+    global _subscription_transport_process_lock, _subscription_transport_epoch
 
     with _subscription_login_lock:
         _await_status_probe_completion_locked()
@@ -3165,18 +3246,30 @@ def _reserve_subscription_transport(client: CodexAppServerClient) -> None:
                 _subscription_active_transports == {client_id}
                 and _subscription_transport_process_lock is not None
             ):
-                return
+                # Adoption: the new start supersedes any stale holder, whose
+                # pending releases become no-ops via the epoch bump.
+                _subscription_transport_epoch += 1
+                return _subscription_transport_epoch
             raise CodexSubscriptionUnavailable(
                 "Subscription voice is already owned by another client or event loop."
             )
         _subscription_transport_process_lock = _acquire_subscription_process_lock()
         _subscription_active_transports.add(client_id)
+        _subscription_transport_epoch += 1
+        return _subscription_transport_epoch
 
 
-def _release_subscription_transport(client: CodexAppServerClient) -> None:
+def _release_subscription_transport(
+    client: CodexAppServerClient, epoch: int
+) -> None:
+    """Release the reservation, but only when ``epoch`` is still current."""
     global _subscription_transport_process_lock
 
     with _subscription_login_lock:
+        if epoch != _subscription_transport_epoch:
+            # A newer reservation owns the profile now; this release belongs
+            # to a superseded holder and must not touch the live state.
+            return
         _subscription_active_transports.discard(id(client))
         if not _subscription_active_transports:
             process_lock = _subscription_transport_process_lock
@@ -3257,7 +3350,10 @@ def _local_subscription_auth_snapshot_locked(
             binary_path=None,
             version=None,
             reason="Dedicated ChatGPT subscription login is in progress.",
-            reason_code="login_required",
+            # Its own state, not login_required: the card must invite the
+            # user to FINISH the running browser login, never to start a
+            # second one.
+            reason_code="login_in_progress",
         )
     if _subscription_profile_mutating:
         # Checked before the transport branch: during disconnect-and-logout
@@ -3280,14 +3376,12 @@ def _local_subscription_auth_snapshot_locked(
             )
         ready_client = next((client for client in active_clients if client.ready), None)
         if ready_client is not None:
-            cached = _subscription_snapshot_cache
-            cached_version = (
-                cached.version
-                if cached is not None
-                and _subscription_snapshot_cache_key
-                == _subscription_cache_key(binary_path)
-                else None
+            # The bounded cache read applies the age ceiling and the
+            # failure-memo exclusion — never read the raw cache here.
+            cached = _cached_subscription_snapshot_locked(
+                binary_path, allow_stale=True
             )
+            cached_version = cached.version if cached is not None else None
             return CodexAppServerCapability(
                 available=True,
                 chatgpt_authenticated=True,
@@ -3398,6 +3492,10 @@ def codex_subscription_auth_snapshot(
                     ),
                     reason_code="busy",
                 ),
+                # Flagged so the stale path never serves this memo as "what
+                # was true before" — it exists only to keep coalesced waiters
+                # off a broken CLI within the fresh TTL.
+                is_failure=True,
             )
         raise
     else:
@@ -3720,13 +3818,12 @@ async def disconnect_and_logout_codex_subscription(
     def _settle() -> None:
         # Off-loop: waits for the claim thread to settle, then releases our
         # claim. Once this thread starts it always finishes, whatever happens
-        # to the coroutine that spawned it.
-        if not claim_settled.wait(timeout=60.0):
-            log.error(
-                "Subscription disconnect claim never settled; leaving state "
-                "for the next disconnect to recover"
-            )
-            return
+        # to the coroutine that spawned it. The wait is unbounded on purpose:
+        # a give-up timeout would turn executor saturation into a permanent
+        # claim leak (the claim thread still runs later, with nobody left to
+        # release it), while the claim itself is bounded by construction
+        # (probe wait <= 5s plus lock acquisition).
+        claim_settled.wait()
         if not claim_failed:
             _finish_subscription_disconnect_mutation()
 

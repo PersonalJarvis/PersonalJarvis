@@ -133,6 +133,8 @@ describe("subscription Realtime voice copy", () => {
     "apikeys_codex.status_lifecycle_unavailable",
     "apikeys_codex.status_setup_invalid",
     "apikeys_codex.status_busy",
+    "apikeys_codex.status_login_in_progress",
+    "apikeys_codex.status_plan_unsupported",
     "apikeys_codex.setup_detail_label",
     "apikeys_codex.install_command_copied",
     "apikeys_codex.connected_chatgpt",

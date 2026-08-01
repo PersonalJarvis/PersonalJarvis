@@ -1615,11 +1615,22 @@ const CODEX_STATUS_KEY_BY_REASON: Record<
 > = {
   ready: "apikeys_codex.status_ready",
   login_required: "apikeys_codex.status_login_required",
+  login_in_progress: "apikeys_codex.status_login_in_progress",
   lifecycle_unavailable: "apikeys_codex.status_lifecycle_unavailable",
   not_installed: "apikeys_codex.status_not_installed",
   setup_invalid: "apikeys_codex.status_setup_invalid",
+  plan_unsupported: "apikeys_codex.status_plan_unsupported",
   busy: "apikeys_codex.status_busy",
 };
+
+// States in which the install row and an active Connect button would be
+// wrong: transient windows, a login the user must FINISH (not restart), and
+// an OS the feature does not support at all.
+const CODEX_NO_INSTALL_PROMPT_REASONS = new Set<string>([
+  "busy",
+  "login_in_progress",
+  "lifecycle_unavailable",
+]);
 
 function CodexAuthWidget({
   descriptor,
@@ -1771,7 +1782,8 @@ function CodexAuthWidget({
             generic sentence left users guessing what to fix. */}
         {subscriptionOnly &&
           (status?.reason_code === "setup_invalid" ||
-            status?.reason_code === "not_installed") &&
+            status?.reason_code === "not_installed" ||
+            status?.reason_code === "plan_unsupported") &&
           status.message && (
             <div
               data-testid="codex-setup-detail"
@@ -1785,7 +1797,8 @@ function CodexAuthWidget({
           )}
       </div>
 
-      {!status?.installed && status?.reason_code !== "busy" && (
+      {!status?.installed &&
+        !CODEX_NO_INSTALL_PROMPT_REASONS.has(status?.reason_code ?? "") && (
         <div className="flex flex-wrap items-center gap-2">
           <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
             {installCommand}
@@ -1804,7 +1817,18 @@ function CodexAuthWidget({
           disabled={
             pending !== null ||
             loginPolling ||
+            // Finish the RUNNING login instead of starting a second one; an
+            // unsupported OS can never connect at all.
+            status?.reason_code === "login_in_progress" ||
+            status?.reason_code === "lifecycle_unavailable" ||
             (!status?.installed && status?.reason_code !== "busy")
+          }
+          title={
+            status?.reason_code === "login_in_progress"
+              ? t("apikeys_codex.status_login_in_progress")
+              : status?.reason_code === "lifecycle_unavailable"
+                ? t("apikeys_codex.status_lifecycle_unavailable")
+                : undefined
           }
         >
           <LogIn className="h-3.5 w-3.5" />

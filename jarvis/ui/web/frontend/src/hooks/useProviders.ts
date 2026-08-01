@@ -151,9 +151,14 @@ export interface CodexStatus {
   reason_code?:
     | "ready"
     | "login_required"
+    // An interactive login is running: invite the user to FINISH it in the
+    // browser, never to start a second one.
+    | "login_in_progress"
     | "lifecycle_unavailable"
     | "not_installed"
     | "setup_invalid"
+    // Sticky: the connected ChatGPT plan can never activate this provider.
+    | "plan_unsupported"
     // Transient: the profile is briefly owned by another status probe, a
     // login/logout, or a starting voice session. Not a setup defect — the UI
     // shows a neutral "checking" line and never the reconnect warning.
@@ -212,17 +217,27 @@ interface ProvidersResponse {
   providers: ProviderDescriptor[];
 }
 
+export const PROVIDER_BACKEND_UNREACHABLE = "backend_unreachable";
+const PROVIDER_RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000] as const;
+
+interface UseProvidersOptions {
+  retryDelaysMs?: readonly number[];
+}
+
 /**
  * Loads /api/providers and re-fetches on relevant WS events. The hook updates
  * the UI state live whenever a secret is set on the backend or a brain
  * provider was switched — without the component having to track that itself.
  */
-export function useProviders() {
+export function useProviders(options: UseProvidersOptions = {}) {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const retryAttempt = useRef(0);
+  const retryDelays = useRef<readonly number[]>(PROVIDER_RETRY_DELAYS_MS);
+  retryDelays.current = options.retryDelaysMs ?? PROVIDER_RETRY_DELAYS_MS;
 
   const refetch = useCallback(async () => {
     const version = ++requestVersion.current;
@@ -237,16 +252,34 @@ export function useProviders() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ProvidersResponse = await res.json();
-      if (version === requestVersion.current) setProviders(data.providers);
+      if (version === requestVersion.current) {
+        retryAttempt.current = 0;
+        setProviders(data.providers);
+      }
     } catch (e) {
       if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
-        setError((e as Error).message);
+        setError(
+          e instanceof TypeError
+            ? PROVIDER_BACKEND_UNREACHABLE
+            : (e as Error).message,
+        );
       }
     } finally {
       if (version === requestVersion.current) setLoading(false);
       if (requestController.current === controller) requestController.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (error !== PROVIDER_BACKEND_UNREACHABLE || retryDelays.current.length === 0) {
+      return;
+    }
+    const delays = retryDelays.current;
+    const delay = delays[Math.min(retryAttempt.current, delays.length - 1)];
+    retryAttempt.current += 1;
+    const timer = window.setTimeout(() => void refetch(), delay);
+    return () => window.clearTimeout(timer);
+  }, [error, refetch]);
 
   /**
    * Optimistically flip the active provider within a tier, in-memory, BEFORE

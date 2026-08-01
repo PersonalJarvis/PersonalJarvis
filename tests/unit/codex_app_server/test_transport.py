@@ -82,6 +82,9 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_snapshot_cache_at", 0.0)
     monkeypatch.setattr(transport, "_subscription_status_probe_active", False)
     monkeypatch.setattr(transport, "_sha256_cache", {})
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache_is_failure", False)
+    monkeypatch.setattr(transport, "_subscription_transport_epoch", 0)
+    monkeypatch.setattr(transport, "_subscription_activation_block", None)
     # The pre-spawn re-hash needs a real approved file; the suite's fake
     # binaries have none. The dedicated test exercises the real check.
     monkeypatch.setattr(transport, "_verify_spawn_binary", lambda _path: None)
@@ -2231,7 +2234,7 @@ async def test_cancelled_reserve_is_released_by_the_abandon_worker(
     with transport._subscription_login_lock:
         assert transport._subscription_active_transports == set()
         assert transport._subscription_transport_process_lock is None
-    assert client._profile_transport_reserved is False
+    assert client._profile_transport_epoch is None
 
 
 @pytest.mark.asyncio
@@ -2253,6 +2256,19 @@ async def test_cancelled_disconnect_still_releases_the_mutation_claim(
         "_delete_codex_subscription_auth_locked",
         lambda: (True, None),
     )
+    # Gate the release so it provably happens AFTER both cancels — otherwise a
+    # fast runner could finish cleanup before the second cancel and the test
+    # would silently degrade to a single-cancel check.
+    finish_gate = threading.Event()
+    real_finish = transport._finish_subscription_disconnect_mutation
+
+    def gated_finish() -> None:
+        assert finish_gate.wait(timeout=10.0)
+        real_finish()
+
+    monkeypatch.setattr(
+        transport, "_finish_subscription_disconnect_mutation", gated_finish
+    )
 
     task = asyncio.create_task(
         transport.disconnect_and_logout_codex_subscription()
@@ -2267,6 +2283,7 @@ async def test_cancelled_disconnect_still_releases_the_mutation_claim(
     with pytest.raises(asyncio.CancelledError):
         await task
     close_release.set()
+    finish_gate.set()
 
     for _ in range(100):
         with transport._subscription_login_lock:
@@ -2311,6 +2328,67 @@ def test_spawn_binary_is_rehashed_without_the_memo(
     binary.write_bytes(b"swapped-content")
     with pytest.raises(CodexSubscriptionUnavailable, match="changed since"):
         _REAL_VERIFY_SPAWN_BINARY(str(binary))
+
+
+def test_stale_epoch_release_is_ignored() -> None:
+    """A superseded holder's release must never tear down a newer reservation."""
+    client = CodexAppServerClient("codex-test")
+    first = transport._reserve_subscription_transport(client)
+    second = transport._reserve_subscription_transport(client)  # adoption bump
+
+    transport._release_subscription_transport(client, first)
+    with transport._subscription_login_lock:
+        # The stale release was a no-op: the newer reservation survives.
+        assert transport._subscription_active_transports == {id(client)}
+        assert transport._subscription_transport_process_lock is not None
+
+    transport._release_subscription_transport(client, second)
+    with transport._subscription_login_lock:
+        assert transport._subscription_active_transports == set()
+        assert transport._subscription_transport_process_lock is None
+
+
+def test_failure_memo_is_not_served_on_the_stale_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient probe failure must not paint the card for the whole
+    next busy window via the stale-cache path."""
+
+    def probe(_binary: str | None) -> CodexAppServerCapability:
+        raise OSError("cli exploded")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    with pytest.raises(OSError):
+        transport.codex_subscription_auth_snapshot("codex-test")
+
+    def contended() -> FakeProfileProcessLock:
+        raise CodexSubscriptionUnavailable("owned elsewhere")
+
+    monkeypatch.setattr(transport, "_acquire_subscription_process_lock", contended)
+    with transport._subscription_login_lock:
+        # Age the memo past the fresh TTL: within it, serving the memo IS the
+        # coalescing contract; the stale path is what must exclude it.
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S - 1.0
+        )
+
+    snapshot = transport.codex_subscription_auth_snapshot("codex-test")
+    assert snapshot.reason_code == "busy"
+    # The stale path answered with the live contention, not the failure memo.
+    assert "owned elsewhere" in snapshot.reason
+
+
+def test_activation_block_sticks_until_invalidated() -> None:
+    transport.set_codex_subscription_activation_block(
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+    assert (
+        transport.codex_subscription_activation_block()
+        == "Subscription voice permits only personal ChatGPT accounts."
+    )
+    with transport._subscription_login_lock:
+        transport._invalidate_subscription_snapshot_locked()
+    assert transport.codex_subscription_activation_block() is None
 
 
 def test_profile_allowlist_accepts_codex_own_runtime_markers() -> None:

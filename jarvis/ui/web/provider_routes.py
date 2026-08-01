@@ -892,6 +892,7 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     from jarvis.codex_app_server import (
         CODEX_SUBSCRIPTION_REASON_CODES,
         CodexAppServerCapability,
+        codex_subscription_activation_block,
         codex_subscription_auth_snapshot,
     )
 
@@ -922,7 +923,8 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     elif (
         not installed
         and snapshot.binary_path is None
-        and snapshot.reason_code in {"busy", "login_required"}
+        and snapshot.reason_code
+        in {"busy", "login_required", "login_in_progress", "lifecycle_unavailable"}
     ):
         # Ownership windows (login in flight, busy probe) are silent about
         # the CLI itself. A pure PATH resolution answers "is it installed"
@@ -938,13 +940,24 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
                 exc_info=True,
             )
     connected = bool(snapshot.available and snapshot.chatgpt_authenticated)
-    if connected:
+    activation_block = codex_subscription_activation_block() if connected else None
+    if activation_block:
+        # The login works, but the live account check refused activation for
+        # good (for example a business/enterprise plan). Without this sticky
+        # diagnosis every surface would keep claiming "ready" after the one
+        # honest activation toast has faded.
+        connected = False
+        message = activation_block
+        reason_code = "plan_unsupported"
+    elif connected:
         message = "Dedicated ChatGPT subscription voice login is ready."
+        reason_code = "ready"
     elif snapshot.available:
         message = "Connect the dedicated ChatGPT subscription voice login."
+        reason_code = snapshot.reason_code
     else:
         message = snapshot.reason
-    reason_code = "ready" if connected else snapshot.reason_code
+        reason_code = snapshot.reason_code
     if reason_code not in CODEX_SUBSCRIPTION_REASON_CODES:
         # Five-layer drift guard (BUG-008 class): an unknown vocabulary value
         # must degrade to a transient state, never reach the UI unmapped.
@@ -1337,6 +1350,15 @@ async def _tier_section_health(
                     status=_section_health.UNKNOWN,
                     reason="busy",
                     detail=f"{spec.label}: status check in progress",
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") == "login_in_progress":
+                # The user is mid-login; an amber "not connected" dot would
+                # contradict the card telling them to finish that login.
+                return SectionHealth(
+                    status=_section_health.UNKNOWN,
+                    reason="login_in_progress",
+                    detail=f"{spec.label}: login in progress",
                     subject_id=spec.id,
                 )
             configured = bool(codex_payload.get("connected"))
@@ -3776,6 +3798,14 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "Try again in a moment."
                 ),
             )
+        if codex_payload.get("reason_code") == "login_in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The ChatGPT subscription login is still running. Finish "
+                    "it in the browser window, then activate."
+                ),
+            )
         credential_present = bool(codex_payload.get("connected"))
     else:
         credential_present = await _provider_credential_present_async(spec, request)
@@ -3813,7 +3843,23 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ),
         ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
+        if spec.id == "codex-subscription-realtime":
+            from jarvis.codex_app_server import (
+                CodexSubscriptionPlanUnsupported,
+                set_codex_subscription_activation_block,
+            )
+
+            if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                # Sticky: the one honest toast fades in seconds, but this
+                # account can never activate — every surface must stop
+                # claiming "ready" until a different login exists.
+                set_codex_subscription_activation_block(str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if spec.id == "codex-subscription-realtime":
+        from jarvis.codex_app_server import set_codex_subscription_activation_block
+
+        # A passed activation is the proof the account works again.
+        set_codex_subscription_activation_block(None)
 
     if body.persist:
         try:

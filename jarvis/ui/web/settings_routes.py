@@ -281,13 +281,41 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
     # A3: never pin the boot default to an unreachable engine. A provider may
     # use an API key or an external subscription login, so readiness — not a
     # particular credential shape — is the boundary.
-    if body.mode == "realtime" and await asyncio.to_thread(
-        _realtime_available_provider, cfg
-    ) is None:
-        raise HTTPException(
-            status_code=400,
-            detail="no realtime provider is configured and ready",
-        )
+    if body.mode == "realtime":
+        prov = await asyncio.to_thread(_realtime_available_provider, cfg)
+        if prov is None:
+            raise HTTPException(
+                status_code=400,
+                detail="no realtime provider is configured and ready",
+            )
+        if prov == "codex-subscription-realtime":
+            # The availability bool fails OPEN on a transient busy window (by
+            # design — the session opener verifies live). PERSISTING the mode
+            # is a standing decision, so it gates on the actual payload: a
+            # busy window answers "try again", a logged-out pinned provider
+            # is refused instead of pinning a mode that cannot start.
+            from jarvis.ui.web.provider_routes import (
+                _codex_binary_path,
+                _codex_subscription_status_payload,
+            )
+
+            payload = await asyncio.to_thread(
+                _codex_subscription_status_payload,
+                _codex_binary_path(request),
+            )
+            if payload.get("reason_code") in {"busy", "login_in_progress"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The ChatGPT subscription voice status is being "
+                        "checked. Try again in a moment."
+                    ),
+                )
+            if not payload.get("connected"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="no realtime provider is configured and ready",
+                )
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
