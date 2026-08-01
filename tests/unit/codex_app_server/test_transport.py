@@ -2446,17 +2446,116 @@ def test_unreadable_profile_reports_busy_not_setup_invalid(
     assert "could not be inspected" in capability.reason
 
 
-def test_activation_block_sticks_until_invalidated() -> None:
+def test_activation_block_survives_cache_invalidation_until_logout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cache invalidation happens on every mutation attempt — including an
+    ABORTED re-login — which is no evidence the refused plan changed. Only
+    explicit new evidence (here: logout) clears the verdict."""
     transport.set_codex_subscription_activation_block(
         "Subscription voice permits only personal ChatGPT accounts."
     )
+    with transport._subscription_login_lock:
+        transport._invalidate_subscription_snapshot_locked()
     assert (
         transport.codex_subscription_activation_block()
         == "Subscription voice permits only personal ChatGPT accounts."
     )
-    with transport._subscription_login_lock:
-        transport._invalidate_subscription_snapshot_locked()
+
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+    assert transport.logout_codex_subscription() == (True, None)
     assert transport.codex_subscription_activation_block() is None
+
+
+@pytest.mark.asyncio
+async def test_cold_start_plan_refusal_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The FIRST activation (app-server not yet running) discovers the plan
+    refusal inside ensure_started — the sticky diagnosis must be recorded on
+    that cold path too, not only on the warm re-verification."""
+    client = CodexAppServerClient("codex-test")
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(binary_path="codex-test"),
+    )
+
+    def refuse(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", refuse)
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.ensure_started()
+
+    assert "personal ChatGPT accounts" in (
+        transport.codex_subscription_activation_block() or ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_login_ready_respects_the_activation_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness surfaces must not advertise a provider whose account the
+    live gate refused permanently."""
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(),
+    )
+    assert await transport.codex_subscription_login_ready("codex-test") is True
+
+    transport.set_codex_subscription_activation_block(
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+    assert await transport.codex_subscription_login_ready("codex-test") is False
+
+
+def test_headless_linux_reports_lifecycle_with_a_coherent_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reason TEXT degrades with the code: every surface renders one of
+    the two, and they must tell the same story."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+
+    def missing_profile(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionProfileMissing("profile missing")
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", missing_profile)
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "lifecycle_unavailable"
+    assert "headless Linux" in capability.reason
+    assert "desktop" in capability.reason
 
 
 def test_profile_allowlist_accepts_codex_own_runtime_markers() -> None:

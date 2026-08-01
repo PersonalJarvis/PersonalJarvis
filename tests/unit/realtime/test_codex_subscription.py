@@ -318,6 +318,26 @@ async def test_orchestrator_capability_check_does_not_repeat_cli_auth_probe(
     assert await provider.can_open_duplex_session() is True
 
 
+def test_external_login_ready_respects_the_activation_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A permanently refused account must not be advertised as available."""
+    from jarvis import codex_app_server
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_activation_block",
+        lambda: "Subscription voice permits only personal ChatGPT accounts.",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary: pytest.fail("a blocked account needs no CLI probe"),
+    )
+
+    assert CodexSubscriptionRealtimeProvider.external_login_ready(None) is False
+
+
 @pytest.mark.asyncio
 async def test_verify_activation_cleans_up_its_own_transport(
     monkeypatch: pytest.MonkeyPatch,
@@ -345,6 +365,36 @@ async def test_verify_activation_cleans_up_its_own_transport(
     await CodexSubscriptionRealtimeProvider.verify_activation(SimpleNamespace())
 
     assert events == ["verified", "closed"]
+
+
+@pytest.mark.asyncio
+async def test_verify_activation_never_closes_a_client_carrying_a_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that was ALREADY ready is carrying a live session — verifying
+    is harmless, closing it would cut the call mid-sentence."""
+    from jarvis import codex_app_server
+
+    events: list[str] = []
+
+    class _Client:
+        ready = True
+
+        async def require_chatgpt_login(self) -> None:
+            events.append("verified")
+
+        async def close(self) -> None:
+            events.append("closed")
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda _binary: _Client(),
+    )
+
+    await CodexSubscriptionRealtimeProvider.verify_activation(SimpleNamespace())
+
+    assert events == ["verified"]
 
 
 @pytest.mark.parametrize(

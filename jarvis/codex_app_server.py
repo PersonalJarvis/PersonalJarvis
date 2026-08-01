@@ -1042,6 +1042,12 @@ _CLI_VERSION_RE: Final = re.compile(
 )
 
 
+_HEADLESS_LOGIN_REASON: Final = (
+    "Interactive subscription-voice login is unavailable on headless Linux. "
+    "Run Jarvis on a desktop to connect this dedicated profile."
+)
+
+
 def _login_required_reason_code() -> CodexSubscriptionReasonCode:
     """The honest "please log in" state for THIS host.
 
@@ -1057,6 +1063,19 @@ def _login_required_reason_code() -> CodexSubscriptionReasonCode:
     ):
         return "lifecycle_unavailable"
     return "login_required"
+
+
+def _login_required_state(reason: str) -> tuple[str, CodexSubscriptionReasonCode]:
+    """Reason text and code for a missing login, coherent on every surface.
+
+    When the code degrades to ``lifecycle_unavailable`` (headless host), the
+    text degrades WITH it: otherwise the 409/400 details and the Test verdict
+    would keep asking for the exact login the card refuses to offer.
+    """
+    code = _login_required_reason_code()
+    if code == "lifecycle_unavailable":
+        reason = _HEADLESS_LOGIN_REASON
+    return reason, code
 
 
 def _displayable_cli_version(raw: str | None) -> str | None:
@@ -1144,13 +1163,14 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             trusted_binary_path=resolved_binary,
         )
     except CodexSubscriptionProfileMissing as exc:  # Missing login becomes an actionable snapshot.
+        reason, reason_code = _login_required_state(str(exc))
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
             binary_path=resolved_binary,
             version=version,
-            reason=str(exc),
-            reason_code=_login_required_reason_code(),
+            reason=reason,
+            reason_code=reason_code,
         )
     except CodexSubscriptionInspectionFailed as exc:
         # An OS read hiccup is transiently unknown, never a proven-broken
@@ -1194,13 +1214,14 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
         )
     except CodexSubscriptionProfileMissing as exc:
         # Missing login remains a normal not-ready state.
+        reason, reason_code = _login_required_state(str(exc))
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
             binary_path=resolved_binary,
             version=version,
-            reason=str(exc),
-            reason_code=_login_required_reason_code(),
+            reason=reason,
+            reason_code=reason_code,
         )
     except CodexSubscriptionInspectionFailed as exc:
         # Transiently unreadable, not proven-broken (see the first block).
@@ -1234,19 +1255,27 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason_code="busy",
         )
     chatgpt_login = logged_in and login_mode == "chatgpt"
+    if chatgpt_login:
+        return CodexAppServerCapability(
+            available=True,
+            # Advisory only: the CLI emits a fixed PII-free mode string. The
+            # live account/read RPC below proves ChatGPT mode and the plan.
+            chatgpt_authenticated=True,
+            binary_path=resolved_binary,
+            version=version,
+            reason="Dedicated ChatGPT login is available.",
+            reason_code="ready",
+        )
+    reason, reason_code = _login_required_state(
+        "Use Jarvis's subscription-voice login to connect ChatGPT."
+    )
     return CodexAppServerCapability(
         available=True,
-        # Advisory only: the CLI emits a fixed PII-free mode string. The live
-        # account/read RPC below proves ChatGPT mode and the plan.
-        chatgpt_authenticated=chatgpt_login,
+        chatgpt_authenticated=False,
         binary_path=resolved_binary,
         version=version,
-        reason=(
-            "Dedicated ChatGPT login is available."
-            if chatgpt_login
-            else "Use Jarvis's subscription-voice login to connect ChatGPT."
-        ),
-        reason_code="ready" if chatgpt_login else _login_required_reason_code(),
+        reason=reason,
+        reason_code=reason_code,
     )
 
 
@@ -1849,7 +1878,17 @@ class CodexAppServerClient:
                         _subscription_state_changed.notify_all()
 
                 await asyncio.shield(asyncio.to_thread(_announce_ready))
-            except BaseException:
+            except BaseException as exc:
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    # The COLD activation path discovers the refused plan
+                    # here, inside startup — record the sticky diagnosis where
+                    # the truth appears, or every surface keeps claiming ready
+                    # after the one honest toast fades.
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            set_codex_subscription_activation_block, str(exc)
+                        )
+                    )
                 await self._close_process(
                     CodexAppServerDisconnected("Codex app-server initialization failed."),
                     expected=False,
@@ -3018,6 +3057,17 @@ class CodexAppServerClient:
         stderr_task = self._stderr_task
         self._reader_task = None
         self._stderr_task = None
+        # Captured SYNCHRONOUSLY with self._process = None: the reaping below
+        # awaits for seconds without _start_lock, and a parallel ensure_started
+        # may re-reserve (new epoch) and re-spawn (new lifeline FD) meanwhile.
+        # Reading these fields late in the finally would tear down the NEW
+        # life's state — closing the fresh child's lifeline kills its process
+        # group on POSIX, and releasing the fresh epoch strips a live call's
+        # profile reservation.
+        lifeline_fd = self._lifeline_write_fd
+        self._lifeline_write_fd = None
+        release_epoch = self._profile_transport_epoch
+        self._profile_transport_epoch = None
 
         for _method, future in tuple(self._pending.values()):
             if not future.done():
@@ -3070,17 +3120,18 @@ class CodexAppServerClient:
         finally:
             # Sync resource cleanup first (safe under any cancellation), the
             # awaited release last: its shield keeps the queued job alive even
-            # if this await is interrupted again.
+            # if this await is interrupted again. ONLY the entry-time local
+            # copies are used here — never re-read from self (see above).
             if tree is not None:
                 tree.close()
-            self._close_lifeline()
-            if self._profile_transport_epoch is not None:
-                # Epoch first, release off-loop and shielded (see the
-                # early-return branch above for why both matter).
-                epoch = self._profile_transport_epoch
-                self._profile_transport_epoch = None
+            if lifeline_fd is not None:
+                with suppress(OSError):
+                    os.close(lifeline_fd)
+            if release_epoch is not None:
                 await asyncio.shield(
-                    asyncio.to_thread(_release_subscription_transport, self, epoch)
+                    asyncio.to_thread(
+                        _release_subscription_transport, self, release_epoch
+                    )
                 )
             if not expected:
                 log.warning("Codex app-server connection reset")
@@ -3178,9 +3229,11 @@ def _cached_subscription_snapshot_locked(
 
     ``allow_stale`` serves the last known status while the profile is briefly
     owned elsewhere, bounded by ``_SUBSCRIPTION_SNAPSHOT_STALE_MAX_S``.
-    In-process mutations invalidate the cache, so a stale entry cannot outlive
-    a login, logout, or disconnect performed by this process; an entry only
-    ages past the TTL while another process owns the profile.
+    In-process mutations invalidate the cache when they BEGIN and again when
+    they finish; a probe that was already mid-flight when a mutation started
+    may still store its (pre-mutation) result during the mutation window, so
+    a stale read can briefly reflect the pre-mutation truth until the
+    mutation's closing invalidation lands.
     """
     if _subscription_snapshot_cache is None:
         return None
@@ -3228,9 +3281,11 @@ def _invalidate_subscription_snapshot_locked() -> None:
     _subscription_snapshot_cache_key = ""
     _subscription_snapshot_cache_at = 0.0
     _subscription_snapshot_cache_is_failure = False
-    # A login/logout may change the account, so the sticky "this plan can
-    # never activate" diagnosis must be re-earned by the next activation.
-    _subscription_activation_block = None
+    # The sticky activation block is deliberately NOT cleared here: cache
+    # invalidation happens on every mutation attempt, including an ABORTED
+    # re-login, and a closed browser window is no evidence the refused plan
+    # changed. The block clears only on explicit new evidence — a VERIFIED
+    # fresh login, a logout, or a passed activation.
 
 
 # Sticky reason the connected login cannot activate (for example a
@@ -3240,12 +3295,17 @@ def _invalidate_subscription_snapshot_locked() -> None:
 _subscription_activation_block: str | None = None
 
 
-def set_codex_subscription_activation_block(message: str | None) -> None:
-    """Record (or clear with ``None``) why activation is impossible."""
+def _set_subscription_activation_block_locked(message: str | None) -> None:
+    """Caller holds ``_subscription_login_lock``."""
     global _subscription_activation_block
 
+    _subscription_activation_block = (message or "").strip() or None
+
+
+def set_codex_subscription_activation_block(message: str | None) -> None:
+    """Record (or clear with ``None``) why activation is impossible."""
     with _subscription_login_lock:
-        _subscription_activation_block = (message or "").strip() or None
+        _set_subscription_activation_block_locked(message)
 
 
 def codex_subscription_activation_block() -> str | None:
@@ -3683,15 +3743,17 @@ def start_codex_subscription_login(
         global _subscription_login_in_flight, _subscription_login_process
         global _subscription_profile_mutating
 
+        login_verified = False
         try:
             process.wait()
             try:
                 post_login = _read_codex_capability(capability.binary_path)
-                if not (
+                login_verified = bool(
                     post_login.available
                     and post_login.chatgpt_authenticated
                     and post_login.reason_code == "ready"
-                ):
+                )
+                if not login_verified:
                     log.warning(
                         "Dedicated subscription login did not produce a verified "
                         "ChatGPT login (%s)",
@@ -3721,6 +3783,11 @@ def start_codex_subscription_login(
                     _subscription_profile_mutating = False
                     _release_subscription_mutation_process_lock_locked()
                     _invalidate_subscription_snapshot_locked()
+                    if login_verified:
+                        # A VERIFIED fresh login is new evidence — the next
+                        # activation re-judges the plan. An aborted login
+                        # window keeps the recorded verdict.
+                        _set_subscription_activation_block_locked(None)
                     _subscription_state_changed.notify_all()
 
     try:
@@ -3812,6 +3879,8 @@ def logout_codex_subscription(
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
             _invalidate_subscription_snapshot_locked()
+            # The judged login is gone; the plan verdict goes with it.
+            _set_subscription_activation_block_locked(None)
             _subscription_state_changed.notify_all()
 
 
@@ -3863,6 +3932,8 @@ def _finish_subscription_disconnect_mutation() -> None:
             _release_subscription_mutation_process_lock_locked()
         _subscription_profile_mutating = False
         _invalidate_subscription_snapshot_locked()
+        # The judged login is gone; the plan verdict goes with it.
+        _set_subscription_activation_block_locked(None)
         _subscription_state_changed.notify_all()
 
 
@@ -3929,6 +4000,10 @@ async def codex_subscription_login_ready(binary_path: str | None = None) -> bool
     turns a healthy install into "connect this provider first" for the busy
     window.
     """
+    if await asyncio.to_thread(codex_subscription_activation_block):
+        # The live account gate refused this login permanently; readiness
+        # surfaces must stop advertising a provider that can never start.
+        return False
     try:
         snapshot = await asyncio.to_thread(
             codex_subscription_auth_snapshot,
@@ -3967,8 +4042,13 @@ async def close_shared_codex_app_servers() -> None:
                 epoch = client._profile_transport_epoch
                 client._profile_transport_epoch = None
                 if epoch is not None:
-                    await asyncio.to_thread(
-                        _release_subscription_transport, client, epoch
+                    # Shielded like every other epoch release: a cancellation
+                    # after the attribute was nulled must not strand the
+                    # reservation.
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            _release_subscription_transport, client, epoch
+                        )
                     )
             else:
                 raise CodexSubscriptionUnavailable(

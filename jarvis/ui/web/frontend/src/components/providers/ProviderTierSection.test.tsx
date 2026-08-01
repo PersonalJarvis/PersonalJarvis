@@ -620,6 +620,40 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     );
   });
 
+  it("lets a plan-blocked card retry activation through the backend", async () => {
+    const calls = installFetchMock();
+    // The experimental-provider acknowledgement dialog (jsdom cannot show it).
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message:
+            "Subscription voice permits only personal ChatGPT accounts; workspace, enterprise, education, and unknown plans are refused.",
+          reason_code: "plan_unsupported",
+        },
+      }),
+    );
+
+    // The backend's live account gate is the ONLY judge that can clear the
+    // sticky block — the click must reach it instead of dead-ending in a
+    // local toast.
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (candidate) =>
+            candidate.method === "POST" &&
+            candidate.url.includes("/realtime/switch"),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it("shows the pinned install path for a wrong codex release", () => {
     installFetchMock();
     renderCard(

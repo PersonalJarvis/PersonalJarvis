@@ -713,29 +713,32 @@ class CodexSubscriptionRealtimeProvider:
     credential_family = "openai-chatgpt-subscription"
     supports_realtime = True
     implicit_usage_fallback_allowed = False
+    requires_webrtc_offer = True
+    input_sample_rate = _INPUT_RATE
+    output_sample_rate = _OUTPUT_RATE
+    credential_candidates: tuple[tuple[str, str | None], ...] = ()
 
     @classmethod
     async def verify_activation(cls, cfg: Any) -> None:
         """Run the provider's authoritative account/config activation gate.
 
-        The gate starts app-server just to judge the account, so it must also
-        clean up after itself: leaving the transport reservation and an idle
-        Codex child running would make the card's reconnect button answer
-        "disconnect active subscription voice" after every activation. A call
-        that starts later simply re-runs ``ensure_started``.
+        When the gate itself started app-server just to judge the account, it
+        also cleans up: leaving the transport reservation and an idle Codex
+        child running would make the card's reconnect button answer
+        "disconnect active subscription voice" after every activation. A
+        client that was ALREADY ready is carrying a live call — verifying is
+        harmless, closing it would cut the call mid-sentence.
         """
         app_server_module = importlib.import_module("jarvis.codex_app_server")
         codex_cfg = getattr(cfg, "codex", None)
         binary_path = str(getattr(codex_cfg, "binary_path", "") or "").strip() or None
         client = app_server_module.get_shared_codex_app_server(binary_path)
+        was_ready = bool(getattr(client, "ready", False))
         try:
             await client.require_chatgpt_login()
         finally:
-            await client.close()
-    requires_webrtc_offer = True
-    input_sample_rate = _INPUT_RATE
-    output_sample_rate = _OUTPUT_RATE
-    credential_candidates: tuple[tuple[str, str | None], ...] = ()
+            if not was_ready:
+                await client.close()
 
     def __init__(
         self,
@@ -765,6 +768,11 @@ class CodexSubscriptionRealtimeProvider:
             binary_path = str(
                 getattr(getattr(cfg, "codex", None), "binary_path", "") or ""
             ).strip()
+            if app_server_module.codex_subscription_activation_block():
+                # The live account gate refused this login permanently;
+                # advertising the provider as available would build sessions
+                # that can never start (and mislead GET /voice-mode).
+                return False
             status = app_server_module.codex_subscription_auth_snapshot(
                 binary_path or None
             )

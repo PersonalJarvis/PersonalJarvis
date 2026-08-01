@@ -767,7 +767,15 @@ export function ProviderCard({
       pushToast("warning", t("apikeys_codex.brain_needs_openai_key"));
       return;
     }
-    if (!assumeConfigured && !descriptor.configured) {
+    if (
+      !assumeConfigured &&
+      !descriptor.configured &&
+      // plan_unsupported deliberately proceeds to the backend switch: its
+      // live account gate is the ONLY judge that can clear the sticky block
+      // when the plan changed back; a re-refusal answers with the precise
+      // 409 detail as an error toast.
+      descriptor.codex_status?.reason_code !== "plan_unsupported"
+    ) {
       const codexReason = descriptor.codex_status?.reason_code;
       // Transient/in-flight states are notes, not faults — and telling the
       // user to redo a working ChatGPT login would contradict the card's own
@@ -1625,7 +1633,7 @@ export function AuthWidget({
 // Exhaustive by construction: adding a value to CodexStatus["reason_code"]
 // without a card mapping fails the TypeScript build here instead of silently
 // falling through to a wrong status line (the BUG-008 multi-layer enum class).
-const CODEX_STATUS_KEY_BY_REASON: Record<
+export const CODEX_STATUS_KEY_BY_REASON: Record<
   NonNullable<NonNullable<ProviderDescriptor["codex_status"]>["reason_code"]>,
   string
 > = {
@@ -1799,7 +1807,8 @@ function CodexAuthWidget({
         {subscriptionOnly &&
           (status?.reason_code === "setup_invalid" ||
             status?.reason_code === "not_installed" ||
-            status?.reason_code === "plan_unsupported") &&
+            status?.reason_code === "plan_unsupported" ||
+            status?.reason_code === "lifecycle_unavailable") &&
           status.message && (
             <div
               data-testid="codex-setup-detail"
@@ -2033,6 +2042,9 @@ export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) 
     // Nothing is "missing" on an OS the feature does not support at all.
     if (status?.reason_code === "lifecycle_unavailable")
       return <StateChip tone="neutral">unavailable</StateChip>;
+    // Terminal until the account changes — "not connected" would undersell it.
+    if (status?.reason_code === "plan_unsupported")
+      return <StateChip tone="missing">blocked</StateChip>;
     if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
     if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
     return <StateChip tone="neutral">not connected</StateChip>;
