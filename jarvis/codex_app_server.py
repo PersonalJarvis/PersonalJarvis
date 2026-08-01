@@ -3058,6 +3058,14 @@ class CodexAppServerClient:
         if model is not None and model.strip():
             params["model"] = model.strip()
         if offer_sdp is not None:
+            # The upstream v3 SDP parser reads line-by-line and answers
+            # "Failed to parse offer: failed to unmarshal SDP: EOF" for an
+            # offer whose LAST line has no terminator — which is exactly what
+            # Jarvis's ingress validation produces (it strips the offer).
+            # Proven live 2026-08-01: the identical offer passes WITH a
+            # trailing CRLF and fails without one.
+            if not offer_sdp.endswith("\n"):
+                offer_sdp = offer_sdp + "\r\n"
             params["transport"] = {"type": "webrtc", "sdp": offer_sdp}
 
         sdp_subscription = self.subscribe(thread_id) if offer_sdp is not None else None

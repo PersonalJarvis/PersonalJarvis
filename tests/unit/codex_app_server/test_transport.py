@@ -687,6 +687,15 @@ async def test_realtime_start_subscribes_before_request_and_returns_answer_sdp(
     assert thread_params["dynamicTools"] is None
     assert thread_params["ephemeral"] is True
     assert Path(thread_params["cwd"]).name.startswith("jarvis-codex-voice-")
+    start_params = next(
+        item["params"]
+        for item in messages
+        if item.get("method") == "thread/realtime/start"
+    )
+    # The upstream v3 SDP parser rejects an offer whose last line has no
+    # terminator ("unmarshal SDP: EOF") — and Jarvis's ingress validation
+    # strips offers, so the transport boundary must restore the newline.
+    assert start_params["transport"]["sdp"] == "offer-sdp\r\n"
 
     realtime_params = next(
         item["params"] for item in messages if item.get("method") == "thread/realtime/start"
@@ -2085,6 +2094,48 @@ async def test_account_requires_the_openai_authenticated_provider() -> None:
     client._request_live = account_read  # type: ignore[method-assign]
     with pytest.raises(CodexSubscriptionUnavailable, match="authentication"):
         await client._verify_live_chatgpt_account()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_fails_fast_on_a_realtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An upstream refusal (the 403 that ended v1, an invalid offer) must
+    surface as its honest text, never hide behind the blind SDP timeout."""
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        method = message.get("method")
+        if method == "thread/start":
+            _respond(process, request_id, {"thread": {"id": "voice-thread"}})
+        elif method == "thread/realtime/start":
+            process.emit(
+                {
+                    "method": "thread/realtime/error",
+                    "params": {
+                        "threadId": "voice-thread",
+                        "message": "unexpected status 403 Forbidden: Voice session access denied.",
+                    },
+                }
+            )
+            _respond(process, request_id, {})
+
+    SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+    await client.thread_start(base_instructions="Answer directly.")
+
+    with pytest.raises(CodexAppServerError, match="Voice session access denied"):
+        await client.realtime_start(
+            "voice-thread",
+            offer_sdp="offer-sdp",
+            include_startup_context=False,
+            client_managed_handoffs=True,
+        )
+    await client.close()
 
 
 @pytest.mark.asyncio
