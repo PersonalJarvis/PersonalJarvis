@@ -25,6 +25,7 @@ from jarvis.codex_app_server import (
     CodexAppServerCapability,
     CodexAppServerClient,
     CodexAppServerDisconnected,
+    CodexAppServerError,
     CodexAppServerRPCError,
     CodexAppServerTimeout,
     CodexNotificationOverflow,
@@ -700,7 +701,7 @@ async def test_realtime_start_subscribes_before_request_and_returns_answer_sdp(
     realtime_params = next(
         item["params"] for item in messages if item.get("method") == "thread/realtime/start"
     )
-    assert realtime_params["transport"] == {"type": "webrtc", "sdp": "offer-sdp"}
+    assert realtime_params["transport"] == {"type": "webrtc", "sdp": "offer-sdp\r\n"}
     assert realtime_params["model"] == "explicit-realtime-model"
     assert realtime_params["includeStartupContext"] is False
     assert realtime_params["clientManagedHandoffs"] is True
