@@ -86,6 +86,8 @@ export interface ProjectProfile {
 
 export interface TerminalState {
   key: string;
+  /** Stable for one pane lifetime, even when its reusable call-sign is recycled. */
+  history_id?: string;
   name: string;
   agent: string;
   display_name: string;

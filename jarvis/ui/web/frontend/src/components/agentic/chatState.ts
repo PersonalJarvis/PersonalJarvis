@@ -1,0 +1,77 @@
+import type { TerminalRecap, TerminalState } from "@/lib/agenticIdeApi";
+
+/** One pane lifetime, independent of its reusable grid call-sign. */
+export function chatTerminalIdentity(terminal: TerminalState): string {
+  return terminal.history_id ?? `${terminal.key}@${terminal.started_at ?? "pending"}`;
+}
+
+/** Best available arrival order when this browser has not seen the workspace. */
+export function initialChatOrder(terminals: readonly TerminalState[]): readonly string[] {
+  return [...terminals]
+    .sort((left, right) => {
+      const leftStarted = left.started_at ?? Number.POSITIVE_INFINITY;
+      const rightStarted = right.started_at ?? Number.POSITIVE_INFINITY;
+      return leftStarted - rightStarted || left.index - right.index;
+    })
+    .map(chatTerminalIdentity);
+}
+
+/** Keep chat sessions in arrival order even when the grid is rearranged. */
+export function reconcileChatOrder(
+  previous: readonly string[],
+  terminals: readonly TerminalState[],
+): readonly string[] {
+  const current = terminals.map(chatTerminalIdentity);
+  const live = new Set(current);
+  const next = previous.filter((key) => live.has(key));
+  const known = new Set(next);
+  for (const key of current) {
+    if (!known.has(key)) {
+      next.push(key);
+      known.add(key);
+    }
+  }
+  return sameStrings(previous, next) ? previous : next;
+}
+
+/** Put terminal objects into the stable order used by the chat rail. */
+export function orderChatTerminals(
+  terminals: readonly TerminalState[],
+  identities: readonly string[],
+): TerminalState[] {
+  const byIdentity = new Map(
+    terminals.map((terminal) => [chatTerminalIdentity(terminal), terminal]),
+  );
+  return identities.flatMap((identity) => {
+    const terminal = byIdentity.get(identity);
+    return terminal ? [terminal] : [];
+  });
+}
+
+/** Avoid repainting every terminal when a recap poll returns unchanged data. */
+export function sameRecaps(
+  current: Readonly<Record<string, TerminalRecap>>,
+  next: Readonly<Record<string, TerminalRecap>>,
+): boolean {
+  const currentNames = Object.keys(current);
+  const nextNames = Object.keys(next);
+  if (currentNames.length !== nextNames.length) return false;
+  return nextNames.every((name) => {
+    const before = current[name];
+    const after = next[name];
+    if (!before || !after) return false;
+    const beforeFields = Object.keys(before) as (keyof TerminalRecap)[];
+    const afterFields = Object.keys(after) as (keyof TerminalRecap)[];
+    if (
+      beforeFields.length !== afterFields.length ||
+      afterFields.some((field) => !Object.hasOwn(before, field))
+    ) {
+      return false;
+    }
+    return afterFields.every((field) => Object.is(before[field], after[field]));
+  });
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}

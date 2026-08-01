@@ -178,7 +178,7 @@ export function durationLabel(since: number, now: number): string {
 
 function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
-    return <Loader2 className="h-3 w-3 animate-spin" />;
+    return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
   if (look.icon === "check") return <Check className="h-3 w-3" />;
   if (look.icon === "dot") return <CircleDot className="h-2.5 w-2.5" />;
   if (look.icon === "ask") return <HelpCircle className="h-3 w-3" />;

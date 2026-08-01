@@ -9,17 +9,9 @@
  * take the identical path through the app, and the two can never behave
  * differently.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  ArrowUp,
   Brain,
   Check,
   ChevronUp,
@@ -48,24 +40,12 @@ import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore } from "@/store/events";
-import {
-  AgenticTerminal,
-  type PaneStatus,
-  type SplitDirection,
-} from "./AgenticTerminal";
+import { AgenticTerminal, type PaneStatus, type SplitDirection } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
-import {
-  AgentPickerMenu,
-  offersAgentChoice,
-  type SplitAgentChoice,
-} from "./AgentPicker";
+import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
-import {
-  bandCapacityFor,
-  GRID_HORIZONTAL_PADDING_PX,
-  MIN_PANE_HEIGHT_PX,
-} from "./layout";
+import { bandCapacityFor, GRID_HORIZONTAL_PADDING_PX, MIN_PANE_HEIGHT_PX } from "./layout";
 import {
   paneArrangement,
   paneLayout,
@@ -77,16 +57,14 @@ import {
   type PaneSeam,
   type PaneWeights,
 } from "./paneLayout";
-import {
-  loadStoredArrangement,
-  saveStoredArrangement,
-  usePaneWeights,
-} from "./usePaneWeights";
+import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { PromptPreview } from "./PromptPreview";
+import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
+import { initialChatOrder, orderChatTerminals, reconcileChatOrder, sameRecaps } from "./chatState";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -425,11 +403,10 @@ const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 export type WorkspaceView = "grid" | "chat";
 
 const VIEW_KEY = "jarvis.agenticIde.workspaceView";
+const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
 
 export function storedViewMode(): WorkspaceView | null {
-  return readStored(VIEW_KEY, (raw) =>
-    raw === "grid" || raw === "chat" ? raw : null,
-  );
+  return readStored(VIEW_KEY, (raw) => (raw === "grid" || raw === "chat" ? raw : null));
 }
 
 /**
@@ -442,6 +419,23 @@ export function storedViewMode(): WorkspaceView | null {
  */
 export function rememberViewMode(next: WorkspaceView): void {
   writeStored(VIEW_KEY, next);
+}
+
+function storedChatOrder(workspaceId: string): readonly string[] | null {
+  return readStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, (raw) => {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+        ? parsed
+        : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+function rememberChatOrder(workspaceId: string, identities: readonly string[]): void {
+  writeStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, JSON.stringify(identities));
 }
 
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
@@ -496,9 +490,7 @@ function rekey<T>(map: Record<string, T>, from: string, to: string): Record<stri
 }
 
 function storedAppearance(): TerminalAppearance | null {
-  return readStored(APPEARANCE_KEY, (raw) =>
-    raw === "light" || raw === "dark" ? raw : null,
-  );
+  return readStored(APPEARANCE_KEY, (raw) => (raw === "light" || raw === "dark" ? raw : null));
 }
 
 function storedFontSize(): number | null {
@@ -587,16 +579,30 @@ export function AgenticGrid({
       alive = false;
     };
   }, []);
-  const [target, setTarget] = useState(
-    session.terminals.find(takesPrompts)?.name ?? "",
+  const [target, setTarget] = useState(session.terminals.find(takesPrompts)?.name ?? "");
+  const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>(
+    {},
   );
-  const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>({});
   // What each pane is doing, by call-sign, as the header shows it. Kept beside
   // the session rather than inside it because it changes on a completely
   // different clock: the layout changes when a pane is opened or closed, a
   // recap whenever an agent prints a line.
-  const [recaps, setRecaps] = useState<Record<string, TerminalRecap>>({});
-  const [prompt, setPrompt] = useState("");
+  const [recapCache, setRecapCache] = useState<{
+    workspaceId: string;
+    rows: Record<string, TerminalRecap>;
+  }>(() => ({ workspaceId: session.id, rows: {} }));
+  // Never show T1's status from the workspace that was on screen one render
+  // ago. Call-signs repeat between workspaces, so a cache without its owner can
+  // claim a fresh pane is working, done, or describing somebody else's task.
+  const recaps: Record<string, TerminalRecap> =
+    recapCache.workspaceId === session.id ? recapCache.rows : {};
+  // The editor owns ordinary keystrokes so typing does not re-render every
+  // xterm pane in this very large component. This seed changes only when the
+  // parent intentionally replaces the draft (successful send or preview undo).
+  const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
+  const replacePrompt = useCallback((value: string) => {
+    setPromptSeed((current) => ({ value, revision: current.revision + 1 }));
+  }, []);
   const [sending, setSending] = useState(false);
   // The composed prompt waiting for the user's approval, and the wording they
   // originally typed. Both are kept so "Send verbatim" and Escape can hand the
@@ -630,9 +636,7 @@ export function AgenticGrid({
    * which way someone reads their agents is a display preference of this
    * screen, not workspace state worth a round-trip.
    */
-  const [viewMode, setViewModeState] = useState<WorkspaceView>(
-    () => storedViewMode() ?? "grid",
-  );
+  const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
   const setViewMode = useCallback((next: WorkspaceView) => {
     setViewModeState(next);
     rememberViewMode(next);
@@ -654,14 +658,18 @@ export function AgenticGrid({
    * effects, so a pane closed by another client simply falls back.
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
+  const [chatOrder, setChatOrder] = useState<{
+    workspaceId: string;
+    keys: readonly string[];
+  }>(() => ({
+    workspaceId: session.id,
+    keys: storedChatOrder(session.id) ?? initialChatOrder(session.terminals),
+  }));
+  const chatRailRef = useRef<HTMLDivElement | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [pendingSelectionClose, setPendingSelectionClose] = useState<
-    string[] | null
-  >(null);
+  const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(() => new Set());
+  const [pendingSelectionClose, setPendingSelectionClose] = useState<string[] | null>(null);
   const selectionToggleRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
   const [working, setWorking] = useState(false);
@@ -712,15 +720,31 @@ export function AgenticGrid({
   useEffect(() => {
     if (!pollRecaps) return;
     let cancelled = false;
+    let pulling = false;
+    let warned = false;
     const pull = async () => {
+      // A slow read must not stack another walk of every terminal on top of
+      // itself. One result is enough; the next interval catches up.
+      if (pulling) return;
+      pulling = true;
       try {
         const answer = await fetchTerminalRecaps(session.id);
         if (cancelled) return;
-        setRecaps(
-          Object.fromEntries(answer.terminals.map((term) => [term.name, term])),
-        );
-      } catch {
-        /* keep the last recaps — a stale sentence beats an empty header */
+        const next = Object.fromEntries(answer.terminals.map((term) => [term.name, term]));
+        setRecapCache((current) => {
+          const currentRows = current.workspaceId === session.id ? current.rows : {};
+          return sameRecaps(currentRows, next) ? current : { workspaceId: session.id, rows: next };
+        });
+        warned = false;
+      } catch (error) {
+        // Keep the last recap, but do not turn a dead status feed into a silent
+        // failure. Log once until a successful read resets the warning.
+        if (!warned) {
+          console.warn("Agentic IDE: could not refresh terminal status:", error);
+          warned = true;
+        }
+      } finally {
+        pulling = false;
       }
     };
     void pull();
@@ -757,9 +781,18 @@ export function AgenticGrid({
    * every five seconds, and a header that keeps the old sentence for four of
    * them after you pressed Save reads as a save that did not work.
    */
-  const applyRecap = useCallback((row: TerminalRecap) => {
-    setRecaps((current) => ({ ...current, [row.name]: row }));
-  }, []);
+  const applyRecap = useCallback(
+    (row: TerminalRecap) => {
+      setRecapCache((current) => ({
+        workspaceId: session.id,
+        rows: {
+          ...(current.workspaceId === session.id ? current.rows : {}),
+          [row.name]: row,
+        },
+      }));
+    },
+    [session.id],
+  );
 
   const recapActionsFor = useCallback(
     (name: string) => ({
@@ -820,8 +853,7 @@ export function AgenticGrid({
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
-    const fallback = () =>
-      Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
+    const fallback = () => Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
     setGridWidth(fallback());
     setGridHeight(node.clientHeight);
     const observer = new ResizeObserver((entries) => {
@@ -878,9 +910,7 @@ export function AgenticGrid({
   // maximised window gets the tall prompt bar back.
   const requestedComposer = Math.min(composer.size, composerMax);
   const composerCollapsed = requestedComposer < COMPOSER_COLLAPSE_AT_PX;
-  const composerHeight = composerCollapsed
-    ? COMPOSER_COLLAPSED_PX
-    : requestedComposer;
+  const composerHeight = composerCollapsed ? COMPOSER_COLLAPSED_PX : requestedComposer;
 
   /*
    * Double-clicking the seam TOGGLES rather than resets.
@@ -1106,6 +1136,34 @@ export function AgenticGrid({
 
   const atLimit = session.terminals.length >= maxTerminals;
 
+  /*
+   * Chat is a conversation history, so its rail follows ARRIVAL order. The
+   * backend's terminal array follows grid coordinates and is deliberately
+   * re-sorted after every split or drag; rendering that array directly made a
+   * newly spawned Codex session appear in the middle of an existing chat.
+   */
+  const stableChatKeys = useMemo(
+    () =>
+      reconcileChatOrder(
+        chatOrder.workspaceId === session.id
+          ? chatOrder.keys
+          : (storedChatOrder(session.id) ?? initialChatOrder(session.terminals)),
+        session.terminals,
+      ),
+    [chatOrder, session.id, session.terminals],
+  );
+  const chatTerminals = useMemo(
+    () => orderChatTerminals(session.terminals, stableChatKeys),
+    [session.terminals, stableChatKeys],
+  );
+  useEffect(() => {
+    rememberChatOrder(session.id, stableChatKeys);
+    if (chatOrder.workspaceId === session.id && chatOrder.keys === stableChatKeys) {
+      return;
+    }
+    setChatOrder({ workspaceId: session.id, keys: stableChatKeys });
+  }, [chatOrder, session.id, stableChatKeys]);
+
   /** The pane on the chat stage: the chosen one while it lives, else a fallback. */
   const chatSelected = useMemo(() => {
     const names = session.terminals.map((term) => term.name);
@@ -1115,22 +1173,19 @@ export function AgenticGrid({
   }, [chatPane, target, session.terminals]);
 
   /** Rail click: show the pane, and aim the composer at it when it can listen. */
-  const selectChatPane = useCallback(
-    (name: string, promptable: boolean) => {
-      setChatPane(name);
-      if (promptable) setTarget(name);
-    },
-    [],
-  );
+  const selectChatPane = useCallback((name: string, promptable: boolean) => {
+    setChatPane(name);
+    if (promptable) setTarget(name);
+  }, []);
 
-  const split = async (
-    anchor: string | null,
-    direction: SplitDirection,
-    agent?: string,
-  ) => {
+  const split = async (anchor: string | null, direction: SplitDirection, agent?: string) => {
     setWorking(true);
     try {
-      const next = await addTerminal({ anchor: anchor ?? undefined, direction, agent });
+      const next = await addTerminal({
+        anchor: anchor ?? undefined,
+        direction,
+        agent,
+      });
       onSessionChanged?.(next);
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
@@ -1180,8 +1235,7 @@ export function AgenticGrid({
    * so the click opens it straight away rather than showing a one-entry menu.
    */
   const openTerminal = (surface: "rail" | "empty") => {
-    if (offersChoice)
-      setPicking((current) => (current === surface ? null : surface));
+    if (offersChoice) setPicking((current) => (current === surface ? null : surface));
     else void split(null, "right");
   };
 
@@ -1281,17 +1335,30 @@ export function AgenticGrid({
     // opened by voice would otherwise exist only as a rail entry behind the
     // one being read, which is the 2026-07-28 "terminals just don't load"
     // report in new clothes.
-    if (chatView) setChatPane(fresh[fresh.length - 1]);
-    // The LAST one: panes are appended, so the newest is the one whose arrival
-    // could have pushed the grid past its viewport. Probed rather than assumed —
-    // `scrollIntoView` is absent in jsdom and in some embedded WebViews, and the
-    // ring below is the half of this that matters most anyway.
-    const newest = paneNodes.current.get(fresh[fresh.length - 1]);
-    if (typeof newest?.scrollIntoView === "function") {
-      newest.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    let frame: number | undefined;
+    if (chatView) {
+      setChatPane(fresh[fresh.length - 1]);
+      // Chat rows are arrival-ordered, so the new session belongs at the rail's
+      // tail. Scrolling the hidden grid cell used to move the whole workspace
+      // and then snap the terminal again after its delayed fit.
+      frame = requestAnimationFrame(() => {
+        const rail = chatRailRef.current;
+        if (rail) rail.scrollTop = rail.scrollHeight;
+      });
+    } else {
+      // The LAST one: panes are appended, so the newest is the one whose arrival
+      // could have pushed the grid past its viewport. Probed rather than assumed —
+      // `scrollIntoView` is absent in jsdom and in some embedded WebViews.
+      const newest = paneNodes.current.get(fresh[fresh.length - 1]);
+      if (typeof newest?.scrollIntoView === "function") {
+        newest.scrollIntoView({ block: "nearest", behavior: "auto" });
+      }
     }
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, [session.terminals]);
 
   /*
@@ -1334,7 +1401,7 @@ export function AgenticGrid({
     // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
     // some embedded WebViews, and a maximized pane fills the grid anyway.
     if (typeof node?.scrollIntoView === "function") {
-      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      node.scrollIntoView({ block: "nearest", behavior: "auto" });
     }
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
     return () => window.clearTimeout(timer);
@@ -1373,10 +1440,13 @@ export function AgenticGrid({
         // The name the backend really settled on, read back off the pane's key
         // rather than assumed from the input — the key is what survives a
         // rename, which is exactly why it is the thing to look the pane up by.
-        const to =
-          next.terminals.find((term) => term.key === pane.key)?.name ?? cleaned;
+        const to = next.terminals.find((term) => term.key === pane.key)?.name ?? cleaned;
         setStatuses((current) => rekey(current, from, to));
-        setRecaps((current) => rekey(current, from, to));
+        setRecapCache((current) =>
+          current.workspaceId === session.id
+            ? { ...current, rows: rekey(current.rows, from, to) }
+            : current,
+        );
         setRestartTokens((current) => rekey(current, from, to));
         // The pane's dragged height is keyed by call-sign too, and the basis
         // map is what stops the remap effect from reading a rename as "one
@@ -1453,9 +1523,7 @@ export function AgenticGrid({
       if (maximized === name) setMaximized(null);
       // The surviving columns keep the widths they were dragged to; the closed
       // pane's own height weight goes with it.
-      sizes.setWeights((current) =>
-        remapColumnWeights(current, session.terminals, next.terminals),
-      );
+      sizes.setWeights((current) => remapColumnWeights(current, session.terminals, next.terminals));
       rebaseWeights(next.terminals);
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
@@ -1573,7 +1641,7 @@ export function AgenticGrid({
       const result = await promptTerminal(target, text, { attachments: carry });
       setPreview(null);
       setPreviewSource("");
-      setPrompt("");
+      replacePrompt("");
       setAttachments([]);
       // The text is typed either way — but if the agent did not accept it, say
       // so instead of leaving the user to wonder why nothing happened.
@@ -1601,8 +1669,8 @@ export function AgenticGrid({
    * back out. If composition fails outright the original goes straight through
    * rather than blocking on a nicety.
    */
-  const send = async () => {
-    const text = prompt.trim();
+  const send = async (draft: string) => {
+    const text = draft.trim();
     if (!text || !target) return;
     setSending(true);
     try {
@@ -1649,9 +1717,7 @@ export function AgenticGrid({
         {workspaceBar ?? (
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
-            <span className="truncate font-display text-sm font-semibold">
-              {project.name}
-            </span>
+            <span className="truncate font-display text-sm font-semibold">{project.name}</span>
           </div>
         )}
 
@@ -1755,9 +1821,7 @@ export function AgenticGrid({
           onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
           title={t("agentic_grid.selection.hint")}
           aria-label={
-            selectionMode
-              ? t("agentic_grid.selection.finish")
-              : t("agentic_grid.selection.start")
+            selectionMode ? t("agentic_grid.selection.finish") : t("agentic_grid.selection.start")
           }
           className={cn(TOOLBAR_BTN, selectionMode && TOOLBAR_BTN_ON)}
         >
@@ -1783,9 +1847,7 @@ export function AgenticGrid({
               type="button"
               className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               onClick={() =>
-                setSelectedTerminals(
-                  new Set(session.terminals.map((terminal) => terminal.name)),
-                )
+                setSelectedTerminals(new Set(session.terminals.map((terminal) => terminal.name)))
               }
               disabled={session.terminals.length === 0}
             >
@@ -1922,8 +1984,11 @@ export function AgenticGrid({
               />
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
-            {session.terminals.map((term) => {
+          <div
+            ref={chatRailRef}
+            className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2"
+          >
+            {chatTerminals.map((term) => {
               const state = statuses[term.name];
               const headline = recaps[term.name]?.recap ?? term.recap;
               const title =
@@ -2041,15 +2106,13 @@ export function AgenticGrid({
         className={cn(
           "relative min-h-0 min-w-0 flex-1",
           // Scrolls only once the panes would be squeezed below a readable
-          // height. With a workspace that fits, this is `overflow-hidden`
-          // behaviour and nothing moves. The chat stage never scrolls — its
-          // one pane fills it, and the terminal scrolls inside itself.
-          chatView || maximized !== null
-            ? "overflow-hidden"
-            : "overflow-y-auto scrollbar-jarvis",
-          // A drag across the grid would otherwise sweep a text selection over
-          // every header and label it crosses.
-          arrange.held !== null && "select-none",
+            // height. With a workspace that fits, this is `overflow-hidden`
+            // behaviour and nothing moves. The chat stage never scrolls — its
+            // one pane fills it, and the terminal scrolls inside itself.
+            chatView || maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
+            // A drag across the grid would otherwise sweep a text selection over
+            // every header and label it crosses.
+            arrange.held !== null && "select-none",
         )}
         // Inline rather than a utility class so ONE number drives both the
         // rendered outer margin and the width the column count is computed from.
@@ -2098,27 +2161,23 @@ export function AgenticGrid({
                 chatView
                   ? onStage
                     ? "rounded-xl border border-border shadow-lg"
-                    : "hidden"
-                  : maximized !== null && !isMaximized && "hidden",
-              )}
-              style={
-                chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)
-              }
-            >
-              <AgenticTerminal
-                name={term.name}
+                        : "hidden"
+                      : maximized !== null && !isMaximized && "hidden",
+                  )}
+                  style={chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
+                >
+                  <AgenticTerminal
+                    name={term.name}
                 workspaceId={session.id}
                 displayName={term.display_name}
                 // The polled recap when one has arrived, the one the workspace
-                // state carried until then — so a pane opens with a sentence in
-                // its header rather than with a blank that fills in later.
-                recap={recaps[term.name]?.recap ?? term.recap}
-                recapDetail={
-                  recaps[term.name]?.recap_detail ?? term.recap_detail
-                }
-                // Who wrote it and why — only the polled read knows, so a pane
-                // still on its opening recap gets an empty meta and a card that
-                // simply says less rather than one that guesses.
+                    // state carried until then — so a pane opens with a sentence in
+                    // its header rather than with a blank that fills in later.
+                    recap={recaps[term.name]?.recap ?? term.recap}
+                    recapDetail={recaps[term.name]?.recap_detail ?? term.recap_detail}
+                    // Who wrote it and why — only the polled read knows, so a pane
+                    // still on its opening recap gets an empty meta and a card that
+                    // simply says less rather than one that guesses.
                 recapMeta={{
                   source: recaps[term.name]?.source,
                   reason: recaps[term.name]?.reason,
@@ -2129,21 +2188,20 @@ export function AgenticGrid({
                 recapActions={recapActionsFor(term.name)}
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
-                // be noise for the many; labelling the odd one out is the whole
-                // signal for the few running two seats at once.
-                accountLabel={
-                  term.account && !term.account.endsWith(":default")
-                    ? term.account_label
-                    : null
-                }
-                promptCount={term.prompts_sent}
-                appearance={appearance}
-                fontSize={fontSize}
-                geometryReady={gridWidth > 0 && gridHeight > 0}
-                focused={target === term.name}
-                maximized={isMaximized}
-                layoutBusy={layoutBusy}
-                splitDisabled={atLimit || busy || working}
+                    // be noise for the many; labelling the odd one out is the whole
+                    // signal for the few running two seats at once.
+                    accountLabel={
+                      term.account && !term.account.endsWith(":default") ? term.account_label : null
+                    }
+                    promptCount={term.prompts_sent}
+                    appearance={appearance}
+                    fontSize={fontSize}
+                    geometryReady={gridWidth > 0 && gridHeight > 0}
+                    focused={target === term.name}
+                    active={!chatView || onStage}
+                    maximized={isMaximized}
+                    layoutBusy={layoutBusy}
+                    splitDisabled={atLimit || busy || working}
                 agents={agents}
                 onFocus={() => {
                   if (takesPrompts(term)) setTarget(term.name);
@@ -2154,51 +2212,45 @@ export function AgenticGrid({
                   // "maximize" honestly means "give me the full-width grid
                   // version of this pane".
                   if (chatView) {
-                    setViewMode("grid");
-                    setMaximized(term.name);
-                  } else {
-                    setMaximized((current) =>
-                      current === term.name ? null : term.name,
-                    );
-                  }
-                }}
-                onSplit={(direction, agent) => void split(term.name, direction, agent)}
+                        setViewMode("grid");
+                        setMaximized(term.name);
+                      } else {
+                        setMaximized((current) => (current === term.name ? null : term.name));
+                      }
+                    }}
+                    onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
                 onAttachError={(message) => pushToast("error", message)}
                 // Picked up by its header, put down on another pane. Undefined
                 // rather than a disabled flag when rearranging is off, so the
-                // header goes back to being a plain header — no grab cursor
-                // promising a gesture that would do nothing.
-                onArrangeStart={
-                  canArrange
-                    ? (event) => arrange.start(term.name, event)
-                    : undefined
-                }
-                arranging={arrange.held === term.name}
-                restartToken={restartTokens[term.name] ?? 0}
+                    // header goes back to being a plain header — no grab cursor
+                    // promising a gesture that would do nothing.
+                    onArrangeStart={
+                      canArrange ? (event) => arrange.start(term.name, event) : undefined
+                    }
+                    arranging={arrange.held === term.name}
+                    restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
               />
               {/* Where a drop on THIS pane would put the pane in hand. Every
                   other pane is outlined the moment a drag starts, so the grid
                   says "these are the places" before the cursor gets there, and
                   the one under the cursor fills in the half it would take. */}
-              {arrange.held !== null && arrange.held !== term.name && (
-                <div
-                  data-testid={`pane-dropzone-${term.name}`}
-                  data-zone={
-                    arrange.hover?.target === term.name ? arrange.hover.zone : ""
-                  }
-                  className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-dashed border-primary/30"
-                >
-                  {arrange.hover?.target === term.name && (
-                    <>
-                      <div
-                        className={cn(
-                          "absolute rounded-md bg-primary/25 ring-2 ring-primary transition-all",
-                          ZONE_BOX[arrange.hover.zone],
-                        )}
-                      />
+                  {arrange.held !== null && arrange.held !== term.name && (
+                    <div
+                      data-testid={`pane-dropzone-${term.name}`}
+                      data-zone={arrange.hover?.target === term.name ? arrange.hover.zone : ""}
+                      className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-dashed border-primary/30"
+                    >
+                      {arrange.hover?.target === term.name && (
+                        <>
+                          <div
+                            className={cn(
+                              "absolute rounded-md bg-primary/25 ring-2 ring-primary",
+                              ZONE_BOX[arrange.hover.zone],
+                            )}
+                          />
                       <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg">
                         {t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
                           "{0}",
@@ -2213,20 +2265,14 @@ export function AgenticGrid({
                 <button
                   type="button"
                   data-testid={`select-terminal-${term.name}`}
-                  aria-pressed={selectedTerminals.has(term.name)}
-                  aria-label={
-                    selectedTerminals.has(term.name)
-                      ? t("agentic_grid.selection.deselect_terminal").replace(
-                          "{0}",
-                          term.name,
-                        )
-                      : t("agentic_grid.selection.select_terminal").replace(
-                          "{0}",
-                          term.name,
-                        )
-                  }
-                  onClick={() => toggleTerminalSelection(term.name)}
-                  // Selection mode owns the right mouse button and does nothing
+                      aria-pressed={selectedTerminals.has(term.name)}
+                      aria-label={
+                        selectedTerminals.has(term.name)
+                          ? t("agentic_grid.selection.deselect_terminal").replace("{0}", term.name)
+                          : t("agentic_grid.selection.select_terminal").replace("{0}", term.name)
+                      }
+                      onClick={() => toggleTerminalSelection(term.name)}
+                      // Selection mode owns the right mouse button and does nothing
                   // with it. Marking a pane on right-click was too easy to
                   // trigger by accident, and letting the event through would
                   // open the app-wide Cut/Copy/Paste menu over an overlay that
@@ -2382,7 +2428,7 @@ export function AgenticGrid({
         }
       />
 
-      {composerCollapsed ? (
+      {composerCollapsed && (
         <div
           data-testid="agentic-composer-collapsed"
           style={{ height: COMPOSER_COLLAPSED_PX }}
@@ -2401,12 +2447,14 @@ export function AgenticGrid({
             Write instead
           </button>
         </div>
-      ) : (
-        <div
-          data-testid="agentic-composer"
-          style={{ height: composerHeight }}
-          {...dragHandlers}
-          onPaste={(event) => {
+      )}
+      <div
+        data-testid={composerCollapsed ? undefined : "agentic-composer"}
+        aria-hidden={composerCollapsed || undefined}
+        hidden={composerCollapsed}
+        style={{ height: composerHeight }}
+        {...dragHandlers}
+        onPaste={(event) => {
             // Clipboard IMAGES only. Pasted text belongs to the textarea, and
             // intercepting it would break ordinary paste into the prompt.
             const images = extractPasteFiles(event.clipboardData).map((f) =>
@@ -2440,13 +2488,13 @@ export function AgenticGrid({
               const state = statuses[term.name];
               return (
                 <button
-                  key={term.key}
-                  type="button"
-                  data-testid={`prompt-target-${term.name}`}
-                  onClick={() => setTarget(term.name)}
-                  aria-pressed={target === term.name}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
+                key={term.key}
+                type="button"
+                data-testid={`prompt-target-${term.name}`}
+                onClick={() => (chatView ? selectChatPane(term.name, true) : setTarget(term.name))}
+                aria-pressed={target === term.name}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
                     target === term.name
                       ? "border-primary/60 bg-primary/10 text-primary"
                       : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -2482,13 +2530,13 @@ export function AgenticGrid({
                 onSend={() => void deliver(preview.composed)}
                 onSendVerbatim={() => void deliver(previewSource, attachments)}
                 onCancel={() => {
-                  // Give the user their own words back rather than dropping
-                  // them. The attachments stay too — backing out of a rewrite
-                  // is not a reason to lose the file they dropped.
-                  setPrompt(previewSource);
-                  setPreview(null);
-                  setPreviewSource("");
-                }}
+                // Give the user their own words back rather than dropping
+                // them. The attachments stay too — backing out of a rewrite
+                // is not a reason to lose the file they dropped.
+                replacePrompt(previewSource);
+                setPreview(null);
+                setPreviewSource("");
+              }}
               />
             </div>
           )}
@@ -2498,42 +2546,15 @@ export function AgenticGrid({
             two-line box with empty space under it. Its own resize grip is gone —
             two ways to change one height fight each other.
           */}
-          <div className="flex min-h-0 flex-1 items-end gap-2">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder={
-                target
-                  ? `Type an instruction for ${target} — Enter sends, Shift+Enter adds a line`
-                  : "Pick a terminal first"
-              }
-              className="h-full min-h-[44px] flex-1 resize-none rounded-lg border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:border-primary/50"
-            />
-            <button
-              type="button"
-              className="btn-primary h-[52px] shrink-0"
-              disabled={sending || !prompt.trim() || !target}
-              onClick={() => void send()}
-            >
-              <ArrowUp className="h-4 w-4" />
-              {sending ? "Preparing…" : "Send"}
-            </button>
-          </div>
-          {composerHeight >= COMPOSER_HINT_AT_PX && (
-            <p className="mt-2 shrink-0 text-[11px] text-muted-foreground">
-              Anything you can type here, you can also say out loud — for example
-              “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
-              {session.terminals[0]?.name ?? "Mika"} to run the tests”.
-            </p>
-          )}
-        </div>
-      )}
+        <PromptEditor target={target} sending={sending} seed={promptSeed} onSend={send} />
+        {composerHeight >= COMPOSER_HINT_AT_PX && (
+          <p className="mt-2 shrink-0 text-[11px] text-muted-foreground">
+            Anything you can type here, you can also say out loud — for example “what is{" "}
+            {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
+            {session.terminals[0]?.name ?? "Mika"} to run the tests”.
+          </p>
+        )}
+      </div>
 
       {/* The pane in hand, following the cursor.
           A label rather than a copy of the terminal: an xterm canvas cannot be
@@ -2871,17 +2892,12 @@ function ConfirmWorkspaceClose({
           Close this workspace?
         </Dialog.Title>
         <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-          This stops all {terminalCount} {agentLabel} and closes every terminal
-          session. Anything already written to disk stays.
+          This stops all {terminalCount} {agentLabel} and closes every terminal session. Anything
+          already written to disk stays.
         </Dialog.Description>
         <div className="mt-5 flex items-center justify-end gap-2">
           <Dialog.Close asChild>
-            <button
-              type="button"
-              className="btn-ghost"
-              autoFocus
-              disabled={busy}
-            >
+            <button type="button" className="btn-ghost" autoFocus disabled={busy}>
               Keep workspace open
             </button>
           </Dialog.Close>
@@ -2932,17 +2948,11 @@ function ConfirmClose({
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
         <h3 className="font-display text-base font-semibold">Close {name}?</h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          The coding agent running in this terminal is stopped and its session is
-          gone. Anything it already wrote to disk stays.
+          The coding agent running in this terminal is stopped and its session is gone. Anything it
+          already wrote to disk stays.
         </p>
         <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="btn-ghost"
-            autoFocus
-            disabled={busy}
-            onClick={onCancel}
-          >
+          <button type="button" className="btn-ghost" autoFocus disabled={busy} onClick={onCancel}>
             Keep it open
           </button>
           <button

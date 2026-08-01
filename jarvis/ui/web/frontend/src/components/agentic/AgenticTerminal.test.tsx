@@ -15,6 +15,9 @@ const terminalHarness = vi.hoisted(() => ({
   input: vi.fn<(data: string) => void>(),
   /** xterm's single custom key handler, so a test can press a key. */
   keys: { current: null as ((event: KeyboardEvent) => boolean) | null },
+  focus: vi.fn(),
+  scrollToBottom: vi.fn(),
+  write: vi.fn(),
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -38,7 +41,9 @@ vi.mock("@xterm/xterm", () => ({
     open(host: HTMLElement) {
       terminalHarness.open(host);
     }
-    focus() {}
+    focus() {
+      terminalHarness.focus();
+    }
     paste() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalHarness.keys.current = handler;
@@ -52,7 +57,13 @@ vi.mock("@xterm/xterm", () => ({
     onData() {
       return { dispose() {} };
     }
-    write() {}
+    write(text: string, callback?: () => void) {
+      terminalHarness.write(text);
+      callback?.();
+    }
+    scrollToBottom() {
+      terminalHarness.scrollToBottom();
+    }
     resize() {}
     dispose() {}
     clearTextureAtlas() {}
@@ -106,6 +117,9 @@ describe("AgenticTerminal layout", () => {
   beforeEach(() => {
     terminalHarness.open.mockClear();
     terminalHarness.observe.mockClear();
+    terminalHarness.fit.mockClear();
+    terminalHarness.scrollToBottom.mockClear();
+    terminalHarness.write.mockClear();
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -166,6 +180,69 @@ describe("AgenticTerminal layout", () => {
     );
 
     expect(terminalHarness.open).toHaveBeenCalled();
+  });
+
+  it("refits and follows the live tail before a hidden chat pane is shown", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    Object.defineProperty(host, "clientWidth", { configurable: true, value: 600 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, value: 400 });
+    terminalHarness.fit.mockClear();
+    terminalHarness.scrollToBottom.mockClear();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+  });
+
+  it("keeps prompt output parked until an inactive chat pane is selected", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    terminalHarness.write.mockClear();
+
+    act(() => {
+      terminalHarness.handlers.current?.onPrompt?.(
+        { text: "Run the tests", at: 1, chars: 13 } as never,
+      );
+      terminalHarness.handlers.current?.onOutput?.("working" as never);
+    });
+    expect(terminalHarness.write).not.toHaveBeenCalled();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(terminalHarness.write).toHaveBeenCalledWith("working");
   });
 });
 
@@ -630,6 +707,7 @@ describe("pane start-up feedback", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = ResizeObserverHarness;
     terminalHarness.handlers.current = null;
+    terminalHarness.focus.mockClear();
   });
 
   afterEach(() => {
@@ -668,6 +746,27 @@ describe("pane start-up feedback", () => {
     });
 
     expect(screen.queryByTestId("agentic-pane-starting-T5")).toBeNull();
+  });
+
+  it("does not let a hidden pane steal focus when it finishes connecting", () => {
+    render(
+      <AgenticTerminal
+        name="T5"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        focused
+        active={false}
+      />,
+    );
+
+    act(() => {
+      terminalHarness.handlers.current?.onReady?.(
+        { resumed: false, reattached: false, lastPrompt: null } as never,
+      );
+    });
+
+    expect(terminalHarness.focus).not.toHaveBeenCalled();
   });
 
   /**

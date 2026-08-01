@@ -1271,6 +1271,20 @@ describe("prompt bar seam", () => {
     expect(screen.getByTestId("pane-resizer-horizontal")).toBeTruthy();
   });
 
+  it("keeps a draft when the prompt bar is collapsed and reopened", () => {
+    window.localStorage.setItem(HEIGHT_KEY, OPEN);
+    renderGrid();
+    const editor = screen.getByLabelText("Instruction for Mika");
+    fireEvent.change(editor, { target: { value: "Keep this draft" } });
+
+    dragSeam(700, 1400);
+    fireEvent.click(screen.getByTestId("agentic-composer-reopen"));
+
+    expect(
+      (screen.getByLabelText("Instruction for Mika") as HTMLTextAreaElement).value,
+    ).toBe("Keep this draft");
+  });
+
   it("the reopen button brings the prompt bar back at its designed height", () => {
     renderGrid();
     expect(screen.getByTestId("agentic-composer-collapsed")).toBeTruthy();

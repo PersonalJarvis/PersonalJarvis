@@ -41,7 +41,7 @@
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -228,6 +228,8 @@ interface AgenticTerminalProps {
   geometryReady?: boolean;
   /** Highlight this pane as the prompt target. */
   focused?: boolean;
+  /** Is this pane currently visible on the chat stage? */
+  active?: boolean;
   onFocus?: () => void;
   onStatus?: (status: PaneStatus, detail?: string) => void;
   /** True while this pane fills the whole grid. */
@@ -312,6 +314,7 @@ export function AgenticTerminal({
   fontSize,
   geometryReady = true,
   focused = false,
+  active = true,
   onFocus,
   onStatus,
   maximized = false,
@@ -334,6 +337,7 @@ export function AgenticTerminal({
   // Lets the font-size effect trigger a REAL resize (xterm + the terminal
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
+  const visibilityRef = useRef<{ show: () => void; park: () => void } | null>(null);
   const statusRef = useRef<PaneStatus>("connecting");
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
@@ -378,12 +382,16 @@ export function AgenticTerminal({
   // when it asks. Read at connect time, hence a ref rather than the prop: the
   // connect effect must not re-run when the user flips the theme.
   const appearanceRef = useRef(appearance);
+  const activeRef = useRef(active);
+  const focusedRef = useRef(focused);
   // Read by the connect effect's resize scheduler, which is built once and
   // therefore cannot see the prop change.
   const layoutBusyRef = useRef(layoutBusy);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
   appearanceRef.current = appearance;
+  activeRef.current = active;
+  focusedRef.current = focused;
   layoutBusyRef.current = layoutBusy;
 
   useEffect(() => {
@@ -535,7 +543,7 @@ export function AgenticTerminal({
      * Starts as VISIBLE: the observer's first callback is asynchronous, and a
      * pane that withheld output until it arrived would flicker blank on mount.
      */
-    let paneVisible = true;
+    let paneVisible = activeRef.current;
     const offscreen = new OffscreenBuffer();
     /** When this pane last measured itself while parked (see `recheckParked`). */
     let parkedCheckedAt = 0;
@@ -573,6 +581,7 @@ export function AgenticTerminal({
     };
 
     const showPane = () => {
+      if (!activeRef.current) return;
       if (paneVisible) return;
       paneVisible = true;
       flushHeld();
@@ -584,6 +593,8 @@ export function AgenticTerminal({
       // an interval that started before this pane was even parked.
       parkedCheckedAt = 0;
     };
+    const visibility = { show: showPane, park: parkPane };
+    visibilityRef.current = visibility;
 
     /**
      * Un-park this pane if it is genuinely on screen — measured, not remembered.
@@ -594,6 +605,7 @@ export function AgenticTerminal({
      * state: the document becoming visible again, and the pane being resized.
      */
     const revealIfOnScreen = () => {
+      if (!activeRef.current) return;
       if (paneVisible) return;
       const box = container.getBoundingClientRect();
       const viewport = {
@@ -632,7 +644,7 @@ export function AgenticTerminal({
     // Everything this pane draws goes through here, not just the agent's
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
-    const writeToPane = (text: string) => {
+    const writeToPane = (text: string, afterWrite?: () => void) => {
       if (!text) return;
       // The first byte is what retires the "starting" overlay — and it is taken
       // HERE rather than at the socket, so a pane whose output is parked
@@ -641,7 +653,7 @@ export function AgenticTerminal({
       setPainted(true);
       if (!paneVisible) recheckParked();
       if (paneVisible) {
-        term.write(text);
+        term.write(text, afterWrite);
         return;
       }
       offscreen.push(text);
@@ -699,7 +711,11 @@ export function AgenticTerminal({
       // Through the ordinary path, so a replay arriving while nobody is looking
       // is parked and un-parked by the same rules as anything else — and so it
       // counts as the pane having painted.
-      writeToPane(text);
+      writeToPane(text, () => {
+        // A selected chat returning from another session opens on the live
+        // prompt, never several screens above it.
+        if (activeRef.current) term.scrollToBottom?.();
+      });
     };
 
     /*
@@ -795,16 +811,18 @@ export function AgenticTerminal({
          */
         onPrompt: (delivery) => {
           if (disposed) return;
-          showPane();
+          if (activeRef.current) showPane();
           setReceipt(delivery);
           setJustDelivered(true);
           window.setTimeout(() => setJustDelivered(false), 2_000);
-          try {
-            container.scrollIntoView({ block: "nearest", behavior: "smooth" });
-          } catch {
-            // Older engines take no options object; position is a nicety and
-            // the receipt is legible wherever the pane happens to sit.
-            container.scrollIntoView();
+          if (activeRef.current) {
+            try {
+              container.scrollIntoView({ block: "nearest", behavior: "auto" });
+            } catch {
+              // Older engines take no options object; position is a nicety and
+              // the receipt is legible wherever the pane happens to sit.
+              container.scrollIntoView();
+            }
           }
         },
         onReady: ({ resumed, reattached, lastPrompt }) => {
@@ -841,7 +859,13 @@ export function AgenticTerminal({
                 ? "continued its previous conversation"
                 : "started a new conversation",
           );
-          term.focus();
+          if (
+            activeRef.current &&
+            focusedRef.current &&
+            (document.activeElement === null || document.activeElement === document.body)
+          ) {
+            term.focus();
+          }
         },
         onExit: (code) => {
           report("exited", explainExit(code));
@@ -999,10 +1023,31 @@ export function AgenticTerminal({
       termRef.current = null;
       fitRef.current = null;
       resizeRef.current = null;
+      if (visibilityRef.current === visibility) visibilityRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
   }, [name, restartToken, geometryReady]);
+
+  /*
+   * A chat-stage switch changes a pane from `display:none` to the full canvas
+   * in one commit. Refit and follow the live tail before that frame paints;
+   * hidden siblings stay parked even when a prompt is addressed to them.
+   */
+  useLayoutEffect(() => {
+    if (!active) {
+      visibilityRef.current?.park();
+      return;
+    }
+    const reveal = () => {
+      visibilityRef.current?.show();
+      resizeRef.current?.();
+      termRef.current?.scrollToBottom?.();
+    };
+    reveal();
+    const frame = requestAnimationFrame(reveal);
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
 
   // Live restyle — no reconnect, so the running agent is untouched. The canvas
   // renderer caches rendered glyphs per colour in a texture atlas, so a theme
