@@ -153,7 +153,11 @@ export interface CodexStatus {
     | "login_required"
     | "lifecycle_unavailable"
     | "not_installed"
-    | "setup_invalid";
+    | "setup_invalid"
+    // Transient: the profile is briefly owned by another status probe, a
+    // login/logout, or a starting voice session. Not a setup defect — the UI
+    // shows a neutral "checking" line and never the reconnect warning.
+    | "busy";
   version?: string | null;
   accountLabel?: string | null;
   account_label?: string | null;

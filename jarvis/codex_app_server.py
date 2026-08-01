@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
@@ -254,6 +255,10 @@ class CodexAppServerCapability:
         "lifecycle_unavailable",
         "not_installed",
         "setup_invalid",
+        # Transient: the profile is briefly owned by another probe, a login /
+        # logout, or a starting voice transport. Not a setup defect; callers
+        # keep their last known state instead of asking the user to reconnect.
+        "busy",
     ] = "setup_invalid"
 
 
@@ -2740,6 +2745,54 @@ _subscription_active_transports: set[int] = set()
 _subscription_transport_process_lock: Any | None = None
 _subscription_mutation_process_lock: Any | None = None
 
+# Status probes must never report a broken setup just because the profile is
+# briefly owned by another probe or mutation (the UI fires several concurrent
+# refreshes; each losing caller used to flap the card to "needs attention").
+# Concurrent callers wait on this condition (it shares _subscription_login_lock)
+# and share the owner's result. The last completed probe is cached briefly so a
+# refresh burst costs one CLI probe instead of one per request.
+_SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S: Final = 5.0
+_SUBSCRIPTION_SNAPSHOT_WAIT_TIMEOUT_S: Final = 10.0
+_subscription_state_changed = threading.Condition(_subscription_login_lock)
+_subscription_snapshot_cache: CodexAppServerCapability | None = None
+_subscription_snapshot_cache_at: float = 0.0
+
+
+def _cached_subscription_snapshot_locked(
+    *, allow_stale: bool
+) -> CodexAppServerCapability | None:
+    """Return the last completed probe result; caller holds the login lock.
+
+    ``allow_stale`` serves the last known status while the profile is briefly
+    owned elsewhere; mutations invalidate the cache, so a stale entry can never
+    outlive a login, logout, or disconnect.
+    """
+    if _subscription_snapshot_cache is None:
+        return None
+    if allow_stale:
+        return _subscription_snapshot_cache
+    age = time.monotonic() - _subscription_snapshot_cache_at
+    if age <= _SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S:
+        return _subscription_snapshot_cache
+    return None
+
+
+def _store_subscription_snapshot_locked(
+    snapshot: CodexAppServerCapability,
+) -> None:
+    global _subscription_snapshot_cache, _subscription_snapshot_cache_at
+
+    _subscription_snapshot_cache = snapshot
+    _subscription_snapshot_cache_at = time.monotonic()
+
+
+def _invalidate_subscription_snapshot_locked() -> None:
+    """Drop the cached status after anything that can change the profile."""
+    global _subscription_snapshot_cache, _subscription_snapshot_cache_at
+
+    _subscription_snapshot_cache = None
+    _subscription_snapshot_cache_at = 0.0
+
 
 def _subscription_transport_pass_fds(
     client: CodexAppServerClient,
@@ -2800,6 +2853,7 @@ def _release_subscription_transport(client: CodexAppServerClient) -> None:
             _subscription_transport_process_lock = None
             if process_lock is not None:
                 process_lock.close()
+            _subscription_state_changed.notify_all()
 
 
 def _release_subscription_mutation_process_lock_locked() -> None:
@@ -2896,7 +2950,7 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
             binary_path=None,
             version=None,
             reason="Dedicated ChatGPT subscription voice is starting.",
-            reason_code="setup_invalid",
+            reason_code="busy",
         )
     if _subscription_profile_mutating:
         return CodexAppServerCapability(
@@ -2905,7 +2959,7 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
             binary_path=None,
             version=None,
             reason="Dedicated subscription voice status is being checked or changed.",
-            reason_code="setup_invalid",
+            reason_code="busy",
         )
     return None
 
@@ -2913,33 +2967,64 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
 def codex_subscription_auth_snapshot(
     binary_path: str | None = None,
 ) -> CodexAppServerCapability:
-    """Return a lightweight snapshot without starting ``codex app-server``."""
+    """Return a lightweight snapshot without starting ``codex app-server``.
+
+    Concurrent callers never see a fake broken setup: while another probe or a
+    profile mutation owns the profile, this serves the last completed result,
+    or waits briefly for the owner and re-evaluates. Only a cold start that
+    stays contended past the bounded wait reports the transient ``busy`` state.
+    """
     global _subscription_mutation_process_lock, _subscription_profile_mutating
 
-    with _subscription_login_lock:
-        local_snapshot = _local_subscription_auth_snapshot_locked()
-        if local_snapshot is not None:
-            return local_snapshot
-        try:
-            _subscription_mutation_process_lock = (
-                _acquire_subscription_process_lock()
-            )
-        except CodexSubscriptionUnavailable as exc:  # Expected lock failure becomes status.
-            return CodexAppServerCapability(
-                available=False,
-                chatgpt_authenticated=False,
-                binary_path=None,
-                version=None,
-                reason=str(exc),
-                reason_code="setup_invalid",
-            )
-        _subscription_profile_mutating = True
+    deadline = time.monotonic() + _SUBSCRIPTION_SNAPSHOT_WAIT_TIMEOUT_S
+    with _subscription_state_changed:
+        while True:
+            local_snapshot = _local_subscription_auth_snapshot_locked()
+            if local_snapshot is not None:
+                if local_snapshot.reason_code != "busy":
+                    return local_snapshot
+                cached = _cached_subscription_snapshot_locked(allow_stale=True)
+                if cached is not None:
+                    return cached
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return local_snapshot
+                _subscription_state_changed.wait(timeout=remaining)
+                continue
+            cached = _cached_subscription_snapshot_locked(allow_stale=False)
+            if cached is not None:
+                return cached
+            try:
+                _subscription_mutation_process_lock = (
+                    _acquire_subscription_process_lock()
+                )
+            except CodexSubscriptionUnavailable as exc:
+                # Another process (a second Jarvis instance or CLI session)
+                # briefly owns the profile. Serve the last known status; a
+                # transient lock is not a setup defect.
+                stale = _cached_subscription_snapshot_locked(allow_stale=True)
+                if stale is not None:
+                    return stale
+                return CodexAppServerCapability(
+                    available=False,
+                    chatgpt_authenticated=False,
+                    binary_path=None,
+                    version=None,
+                    reason=str(exc),
+                    reason_code="busy",
+                )
+            _subscription_profile_mutating = True
+            break
     try:
-        return _read_codex_capability(binary_path)
+        snapshot = _read_codex_capability(binary_path)
+        with _subscription_login_lock:
+            _store_subscription_snapshot_locked(snapshot)
+        return snapshot
     finally:
         with _subscription_login_lock:
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
+            _subscription_state_changed.notify_all()
 
 
 def start_codex_subscription_login(
@@ -3016,6 +3101,8 @@ def start_codex_subscription_login(
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
             _subscription_login_in_flight = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
         raise CodexSubscriptionUnavailable(str(exc)) from exc
     except BaseException:
         if log_dir is not None:
@@ -3024,6 +3111,8 @@ def start_codex_subscription_login(
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
             _subscription_login_in_flight = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
         raise
 
     with _subscription_login_lock:
@@ -3070,6 +3159,8 @@ def start_codex_subscription_login(
                     _subscription_login_in_flight = False
                     _subscription_profile_mutating = False
                     _release_subscription_mutation_process_lock_locked()
+                    _invalidate_subscription_snapshot_locked()
+                    _subscription_state_changed.notify_all()
 
     _launch_subscription_login_reaper(cleanup_login)
     return process
@@ -3124,6 +3215,8 @@ def logout_codex_subscription(
         with _subscription_login_lock:
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
 
 
 async def disconnect_and_logout_codex_subscription(
@@ -3172,6 +3265,8 @@ async def disconnect_and_logout_codex_subscription(
             else:
                 _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
 
 
 async def codex_subscription_login_ready(binary_path: str | None = None) -> bool:

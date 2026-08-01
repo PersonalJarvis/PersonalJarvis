@@ -1620,9 +1620,11 @@ function CodexAuthWidget({
         ? "apikeys_codex.status_lifecycle_unavailable"
       : status.reason_code === "setup_invalid"
         ? "apikeys_codex.status_setup_invalid"
-        : status.reason_code === "not_installed" || !status.installed
-          ? "apikeys_codex.status_not_installed"
-          : "apikeys_codex.status_login_required";
+        : status.reason_code === "busy"
+          ? "apikeys_codex.status_busy"
+          : status.reason_code === "not_installed" || !status.installed
+            ? "apikeys_codex.status_not_installed"
+            : "apikeys_codex.status_login_required";
 
   useEffect(() => {
     if (!loginPolling || loginReady) return;
@@ -1741,7 +1743,7 @@ function CodexAuthWidget({
         </div>
       </div>
 
-      {!status?.installed && (
+      {!status?.installed && status?.reason_code !== "busy" && (
         <div className="flex flex-wrap items-center gap-2">
           <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
             {installCommand}

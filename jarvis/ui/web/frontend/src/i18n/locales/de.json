@@ -1909,6 +1909,7 @@
     "status_not_installed": "Installiere zuerst die unterstützte Codex-Version und verbinde danach ChatGPT.",
     "status_lifecycle_unavailable": "Subscription Voice ist auf diesem Betriebssystem noch nicht verfügbar. API Realtime und Standard-Voice funktionieren weiterhin.",
     "status_setup_invalid": "Das geschützte Codex-Sprachprofil braucht Aufmerksamkeit. Prüfe die Anleitung und verbinde es danach neu.",
+    "status_busy": "Der ChatGPT-Sprachstatus wird gerade geprüft — einen Moment.",
     "install_command_copied": "Installationsbefehl kopiert",
     "connected_chatgpt": "Über dein ChatGPT-Abo verbunden.",
     "disconnect": "Trennen",

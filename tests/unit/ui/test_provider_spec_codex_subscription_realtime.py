@@ -155,6 +155,8 @@ async def test_section_health_accepts_keyring_only_chatgpt_login(
 async def test_realtime_activation_rejects_codex_api_key_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from jarvis import codex_app_server
+
     class _Service:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
@@ -164,6 +166,17 @@ async def test_realtime_activation_rejects_codex_api_key_mode(
 
     monkeypatch.setattr(routes, "CodexAuthService", _Service)
     monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
+
+    # The route judges this provider by the dedicated-profile probe, never the
+    # ordinary Codex login. An api-key-mode login yields no ChatGPT-authenticated
+    # dedicated profile, so the probe answers False. Patching the probe keeps
+    # this unit test off the real CLI and independent of the host's login state.
+    async def not_ready(_binary_path: str | None = None) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        codex_app_server, "codex_subscription_login_ready", not_ready
+    )
 
     with pytest.raises(HTTPException) as caught:
         await routes.realtime_switch(
@@ -291,6 +304,7 @@ async def test_subscription_voice_status_uses_isolated_snapshot(
         (False, False, "codex-cli 0.146.0", "login_required"),
         (False, False, None, "not_installed"),
         (False, False, "codex-cli 0.147.0", "setup_invalid"),
+        (False, False, None, "busy"),
     ],
 )
 def test_subscription_status_has_stable_reason_codes(
