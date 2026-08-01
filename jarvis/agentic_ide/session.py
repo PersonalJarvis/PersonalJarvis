@@ -90,7 +90,12 @@ from .agent_sessions import (
 )
 from .folders import ProjectProfile, probe_project
 from .names import free_positions, normalize, position_of, resolve
-from .terminal_input import THEME_COLOURS, TerminalQueryResponder
+from .terminal_input import (
+    THEME_COLOURS,
+    TerminalQueryResponder,
+    classify_terminal_input,
+    is_pointer_noise_only,
+)
 from .transcript import ReplayBuffer, Transcript
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -877,6 +882,12 @@ class Terminal:
     last_submit_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
+    # A hand-pressed Enter on an injected prompt is being checked against the
+    # screen. Kept explicit so another Enter stays on the verified path rather
+    # than being mistaken for a brand-new manual instruction.
+    manual_submit_pending: bool = False
+    manual_submit_token: int = 0
+    bracketed_paste_active: bool = False
     # Did it arrive with its line structure intact? False means the pane
     # rejected the pasted block and the single-line fallback carried it — worth
     # seeing in the log, because it silently costs prompt readability.
@@ -2661,6 +2672,18 @@ class Registry:
         # Cleared rather than left alone so a restarted pane cannot inherit the
         # previous process's last output either.
         term.last_output_at = None
+        term.manual_submit_pending = False
+        term.manual_submit_token += 1
+        term.bracketed_paste_active = False
+        # The previous process's activity stamp goes with it. `stamp` resets
+        # `activity_since` only when the WORD changes, so a pane that was
+        # "waiting", restarted, and settled back to "waiting" kept the old
+        # since — and the tooltip claimed the fresh agent had been waiting for
+        # however long the dead one had. Until the next sweep (≤2 s) readers
+        # fall back to a one-look answer, which is honest about not knowing.
+        term.activity = ""
+        term.activity_at = 0.0
+        term.activity_since = 0.0
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
@@ -2885,14 +2908,44 @@ class Registry:
         owner, term = found
         if not term.pty_id:
             return False
+        manager = self._manager()
+        if is_pointer_noise_only(data):
+            # A wheel tick, a click, a focus flip: the terminal talking, not a
+            # person typing. It echoes nothing, so it must not arm the typing
+            # shadow — stamping it made a busy pane read "done" for STILL_S
+            # whenever it was scrolled or merely clicked. The TUI still gets
+            # the bytes; it asked for them.
+            return manager.write(term.pty_id, data)
+        is_submit, edits_prompt, paste_active = classify_terminal_input(
+            data, term.bracketed_paste_active
+        )
+        confirm_pending_prompt = bool(
+            is_submit
+            and not edits_prompt
+            and term.last_prompt
+            and (term.submitted is False or term.manual_submit_pending)
+        )
+        # Do not mutate activity or receipt state for bytes the PTY refused.
+        written = manager.write(term.pty_id, data)
+        if not written:
+            return False
+        term.bracketed_paste_active = paste_active
         # Somebody is typing in here. Recorded on EVERY keystroke (unlike the
         # submit handling below), because the activity detector needs to tell
         # the agent's own output apart from the echo of a person at the
         # keyboard — see `activity._printing_now`.
         term.last_input_at = time.time()
+        if term.manual_submit_pending and edits_prompt:
+            # The screen observer is checking whether the PREVIOUS prompt
+            # disappeared. Any later edit can make that happen without a
+            # submission (Ctrl+U is the clearest example), so its verdict is
+            # stale. Resolve the injected prompt conservatively as unsent.
+            term.manual_submit_pending = False
+            term.manual_submit_token += 1
+            term.submitted = False
         # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
         # and a half-typed line are not an instruction.
-        if "\r" in data or "\n" in data:
+        if is_submit:
             # The user submitted something in the pane themselves, so this one
             # is being driven again and is no longer waiting to be nudged.
             # Dropping the pane off that list for a mere keypress would hide a
@@ -2903,15 +2956,79 @@ class Registry:
             # makes its next stop worth reporting — a pane driven only by hand
             # never goes through `send_prompt`, so without this hook the bell
             # would stay silent for everybody who types their own prompts.
-            term.last_submit_at = term.last_input_at
-            term.submit_generation = term.process_generation
+            if confirm_pending_prompt:
+                # Enter may accept a completion rather than submit. Return the
+                # receipt to "unconfirmed" until the same screen check used by
+                # the injection path sees the prompt leave the input box.
+                term.submitted = None
+                term.manual_submit_pending = True
+                self._schedule_manual_submit_confirmation(owner, term)
+            else:
+                term.last_submit_at = term.last_input_at
+                term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
             # without this hook it would keep the gap that cost every non-Claude
             # pane its resume handle.
-            self._lookup_after_conversation(owner, term)
-        return self._manager().write(term.pty_id, data)
+            if not term.manual_submit_pending:
+                self._lookup_after_conversation(owner, term)
+        return True
+
+    def _schedule_manual_submit_confirmation(self, owner: Session, term: Terminal) -> None:
+        """Verify a hand-pressed Enter before changing an unsent receipt."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # A synchronous embedding cannot observe the terminal over time.
+            # Keep the receipt unconfirmed instead of making up an answer.
+            logger.debug(
+                "Agentic IDE: cannot verify manual Enter for {} without an event loop",
+                term.name,
+            )
+            return
+
+        payload = term.last_prompt
+        generation = term.process_generation
+        term.manual_submit_token += 1
+        token = term.manual_submit_token
+
+        async def _confirm() -> None:
+            try:
+                submitted = await self._observe_manual_submission(term, payload)
+                if (
+                    term.process_generation != generation
+                    or term.last_prompt != payload
+                    or term.manual_submit_token != token
+                ):
+                    return
+                term.manual_submit_pending = False
+                term.submitted = submitted
+                if submitted:
+                    term.last_submit_at = time.time()
+                    term.submit_generation = term.process_generation
+                    self._lookup_after_conversation(owner, term)
+                await announce_prompt(term)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - confirmation must not kill input
+                logger.warning(
+                    "Agentic IDE: could not verify manual Enter for {}: {}", term.name, exc
+                )
+
+        task = loop.create_task(_confirm())
+        owner.lookups.add(task)
+        task.add_done_callback(owner.lookups.discard)
+
+    async def _observe_manual_submission(self, term: Terminal, payload: str) -> bool:
+        """Passively watch whether a hand-pressed Enter emptied the input box."""
+        needle = _submit_needle(payload)
+        checks = max(1, int(_SUBMIT_WINDOW_S / _SUBMIT_POLL_S)) if _SUBMIT_POLL_S else 1
+        for _ in range(checks):
+            await asyncio.sleep(_SUBMIT_POLL_S)
+            if not _input_line_holds(term.transcript.tail(10), needle):
+                return True
+        return False
 
     async def _nudge_repaint(self, term: Terminal, cols: int, rows: int) -> None:
         """Ask the agent in ``term`` to draw its whole interface again.
@@ -3593,10 +3710,16 @@ class Registry:
         term.last_prompt_at = time.time()
         # The same stamp under the name the activity watcher reads, so a pane
         # driven by Jarvis and one driven by hand prove the same thing the same
-        # way. Set even for a hard False: the text is in the pane's input box,
-        # and whatever it does next was still asked of it.
-        term.last_submit_at = term.last_prompt_at
-        term.submit_generation = term.process_generation
+        # way. NOT set on a hard False: the verification watched the text SIT
+        # in the input box, so no job was handed over — and stamping it anyway
+        # turned the echo of an unsubmitted prompt into a "Finished and waiting
+        # at its prompt" bell for work that never started. The moment the user
+        # presses Enter on that box themselves, `write` stamps it for real.
+        if submitted is not False:
+            term.last_submit_at = term.last_prompt_at
+            term.submit_generation = term.process_generation
+        term.manual_submit_pending = False
+        term.manual_submit_token += 1
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         history_entry = prompt_history.PromptHistoryEntry(
@@ -3675,10 +3798,17 @@ class Registry:
         typed = payload + (" " if _opens_completion(last_line) else "")
         if multiline:
             typed = f"{PASTE_START}{typed}{PASTE_END}"
+        # Injected text echoes exactly like hand-typing, and the activity
+        # detector must read it the same way: movement in the shadow of these
+        # writes is the prompt being TYPED, never the agent already working —
+        # and, for a prompt the pane refuses to submit, never the agent
+        # "finishing" a job it was never given.
+        term.last_input_at = time.time()
         if not manager.write(term.pty_id or "", typed):
             raise SessionError(f"Could not write to {term.name}.")
 
         arrived = await self._await_arrival(term, payload)
+        term.last_input_at = time.time()
         manager.write(term.pty_id or "", "\r")
         left_the_box = await self._confirm_submitted(term, payload, manager)
 

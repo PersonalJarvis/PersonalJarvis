@@ -12,6 +12,7 @@ afterwards that the text left the input line (retrying Enter while it has not).
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,124 @@ async def test_enter_is_pressed_again_while_the_prompt_sits_in_the_box(
     enters = [d for d in fake_pty.typed if d == "\r"]
     assert len(enters) == 2, f"one Enter plus a single retry, got {fake_pty.typed}"
     assert term.submitted is False
+
+
+async def test_hand_pressed_enter_is_verified_before_an_unsent_receipt_changes(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Enter can accept a completion, so the receipt must follow the screen."""
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H❯ review the pipeline\r\n")
+
+    registry.write(term.key, "\r")
+    assert term.submitted is None
+    await asyncio.sleep(0.08)
+
+    assert term.submitted is False
+    assert term.last_submit_at is None
+    assert fake_pty.typed == ["\r"], "passive verification must never press Enter again"
+
+
+async def test_hand_pressed_enter_marks_the_receipt_after_the_prompt_leaves(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H❯ review the pipeline\r\n")
+
+    registry.write(term.key, "\r")
+    await on_output("pty", "\x1b[2J\x1b[H❯\r\n✻ Working\r\n")
+    await asyncio.sleep(0.04)
+
+    assert term.submitted is True
+    assert term.last_submit_at is not None
+
+
+async def test_modifier_enter_adds_a_line_without_arming_or_retrying_submission(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+
+    assert registry.write(term.key, "\x1b\r") is True
+    await asyncio.sleep(0.08)
+
+    assert term.submitted is False
+    assert term.manual_submit_pending is False
+    assert term.last_submit_at is None
+    assert fake_pty.typed == ["\x1b\r"]
+
+
+async def test_failed_enter_write_does_not_change_receipt_or_activity(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+    fake_pty.close(term.pty_id or "")
+
+    assert registry.write(term.key, "\r") is False
+    assert term.submitted is False
+    assert term.manual_submit_pending is False
+    assert term.last_input_at is None
+    assert term.last_submit_at is None
+
+
+async def test_repeated_enter_stays_verified_until_the_prompt_leaves(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H❯ review the pipeline\r\n")
+
+    assert registry.write(term.key, "\r") is True
+    assert registry.write(term.key, "\r") is True
+    await asyncio.sleep(0.08)
+
+    assert term.submitted is False
+    assert term.manual_submit_pending is False
+    assert term.last_submit_at is None
+    assert fake_pty.typed == ["\r", "\r"]
+
+
+async def test_multiline_bracketed_paste_never_arms_submission(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+
+    assert registry.write(term.key, f"{PASTE_START}first line\n") is True
+    assert registry.write(term.key, f"second line\r\n{PASTE_END}") is True
+
+    assert term.last_submit_at is None
+    assert term.manual_submit_pending is False
+    assert term.bracketed_paste_active is False
+
+
+async def test_edit_after_enter_invalidates_manual_submission_observation(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+    term.last_prompt = "review the pipeline"
+    term.submitted = False
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[Hâ¯ review the pipeline\r\n")
+
+    assert registry.write(term.key, "\r") is True
+    assert registry.write(term.key, "\x15") is True  # Ctrl+U clears the input line.
+    await on_output("pty", "\x1b[2J\x1b[Hâ¯\r\n")
+    await asyncio.sleep(0.08)
+
+    assert term.submitted is False
+    assert term.manual_submit_pending is False
+    assert term.last_submit_at is None
 
 
 async def test_a_collapsed_paste_is_retried_and_reported_honestly(
