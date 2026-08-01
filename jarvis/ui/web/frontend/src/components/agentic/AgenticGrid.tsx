@@ -405,7 +405,7 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  * The text size is the exception and is kept by the BACKEND as well (see
  * `fetchTerminalUiPreferences`). The desktop window is an embedded WebView that
  * starts every run with empty browser storage, so a size kept only here is
- * forgotten on each restart â€” which reads as the control having stopped
+ * forgotten on each restart — which reads as the control having stopped
  * working. Its localStorage entry stays as the first-paint cache so the panes
  * open at the remembered size instead of visibly resizing a moment later.
  */
@@ -422,14 +422,26 @@ const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
  * pure restyle of the same mounted elements, because unmounting a pane kills
  * the coding agent behind it (see the grid container's comment below).
  */
-type WorkspaceView = "grid" | "chat";
+export type WorkspaceView = "grid" | "chat";
 
 const VIEW_KEY = "jarvis.agenticIde.workspaceView";
 
-function storedViewMode(): WorkspaceView | null {
+export function storedViewMode(): WorkspaceView | null {
   return readStored(VIEW_KEY, (raw) =>
     raw === "grid" || raw === "chat" ? raw : null,
   );
+}
+
+/**
+ * Record which way the workspace should be read, ahead of the grid mounting.
+ *
+ * Exported for the workspace wizard: its last step asks grid-or-chat before
+ * anything opens, and the grid then simply reads the answer on mount — the
+ * same stored preference the toolbar toggle below keeps, so the wizard's
+ * choice and a later toggle can never disagree about where the answer lives.
+ */
+export function rememberViewMode(next: WorkspaceView): void {
+  writeStored(VIEW_KEY, next);
 }
 
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
@@ -538,7 +550,7 @@ export function AgenticGrid({
     writeStored(FONT_KEY, String(next));
     // The backend is what makes the choice survive a restart; the line above is
     // only this window's cache. A failed write is reported rather than
-    // swallowed â€” the panes still resize, they just would not remember it.
+    // swallowed — the panes still resize, they just would not remember it.
     void saveTerminalFontSize(next).catch((err) => {
       console.warn("Agentic IDE: terminal text size not remembered:", err);
     });
@@ -559,7 +571,7 @@ export function AgenticGrid({
         }
         // Nothing stored yet, but this window still holds a size chosen before
         // the backend kept them. Hand that choice over instead of letting the
-        // default silently replace it â€” otherwise upgrading resets it once.
+        // default silently replace it — otherwise upgrading resets it once.
         const local = storedFontSize();
         if (local === null) return;
         void saveTerminalFontSize(local).catch((err) => {
@@ -623,7 +635,7 @@ export function AgenticGrid({
   );
   const setViewMode = useCallback((next: WorkspaceView) => {
     setViewModeState(next);
-    writeStored(VIEW_KEY, next);
+    rememberViewMode(next);
     // Chat shows exactly one pane already; a leftover maximize from the grid
     // would silently pin the stage to a pane the rail no longer highlights.
     if (next === "chat") setMaximized(null);

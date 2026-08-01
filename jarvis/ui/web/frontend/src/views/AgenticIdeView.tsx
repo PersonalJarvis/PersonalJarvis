@@ -3,14 +3,14 @@
  *
  * Two states in one view:
  *
- * * no workspace open → a four-step wizard: folder, how many terminals, an
- *   aggregate agent allocation, then start,
+ * * no workspace open → a five-step wizard: folder, how many terminals, an
+ *   aggregate agent allocation, grid or chat view, then start,
  * * workspace open → the terminal grid (see AgenticGrid).
  *
  * The wizard order is deliberate and matches how the decision actually gets
- * made: you know the folder first, the number of panes second, and only then
- * care which agent sits in which pane. Every step is reversible and nothing is
- * started until the last one.
+ * made: you know the folder first, the number of panes second, then which agent
+ * sits in which pane, and last how you want to read them. Every step is
+ * reversible and nothing is started until the last one.
  *
  * i18n note: the section label and view header go through the locale files; the
  * panel copy inside is still English-only source awaiting its i18n keys.
@@ -18,7 +18,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
-import { AgenticGrid } from "@/components/agentic/AgenticGrid";
+import {
+  AgenticGrid,
+  rememberViewMode,
+  storedViewMode,
+  type WorkspaceView,
+} from "@/components/agentic/AgenticGrid";
 import { VoicePanel } from "@/components/agentic/VoicePanel";
 import {
   WorkspaceLauncher,
@@ -132,6 +137,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [folder, setFolder] = useState<string | null>(null);
   const [count, setCount] = useState(2);
   const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
+  // Grid or chat, the wizard's last decision. Starts from the remembered
+  // reading preference so returning users see their usual answer preselected;
+  // it is written back only when a workspace actually opens (see `start`).
+  const [view, setView] = useState<WorkspaceView>(
+    () => storedViewMode() ?? "grid",
+  );
   // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
   // a failed load costs the picker, never the wizard: with none loaded every
   // pane simply opens on the active account, exactly as before.
@@ -428,6 +439,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const start = async () => {
     if (!folder) return;
     setBusy(true);
+    // Recorded BEFORE the grid can mount: the grid reads the stored preference
+    // once, when it appears, so the wizard's answer has to be on disk by then.
+    rememberViewMode(view);
     try {
       // The open answers with the whole state — the new workspace AND the bar.
       // Re-fetching instead would be a race that can blank what was just opened.
@@ -821,6 +835,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           offer={offer}
           onResume={() => void resumeAll()}
           onDismissOffer={() => void dismissOffer()}
+          view={view}
+          onView={setView}
           onStart={() => void start()}
         />
       </div>

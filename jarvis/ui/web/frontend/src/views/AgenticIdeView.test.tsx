@@ -274,6 +274,10 @@ beforeEach(() => {
   // the user came for. The tests below that type an instruction want it open,
   // and the remembered height is how a user who wants it open gets it.
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
+  // The wizard's view step preselects the remembered reading mode, and the
+  // grid reads the same key on mount — a value left behind by one test must
+  // not decide how the next one's workspace opens.
+  window.localStorage.removeItem("jarvis.agenticIde.workspaceView");
   vi.mocked(api.fetchIdeAgents).mockResolvedValue(AGENTS);
   vi.mocked(api.fetchIdeState).mockResolvedValue(EMPTY_STATE);
   vi.mocked(api.fetchFolders).mockResolvedValue({
@@ -399,7 +403,7 @@ describe("Agentic IDE launcher", () => {
     await waitFor(() => expect(next.disabled).toBe(false));
   });
 
-  it("walks through folder, layout, agents and review before opening", async () => {
+  it("walks through folder, layout, agents, view and review before opening", async () => {
     vi.mocked(api.startIdeSession).mockResolvedValue(
       stateWith(sessionWith(["Mika", "Nova"])),
     );
@@ -426,10 +430,22 @@ describe("Agentic IDE launcher", () => {
     fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
     expect(screen.getByText("2 / 2")).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
+    expect(
+      screen.getByRole("heading", { name: /choose how to read the workspace/i }),
+    ).toBeTruthy();
+    // The full terminal grid is the preselected answer, not an open question.
+    expect(
+      screen.getByTestId("view-choice-grid").getAttribute("aria-checked"),
+    ).toBe("true");
+
     fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
     expect(
       screen.getByRole("heading", { name: /review before opening/i }),
     ).toBeTruthy();
+    expect(screen.getByTestId("review-view-mode").textContent).toBe(
+      "Terminal grid",
+    );
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
     await waitFor(() =>
@@ -440,6 +456,38 @@ describe("Agentic IDE launcher", () => {
     );
     // Panes are rendered once the session exists.
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+  });
+
+  it("opens the workspace in chat view when the view step says so", async () => {
+    vi.mocked(api.startIdeSession).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openAgents();
+    fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
+
+    fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
+    fireEvent.click(screen.getByTestId("view-choice-chat"));
+    expect(
+      screen.getByTestId("view-choice-chat").getAttribute("aria-checked"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
+    expect(screen.getByTestId("review-view-mode").textContent).toBe(
+      "Chat view",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
+
+    // The grid reads the stored preference on mount, so the workspace comes up
+    // with the chat rail showing instead of the wall of terminals.
+    expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+    expect(
+      window.localStorage.getItem("jarvis.agenticIde.workspaceView"),
+    ).toBe("chat");
+    const rail = screen.getByTestId("agentic-chat-rail");
+    expect(rail.className).toContain("flex");
+    expect(rail.className).not.toContain("hidden");
   });
 
   it("keeps an aggregate agent split across backward navigation", async () => {
