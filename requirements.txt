@@ -4,9 +4,17 @@ aiofiles==25.1.0 \
     --hash=sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2 \
     --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
     # via -r requirements.in
+aioice==0.10.2 \
+    --hash=sha256:14911c15ab12d096dd14d372ebb4aecbb7420b52c9b76fdfcf54375dec17fcbf \
+    --hash=sha256:bf236c6829ee33c8e540535d31cd5a066b531cb56de2be94c46be76d68b1a806
+    # via aiortc
 aiolimiter==1.2.1 \
     --hash=sha256:d3f249e9059a20badcb56b61601a83556133655c11d1eb3dd3e04ff069e5f3c7 \
     --hash=sha256:e02a37ea1a855d9e832252a105420ad4d15011505512a1a1d814647451b5cca9
+    # via -r requirements.in
+aiortc==1.15.0 \
+    --hash=sha256:4e1e54bff31a9c2cb654c7b7edc068085a7df53365e5df24a5cb24168e3f95f7 \
+    --hash=sha256:ee6c0757ca070cf6d6bee441936d6ede24eef51211bbff6653409c540f72e625
     # via -r requirements.in
 aiosqlite==0.22.1 \
     --hash=sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650 \
@@ -94,6 +102,38 @@ audioop-lts==0.2.2 ; python_full_version >= '3.13' \
     --hash=sha256:fbdd522624141e40948ab3e8cdae6e04c748d78710e9f0f8d4dae2750831de19 \
     --hash=sha256:fd3d4602dc64914d462924a08c1a9816435a2155d74f325853c1f1ac3b2d9800
     # via -r requirements.in
+av==17.1.0 \
+    --hash=sha256:1284addf3c0dd939887a9722dc30df2241a97471ad52c3c507e31583ae22ff02 \
+    --hash=sha256:1370b11a697eb3f2555906f8ab3519b0cfe48425d7830a3996ad42e6bffafda5 \
+    --hash=sha256:19264c9bb4bee404accc7ce9ec461f2044b7f577a70234d29aafde31ed17de46 \
+    --hash=sha256:19c84fd72af5ef81a20f18fbc6f9aedff9e1455e53a7062c1d4c95926d73da4e \
+    --hash=sha256:22dff0ae582d10ef08c75c2150a4fd27cfc26653b54930c7c27b9f7b3aa20723 \
+    --hash=sha256:3453b06075c7bb973fdb6de52563f7692ff05cbc64c0bb45f4fd6e8709131f2f \
+    --hash=sha256:3dcd41e53f53f9a3260751d9c3c11d34e93d70d61e506c81f13dbc1e3606e07b \
+    --hash=sha256:43ebbe977f19a7f2d2bd1a4e119675a0b15e05852cf7309846b6ab922ba7ffe9 \
+    --hash=sha256:5327807c1219293803ef0c5d1578ff3ae1cf638c09e5998962026e1a554ec240 \
+    --hash=sha256:58f7593726437cda5bd19793027e027768450b5c4a594777bf487798a33db702 \
+    --hash=sha256:5df5c1172ef1cf65a1529d612f7da7798ce2cf82c1ff7212466b538a6cc7214c \
+    --hash=sha256:6a20658ec7d96a70e14b1196eff00b7cdd8831ac3b99868e16b8ba8b24090847 \
+    --hash=sha256:6c9b71fe5c0c5a8d303b1588d4d8ce9397d6b023f467cfef95000ba1f75507fa \
+    --hash=sha256:7f1e71ff621b66253333926f948e00faae11d855b2442133c65128bca64cdeb3 \
+    --hash=sha256:90c49bc9608377d01e82e747377505419a229464873341db18202d5dddecce5a \
+    --hash=sha256:9514cfda85180554c430695282faf4be3ffdf95775d8519733821244eecb58e0 \
+    --hash=sha256:ad7b4aa011093324b7118245f50ac6db244cfe9900d4072508a5245a2b0d3f41 \
+    --hash=sha256:b41647e42884bf543b8e8d0a1dabd4d1b006c99183eb1a2d7afc5b01f73eeff4 \
+    --hash=sha256:bbab058bd965309f39962e53caac8126987c68c0be094fc4f9427e5615b0218f \
+    --hash=sha256:bff8896454b38fcb785a70e5ae0485d7021cb776303a5849393128a30b8f850b \
+    --hash=sha256:cc5a5247622cb77e24c342364eb68f88c1442ddfaab60c1f1f483359d3cc7879 \
+    --hash=sha256:e1c90f85cd7431ede95b11e8e711571a896ebea433f298849c2c0f1594c8d86e \
+    --hash=sha256:ec630be6321b04e317862f6082e84812bbd801e55a3c2298312e3fc8a0a4af4f \
+    --hash=sha256:ee98534242a74da847af78624779ac5a3177dc7c69f956a4da9e6f0fdb37d7f6 \
+    --hash=sha256:efe9b1397300b67b644ad220c89df4892a76f2debe70f16bae1749fa20526e63 \
+    --hash=sha256:f997e3351bdf51127c07a74e21741a2996e9230cbeb2d81c14acde761b116c9c \
+    --hash=sha256:f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f \
+    --hash=sha256:fa64e1f1500d01c4a98e7a41dc1a9a35fb4dfe71f5de0389264ec1192200c76a \
+    --hash=sha256:ff457ed419348e5b8e8c811d341389b052c5e4d5839da3794d019b125b9fe830 \
+    --hash=sha256:ffbd78d73d2c9bf31e9a007c992faec3991428b2941a3b085b84fb82e8c32d19
+    # via aiortc
 backports-tarfile==1.2.0 ; python_full_version < '3.12' \
     --hash=sha256:77e284d754527b01fb1e6fa8a1afe577858ebe4e9dad8919e34c862cb399bc34 \
     --hash=sha256:d75e02c268746e1b8144c278978b6e98e85de6ad16f8e4b0844a154557eca991
@@ -192,6 +232,7 @@ cffi==2.0.0 \
     --hash=sha256:fe562eb1a64e67dd297ccc4f5addea2501664954f2692b69a76449ec7913ecbf
     # via
     #   cryptography
+    #   pylibsrtp
     #   sounddevice
     #   vosk
 charset-normalizer==3.4.7 \
@@ -405,8 +446,10 @@ cryptography==46.0.3 ; platform_machine == 'ARM64' and sys_platform == 'win32' \
     --hash=sha256:f260d0d41e9b4da1ed1e0f1ce571f97fe370b152ab18778e9e8f67d6af432018
     # via
     #   -r requirements.in
+    #   aiortc
     #   google-auth
     #   pyjwt
+    #   pyopenssl
 cryptography==48.0.1 ; platform_machine == 'x86_64' and sys_platform == 'darwin' \
     --hash=sha256:08a597acce1ff37f347400087776599e2348a3a8bc53b44120e463cd274efe4a \
     --hash=sha256:09f73a725d582cef64b91281a322cd798d14a33b2b6f2b7ad9531dc336d84c02 \
@@ -459,8 +502,10 @@ cryptography==48.0.1 ; platform_machine == 'x86_64' and sys_platform == 'darwin'
     --hash=sha256:fe0180af5bf9236518a087e35bf2d9a347d5f5f51e63c579d683ddff424e3d46
     # via
     #   -r requirements.in
+    #   aiortc
     #   google-auth
     #   pyjwt
+    #   pyopenssl
 cryptography==49.0.0 ; (platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'ARM64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'win32') \
     --hash=sha256:026ac7423e6fa66872d3bf889be5974507da3944f866f704fa200eadacd00001 \
     --hash=sha256:07cab27cc7b7e0fd28e5e26bb9eeedde5c135c868b46de4a27845abe94af6122 \
@@ -510,8 +555,10 @@ cryptography==49.0.0 ; (platform_machine != 'x86_64' and sys_platform == 'darwin
     --hash=sha256:fc1e275c2f1d97b1a6450b8b0ea3ebfa6e087a611c2b26cb2404d48588abab7b
     # via
     #   -r requirements.in
+    #   aiortc
     #   google-auth
     #   pyjwt
+    #   pyopenssl
     #   secretstorage
 ddgs==9.14.3 \
     --hash=sha256:2bc5dceb092f330585277a8f3fc50f488828f55e09793ae85975e01b3141879c \
@@ -524,6 +571,10 @@ distro==1.9.0 \
     #   anthropic
     #   google-genai
     #   openai
+dnspython==2.8.0 \
+    --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
+    --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
+    # via aioice
 docopt==0.6.2 \
     --hash=sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491
     # via num2words
@@ -558,6 +609,41 @@ google-auth==2.55.1 \
     --hash=sha256:eada68dfd52b3b81191827601e2a0c3fa12540c818534b630ddc5355769c3995 \
     --hash=sha256:fb2d9b730f2c9b8d326ec8d7222f21aef2ead15bf0513793d6442485d87af0a1
     # via google-genai
+google-crc32c==1.8.0 \
+    --hash=sha256:014a7e68d623e9a4222d663931febc3033c5c7c9730785727de2a81f87d5bab8 \
+    --hash=sha256:01f126a5cfddc378290de52095e2c7052be2ba7656a9f0caf4bcd1bfb1833f8a \
+    --hash=sha256:0470b8c3d73b5f4e3300165498e4cf25221c7eb37f1159e221d1825b6df8a7ff \
+    --hash=sha256:119fcd90c57c89f30040b47c211acee231b25a45d225e3225294386f5d258288 \
+    --hash=sha256:14f87e04d613dfa218d6135e81b78272c3b904e2a7053b841481b38a7d901411 \
+    --hash=sha256:17446feb05abddc187e5441a45971b8394ea4c1b6efd88ab0af393fd9e0a156a \
+    --hash=sha256:19b40d637a54cb71e0829179f6cb41835f0fbd9e8eb60552152a8b52c36cbe15 \
+    --hash=sha256:2a3dc3318507de089c5384cc74d54318401410f82aa65b2d9cdde9d297aca7cb \
+    --hash=sha256:3b9776774b24ba76831609ffbabce8cdf6fa2bd5e9df37b594221c7e333a81fa \
+    --hash=sha256:3cc0c8912038065eafa603b238abf252e204accab2a704c63b9e14837a854962 \
+    --hash=sha256:3d488e98b18809f5e322978d4506373599c0c13e6c5ad13e53bb44758e18d215 \
+    --hash=sha256:3ebb04528e83b2634857f43f9bb8ef5b2bbe7f10f140daeb01b58f972d04736b \
+    --hash=sha256:450dc98429d3e33ed2926fc99ee81001928d63460f8538f21a5d6060912a8e27 \
+    --hash=sha256:4b8286b659c1335172e39563ab0a768b8015e88e08329fa5321f774275fc3113 \
+    --hash=sha256:57a50a9035b75643996fbf224d6661e386c7162d1dfdab9bc4ca790947d1007f \
+    --hash=sha256:61f58b28e0b21fcb249a8247ad0db2e64114e201e2e9b4200af020f3b6242c9f \
+    --hash=sha256:6f35aaffc8ccd81ba3162443fabb920e65b1f20ab1952a31b13173a67811467d \
+    --hash=sha256:71734788a88f551fbd6a97be9668a0020698e07b2bf5b3aa26a36c10cdfb27b2 \
+    --hash=sha256:864abafe7d6e2c4c66395c1eb0fe12dc891879769b52a3d56499612ca93b6092 \
+    --hash=sha256:86cfc00fe45a0ac7359e5214a1704e51a99e757d0272554874f419f79838c5f7 \
+    --hash=sha256:87b0072c4ecc9505cfa16ee734b00cd7721d20a0f595be4d40d3d21b41f65ae2 \
+    --hash=sha256:87fa445064e7db928226b2e6f0d5304ab4cd0339e664a4e9a25029f384d9bb93 \
+    --hash=sha256:89c17d53d75562edfff86679244830599ee0a48efc216200691de8b02ab6b2b8 \
+    --hash=sha256:8b3f68782f3cbd1bce027e48768293072813469af6a61a86f6bb4977a4380f21 \
+    --hash=sha256:a428e25fb7691024de47fecfbff7ff957214da51eddded0da0ae0e0f03a2cf79 \
+    --hash=sha256:b0d1a7afc6e8e4635564ba8aa5c0548e3173e41b6384d7711a9123165f582de2 \
+    --hash=sha256:ba6aba18daf4d36ad4412feede6221414692f44d17e5428bdd81ad3fc1eee5dc \
+    --hash=sha256:cb5c869c2923d56cb0c8e6bcdd73c009c36ae39b652dbe46a05eb4ef0ad01454 \
+    --hash=sha256:d511b3153e7011a27ab6ee6bb3a5404a55b994dc1a7322c0b87b29606d9790e2 \
+    --hash=sha256:db3fe8eaf0612fc8b20fa21a5f25bd785bc3cd5be69f8f3412b0ac2ffd49e733 \
+    --hash=sha256:e6584b12cb06796d285d09e33f63309a09368b9d806a551d8036a4207ea43697 \
+    --hash=sha256:f4b51844ef67d6cf2e9425983274da75f18b1597bb2c998e1c0a0e8d46f8f651 \
+    --hash=sha256:f639065ea2042d5c034bf258a9f085eaa7af0cd250667c0635a3118e8f92c69c
+    # via aiortc
 google-genai==2.10.0 \
     --hash=sha256:77912cd558cd7dfd5b75c25fd1c609e78d7954dde583331104022a46ea90f9ee \
     --hash=sha256:d5350311567ae660c24cbc1752aee4b3d660f89c0106d2dcd2a69978c35afe1e
@@ -604,6 +690,10 @@ idna==3.18 \
     #   anyio
     #   httpx
     #   requests
+ifaddr==0.2.0 \
+    --hash=sha256:085e0305cfe6f16ab12d72e2024030f5d52674afad6911bb1eee207177b8a748 \
+    --hash=sha256:cc0cbfcaabf765d44595825fb96a99bb12c79716b73b44330ea38ee2b0c4aed4
+    # via aioice
 importlib-metadata==9.0.0 ; python_full_version < '3.12' \
     --hash=sha256:2d21d1cc5a017bd0559e36150c21c830ab1dc304dedd1b7ea85d20f45ef3edd7 \
     --hash=sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc
@@ -1566,6 +1656,10 @@ pydantic-settings==2.14.2 \
     # via
     #   -r requirements.in
     #   mcp
+pyee==13.0.1 \
+    --hash=sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8 \
+    --hash=sha256:af2f8fede4171ef667dfded53f96e2ed0d6e6bd7ee3bb46437f77e3b57689228
+    # via aiortc
 pygments==2.20.0 \
     --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
     --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
@@ -1574,6 +1668,28 @@ pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
     # via mcp
+pylibsrtp==1.0.0 \
+    --hash=sha256:2696bdb2180d53ac55d0eb7b58048a2aa30cd4836dd2ca683669889137a94d2a \
+    --hash=sha256:293c9f2ac21a2bd689c477603a1aa235d85cf252160e6715f0101e42a43cbedc \
+    --hash=sha256:4ddb562e443cf2e557ea2dfaeef0d7e6b90e96dd38eb079b4ab2c8e34a79f50b \
+    --hash=sha256:81fb8879c2e522021a7cbd3f4bda1b37c192e1af939dfda3ff95b4723b329663 \
+    --hash=sha256:822c30ea9e759b333dc1f56ceac778707c51546e97eb874de98d7d378c000122 \
+    --hash=sha256:8d6527c4a78a39a8d397f8862a8b7cdad4701ee866faf9de4ab8c70be61fd34d \
+    --hash=sha256:9209b86e662ebbd17c8a9e8549ba57eca92a3e87fb5ba8c0e27b8c43cd08a767 \
+    --hash=sha256:aaad74e5c8cbc1c32056c3767fea494c1e62b3aea2c908eda2a1051389fdad76 \
+    --hash=sha256:b39dff075b263a8ded5377f2490c60d2af452c9f06c4d061c7a2b640612b34d4 \
+    --hash=sha256:bae377c3b402b17b9bbfbfe2534c2edba17aa13bea4c64ce440caacbe0858b55 \
+    --hash=sha256:c134fa09e7b80a5b7fed626230c5bc257fd771bd6978e754343e7a61d96bc7e6 \
+    --hash=sha256:f02e616c9dfab2b03b32d8cc7b748f9d91814c0211086f987629a60f05f6e2cc
+    # via aiortc
+pyopenssl==26.2.0 ; (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'ARM64' and sys_platform == 'win32') \
+    --hash=sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70 \
+    --hash=sha256:8c6fcecd1183a7fc897548dfe388b0cdb7f37e018200d8409cf33959dbe35387
+    # via aiortc
+pyopenssl==26.3.0 ; (platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'ARM64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'win32') \
+    --hash=sha256:46367f8f66b92271e6d218da9c87607e1ef5a0bc5c8dea5bb3db82f395c385a3 \
+    --hash=sha256:589de7fae1c9ea670d18422ed00fc04da787bbde8e1454aea872aa57b49ad341
+    # via aiortc
 pypdf==6.14.2 \
     --hash=sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946 \
     --hash=sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25
@@ -2100,6 +2216,8 @@ typing-extensions==4.15.0 \
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   pyee
+    #   pyopenssl
     #   referencing
     #   starlette
     #   typing-inspection

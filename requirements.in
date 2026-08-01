@@ -50,6 +50,7 @@ keyring>=25.5
 
 # Audio I/O
 sounddevice>=0.5
+aiortc>=1.13
 # NumPy 2.1 has no Windows ARM64 wheels. Use the first official ARM64-wheel
 # branch there so a stock machine never falls into an unavailable native build.
 numpy>=1.26,<2.2; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')
