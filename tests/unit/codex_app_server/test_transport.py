@@ -2134,16 +2134,66 @@ def test_native_codex_version_and_hash_are_both_required(
         )
         == str(binary.resolve())
     )
-    with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
-        transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
+    # The hash IS the pinned build: a launcher that cannot print its version
+    # (npm wrapper without node on PATH) must not brick a verified binary.
+    assert (
+        transport._trusted_native_codex_binary(str(binary), None)
+        == str(binary.resolve())
+    )
 
     monkeypatch.setattr(
         transport, "_sha256_file_cached", lambda _path: "wrong-hash"
     )
+    # A real-but-different release names the required version...
+    with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
+        transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
+    # ...while an unknown build with the right version fails on the hash.
     with pytest.raises(CodexSubscriptionUnavailable, match="approved build"):
         transport._trusted_native_codex_binary(
             str(binary), transport._SUPPORTED_CODEX_VERSION
         )
+
+
+def test_capability_survives_a_version_probe_that_prints_a_shell_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """npm's codex launcher without node prints a localized error, not a version."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return 'Der Befehl ""node"" ist entweder falsch geschrieben oder\n'  # i18n-allow: verbatim Windows shell error under test
+
+        def login_status(self) -> tuple[bool, str]:
+            return True, "chatgpt"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: tmp_path,
+    )
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.available is True
+    assert capability.chatgpt_authenticated is True
+    assert capability.reason_code == "ready"
+    # The shell error never becomes the version chip; the hash-proven pinned
+    # release is reported instead.
+    assert capability.version == transport._SUPPORTED_CODEX_VERSION
 
 
 def test_sha256_memo_rehashes_when_the_file_identity_changes(

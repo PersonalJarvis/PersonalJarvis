@@ -882,10 +882,14 @@ def _codex_package_roots(launcher: Path) -> list[Path]:
 
 
 def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> str:
-    if version != _SUPPORTED_CODEX_VERSION:
-        raise CodexSubscriptionUnavailable(
-            f"Subscription voice requires Codex CLI {_SUPPORTED_CODEX_VERSION}."
-        )
+    """Locate the SHA-256-approved native executable for the pinned release.
+
+    The hash is the authority: a candidate matching an official artifact IS
+    the pinned build, whatever the launcher's ``--version`` said. The version
+    string is advisory only — the npm ``codex`` launcher needs a working
+    ``node`` on PATH just to print it, and a service process without node used
+    to fail the whole feature here although the native binary was intact.
+    """
     target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     if target is None:
         raise CodexSubscriptionUnavailable(
@@ -933,9 +937,28 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
                 return str(canonical)
         except OSError:  # Unreadable installation candidates are skipped during discovery.
             continue
+    if version is not None and version.startswith("codex-cli") and (
+        version != _SUPPORTED_CODEX_VERSION
+    ):
+        # The launcher answered with a real but different release — name the
+        # required one instead of a generic hash complaint.
+        raise CodexSubscriptionUnavailable(
+            f"Subscription voice requires Codex CLI {_SUPPORTED_CODEX_VERSION}."
+        )
     raise CodexSubscriptionUnavailable(
         "The installed Codex 0.146 executable does not match an official approved build."
     )
+
+
+def _displayable_cli_version(raw: str | None) -> str | None:
+    """Return the probe output only when it is an actual version string.
+
+    The npm launcher prints a localized shell error instead of a version when
+    ``node`` is missing; that text must never reach the UI's version chip or
+    count as an installed version.
+    """
+    text = " ".join(str(raw or "").split())
+    return text if text.startswith("codex-cli ") else None
 
 
 def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
@@ -963,12 +986,16 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason="Codex CLI is not installed.",
             reason_code="not_installed",
         )
-    version = service._probe_version(resolved)
+    version = _displayable_cli_version(service._probe_version(resolved))
     try:
         resolved_binary = _trusted_native_codex_binary(
             resolved,
             version,
         )
+        # A hash match proves the pinned official build even when the npm
+        # launcher could not print its version (for example: no node on the
+        # service PATH).
+        version = _SUPPORTED_CODEX_VERSION
     except CodexSubscriptionContainmentUnavailable as exc:  # Expected platform gate becomes status.
         return CodexAppServerCapability(
             available=False,
