@@ -271,6 +271,125 @@ async def test_first_provider_success_does_not_try_others():
     assert reg.tried == ["gemini"]  # no needless fallback calls
 
 
+async def test_synchronous_aggregation_fault_stops_after_one_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller-owned stream adapter bug is not N broken provider families."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki import provider_chain as pc
+    from jarvis.memory.wiki.health import WikiHealth
+
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+    reg = _FakeRegistry(fail_providers=set())
+
+    def _broken_adapter(_stream: Any) -> Any:
+        raise TypeError("async_generator object is not iterable")
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="ImageDescriber",
+        aggregate=_broken_adapter,
+    )
+
+    assert result is None
+    assert reg.tried == ["openrouter"]
+    assert not pc._in_cooldown("openrouter")
+    detail = isolated_health.snapshot()["last_chain_failure"]["detail"]
+    assert detail == "ImageDescriber aggregation setup failed: TypeError"
+
+
+async def test_validator_fault_stops_after_one_provider_without_cooling_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.memory.wiki import provider_chain as pc
+
+    reg = _FakeRegistry(fail_providers=set())
+
+    def _broken_validator(_agg: Any) -> str | None:
+        raise TypeError("validator contract bug")
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="ImageDescriber",
+        aggregate=_aggregate,
+        validate=_broken_validator,
+    )
+
+    assert result is None
+    assert reg.tried == ["openrouter"]
+    assert not pc._in_cooldown("openrouter")
+
+
+async def test_boolean_validator_contract_is_rejected_as_a_shared_fault() -> None:
+    """The old media validator returned bool, inverting success and failure."""
+    reg = _FakeRegistry(fail_providers=set())
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="ImageDescriber",
+        aggregate=_aggregate,
+        validate=lambda _agg: False,  # type: ignore[arg-type] - broken legacy contract
+    )
+
+    assert result is None
+    assert reg.tried == ["openrouter"]
+
+
+async def test_optional_lane_neither_sets_nor_clears_normal_wiki_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki.health import WikiHealth
+
+    isolated_health = WikiHealth()
+    isolated_health.record_chain_failure("normal wiki capture is unavailable")
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    success = await complete_with_fallback(
+        registry=_FakeRegistry(fail_providers=set()),
+        chain=[("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="OptionalMedia",
+        aggregate=_aggregate,
+        record_health=False,
+        failure_scope="optional-media",
+    )
+    assert success is not None
+    assert (
+        isolated_health.snapshot()["last_chain_failure"]["detail"]
+        == "normal wiki capture is unavailable"
+    )
+
+    isolated_health.record_chain_success()
+    failure = await complete_with_fallback(
+        registry=_FakeRegistry(fail_providers={"gemini"}),
+        chain=[("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="OptionalMedia",
+        aggregate=_aggregate,
+        record_health=False,
+        failure_scope="optional-media",
+    )
+    assert failure is None
+    assert isolated_health.snapshot()["last_chain_failure"] is None
+    from jarvis.memory.wiki import provider_chain as pc
+
+    assert not pc._in_cooldown("gemini")
+    assert pc._in_cooldown("gemini", scope="optional-media")
+
+
 class _TextBrain:
     def __init__(self, text: str) -> None:
         self._text = text
