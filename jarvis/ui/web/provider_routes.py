@@ -865,47 +865,6 @@ def _resolve_cfg(request: Request):
         return None
 
 
-def _select_pipeline_voice_mode(
-    request: Request, *, persist: bool
-) -> tuple[bool, bool]:
-    """Make a successful STT/TTS selection the active voice engine.
-
-    Provider cards are an engine choice, not only dormant configuration:
-    realtime cards already select ``realtime``, so STT and TTS cards must
-    symmetrically select the classic ``pipeline``. Without this coupling the
-    UI can truthfully show a local model as active while the next call still
-    opens a stale realtime provider and never reaches that model.
-
-    Returns ``(voice_mode_persisted, session_restarted)``. A persistence
-    failure is reported in the route response but does not discard the valid
-    live provider switch; this mirrors the realtime-provider route.
-    """
-    voice_mode_persisted = False
-    if persist:
-        try:
-            from jarvis.core.config_writer import set_voice_mode
-
-            set_voice_mode("pipeline")
-            voice_mode_persisted = True
-        except Exception as exc:  # noqa: BLE001 — live selection remains valid
-            log.warning(
-                "voice-mode persist failed after pipeline provider switch: %s",
-                exc,
-            )
-
-    cfg = _resolve_cfg(request)
-    if cfg is not None and getattr(cfg, "voice", None) is not None:
-        try:
-            cfg.voice.mode = "pipeline"  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
-            log.debug("In-memory voice.mode update skipped: %s", exc)
-
-    from jarvis.ui.web.voice_runtime import apply_voice_mode
-
-    session_restarted = apply_voice_mode(request, "pipeline")
-    return voice_mode_persisted, session_restarted
-
-
 def _codex_binary_path(request: Request | None = None) -> str | None:
     cfg = _resolve_cfg(request) if request is not None else None
     if cfg is None:
@@ -3284,22 +3243,16 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             )
             restart_required = True
 
-    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
-        request, persist=body.persist
-    )
-
     await _emit(request, SecretConfigured(key="tts.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist and voice_mode_persisted,
-        "voice_mode_persisted": voice_mode_persisted,
+        "persisted": body.persist,
         "live_switched": live_switched,
         "restart_required": restart_required,
-        "session_restarted": session_restarted,
+        "session_restarted": False,
     }
 
 
@@ -3676,23 +3629,16 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 status_code=500, detail=f"STT provider save failed: {exc}"
             ) from exc
 
-    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
-        request, persist=body.persist
-    )
-    persisted = persisted and voice_mode_persisted
-
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
         "persisted": persisted,
-        "voice_mode_persisted": voice_mode_persisted,
         "live_switched": live_switched,
         "restart_required": False,
-        "session_restarted": session_restarted,
+        "session_restarted": False,
     }
 
 
@@ -3701,14 +3647,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Switch the active realtime provider.
 
     The desktop and browser runtimes resolve ``voice.mode`` plus the selected
-    provider whenever a voice session opens. An active desktop call is closed
-    and reopened against the new selection; no application restart is required.
+    provider whenever a voice session opens. An active realtime call is closed
+    and reopened against the new provider; no application restart is required.
     Realtime is cross-family (AP-22), so validation is registry/tier based.
 
-    Activating a realtime provider also makes Realtime the ACTIVE voice mode
-    (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
-    ``[brain.realtime].provider``, so without this the badge could never
-    follow an activation (Feature A4).
+    Provider selection and voice-engine selection are intentionally independent.
+    This route never changes ``[voice].mode``; only the explicit voice-mode
+    settings action may switch between Pipeline and Realtime.
     """
     spec = get_spec(body.provider)
     if spec is None:
@@ -3774,7 +3719,6 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    voice_mode_write_ok = True
     if body.persist:
         try:
             from jarvis.core.config_writer import set_realtime_provider
@@ -3786,13 +3730,6 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
-        try:
-            from jarvis.core.config_writer import set_voice_mode
-
-            set_voice_mode("realtime")
-        except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
-            voice_mode_write_ok = False
-            log.warning("voice-mode persist failed after realtime switch: %s", exc)
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -3806,14 +3743,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 realtime_cfg.provider = body.provider
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
             log.debug("In-memory realtime.provider update skipped: %s", exc)
-    if cfg is not None and getattr(cfg, "voice", None) is not None:
-        try:
-            cfg.voice.mode = "realtime"  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
-            log.debug("In-memory voice.mode update skipped: %s", exc)
-
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     from jarvis.ui.web.voice_runtime import reconnect_realtime
 
@@ -3825,13 +3755,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
-        # True only when persist was requested AND both writes (provider +
-        # voice mode) actually landed — previously this reported
-        # body.persist unconditionally even when the voice-mode write above
-        # failed and was only logged, so the UI showed "persisted" for a
-        # switch that silently left [voice].mode stale on disk.
-        "persisted": body.persist and voice_mode_write_ok,
-        "voice_mode_persisted": voice_mode_write_ok,
+        "persisted": body.persist,
         "restart_required": False,
         "session_restarted": session_restarted,
     }

@@ -102,10 +102,6 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     monkeypatch.setattr(
         config_writer, "set_realtime_provider", lambda name, **kw: writes.append(name)
     )
-    # Feature A4 also flips [voice].mode inside this route; mock it too so the
-    # test never touches the real jarvis.toml (isolation defect otherwise).
-    monkeypatch.setattr(config_writer, "set_voice_mode", lambda mode, **kw: None)
-
     app = _app()
     client = TestClient(app)
     resp = client.post(
@@ -122,11 +118,8 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     assert app.state.config.brain.realtime.provider == "openai-realtime"
 
 
-def test_realtime_switch_sets_voice_mode(monkeypatch):
-    """Feature A4: activating a realtime provider must flip [voice].mode to
-    "realtime" too — the "Active" badge reads [voice].mode, not
-    [brain.realtime].provider, so persisting only the provider can never move
-    it (the original bug this feature fixes)."""
+def test_realtime_switch_preserves_pipeline_mode(monkeypatch):
+    """Provider selection configures Realtime without activating the engine."""
     monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
     monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
     voice_mode_writes: list[str] = []
@@ -135,19 +128,19 @@ def test_realtime_switch_sets_voice_mode(monkeypatch):
     )
 
     app = _app()
+    app.state.config.voice.mode = "pipeline"
     client = TestClient(app)
     resp = client.post(
         "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
     )
     assert resp.status_code == 200
-    assert voice_mode_writes == ["realtime"]
-    assert app.state.config.voice.mode == "realtime"
+    assert voice_mode_writes == []
+    assert app.state.config.voice.mode == "pipeline"
 
 
 def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
     monkeypatch.setattr(config_writer, "set_realtime_provider", lambda _name: None)
-    monkeypatch.setattr(config_writer, "set_voice_mode", lambda _mode: None)
     reasons: list[str] = []
 
     class LivePipeline:
@@ -156,6 +149,7 @@ def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
             return True
 
     app = _app()
+    app.state.config.voice.mode = "realtime"
     app.state.speech_pipeline = LivePipeline()
     client = TestClient(app)
 
@@ -167,30 +161,6 @@ def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
     assert response.status_code == 200
     assert response.json()["session_restarted"] is True
     assert reasons == ["realtime_provider:openai-realtime"]
-
-
-def test_realtime_switch_reports_voice_mode_not_persisted_on_write_failure(monkeypatch):
-    """Bug: the [voice].mode write failure was only logged, but the response
-    still reported persisted=True unconditionally — the UI showed "saved"
-    for a switch that silently left [voice].mode stale on disk."""
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
-    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
-
-    def _boom(mode, **kw):
-        raise RuntimeError("disk full (simulated)")
-
-    monkeypatch.setattr(config_writer, "set_voice_mode", _boom)
-
-    app = _app()
-    client = TestClient(app)
-    resp = client.post(
-        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    assert body["persisted"] is False
-    assert body["voice_mode_persisted"] is False
 
 
 def test_realtime_switch_without_key_is_409(monkeypatch):

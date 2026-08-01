@@ -86,12 +86,9 @@ export function useVoiceMode() {
     onSettled: () => qc.invalidateQueries({ queryKey: ["voice-mode"] }),
   });
 
-  // Activating a realtime provider CARD (ApiKeysView's ProviderCategory, the
-  // "Set active" action on a Realtime tier card) flips `[voice].mode`
-  // server-side too (provider_routes.py::realtime_switch, Feature A4) — that
-  // write bypasses this hook's own mutation, so the "Active" badge would
-  // otherwise go stale until an unrelated refetch. Listen for the event the
-  // card activation already dispatches and refresh here.
+  // A realtime provider card changes the provider, never `[voice].mode`.
+  // Refresh because this response also carries the selected provider/model
+  // shown in the runtime status; the engine mode itself remains user-controlled.
   useEffect(() => {
     function onRealtimeSwitched() {
       qc.invalidateQueries({ queryKey: ["voice-mode"] });

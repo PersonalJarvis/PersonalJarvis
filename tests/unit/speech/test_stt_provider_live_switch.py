@@ -139,22 +139,22 @@ def test_switch_route_applies_to_running_pipeline_without_restart(
         "ok": True,
         "active": "openrouter-stt",
         "persisted": True,
-        "voice_mode_persisted": True,
         "live_switched": True,
         "restart_required": False,
-        "session_restarted": True,
+        "session_restarted": False,
     }
     assert pipeline.calls == [("openrouter-stt", None)]
-    assert pipeline.mode_calls == ["pipeline"]
+    assert pipeline.mode_calls == []
     assert web_server.cfg.stt.provider == "openrouter-stt"
-    assert web_server.cfg.voice.mode == "pipeline"
+    assert web_server.cfg.voice.mode == "realtime"
     assert writes == ["openrouter-stt"]
-    assert mode_writes == ["pipeline"]
+    assert mode_writes == []
 
 
 def test_switch_route_never_requests_restart_when_voice_is_not_running(
     web_server: WebServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    initial_mode = web_server.cfg.voice.mode
     monkeypatch.setattr(provider_routes, "_is_credential_present", lambda _spec: True)
     monkeypatch.setattr("jarvis.brain.app_control.local_readiness_error", lambda _spec: None)
 
@@ -167,7 +167,6 @@ def test_switch_route_never_requests_restart_when_voice_is_not_running(
     assert response.status_code == 200, response.text
     assert response.json()["live_switched"] is False
     assert response.json()["restart_required"] is False
-    assert response.json()["voice_mode_persisted"] is False
     assert response.json()["session_restarted"] is False
     assert web_server.cfg.stt.provider == "openrouter-stt"
-    assert web_server.cfg.voice.mode == "pipeline"
+    assert web_server.cfg.voice.mode == initial_mode
