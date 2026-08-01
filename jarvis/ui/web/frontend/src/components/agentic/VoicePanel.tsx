@@ -115,14 +115,14 @@ export function VoicePanel() {
         >
           <PanelRightOpen className="h-4 w-4" />
         </button>
-        {/* The one-glance state the strip still owes: blue and pulsing while a
+        {/* The one-glance state the strip still owes: gold and pulsing while a
             conversation runs, quiet otherwise. */}
         <span
           aria-hidden="true"
           className={cn(
             "h-2.5 w-2.5 rounded-full",
             active
-              ? "animate-pulse bg-sky-500 motion-reduce:animate-none"
+              ? "animate-pulse bg-[#e7c46e] motion-reduce:animate-none"
               : "bg-muted-foreground/40",
           )}
         />
@@ -151,7 +151,7 @@ export function VoicePanel() {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-5 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-5 pb-6">
         <button
           type="button"
           data-testid="voice-orb-button"
@@ -165,15 +165,15 @@ export function VoicePanel() {
           }
           aria-label={active ? "Hang up" : `Talk to ${assistantName}`}
           className={cn(
-            "rounded-full outline-none transition-[transform,box-shadow,opacity] duration-500 ease-out hover:scale-[1.015] active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-sky-200/60 motion-reduce:transform-none",
-            // A diffuse pool of cool light gives depth without a neon outline.
+            "rounded-full outline-none transition-[transform,box-shadow,opacity] duration-500 ease-out hover:scale-[1.01] active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-[#e7c46e]/55 motion-reduce:transform-none",
+            // A restrained ambient pool; the sphere itself remains borderless.
             active
-              ? "shadow-[0_30px_90px_-38px_rgba(24,155,238,0.9),0_12px_34px_-24px_rgba(143,231,248,0.75)]"
-              : "shadow-[0_26px_72px_-40px_rgba(24,140,232,0.72),0_10px_26px_-24px_rgba(179,238,247,0.55)]",
+              ? "shadow-[0_20px_56px_-38px_rgba(231,196,110,0.48)]"
+              : "shadow-[0_18px_48px_-40px_rgba(231,196,110,0.3)]",
             busy && "cursor-wait opacity-70",
           )}
         >
-          <VoiceOrb state={voiceState} size={208} />
+          <VoiceOrb state={voiceState} size={160} />
         </button>
 
         <div className="flex flex-col items-center gap-1.5 text-center">

@@ -49,7 +49,7 @@ describe("voice panel", () => {
     expect(screen.getByTestId("voice-panel")).toBeTruthy();
     const orb = screen.getByTestId("voice-orb-canvas");
     expect(orb.getAttribute("data-state")).toBe("idle");
-    expect(orb.getAttribute("style")).toContain("width: 208px");
+    expect(orb.getAttribute("style")).toContain("width: 160px");
     expect(screen.getByTestId("voice-panel-status").textContent).toBe("Ready");
     // The brand rule: the assistant's own name, never a hardcoded one.
     expect(screen.getByTestId("voice-orb-button").getAttribute("title")).toContain(

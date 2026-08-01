@@ -1,15 +1,15 @@
 /**
- * A calm, atmospheric voice orb with soft internal weather.
+ * A compact voice orb made from softly evolving procedural weather.
  *
- * The reference is a luminous glass sphere rather than a flat status disc:
- * cool depth rises from cobalt into a pale sky, while broad cloud layers move
- * in gentle waves. Voice states only change the pace, lift and breathing of
- * those layers. Nothing orbits and there are no particles, so the perpetual
- * motion remains comfortable in a panel that may stay open all day.
+ * The visual target is a luminous, cloud-filled presence rather than a glossy
+ * gradient ball. A low-resolution fractal field is color-mapped through the
+ * product's ivory, gold and amber palette, then enlarged with interpolation.
+ * That deliberate softness creates organic depth without visible bands,
+ * outlines, rotating particles or image assets.
  *
- * Rendering stays deliberately small: one 2D canvas, a capped device-pixel
- * ratio, no bitmap assets, and no work while the document is hidden. Reduced
- * motion users receive the same dimensional sphere as a still image.
+ * Voice states alter pace, breathing, turbulence and highlight energy while
+ * the color identity stays stable. Rendering pauses with the document, runs
+ * at a capped 20 fps, and becomes a state-aware still for reduced motion.
  */
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -17,155 +17,175 @@ import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import type { VoiceState } from "@/store/events";
 
 interface Motion {
-  /** Horizontal travel of the broad cloud field, as a radius fraction. */
-  flow: number;
-  /** Pace of the internal weather. */
+  /** Pace of the slowly evolving cloud field. */
   speed: number;
   /** Whole-sphere breathing depth, as a scale fraction. */
   breathAmp: number;
   /** Whole-sphere breathing rate in hertz. */
   breathHz: number;
-  /** Vertical wave motion inside the sphere. */
-  undulation: number;
-  /** Overall light strength. */
+  /** Strength of the domain-warped cloud shapes. */
+  turbulence: number;
+  /** Brightness of the cream cloud highlights. */
   energy: number;
-  /** Cross-fade from the quiet error palette into the blue palette. */
-  vivid: number;
 }
 
 const MOTIONS: Record<VoiceState, Motion> = {
-  idle: {
-    flow: 0.07,
-    speed: 0.22,
-    breathAmp: 0.012,
-    breathHz: 0.18,
-    undulation: 0.035,
-    energy: 0.82,
-    vivid: 0.92,
-  },
-  listening: {
-    flow: 0.16,
-    speed: 0.58,
-    breathAmp: 0.032,
-    breathHz: 0.68,
-    undulation: 0.085,
-    energy: 1,
-    vivid: 1,
-  },
-  thinking: {
-    flow: 0.12,
-    speed: 0.4,
-    breathAmp: 0.018,
-    breathHz: 0.34,
-    undulation: 0.12,
-    energy: 0.9,
-    vivid: 0.96,
-  },
-  speaking: {
-    flow: 0.2,
-    speed: 0.9,
-    breathAmp: 0.047,
-    breathHz: 1.25,
-    undulation: 0.15,
-    energy: 1,
-    vivid: 1,
-  },
-  error: {
-    flow: 0.02,
-    speed: 0.12,
-    breathAmp: 0.005,
-    breathHz: 0.14,
-    undulation: 0.015,
-    energy: 0.58,
-    vivid: 0,
-  },
+  idle: { speed: 0.18, breathAmp: 0.006, breathHz: 0.16, turbulence: 0.82, energy: 0.86 },
+  listening: { speed: 0.52, breathAmp: 0.02, breathHz: 0.62, turbulence: 1, energy: 1 },
+  thinking: { speed: 0.36, breathAmp: 0.012, breathHz: 0.32, turbulence: 0.96, energy: 0.94 },
+  speaking: { speed: 0.82, breathAmp: 0.028, breathHz: 1.05, turbulence: 1.04, energy: 1 },
+  error: { speed: 0.12, breathAmp: 0.004, breathHz: 0.12, turbulence: 0.72, energy: 0.72 },
 };
 
 type Rgb = readonly [number, number, number];
 
-/** From high mist to deep water. */
-const SKY: readonly Rgb[] = [
-  [244, 252, 251],
-  [211, 243, 247],
-  [126, 211, 243],
-  [28, 148, 238],
-  [3, 99, 222],
-  [5, 48, 157],
-];
-
-/** Muted steel counterpart for a voice error. */
-const STEEL: readonly Rgb[] = [
-  [232, 236, 239],
-  [208, 216, 222],
-  [158, 174, 185],
-  [99, 119, 135],
-  [59, 76, 91],
-  [31, 42, 52],
-];
-
-interface CloudSeed {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  phase: number;
-  depth: number;
-}
-
-/** Broad overlapping shapes read as weather, never as individual particles. */
-const CLOUDS: readonly CloudSeed[] = [
-  { x: -0.42, y: -0.56, width: 0.68, height: 0.3, phase: 0.4, depth: 0 },
-  { x: 0.12, y: -0.48, width: 0.78, height: 0.35, phase: 2.2, depth: 1 },
-  { x: 0.5, y: -0.34, width: 0.58, height: 0.28, phase: 4.8, depth: 0 },
-  { x: -0.34, y: -0.1, width: 0.92, height: 0.38, phase: 3.6, depth: 1 },
-  { x: 0.36, y: 0.02, width: 0.82, height: 0.36, phase: 5.7, depth: 2 },
-  { x: -0.08, y: 0.28, width: 1.02, height: 0.42, phase: 1.4, depth: 2 },
-];
+const IVORY: Rgb = [255, 250, 235];
+const PALE_GOLD: Rgb = [248, 226, 151];
+const SIGNAL_GOLD: Rgb = [231, 196, 110];
+const AMBER: Rgb = [210, 147, 24];
+const DEEP_AMBER: Rgb = [126, 66, 2];
+const CLOUD_LIGHT: Rgb = [255, 249, 216];
+// 48² pixels at 20 fps keeps this decorative renderer near 553k value-noise
+// samples per second, leaving the main thread available for terminal streaming.
+const TEXTURE_SIZE = 48;
+const NOISE_SIZE = 64;
+const FRAME_INTERVAL_MS = 1000 / 20;
 
 function mix(a: number, b: number, amount: number): number {
   return a + (b - a) * amount;
 }
 
-function orbColor(index: number, vivid: number): Rgb {
-  const sky = SKY[index % SKY.length];
-  const steel = STEEL[index % STEEL.length];
-  return [
-    Math.round(mix(steel[0], sky[0], vivid)),
-    Math.round(mix(steel[1], sky[1], vivid)),
-    Math.round(mix(steel[2], sky[2], vivid)),
-  ];
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.min(max, Math.max(min, value));
 }
 
-function rgba(color: Rgb, alpha: number): string {
-  return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const position = clamp((value - edge0) / (edge1 - edge0));
+  return position * position * (3 - 2 * position);
 }
 
-function paintCloud(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  color: Rgb,
-  alpha: number,
-): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(width, height);
-  const cloud = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-  cloud.addColorStop(0, rgba(color, alpha));
-  cloud.addColorStop(0.42, rgba(color, alpha * 0.72));
-  cloud.addColorStop(1, rgba(color, 0));
-  ctx.fillStyle = cloud;
-  ctx.beginPath();
-  ctx.arc(0, 0, 1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+/** A stable tile of pseudo-random values avoids expensive trigonometry per pixel. */
+const NOISE_GRID = (() => {
+  const grid = new Float32Array(NOISE_SIZE * NOISE_SIZE);
+  let seed = 0x51f15e;
+  for (let index = 0; index < grid.length; index += 1) {
+    seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+    grid[index] = seed / 0xffffffff;
+  }
+  return grid;
+})();
+
+function gridValue(x: number, y: number): number {
+  return NOISE_GRID[((y & (NOISE_SIZE - 1)) * NOISE_SIZE) + (x & (NOISE_SIZE - 1))];
+}
+
+function noiseAt(x: number, y: number): number {
+  const left = Math.floor(x);
+  const top = Math.floor(y);
+  const tx = x - left;
+  const ty = y - top;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const upper = mix(gridValue(left, top), gridValue(left + 1, top), sx);
+  const lower = mix(gridValue(left, top + 1), gridValue(left + 1, top + 1), sx);
+  return mix(upper, lower, sy);
+}
+
+function fractalNoise(x: number, y: number): number {
+  let value = 0;
+  let amplitude = 0.54;
+  let normalizer = 0;
+  for (let octave = 0; octave < 3; octave += 1) {
+    value += noiseAt(x, y) * amplitude;
+    normalizer += amplitude;
+    x = x * 2.03 + 11.7;
+    y = y * 2.01 - 7.9;
+    amplitude *= 0.5;
+  }
+  return value / normalizer;
+}
+
+function paintWeather(image: ImageData, weatherPhase: number, motion: Motion): void {
+  const phase = weatherPhase * 0.1;
+  const data = image.data;
+
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    const ny = (y / (TEXTURE_SIZE - 1)) * 2 - 1;
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const nx = (x / (TEXTURE_SIZE - 1)) * 2 - 1;
+      const warpX = fractalNoise(nx * 1.3 + phase + 8.2, ny * 1.22 - phase * 0.7 + 3.4);
+      const warpY = fractalNoise(nx * 1.18 - phase * 0.55 + 19.7, ny * 1.35 + phase + 12.1);
+      const cloudField = fractalNoise(
+        nx * 1.85 + warpX * motion.turbulence * 1.35 + phase,
+        ny * 1.72 + warpY * motion.turbulence * 1.2 - phase * 0.8,
+      );
+      const detail = fractalNoise(nx * 3.15 - phase * 0.45 + 31.2, ny * 2.9 + phase * 0.35);
+      const weather = cloudField * 0.76 + detail * 0.24;
+
+      // Warping the vertical color position removes the synthetic horizon band.
+      const vertical = clamp((ny + 1) * 0.5 + (weather - 0.5) * 0.28);
+      let start: Rgb;
+      let end: Rgb;
+      let paletteMix: number;
+      if (vertical < 0.22) {
+        start = IVORY;
+        end = PALE_GOLD;
+        paletteMix = vertical / 0.22;
+      } else if (vertical < 0.5) {
+        start = PALE_GOLD;
+        end = SIGNAL_GOLD;
+        paletteMix = (vertical - 0.22) / 0.28;
+      } else if (vertical < 0.76) {
+        start = SIGNAL_GOLD;
+        end = AMBER;
+        paletteMix = (vertical - 0.5) / 0.26;
+      } else {
+        start = AMBER;
+        end = DEEP_AMBER;
+        paletteMix = (vertical - 0.76) / 0.24;
+      }
+      let red = mix(start[0], end[0], paletteMix);
+      let green = mix(start[1], end[1], paletteMix);
+      let blue = mix(start[2], end[2], paletteMix);
+
+      const shadow =
+        smoothstep(0.48, 0.66, 1 - weather) * smoothstep(0.28, 0.95, vertical) * 0.18;
+      red = mix(red, DEEP_AMBER[0], shadow);
+      green = mix(green, DEEP_AMBER[1], shadow);
+      blue = mix(blue, DEEP_AMBER[2], shadow);
+
+      // Large cream masses form the soft, irregular clouds visible in the target.
+      const cloud = smoothstep(0.46, 0.64, weather) * (1 - vertical * 0.32);
+      const cloudMix = cloud * 0.78 * motion.energy;
+      red = mix(red, CLOUD_LIGHT[0], cloudMix);
+      green = mix(green, CLOUD_LIGHT[1], cloudMix);
+      blue = mix(blue, CLOUD_LIGHT[2], cloudMix);
+
+      // A second, quieter field breaks up any remaining uniform areas.
+      const shimmer = smoothstep(0.58, 0.76, warpX * 0.55 + detail * 0.45);
+      const shimmerMix = shimmer * 0.24 * motion.energy;
+      red = mix(red, PALE_GOLD[0], shimmerMix);
+      green = mix(green, PALE_GOLD[1], shimmerMix);
+      blue = mix(blue, PALE_GOLD[2], shimmerMix);
+
+      // Restrained spherical shading, with no dark outline or glossy rim.
+      const radius = Math.sqrt(nx * nx + ny * ny);
+      const edgeShade = smoothstep(0.7, 1, radius) * 0.1;
+      const volumeLight = 1.02 + (1 - Math.min(1, radius)) * 0.05 - edgeShade;
+      const offset = (y * TEXTURE_SIZE + x) * 4;
+      // Deterministic sub-LSB dither prevents broad 8-bit color contours.
+      const dither = ((((x * 73 + y * 151) & 255) / 255) - 0.5) * 0.8;
+      data[offset] = clamp(Math.round(red * volumeLight + dither), 0, 255);
+      data[offset + 1] = clamp(Math.round(green * volumeLight + dither), 0, 255);
+      data[offset + 2] = clamp(Math.round(blue * volumeLight + dither), 0, 255);
+      data[offset + 3] = 255;
+    }
+  }
 }
 
 export function VoiceOrb({
   state,
-  size = 208,
+  size = 160,
   className,
 }: {
   state: VoiceState;
@@ -200,123 +220,53 @@ export function VoiceOrb({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const texture = document.createElement("canvas");
+    texture.width = TEXTURE_SIZE;
+    texture.height = TEXTURE_SIZE;
+    const textureCtx = texture.getContext("2d");
+    if (!textureCtx) return;
+    const weather = textureCtx.createImageData(TEXTURE_SIZE, TEXTURE_SIZE);
+
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     canvas.width = Math.round(size * dpr);
     canvas.height = Math.round(size * dpr);
     const half = (size * dpr) / 2;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     const live: Motion = { ...MOTIONS[stateRef.current] };
     let last = performance.now();
+    let weatherPhase = 0;
+    let breathPhase = 0;
 
     const drawFrame = (now: number) => {
-      const time = now / 1000;
       const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
       last = now;
 
       const target = MOTIONS[stateRef.current] ?? MOTIONS.idle;
-      const ease = 1 - Math.exp(-dt * 3.4);
+      const ease = 1 - Math.exp(-dt * 3.2);
       for (const key of Object.keys(live) as (keyof Motion)[]) {
         live[key] = mix(live[key], target[key], ease);
       }
+      weatherPhase += dt * live.speed;
+      breathPhase += dt * live.breathHz * Math.PI * 2;
 
-      // Pulse inward from the canvas edge so an energetic state never clips.
       const breath =
         1 -
-        live.breathAmp * 0.7 +
-        live.breathAmp * 0.55 * Math.sin(2 * Math.PI * live.breathHz * time) +
-        live.breathAmp * 0.15 * Math.sin(2 * Math.PI * live.breathHz * 2.1 * time + 1.7);
-      const radius = (half - 2.5 * dpr) * breath;
+        live.breathAmp * 0.65 +
+        live.breathAmp * 0.52 * Math.sin(breathPhase) +
+        live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4);
+      const radius = (half - 0.75 * dpr) * breath;
+
+      paintWeather(weather, weatherPhase, live);
+      textureCtx.putImageData(weather, 0, 0);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
       ctx.beginPath();
       ctx.arc(half, half, radius, 0, Math.PI * 2);
       ctx.clip();
-
-      // The vertical atmosphere provides depth before any moving layer is added.
-      const body = ctx.createLinearGradient(half, half - radius, half, half + radius);
-      body.addColorStop(0, rgba(orbColor(0, live.vivid), 1));
-      body.addColorStop(0.28, rgba(orbColor(1, live.vivid), 1));
-      body.addColorStop(0.58, rgba(orbColor(3, live.vivid), 1));
-      body.addColorStop(0.82, rgba(orbColor(4, live.vivid), 1));
-      body.addColorStop(1, rgba(orbColor(5, live.vivid), 1));
-      ctx.fillStyle = body;
-      ctx.fillRect(half - radius, half - radius, radius * 2, radius * 2);
-
-      // Slow layers move laterally and rise/fall as waves. Their large scale and
-      // overlap avoid the busy, orbiting-particle look of the previous orb.
-      CLOUDS.forEach((cloud) => {
-        const phase = time * live.speed + cloud.phase;
-        const x =
-          half +
-          radius * cloud.x +
-          radius * live.flow * Math.sin(phase * (0.72 + cloud.depth * 0.08));
-        const y =
-          half +
-          radius * cloud.y +
-          radius * live.undulation * Math.sin(phase * 0.86 + cloud.phase * 0.6);
-        const swell = 1 + 0.08 * Math.sin(phase * 0.54 + cloud.phase);
-        const color = orbColor(Math.min(2, cloud.depth), live.vivid);
-        paintCloud(
-          ctx,
-          x,
-          y,
-          radius * cloud.width * swell,
-          radius * cloud.height * swell,
-          color,
-          (0.3 - cloud.depth * 0.035) * live.energy,
-        );
-      });
-
-      // A translucent upwelling keeps the lower blue from becoming a flat band.
-      paintCloud(
-        ctx,
-        half + radius * live.flow * 0.6 * Math.sin(time * live.speed * 0.55 + 1.2),
-        half + radius * 0.48,
-        radius * 0.9,
-        radius * 0.55,
-        orbColor(3, live.vivid),
-        0.34 * live.energy,
-      );
-
-      // Edge shade and a restrained top reflection finish the glass volume.
-      const vignette = ctx.createRadialGradient(
-        half - radius * 0.16,
-        half - radius * 0.2,
-        radius * 0.2,
-        half,
-        half,
-        radius,
-      );
-      vignette.addColorStop(0.54, "rgba(3, 16, 38, 0)");
-      vignette.addColorStop(0.86, "rgba(3, 16, 38, 0.05)");
-      vignette.addColorStop(1, "rgba(3, 16, 38, 0.34)");
-      ctx.fillStyle = vignette;
-      ctx.fillRect(half - radius, half - radius, radius * 2, radius * 2);
-
-      const reflection = ctx.createRadialGradient(
-        half - radius * 0.38,
-        half - radius * 0.5,
-        0,
-        half - radius * 0.3,
-        half - radius * 0.42,
-        radius * 0.72,
-      );
-      reflection.addColorStop(0, `rgba(255, 255, 255, ${0.25 * live.energy})`);
-      reflection.addColorStop(0.42, `rgba(255, 255, 255, ${0.08 * live.energy})`);
-      reflection.addColorStop(1, "rgba(255, 255, 255, 0)");
-      ctx.fillStyle = reflection;
-      ctx.fillRect(half - radius, half - radius, radius * 2, radius * 2);
-
-      ctx.restore();
-
-      // A hairline rim keeps the silhouette crisp against the dark workspace.
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(half, half, radius - 0.5 * dpr, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(216, 244, 251, ${0.18 * live.energy})`;
-      ctx.lineWidth = dpr;
-      ctx.stroke();
+      ctx.drawImage(texture, half - radius, half - radius, radius * 2, radius * 2);
       ctx.restore();
     };
 
@@ -335,8 +285,13 @@ export function VoiceOrb({
     }
 
     redrawStillRef.current = null;
+    let lastPaint = performance.now();
+    drawFrame(lastPaint);
     let raf = requestAnimationFrame(function loop(now: number) {
-      drawFrame(now);
+      if (now - lastPaint >= FRAME_INTERVAL_MS) {
+        drawFrame(now);
+        lastPaint = now;
+      }
       raf = requestAnimationFrame(loop);
     });
     return () => cancelAnimationFrame(raf);
