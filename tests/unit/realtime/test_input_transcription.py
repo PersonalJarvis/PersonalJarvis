@@ -136,3 +136,86 @@ async def test_a_failing_recognizer_never_kills_the_call() -> None:
     # No transcript follows, and closing still completes cleanly.
     await transcriber.close()
     assert await asyncio.wait_for(transcriber.next_event(), timeout=5.0) is None
+
+
+@pytest.mark.asyncio
+async def test_silence_never_vouches_for_a_server_transcript() -> None:
+    """The energy gate the provider asks before trusting a server-side user
+    transcript. ChatGPT-Live invented "[exhale]" and "a_lee pixelated image"
+    while the user sat silent, and each was recorded as something they said."""
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: _FakeSTT())
+
+    assert transcriber.speech_recently() is False  # nothing fed yet
+    for _ in range(40):
+        transcriber.feed(_quiet(), RATE)
+    assert transcriber.speech_recently() is False
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_real_speech_vouches_for_a_server_transcript() -> None:
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: _FakeSTT())
+
+    for _ in range(20):  # mid-utterance
+        transcriber.feed(_loud(), RATE)
+    assert transcriber.speech_recently() is True
+
+    for _ in range(40):  # the silence that closes it
+        transcriber.feed(_quiet(), RATE)
+    # The far end transcribes with its own latency, so a genuine transcript
+    # arrives shortly AFTER the audio stopped.
+    assert transcriber.speech_recently() is True
+    # ...but the vouching expires, so a transcript arriving much later in the
+    # silence is no longer covered by it.
+    await asyncio.sleep(0.05)
+    assert transcriber.speech_recently(grace_ms=10) is False
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cough_does_not_vouch_for_a_server_transcript() -> None:
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: _FakeSTT())
+
+    for _ in range(8):  # 160 ms — too short to be an utterance
+        transcriber.feed(_loud(), RATE)
+    for _ in range(40):
+        transcriber.feed(_quiet(), RATE)
+    assert transcriber.speech_recently() is False
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_recognizer_announces_itself() -> None:
+    """Silence would strand the turn: the provider needs to know it must fall
+    back to the far end's transcript (AP-30 - never fail without saying so)."""
+
+    class _Broken:
+        async def transcribe(self, audio):  # noqa: ANN001 - protocol shape
+            async for _ in audio:
+                pass
+            raise RuntimeError("recognizer exploded")
+
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: _Broken())
+    for _ in range(40):
+        transcriber.feed(_loud(), RATE)
+    for _ in range(40):
+        transcriber.feed(_quiet(), RATE)
+
+    events = await _drain(transcriber, 2)
+    assert events[0].kind == "speech_started"
+    assert events[1].kind == "transcript_failed"
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_result_also_announces_itself() -> None:
+    stt = _FakeSTT("   ")
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
+    for _ in range(40):
+        transcriber.feed(_loud(), RATE)
+    for _ in range(40):
+        transcriber.feed(_quiet(), RATE)
+
+    events = await _drain(transcriber, 2)
+    assert events[1].kind == "transcript_failed"
+    await transcriber.close()

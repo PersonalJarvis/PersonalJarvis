@@ -285,6 +285,9 @@ class _CodexSubscriptionRealtimeSession:
         self._closed = False
         self._last_input_item_id = ""
         self._assistant_delta_text = ""
+        # The far end's own guess at what the user said. Kept as a live preview
+        # and promoted to the recorded turn only if the local recognizer fails.
+        self._server_user_preview = ""
         self._language = str(language or "en").strip().lower()
         self._active_codex_turn_id = ""
         self._handoff_interrupt_pending = False
@@ -335,6 +338,27 @@ class _CodexSubscriptionRealtimeSession:
         self._audio_endpoint.send_pcm(pcm, sample_rate)
         if self._input_transcriber is not None:
             self._input_transcriber.feed(pcm, sample_rate)
+
+    def _server_user_transcript_is_plausible(self) -> bool:
+        """Was there microphone energy behind this server-side transcript?
+
+        ChatGPT-Live transcribes the user itself, and like every recognizer it
+        invents caption-style text on silence and on the echo of its own voice
+        — observed live as "[exhale]", "blurred gray", "a_lee pixelated image",
+        each recorded as something the user had said and answered in earnest.
+        The test is word-agnostic (AP-27): the local endpointer already knows,
+        from audio energy alone, whether anybody was speaking. Content rules
+        cannot do this job — a hallucination is spelled like a sentence.
+        """
+        transcriber = self._input_transcriber
+        if transcriber is None:
+            # No endpointer, so no evidence either way; a deaf bar would be a
+            # worse failure than an occasional invented line.
+            return True
+        checker = getattr(transcriber, "speech_recently", None)
+        if not callable(checker):
+            return True
+        return bool(checker())
 
     async def receive(self) -> AsyncIterator[_ProviderEvent]:
         # Stay below app-server's bounded subscription queue so a stalled
@@ -448,8 +472,29 @@ class _CodexSubscriptionRealtimeSession:
                         _cancel_completion()
                         completion_emitted = False
                         self._assistant_delta_text = ""
+                        self._server_user_preview = ""
                         yield _ProviderEvent(type="speech_started")
+                    elif payload.kind == "transcript_failed":
+                        # The local recognizer could not deliver this
+                        # utterance. A turn the user really spoke must not
+                        # vanish, so the far end's preview is promoted — it
+                        # covers the same audio and passed the same energy
+                        # gate. Silence here would strand the whole turn.
+                        preview = self._server_user_preview
+                        self._server_user_preview = ""
+                        if preview:
+                            log.info(
+                                "Local recognizer delivered nothing; using the "
+                                "provider's own transcript for this turn"
+                            )
+                            yield _ProviderEvent(
+                                type="input_transcript",
+                                text=preview,
+                                is_final=True,
+                                item_id=self._last_input_item_id or None,
+                            )
                     else:
+                        self._server_user_preview = ""
                         yield _ProviderEvent(
                             type="input_transcript",
                             text=payload.text,
@@ -558,6 +603,12 @@ class _CodexSubscriptionRealtimeSession:
                     if not delta:
                         continue
                     if role == "user":
+                        if not self._server_user_transcript_is_plausible():
+                            log.debug(
+                                "Dropping a server user transcript delta that "
+                                "no microphone energy backs"
+                            )
+                            continue
                         _cancel_completion()
                         completion_emitted = False
                         yield _ProviderEvent(
@@ -583,12 +634,27 @@ class _CodexSubscriptionRealtimeSession:
                     role = str(params.get("role", "") or "").lower()
                     text = str(params.get("text", "") or "")
                     if role == "user":
+                        if not self._server_user_transcript_is_plausible():
+                            log.info(
+                                "Ignoring a server user transcript that no "
+                                "microphone energy backs (%r)",
+                                text[:80],
+                            )
+                            continue
                         _cancel_completion()
                         completion_emitted = False
+                        # The local recognizer owns the FINAL text: it is the
+                        # one the user configured, with their dictionary and
+                        # bias prompt, and it is what every other Jarvis
+                        # feature hears. This stays a live preview unless that
+                        # recognizer reports it could not deliver.
+                        local_owns_final = self._input_transcriber is not None
+                        if local_owns_final:
+                            self._server_user_preview = text
                         yield _ProviderEvent(
                             type="input_transcript",
                             text=text,
-                            is_final=True,
+                            is_final=not local_owns_final,
                             item_id=self._last_input_item_id or None,
                         )
                     elif role == "assistant":

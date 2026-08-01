@@ -43,11 +43,18 @@ _MAX_UTTERANCE_MS = 20_000
 _MIN_VOICED_MS = 300
 
 
+# How long after the microphone last carried real speech a server-side user
+# transcript is still plausible. The far end transcribes with its own latency,
+# so a genuine transcript trails the audio; a hallucinated one arrives while
+# the user is silent or while the assistant itself is talking.
+_SERVER_TRANSCRIPT_GRACE_MS = 2_000
+
+
 @dataclass(frozen=True, slots=True)
 class InputTranscriptEvent:
     """One normalized user-speech event for the provider event stream."""
 
-    kind: str  # "speech_started" | "transcript"
+    kind: str  # "speech_started" | "transcript" | "transcript_failed"
     text: str = ""
     is_final: bool = False
 
@@ -81,9 +88,27 @@ class LocalInputTranscriber:
         self._speech_ms = 0
         self._silence_ms = 0
         self._in_speech = False
+        self._last_speech_end = 0.0
         self._tasks: set[asyncio.Task[None]] = set()
         self._closed = False
         self._unavailable_logged = False
+
+    # -- voice activity ------------------------------------------------
+    def speech_recently(self, grace_ms: int = _SERVER_TRANSCRIPT_GRACE_MS) -> bool:
+        """Did the microphone actually carry speech just now?
+
+        The answer is derived from audio ENERGY alone — never from the words
+        of any transcript (AP-27). Server-side recognizers hallucinate
+        caption-style text ("[exhale]", "pixelated image") on silence and on
+        the echo of the assistant's own voice, and no spelling rule can
+        separate those from a genuine short utterance. Their giveaway is
+        physical: they arrive when nobody was making a sound.
+        """
+        if self._in_speech:
+            return True
+        if self._last_speech_end <= 0.0:
+            return False
+        return (time.monotonic() - self._last_speech_end) * 1000.0 <= grace_ms
 
     # -- feeding -------------------------------------------------------
     def feed(self, pcm: bytes, sample_rate: int) -> None:
@@ -157,6 +182,9 @@ class LocalInputTranscriber:
         self._speech_ms = 0
         if voiced_ms < _MIN_VOICED_MS or not pcm:
             return
+        # Only a qualifying utterance vouches for a server-side transcript; a
+        # cough must not open the door that the energy gate just closed.
+        self._last_speech_end = time.monotonic()
         task = asyncio.create_task(
             self._transcribe(pcm), name="realtime-local-input-transcribe"
         )
@@ -192,6 +220,7 @@ class LocalInputTranscriber:
                     "the user's words stay idle",
                     exc_info=True,
                 )
+            self._emit(InputTranscriptEvent(kind="transcript_failed"))
             return
 
         from jarvis.core.protocols import AudioChunk  # noqa: PLC0415
@@ -205,9 +234,13 @@ class LocalInputTranscriber:
             result = await stt.transcribe(chunks())
         except Exception:  # noqa: BLE001 - one failed utterance is not fatal
             log.warning("Local input transcription failed for one utterance", exc_info=True)
+            self._emit(InputTranscriptEvent(kind="transcript_failed"))
             return
         text = str(getattr(result, "text", "") or "").strip()
         if not text:
+            # Real speech that produced no words: the far end's own transcript
+            # of the same audio is now the best thing Jarvis has.
+            self._emit(InputTranscriptEvent(kind="transcript_failed"))
             return
         log.info(
             "realtime local input transcript (%.0f ms): %r",

@@ -583,9 +583,10 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
             ),
         ]
     )
-    session = await _provider(client).open_session(
-        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
-    )
+    # The user really was speaking, so their transcripts pass the energy gate.
+    session = await _provider(
+        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=True)
+    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
 
     events = [event async for event in session.receive()]
 
@@ -599,7 +600,10 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
         "turn_complete",
         "error",
     ]
-    assert events[2].is_final is True
+    # A live preview, not the recorded turn: with a local recognizer present it
+    # owns the final text (see the server-transcript tests at the end of this
+    # file for both halves of that rule).
+    assert events[2].is_final is False
     assert events[2].item_id == "input-1"
     assert events[3].text == "hi"
     # A cleanly exhausted fake stream is still an unexpected transport death.
@@ -899,9 +903,12 @@ async def test_normalization_queue_backpressures_and_pump_cleans_up() -> None:
     client = _Client()
     subscription = _CountingSubscription()
     client.subscription = subscription
-    session = await _provider(client).open_session(
-        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
-    )
+    # This subscription streams user transcripts forever, so the endpointer has
+    # to report real speech - otherwise the energy gate rightly discards every
+    # one of them and there is no backpressure left to measure.
+    session = await _provider(
+        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=True)
+    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
     stream = session.receive()
 
     first = await anext(stream)
@@ -1094,3 +1101,86 @@ async def test_ui_disconnect_after_answer_removes_answered_lease() -> None:
     assert (await registration.wait()).type == "release"
     assert await broker.pending_count() == 0
     assert await lease.answer("v=0\r\no=late-answer") is False
+
+
+class _StubEndpointer:
+    """Stands in for the local endpointer's word-agnostic energy verdict."""
+
+    def __init__(self, speaking: bool) -> None:
+        self._speaking = speaking
+
+    def speech_recently(self, grace_ms: int = 2000) -> bool:  # noqa: ARG002
+        return self._speaking
+
+    def feed(self, pcm, sample_rate) -> None:  # noqa: ANN001, ARG002 - protocol
+        return None
+
+    async def next_event(self):  # noqa: ANN202 - delivers nothing in these tests
+        await asyncio.sleep(3600)
+
+    async def close(self) -> None:
+        return None
+
+
+def _hallucination_client() -> "_Client":
+    return _Client(
+        [
+            _Notification(
+                "thread/realtime/transcript/delta",
+                {"threadId": "thread-1", "role": "user", "delta": "a_lee "},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {
+                    "threadId": "thread-1",
+                    "role": "user",
+                    "text": "a_lee pixelated image",
+                },
+            ),
+        ]
+    )
+
+
+async def _user_transcripts(*, speaking: bool | None) -> list:
+    transcriber = None if speaking is None else _StubEndpointer(speaking)
+    session = await _provider(
+        _hallucination_client(), input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
+    events = [event async for event in session.receive()]
+    await session.close()
+    return [event for event in events if event.type == "input_transcript"]
+
+
+@pytest.mark.asyncio
+async def test_a_server_transcript_without_microphone_energy_never_becomes_a_turn():
+    """The live defect: the user said "Hallo, was geht?" and Jarvis recorded
+    "a_lee pixelated image" as their words, then answered it in earnest.
+    ChatGPT-Live transcribes the user itself and, like every recognizer, writes
+    caption-shaped text over silence and over the echo of its own voice. Only
+    audio energy separates the two - a hallucination is spelled flawlessly
+    (AP-27)."""
+    assert await _user_transcripts(speaking=False) == []
+
+
+@pytest.mark.asyncio
+async def test_a_server_transcript_backed_by_speech_shows_up_live():
+    """While the user really is speaking, the far end's transcript is the only
+    live text there is - dropping it would leave the bar blank mid-sentence."""
+    transcripts = await _user_transcripts(speaking=True)
+
+    assert [event.text for event in transcripts] == [
+        "a_lee ",
+        "a_lee pixelated image",
+    ]
+    # The local recognizer - the user's own, with their dictionary and bias
+    # prompt - owns the FINAL text, so these stay a live preview.
+    assert not any(event.is_final for event in transcripts)
+
+
+@pytest.mark.asyncio
+async def test_without_a_local_recognizer_the_server_transcript_is_final():
+    """A host with no usable recognizer still has to reach a routed turn, or
+    the provider talks while every Jarvis integration sits idle."""
+    finals = [event for event in await _user_transcripts(speaking=None) if event.is_final]
+
+    assert [event.text for event in finals] == ["a_lee pixelated image"]
