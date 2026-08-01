@@ -252,7 +252,7 @@ class _CodexSubscriptionRealtimeSession:
         subscription: Any,
         thread_id: str,
         answer_sdp: str,
-        offer_lease: Any = None,
+        audio_endpoint: Any = None,
         language: str = "en",
     ) -> None:
         self._client = client
@@ -261,7 +261,8 @@ class _CodexSubscriptionRealtimeSession:
         self.session_id = thread_id
         self.answer_sdp = answer_sdp
         self.realtime_version = ""
-        self._offer_lease = offer_lease
+        # Owns the media path: ChatGPT-Live carries audio ONLY over WebRTC.
+        self._audio_endpoint = audio_endpoint
         self._closed = False
         self._last_input_item_id = ""
         self._assistant_delta_text = ""
@@ -302,13 +303,14 @@ class _CodexSubscriptionRealtimeSession:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
             return
-        await self._client.realtime_append_audio(
-            self._thread_id,
-            data=base64.b64encode(pcm).decode("ascii"),
-            sample_rate=sample_rate,
-            num_channels=channels,
-            samples_per_channel=len(pcm) // 2,
-        )
+        if self._audio_endpoint is None:
+            raise RuntimeError(
+                "Codex subscription realtime has no media path for microphone audio"
+            )
+        # ChatGPT-Live (v3) has NO audio client event: the sideband append that
+        # the retired v1 protocol used is rejected outright ("Invalid value:
+        # 'input_audio.append'"). Microphone audio rides the media track.
+        self._audio_endpoint.send_pcm(pcm, sample_rate)
 
     async def receive(self) -> AsyncIterator[_ProviderEvent]:
         # Stay below app-server's bounded subscription queue so a stalled
@@ -336,6 +338,27 @@ class _CodexSubscriptionRealtimeSession:
             else:
                 await queue.put(("stream_end", None))
 
+        async def _pump_media_audio() -> None:
+            """Feed decoded RTP audio into the same normalized event stream.
+
+            This is the ONLY audio source on ChatGPT-Live: the sideband
+            ``outputAudio`` notification the retired v1 protocol used is never
+            emitted (verified live — 956 RTP frames, zero sideband deltas).
+            """
+            endpoint = self._audio_endpoint
+            if endpoint is None:
+                return
+            try:
+                while True:
+                    pcm = await endpoint.next_output_pcm()
+                    if pcm is None:
+                        return
+                    await queue.put(("media_audio", pcm))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - normalized by consumer
+                await queue.put(("stream_error", exc))
+
         async def _emit_after_idle(generation: int) -> None:
             await asyncio.sleep(_OUTPUT_QUIESCENCE_S)
             await queue.put(("completion", generation))
@@ -362,9 +385,28 @@ class _CodexSubscriptionRealtimeSession:
             _pump_notifications(),
             name=f"codex-realtime-notifications-{self._thread_id}",
         )
+        media_task = asyncio.create_task(
+            _pump_media_audio(),
+            name=f"codex-realtime-media-{self._thread_id}",
+        )
         try:
             while True:
                 queue_kind, payload = await queue.get()
+                if queue_kind == "media_audio":
+                    # Real provider audio keeps the turn alive exactly like the
+                    # old sideband deltas did (quiescence timer, Orb state,
+                    # transcript-gated playback).
+                    if completion_task is not None:
+                        _arm_completion()
+                    yield _ProviderEvent(
+                        type="audio_delta",
+                        audio=_PcmChunk(
+                            pcm=payload,
+                            sample_rate=_OUTPUT_RATE,
+                            channels=1,
+                        ),
+                    )
+                    continue
                 if queue_kind == "completion":
                     if payload != completion_generation:
                         continue
@@ -508,10 +550,12 @@ class _CodexSubscriptionRealtimeSession:
                     continue
 
                 if method == "thread/realtime/outputAudio/delta":
-                    # The sideband PCM is authoritative for Jarvis playback:
-                    # it passes through the existing scrub, barge-in, and
-                    # persistence gates. The browser peer intentionally does
-                    # not play the duplicate RTP track.
+                    if self._audio_endpoint is not None:
+                        # ChatGPT-Live never emits this; if a future protocol
+                        # revision mirrors audio again, playing BOTH sources
+                        # would double every word. The media track wins.
+                        continue
+                    # Legacy sideband path (retired v1 protocol).
                     audio = params.get("audio")
                     if not isinstance(audio, dict):
                         _cancel_completion()
@@ -642,13 +686,15 @@ class _CodexSubscriptionRealtimeSession:
             )
         finally:
             _cancel_completion()
-            if not pump_task.done():
-                pump_task.cancel()
+            for pump in (pump_task, media_task):
+                if not pump.done():
+                    pump.cancel()
             for task in tuple(timer_tasks):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(
                 pump_task,
+                media_task,
                 *tuple(timer_tasks),
                 return_exceptions=True,
             )
@@ -710,8 +756,8 @@ class _CodexSubscriptionRealtimeSession:
             try:
                 await _close_subscription(self._subscription)
             finally:
-                if self._offer_lease is not None:
-                    await self._offer_lease.release()
+                if self._audio_endpoint is not None:
+                    await self._audio_endpoint.close()
 
 
 class CodexSubscriptionRealtimeProvider:
@@ -721,7 +767,9 @@ class CodexSubscriptionRealtimeProvider:
     credential_family = "openai-chatgpt-subscription"
     supports_realtime = True
     implicit_usage_fallback_allowed = False
-    requires_webrtc_offer = True
+    # Jarvis owns the WebRTC peer in-process now, so the UI no longer has to
+    # broker a signalling offer (and a headless host needs no browser at all).
+    requires_webrtc_offer = False
     # Declared handshake need (capability, AP-21): a COLD start spawns
     # app-server, verifies the live account, re-audits config, and negotiates
     # WebRTC — measured 15-25s on a mid-range desktop. The shared 12s ceiling
@@ -760,11 +808,12 @@ class CodexSubscriptionRealtimeProvider:
         self,
         *,
         client: Any = None,
-        offer_broker: Any = None,
+        audio_endpoint_factory: Any = None,
         binary_path: str | None = None,
     ) -> None:
         self._client = client
-        self._offer_broker = offer_broker
+        # Injected in tests; production builds the in-process WebRTC endpoint.
+        self._audio_endpoint_factory = audio_endpoint_factory
         self._binary_path = str(binary_path or "").strip() or None
 
     @classmethod
@@ -815,25 +864,18 @@ class CodexSubscriptionRealtimeProvider:
         return True
 
     async def open_session(self, cfg: Any) -> _CodexSubscriptionRealtimeSession:
-        offer_sdp = str(getattr(cfg, "transport_offer_sdp", "") or "").strip()
-        offer_lease: Any = None
-        if not offer_sdp:
-            broker = self._offer_broker
-            if broker is None:
-                broker_module = importlib.import_module(
-                    "jarvis.realtime.offer_broker"
-                )
-                broker = broker_module.get_realtime_transport_offer_broker()
-            offer_lease = await broker.acquire(timeout_s=_BROKER_OFFER_WAIT_S)
-            if offer_lease is None:
-                raise RuntimeError(
-                    "Codex subscription realtime needs a connected UI WebRTC "
-                    "offer, so this session cannot start"
-                )
-            offer_sdp = offer_lease.offer_sdp
-
-        broker_module = importlib.import_module("jarvis.realtime.offer_broker")
-        offer_sdp = broker_module.validate_webrtc_offer_sdp(offer_sdp)
+        # Jarvis owns the media path in-process. The UI could only ever broker
+        # a signalling-shaped offer (no microphone), which ChatGPT-Live cannot
+        # use: on v3 the audio IS the WebRTC track.
+        audio_endpoint: Any = None
+        if self._audio_endpoint_factory is not None:
+            audio_endpoint = self._audio_endpoint_factory()
+        else:
+            transport_module = importlib.import_module(
+                "jarvis.realtime.webrtc_transport"
+            )
+            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint()
+        offer_sdp = await audio_endpoint.create_offer()
 
         client = self._client
         if client is None:
@@ -894,14 +936,16 @@ class CodexSubscriptionRealtimeProvider:
             answer_sdp = str(getattr(start, "answer_sdp", "") or "").strip()
             if not answer_sdp:
                 raise RuntimeError("Codex app-server did not return a WebRTC answer SDP")
-            if offer_lease is not None and not await offer_lease.answer(answer_sdp):
-                raise RuntimeError("The UI WebRTC offer disconnected before Codex answered")
+            await audio_endpoint.apply_answer(answer_sdp)
+            # Fail here rather than mid-call: without a live media path the
+            # session would look connected and stay mute in both directions.
+            await audio_endpoint.wait_connected()
             return _CodexSubscriptionRealtimeSession(
                 client=client,
                 subscription=subscription,
                 thread_id=thread_id,
                 answer_sdp=answer_sdp,
-                offer_lease=offer_lease,
+                audio_endpoint=audio_endpoint,
                 language=str(getattr(cfg, "language", "en") or "en"),
             )
         except BaseException:
@@ -912,8 +956,7 @@ class CodexSubscriptionRealtimeProvider:
                     if subscription is not None:
                         await _close_subscription(subscription)
                 finally:
-                    if offer_lease is not None:
-                        await offer_lease.release()
+                    await audio_endpoint.close()
             raise
 
 

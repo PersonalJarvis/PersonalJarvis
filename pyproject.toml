@@ -72,6 +72,12 @@ dependencies = [
     "loguru>=0.7",
     "keyring>=25.5",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
+    # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
+    # media track — its protocol has no audio event at all. Jarvis owns that
+    # peer in-process so the existing pipeline (wake word, echo guard,
+    # barge-in, Orb) keeps working; without aiortc that ONE provider degrades
+    # with an honest message while every other voice path is unaffected.
+    "aiortc>=1.13",
     # NumPy 2.1 is the conservative runtime branch everywhere it ships. Its
     # Windows ARM64 wheel gap is permanent, though, so that architecture uses
     # the first compatible branch with official CPython 3.11+ ARM64 wheels.

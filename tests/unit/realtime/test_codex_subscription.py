@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from types import SimpleNamespace
 
 import pytest
@@ -73,6 +72,69 @@ class _CountingSubscription(_Subscription):
                 "delta": str(self.yielded),
             },
         )
+
+
+class _FakeAudioEndpoint:
+    """Stands in for the in-process WebRTC peer.
+
+    ChatGPT-Live carries audio on the media track, so the adapter owns a real
+    peer in production. Tests inject this to keep the suite off the network
+    while still pinning that microphone PCM reaches the media path and that
+    remote audio re-enters the normalized event stream.
+    """
+
+    def __init__(
+        self,
+        *,
+        output_chunks: tuple[bytes, ...] = (),
+        output_schedule: tuple[tuple[float, bytes], ...] = (),
+    ) -> None:
+        self.sent: list[tuple[bytes, int]] = []
+        self.answers: list[str] = []
+        self.closed = False
+        self.connected = False
+        # ``output_schedule`` paces chunks like real RTP arrival, which is what
+        # the quiescence timer reacts to.
+        self._schedule = list(output_schedule)
+        self._outputs = asyncio.Queue()
+        for chunk in output_chunks:
+            self._outputs.put_nowait(chunk)
+        if not output_schedule:
+            self._outputs.put_nowait(None)
+
+    async def create_offer(self) -> str:
+        return "v=0\r\no=python-peer\r\n"
+
+    async def apply_answer(self, answer_sdp: str) -> None:
+        self.answers.append(answer_sdp)
+
+    async def wait_connected(self, timeout_s: float = 15.0) -> None:
+        del timeout_s
+        self.connected = True
+
+    def send_pcm(self, pcm: bytes, sample_rate: int) -> None:
+        self.sent.append((pcm, sample_rate))
+
+    async def next_output_pcm(self):
+        if self._schedule:
+            delay, chunk = self._schedule.pop(0)
+            if delay:
+                await asyncio.sleep(delay)
+            return chunk
+        return await self._outputs.get()
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _provider(client, **kwargs):
+    """Build the provider with an injected fake media endpoint."""
+    endpoint = kwargs.pop("endpoint", None) or _FakeAudioEndpoint()
+    provider = CodexSubscriptionRealtimeProvider(
+        client=client, audio_endpoint_factory=lambda: endpoint, **kwargs
+    )
+    provider.test_endpoint = endpoint
+    return provider
 
 
 class _Client:
@@ -178,7 +240,7 @@ class _TimedOutCleanupClient(_Client):
 @pytest.mark.asyncio
 async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> None:
     client = _Client()
-    provider = CodexSubscriptionRealtimeProvider(client=client)
+    provider = _provider(client)
 
     session = await provider.open_session(
         RealtimeSessionConfig(
@@ -198,7 +260,9 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
     _thread_id, start = client.realtime_starts[0]
     assert start == {
         "output_modality": "audio",
-        "offer_sdp": "v=0\r\no=browser-offer",
+        # Jarvis's own peer produced this offer: ChatGPT-Live carries the
+        # audio itself, which a signalling-only UI offer cannot do.
+        "offer_sdp": "v=0\r\no=python-peer\r\n",
         "prompt": "",
         # v3 (ChatGPT-Live): the server chooses the model — the client must
         # not send one (rejected with "Field `session.model` is not allowed",
@@ -216,7 +280,7 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
 @pytest.mark.asyncio
 async def test_failed_remote_cleanup_poisons_the_entire_app_server_client() -> None:
     client = _FailedCleanupClient()
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -233,7 +297,7 @@ async def test_timed_out_remote_cleanup_poisons_the_entire_client(
 ) -> None:
     monkeypatch.setattr(codex_subscription_mod, "_REMOTE_CLEANUP_TIMEOUT_S", 0.01)
     client = _TimedOutCleanupClient()
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -247,7 +311,7 @@ async def test_timed_out_remote_cleanup_poisons_the_entire_client(
 async def test_stale_api_voice_selection_fails_before_subscription_realtime_start() -> None:
     """A voice outside the server-confirmed v3 roster fails before start."""
     client = _Client()
-    provider = CodexSubscriptionRealtimeProvider(client=client)
+    provider = _provider(client)
     config = RealtimeSessionConfig(
         transport_offer_sdp="v=0\r\no=browser-offer",
         voice="marin",
@@ -267,7 +331,7 @@ async def test_stale_model_pin_is_ignored_not_fatal() -> None:
     (or the dead v1 era) must not brick the call — it is dropped, and no
     model field reaches the server."""
     client = _Client()
-    provider = CodexSubscriptionRealtimeProvider(client=client)
+    provider = _provider(client)
     config = RealtimeSessionConfig(
         transport_offer_sdp="v=0\r\no=browser-offer",
         model="gpt-4o-realtime-preview",
@@ -285,7 +349,7 @@ async def test_stale_model_pin_is_ignored_not_fatal() -> None:
 @pytest.mark.asyncio
 async def test_language_update_is_developer_context_and_speech_is_authoritative() -> None:
     client = _Client()
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -306,7 +370,7 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
 @pytest.mark.asyncio
 async def test_open_relies_on_authoritative_app_server_auth_without_pre_probe() -> None:
     client = _UnauthenticatedClient()
-    provider = CodexSubscriptionRealtimeProvider(client=client)
+    provider = _provider(client)
 
     with pytest.raises(RuntimeError, match="unauthenticated account"):
         await provider.open_session(
@@ -322,7 +386,7 @@ async def test_open_relies_on_authoritative_app_server_auth_without_pre_probe() 
 async def test_orchestrator_capability_check_does_not_repeat_cli_auth_probe(
     monkeypatch,
 ) -> None:
-    provider = CodexSubscriptionRealtimeProvider(client=_Client())
+    provider = _provider(_Client())
 
     def _unexpected_probe(_cls):
         raise AssertionError("factory login probe must not repeat during handshake")
@@ -451,33 +515,26 @@ def test_external_login_ready_fails_open_on_transient_busy(
 
 
 @pytest.mark.asyncio
-async def test_send_audio_uses_sideband_pcm_without_api_usage_accounting() -> None:
+async def test_send_audio_rides_the_media_track_not_a_sideband_append() -> None:
+    """ChatGPT-Live has NO audio client event: the sideband append the retired
+    v1 protocol used is rejected outright, so microphone PCM must reach the
+    WebRTC media path instead."""
     client = _Client()
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
-        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
-    )
+    provider = _provider(client)
+    session = await provider.open_session(RealtimeSessionConfig())
 
     await session.send_audio(
         SimpleNamespace(pcm=b"\x01\x00\x02\x00", sample_rate=24_000, channels=1)
     )
 
-    assert client.audio_appends == [
-        (
-            "thread-1",
-            {
-                "data": base64.b64encode(b"\x01\x00\x02\x00").decode("ascii"),
-                "sample_rate": 24_000,
-                "num_channels": 1,
-                "samples_per_channel": 2,
-            },
-        )
-    ]
+    assert provider.test_endpoint.sent == [(b"\x01\x00\x02\x00", 24_000)]
+    assert client.audio_appends == []
     await session.close()
+    assert provider.test_endpoint.closed is True
 
 
 @pytest.mark.asyncio
 async def test_notifications_normalize_audio_transcripts_and_boundaries() -> None:
-    encoded = base64.b64encode(b"\x01\x00\x02\x00").decode("ascii")
     client = _Client(
         [
             _Notification(
@@ -499,18 +556,6 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
                 {"threadId": "thread-1", "role": "user", "text": "hello"},
             ),
             _Notification(
-                "thread/realtime/outputAudio/delta",
-                {
-                    "threadId": "thread-1",
-                    "audio": {
-                        "data": encoded,
-                        "sampleRate": 24_000,
-                        "numChannels": 1,
-                        "samplesPerChannel": 2,
-                    },
-                },
-            ),
-            _Notification(
                 "thread/realtime/transcript/delta",
                 {"threadId": "thread-1", "role": "assistant", "delta": "hi"},
             ),
@@ -520,27 +565,62 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
             ),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
     events = [event async for event in session.receive()]
 
+    # No audio_delta here on purpose: ChatGPT-Live carries assistant audio on
+    # the WebRTC media track, never as a sideband notification.
     assert [event.type for event in events] == [
         "speech_started",
         "input_transcript",
         "input_transcript",
-        "audio_delta",
         "output_transcript_delta",
         "turn_complete",
         "error",
     ]
     assert events[2].is_final is True
     assert events[2].item_id == "input-1"
-    assert events[3].audio is not None
-    assert events[3].audio.pcm == b"\x01\x00\x02\x00"
+    assert events[3].text == "hi"
     # A cleanly exhausted fake stream is still an unexpected transport death.
     assert "ended unexpectedly" in str(events[-1].error)
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_media_track_audio_becomes_normalized_audio_deltas() -> None:
+    """Assistant audio arrives as RTP on ChatGPT-Live; it must reach the
+    pipeline as ordinary audio_delta events so playback, the Orb, and the
+    transcript-gated release keep working exactly as before."""
+    client = _Client()
+    # The notification stream stays open past the audio, exactly as it does
+    # during a live call — otherwise the fake transport death would race the
+    # media pump.
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.05,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "hi"},
+                ),
+            )
+        ]
+    )
+    endpoint = _FakeAudioEndpoint(output_chunks=(b"\x01\x00\x02\x00", b"\x03\x00"))
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    audio = [
+        event async for event in session.receive() if event.type == "audio_delta"
+    ]
+
+    assert [event.audio.pcm for event in audio] == [b"\x01\x00\x02\x00", b"\x03\x00"]
+    assert {event.audio.sample_rate for event in audio} == {24_000}
+    assert {event.audio.channels for event in audio} == {1}
     await session.close()
 
 
@@ -549,18 +629,6 @@ async def test_default_done_waits_for_all_late_audio_before_one_completion(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.03)
-    encoded = base64.b64encode(b"\x01\x00").decode("ascii")
-    audio = _Notification(
-        "thread/realtime/outputAudio/delta",
-        {
-            "threadId": "thread-1",
-            "audio": {
-                "data": encoded,
-                "sampleRate": 24_000,
-                "numChannels": 1,
-            },
-        },
-    )
     client = _Client()
     client.subscription = _ScheduledSubscription(
         [
@@ -571,12 +639,18 @@ async def test_default_done_waits_for_all_late_audio_before_one_completion(
                     {"threadId": "thread-1", "role": "assistant", "text": "hi"},
                 ),
             ),
-            (0.015, audio),
-            (0.015, audio),
+            # Keeps the notification stream open while the late media audio
+            # arrives, as a live transport does.
+            (0.2, _Notification("thread/realtime/keepalive", {"threadId": "thread-1"})),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
-        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    # Late RTP audio must keep re-arming the quiescence timer so one turn ends
+    # exactly once, after the last audible chunk.
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00"), (0.0, None))
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
     )
 
     events = [event async for event in session.receive()]
@@ -614,7 +688,7 @@ async def test_later_assistant_delta_cancels_pending_completion_until_next_done(
             ),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -652,7 +726,7 @@ async def test_terminal_or_interruption_event_cancels_pending_completion(
     )
     cancelling = _Notification(method, {"threadId": "thread-1", **params})
     client = _Client([done, cancelling])
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -670,7 +744,7 @@ async def test_duplicate_transcript_done_emits_one_completion(monkeypatch) -> No
         {"threadId": "thread-1", "role": "assistant", "text": "done"},
     )
     client = _Client([done, done])
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -693,7 +767,7 @@ async def test_handoff_without_transcript_preserves_neutral_boundary() -> None:
             )
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -733,7 +807,7 @@ async def test_handoff_preserves_item_transcript_and_interrupts_late_codex_turn(
             ),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -764,7 +838,7 @@ async def test_done_then_handoff_cancels_synthetic_completion(monkeypatch) -> No
             ),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -790,7 +864,7 @@ async def test_v3_authoritative_done_completes_without_idle_debounce(monkeypatch
             )
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -807,7 +881,7 @@ async def test_normalization_queue_backpressures_and_pump_cleans_up() -> None:
     client = _Client()
     subscription = _CountingSubscription()
     client.subscription = subscription
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
     stream = session.receive()
@@ -844,7 +918,7 @@ async def test_handoff_request_never_becomes_a_direct_tool_call() -> None:
             ),
         ]
     )
-    session = await CodexSubscriptionRealtimeProvider(client=client).open_session(
+    session = await _provider(client).open_session(
         RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
     )
 
@@ -864,16 +938,16 @@ async def test_provider_error_and_app_server_death_are_normalized() -> None:
             )
         ]
     )
-    provider_session = await CodexSubscriptionRealtimeProvider(
-        client=provider_error_client
-    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
+    provider_session = await _provider(provider_error_client).open_session(
+        RealtimeSessionConfig()
+    )
     provider_events = [event async for event in provider_session.receive()]
     assert provider_events[0].type == "error"
     assert provider_events[0].recoverable is False
 
     dead_client = _Client(failure=RuntimeError("process exited"))
-    dead_session = await CodexSubscriptionRealtimeProvider(client=dead_client).open_session(
-        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    dead_session = await _provider(dead_client).open_session(
+        RealtimeSessionConfig()
     )
     dead_events = [event async for event in dead_session.receive()]
     assert dead_events[0].type == "error"
@@ -883,14 +957,22 @@ async def test_provider_error_and_app_server_death_are_normalized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_browser_offer_fails_before_app_server_launch() -> None:
+async def test_media_endpoint_failure_fails_before_app_server_launch() -> None:
+    """No media path means no call: ChatGPT-Live audio IS the WebRTC track, so
+    failing early beats a session that looks connected and stays mute."""
     client = _Client()
-    provider = CodexSubscriptionRealtimeProvider(client=client, offer_broker=_NoOfferBroker())
 
-    with pytest.raises(RuntimeError, match="connected UI WebRTC offer"):
+    class _BrokenEndpoint(_FakeAudioEndpoint):
+        async def create_offer(self) -> str:
+            raise RuntimeError("no local WebRTC endpoint")
+
+    provider = _provider(client, endpoint=_BrokenEndpoint())
+
+    with pytest.raises(RuntimeError, match="no local WebRTC endpoint"):
         await provider.open_session(RealtimeSessionConfig())
 
     assert client.capability_calls == 0
+    assert client.thread_starts == []
 
 
 @pytest.mark.asyncio
@@ -912,24 +994,33 @@ async def test_broker_keeps_answered_lease_until_provider_release() -> None:
 
 
 @pytest.mark.asyncio
-async def test_two_consecutive_native_sessions_each_consume_a_fresh_offer() -> None:
-    broker = RealtimeTransportOfferBroker()
+async def test_each_session_negotiates_its_own_media_endpoint() -> None:
+    """Every call owns a fresh peer: the answer is applied to it and the media
+    path is proven live before the session is handed to the pipeline."""
     client = _Client()
-    provider = CodexSubscriptionRealtimeProvider(client=client, offer_broker=broker)
+    endpoints: list[_FakeAudioEndpoint] = []
 
-    for number in (1, 2):
-        offer_id = f"offer-{number}"
-        registration = await broker.register(offer_id, f"v=0\r\no=native-{number}")
+    def factory() -> _FakeAudioEndpoint:
+        endpoint = _FakeAudioEndpoint()
+        endpoints.append(endpoint)
+        return endpoint
+
+    provider = CodexSubscriptionRealtimeProvider(
+        client=client, audio_endpoint_factory=factory
+    )
+
+    for _ in (1, 2):
         session = await provider.open_session(RealtimeSessionConfig())
-        answer = await registration.wait()
-        assert answer.type == "answer"
         await session.close()
-        released = await registration.wait()
-        assert released.type == "release"
 
+    assert len(endpoints) == 2
+    assert all(endpoint.answers == ["v=0\r\nanswer"] for endpoint in endpoints)
+    assert all(endpoint.connected for endpoint in endpoints)
+    assert all(endpoint.closed for endpoint in endpoints)
+    # The offer the provider sent is the one its OWN peer produced.
     assert [kwargs["offer_sdp"] for _thread, kwargs in client.realtime_starts] == [
-        "v=0\r\no=native-1",
-        "v=0\r\no=native-2",
+        "v=0\r\no=python-peer\r\n",
+        "v=0\r\no=python-peer\r\n",
     ]
 
 
