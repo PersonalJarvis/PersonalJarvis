@@ -864,17 +864,53 @@ class CodexSubscriptionRealtimeProvider:
         return True
 
     async def open_session(self, cfg: Any) -> _CodexSubscriptionRealtimeSession:
+        """Open a session, preferring the fast host-only media path.
+
+        Host candidates alone connect on an ordinary network and cost no
+        gathering time; STUN costs a fixed ~5 s wait that used to sit in front
+        of every call and swallow the user's first sentence. A network that
+        genuinely needs a reflexive candidate gets one on the retry.
+        """
+        transport_module = importlib.import_module(
+            "jarvis.realtime.webrtc_transport"
+        )
+        attempts: tuple[Any, ...] = (None, transport_module.stun_ice_servers)
+        last_error: BaseException | None = None
+        for index, ice_factory in enumerate(attempts):
+            try:
+                return await self._open_session_once(
+                    cfg, None if ice_factory is None else ice_factory()
+                )
+            except transport_module.WebRtcMediaPathUnavailable as exc:
+                last_error = exc
+                if index + 1 < len(attempts):
+                    log.warning(
+                        "Realtime media path did not connect on host candidates "
+                        "(%s); retrying with a STUN server",
+                        exc,
+                    )
+                    continue
+                raise
+        raise RuntimeError(  # pragma: no cover - the loop always returns or raises
+            "Codex subscription realtime could not open a media path"
+        ) from last_error
+
+    async def _open_session_once(
+        self, cfg: Any, ice_servers: Any
+    ) -> _CodexSubscriptionRealtimeSession:
         # Jarvis owns the media path in-process. The UI could only ever broker
         # a signalling-shaped offer (no microphone), which ChatGPT-Live cannot
         # use: on v3 the audio IS the WebRTC track.
         audio_endpoint: Any = None
         if self._audio_endpoint_factory is not None:
-            audio_endpoint = self._audio_endpoint_factory()
+            audio_endpoint = self._audio_endpoint_factory(ice_servers)
         else:
             transport_module = importlib.import_module(
                 "jarvis.realtime.webrtc_transport"
             )
-            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint()
+            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(
+                ice_servers
+            )
         offer_sdp = await audio_endpoint.create_offer()
 
         client = self._client

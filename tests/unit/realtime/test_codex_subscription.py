@@ -131,7 +131,10 @@ def _provider(client, **kwargs):
     """Build the provider with an injected fake media endpoint."""
     endpoint = kwargs.pop("endpoint", None) or _FakeAudioEndpoint()
     provider = CodexSubscriptionRealtimeProvider(
-        client=client, audio_endpoint_factory=lambda: endpoint, **kwargs
+        client=client,
+        # The factory receives the ICE configuration for this attempt.
+        audio_endpoint_factory=lambda _ice=None: endpoint,
+        **kwargs,
     )
     provider.test_endpoint = endpoint
     return provider
@@ -994,13 +997,51 @@ async def test_broker_keeps_answered_lease_until_provider_release() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unconnectable_host_path_retries_with_stun() -> None:
+    """Host candidates cost no gathering time and connect on an ordinary
+    network; a network that needs a reflexive candidate must still work, so a
+    dead media path is retried once WITH a STUN server."""
+    from jarvis.realtime.webrtc_transport import WebRtcMediaPathUnavailable
+
+    client = _Client()
+    ice_configs: list[object] = []
+
+    class _HostOnlyFails(_FakeAudioEndpoint):
+        def __init__(self, ice_servers) -> None:
+            super().__init__()
+            self.ice_servers = ice_servers
+
+        async def wait_connected(self, timeout_s: float = 15.0) -> None:
+            del timeout_s
+            if not self.ice_servers:
+                raise WebRtcMediaPathUnavailable("media path failed")
+            self.connected = True
+
+    def factory(ice_servers=None) -> _HostOnlyFails:
+        ice_configs.append(ice_servers)
+        return _HostOnlyFails(ice_servers)
+
+    provider = CodexSubscriptionRealtimeProvider(
+        client=client, audio_endpoint_factory=factory
+    )
+
+    session = await provider.open_session(RealtimeSessionConfig())
+
+    # First attempt host-only (no servers), second with STUN.
+    assert ice_configs[0] is None
+    assert ice_configs[1]
+    assert len(ice_configs) == 2
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_each_session_negotiates_its_own_media_endpoint() -> None:
     """Every call owns a fresh peer: the answer is applied to it and the media
     path is proven live before the session is handed to the pipeline."""
     client = _Client()
     endpoints: list[_FakeAudioEndpoint] = []
 
-    def factory() -> _FakeAudioEndpoint:
+    def factory(_ice_servers=None) -> _FakeAudioEndpoint:
         endpoint = _FakeAudioEndpoint()
         endpoints.append(endpoint)
         return endpoint

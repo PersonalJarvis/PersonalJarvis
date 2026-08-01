@@ -42,6 +42,21 @@ class WebRtcTransportUnavailable(RuntimeError):
     """The host cannot provide an in-process WebRTC audio endpoint."""
 
 
+class WebRtcMediaPathUnavailable(WebRtcTransportUnavailable):
+    """The negotiated media path never became usable.
+
+    Distinct from a missing stack so a caller can retry with a different ICE
+    configuration instead of giving up on the provider entirely.
+    """
+
+
+def stun_ice_servers() -> list[Any]:
+    """Public STUN fallback for networks where host candidates cannot connect."""
+    from aiortc import RTCIceServer  # noqa: PLC0415
+
+    return [RTCIceServer(urls="stun:stun.l.google.com:19302")]
+
+
 def webrtc_available() -> bool:
     """Whether an in-process WebRTC audio endpoint can be built here."""
     try:
@@ -141,15 +156,24 @@ def _upsample_to_wire(pcm: bytes, source_rate: int) -> bytes:
 class RealtimeWebRtcAudioEndpoint:
     """A Python-owned WebRTC peer that carries realtime audio both ways."""
 
-    def __init__(self) -> None:
+    def __init__(self, ice_servers: list[Any] | None = None) -> None:
         if not webrtc_available():
             raise WebRtcTransportUnavailable(
                 "In-process WebRTC audio needs the 'aiortc' package. Install "
                 "Jarvis's requirements to use ChatGPT subscription voice."
             )
-        from aiortc import RTCPeerConnection  # noqa: PLC0415
+        from aiortc import RTCConfiguration, RTCPeerConnection  # noqa: PLC0415
 
-        self._pc = RTCPeerConnection()
+        # Host candidates only by DEFAULT. We are the offerer and the provider's
+        # media server is publicly reachable, so our outgoing checks establish
+        # the path without a reflexive candidate — measured live: gathering
+        # 0.00 s vs 5.01 s with STUN, identical media either way. Those five
+        # seconds sat in front of every call, swallowing the user's first
+        # sentence. ``stun_ice_servers()`` is the retry for networks that
+        # genuinely need it.
+        self._pc = RTCPeerConnection(
+            configuration=RTCConfiguration(iceServers=list(ice_servers or []))
+        )
         self._sender = _PcmSenderTrack()
         self._pc.addTrack(self._sender.track)
         self._recv_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
@@ -235,11 +259,11 @@ class RealtimeWebRtcAudioEndpoint:
             if state == "connected":
                 return
             if state in {"failed", "closed"}:
-                raise WebRtcTransportUnavailable(
+                raise WebRtcMediaPathUnavailable(
                     f"The realtime WebRTC media path {state}."
                 )
             if asyncio.get_running_loop().time() >= deadline:
-                raise WebRtcTransportUnavailable(
+                raise WebRtcMediaPathUnavailable(
                     "The realtime WebRTC media path did not connect in time."
                 )
             await asyncio.sleep(0.05)
@@ -288,6 +312,8 @@ def with_suppress_get(queue: asyncio.Queue[Any]) -> None:
 
 __all__ = [
     "RealtimeWebRtcAudioEndpoint",
+    "WebRtcMediaPathUnavailable",
     "WebRtcTransportUnavailable",
+    "stun_ice_servers",
     "webrtc_available",
 ]
