@@ -1,6 +1,6 @@
 """Deterministic proof that the clarify-question timer no longer barges in on a
 user who resumed speaking — replays the exact live incident (2026-06-17 14:47,
-session f6403ec0) WITHOUT a microphone, so the intermittent "interrupted me
+session <SESSION_ID>) WITHOUT a microphone, so the intermittent "interrupted me
 mid-sentence" bug can be verified every run instead of by luck.
 
 Live sequence being reproduced (from data/jarvis_desktop.log):

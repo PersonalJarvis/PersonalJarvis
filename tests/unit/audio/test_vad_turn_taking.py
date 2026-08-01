@@ -808,7 +808,7 @@ async def test_live_widened_window_defers_endpoint_mid_stream() -> None:
 # Autonomous long-utterance patience (2026-06-18): the VAD must arm the wider
 # silence window by itself once enough ACTIVE speech has accumulated — without
 # relying on the STT probe surfacing a qualifying partial. This fixes session
-# 71f2d2de where a 2976 ms silence ended the turn because the 3000 ms patience
+# <SESSION_ID> where a 2976 ms silence ended the turn because the 3000 ms patience
 # was never armed (the probe never surfaced a partial); had it been armed, 2976
 # < 3000 and the whole sentence would have stayed one turn.
 # --------------------------------------------------------------------------- #
@@ -821,7 +821,7 @@ async def test_long_active_speech_arms_wider_silence_window_autonomously() -> No
     WITHOUT any STT-probe involvement, so a long dictation is not cut on a
     short thinking pause.
 
-    Scenario (session 71f2d2de analogue):
+    Scenario (session <SESSION_ID> analogue):
     - base silence_ms=320 (10 frames)
     - long_utterance_speech_ms=2000 (62 frames (2000 // 32)), long_utterance_silence_ms=3000
     - feed ~2.5 s of speech (79 frames, > 62) then 12 silent frames
@@ -846,7 +846,7 @@ async def test_long_active_speech_arms_wider_silence_window_autonomously() -> No
     assert utterances == [], (
         "12 silent frames ended the long-dictation turn even though the autonomous "
         "patience grant should have raised the window to 93 frames (3000 ms) — "
-        "session 71f2d2de recurrence: the STT probe never armed the window and the "
+        "session <SESSION_ID> recurrence: the STT probe never armed the window and the "
         "snappy base cut the sentence mid-word"
     )
 

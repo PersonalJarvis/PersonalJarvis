@@ -8,7 +8,7 @@ handled by ``persona_loader``), which defines *who the assistant is and what it 
 do*. Preferences refine behaviour; they never override safety rules, confirmation
 gates, or capabilities.
 
-The file is named after the assistant: assistant "Ruben" -> ``Ruben.md``. The name
+The file is named after the assistant: assistant "Alex" -> ``Alex.md``. The name
 is resolved through :func:`jarvis.brain.assistant_name.resolve_assistant_name`
 (the wake phrase with its prefix stripped, else the neutral ``Assistant`` fallback —
 there is no longer a separate ``[persona].name`` setting) and sanitised to a
@@ -90,7 +90,7 @@ def _safe_basename(name: str) -> str:
 
 
 def instructions_filename(config: Any) -> str:
-    """The display/on-disk filename for ``config``'s assistant, e.g. ``Ruben.md``."""
+    """The display/on-disk filename for ``config``'s assistant, e.g. ``Alex.md``."""
     return f"{_safe_basename(resolve_assistant_name(config))}.md"
 
 

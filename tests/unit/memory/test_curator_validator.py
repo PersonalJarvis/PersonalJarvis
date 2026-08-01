@@ -3,8 +3,8 @@
 Focus — the validator is the **last line of defense** against subject confusion:
 
 - Confidence thresholds: <0.5 → reject, 0.5-0.7 → review, >=0.7 → accept.
-- Casey scenario: `subject="user", field="name", value="Casey"` when
-  `people/casey.md` already exists → REJECT due to collision.
+- Synthetic Jordan scenario: `subject="user", field="name", value="Jordan"`
+  when `people/jordan.md` already exists → REJECT due to collision.
 - Pronoun false positives (`person:er`, `person:sie`) → REJECT.
 - Do-not-record keywords (politics, mental health, MBTI) → REJECT.
 - Overwrite protection: existing name + new name at conf<0.85 → REVIEW.
@@ -54,7 +54,7 @@ def _person_cand(
     value: Any = "Designerin",
     confidence: float = 0.9,
     operation: str = "set",
-    evidence: str = "User: 'meine Freundin ist Designerin'",
+    evidence: str = "User: 'meine Kollegin ist Designerin'",
     relationship: str = "colleague",
 ) -> Candidate:
     return Candidate(
@@ -114,31 +114,31 @@ class TestConfidenceThresholds:
 
 
 # ======================================================================
-# Casey-Szenario — die CRUCIAL-Regression
+# Synthetic person-name collision regression
 # ======================================================================
 
-class TestCaseyScenario:
-    """If `people/casey.md` exists, 'Casey' must NOT pass as user.name."""
+class TestJordanScenario:
+    """If `people/jordan.md` exists, 'Jordan' must NOT pass as user.name."""
 
-    def test_rejects_casey_as_user_name_when_casey_exists_as_person(
+    def test_rejects_jordan_as_user_name_when_jordan_exists_as_person(
         self, validator: Validator, person_store
     ) -> None:
-        # Setup: Casey liegt bereits als Person vor (z.B. frueher extrahiert)
-        person_store.get_or_create("Casey", relationship="colleague")
+        # Setup: the synthetic person already exists in the separate store.
+        person_store.get_or_create("Jordan", relationship="colleague")
 
-        # LLM slippt: behauptet Casey sei der User-Name
-        cand = _user_cand(field="name", value="Casey", confidence=0.9)
+        # Simulate an LLM assigning the other person's name to the user.
+        cand = _user_cand(field="name", value="Jordan", confidence=0.9)
         result = validator.validate([cand])
 
-        assert len(result.rejected) == 1, f"Casey must be rejected: {result}"
+        assert len(result.rejected) == 1, f"Jordan must be rejected: {result}"
         _, reason = result.rejected[0]
         assert "kollision" in reason.lower() or "name-koll" in reason.lower()
 
-    def test_alex_as_user_name_is_accepted_even_with_casey_person_present(
+    def test_user_name_is_accepted_even_with_jordan_person_present(
         self, validator: Validator, person_store
     ) -> None:
         """Counter-check: unrelated person names don't block the real user name."""
-        person_store.get_or_create("Casey", relationship="colleague")
+        person_store.get_or_create("Jordan", relationship="colleague")
 
         cand = _user_cand(field="name", value="Alex", confidence=0.95)
         result = validator.validate([cand])
@@ -313,12 +313,12 @@ class TestBatchValidation:
         self, validator: Validator, person_store
     ) -> None:
         """A mix of accept/review/reject lands in the right buckets."""
-        person_store.get_or_create("Casey", relationship="colleague")
+        person_store.get_or_create("Jordan", relationship="colleague")
 
         accepted_cand = _user_cand(
             cluster="communication", field="verbosity", value="tldr", confidence=0.9
         )
-        rejected_cand = _user_cand(field="name", value="Casey", confidence=0.9)
+        rejected_cand = _user_cand(field="name", value="Jordan", confidence=0.9)
         low_conf_cand = _user_cand(confidence=0.2)
 
         result = validator.validate([accepted_cand, rejected_cand, low_conf_cand])

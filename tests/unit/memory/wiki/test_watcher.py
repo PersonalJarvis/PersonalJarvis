@@ -172,15 +172,15 @@ async def test_create_md_file_emits_created_event(watcher_stack):
 async def test_modify_md_file_emits_modified_event(watcher_stack):
     """Re-writing an existing page produces one modified event."""
     _, bus, vault = watcher_stack
-    target = vault / "entities" / "morgan.md"
-    target.write_text("# Morgan\n", encoding="utf-8")
+    target = vault / "entities" / "sam.md"
+    target.write_text("# Sam\n", encoding="utf-8")
     # Drain the creation event.
     await _wait_quiescent(bus)
 
-    target.write_text("# Morgan\n\nUpdated.\n", encoding="utf-8")
+    target.write_text("# Sam\n\nUpdated.\n", encoding="utf-8")
     events = await _wait_quiescent(bus)
     assert len(events) == 1, f"expected one event, got {events!r}"
-    assert events[0].slug == "morgan"
+    assert events[0].slug == "sam"
     assert events[0].kind in ("modified", "created")
 
 

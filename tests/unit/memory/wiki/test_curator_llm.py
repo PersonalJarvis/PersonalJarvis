@@ -212,11 +212,11 @@ def _ok_response() -> str:
 
     return json.dumps([
         {
-            "target": "entities/alex-morgan.md",
+            "target": "entities/personal-jarvis-maintainer.md",
             "operation": "update",
             # i18n-allow: proper name with umlaut used as wiki-page fixture data
             "new_body": (
-                "---\ntype: entity\nslug: alex-morgan\n---\n\n"
+                "---\ntype: entity\nslug: personal-jarvis-maintainer\n---\n\n"
                 "# Alex L\u00fctke\n"
             ),
             "rename_from": None,
@@ -237,7 +237,7 @@ def test_parse_updates_happy_path() -> None:
     updates = _parse_updates(raw)
     assert len(updates) == 1
     assert isinstance(updates[0], PageUpdate)
-    assert updates[0].target_path == Path("entities/alex-morgan.md")
+    assert updates[0].target_path == Path("entities/personal-jarvis-maintainer.md")
     assert updates[0].operation == "update"
     assert "Alex" in updates[0].new_body
 
@@ -345,7 +345,7 @@ async def test_propose_updates_returns_parsed_updates(
         vault=FakeVault(),
     )
     assert len(updates) == 1
-    assert updates[0].target_path == Path("entities/alex-morgan.md")
+    assert updates[0].target_path == Path("entities/personal-jarvis-maintainer.md")
 
 
 @pytest.mark.asyncio
@@ -430,8 +430,8 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
 
     updates = await llm.propose_updates(
         (
-            "ich ziemlich genervt bin und dass ich in "  # i18n-allow: reported transcript fixture
-            "Example City wohne"  # i18n-allow: reported residence transcript fixture
+            "ich heute konzentriert bin und dass ich in "  # i18n-allow: reported transcript fixture
+            "Example City wohne"  # i18n-allow: synthetic residence fixture
         ),
         "tool:wiki-ingest",
         repo=FakeRepo(),

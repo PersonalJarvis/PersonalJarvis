@@ -34,13 +34,13 @@ describe("useAssistantNameSeed mount seed", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ name: "Ruben", resolved: "Ruben", default: "Assistant" }),
+        json: async () => ({ name: "Alex", resolved: "Alex", default: "Assistant" }),
       })) as unknown as typeof fetch,
     );
 
     render(<Harness />);
 
-    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Ruben"));
+    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Alex"));
     expect(fetch).toHaveBeenCalledWith(
       "/api/settings/assistant-name",
       expect.objectContaining({ signal: expect.anything() }),
@@ -48,7 +48,7 @@ describe("useAssistantNameSeed mount seed", () => {
   });
 
   it("refreshes on the jarvis:assistant-name-changed event", async () => {
-    let resolved = "Ruben";
+    let resolved = "Alex";
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -58,7 +58,7 @@ describe("useAssistantNameSeed mount seed", () => {
     );
 
     render(<Harness />);
-    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Ruben"));
+    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Alex"));
 
     resolved = "Athena";
     window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));

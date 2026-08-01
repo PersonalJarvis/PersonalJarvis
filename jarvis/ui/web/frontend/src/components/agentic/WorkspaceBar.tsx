@@ -359,10 +359,10 @@ export function WorkspaceBar({
           onAdd();
         }}
         className={cn(
-          "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+          "flex shrink-0 items-center gap-1.5 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
           addingNew
             ? "border-primary/50 bg-primary/10 text-primary"
-            : "border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
         )}
       >
         <Plus className="h-3.5 w-3.5" />

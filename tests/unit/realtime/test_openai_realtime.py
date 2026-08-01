@@ -1360,7 +1360,7 @@ async def test_second_stray_after_unheeded_rearm_rebuilds_the_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """BUG-064 recurrence #2 (grok-realtime 2026-07-16 10:23, session
-    204b108a): the first stray auto-response arrived 1.9 s after the turn's
+    <SESSION_ID>): the first stray auto-response arrived 1.9 s after the turn's
     transcript — inside the benign-race quiet window, so no transcript
     deadline was armed — and the deaf server then emitted nothing for 16 s,
     so the deadline path never got a second chance. A FURTHER unsolicited
@@ -1426,7 +1426,7 @@ async def test_accepted_response_without_done_stalls_and_rebuilds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51, session
-    1fd3fa38): the server never sent ``response.done`` for an accepted
+    <SESSION_ID>): the server never sent ``response.done`` for an accepted
     response whose output a local barge-in had dropped, so ``_response_idle``
     stayed clear forever — and every idle-gated defense (adoption, transcript
     deadline, transport rebuild) was disarmed at once while the session sat

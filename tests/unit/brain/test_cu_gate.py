@@ -1,6 +1,6 @@
 """Explicit-desktop gate for LLM-chosen computer_use calls (cu_gate.py).
 
-Live incident 2026-07-21 11:36 (voice session 06a65611): a pure knowledge
+Live incident 2026-07-21 11:36 (voice session <SESSION_ID>): a pure knowledge
 question about the Gulfstream G100's runway requirement was delegated to the
 router brain, which called computer_use — Safari opened on the user's screen
 and googled the answer. The gate pins that a question-shaped turn without any
@@ -53,7 +53,7 @@ def test_knowledge_question_blocks_computer_use(utterance: str) -> None:
 
 # ── tech proper names are not on-screen commands ──────────────────────────
 #
-# Live incident 2026-07-27 11:52 (voice session 57cc5f5f, flight recorder
+# Live incident 2026-07-27 11:52 (voice session <SESSION_ID>, flight recorder
 # ActionProposed dispatch_to_harness/screenshot): a model-comparison question
 # naming "Open AI Embedding 3 Large" matched the bare ``open\w*`` vehicle verb,
 # the gate allowed, and computer_use screenshotted the desktop and started

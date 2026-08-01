@@ -45,7 +45,7 @@ SYSTEM_PROMPT = (
     "'stop', 'exit', 'quit', 'shut down', 'that's all', 'thanks jarvis', "
     "'good night', 'ciao', 'auflegen', 'tschüss' — even if Whisper transcribes "  # i18n-allow: German hangup-trigger vocabulary the LLM must match against user speech
     "it strangely like 'offleging'), reply EXACTLY AND EXCLUSIVELY with the "
-    "string: \"Goodbye, Alex.\" (without quotes, exactly 14 characters). "
+    "string: \"Goodbye, Alex.\" (without quotes, exactly 15 characters). "
     "This is the hangup signal — the pipeline detects this response and ends "
     "the call. No additional words, no explanation, only 'Goodbye, Alex.'"
 )
@@ -53,7 +53,7 @@ SYSTEM_PROMPT = (
 
 # Magic hangup signal — matched exactly against brain response.
 # Audit F-AUDIT-1: old variant "Goodbye, Sir." (13 chars) was migrated on
-# 2026-04-29 to a personalized goodbye. The pipeline hangup matcher
+# 2026-04-29 to "Goodbye, Alex." (15 chars). The pipeline hangup matcher
 # (jarvis/speech/pipeline.py) accepts both forms via normalized-equals —
 # see hangup tests for backward compat.
 HANGUP_SIGNAL = "Goodbye, Alex."

@@ -181,7 +181,7 @@ def test_ensure_brain_step_never_duplicates_a_captured_brain_step():
 def test_environment_reads_the_recorded_setup_not_the_live_config():
     session = VoiceSessionRow(
         id="s1", started_ms=0, ended_ms=1000, hangup_reason="hotkey",
-        providers_used=["gemini-live"], language="de", wake_keyword="ruben",
+        providers_used=["gemini-live"], language="de", wake_keyword="alex",
         voice_mode="realtime",
     )
     turn = RunTurn(idx=0, trace_id="t1", provider="grok", model="grok-4.3", tier="realtime")
@@ -207,4 +207,4 @@ def test_wake_source_classification():
     assert analyzer.wake_source("hotkey") == "hotkey"
     assert analyzer.wake_source("telegram") == "channel:telegram"
     assert analyzer.wake_source("channel:discord") == "channel:discord"
-    assert analyzer.wake_source("ruben") == "voice"
+    assert analyzer.wake_source("alex") == "voice"

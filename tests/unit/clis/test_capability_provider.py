@@ -147,7 +147,7 @@ def test_keyword_map_drops_generic_german_news_nouns_for_messaging():
 
 
 def test_keyword_map_drops_self_referential_wake_word():
-    # Live bug 2026-06-18 (session b34a4bba): the jarvisctl CLI declares the
+    # Live bug 2026-06-18 (session <SESSION_ID>): the jarvisctl CLI declares the
     # object "jarvis" for the jarvis-control domain. Because "Jarvis" is the wake
     # word present in virtually EVERY transcript ("Hey Jarvis, …"), using it as a
     # forcing keyword made the evidence gate mandate cli_jarvisctl on every

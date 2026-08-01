@@ -128,21 +128,32 @@ def _str_param(description: str, *, enum: list[str] | None = None,
     return schema
 
 
-def _provider_switch_params(tier: str, *, brain_switchable_only: bool = False,
-                            ) -> dict[str, Any]:
+def _provider_switch_params(
+    tier: str,
+    *,
+    brain_switchable_only: bool = False,
+    allow_experimental_ack: bool = False,
+) -> dict[str, Any]:
     enum = _provider_ids(tier, brain_switchable_only=brain_switchable_only)
+    properties: dict[str, Any] = {
+        "provider": _str_param(
+            f"Target {tier} provider id.", enum=enum or None, min_length=1
+        ),
+        "persist": {
+            "type": "boolean",
+            "default": True,
+            "description": "Persist the choice to jarvis.toml (survives restart).",
+        },
+    }
+    if allow_experimental_ack:
+        properties["accept_experimental"] = {
+            "type": "boolean",
+            "default": False,
+            "description": "Explicitly acknowledge an experimental provider transport.",
+        }
     return {
         "type": "object",
-        "properties": {
-            "provider": _str_param(
-                f"Target {tier} provider id.", enum=enum or None, min_length=1
-            ),
-            "persist": {
-                "type": "boolean",
-                "default": True,
-                "description": "Persist the choice to jarvis.toml (survives restart).",
-            },
-        },
+        "properties": properties,
         "required": ["provider"],
     }
 
@@ -206,11 +217,15 @@ def _build_registry() -> tuple[AppCommand, ...]:
             title="Switch realtime voice provider",
             description=(
                 "Switch which realtime voice engine (speech-to-speech) is "
-                "active, e.g. openai-realtime or gemini-live."
+                "active, including subscription- and API-backed providers. "
+                "Experimental transports require explicit acknowledgement."
             ),
             method="POST",
             path="/api/realtime/switch",
-            params=_provider_switch_params("realtime"),
+            params=_provider_switch_params(
+                "realtime",
+                allow_experimental_ack=True,
+            ),
             ui_section="apikeys",
             voice_aliases={
                 "de": ("wechsle das realtime-modell zu gemini",),  # i18n-allow: input vocab

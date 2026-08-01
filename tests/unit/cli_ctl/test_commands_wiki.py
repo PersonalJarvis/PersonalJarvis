@@ -9,9 +9,9 @@ runner = CliRunner()
 
 
 def test_recall(capture_api):
-    runner.invoke(app, ["wiki", "recall", "example town"])
+    runner.invoke(app, ["wiki", "recall", "melbourne"])
     call = capture_api["calls"][-1]
-    assert call["path"] == "/api/wiki/search" and call["query"]["q"] == "example town"
+    assert call["path"] == "/api/wiki/search" and call["query"]["q"] == "melbourne"
 
 
 def test_page(capture_api):
@@ -35,7 +35,7 @@ def test_ingest_sends_guarded_write_request(capture_api):
         [
             "wiki",
             "ingest",
-            "The user will travel to Example City tomorrow.",
+            "The user will travel to San Francisco tomorrow.",
             "--source",
             "test:cli",
         ],
@@ -45,7 +45,7 @@ def test_ingest_sends_guarded_write_request(capture_api):
     assert call["method"] == "POST"
     assert call["path"] == "/api/wiki/ingest"
     assert call["body"] == {
-        "text": "The user will travel to Example City tomorrow.",
+        "text": "The user will travel to San Francisco tomorrow.",
         "source": "test:cli",
     }
 

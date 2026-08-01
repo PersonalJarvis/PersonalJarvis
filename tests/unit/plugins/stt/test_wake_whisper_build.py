@@ -63,20 +63,20 @@ def test_build_wake_whisper_custom_phrase_opt_in_gets_turbo_when_probe_verifies(
     # sticky probe caches latched a once-fast wake to base/cpu forever). The
     # turbo path itself must keep working for users who opt in.
     cfg = STTConfig(wake_high_accuracy=True)
-    p = build_wake_whisper(cfg, wake_phrase="Hey Ruben", cuda_available=True)
+    p = build_wake_whisper(cfg, wake_phrase="Hey Alex", cuda_available=True)
     assert p._model_name == "large-v3-turbo"
     assert p._device == "cuda"
-    assert p._initial_prompt == "Hey Ruben"  # bias KEPT — needed to hear the name
+    assert p._initial_prompt == "Hey Alex"  # bias KEPT — needed to hear the name
 
 
 def test_build_wake_whisper_default_stays_base_cpu_even_on_verified_cuda() -> None:
     # ADR-0024 guard: with the DEFAULT config (wake_high_accuracy=False) the
     # wake must stay on the reproducible base/cpu floor even when CUDA is
     # present AND the inference probe verifies — GPU wake is opt-in only.
-    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=True)
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
     assert p._model_name == "base"
     assert p._device == "cpu"
-    assert p._initial_prompt == "Hey Ruben"
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_custom_phrase_stays_base_cpu_when_probe_fails(
@@ -85,20 +85,20 @@ def test_build_wake_whisper_custom_phrase_stays_base_cpu_when_probe_fails(
     # An UNVERIFIED GPU (probe hang/failure — the AP-25 class) must keep the
     # validated base/cpu + phrase-bias config even though CUDA is present.
     monkeypatch.setattr(stt_pkg, "_wake_gpu_inference_verified", lambda: False)
-    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=True)
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
     assert p._model_name == "base"
     assert p._device == "cpu"
-    assert p._initial_prompt == "Hey Ruben"
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_high_accuracy_false_is_a_hard_opt_out() -> None:
     # wake_high_accuracy=False must force base/cpu even when the probe verifies
     # the GPU — the user's explicit kill switch always wins.
     cfg = STTConfig(wake_high_accuracy=False)
-    p = build_wake_whisper(cfg, wake_phrase="Hey Ruben", cuda_available=True)
+    p = build_wake_whisper(cfg, wake_phrase="Hey Alex", cuda_available=True)
     assert p._model_name == "base"
     assert p._device == "cpu"
-    assert p._initial_prompt == "Hey Ruben"
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_fast_first_never_runs_the_gpu_probe(
@@ -112,7 +112,7 @@ def test_build_wake_whisper_fast_first_never_runs_the_gpu_probe(
 
     monkeypatch.setattr(stt_pkg, "_wake_gpu_inference_verified", _boom)
     p = build_wake_whisper(
-        STTConfig(), wake_phrase="Hey Ruben", cuda_available=True, fast_first=True
+        STTConfig(), wake_phrase="Hey Alex", cuda_available=True, fast_first=True
     )
     assert p._model_name == "base"
     assert p._device == "cpu"
@@ -122,7 +122,7 @@ def test_build_wake_whisper_custom_phrase_fast_first_stays_base_for_quick_boot()
     # The boot path builds fast-first (base/cpu, ~3 s, no CUDA JIT) so the wake is
     # hear-ready immediately; the GPU turbo swaps in via the background hot-swap.
     p = build_wake_whisper(
-        STTConfig(), wake_phrase="Hey Ruben", cuda_available=True, fast_first=True
+        STTConfig(), wake_phrase="Hey Alex", cuda_available=True, fast_first=True
     )
     assert p._model_name == "base"
     assert p._device == "cpu"
@@ -142,10 +142,10 @@ def test_build_wake_whisper_default_phrase_gets_turbo_no_bias_on_cuda() -> None:
 def test_build_wake_whisper_cpu_keeps_bias() -> None:
     # The weak base/cpu model (no GPU / VPS) still NEEDS the bias to hear the
     # proper noun, so it is kept there.
-    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=False)
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=False)
     assert p._model_name == "base"
     assert p._device == "cpu"
-    assert p._initial_prompt == "Hey Ruben"
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_uses_greedy_beam_for_speed() -> None:
@@ -175,20 +175,20 @@ def test_build_wake_whisper_tolerates_missing_wake_fields() -> None:
 
 
 def test_build_wake_whisper_biases_prompt_with_custom_phrase() -> None:
-    # A custom wake word ("Hey Ruben") routes to the stt_match path, where the
+    # A custom wake word ("Hey Alex") routes to the stt_match path, where the
     # small base/cpu model otherwise mis-hears the proper noun. Empirical
     # 2026-06-23 on the user's real wake WAVs: WITHOUT the bias the live model
-    # heard "Hey Ruben" as "Space"/"Ego"/"Herum" -> 2-13% recall (effectively a
+    # heard "Hey Alex" as "Space"/"Ego"/"Herum" -> 2-13% recall (effectively a
     # dead wake word); WITH the spoken phrase as initial_prompt -> 83% recall.
-    # The earlier hallucination concern is held off by the strict ["hey","ruben"]
-    # matcher (a stray "Ruben" in speech is not an adjacent "hey ruben") plus the
+    # The earlier hallucination concern is held off by the strict ["hey","alex"]
+    # matcher (a stray "Alex" in speech is not an adjacent "hey alex") plus the
     # no_speech_prob/RMS gates: false-wake stayed ~0% on real speech. So the bias
     # is re-enabled on this path. It is scoped to the custom phrase only -- the
     # OWW/"Hey Jarvis" paths pass no phrase and stay unbiased (test below).
     p = build_wake_whisper(
-        STTConfig(), language="de", wake_phrase="Hey Ruben", cuda_available=False
+        STTConfig(), language="de", wake_phrase="Hey Alex", cuda_available=False
     )
-    assert p._initial_prompt == "Hey Ruben"
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_default_has_no_prompt_bias() -> None:

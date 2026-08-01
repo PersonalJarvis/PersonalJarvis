@@ -196,7 +196,7 @@ check in order, name the layer (runbook:
    **Jarvis-Agent**. No other internal names.
 2. **User-visible brand** (UI labels, TTS output, transcript labels, API
    strings the UI displays, tool-schema prose spoken by the router): derived
-   from the configured wake word — "Hey Ruben" → **"Ruben-Agent(s)"**, any
+   from the configured wake word — "Hey Alex" → **"Alex-Agent(s)"**, any
    wake word likewise, neutral fallback **"Assistant-Agent"**. NEVER hardcode
    a fixed name in a user-visible string. Plumbing: i18n token `{name}-Agent`;
    `agentBrand`/`useAgentBrand` (`src/lib/agentBrand.ts`);
@@ -358,7 +358,8 @@ module-level heavy import. New subsystems hook into `_heavy_backend_bg`, a
 deferred registry scan, or a post-ready task; heavy imports stay lazy; routes
 answer 503/None while warming. Enforced by the pre-push BOOT BUDGET gate
 (`scripts/ci/check_boot_budget.py`: window ≤ 8 s, voice-usable +
-app-interactive ≤ 20 s). Doctrine: `docs/diagnostics/BOOT-TTU-NOTES.md`.
+app-interactive ≤ 20 s). The executable contract is
+`scripts/ci/check_boot_budget.py`.
 
 ### AP-27 — Never gate a wake word on transcript CONTENT
 
@@ -396,8 +397,7 @@ backup in the maintainer's password manager; the repo holds ONLY public keys
 "encrypted at rest" scheme leaked its passphrase into 14 permanent public
 snapshots.) Rotation = new keypair → `gh secret set` → swap public keys +
 verifier blocks + fingerprints. Enforced by
-`scripts/ci/check_no_private_keys.py` (pre-commit + pre-push). Doctrine:
-`docs/supply-chain/wave2-key-ceremony.md`.
+`scripts/ci/check_no_private_keys.py` (pre-commit + pre-push).
 
 ---
 
@@ -455,9 +455,9 @@ Detail in [`docs/BUGS.md`](docs/BUGS.md):
   non-zero exit → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before
   larger decisions.
-- **Plan vs. code:** on conflict, the plan wins
-  (`~/.claude/plans/also-er-muss-auch-lexical-pond.md`); deviations get <!-- i18n-allow -->
-  documented back in the plan.
+- **Plan vs. code:** when the user supplies a task plan, it wins on conflict;
+  deviations are documented back in that plan without publishing private
+  filesystem locations or plan contents.
 
 ### Git workflow
 

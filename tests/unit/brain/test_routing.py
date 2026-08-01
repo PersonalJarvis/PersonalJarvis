@@ -1217,8 +1217,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 # Opinion / advice / recommendation / decision questions are CONVERSATION, not
 # work — they must be answered inline, NEVER force-spawned to a worker, even
 # when they contain an everyday word that collides with an action verb in the
-# universal catalogue. Live bug 2026-06-19 (voice session 11:53, Example-City
-# decision-routing turn): "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
+# universal catalogue. A conversational garden-planning question containing
+# "Frage" and "halt" exposed the false-positive path.
 # force-spawned a worker because has_action_intent matched the NOUN "Frage"
 # (-> verb "frag"/"frage") and the FILLER particle "halt" (-> verb "halt"), so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
@@ -1230,8 +1230,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
-        # the real bug utterance (abbreviated) — "Frage" + "möchte" + advice ask
-        "Hey du, ich hab ne Frage, ich möchte auswandern. Was würdest du mir empfehlen?",
+        # representative regression utterance — "Frage" + "möchte" + advice ask
+        "Hey du, ich hab ne Frage, ich möchte einen Garten planen. Was würdest du mir empfehlen?",
         # noun "Frage" collides with the action verb "frag"
         "Ich hab da mal eine Frage: was hältst du davon?",
         # filler particle "halt" collides with the action verb "halt"
@@ -1247,7 +1247,7 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
     """Opinion/advice questions are talk, not work — answered inline even when an
     everyday word ('Frage' -> 'frag', filler 'halt') collides with an action
-    verb (live bug 2026-06-19, decision-routing turn). Reproduces the real strict-mode
+    verb. Reproduces the strict-mode
     path with a seeded registry, where has_action_intent fires and
     _is_generic_subagent_work would otherwise force-spawn."""
     from jarvis.core.capabilities import get_registry
@@ -1277,12 +1277,12 @@ def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
         "Wie siehst du das?",
         "Was ist deine Meinung dazu?",
         # decision help (DE)
-        "Soll ich Projekt Atlas oder Projekt Orion priorisieren?",
+        "Soll ich den Garten im Süden oder Norden anlegen?",
         # conversational opener (DE)
         "Ich hab da mal eine Frage.",
         # advice / opinion (EN)
         "What would you recommend?",
-        "Should I prioritize Project Atlas or Project Orion?",
+        "Should I plant the garden on the north or south side?",
         "I have a question.",
         # advice / opinion (ES)
         "¿Qué me recomiendas?",
@@ -2123,7 +2123,7 @@ def test_whisper_fp_exact_only_seeds_still_filter_when_alone(
         "Musik leiser bitte",
         "Applaus für die Band einspielen",
         "Untertitel im VLC anzeigen lassen",
-        "Tschüss sagen zu Casey per Email",
+        "Tschüss sagen zu Laura per Email",
         "Thank you note in Word erstellen",
     ],
 )
@@ -2300,7 +2300,7 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
     sys.modules["jarvis.core.capabilities"] = mock_module
     try:
         manager, _executor = _manager_with_spawn()
-        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Morgan")
+        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Sam")
         assert result is not None, (
             "_check_unsupported_intent must return refusal for unregistered action"
         )
@@ -2483,7 +2483,7 @@ def test_external_integration_without_capability_stays_unsupported() -> None:
     try:
         manager = _strict_manager_with_mock_registry()
         for utterance in (
-            "schick eine Email an Morgan",
+            "schick eine Email an Sam",
             "trag einen Termin in meinen Kalender ein",
             "spiel Musik auf Spotify",
         ):
@@ -2759,7 +2759,7 @@ def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
     reg = get_registry()
     seed_registry(reg)
     for utterance in (
-        "Schick eine Email an morgan@example.com mit dem Betreff Hallo",
+        "Schick eine Email an sam@example.com mit dem Betreff Hallo",
         "Trag einen Termin morgen 10 Uhr ein",
         "Sende eine WhatsApp an Mama",
         "Bestelle eine Pizza",
@@ -2830,7 +2830,7 @@ def test_voice_save_contact_stays_router_tier() -> None:
     "utterance",
     [
         "ruf Christoph an",
-        "ruf Casey an",
+        "ruf Laura an",
         "call Christoph",
     ],
 )
@@ -2872,7 +2872,7 @@ _HEAVY_RESEARCH_SHOULD_SPAWN = [
 ]
 
 _HEAVY_RESEARCH_STAYS_INLINE = [
-    "Was ist das Wetter in Example Town?",  # no research verb → fast lookup
+    "Was ist das Wetter in Melbourne?",  # no research verb → fast lookup
     "Wie spät ist es in Sydney?",  # no research verb
     "Recherchier das mal kurz",  # verb but no scope (short, 1 verb, no marker)
     "Analysier kurz den Satz",  # verb but no scope
@@ -3076,7 +3076,7 @@ def test_heavy_research_never_force_spawns_without_explicit_trigger() -> None:
 def test_quick_weather_lookup_does_not_force_spawn() -> None:
     """A quick weather lookup must STILL stay inline (no false spawn)."""
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
-    assert manager._should_force_spawn("Was ist das Wetter in Example Town?") is False
+    assert manager._should_force_spawn("Was ist das Wetter in Melbourne?") is False
 
 
 def test_heavy_research_disabled_flag_restores_inline() -> None:

@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.core.win32_dpi import per_monitor_dpi_context
 from jarvis.platform import detect_platform
 from jarvis.platform.macos_ax import decode_ax_point, decode_ax_size
 from jarvis.platform.probes import display_present, is_wayland
@@ -70,6 +71,92 @@ class WindowInfo:
     pid: int | None = None
 
 
+def _configure_window_query_api(user32, ctypes, wintypes) -> None:
+    """Bind pointer-sized Win32 window-query signatures."""
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user32.ClientToScreen.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    user32.GetSystemMetrics.restype = ctypes.c_int
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SetActiveWindow.argtypes = [wintypes.HWND]
+    user32.SetActiveWindow.restype = wintypes.HWND
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.restype = wintypes.BOOL
+    user32.AttachThreadInput.argtypes = [
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.BOOL,
+    ]
+    user32.AttachThreadInput.restype = wintypes.BOOL
+    user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    user32.GetWindowPlacement.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+
+
+def _rects_intersect(
+    first: tuple[int, int, int, int], second: tuple[int, int, int, int],
+) -> bool:
+    left, top, width, height = first
+    other_left, other_top, other_width, other_height = second
+    return (
+        width > 0
+        and height > 0
+        and other_width > 0
+        and other_height > 0
+        and left < other_left + other_width
+        and other_left < left + width
+        and top < other_top + other_height
+        and other_top < top + height
+    )
+
+
+def _virtual_desktop_rect_windows(user32) -> tuple[int, int, int, int] | None:
+    rect = (
+        int(user32.GetSystemMetrics(76)),
+        int(user32.GetSystemMetrics(77)),
+        int(user32.GetSystemMetrics(78)),
+        int(user32.GetSystemMetrics(79)),
+    )
+    if rect[2] <= 0 or rect[3] <= 0:
+        return None
+    return rect
+
+
 # ----------------------------------------------------------------------
 # Windows backend (ctypes) — focus path moved verbatim from switch_window (AD-7)
 # ----------------------------------------------------------------------
@@ -84,15 +171,18 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
         either the window title or a failure reason.
     """
     if os.name != "nt":
-        raise RuntimeError("Window switch is only available on Windows")
+        return False, "Window switch is only available on Windows"
 
-    import ctypes
-    from ctypes import wintypes
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
 
     EnumWindows = user32.EnumWindows
-    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    EnumWindows.argtypes = [EnumWindowsProc, wintypes.LPARAM]
+    EnumWindows.restype = wintypes.BOOL
     GetWindowTextW = user32.GetWindowTextW
     GetWindowTextLengthW = user32.GetWindowTextLengthW
     IsWindowVisible = user32.IsWindowVisible
@@ -157,11 +247,16 @@ def _force_foreground_windows(hwnd: int) -> bool:
     import-cleanliness, HN-7). Separate from ``_find_and_focus_windows`` so the
     verbatim ``switch_window`` path (AD-7) stays untouched.
     """
-    import ctypes
-    from ctypes import wintypes
+    if os.name != "nt":
+        return False
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    _configure_window_query_api(user32, ctypes, wintypes)
+    kernel32.GetCurrentThreadId.argtypes = []
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
     _SW_RESTORE = 9
 
     get_thread = user32.GetWindowThreadProcessId
@@ -203,12 +298,17 @@ def _force_foreground_windows(hwnd: int) -> bool:
 
 def _list_windows_windows() -> list[WindowInfo]:
     """All identifiable visible top-level windows, including untitled ones."""
-    import ctypes
-    from ctypes import wintypes
+    if os.name != "nt":
+        return []
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
     EnumWindows = user32.EnumWindows
-    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    EnumWindows.argtypes = [EnumWindowsProc, wintypes.LPARAM]
+    EnumWindows.restype = wintypes.BOOL
     GetWindowTextW = user32.GetWindowTextW
     GetWindowTextLengthW = user32.GetWindowTextLengthW
     IsWindowVisible = user32.IsWindowVisible
@@ -247,16 +347,21 @@ def _list_windows_windows() -> list[WindowInfo]:
 
 
 def _foreground_title_windows() -> str:
-    import ctypes
+    if os.name != "nt":
+        return ""
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return ""
-    length = user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    return buf.value or ""
+    _configure_window_query_api(user32, ctypes, wintypes)
+    with per_monitor_dpi_context():
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        length = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value or ""
 
 
 # ----------------------------------------------------------------------
@@ -959,21 +1064,25 @@ def foreground_window() -> WindowInfo | None:
 
 
 def _foreground_window_windows() -> WindowInfo | None:
+    if os.name != "nt":
+        return None
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return None
-    length = int(user32.GetWindowTextLengthW(hwnd))
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    pid = wintypes.DWORD()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    return WindowInfo(
-        title=buf.value or "", handle=int(hwnd), pid=int(pid.value) or None
-    )
+    _configure_window_query_api(user32, ctypes, wintypes)
+    with per_monitor_dpi_context():
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        length = int(user32.GetWindowTextLengthW(hwnd))
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return WindowInfo(
+            title=buf.value or "", handle=int(hwnd), pid=int(pid.value) or None
+        )
 
 
 def _quartz_window_list(*, on_screen_only: bool = True) -> list:
@@ -1144,13 +1253,44 @@ def move_window_to_primary(
 
 
 def _window_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
+    if os.name != "nt":
+        return None
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    rect = wintypes.RECT()
-    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+    user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
+    with per_monitor_dpi_context():
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        result = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        virtual = _virtual_desktop_rect_windows(user32)
+        if virtual is not None and not _rects_intersect(result, virtual):
+            return None
+        return result
+
+
+def _window_client_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
+    if os.name != "nt":
         return None
-    return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
+    with per_monitor_dpi_context():
+        rect = wintypes.RECT()
+        origin = wintypes.POINT()
+        if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return None
+        if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+            return None
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return (int(origin.x), int(origin.y), width, height)
 
 
 def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]:
@@ -1161,6 +1301,7 @@ def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]
     from ctypes import wintypes  # noqa: PLC0415
 
     user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
     hwnd = int(win.handle)
 
     class _WINDOWPLACEMENT(ctypes.Structure):
@@ -1208,10 +1349,15 @@ _SHELL_WINDOW_CLASSES = frozenset({
 
 
 def _window_class_windows(hwnd: int) -> str:
+    if os.name != "nt":
+        return ""
     import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
+    user32 = ctypes.windll.user32
+    _configure_window_query_api(user32, ctypes, wintypes)
     buf = ctypes.create_unicode_buffer(256)
-    if not ctypes.windll.user32.GetClassNameW(hwnd, buf, 256):
+    if not user32.GetClassNameW(hwnd, buf, 256):
         return ""
     return buf.value or ""
 
@@ -1265,26 +1411,40 @@ def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
         from ctypes import wintypes  # noqa: PLC0415
 
         hwnd = int(win.handle)
-        rect = wintypes.RECT()
-        _DWMWA_EXTENDED_FRAME_BOUNDS = 9
-        try:
-            res = ctypes.windll.dwmapi.DwmGetWindowAttribute(
-                wintypes.HWND(hwnd),
-                ctypes.wintypes.DWORD(_DWMWA_EXTENDED_FRAME_BOUNDS),
-                ctypes.byref(rect),
-                ctypes.sizeof(rect),
+        user32 = ctypes.windll.user32
+        _configure_window_query_api(user32, ctypes, wintypes)
+        with per_monitor_dpi_context():
+            rect = wintypes.RECT()
+            _DWMWA_EXTENDED_FRAME_BOUNDS = 9
+            try:
+                get_attribute = ctypes.windll.dwmapi.DwmGetWindowAttribute
+                get_attribute.argtypes = [
+                    wintypes.HWND,
+                    wintypes.DWORD,
+                    ctypes.c_void_p,
+                    wintypes.DWORD,
+                ]
+                get_attribute.restype = ctypes.c_long
+                res = get_attribute(
+                    wintypes.HWND(hwnd),
+                    wintypes.DWORD(_DWMWA_EXTENDED_FRAME_BOUNDS),
+                    ctypes.byref(rect),
+                    ctypes.sizeof(rect),
+                )
+            except (OSError, AttributeError):
+                res = 1  # dwmapi missing — fall through to GetWindowRect
+            if res != 0 and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return None
+            result = (
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
             )
-        except (OSError, AttributeError):
-            res = 1  # dwmapi missing — fall through to GetWindowRect
-        if res != 0 and not ctypes.windll.user32.GetWindowRect(
-            hwnd, ctypes.byref(rect)
-        ):
-            return None
-        width = rect.right - rect.left
-        height = rect.bottom - rect.top
-        if width <= 0 or height <= 0:
-            return None
-        return (rect.left, rect.top, width, height)
+            virtual = _virtual_desktop_rect_windows(user32)
+            if virtual is not None and not _rects_intersect(result, virtual):
+                return None
+            return result
     except Exception:  # noqa: BLE001
         log.debug("window_frame_rect failed", exc_info=True)
         return None
@@ -1457,9 +1617,9 @@ def window_is_maximized(win: WindowInfo) -> bool | None:
         _SW_SHOWMAXIMIZED = 3
         wp = _WINDOWPLACEMENT()
         wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
-        if not ctypes.windll.user32.GetWindowPlacement(
-            int(win.handle), ctypes.byref(wp)
-        ):
+        user32 = ctypes.windll.user32
+        _configure_window_query_api(user32, ctypes, wintypes)
+        if not user32.GetWindowPlacement(int(win.handle), ctypes.byref(wp)):
             return None
         return wp.showCmd == _SW_SHOWMAXIMIZED
     except Exception:  # noqa: BLE001
@@ -1529,7 +1689,9 @@ def maximize_window(win: WindowInfo) -> tuple[bool, str]:
             hwnd = int(win.handle)
             _GWL_STYLE, _WS_MAXIMIZEBOX = -16, 0x00010000
             _SW_MAXIMIZE = 3
-            user32.GetWindowLongW.restype = ctypes.c_long
+            from ctypes import wintypes  # noqa: PLC0415
+
+            _configure_window_query_api(user32, ctypes, wintypes)
             style = int(user32.GetWindowLongW(hwnd, _GWL_STYLE))
             if not style & _WS_MAXIMIZEBOX:
                 return False, "window has no maximize box (fixed-size dialog)"

@@ -313,10 +313,12 @@ export function ContinueInterrupted({
           disabled={busy}
           title={t("agentic_grid.continue.hint")}
           className={cn(
-            "flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+            // Quiet at rest, amber only while panes actually wait — the same
+            // rule the rest of the toolbar follows (TOOLBAR_BTN in AgenticGrid).
+            "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
             waiting
-              ? "border-amber-500/60 bg-amber-500/15 text-amber-200"
-              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+              ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
           <PlayCircle className="h-4 w-4" />

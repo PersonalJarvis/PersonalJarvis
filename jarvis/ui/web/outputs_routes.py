@@ -428,7 +428,7 @@ async def _live_continuation_map(request: Request) -> dict[str, str]:
     been continued and that child is actively running. The user then sees a
     cancelled card sitting next to its own live continuation — both showing the
     identical stored prompt — and cannot tell whether "the mission" is running
-    (forensic 2026-06-28, missions 019f0fa6 → 019f0fac).
+    (regression scenario: a cancelled parent with a live continuation).
 
     Returns ``{parent_id: child_id}`` for every parent whose NEWEST re-run child
     is still non-terminal (live). Best-effort: ``{}`` on a missing manager, an

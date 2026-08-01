@@ -14,31 +14,12 @@ import os
 import sqlite3
 import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .schema import Doc
 
 log = logging.getLogger(__name__)
-
-_ATOMIC_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
-
-
-def _replace_with_retry(source: Path, target: Path) -> None:
-    """Atomically replace *target*, tolerating transient Windows file locks."""
-    last_error: PermissionError | None = None
-    for delay_s in _ATOMIC_REPLACE_RETRY_DELAYS_S:
-        if delay_s:
-            time.sleep(delay_s)
-        try:
-            os.replace(source, target)
-            return
-        except PermissionError as exc:
-            # Antivirus and indexers may briefly retain a closed SQLite handle.
-            last_error = exc
-    if last_error is not None:
-        raise last_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +177,7 @@ class DocSearch:
                 finally:
                     current_connection_closed = True
                 self._remove_sidecars(self.db_path)
-                _replace_with_retry(temp_path, self.db_path)
+                os.replace(temp_path, self.db_path)
 
                 self._conn = self._connect(self.db_path)
                 current_connection_closed = False

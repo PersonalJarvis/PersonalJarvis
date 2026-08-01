@@ -35,6 +35,10 @@ from jarvis.screen_context.models import VisualIntent
         "what's on my screen?",
         "check this out",
         "take a screenshot",
+        "look at my screen",
+        "analyze the screenshot",
+        "what can you see on my monitor?",
+        "inspect the current window",
         # -- German (the two phrasings the feature is specified around)
         "Kannst du mal sehen?",
         "Schau dir das an",
@@ -46,12 +50,19 @@ from jarvis.screen_context.models import VisualIntent
         "auf dem Bildschirm ist eine Fehlermeldung",  # i18n-allow: DE input
         "Wenn sowas auf meinem Bildschirm ist, was bedeutet das?",  # i18n-allow: DE input
         "mach einen Screenshot",  # i18n-allow: DE input
+        "Schau dir bitte meinen Bildschirm an",  # i18n-allow: DE input
+        "Pruef bitte, was auf meinem Monitor steht",  # i18n-allow: DE input
+        "Lies bitte dieses Fenster",  # i18n-allow: DE input
+        "Kannst du meinen Bildschirm anschauen?",  # i18n-allow: DE input
+        "Was steht in diesem Fenster?",  # i18n-allow: DE input
         # -- Spanish
         "mira esto",
         "puedes ver esto?",
         "que dice ahi?",
         "echa un vistazo",
         "haz una captura de pantalla",
+        "analiza esta captura de pantalla",
+        "que ves en mi monitor",
     ],
 )
 def test_unambiguous_requests_capture(utterance: str) -> None:
@@ -179,6 +190,22 @@ def test_weak_signals_ask_instead_of_capturing(utterance: str) -> None:
 def test_non_visual_turns_are_left_alone(utterance: str) -> None:
     verdict = classify(utterance)
     assert verdict.intent is VisualIntent.NONE, f"{utterance!r} -> {verdict.intent}"
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "How can you look at my screen?",
+        "How do I let you take a screenshot?",
+        "What happens when I ask for a screenshot?",
+        "Wie kannst du meinen Bildschirm sehen?",  # i18n-allow: DE input
+        "Wie kann ich dir meinen Bildschirm zeigen?",  # i18n-allow: DE input
+        "Was passiert, wenn ich Screenshot sage?",  # i18n-allow: DE input
+        "Como puedes ver mi pantalla?",  # i18n-allow: ES input
+    ],
+)
+def test_product_questions_are_not_capture_consent(utterance: str) -> None:
+    assert classify(utterance).intent is VisualIntent.NONE
 
 
 def test_idiom_masking_does_not_veto_a_real_request() -> None:

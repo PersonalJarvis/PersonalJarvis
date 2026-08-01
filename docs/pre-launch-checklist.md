@@ -23,11 +23,11 @@ in your working tree.
 - [ ] Enable **GitHub Secret Scanning + Push Protection** on the repo before flipping.
 
 ### Personal / identifying data (PII)
-- [ ] No real names, private emails, home/usernames paths (`<USER_HOME>
+- [ ] No real names, private emails, home/usernames paths (`C:\Users\<name>`,
       `/home/<name>`), phone numbers, internal hostnames in tracked files.
 - [ ] **Commit author metadata** is clean — the classic blind spot. File scrubbers
-      miss it: `git log --all --format='%an <%ae> / %cn <%ce>' | sort -u`. Use a
-      public GitHub noreply address for every new author and committer identity.
+      miss it: `git log --all --format='%an <%ae> / %cn <%ce>' | sort -u`. Use
+      `.mailmap` + a noreply email so private addresses never show on GitHub.
 - [ ] No internal-only docs, scratch notes, incident reports, or red-team logs leak.
 
 ### Licensing & legal

@@ -1,8 +1,7 @@
 """Final pass: replace remaining German strings via direct UTF-8 file ops."""
 import os, re
-from pathlib import Path
 
-BASE = Path(__file__).resolve().parents[1] / "jarvis/ui/web/frontend/src"
+BASE = "<USER_HOME>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
 
 def patch(rel, replacements):
     fp = os.path.join(BASE, rel).replace("\\", "/")

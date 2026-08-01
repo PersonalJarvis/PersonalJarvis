@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("RealtimeVoiceGroup", () => {
-  it("blocks enabling Realtime when no provider key is available", () => {
+  it("blocks enabling Realtime when no provider access is available", () => {
     render(<RealtimeVoiceGroup />);
 
     expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);

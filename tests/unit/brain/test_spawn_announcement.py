@@ -655,7 +655,7 @@ async def test_never_raises_and_never_empty_under_pathology() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("brand", ["Ruben-Agent", "Morgan-Agent", "Athena-Agent"])
+@pytest.mark.parametrize("brand", ["Alex-Agent", "Sam-Agent", "Athena-Agent"])
 async def test_brand_follows_any_wake_word_name(brand: str) -> None:
     """The spoken brand is a pure function of the configured wake word: a
     candidate naming the CURRENT brand passes, and every fallback phrase
@@ -679,13 +679,13 @@ async def test_brand_follows_any_wake_word_name(brand: str) -> None:
 async def test_candidate_with_stale_brand_is_rejected() -> None:
     """A candidate naming a DIFFERENT (e.g. stale pre-rename) brand must not
     pass validation — the announcement re-composes with the live brand."""
-    composer = SpawnAnnouncementComposer(brand_provider=lambda: "Ruben-Agent")
+    composer = SpawnAnnouncementComposer(brand_provider=lambda: "Alex-Agent")
     out = await composer.compose(
         utterance="Schau in mein Gmail.",
         language="de",
         candidate="Ein Jarvis-Agent geht gleich durch dein Gmail.",
     )
-    assert out in {p.replace("{agent}", "Ruben-Agent") for p in _FALLBACK_SPAWN["de"]}
+    assert out in {p.replace("{agent}", "Alex-Agent") for p in _FALLBACK_SPAWN["de"]}
 
 
 @pytest.mark.asyncio

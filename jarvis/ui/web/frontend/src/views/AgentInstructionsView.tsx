@@ -9,7 +9,7 @@ import { useT } from "@/i18n";
  * AgentInstructionsView — full-page editor for the user's personal
  * standing-instructions file (an AGENTS.md / CLAUDE.md equivalent). The file is
  * named after the assistant (the heading shows the dynamic `<Name>.md`, e.g.
- * "Ruben.md"). It is distinct from the System Prompt: here the user writes their
+ * "Alex.md"). It is distinct from the System Prompt: here the user writes their
  * own preferences for how the assistant works with them. Changes apply on the
  * assistant's next message — no restart.
  *

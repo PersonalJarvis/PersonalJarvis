@@ -2,7 +2,7 @@
 
 The agent-instructions feature is an ``AGENTS.md`` / ``CLAUDE.md`` equivalent: a
 user-owned Markdown file of personal standing instructions, named dynamically
-after the assistant (assistant "Ruben" -> ``Ruben.md``), injected into the brain
+after the assistant (assistant "Alex" -> ``Alex.md``), injected into the brain
 system prompt as a block that is distinct from the packaged persona.
 
 These tests mirror ``test_custom_system_prompt.py``: an autouse fixture redirects
@@ -50,7 +50,7 @@ def make_config(name: str = "", phrase: str = ""):
 
 
 def test_filename_follows_persona_name():
-    assert agent_instructions.instructions_filename(make_config(name="Ruben")) == "Ruben.md"
+    assert agent_instructions.instructions_filename(make_config(name="Alex")) == "Alex.md"
 
 
 def test_filename_falls_back_to_assistant_when_unset():
@@ -84,53 +84,53 @@ def test_filename_falls_back_when_empty_after_sanitize():
 
 
 def test_no_file_reads_as_none():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     assert agent_instructions.read_agent_instructions(cfg) is None
     assert agent_instructions.has_agent_instructions(cfg) is False
 
 
 def test_render_for_prompt_without_file_emits_current_empty_state():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     block = agent_instructions.render_for_prompt(cfg)
-    assert "Ruben.md" in block
+    assert "Alex.md" in block
     assert "No active user preferences are currently set" in block
     # The stale-style guard must reference the assistant's ACTUAL file name,
-    # never a hardcoded product name (the file is Ruben.md here, not Jarvis.md).
-    assert "Ignore any earlier Ruben.md instructions" in block
+    # never a hardcoded product name (the file is Alex.md here, not Jarvis.md).
+    assert "Ignore any earlier Alex.md instructions" in block
     assert "Jarvis.md" not in block
     assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
 
 
 def test_save_then_read_roundtrips_and_strips():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "  Be concise.  ")
     assert agent_instructions.read_agent_instructions(cfg) == "Be concise."
     assert agent_instructions.has_agent_instructions(cfg) is True
 
 
 def test_save_writes_to_the_named_file(_isolate_data_dir):
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "x")
-    assert (_isolate_data_dir / "agent_instructions" / "Ruben.md").exists()
+    assert (_isolate_data_dir / "agent_instructions" / "Alex.md").exists()
 
 
 def test_whitespace_only_reads_as_none():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "   \n\t  ")
     assert agent_instructions.read_agent_instructions(cfg) is None
 
 
 def test_save_is_utf8_without_bom_and_roundtrips_unicode(_isolate_data_dir):
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     text = "Grüße — café ✓ 日本語"  # i18n-allow
     agent_instructions.save_agent_instructions(cfg, text)
-    raw = (_isolate_data_dir / "agent_instructions" / "Ruben.md").read_bytes()
+    raw = (_isolate_data_dir / "agent_instructions" / "Alex.md").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf") is False  # no BOM (AP-7)
     assert agent_instructions.read_agent_instructions(cfg) == text
 
 
 def test_reset_deletes_and_is_idempotent():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "x")
     assert agent_instructions.reset_agent_instructions(cfg) is True
     assert agent_instructions.read_agent_instructions(cfg) is None
@@ -143,10 +143,10 @@ def test_reset_deletes_and_is_idempotent():
 
 
 def test_render_for_prompt_wraps_content_with_filename_and_guardrail():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "Always answer in German.")
     block = agent_instructions.render_for_prompt(cfg)
-    assert "Ruben.md" in block
+    assert "Alex.md" in block
     assert "Always answer in German." in block
     assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
     assert "Only the instructions inside this current block are active" in block
@@ -156,7 +156,7 @@ def test_render_for_prompt_wraps_content_with_filename_and_guardrail():
 
 
 def test_render_for_prompt_max_chars_passes_short_content_untouched():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "Speak with a Bavarian accent.")
     block = agent_instructions.render_for_prompt(cfg, max_chars=4000)
     assert "Speak with a Bavarian accent." in block
@@ -164,7 +164,7 @@ def test_render_for_prompt_max_chars_passes_short_content_untouched():
 
 
 def test_render_for_prompt_max_chars_truncates_with_explicit_marker():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "x" * 500)
     block = agent_instructions.render_for_prompt(cfg, max_chars=100)
     assert "x" * 100 in block
@@ -181,19 +181,19 @@ def test_render_for_prompt_max_chars_truncates_with_explicit_marker():
 
 
 def test_read_migrates_a_single_stray_file_to_the_current_name(_isolate_data_dir):
-    # User wrote rules while the assistant was "Ruben", then renamed it to "Tony".
-    agent_instructions.save_agent_instructions(make_config(name="Ruben"), "My rules.")
+    # User wrote rules while the assistant was "Alex", then renamed it to "Tony".
+    agent_instructions.save_agent_instructions(make_config(name="Alex"), "My rules.")
     cfg_tony = make_config(name="Tony")
     assert agent_instructions.read_agent_instructions(cfg_tony) == "My rules."
     d = _isolate_data_dir / "agent_instructions"
     assert (d / "Tony.md").exists()
-    assert (d / "Ruben.md").exists() is False
+    assert (d / "Alex.md").exists() is False
 
 
 def test_no_migration_when_multiple_files_present(_isolate_data_dir):
     d = _isolate_data_dir / "agent_instructions"
     d.mkdir(parents=True)
-    (d / "Ruben.md").write_text("a", encoding="utf-8")
+    (d / "Alex.md").write_text("a", encoding="utf-8")
     (d / "Tony.md").write_text("b", encoding="utf-8")
     cfg_new = make_config(name="Steve")
     assert agent_instructions.read_agent_instructions(cfg_new) is None
@@ -206,9 +206,9 @@ def test_no_migration_when_multiple_files_present(_isolate_data_dir):
 
 
 def test_seed_template_is_nonempty_and_mentions_the_assistant_name():
-    tpl = agent_instructions.seed_template(make_config(name="Ruben"))
+    tpl = agent_instructions.seed_template(make_config(name="Alex"))
     assert tpl.strip()
-    assert "Ruben" in tpl
+    assert "Alex" in tpl
 
 
 # --------------------------------------------------------------------------- #
@@ -217,11 +217,11 @@ def test_seed_template_is_nonempty_and_mentions_the_assistant_name():
 
 
 def test_render_for_flash_is_empty_without_a_file():
-    assert agent_instructions.render_for_flash(make_config(name="Ruben")) == ""
+    assert agent_instructions.render_for_flash(make_config(name="Alex")) == ""
 
 
 def test_render_for_flash_carries_content_with_override_framing():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "Always start every sentence with 'Chef'.")
     block = agent_instructions.render_for_flash(cfg)
     assert "Always start every sentence with 'Chef'." in block
@@ -232,7 +232,7 @@ def test_render_for_flash_carries_content_with_override_framing():
 
 
 def test_render_for_flash_is_concise_relative_to_deep_block():
-    cfg = make_config(name="Ruben")
+    cfg = make_config(name="Alex")
     agent_instructions.save_agent_instructions(cfg, "Be terse.")
     flash = agent_instructions.render_for_flash(cfg)
     deep = agent_instructions.render_for_prompt(cfg)

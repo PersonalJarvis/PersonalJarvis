@@ -9,6 +9,7 @@ const fakes = vi.hoisted(() => ({
   native: false,
   mode: "realtime",
   available: true,
+  requiresWebRtcOffer: false,
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
   supportIssue: null as
@@ -20,6 +21,7 @@ const fakes = vi.hoisted(() => ({
     onAudio?: () => void;
     onStatus?: (status: string, payload: Record<string, unknown>) => void;
   },
+  options: null as null | { requiresWebRtcOffer?: boolean },
 }));
 
 vi.mock("@/hooks/useCapabilities", () => ({
@@ -30,6 +32,7 @@ vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
     mode: fakes.mode,
     realtimeAvailable: fakes.available,
+    requiresWebRtcOffer: fakes.requiresWebRtcOffer,
     setMode: vi.fn(),
     isLoading: false,
     isSaving: false,
@@ -42,8 +45,12 @@ vi.mock("@/lib/realtimeAudio", () => ({
   browserRealtimeSupportIssue: () => fakes.supportIssue,
   RealtimeAudioSupportError: class extends Error {},
   RealtimeAudioClient: class {
-    constructor(callbacks: NonNullable<typeof fakes.callbacks>) {
+    constructor(
+      callbacks: NonNullable<typeof fakes.callbacks>,
+      options: NonNullable<typeof fakes.options>,
+    ) {
       fakes.callbacks = callbacks;
+      fakes.options = options;
     }
 
     connect = fakes.connect;
@@ -56,10 +63,13 @@ describe("BrowserRealtimeControl", () => {
     fakes.native = false;
     fakes.mode = "realtime";
     fakes.available = true;
+    fakes.requiresWebRtcOffer = false;
     fakes.connect.mockClear();
     fakes.disconnect.mockClear();
     fakes.supportIssue = null;
     fakes.callbacks = null;
+    fakes.options = null;
+    delete (window as unknown as { pywebview?: unknown }).pywebview;
     useEventStore.setState({
       voiceState: "idle",
       transcription: "",
@@ -69,8 +79,16 @@ describe("BrowserRealtimeControl", () => {
 
   it("is hidden in the desktop shell to prevent a second microphone", () => {
     fakes.native = true;
+    (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
     render(<BrowserRealtimeControl />);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("stays visible in external Chrome connected to the desktop backend", () => {
+    fakes.native = true;
+    render(<BrowserRealtimeControl />);
+
+    expect(screen.getByRole("button", { name: "sidebar.realtime_start" })).toBeTruthy();
   });
 
   it("is hidden while the classic pipeline is selected", () => {
@@ -92,6 +110,15 @@ describe("BrowserRealtimeControl", () => {
     ).toBe("true");
   });
 
+  it("requests WebRTC signalling only for a provider that declares it", async () => {
+    fakes.requiresWebRtcOffer = true;
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    expect(fakes.options).toEqual({ requiresWebRtcOffer: true });
+  });
+
   it("returns to thinking after an interim realtime sentence", async () => {
     render(<BrowserRealtimeControl />);
     fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
@@ -104,7 +131,7 @@ describe("BrowserRealtimeControl", () => {
     expect(useEventStore.getState().voiceState).toBe("thinking");
   });
 
-  it("explains that a key is required instead of opening the microphone", () => {
+  it("requires a configured Realtime provider before opening the microphone", () => {
     fakes.available = false;
     render(<BrowserRealtimeControl />);
 

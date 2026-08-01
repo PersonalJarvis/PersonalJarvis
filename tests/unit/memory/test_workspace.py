@@ -80,7 +80,7 @@ class TestPersonSlug:
     """Slug rules: lowercase, umlauts expanded, non-safe chars removed."""
 
     def test_basic_umlaut_expansion(self) -> None:
-        assert person_slug("Casey Müller") == "casey_mueller"  # i18n-allow: German umlaut name, matched by the slug-normalization logic under test
+        assert person_slug("Laura Müller") == "laura_mueller"  # i18n-allow: German umlaut name, matched by the slug-normalization logic under test
 
     def test_dots_and_whitespace_stripped(self) -> None:
         assert person_slug("Dr. Paul O.") == "dr_paul_o"

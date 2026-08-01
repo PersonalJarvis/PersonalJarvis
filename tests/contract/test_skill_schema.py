@@ -28,7 +28,7 @@ def test_valid_full_frontmatter():
         "description": "Fasst Inbox zusammen",
         "category": "productivity",
         "tags": ["email", "gmail"],
-        "author": "Morgan",
+        "author": "Sam",
         "license": "MIT",
         "triggers": [
             {"type": "voice", "pattern": r"fass.*(?:inbox|emails) zusammen",

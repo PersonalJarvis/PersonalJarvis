@@ -94,6 +94,7 @@ vi.mock("@/lib/editActions", () => ({ attachTerminalBridge: () => undefined }));
 vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import { AgenticTerminal } from "./AgenticTerminal";
+import { OFFSCREEN_MAX_HOLD_MS } from "./offscreenBuffer";
 
 class ResizeObserverHarness implements ResizeObserver {
   constructor(_callback: ResizeObserverCallback) {}
@@ -323,6 +324,82 @@ describe("AgenticTerminal off-screen output", () => {
 
     act(() => harness.handlers?.onOutput("nobody is looking at this"));
     expect(harness.writes).toEqual([]);
+  });
+
+  it("writes what it holds once the deadline passes, still believing it is hidden", () => {
+    // The backstop for every visibility question this pane can get wrong. The
+    // three known ways to be wrongly parked were each found one live incident
+    // at a time, so the pane must not depend on having learnt the last of them:
+    // being mistaken has to cost a coalesced write, never a screen that stopped
+    // (reported 2026-07-31 — two live panes, one frozen at a time).
+    //
+    // Nothing here tells the pane it is visible: no observer callback, no
+    // `visibilitychange`, and jsdom measures a zero box, which `boxOnScreen`
+    // reads as off screen. It writes anyway, which is the whole point.
+    vi.useFakeTimers();
+    try {
+      mount();
+      act(() => harness.fire?.(false));
+      act(() => harness.handlers?.onOutput("the agent is still working"));
+      expect(harness.writes).toEqual([]);
+
+      act(() => {
+        vi.advanceTimersByTime(OFFSCREEN_MAX_HOLD_MS + 50);
+      });
+
+      expect(harness.writes.join("")).toContain("the agent is still working");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still coalesces a burst inside the hold window into ONE write", () => {
+    // The performance contract that parking exists for, unchanged: a pane
+    // nobody is looking at merges a burst into a single parse rather than
+    // taking a frame per chunk from the pane being typed into. The deadline
+    // bounds how far behind that can leave a screen; it does not turn parking
+    // back into one write per chunk.
+    vi.useFakeTimers();
+    try {
+      mount();
+      act(() => harness.fire?.(false));
+      act(() => {
+        harness.handlers?.onOutput("frame one ");
+        harness.handlers?.onOutput("frame two ");
+        harness.handlers?.onOutput("frame three");
+      });
+      expect(harness.writes).toEqual([]);
+
+      act(() => {
+        vi.advanceTimersByTime(OFFSCREEN_MAX_HOLD_MS + 50);
+      });
+
+      expect(harness.writes).toEqual(["frame one frame two frame three"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not leave a quiet agent's last word parked", () => {
+    // The case a deadline checked only when the NEXT chunk arrives cannot
+    // reach: an agent that says something and then waits. That pane receives
+    // nothing further, so a check on write would never run again and the last
+    // thing it said would stay parked for as long as it stays quiet — which is
+    // precisely the screen a user reads as frozen.
+    vi.useFakeTimers();
+    try {
+      mount();
+      act(() => harness.fire?.(false));
+      act(() => harness.handlers?.onOutput("waiting for your answer"));
+
+      act(() => {
+        vi.advanceTimersByTime(OFFSCREEN_MAX_HOLD_MS + 50);
+      });
+
+      expect(harness.writes.join("")).toContain("waiting for your answer");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stays visible where IntersectionObserver does not exist", () => {

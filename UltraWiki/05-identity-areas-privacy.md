@@ -11,10 +11,10 @@ three tiers:
    address, an exact contact-book match. These identifiers are unique enough
    that automation is safe.
 2. **Probable — queue for confirmation.** Name similarity, nickname patterns,
-   co-occurrence in the same threads ("CE" appears exactly where Casey's
+   co-occurrence in the same threads ("Viki" appears exactly where Viktoria's
    number appears). The match is *proposed*, never applied: it lands in the
    **confirmation queue** and both identities keep answering separately until
-   the user confirms ("Is CE = Casey Müller?" — one tap). <!-- i18n-allow: illustrative German name in the identity-merge example -->
+   the user confirms ("Is Viki = Viktoria Müller?" — one tap). <!-- i18n-allow: illustrative German name in the identity-merge example -->
 3. **Weak — do nothing.** Below the proposal threshold, identities stay
    separate; a wrong split is annoying but repairable, a wrong merge is
    poison.

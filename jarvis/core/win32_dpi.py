@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,56 @@ _DPI_AWARENESS_SET: bool = False
 # window-centric Computer-Use relies on: window rects, monitor metrics and
 # SendInput normalization all read the SAME physical-pixel virtual desktop.
 _DPI_CTX_PER_MONITOR_V2 = -4
+_DPI_CTX_PER_MONITOR = -3
 _E_ACCESSDENIED = -2147024891  # 0x80070005 — awareness already set: fine
+
+
+def _current_awareness_tier(windll) -> str:
+    """Return the process DPI tier, with an effective-thread fallback."""
+    import ctypes  # noqa: PLC0415
+
+    try:
+        get_process_awareness = windll.shcore.GetProcessDpiAwareness
+        get_process_awareness.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        get_process_awareness.restype = ctypes.c_long
+        awareness = ctypes.c_int(-1)
+        if int(get_process_awareness(None, ctypes.byref(awareness))) == 0:
+            if awareness.value == 2:
+                return "per_monitor"
+            if awareness.value == 1:
+                return "system"
+            return "none"
+    except (OSError, AttributeError, TypeError, ValueError):
+        logger.debug("Could not query process DPI awareness", exc_info=True)
+
+    try:
+        get_context = windll.user32.GetThreadDpiAwarenessContext
+        get_context.argtypes = []
+        get_context.restype = ctypes.c_void_p
+        context = get_context()
+        if not context:
+            return "none"
+
+        contexts_equal = windll.user32.AreDpiAwarenessContextsEqual
+        contexts_equal.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        contexts_equal.restype = ctypes.c_int
+        if contexts_equal(
+            ctypes.c_void_p(context), ctypes.c_void_p(_DPI_CTX_PER_MONITOR_V2)
+        ):
+            return "per_monitor_v2"
+
+        get_awareness = windll.user32.GetAwarenessFromDpiAwarenessContext
+        get_awareness.argtypes = [ctypes.c_void_p]
+        get_awareness.restype = ctypes.c_int
+        awareness = int(get_awareness(ctypes.c_void_p(context)))
+        if awareness == 2:
+            return "per_monitor"
+        if awareness == 1:
+            return "system"
+        return "none"
+    except (OSError, AttributeError, TypeError, ValueError):
+        logger.debug("Could not query effective DPI awareness", exc_info=True)
+        return "none"
 
 
 def _apply_process_awareness(windll) -> str:
@@ -48,20 +99,30 @@ def _apply_process_awareness(windll) -> str:
 
     try:
         set_ctx = windll.user32.SetProcessDpiAwarenessContext
+        set_ctx.argtypes = [ctypes.c_void_p]
+        set_ctx.restype = ctypes.c_int
         if set_ctx(ctypes.c_void_p(_DPI_CTX_PER_MONITOR_V2)):
             return "per_monitor_v2"
     except (OSError, AttributeError):
         logger.debug("SetProcessDpiAwarenessContext unavailable", exc_info=True)
     try:
-        # PROCESS_PER_MONITOR_DPI_AWARE = 2; E_ACCESSDENIED = already set.
-        res = windll.shcore.SetProcessDpiAwareness(2)
-        if res in (0, _E_ACCESSDENIED):
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2.
+        set_awareness = windll.shcore.SetProcessDpiAwareness
+        set_awareness.argtypes = [ctypes.c_int]
+        set_awareness.restype = ctypes.c_long
+        res = int(set_awareness(2))
+        if res == 0:
             return "per_monitor"
+        if res == _E_ACCESSDENIED:
+            return _current_awareness_tier(windll)
         logger.debug("SetProcessDpiAwareness returned 0x%x", res & 0xFFFFFFFF)
     except (OSError, AttributeError):
         logger.debug("SetProcessDpiAwareness unavailable", exc_info=True)
     try:
-        if windll.user32.SetProcessDPIAware():
+        set_aware = windll.user32.SetProcessDPIAware
+        set_aware.argtypes = []
+        set_aware.restype = ctypes.c_int
+        if set_aware():
             return "system"
     except (OSError, AttributeError):
         logger.warning("Could not set DPI awareness", exc_info=True)
@@ -143,3 +204,35 @@ def pin_thread_dpi_per_monitor() -> bool:
     except (OSError, AttributeError):
         logger.debug("SetThreadDpiAwarenessContext unavailable", exc_info=True)
         return False
+
+
+@contextmanager
+def per_monitor_dpi_context() -> Iterator[None]:
+    """Temporarily pin the calling thread to physical per-monitor pixels."""
+    if os.name != "nt":
+        yield
+        return
+
+    previous = None
+    set_context = None
+    try:
+        import ctypes  # noqa: PLC0415
+
+        set_context = ctypes.windll.user32.SetThreadDpiAwarenessContext
+        set_context.argtypes = [ctypes.c_void_p]
+        set_context.restype = ctypes.c_void_p
+        for context in (_DPI_CTX_PER_MONITOR_V2, _DPI_CTX_PER_MONITOR):
+            previous = set_context(ctypes.c_void_p(context))
+            if previous:
+                break
+    except (OSError, AttributeError):
+        logger.debug("SetThreadDpiAwarenessContext unavailable", exc_info=True)
+
+    try:
+        yield
+    finally:
+        if previous and set_context is not None:
+            try:
+                set_context(ctypes.c_void_p(previous))
+            except (OSError, AttributeError):
+                logger.debug("Could not restore thread DPI context", exc_info=True)

@@ -35,7 +35,7 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
-from jarvis.brain.turn_planner import TurnPath, TurnPlan, plan_turn
+from jarvis.brain.turn_planner import TurnPath, TurnPlan, TurnReason, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
@@ -763,7 +763,7 @@ _REALTIME_SKILL_TOOL_WORD_RE = re.compile(
 
 
 def _preferences_block(config: Any) -> str:
-    """The user's standing-instructions block (``Ruben.md`` equivalent).
+    """The user's standing-instructions block (``Alex.md`` equivalent).
 
     The realtime engine speaks directly to the user, so it must honor the same
     user-editable agent-instructions file as the classic deep brain — otherwise
@@ -950,6 +950,7 @@ class RealtimeVoiceSession:
         surface: str = "browser",
         brain: Any = None,
         tool_bridge: Any = None,
+        allow_classic_fallback: bool = True,
     ) -> None:
         self.session_id = session_id
         self._send_binary = send_binary
@@ -969,6 +970,11 @@ class RealtimeVoiceSession:
         )
         self._half_duplex = bool(half_duplex)
         self._surface = str(surface or "unknown")
+        # Billing boundary advertised to browser/desktop owners. A provider
+        # backed by an interactive subscription can forbid falling through to
+        # unrelated ambient API credentials and the classic usage pipeline.
+        self.allow_classic_fallback = bool(allow_classic_fallback)
+        self._transport_offer_sdp = ""
         self._output_active = False
 
         brain_config = getattr(self._config, "brain", None)
@@ -1440,22 +1446,35 @@ class RealtimeVoiceSession:
             rate = int(msg.get("sample_rate", self.browser_sample_rate) or self.browser_sample_rate)
             if rate != self.browser_sample_rate:
                 self.browser_sample_rate = rate
+            offer_sdp = str(
+                msg.get("webrtc_offer_sdp")
+                or msg.get("webrtc_sdp")
+                or msg.get("sdp")
+                or ""
+            )
+            if offer_sdp:
+                self._transport_offer_sdp = offer_sdp
             if self._session is None:
                 await self._open()
             self._in_resampler = StreamingPcm16Resampler(
                 self.browser_sample_rate, self._input_sample_rate
             )
-            await self._send_json(
-                {
-                    "type": "audio_ready",
-                    "provider": self.active_provider,
-                    "model": self._active_model,
-                    "input_sample_rate": self._input_sample_rate,
-                    "output_sample_rate": int(
-                        getattr(self._provider, "output_sample_rate", 24_000) or 24_000
-                    ),
-                }
-            )
+            ready = {
+                "type": "audio_ready",
+                "provider": self.active_provider,
+                "model": self._active_model,
+                "requires_webrtc_answer": bool(
+                    getattr(self._provider, "requires_webrtc_offer", False)
+                ),
+                "input_sample_rate": self._input_sample_rate,
+                "output_sample_rate": int(
+                    getattr(self._provider, "output_sample_rate", 24_000) or 24_000
+                ),
+            }
+            answer_sdp = str(getattr(self._session, "answer_sdp", "") or "")
+            if answer_sdp:
+                ready["webrtc_answer_sdp"] = answer_sdp
+            await self._send_json(ready)
             if self._surface == "browser" and not self._browser_session_started:
                 await self._publish_browser_session_started()
                 self._browser_session_started = True
@@ -1592,6 +1611,7 @@ class RealtimeVoiceSession:
                     if self._suppress_history_seed
                     else self._history_seed()
                 ),
+                transport_offer_sdp=self._transport_offer_sdp,
             )
             try:
                 providers_left = sum(
@@ -2152,7 +2172,15 @@ class RealtimeVoiceSession:
                                 f"path={turn_plan.path.value};reasons={reasons}"
                             ),
                         )
-                        if self._delegate_enabled and self._last_user_text:
+                        screen_context_turn = (
+                            TurnReason.SCREEN_CONTEXT in turn_plan.reasons
+                        )
+                        deterministic_delegate_available = callable(self._brain)
+                        if (
+                            self._last_user_text
+                            and deterministic_delegate_available
+                            and (self._delegate_enabled or screen_context_turn)
+                        ):
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
                                 or turn_plan.requires_orchestrator
@@ -2328,6 +2356,63 @@ class RealtimeVoiceSession:
                         self._response_requested_for_turn = True
                         if input_item_id:
                             self._response_requested_input_ids.add(input_item_id)
+                elif event.type == "handoff_requested":
+                    # Client-managed handoffs are a provider control boundary,
+                    # never a public response boundary and never a direct tool
+                    # call. Keep execution inside the existing deterministic
+                    # Jarvis supervisor path, then render its trusted result
+                    # through the provider's appendText/appendSpeech boundary.
+                    handoff_text = _dictionary_corrected(
+                        str(getattr(event, "text", "") or "").strip()
+                    )
+                    if handoff_text and not self._last_user_text:
+                        self._last_user_text = handoff_text
+                        self._input_turn_observed = True
+                        await self._publish_transcription(
+                            handoff_text,
+                            is_final=True,
+                        )
+                    await self._ensure_turn_started()
+                    if not self._delegate_enabled or not self._last_user_text:
+                        await self._fail_terminally(
+                            "Realtime provider requested a supervised handoff, "
+                            "but no deterministic Jarvis delegate is available."
+                        )
+                        break
+                    self._delegate_required_for_turn = True
+                    self._response_requested_for_turn = True
+                    self._drop_provider_output_until_new_response = True
+                    turn_state = self._delegate_turns.setdefault(
+                        self._turn_id,
+                        _DelegateTurnState(deterministic=True),
+                    )
+                    turn_state.deterministic = True
+                    turn_state.wait_for_provider_boundary = True
+                    turn_state.input_final = True
+                    # The realtime model explicitly yielded control. The
+                    # app-server adapter interrupts any normal Codex turn that
+                    # core may already have started before this event arrived.
+                    try:
+                        await self._session.interrupt()
+                    except Exception:  # noqa: BLE001 - the adapter also interrupts on receipt
+                        log.warning(
+                            "realtime[%s] provider handoff interrupt failed",
+                            self.session_id,
+                            exc_info=True,
+                        )
+                    turn_state.input_boundary_ready.set()
+                    turn_state.provider_boundary_seen = True
+                    turn_state.provider_ready.set()
+                    log.info(
+                        "realtime[%s] supervised provider handoff%s",
+                        self.session_id,
+                        (
+                            f" ({getattr(event, 'handoff_id', '')})"
+                            if getattr(event, "handoff_id", None)
+                            else ""
+                        ),
+                    )
+                    self._start_deterministic_delegate(self._last_user_text)
                 elif event.type == "output_transcript_delta" and event.text:
                     delegate_state = self._delegate_turns.get(self._turn_id)
                     if (
@@ -3137,18 +3222,23 @@ class RealtimeVoiceSession:
         # The fresh transport may resolve to a different provider, model, or
         # sample rates — re-announce so playback and surface labels follow.
         try:
-            await self._send_json(
-                {
-                    "type": "audio_ready",
-                    "provider": self.active_provider,
-                    "model": self._active_model,
-                    "input_sample_rate": self._input_sample_rate,
-                    "output_sample_rate": int(
-                        getattr(self._provider, "output_sample_rate", 24_000)
-                        or 24_000
-                    ),
-                }
-            )
+            ready = {
+                "type": "audio_ready",
+                "provider": self.active_provider,
+                "model": self._active_model,
+                "requires_webrtc_answer": bool(
+                    getattr(self._provider, "requires_webrtc_offer", False)
+                ),
+                "input_sample_rate": self._input_sample_rate,
+                "output_sample_rate": int(
+                    getattr(self._provider, "output_sample_rate", 24_000)
+                    or 24_000
+                ),
+            }
+            answer_sdp = str(getattr(self._session, "answer_sdp", "") or "")
+            if answer_sdp:
+                ready["webrtc_answer_sdp"] = answer_sdp
+            await self._send_json(ready)
         except Exception:  # noqa: BLE001, S110 — surface refresh is best-effort
             pass
         return True
@@ -5048,10 +5138,22 @@ class RealtimeVoiceSession:
             self._queue_late_delegate_result(turn_state)
             return
         turn_state.delivery_started = True
+        trusted_reply = self._scrubbed_trusted_reply(turn_state)
+        if not trusted_reply:
+            from jarvis.voice.action_phrases import action_phrase
+
+            trusted_reply = action_phrase(
+                "cu_done" if succeeded else "action_failed_generic",
+                self._language,
+            )
+        # From this point onward every speech and persistence fallback must use
+        # the regex-scrubbed value (ADR-0010). The raw Brain answer must never
+        # reach appendSpeech, which synthesizes before our audio gate can help.
+        turn_state.last_reply = trusted_reply
         # Belt-and-braces echo reference: the exact reply text, independent
         # of the provider's (possibly lagging/garbled) readback
         # transcription (BUG-089).
-        self._register_spoken_reference(str(turn_state.last_reply or ""))
+        self._register_spoken_reference(trusted_reply)
         drop_before_delivery = self._drop_provider_output_until_new_response
         self._drop_provider_output_until_new_response = False
         try:
@@ -5064,13 +5166,17 @@ class RealtimeVoiceSession:
                     )
                 turn_state.pending_tool_calls.clear()
             else:
-                await self._session.send_text(
-                    _delegate_result_prompt(
-                        turn_state.last_reply,
-                        language=self._language,
-                        success=succeeded,
+                send_speech = getattr(self._session, "send_speech", None)
+                if callable(send_speech):
+                    await send_speech(trusted_reply)
+                else:
+                    await self._session.send_text(
+                        _delegate_result_prompt(
+                            trusted_reply,
+                            language=self._language,
+                            success=succeeded,
+                        )
                     )
-                )
         except Exception:  # noqa: BLE001 — preserve an honest surface fallback
             turn_state.delivery_started = False
             self._drop_provider_output_until_new_response = drop_before_delivery
@@ -5129,7 +5235,7 @@ class RealtimeVoiceSession:
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(_DELEGATE_READBACK_POLL_S)
-        reply = str(turn_state.last_reply or "").strip()
+        reply = self._scrubbed_trusted_reply(turn_state)
         # One reply, one voice: the turn-complete no-audio fallback may have
         # spoken it already through the same surface TTS, which never touches
         # the realtime sample counters this loop watches (live forensic

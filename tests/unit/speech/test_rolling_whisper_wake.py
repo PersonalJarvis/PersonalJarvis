@@ -1,7 +1,7 @@
 """Regression tests for the rolling-whisper wake backstop (custom phrases).
 
 Forensic 2026-06-22 (branch feat/fast-boot-bootstrap): a user who sets a custom
-wake word ("Hey Ruben") falls onto the ``stt_match`` path = RollingWhisperWake.
+wake word ("Hey Alex") falls onto the ``stt_match`` path = RollingWhisperWake.
 Two live symptoms — "huge delay" + "sometimes nothing at all":
 
 - LATENCY (this file): ``detect`` used to ``await transcribe_pcm`` *inside* the
@@ -97,8 +97,8 @@ async def test_detect_yields_keyword_when_transcript_matches() -> None:
     import re
 
     wake = RollingWhisperWake(
-        _PhraseSTT("hey ruben"),
-        pattern=re.compile(r"ruben"),
+        _PhraseSTT("hey alex"),
+        pattern=re.compile(r"alex"),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -124,7 +124,7 @@ async def test_detect_yields_keyword_when_transcript_matches() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop_feed))
     try:
         kw = await asyncio.wait_for(_first_keyword(), timeout=3.0)
-        assert kw == "ruben"
+        assert kw == "alex"
     finally:
         stop_feed.set()
         await src.put(None)
@@ -140,8 +140,8 @@ async def test_detect_accepts_short_live_wake_phrase_confidence() -> None:
     import re
 
     wake = RollingWhisperWake(
-        _PhraseSTT("Hey Ruben!", confidence=0.499, no_speech_prob=0.05734),
-        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        _PhraseSTT("Hey Alex!", confidence=0.499, no_speech_prob=0.05734),
+        pattern=re.compile(r"hey\W+alex", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -167,7 +167,7 @@ async def test_detect_accepts_short_live_wake_phrase_confidence() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop_feed))
     try:
         kw = await asyncio.wait_for(_first_keyword(), timeout=3.0)
-        assert kw.lower() == "hey ruben"
+        assert kw.lower() == "hey alex"
     finally:
         stop_feed.set()
         await src.put(None)
@@ -182,7 +182,7 @@ async def test_detect_accepts_real_world_low_confidence_wake() -> None:
     """The live base/cpu model scores a real, cleanly-heard wake well below 0.45.
 
     Forensic 2026-06-23 (running app, branch feat/fast-boot-bootstrap): the
-    rolling-whisper wake rejected a CORRECTLY transcribed "Ruben." at confidence
+    rolling-whisper wake rejected a CORRECTLY transcribed "Alex." at confidence
     0.318 — and 141 more like it (142 rejects / 0 accepts in a whole evening). The
     old ``min_wake_confidence=0.45`` gate, built to suppress *prompt-bias*
     hallucinations, also kills genuine quiet wakes (the bias is now disabled, so
@@ -192,8 +192,8 @@ async def test_detect_accepts_real_world_low_confidence_wake() -> None:
     import re
 
     wake = RollingWhisperWake(
-        _PhraseSTT("Hey Ruben", confidence=0.318, no_speech_prob=0.05),
-        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        _PhraseSTT("Hey Alex", confidence=0.318, no_speech_prob=0.05),
+        pattern=re.compile(r"hey\W+alex", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -219,7 +219,7 @@ async def test_detect_accepts_real_world_low_confidence_wake() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop_feed))
     try:
         kw = await asyncio.wait_for(_first_keyword(), timeout=3.0)
-        assert kw.lower() == "hey ruben"
+        assert kw.lower() == "hey alex"
     finally:
         stop_feed.set()
         await src.put(None)
@@ -239,8 +239,8 @@ async def test_detect_rejects_matching_low_confidence_transcript() -> None:
     import re
 
     wake = RollingWhisperWake(
-        _PhraseSTT("hey ruben", confidence=0.2),
-        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        _PhraseSTT("hey alex", confidence=0.2),
+        pattern=re.compile(r"hey\W+alex", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -289,8 +289,8 @@ async def test_detect_rejects_matching_high_no_speech_transcript() -> None:
     import re
 
     wake = RollingWhisperWake(
-        _PhraseSTT("hey ruben", confidence=0.9, no_speech_prob=0.95),
-        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        _PhraseSTT("hey alex", confidence=0.9, no_speech_prob=0.95),
+        pattern=re.compile(r"hey\W+alex", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,

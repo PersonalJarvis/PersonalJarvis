@@ -77,7 +77,7 @@ async def test_lookup_returns_contact_details() -> None:
             name="Christoph",
             relationship="friend",
             emails=["christoph@example.com"],
-            phones=["+12025550101"],
+            phones=["+4915112345678"],
             address={"street": "Hauptstr. 1", "city": "Berlin"},
             note_md="Old university friend.",
         )
@@ -88,7 +88,7 @@ async def test_lookup_returns_contact_details() -> None:
     out = result.output
     assert "Christoph" in out
     assert "christoph@example.com" in out
-    assert "+12025550101" in out
+    assert "+4915112345678" in out
     assert "Berlin" in out
 
 

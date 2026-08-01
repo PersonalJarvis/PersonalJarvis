@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-27
 **Branch:** feat/cartesia-tts
-**ADR:** [`ADR-021-web-search.md`](../adr/ADR-021-web-search.md)
+**ADR:** [`0021-web-search.md`](../adr/0021-web-search.md)
 **Scope:** Foundation wave — skill package, sanitiser, voice-override hook, client protocol, and full test surface.
 
 ## What landed

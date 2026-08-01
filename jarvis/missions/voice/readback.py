@@ -274,7 +274,7 @@ def render_agent_brand(phrase: str) -> str:
     """Resolve the ``{agent}``/``{agents}`` placeholders to the live brand.
 
     The public agent-system name follows the wake-word-derived assistant name
-    ("Ruben" -> "Ruben-Agent") for ANY configured wake word (2026-07-17
+    ("Alex" -> "Alex-Agent") for ANY configured wake word (2026-07-17
     rebrand). Read fresh per call so a wake-word change applies without a
     restart; any resolution failure falls back to the neutral
     "Assistant-Agent" — a spoken phrase must never carry a raw placeholder.

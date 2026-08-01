@@ -1,6 +1,6 @@
 """Deterministic explicit-desktop gate for LLM-chosen computer_use calls.
 
-Live incident 2026-07-21 11:36 (voice session 06a65611): the user asked a pure
+Live incident 2026-07-21 11:36 (voice session <SESSION_ID>): the user asked a pure
 knowledge question — "braucht die Golf 100 Start- und  # i18n-allow: forensic quote
 Landebahn" (what runway does the Gulfstream G100 need)  # i18n-allow: quote cont.
 — the realtime layer correctly delegated the turn to the router brain, and the
@@ -66,7 +66,7 @@ _UMLAUT_TRANSLITERATION = str.maketrans(
 # Tech proper names and terms of art that merely CONTAIN a vehicle token.
 # Masked out of the turn before the vehicle match runs, so a product name can
 # never read as an on-screen command. Live incident 2026-07-27 11:52 (voice
-# session 57cc5f5f): "…BGE-M3 und Gemini oder Open AI  # i18n-allow: live quote
+# session <SESSION_ID>): "…BGE-M3 und Gemini oder Open AI  # i18n-allow: live quote
 # Embedding 3 Large, was der Unterschied?" — a pure  # i18n-allow: quote cont.
 # model-comparison question. The provider name
 # "Open AI" matched the English open-verb, the gate allowed, and the router's

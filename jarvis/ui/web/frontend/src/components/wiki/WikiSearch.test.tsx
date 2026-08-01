@@ -56,7 +56,7 @@ function seedTreeCache(client: QueryClient) {
         count: 2,
         files: [
           { slug: "alex", title: "Alex", mtime: 2000, size: 412 },
-          { slug: "morgan", title: "Morgan", mtime: 1000, size: 289 },
+          { slug: "sam", title: "Sam", mtime: 1000, size: 289 },
         ],
       },
     ],
@@ -158,9 +158,9 @@ describe("WikiSearch", () => {
     });
     const items = screen.getAllByTestId("wiki-search-recent-item");
     expect(items).toHaveLength(2);
-    // Sorted by mtime desc — alex first (mtime=2000), morgan second.
+    // Sorted by mtime desc — alex first (mtime=2000), sam second.
     expect(items[0].getAttribute("data-slug")).toBe("alex");
-    expect(items[1].getAttribute("data-slug")).toBe("morgan");
+    expect(items[1].getAttribute("data-slug")).toBe("sam");
   });
 
   it("renders every server hit, even when the slug does not match the query", async () => {
@@ -177,9 +177,9 @@ describe("WikiSearch", () => {
             query: "birthday party",
             hits: [
               {
-                slug: "morgan",
-                title: "Morgan",
-                path: "entities/morgan.md",
+                slug: "sam",
+                title: "Sam",
+                path: "entities/sam.md",
                 snippet: "Plans the birthday party every year.",
                 score: 1,
               },
@@ -211,7 +211,7 @@ describe("WikiSearch", () => {
     await waitFor(() => {
       const hits = screen.getAllByTestId("wiki-search-hit");
       expect(hits).toHaveLength(1);
-      expect(hits[0].getAttribute("data-slug")).toBe("morgan");
+      expect(hits[0].getAttribute("data-slug")).toBe("sam");
     });
   });
 

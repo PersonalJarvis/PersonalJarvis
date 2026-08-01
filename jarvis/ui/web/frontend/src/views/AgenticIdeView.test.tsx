@@ -61,7 +61,6 @@ vi.mock("@/components/agentic/AgenticTerminal", () => ({
   AgenticTerminal: ({ name }: { name: string }) => (
     <div data-testid={`pane-${name}`}>{name}</div>
   ),
-  PaneStatusPill: () => <span>live</span>,
 }));
 
 vi.mock("@/lib/agenticIdeApi", () => ({
@@ -89,6 +88,21 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   fetchTerminalRecaps: vi.fn(async () => ({
     workspace_id: null,
     terminals: [],
+  })),
+  // The remembered terminal text size, read once when the grid mounts.
+  fetchTerminalUiPreferences: vi.fn(async () => ({
+    terminal_font_size: 13,
+    stored: false,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
+  saveTerminalFontSize: vi.fn(async (size: number) => ({
+    terminal_font_size: size,
+    stored: true,
+    min: 10,
+    max: 20,
+    default: 13,
   })),
 }));
 
@@ -273,10 +287,10 @@ beforeEach(() => {
         is_repo: true,
       },
     ],
-    device_name: "Alex's MacBook",
+    device_name: "Studio MacBook",
   });
   vi.mocked(api.fetchRecents).mockResolvedValue({
-    device_name: "Alex's MacBook",
+    device_name: "Studio MacBook",
     recents: [],
   });
   vi.mocked(api.searchFolders).mockResolvedValue({
@@ -614,14 +628,13 @@ describe("Agentic IDE launcher", () => {
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
   });
 
-  it("previews four terminals as two by two in a tall 2K workspace", async () => {
-    // The live grid gets 1,100 px after its 64 px toolbar/composer chrome. Four
-    // full-height TUI columns would pin their input at the bottom and leave the
-    // reported half-screen gap above it, so the preview must show the same 2 x
-    // 2 arrangement the running workspace now chooses.
+  it("previews four terminals side by side in a 2K workspace", async () => {
+    // An aspect-ratio rule used to fold these into 2 x 2. It re-dealt the
+    // running workspace on the fourth split (reported 2026-07-31), so rows are
+    // the user's choice now and only width wraps — the preview says the same.
     const stage = await stageAt(2048, "4", 1164);
-    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
   });
 
   it("draws one pane per terminal and never more than the stage can hold", async () => {

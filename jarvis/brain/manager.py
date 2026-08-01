@@ -1,4 +1,4 @@
-"""BrainManager: Intent-Router + Smart-Fallback + Pipeline-Adapter.
+﻿"""BrainManager: Intent-Router + Smart-Fallback + Pipeline-Adapter.
 
 Architecture:
 
@@ -946,8 +946,7 @@ def _is_definitional_question_about(user_text: str, token: str) -> bool:
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
 # even when they contain an everyday word that collides with an action verb in
 # the universal catalogue ("Frage" -> "frag"/"frage", the filler particle
-# "halt" -> "halt"). Live bug 2026-06-19 (voice session 11:53, Example-City
-# decision-routing turn): "ich hab ne Frage ... was würdest du mir empfehlen?"
+# "halt" -> "halt"). A conversational advice question containing both words
 # force-spawned because has_action_intent matched "Frage"/"halt", so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
 # work; the answer then returned out-of-band via the MissionAnnouncer and never
@@ -1467,7 +1466,7 @@ def _evidence_answer_is_unverified(
     from the tool's result. If the model returns a non-empty answer but the
     mandated tool never ran (``executed_tool_names``), that answer is necessarily
     unverified — at worst a confabulation (live repro 2026-06-17, session
-    296abc82: the model invented "the gcloud tool blocked execution because it
+    <SESSION_ID>: the model invented "the gcloud tool blocked execution because it
     classified the request as an explanatory question"). Empty answers and
     fire-and-forget ``suppress_response`` turns are handled elsewhere, so they
     are excluded here.
@@ -2198,7 +2197,7 @@ def _provider_down_phrase(lang: str, idx: int, cause: str | None = None) -> str:
 
 
 # AD-OE6: a model round that dies AFTER tools already ran must end in an honest
-# spoken notice, never silence. Forensic 2026-07-05 (session 3e27dd8e): the
+# spoken notice, never silence. Forensic 2026-07-05 (session <SESSION_ID>): the
 # provider sent finish_reason="error" on a ~224k-token round following 10+
 # executed tools; the empty-response guard is (correctly) skipped when tool
 # calls exist, so the turn counted as success with empty text — the user heard
@@ -3540,7 +3539,7 @@ class BrainManager:
             parts.append(persona_block)
 
         # User's own standing-instructions file (AGENTS.md / CLAUDE.md equivalent),
-        # named after the assistant (e.g. Ruben.md). Distinct from the persona: the
+        # named after the assistant (e.g. Alex.md). Distinct from the persona: the
         # user writes personal preferences here, and the block is framed so they
         # refine behaviour but never override safety/confirmations. Read fresh each
         # turn -> an edit applies on the next turn, no restart. A read fault must
@@ -7097,7 +7096,7 @@ class BrainManager:
         # never a heavy-worker spawn. Guards the verb-collision false positive
         # where an everyday word ("Frage" -> "frag", the filler "halt") trips
         # has_action_intent and pushes a pure chat turn into
-        # _is_generic_subagent_work. Live bug 2026-06-19 (decision-routing turn). The
+        # _is_generic_subagent_work. The
         # explicit heavy-work trigger hoisted above still wins, so "spawn a
         # subagent and tell me what you'd recommend" dispatches as asked.
         if _is_opinion_advice_question(t):
@@ -10344,7 +10343,7 @@ class BrainManager:
                 # response guard above is correctly skipped when tool calls
                 # exist, so without this branch the turn counts as a success
                 # with empty text and the user hears NOTHING (forensic
-                # 2026-07-05, session 3e27dd8e, 223k-token round). Do NOT
+                # 2026-07-05, session <SESSION_ID>, 223k-token round). Do NOT
                 # fall through to the next provider — the executed tools
                 # would re-run their side effects; speak honestly instead.
                 if (
@@ -10570,7 +10569,7 @@ class BrainManager:
             )
             return agg.text
 
-        # Evidence-gate enforcement (live repro 2026-06-17, session 296abc82):
+        # Evidence-gate enforcement (live repro 2026-06-17, session <SESSION_ID>):
         # the gate MANDATED a tool this turn, but neither the normal tool loop
         # nor the leaked-tool recovery above actually ran it — so the model's
         # answer is unverified, at worst a confabulation ("the gcloud tool

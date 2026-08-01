@@ -9,13 +9,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.2.0"
+version = "1.2.1"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Personal Jarvis Contributors" }]
+authors = [{ name = "Personal Jarvis Maintainer" }]  # i18n-allow: maintainer proper name (umlaut)
 keywords = [
     "voice-assistant",
     "ai-agent",
@@ -207,7 +207,7 @@ dependencies = [
     "watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
     # Atomic TOML edits from the desktop app (Phase 1b: provider persistence)
     "tomlkit>=0.12",
-    # === F-FRIENDS [F0+F1] · feature/friends-section · maintainer-2026-04-30 ===
+    # === F-FRIENDS [F0+F1] · feature/friends-section · alex-2026-04-30 ===
     # Phase F0 — async SQLite for FriendRegistry (previously transitive via chromadb).
     "aiosqlite>=0.21",
     # UltraWiki semantic store: sqlite-vec is the loadable SQLite extension that
@@ -269,8 +269,11 @@ ultrawiki-postgres = [
     # own server) through a plain connection string; vector search arrives as
     # the pgvector DB extension queried via SQL — no vector-DB SDK (UltraWiki
     # design D-2). Lazy-imported in jarvis/ultrawiki/store.py; the SQLite floor
-    # stays the universal base path, so this group is opt-in.
-    "psycopg[binary]>=3.2",
+    # stays the universal base path, so this group is opt-in. psycopg does not
+    # publish binary wheels for Windows ARM64, where its pure-Python wheel keeps
+    # the advertised full profile compiler-free and uses the system libpq.
+    "psycopg[binary]>=3.2; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "psycopg>=3.2; sys_platform == 'win32' and platform_machine == 'ARM64'",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -429,7 +432,9 @@ local-voice = [
     # files and then transcribes every language as English. Kept in step with
     # jarvis/speech/local_models.py::SHERPA_ONNX_PACKAGE, which the in-app
     # installer asks pip for.
-    "sherpa-onnx>=1.13.3",
+    # Upstream publishes no Windows ARM64 wheel. The providers already expose
+    # an honest unavailable state when the optional runtime is absent.
+    "sherpa-onnx>=1.13.3; sys_platform != 'win32' or platform_machine != 'ARM64'",
 ]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
@@ -524,7 +529,7 @@ screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
 # Transport adapter between the UI layer and the orchestrator (Plan §17.3).
 # Web channel is the first; Telegram/WhatsApp follow in Phase 8+.
 web = "jarvis.channels.web:WebChannel"
-# === F-FRIENDS [F1] · feature/friends-section · maintainer-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
 # Phase F1 — bidirectional Telegram bot channel (long polling).
 # Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
 telegram = "jarvis.channels.telegram:TelegramChannel"
@@ -537,6 +542,7 @@ discord = "jarvis.channels.discord:DiscordChannel"
 [project.entry-points."jarvis.realtime"]
 # Provider-neutral speech-to-speech plugins. Every adapter loads lazily; the
 # orchestrator chooses a credential-ready family and crosses families on failure.
+codex-subscription-realtime = "jarvis.plugins.realtime.codex_subscription:CodexSubscriptionRealtimeProvider"
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 
@@ -707,8 +713,8 @@ contact-upsert = "jarvis.plugins.tool.contact_upsert:ContactUpsertTool"
 call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["jarvis*"]
+where = [".", "src"]
+include = ["jarvis*", "skills*"]
 
 [tool.setuptools.package-data]
 jarvis = [

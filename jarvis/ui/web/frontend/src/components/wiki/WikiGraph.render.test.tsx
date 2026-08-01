@@ -64,10 +64,10 @@ const PAYLOAD = {
   ok: true,
   nodes: [
     { id: "alex", kind: "entity", title: "Alex" },
-    { id: "morgan", kind: "entity", title: "Morgan" },
+    { id: "sam", kind: "entity", title: "Sam" },
     { id: "golf", kind: "concept", title: "Golf" },
   ],
-  edges: [{ source: "alex", target: "morgan", context: "knows" }],
+  edges: [{ source: "alex", target: "sam", context: "knows" }],
   broken: [],
 };
 

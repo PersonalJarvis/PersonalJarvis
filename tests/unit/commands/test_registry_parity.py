@@ -137,6 +137,19 @@ def test_brain_switch_enum_excludes_subagent_only_providers() -> None:
     assert "antigravity" not in enum
 
 
+def test_realtime_switch_exposes_experimental_acknowledgement() -> None:
+    """Curated CLI/voice schema must match the REST activation contract."""
+    command = get_command("realtime-switch")
+    assert command is not None
+    properties = command.params["properties"]
+    assert "codex-subscription-realtime" in properties["provider"]["enum"]
+    assert properties["accept_experimental"] == {
+        "type": "boolean",
+        "default": False,
+        "description": "Explicitly acknowledge an experimental provider transport.",
+    }
+
+
 def test_spawn_agent_enum_follows_the_agent_registry() -> None:
     """A newly registered coding CLI must be spawnable by voice the same day.
 

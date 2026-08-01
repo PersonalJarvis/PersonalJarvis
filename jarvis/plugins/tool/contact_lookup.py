@@ -51,7 +51,7 @@ class ContactLookupTool:
         "Look up a saved contact by name or alias and return their e-mail "
         "address(es), phone number(s), postal address and notes. Call this "
         "FIRST whenever the user names a person for an action — e.g. 'schreib "
-        "eine Mail an Christoph', 'ruf Christoph an', 'was ist Caseys Nummer' — "
+        "eine Mail an Christoph', 'ruf Christoph an', 'was ist Lauras Nummer' — "
         "then chain into the gmail or call-contact tool with the resolved "
         "details. Read-only; it never sends or changes anything."
     )

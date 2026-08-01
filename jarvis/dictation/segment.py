@@ -81,6 +81,7 @@ def quietest_cut(
     try:
         samples = np.frombuffer(pcm[:limit], dtype=np.int16).astype(np.float32)
     except (ValueError, TypeError):
+        # Malformed PCM deliberately falls back to the safe nominal cut.
         return _align(limit)
     if samples.size == 0:
         return _align(limit)
@@ -198,6 +199,98 @@ _RELATIVE_SILENCE_FRACTION = 0.06
 _RELATIVE_SILENCE_RMS = 250.0
 
 
+#: Frame width used when scanning a window for sustained pauses. Short enough
+#: to place a pause edge within a syllable, long enough that one frame's RMS is
+#: a meaningful loudness reading.
+_RUN_FRAME_S = 0.05
+
+#: A quiet gap must last at least this long before it splits two speech runs.
+#: Inter-word pauses are shorter; this is the "breath between sentences" scale
+#: — the pause length that makes a cloud recognizer stop transcribing.
+_RUN_MIN_PAUSE_S = 0.6
+
+#: Audio kept around each run so a soft onset or trailing consonant is not
+#: clipped off by the frame grid.
+_RUN_PAD_S = 0.15
+
+
+def speech_runs(
+    pcm: bytes,
+    *,
+    session_peak: float = 0.0,
+    bytes_per_second: int = 16_000 * BYTES_PER_SAMPLE,
+    min_pause_s: float = _RUN_MIN_PAUSE_S,
+    pad_s: float = _RUN_PAD_S,
+) -> list[tuple[int, int]]:
+    """Byte ranges of continuous speech in ``pcm``, split at sustained pauses.
+
+    The energy-only answer to "does this recording contain a mid-recording
+    pause, and where does the speech on each side of it live?". Quiet gaps
+    shorter than ``min_pause_s`` stay inside their run — they are the pauses
+    between words, and cutting there would hand a recognizer half-words. Each
+    run is padded by ``pad_s`` on both sides and clamped to the buffer.
+
+    Quiet is judged with the same two tests as :func:`is_silent_segment` —
+    absolute room-tone floor plus far-below-``session_peak`` — on ENERGY only,
+    never on transcribed content (the wake path's AP-27 lesson). Returns ``[]``
+    when nothing in ``pcm`` reaches speech loudness, and one whole-buffer run
+    is simply a recording without a sustained pause.
+    """
+    if not pcm:
+        return []
+    frame_bytes = _align(max(BYTES_PER_SAMPLE, int(_RUN_FRAME_S * bytes_per_second)))
+    try:
+        samples = np.frombuffer(
+            pcm[: len(pcm) - (len(pcm) % BYTES_PER_SAMPLE)], dtype=np.int16
+        ).astype(np.float32)
+    except (ValueError, TypeError):
+        # Malformed PCM has no trustworthy speech run to return.
+        return []
+    if samples.size == 0:
+        return []
+    frame_samples = max(1, frame_bytes // BYTES_PER_SAMPLE)
+    frame_count = int(np.ceil(samples.size / frame_samples))
+    padded = np.zeros(frame_count * frame_samples, dtype=np.float32)
+    padded[: samples.size] = samples
+    frames = padded.reshape(frame_count, frame_samples)
+    peaks = np.max(np.abs(frames), axis=1)
+    rms = np.sqrt(np.mean(np.square(frames), axis=1))
+
+    quiet = (peaks < _CERTAIN_SILENCE_PEAK) & (rms < _CERTAIN_SILENCE_RMS)
+    if session_peak >= _SPEECH_REFERENCE_PEAK:
+        quiet |= (peaks < session_peak * _RELATIVE_SILENCE_FRACTION) & (rms < _RELATIVE_SILENCE_RMS)
+
+    speech_frames = np.flatnonzero(~quiet)
+    if speech_frames.size == 0:
+        return []
+
+    min_pause_frames = max(1, int(round(min_pause_s / _RUN_FRAME_S)))
+    runs: list[tuple[int, int]] = []  # in frame indices, inclusive
+    start = int(speech_frames[0])
+    prev = start
+    for frame in speech_frames[1:]:
+        idx = int(frame)
+        if idx - prev - 1 >= min_pause_frames:
+            runs.append((start, prev))
+            start = idx
+        prev = idx
+    runs.append((start, prev))
+
+    pad_bytes = _align(max(0, int(pad_s * bytes_per_second)))
+    ranges: list[tuple[int, int]] = []
+    for first, last in runs:
+        begin = max(0, first * frame_bytes - pad_bytes)
+        end = min(len(pcm), (last + 1) * frame_bytes + pad_bytes)
+        begin, end = _align(begin), _align(end)
+        if ranges and begin <= ranges[-1][1]:
+            # Padding bridged the gap — the pause was barely over the
+            # threshold, and two touching runs are one run.
+            ranges[-1] = (ranges[-1][0], end)
+        else:
+            ranges.append((begin, end))
+    return ranges
+
+
 def segment_energy(pcm: bytes) -> tuple[float, float]:
     """``(peak, rms)`` of ``pcm`` as int16 magnitudes. ``(0, 0)`` when empty.
 
@@ -209,6 +302,7 @@ def segment_energy(pcm: bytes) -> tuple[float, float]:
     try:
         samples = np.frombuffer(pcm, dtype=np.int16)
     except (ValueError, TypeError):
+        # Malformed PCM is treated as zero energy by this never-raise helper.
         return 0.0, 0.0
     if samples.size == 0:
         return 0.0, 0.0
@@ -251,4 +345,5 @@ __all__ = [
     "quality_windows",
     "quietest_cut",
     "segment_energy",
+    "speech_runs",
 ]

@@ -66,7 +66,7 @@ def _tid(uuid_or_str: UUID | str | None) -> str | None:
 def _agent_display_name() -> str:
     """Public display name for an agent node — the wake-word-derived brand.
 
-    "Ruben" -> "Ruben-Agent", for ANY configured wake word (2026-07-17
+    "Alex" -> "Alex-Agent", for ANY configured wake word (2026-07-17
     rebrand); resolution failures fall back to the neutral "Assistant-Agent".
     Read per node creation so a wake-word change applies without a restart.
     """

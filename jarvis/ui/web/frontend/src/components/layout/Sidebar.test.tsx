@@ -140,7 +140,7 @@ describe("Sidebar header avatar", () => {
       transcriptionFinal: true,
       connected: true,
       voiceReady: true,
-      assistantName: "Ruben",
+      assistantName: "Alex",
     });
   });
 
@@ -339,12 +339,12 @@ describe("Sidebar assistant name header", () => {
 
   test("renders the resolved assistant name (not a hardcoded 'Jarvis')", () => {
     // The header wordmark must follow the configured assistant name so a user
-    // who renames the assistant (e.g. to "Ruben") never sees a stale "Jarvis".
-    useEventStore.setState({ assistantName: "Ruben" });
+    // who renames the assistant (e.g. to "Alex") never sees a stale "Jarvis".
+    useEventStore.setState({ assistantName: "Alex" });
 
     renderSidebar();
 
-    expect(screen.getByText("Ruben")).toBeTruthy();
+    expect(screen.getByText("Alex")).toBeTruthy();
     expect(screen.queryByText("Jarvis")).toBeNull();
   });
 

@@ -253,7 +253,7 @@ or frontmatter:
 - personal names, email addresses, phone numbers, account names, internal
   project identifiers, machine identifiers, Windows security identifiers, or
   hostnames;
-- personal paths such as `<USER_HOME>\...`, local vault contents,
+- personal paths such as `C:\Users\<person>\...`, local vault contents,
   conversation text, contact data, or private repository URLs.
 
 Do not invent key-shaped sample values. When a credential is required, say:

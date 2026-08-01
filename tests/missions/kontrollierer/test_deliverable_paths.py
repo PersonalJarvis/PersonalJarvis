@@ -40,13 +40,13 @@ _REAL_JUNK = [
 ]
 
 # Real genuine deliverables from the SAME mission — every one must survive
-# (False == "is a deliverable"). Note: example-city-plan-render.png lives INSIDE
+# (False == "is a deliverable"). Note: melbourne-plan-render.png lives INSIDE
 # qa-artifacts/ next to the junk, so we must exclude the chrome-profile subtrees
 # WITHOUT excluding all of qa-artifacts/.
 _REAL_DELIVERABLES = [
     "index.html",
     "scripts/qa.mjs",
-    "qa-artifacts/example-city-plan-render.png",
+    "qa-artifacts/melbourne-plan-render.png",
     "qa-artifacts/.gitignore",
 ]
 
@@ -118,7 +118,7 @@ def test_empty_and_root_paths() -> None:
 
 # --- find_generator_scripts: the 2026-06-22 generator-script leak --------------
 # Live forensic (mission_019ef099): the user asked by voice for "one HTML file"
-# and got THREE deliverables — example_city_guide.html PLUS its Python generator
+# and got THREE deliverables — melbourne_guide.html PLUS its Python generator
 # generate_guide.py (which embeds the whole HTML as a string literal and writes
 # the sibling .html) PLUS a hero image. The user opened the .py and "only saw
 # code". A generator/build script is process scratch, not the thing asked for.
@@ -131,11 +131,11 @@ def _reader(mapping: dict[str, str]):
 
 
 def test_generator_script_emitting_sibling_html_is_detected() -> None:
-    files = ["generate_guide.py", "example_city_guide.html", "example_city_hero.jpg"]
+    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
     text = {
         "generate_guide.py": (
             'html_content = """<!DOCTYPE html><html lang="de">...</html>"""\n'
-            'with open("example_city_guide.html", "w", encoding="utf-8") as f:\n'
+            'with open("melbourne_guide.html", "w", encoding="utf-8") as f:\n'
             "    f.write(html_content)\n"
         ),
     }
@@ -145,15 +145,15 @@ def test_generator_script_emitting_sibling_html_is_detected() -> None:
 
 
 def test_emitted_doc_and_its_asset_are_never_dropped() -> None:
-    files = ["generate_guide.py", "example_city_guide.html", "example_city_hero.jpg"]
+    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
     text = {
         "generate_guide.py": (
-            '<!DOCTYPE html>\nopen("example_city_guide.html", "w").write(page)\n'
+            '<!DOCTYPE html>\nopen("melbourne_guide.html", "w").write(page)\n'
         )
     }
     gen = find_generator_scripts(files, _reader(text))
-    assert "example_city_guide.html" not in gen  # the real deliverable survives
-    assert "example_city_hero.jpg" not in gen  # its asset survives
+    assert "melbourne_guide.html" not in gen  # the real deliverable survives
+    assert "melbourne_hero.jpg" not in gen  # its asset survives
 
 
 def test_standalone_script_with_no_sibling_doc_is_kept() -> None:

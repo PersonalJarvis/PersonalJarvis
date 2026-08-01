@@ -360,7 +360,7 @@ SECRETS: list[SecretSpec] = [
         # never prompted — the secrets overview still shows "already stored".
         prompt=False,
     ),
-    # === F-FRIENDS [F1] · feature/friends-section · maintainer-2026-04-30 ===
+    # === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
     # Phase F1 — Telegram-channel bot token. The user creates a bot via
     # @BotFather, gets a token like ``123456:ABC-DEF...``, and enters it
     # here. ``getMe`` validation happens in TelegramChannel.start().

@@ -222,6 +222,7 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
     </Card>
   );
 }
+
 function TurnFacts({ turn }: { turn: RunTurn }) {
   const t = useT();
   const locale = useRunLocale();

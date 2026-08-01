@@ -31,7 +31,7 @@ def agent_brand_from_name(assistant_name: str) -> str:
     """Return the public agent-system display brand for ``assistant_name``.
 
     2026-07-17 rebrand: the user-visible name of the agent system follows the
-    wake-word-derived assistant name — "Ruben" -> "Ruben-Agent", "Athena" ->
+    wake-word-derived assistant name — "Alex" -> "Alex-Agent", "Athena" ->
     "Athena-Agent" — for ANY configured wake word, never a hardcoded product
     name. Internal identifiers keep the "Jarvis-Agents" system name; only
     display/spoken surfaces use this brand. TS mirror:

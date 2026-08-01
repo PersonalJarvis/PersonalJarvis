@@ -159,7 +159,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße Alex" as a task and spawned a Phase-6  # i18n-allow: German fixture
+# interpreted "Ich heiße Alex" as a task and spawned a Phase-6  # i18n-allow: sanitized German forensic fixture preserving the trigger shape
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(

@@ -94,7 +94,7 @@ def _gen_with_fallback(
 
 
 async def test_run_stream_fails_over_to_fallback_when_primary_times_out() -> None:
-    # Live bug 2026-06-18 (session b34a4bba): the Gemini ack timed out (4 s)
+    # Live bug 2026-06-18 (session <SESSION_ID>): the Gemini ack timed out (4 s)
     # while the Gemini deep brain was slow, and with no failover the user heard
     # 8 s of dead air and aborted. A SEPARATE fallback provider must speak
     # instead — realises the documented "Gemini primary, Grok fallback" design.

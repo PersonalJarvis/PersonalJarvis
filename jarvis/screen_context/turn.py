@@ -86,7 +86,7 @@ def reset_service() -> None:
     """
     global _service
     if _service is not None:
-        _service.discard_all()
+        _service.close()
     _service = None
 
 

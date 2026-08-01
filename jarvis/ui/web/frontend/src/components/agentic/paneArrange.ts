@@ -31,15 +31,24 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 export type DropZone = "swap" | "left" | "right" | "above" | "below";
 
 /**
- * How much of a pane's width/height each edge zone takes.
+ * The most of a pane's HEIGHT the stack-it bands at the top and bottom may take.
  *
- * 0.3 leaves the middle 40 % × 40 % as the swap zone, and swap is deliberately
- * the biggest target: "these two are the wrong way round" is the move people
- * actually reach for, and it is the only one that leaves the rest of the grid
- * exactly as it was. The edges then still start well inside the pane, so hitting
- * "put it to the left of this one" never requires pixel accuracy.
+ * Only the horizontal edges need a band at all — see `zoneFor`, where left and
+ * right split what is left between them. A share on its own was once the whole
+ * story and it made stacking far too easy to hit by accident: five panes draw
+ * each column tall and narrow, so 0.3 of the height is a very deep band, and the
+ * two of them together swallowed most of the pane (BUG-111).
  */
 export const EDGE_FRACTION = 0.3;
+
+/**
+ * The ceiling that keeps a stack-it band from growing with the pane.
+ *
+ * An edge is a place a user AIMS at, and aiming does not get harder because the
+ * pane got taller — so past a point the band stops growing and the sideways
+ * halves keep the rest.
+ */
+export const EDGE_MAX_PX = 88;
 
 /** Pixels the pointer must travel before a click on a header becomes a drag. */
 export const DRAG_THRESHOLD_PX = 5;
@@ -52,32 +61,54 @@ export interface PaneRect {
   height: number;
 }
 
-/** Which drop a point inside ``rect`` means. */
+/** Anything that changes what a drop means without moving the pointer. */
+export interface ZoneOptions {
+  /** The swap modifier is held — every drop becomes an exchange. */
+  swap?: boolean;
+  /** Share of the height the stack-it bands may claim. Test seam. */
+  edge?: number;
+}
+
+/**
+ * Which drop a point inside ``rect`` means.
+ *
+ * **Dragging MOVES a pane; it does not exchange two.** That is the whole shape
+ * of this function, and it was learned the hard way: carrying a pane sideways
+ * onto another one is how a person says "put it over there", and answering that
+ * with a swap sends the target back the other way — the user asked for one pane
+ * to move and two of them did (BUG-111). So the horizontal half the pointer is
+ * in decides which SIDE of the target the pane lands on, and every point in the
+ * pane is a landing place. There is no aiming, and no dead middle that means
+ * something else.
+ *
+ * Two bands are carved out first, along the top and bottom edges, for joining
+ * the target's own column — the one drop that is genuinely vertical, so it is
+ * the one that reads the vertical position. They are measured in PIXELS and
+ * capped (`EDGE_MAX_PX`), because a band that keeps a fixed SHARE of a tall
+ * narrow column is deep enough to swallow the sideways drag it sits in.
+ *
+ * Exchanging two panes is still worth having — it is the only move that leaves
+ * the grid's shape untouched — so it stays on the swap modifier, where it can no
+ * longer happen to someone who did not ask for it.
+ */
 export function zoneFor(
   rect: PaneRect,
   x: number,
   y: number,
-  edge: number = EDGE_FRACTION,
+  options: ZoneOptions = {},
 ): DropZone {
   // A pane with no measurable box (hidden behind a maximized sibling, or not
   // laid out yet) can still be pointed at in theory. Swap is the answer that
   // cannot produce a nonsensical layout, so it is the fallback.
   if (rect.width <= 0 || rect.height <= 0) return "swap";
-  const fx = (x - rect.left) / rect.width;
-  const fy = (y - rect.top) / rect.height;
-  const sides: Array<[DropZone, number]> = [
-    ["left", fx],
-    ["right", 1 - fx],
-    ["above", fy],
-    ["below", 1 - fy],
-  ];
-  // The nearest edge wins, which is what resolves the corners: a point in the
-  // top-left corner is closer to whichever of the two edges it is nearer to.
-  let best: [DropZone, number] = sides[0];
-  for (const side of sides) {
-    if (side[1] < best[1]) best = side;
+  if (options.swap) return "swap";
+  const band = Math.min(rect.height * (options.edge ?? EDGE_FRACTION), EDGE_MAX_PX);
+  const fromTop = y - rect.top;
+  const fromBottom = rect.top + rect.height - y;
+  if (fromTop <= band || fromBottom <= band) {
+    return fromTop <= fromBottom ? "above" : "below";
   }
-  return best[1] > edge ? "swap" : best[0];
+  return x - rect.left < rect.width / 2 ? "left" : "right";
 }
 
 /** A pane the drag can be dropped on, as measured right now. */
@@ -104,6 +135,7 @@ export function pickTarget(
   held: string | null,
   x: number,
   y: number,
+  options: ZoneOptions = {},
 ): ArrangeHover | null {
   for (const candidate of targets) {
     if (candidate.name === held) continue;
@@ -115,11 +147,19 @@ export function pickTarget(
       y >= rect.top &&
       y <= rect.top + rect.height
     ) {
-      return { target: candidate.name, zone: zoneFor(rect, x, y) };
+      return { target: candidate.name, zone: zoneFor(rect, x, y, options) };
     }
   }
   return null;
 }
+
+/**
+ * The key that turns a move into an exchange, held during the drag.
+ *
+ * Shift rather than Alt: on Windows a bare Alt press is the window menu's own
+ * shortcut, so letting go of it mid-drag pulls focus out of the page.
+ */
+export const SWAP_MODIFIER = "Shift";
 
 export interface PaneArrange {
   /** Call-sign of the pane currently in hand, or null when nothing is held. */
@@ -128,6 +168,8 @@ export interface PaneArrange {
   hover: ArrangeHover | null;
   /** Viewport coordinates of the cursor, for the label that follows it. */
   point: { x: number; y: number } | null;
+  /** Whether the swap modifier is down, so the label can say what it changes. */
+  swapping: boolean;
   /** Start a drag — wired to the pane header's `pointerdown`. */
   start: (name: string, event: ReactPointerEvent) => void;
   /** Ref callback that lets a pane cell be measured as a drop target. */
@@ -157,12 +199,17 @@ export function usePaneArrange(
   // without being re-created (and re-registered) on every move.
   const heldRef = useRef<string | null>(null);
   const hoverRef = useRef<ArrangeHover | null>(null);
+  // The last place the pointer was, so pressing or releasing the swap modifier
+  // can re-answer "what would a drop here do" without the pointer moving.
+  const pointRef = useRef<{ x: number; y: number } | null>(null);
+  const swapRef = useRef(false);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
 
   const [held, setHeld] = useState<string | null>(null);
   const [hover, setHover] = useState<ArrangeHover | null>(null);
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
+  const [swapping, setSwapping] = useState(false);
 
   const finish = useCallback((commit: boolean) => {
     const moved = heldRef.current;
@@ -172,9 +219,12 @@ export function usePaneArrange(
     pending.current = null;
     heldRef.current = null;
     hoverRef.current = null;
+    pointRef.current = null;
+    swapRef.current = false;
     setHeld(null);
     setHover(null);
     setPoint(null);
+    setSwapping(false);
     // `moved` is null for a press that never crossed the threshold — an
     // ordinary click on the header, which must stay an ordinary click.
     if (commit && moved && drop && drop.target !== moved) {
@@ -204,6 +254,18 @@ export function usePaneArrange(
         x: event.clientX,
         y: event.clientY,
       };
+      swapRef.current = event.shiftKey;
+
+      /** Re-read what a drop would mean, from wherever the pointer already is. */
+      const reread = () => {
+        const at = pointRef.current;
+        if (at === null || heldRef.current === null) return;
+        const next = pickTarget(measure(), heldRef.current, at.x, at.y, {
+          swap: swapRef.current,
+        });
+        hoverRef.current = next;
+        setHover(next);
+      };
 
       const onMove = (moveEvent: globalThis.PointerEvent) => {
         const origin = pending.current;
@@ -220,15 +282,16 @@ export function usePaneArrange(
         // Stops the browser from turning the drag into a text selection that
         // sweeps across every pane it crosses.
         moveEvent.preventDefault();
-        setPoint({ x: moveEvent.clientX, y: moveEvent.clientY });
-        const next = pickTarget(
-          measure(),
-          heldRef.current,
-          moveEvent.clientX,
-          moveEvent.clientY,
-        );
-        hoverRef.current = next;
-        setHover(next);
+        pointRef.current = { x: moveEvent.clientX, y: moveEvent.clientY };
+        setPoint(pointRef.current);
+        // Read from the event rather than trusting the key listeners alone: a
+        // modifier pressed or released while the window was in the background
+        // never fired one, and the pointer event always carries the truth.
+        if (moveEvent.shiftKey !== swapRef.current) {
+          swapRef.current = moveEvent.shiftKey;
+          setSwapping(moveEvent.shiftKey);
+        }
+        reread();
       };
 
       const onUp = (upEvent: globalThis.PointerEvent) => {
@@ -237,7 +300,22 @@ export function usePaneArrange(
       };
       const onCancel = () => finish(false);
       const onKey = (keyEvent: globalThis.KeyboardEvent) => {
-        if (keyEvent.key === "Escape") finish(false);
+        if (keyEvent.key === "Escape") {
+          finish(false);
+          return;
+        }
+        if (keyEvent.key === SWAP_MODIFIER && !swapRef.current) {
+          swapRef.current = true;
+          setSwapping(true);
+          reread();
+        }
+      };
+      const onKeyUp = (keyEvent: globalThis.KeyboardEvent) => {
+        if (keyEvent.key === SWAP_MODIFIER && swapRef.current) {
+          swapRef.current = false;
+          setSwapping(false);
+          reread();
+        }
       };
       // Also a backstop: a pointerup delivered outside the window never
       // arrives, and a pane would otherwise stay stuck to the cursor.
@@ -247,12 +325,14 @@ export function usePaneArrange(
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onCancel);
       window.addEventListener("keydown", onKey);
+      window.addEventListener("keyup", onKeyUp);
       window.addEventListener("blur", onBlur);
       cleanup.current = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onCancel);
         window.removeEventListener("keydown", onKey);
+        window.removeEventListener("keyup", onKeyUp);
         window.removeEventListener("blur", onBlur);
       };
     },
@@ -273,5 +353,5 @@ export function usePaneArrange(
     return callback;
   }, []);
 
-  return { held, hover, point, start, registerCell };
+  return { held, hover, point, swapping, start, registerCell };
 }

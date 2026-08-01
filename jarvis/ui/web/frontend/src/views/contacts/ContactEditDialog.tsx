@@ -153,7 +153,7 @@ export function ContactEditDialog({
             label={t("contacts.phones")}
             values={phones}
             onChange={setPhones}
-            placeholder="+1 202-555-0103"
+            placeholder="+49 151 2345 6789"
             type="tel"
             addLabel={t("contacts.addPhone")}
           />

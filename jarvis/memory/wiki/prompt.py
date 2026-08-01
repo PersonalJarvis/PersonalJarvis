@@ -134,8 +134,8 @@ dismiss them as smalltalk:
     * "I always work with Spotify"           → user entity, Facts/Habits
 - **Other-person identity facts**: same shape, just on their own
   entity page.
-    * "Morgan likes hiking"                 → entities/morgan.md
-    * "My boss is named Tom"                → entities/tom.md + relationship
+    * "Jordan coordinates the garden project" → entities/jordan.md
+    * "My team lead is named Taylor"        → entities/taylor.md + relationship
 - **Active projects / undertakings**: anything the user describes as
   current work-in-progress.
     * "I am working on a pixel-art editor"  → projects/pixel-art-editor.md

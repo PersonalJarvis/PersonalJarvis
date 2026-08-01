@@ -159,12 +159,9 @@ async def test_task_runs_sweep_then_cancels(tmp_path: Path) -> None:
 async def test_task_continues_on_sweep_error(tmp_path: Path, monkeypatch) -> None:
     """A failing sweep is logged, the task keeps looping."""
     call_count = {"n": 0}
-    second_call = asyncio.Event()
 
     async def crashing_sweep(*args, **kwargs):
         call_count["n"] += 1
-        if call_count["n"] >= 2:
-            second_call.set()
         raise RuntimeError("simulated")
 
     monkeypatch.setattr(
@@ -178,12 +175,12 @@ async def test_task_continues_on_sweep_error(tmp_path: Path, monkeypatch) -> Non
             interval_seconds=0.05,
         )
     )
+    await asyncio.sleep(0.2)
+    task.cancel()
     try:
-        await asyncio.wait_for(second_call.wait(), timeout=2.0)
-    finally:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        await task
+    except asyncio.CancelledError:
+        pass
 
     assert call_count["n"] >= 2
 

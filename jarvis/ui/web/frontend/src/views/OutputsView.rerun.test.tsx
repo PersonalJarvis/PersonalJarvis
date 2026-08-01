@@ -190,15 +190,15 @@ describe("OutputsView rerun button gating", () => {
     // clicking it jumps to the child.
     installFetchMock([
       session({
-        slug: "mission_019f0fa6-4ff6",
+        slug: "mission_parent-test",
         utterance: "Parent task",
         status: "cancelled",
         mission_id: "m-parent",
-        active_child_id: "019f0fac-26a3-7c59",
-        active_child_slug: "mission_019f0fac-26a3",
+        active_child_id: "child-test-id",
+        active_child_slug: "mission_child-test",
       }),
       session({
-        slug: "mission_019f0fac-26a3",
+        slug: "mission_child-test",
         utterance: "Child task",
         status: "running",
         mission_id: "m-child",

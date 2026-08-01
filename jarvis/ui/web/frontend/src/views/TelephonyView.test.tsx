@@ -82,7 +82,7 @@ const STATUS_OK = {
   configured: true,
   enabled: true,
   account_sid_masked: "AC••••••cdef",
-  phone_number: "+1202555010289",
+  phone_number: "+4930123456789",
   public_base_url: LONG_PUBLIC_URL,
   webhook_url: `${LONG_PUBLIC_URL}/api/telephony/voice`,
   auth_token_set: true,
@@ -97,7 +97,7 @@ const STATUS_OK = {
 const CONFIG_OK = {
   enabled: true,
   account_sid: FULL_ACCOUNT_SID,
-  phone_number: "+1202555010289",
+  phone_number: "+4930123456789",
   public_base_url: LONG_PUBLIC_URL,
   greeting: "",
   language_code: "de-DE",
@@ -121,8 +121,8 @@ const CALLS_OK = {
   calls: [
     {
       call_sid: "CA1111111111111111111111111111aaaa",
-      from: "+12025550101",
-      to: "+1202555010289",
+      from: "+4915112345678",
+      to: "+4930123456789",
       started_at: "2026-05-24T10:00:00Z",
       ended_at: "2026-05-24T10:01:30Z",
       duration_s: 90,
@@ -159,7 +159,7 @@ describe("TelephonyView — status rendering", () => {
 
     // Phone number and webhook surface verbatim.
     expect(screen.getByTestId("status-phone-number").textContent).toBe(
-      "+1202555010289",
+      "+4930123456789",
     );
   });
 

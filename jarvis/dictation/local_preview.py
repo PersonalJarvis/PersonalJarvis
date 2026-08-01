@@ -106,29 +106,71 @@ class LocalPreviewTranscriber:
     def _load_model(self) -> None:
         """Build the engine. Runs OFF the transcribe path — see ``transcribe``."""
         try:
-            from faster_whisper import WhisperModel
+            from jarvis.plugins.stt.fwhisper import _new_whisper_model
 
-            device, compute = self._pick_device()
-            model = WhisperModel(
-                self._model_name, device=device, compute_type=compute
-            )
-            with self._lock:
-                self._model = model
-            log.info(
-                "Dictation preview engine ready: %s on %s (%s).",
-                self._model_name,
-                device,
-                compute,
-            )
-        except Exception as exc:  # noqa: BLE001 — a preview must never break dictation
-            self._load_failed = True
-            self._unavailable = True
-            log.info(
-                "Local dictation preview unavailable (%s: %s) — the transcript "
-                "is unaffected; the live line falls back to the provider.",
-                type(exc).__name__,
-                exc,
-            )
+            preferred = self._pick_device()
+            attempts = [preferred]
+            if preferred[0] != "cpu":
+                attempts.append(("cpu", "int8"))
+            last_error: Exception | None = None
+            for device, compute in attempts:
+                try:
+                    model = _new_whisper_model(self._model_name, device, compute)
+                except Exception as exc:  # noqa: BLE001 — try the portable floor
+                    last_error = exc
+                    log.info(
+                        "Dictation preview engine could not use %s (%s: %s).",
+                        device,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    continue
+                try:
+                    # Constructing the model does not pay CUDA's first-decode
+                    # setup cost. Prime one throwaway greedy decode here, while
+                    # the preview is still advertised as unavailable, so the
+                    # first visible preview keeps the steady-state latency.
+                    import numpy as np
+
+                    rng = np.random.default_rng(0)
+                    warm_audio = (
+                        rng.standard_normal(16_000).astype(np.float32) * 0.001
+                    )
+                    segments, _info = model.transcribe(
+                        warm_audio,
+                        beam_size=1,
+                        temperature=0.0,
+                        condition_on_previous_text=False,
+                    )
+                    list(segments)
+                except Exception as exc:  # noqa: BLE001 — try the portable floor
+                    last_error = exc
+                    log.info(
+                        "Dictation preview rejected %s after its first "
+                        "decode failed (%s: %s).",
+                        device,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    continue
+                with self._lock:
+                    self._model = model
+                log.info(
+                    "Dictation preview engine ready: %s on %s (%s).",
+                    self._model_name,
+                    device,
+                    compute,
+                )
+                break
+            else:
+                self._load_failed = True
+                self._unavailable = True
+                log.info(
+                    "Local dictation preview unavailable (%s: %s) — the transcript "
+                    "is unaffected; the live line falls back to the provider.",
+                    type(last_error).__name__ if last_error is not None else "Error",
+                    last_error or "no usable local inference device",
+                )
         finally:
             self._loading = False
 
@@ -136,15 +178,25 @@ class LocalPreviewTranscriber:
     def _pick_device() -> tuple[str, str]:
         """``(device, compute_type)`` — CUDA when it is genuinely usable.
 
-        Capability probe, never a hardware name (AP-21/AP-25 territory): CUDA
-        being importable and CUDA working are different questions, and the
-        answer here only decides how FAST the preview is. Anything uncertain
-        picks CPU, which always works.
+        Ask the inference runtime that will actually execute the model. Importing
+        torch here was both indirect and racy: the faster-whisper import shield
+        can temporarily hide torch from another loader thread, which made a
+        CUDA-capable desktop silently choose the CPU for the rest of the process.
+        Anything uncertain picks CPU, and ``_load_model`` still proves the choice
+        with a real model build before accepting it.
         """
         try:
-            import torch
+            from jarvis.plugins.stt.fwhisper import (
+                ensure_cuda_libraries_findable,
+                inference_only_import_shield,
+            )
 
-            if torch.cuda.is_available():
+            ensure_cuda_libraries_findable()
+            with inference_only_import_shield():
+                import ctranslate2
+
+            supported = ctranslate2.get_supported_compute_types("cuda")
+            if "int8_float16" in supported:
                 return "cuda", "int8_float16"
         except Exception as exc:  # noqa: BLE001 — a probe must never decide by raising
             log.debug("Preview CUDA probe failed (%s); using CPU.", exc)
@@ -170,6 +222,10 @@ class LocalPreviewTranscriber:
             samples,
             language=language,
             beam_size=1,  # greedy: the preview trades a little accuracy for latency
+            # A tuple/default enables Whisper's temperature fallback ladder and
+            # may decode the same stale preview repeatedly. One fixed greedy
+            # pass keeps the measured path in the tens-of-milliseconds range.
+            temperature=0.0,
             condition_on_previous_text=False,
         )
         text = " ".join(seg.text for seg in segments).strip()
@@ -205,18 +261,29 @@ class LocalPreviewTranscriber:
             # first couple of seconds is not a failure of anything.
             self._start_loading()
             return None
-        if not self._busy.acquire(blocking=False):
+        guard = self._busy
+        if not guard.acquire(blocking=False):
             # A previous preview is still running. Skipping is correct: a queued
-            # call on a native engine is how it wedges (AP-24).
+            # call on a native engine is how it wedges (AP-24). This can only
+            # persist after a timed-out/cancelled waiter, so count it toward
+            # recovery; otherwise one truly wedged worker owns the guard forever.
+            self._note_failure("still busy after its waiter ended")
             return None
+        work: asyncio.Task[tuple[str, str, float]] | None = None
+        release_here = True
         try:
-            text, detected, probability = await asyncio.wait_for(
+            work = asyncio.create_task(
                 asyncio.to_thread(self._transcribe_sync, pcm, language),
+                name="dictation-local-preview",
+            )
+            text, detected, probability = await asyncio.wait_for(
+                asyncio.shield(work),
                 timeout=PREVIEW_TIMEOUT_S,
             )
             if detected:
                 self.last_language = detected
                 self.last_language_probability = probability
+            self._failures = 0
             return text
         except TimeoutError:
             # Not silent: _note_failure logs the attempt and drops the engine once
@@ -229,7 +296,27 @@ class LocalPreviewTranscriber:
             self._note_failure(f"{type(exc).__name__}: {exc}")
             return None
         finally:
-            self._busy.release()
+            if work is not None and not work.done():
+                # Cancelling or timing out the asyncio waiter does not stop the
+                # native thread. Keep the non-blocking guard held until that
+                # thread really exits, or the next preview would enter the same
+                # ctranslate2 session concurrently (AP-24).
+                release_here = False
+
+                def _release_finished_worker(done: asyncio.Task) -> None:
+                    guard.release()
+                    try:
+                        done.result()
+                    except asyncio.CancelledError:
+                        # Cancellation is the expected terminal state here; the
+                        # guard was already released before reading the result.
+                        pass
+                    except Exception as exc:  # noqa: BLE001 — detached worker is contained
+                        log.debug("Detached dictation preview failed: %s", exc)
+
+                work.add_done_callback(_release_finished_worker)
+            if release_here:
+                guard.release()
 
     def _start_loading(self) -> None:
         """Kick off a one-shot background load. Cheap and idempotent."""
@@ -260,7 +347,11 @@ class LocalPreviewTranscriber:
         if self._failures < _MAX_FAILURES:
             return
         with self._lock:
+            # The old native worker keeps its captured model and guard. Rotate
+            # both references atomically so the next tick builds a genuinely
+            # fresh session rather than re-polling a wedged engine (AP-24).
             self._model = None
+            self._busy = threading.Lock()
         self._failures = 0
         log.info("Dictation preview engine dropped (%s); rebuilding on the next tick.", why)
 

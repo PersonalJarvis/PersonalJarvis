@@ -10,7 +10,7 @@ the runtime passes one.
 Only pages under the four interactive page-kind directories
 (``entities/``, ``concepts/``, ``projects/``, ``sessions/``) are yielded:
 
-- ``external_id`` — ``"<kind>/<slug>"`` (e.g. ``"entities/elizabeth"``).
+- ``external_id`` — ``"<kind>/<slug>"`` (e.g. ``"entities/viktoria"``).
 - ``title`` — frontmatter ``title:`` value, else the first ``# `` heading,
   else the slug.
 - ``permalink`` — ``file://`` URI of the page.

@@ -48,7 +48,7 @@ const STATUS = {
   configured: true,
   enabled: true,
   account_sid_masked: "AC••••••cdef",
-  phone_number: "+1202555010289",
+  phone_number: "+4930123456789",
   public_base_url: "https://jarvis.example.com",
   webhook_url: "https://jarvis.example.com/api/telephony/voice",
   auth_token_set: true,

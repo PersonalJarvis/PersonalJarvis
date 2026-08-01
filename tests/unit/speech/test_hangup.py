@@ -114,14 +114,14 @@ def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:
 
 
 def test_contains_end_signal_detects_token() -> None:
-    assert contains_end_signal("Bis später, Ruben. [[END_CALL]]") is True  # i18n-allow
-    assert contains_end_signal("Bis später, Ruben.") is False  # i18n-allow
+    assert contains_end_signal("Bis später, Alex. [[END_CALL]]") is True  # i18n-allow
+    assert contains_end_signal("Bis später, Alex.") is False  # i18n-allow
     assert contains_end_signal("") is False
     assert contains_end_signal(None) is False  # type: ignore[arg-type]
 
 
 def test_strip_end_signal_removes_token_and_trims() -> None:
-    assert strip_end_signal("Bis später, Ruben. [[END_CALL]]") == "Bis später, Ruben."  # i18n-allow
+    assert strip_end_signal("Bis später, Alex. [[END_CALL]]") == "Bis später, Alex."  # i18n-allow
     assert strip_end_signal("[[END_CALL]]") == ""
     assert strip_end_signal("Auf Wiedersehen.") == "Auf Wiedersehen."
 
@@ -133,10 +133,10 @@ def test_end_call_signal_is_the_documented_token() -> None:
 @pytest.mark.parametrize(
     "phrase",
     [
-        "goodbye, ruben",
-        "goodbye ruben",
-        "auf wiedersehen, ruben",
-        "auf wiedersehen ruben",
+        "goodbye, alex",
+        "goodbye alex",
+        "auf wiedersehen, alex",
+        "auf wiedersehen alex",
         "goodbye, sir",
         "goodbye sir",
     ],
@@ -146,6 +146,6 @@ def test_is_legacy_farewell_matches_old_exact_phrases(phrase: str) -> None:
 
 
 def test_is_legacy_farewell_rejects_other_text() -> None:
-    assert is_legacy_farewell("auf wiedersehen ruben war mir ein vergnügen") is False  # i18n-allow
-    assert is_legacy_farewell("hallo ruben") is False
+    assert is_legacy_farewell("auf wiedersehen alex war mir ein vergnügen") is False  # i18n-allow
+    assert is_legacy_farewell("hallo alex") is False
     assert is_legacy_farewell("") is False

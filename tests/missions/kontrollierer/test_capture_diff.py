@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import time
 import uuid
 from pathlib import Path
 
@@ -76,9 +75,7 @@ def kontrollierer() -> Kontrollierer:
     return object.__new__(Kontrollierer)
 
 
-def test_capture_diff_surfaces_newly_created_file(
-    worktree: Path, kontrollierer: Kontrollierer
-) -> None:
+def test_capture_diff_surfaces_newly_created_file(worktree: Path, kontrollierer: Kontrollierer) -> None:
     """BUG-LIVE-01 — a brand-new file in the worktree must appear in the
     captured diff. `git add -N .` + `git diff HEAD` is supposed to handle
     this, but if it doesn't the belt-and-braces `ls-files --others`
@@ -460,45 +457,6 @@ def test_snapshot_promotion_failure_rolls_back_previous_durable_draft(
     assert not list(draft_artifacts.glob(".files-previous-*"))
 
 
-def test_snapshot_promotion_retries_transient_windows_file_lock(
-    worktree: Path,
-    kontrollierer: Kontrollierer,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A short scanner lock must not discard an otherwise complete archive."""
-    mission_dir = tmp_path / "mission_root"
-    mission_dir.mkdir()
-    output = worktree / "report.html"
-    output.write_text("<!doctype html><p>durable draft</p>", encoding="utf-8")
-    real_replace = Path.replace
-    attempts = 0
-
-    def fail_first_staged_promotion(source: Path, target: Path) -> Path:
-        nonlocal attempts
-        if source.name.startswith(".files-next-"):
-            attempts += 1
-            if attempts == 1:
-                raise PermissionError("simulated transient scanner lock")
-        return real_replace(source, target)
-
-    monkeypatch.setattr(Path, "replace", fail_first_staged_promotion)
-    monkeypatch.setattr(time, "sleep", lambda _delay: None)
-
-    artifacts = kontrollierer._archive_task_artifacts(
-        worktree=worktree,
-        mission_dir=mission_dir,
-        task_id="promotion-retry",
-        drain_iteration_diffs=False,
-    )
-
-    assert artifacts is not None
-    assert attempts == 2
-    assert (artifacts / "files" / output.name).read_text(encoding="utf-8") == (
-        "<!doctype html><p>durable draft</p>"
-    )
-
-
 # --- 2026-05-27 hardening audit: archive must round-trip non-ASCII and
 #     gitignored deliverables, and must NOT leak materialized contract files.
 
@@ -511,9 +469,8 @@ def test_archive_copies_non_ascii_deliverable(
     must land in artifacts/files/. git core.quotepath=true octal-escapes the
     name in both `ls-files` and the staged diff; the archive path must
     round-trip it to the real on-disk name."""
-    (worktree / "Werbungä.html").write_text(  # i18n-allow: literal filename
-        "<h1>Hallo Welt</h1>\n",  # i18n-allow: arbitrary fixture content
-        encoding="utf-8",
+    (worktree / "Werbungä.html").write_text(  # i18n-allow: literal umlaut filename under test
+        "<h1>Hallo Welt</h1>\n", encoding="utf-8"  # i18n-allow: arbitrary file content, not user-facing prose
     )
     mission_dir = tmp_path / "mission_root"
     mission_dir.mkdir()
@@ -730,7 +687,7 @@ def test_archive_skips_browser_profile_scratch(
     qa = worktree / "qa-artifacts"
     qa.mkdir()
     (qa / ".gitignore").write_text("chrome-profile-*/\n", encoding="utf-8")
-    (qa / "example-city-plan-render.png").write_bytes(b"\x89PNG\r\n\x1a\n realdata")
+    (qa / "melbourne-plan-render.png").write_bytes(b"\x89PNG\r\n\x1a\n realdata")
     # Browser scratch the worker gitignored — 4 profiles' worth of cache junk,
     # incl. a 0-byte journal ("empty file") and a top-level profile file that
     # carries no cache-dir segment (only the profile-root match catches it).
@@ -745,11 +702,7 @@ def test_archive_skips_browser_profile_scratch(
 
     # Sanity: the profile really is gitignored (so only the --ignored union
     # could resurrect it), mirroring the live mission.
-    chk = _git(
-        "check-ignore",
-        "qa-artifacts/chrome-profile-dd6355b81ddb49db87fc5045a7012b19/Last Browser",
-        cwd=worktree,
-    )
+    chk = _git("check-ignore", "qa-artifacts/chrome-profile-dd6355b81ddb49db87fc5045a7012b19/Last Browser", cwd=worktree)
     if chk.returncode != 0:
         pytest.skip(
             "chrome-profile not gitignored in this worktree state — "
@@ -770,7 +723,7 @@ def test_archive_skips_browser_profile_scratch(
     files_dir = artifacts / "files"
     # Real deliverables survive.
     assert (files_dir / "index.html").exists(), "genuine deliverable missing"
-    assert (files_dir / "qa-artifacts" / "example-city-plan-render.png").exists(), (
+    assert (files_dir / "qa-artifacts" / "melbourne-plan-render.png").exists(), (
         "real artifact inside qa-artifacts/ was wrongly dropped"
     )
     # The whole browser-profile subtree is gone — no chrome-profile dir at all.

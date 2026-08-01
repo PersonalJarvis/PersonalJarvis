@@ -315,10 +315,12 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
         }
         onClick={() => void toggle()}
         className={cn(
-          "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+          // Quiet glyph at rest, loud only while something actually waits —
+          // the toolbar's shared rule (see TOOLBAR_BTN in AgenticGrid).
+          "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
           unread > 0
-            ? "border-primary/60 bg-primary/15 text-primary hover:bg-primary/25"
-            : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+            ? "bg-primary/15 text-primary hover:bg-primary/25"
+            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
         )}
       >
         <Bell className={cn("h-4 w-4", unread > 0 && "animate-[pulse_2s_ease-in-out_2]")} />

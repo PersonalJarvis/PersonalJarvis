@@ -100,7 +100,7 @@ class TestObsidianVault:
         assert [item.external_id for item in items] == ["daily/idea.md", "note.md"]
         note = next(item for item in items if item.external_id == "note.md")
         assert note.title == "Meeting Notes"
-        assert "Project Atlas" in note.body
+        assert "Viktoria" in note.body
         assert note.permalink == (root / "note.md").resolve().as_uri()
         for item in items:
             assert _ISO_UTC_RE.fullmatch(item.timestamp_utc)
@@ -222,7 +222,7 @@ class TestLocalFolder:
 class TestLocalFolderRootPath:
     """A folder path a human typed or pasted, and what it must not do silently.
 
-    The user pasted ``<USER_HOME>>`` — the trailing ``>``
+    The maintainer pasted ``<USER_HOME>>`` — the trailing ``>``
     belongs to the shell PROMPT, not to the path. The source registered, the
     import reported "done", and the card showed zero items with no reason
     anywhere. Both halves are pinned here: clean what is obviously shell

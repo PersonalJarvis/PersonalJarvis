@@ -288,7 +288,7 @@ class RollingWhisperWake:
         language: str = "de",
         # faster-whisper's exp(avg_logprob) score is harsh on 1-2 word wake
         # chunks: live, cleanly-heard custom-name wakes land at ~0.28-0.52 (real
-        # samples 2026-06-23: "Ruben." 0.318, "Hey Ruhm" 0.365, "Hey Ruben" 0.52).
+        # samples 2026-06-23: "Alex." 0.318, "Hey Ruhm" 0.365, "Hey Alex" 0.52).
         # A 0.45 floor rejected EVERY genuine wake (142 rejects / 0 accepts in one
         # evening). That floor was built to suppress *prompt-bias* hallucinations,
         # but the bias is now disabled (build_wake_whisper passes initial_prompt

@@ -533,6 +533,7 @@ class GeminiLiveProvider:
     # alias backed by the very same credential family (AP-22).
     credential_family = "gemini"
     supports_realtime = True
+    implicit_usage_fallback_allowed = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates = (

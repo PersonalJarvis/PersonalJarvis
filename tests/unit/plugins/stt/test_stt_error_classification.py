@@ -457,7 +457,7 @@ def test_a_provider_that_refuses_the_optional_kwargs_still_builds(
     class _Cfg:
         provider = "gemini-api"
         language = "de"
-        bias_prompt = "Jarvis, Ruben"
+        bias_prompt = "Jarvis, Alex"
         timeout_s = 8.0
 
     provider = stt_pkg.build_stt_from_config(_Cfg())

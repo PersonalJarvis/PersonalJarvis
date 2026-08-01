@@ -116,7 +116,7 @@ def _parse_recognizer_json(raw: str, *, where: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 # Minimum per-word grammar confidence for the verify RE-SCORE over the ring
-# window. This is the precision anchor (live forensic 2026-07-06, "Hey Ruben"
+# window. This is the precision anchor (live forensic 2026-07-06, "Hey Alex"
 # fired on plain room speech): genuine wakes re-score at ~1.0 (spike
 # distribution p25..max = 1.0), room speech pulled onto the phrase re-scores
 # lower. Calibrated on 6 min of judged continuous room speech vs the
@@ -152,7 +152,7 @@ _GARBLED_PREFIX_CORE_RATIO = 0.80
 _GARBLED_PREFIX_PHRASE_RATIO = 0.62
 
 # Some free decoders merge the complete prefixed phrase into one word. Real
-# captures include "Hey Ruben" -> "herum" / "erhoben"; treating those as a
+# captures include "Hey Alex" -> "herum" / "erhoben"; treating those as a
 # missing prefix would either reject genuine calls or accidentally accept the
 # bare core. The rescue therefore requires independent similarity to the
 # prefix, core, and complete merged phrase, plus a bounded length ratio. A
@@ -173,7 +173,7 @@ _MATCH_MIN_RMS = 0.006
 # --- word-agnostic candidate shape (AP-27, forensic 2026-07-13) -------------
 # Everything above asks the free decoder to SPELL the wake word. An offline
 # small model has no arbitrary proper noun in its lexicon, so it CANNOT.
-# Replaying 159 real captured "Hey Ruben" calls (data/wake_debug) through this
+# Replaying 159 real captured "Hey Alex" calls (data/wake_debug) through this
 # detector: the free decoder spelled the phrase in only 28 % of genuine calls
 # and otherwise produced sound-alike garbage — "herum", "erhoben", "hey room",
 # "hey oben", "heroes". Rejecting on that garbage ate 38 % of all real wakes
@@ -196,18 +196,18 @@ _MATCH_MIN_RMS = 0.006
 #
 # Calibrated on 250 positive / 1650 negative real captured windows: verify
 # pass-rate on genuine calls 55 % -> 74 %, at 3 false accepts (two of which are
-# genuine calls the corpus labels negative: "ey ruben", "hei ruben").
+# genuine calls the corpus labels negative: "ey alex", "hei alex").
 _SHAPE_MAX_VOICED_S_PER_TOKEN = 0.65
 _SHAPE_MAX_OTHER_WORD_CONF = 0.98
 
 # The shape bounds above describe a SHORT, ISOLATED utterance — which a bare
 # interjection also is. Live false wake (2026-07-13 11:05, first hour after the
-# shape gate shipped): "hey ho" confirmed for "Hey Ruben". The free ear had
+# shape gate shipped): "hey ho" confirmed for "Hey Alex". The free ear had
 # heard the prefix plus a 0.12 s grunt: the NAME was never spoken and the
 # grammar had stretched a bare "hey" onto the phrase.
 #
 # Neither spelling nor sound-similarity can catch that — measured on the real
-# captures, room speech scores HIGHER against "ruben" (`den genie ring` 0.50,
+# captures, room speech scores HIGHER against "alex" (`den genie ring` 0.50,
 # `simple frage brauchen` 0.62) than genuine calls do (`hey room` 0.25,
 # `hey ho` 0.25). Any similarity floor that rejects the false wake also rejects
 # real ones. <!-- the AP-27 trap, one level down -->
@@ -231,7 +231,7 @@ _SHAPE_TOKEN_SLACK = 0
 # --- acoustic competition for the SHAPE path (live forensic 2026-07-17) -----
 # The shape gate accepts anything that LOOKS like a wake call — which a call of
 # a DIFFERENT name also does. Live: "hey nova" confirmed (shape) for the phrase
-# "Hey Jarvis", "hey ruben" for "Hey Nova": every "<prefix> <other name>" call
+# "Hey Jarvis", "hey alex" for "Hey Nova": every "<prefix> <other name>" call
 # has exactly the shape of a genuine wake, so shape alone cannot separate them
 # — and per AP-27 no spelling rule may reject either (measured again on this
 # corpus: the free-decode confidences of adversarial calls are indistinguishable
@@ -249,7 +249,7 @@ _SHAPE_TOKEN_SLACK = 0
 # context (2026-07-17, three phrases x foreign-name calls + ambient): kills
 # every shape-path foreign-name fire (2 -> 0) at a 1-2 % genuine-recall cost,
 # where gating the WHOLE verify on the competition (not just the shape path)
-# cost 13 % of genuine "Hey Ruben" calls — that variant was rejected.
+# cost 13 % of genuine "Hey Alex" calls — that variant was rejected.
 # Only a PREFIXED phrase has this competition: an unprefixed phrase ("Computer")
 # already competes against the bare "[unk]" in the normal re-score grammar and
 # offers no prefix anchor to build the alternative from.
@@ -1020,7 +1020,7 @@ class VoskKwsProvider:
     ) -> bool:
         """Three checks over the given window; ALL must pass before a fire.
 
-        Why this shape (live forensic 2026-07-06, "Hey Ruben" fired on plain
+        Why this shape (live forensic 2026-07-06, "Hey Alex" fired on plain
         room speech every few minutes): the streaming PARTIAL that makes the
         detector fast carries no confidence — its 1.00 placeholder sailed
         through the conf gate — and the old confirm compared the phrase

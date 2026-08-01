@@ -23,6 +23,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /interrupted``                → panes that came back and were never restarted
 * ``POST   /interrupted/continue``       → tell them to carry on ("continue")
 * ``PUT    /mode``                       → focused coding mode on/off
+* ``GET    /ui-preferences``             → remembered terminal text size
+* ``PUT    /ui-preferences``             → remember another one (survives restarts)
 * ``GET    /accounts``                   → which subscription new terminals use
 * ``PUT    /accounts/active``            → switch it (open panes keep theirs)
 * ``POST   /terminals``                  → open one more pane (split)
@@ -72,6 +74,7 @@ from jarvis.agentic_ide import (
     recents,
     resume_store,
 )
+from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
 from jarvis.agentic_ide.fleet_actions import (
@@ -282,6 +285,18 @@ class CloseTerminalsRequest(BaseModel):
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
+    )
+
+
+class TerminalTextSizeRequest(BaseModel):
+    """How large the text in the workspace's terminals should be, in pixels."""
+
+    terminal_font_size: int = Field(
+        description=(
+            "Terminal text size in pixels. Values outside the supported range "
+            "are clamped to the nearest usable one rather than rejected; the "
+            "response says what was actually stored."
+        )
     )
 
 
@@ -514,7 +529,7 @@ class FoldersResponse(BaseModel):
     parent: str | None
     entries: list[FolderItem]
     error: str | None = None
-    # Human-facing name of this machine ("Example MacBook"), so the picker can
+    # Human-facing name of this machine ("Studio MacBook"), so the picker can
     # label the start points with the device rather than the account folder
     # ("Administrator" tells the user nothing about which computer this is).
     device_name: str | None = None
@@ -882,6 +897,34 @@ class TerminalRecap(BaseModel):
         description=(
             "When the model wrote it, or when the user did. 0 for the "
             "transcript-derived recap, which is recomputed on every read."
+        ),
+    )
+    activity: str = Field(
+        default="",
+        description=(
+            "Whether this pane's agent is still on the job: 'working' (its "
+            "screen is moving), 'waiting' (alive and standing still), 'asking' "
+            "(standing still with a question on screen), 'starting', 'exited' "
+            "or 'failed'. Read from the terminal itself rather than from "
+            "anything a particular CLI prints, so it holds for every coding CLI "
+            "a pane can run, including ones added later. Empty for a plain "
+            "terminal, which runs no agent."
+        ),
+    )
+    activity_since: float = Field(
+        default=0.0,
+        description=(
+            "When the pane entered that state (epoch seconds), so 'waiting' can "
+            "be shown with how long it has been waiting. 0 when unknown."
+        ),
+    )
+    worked: bool = Field(
+        default=False,
+        description=(
+            "Has anything ever been asked of this pane — an instruction sent to "
+            "it, or the conversation it resumed? It is what separates an agent "
+            "that FINISHED from a terminal nobody has asked for anything: the "
+            "same still screen, and not the same news."
         ),
     )
 
@@ -1692,6 +1735,53 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
     return {"ok": True, "focus_mode": enabled}
 
 
+@router.get("/ui-preferences", summary="Remembered workspace display preferences")
+async def get_ui_preferences() -> dict:
+    """How the workspace should look, as this machine last left it.
+
+    Today that is one thing: the size of the terminal text. It is answered by
+    the backend rather than read from the page's own storage because the desktop
+    window is an embedded WebView that starts each run with an empty one — a
+    preference kept only in the browser is forgotten on every restart.
+
+    ``stored`` says whether a size was ever chosen here. A client that still
+    holds an older, browser-only choice uses it to hand that choice over instead
+    of letting the default overwrite it.
+    """
+    from jarvis.agentic_ide import ui_prefs
+
+    return {
+        "ok": True,
+        "terminal_font_size": await asyncio.to_thread(ui_prefs.terminal_font_size),
+        "stored": await asyncio.to_thread(ui_prefs.has_terminal_font_size),
+        "min": ui_prefs.FONT_MIN,
+        "max": ui_prefs.FONT_MAX,
+        "default": ui_prefs.FONT_DEFAULT,
+    }
+
+
+@router.put("/ui-preferences", summary="Remember a workspace display preference")
+async def set_ui_preferences(req: TerminalTextSizeRequest) -> dict:
+    """Remember the terminal text size until it is changed again.
+
+    Survives closing the workspace, closing the app and restarting the machine,
+    and applies to every terminal in every workspace — one person reads at one
+    size. Open panes are re-rendered by the UI immediately; nothing is restarted
+    and no agent is interrupted by the change.
+    """
+    from jarvis.agentic_ide import ui_prefs
+
+    size = await asyncio.to_thread(ui_prefs.set_terminal_font_size, req.terminal_font_size)
+    return {
+        "ok": True,
+        "terminal_font_size": size,
+        "stored": True,
+        "min": ui_prefs.FONT_MIN,
+        "max": ui_prefs.FONT_MAX,
+        "default": ui_prefs.FONT_DEFAULT,
+    }
+
+
 @router.get("/accounts", summary="Which subscription new terminals use")
 async def get_accounts() -> dict:
     """The active subscription of every coding CLI, with its display name.
@@ -1957,6 +2047,7 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
     into describing the same pane differently — the drift class §5 calls out,
     on a payload that is read four times a minute.
     """
+    reading = term.reading()
     return TerminalRecap(
         key=term.key,
         name=term.name,
@@ -1968,6 +2059,12 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
         writer=summary.writer,
         note=summary.note,
         generated_at=summary.generated_at,
+        # This poll is what keeps the pane list current, so it carries what the
+        # pane is DOING as well as what it is doing it about. Both come from the
+        # pane itself; neither is recomputed here, or the two would drift.
+        activity=reading.activity,
+        activity_since=reading.since,
+        worked=has_work_behind_it(term),
     )
 
 

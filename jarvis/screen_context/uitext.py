@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from jarvis.screen_context.models import Degradation, DegradationCode
@@ -209,9 +210,107 @@ async def read_ui_text(
 # --------------------------------------------------------------------------
 
 
-def text_is_sparse(text: str) -> bool:
-    """Whether the accessibility result is thin enough to warrant OCR."""
-    return len(text.strip()) < _SPARSE_TEXT_THRESHOLD
+def text_is_sparse(
+    text: str,
+    *,
+    image_size: tuple[int, int] | None = None,
+) -> bool:
+    """Whether accessibility text is too thin for the captured surface."""
+    threshold = _SPARSE_TEXT_THRESHOLD
+    if image_size is not None:
+        width, height = image_size
+        threshold = min(256, max(threshold, int(width * height / 25_000)))
+    return len(text.strip()) < threshold
+
+
+@dataclass(frozen=True, slots=True)
+class OcrTextRegion:
+    """One OCR line and its image-local bounding rectangle."""
+
+    text: str
+    bounds: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class OcrSupplement:
+    """OCR text plus the geometry needed to burn secrets out of pixels."""
+
+    text: str = ""
+    regions: tuple[OcrTextRegion, ...] = ()
+    degradation: Degradation | None = None
+
+
+def _ocr_unavailable(message: str) -> OcrSupplement:
+    return OcrSupplement(
+        degradation=Degradation(
+            code=DegradationCode.OCR_UNAVAILABLE,
+            message=message,
+        )
+    )
+
+
+def ocr_supplement_with_regions(image: Any) -> OcrSupplement:
+    """Run OCR once and retain line boxes for deterministic pixel redaction."""
+    try:
+        import pytesseract  # noqa: PLC0415
+    except ImportError:
+        log.info(
+            "screen_context: OCR is enabled but no OCR engine is installed; "
+            "OCR-based pixel redaction was unavailable."
+        )
+        return _ocr_unavailable(
+            "Text recognition is switched on but no OCR engine is installed, "
+            "so OCR-based pixel redaction was unavailable."
+        )
+
+    try:
+        output = getattr(getattr(pytesseract, "Output", None), "DICT", "dict")
+        data = pytesseract.image_to_data(image, output_type=output)
+        texts = list(data.get("text", ()))
+        grouped: dict[tuple[int, int, int], list[tuple[str, int, int, int, int]]] = {}
+        for index, raw_text in enumerate(texts):
+            word = " ".join(str(raw_text or "").split())
+            if not word:
+                continue
+            try:
+                left = int(data["left"][index])
+                top = int(data["top"][index])
+                width = int(data["width"][index])
+                height = int(data["height"][index])
+                key = (
+                    int(data.get("block_num", list(range(len(texts))))[index]),
+                    int(data.get("par_num", [0] * len(texts))[index]),
+                    int(data.get("line_num", list(range(len(texts))))[index]),
+                )
+            except (IndexError, KeyError, TypeError, ValueError):
+                # One malformed OCR row is skipped while valid rows remain usable.
+                continue
+            if width <= 0 or height <= 0:
+                continue
+            grouped.setdefault(key, []).append((word, left, top, width, height))
+
+        regions: list[OcrTextRegion] = []
+        for words in grouped.values():
+            left = min(word[1] for word in words)
+            top = min(word[2] for word in words)
+            right = max(word[1] + word[3] for word in words)
+            bottom = max(word[2] + word[4] for word in words)
+            regions.append(
+                OcrTextRegion(
+                    text=" ".join(word[0] for word in words),
+                    bounds=(left, top, right - left, bottom - top),
+                )
+            )
+        return OcrSupplement(
+            text="\n".join(region.text for region in regions),
+            regions=tuple(regions),
+        )
+    except Exception as exc:  # noqa: BLE001 - optional binary/backend failures
+        log.debug("OCR failed", exc_info=True)
+        return _ocr_unavailable(
+            f"Text recognition could not run ({exc}), so OCR-based pixel "
+            "redaction was unavailable."
+        )
 
 
 def ocr_supplement(image: Any) -> tuple[str, Degradation | None]:
@@ -259,9 +358,12 @@ def ocr_supplement(image: Any) -> tuple[str, Degradation | None]:
 
 
 __all__ = [
+    "OcrSupplement",
+    "OcrTextRegion",
     "aggregate_text",
     "nodes_in_rect",
     "ocr_supplement",
+    "ocr_supplement_with_regions",
     "read_ui_text",
     "text_is_sparse",
 ]

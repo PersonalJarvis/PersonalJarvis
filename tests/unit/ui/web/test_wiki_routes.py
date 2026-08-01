@@ -82,16 +82,16 @@ def _write_page(
 
 @pytest.fixture
 def populated_vault(tmp_path: Path) -> Path:
-    """Three-page vault: alex -> morgan, alex -> pixel-art-editor."""
+    """Three-page vault: alex -> sam, alex -> pixel-art-editor."""
     vault = tmp_path / "vault"
     _write_page(
         vault,
         "entities",
-        "morgan",
+        "sam",
         page_type="entity",
         body=(
-            "# Morgan\n\n## Summary\nMorgan is a person who likes hiking.\n\n"
-            "## Facts\n- Likes hiking.\n"
+            "# Sam\n\n## Summary\nSam mentors community projects.\n\n"
+            "## Facts\n- Joined the garden project in 2024.\n"
         ),
     )
     _write_page(
@@ -100,7 +100,7 @@ def populated_vault(tmp_path: Path) -> Path:
         "alex",
         page_type="entity",
         body=(
-            "# Alex\n\n## Summary\nMentor is [[morgan]].\n\n"
+            "# Alex\n\n## Summary\nMentor is [[sam]].\n\n"
             "## Facts\n- Working on [[pixel-art-editor]].\n"
             "- Favorite food is Pizza (source: voice-fact:demo).\n"
         ),
@@ -220,12 +220,12 @@ def test_tree_with_three_pages_lists_files_and_counts(populated_vault: Path) -> 
     assert folders_by_name["concepts"]["count"] == 0
     assert folders_by_name["sessions"]["count"] == 0
     slugs = {f["slug"] for f in folders_by_name["entities"]["files"]}
-    assert slugs == {"morgan", "alex"}
+    assert slugs == {"sam", "alex"}
     sample_file = folders_by_name["entities"]["files"][0]
     assert "mtime" in sample_file and isinstance(sample_file["mtime"], float)
     assert "size" in sample_file and sample_file["size"] > 0
     assert body["stats"]["total_pages"] == 3
-    # alex has 2 outbound wikilinks (morgan, pixel-art-editor)
+    # alex has 2 outbound wikilinks (sam, pixel-art-editor)
     assert body["stats"]["total_links"] >= 2
 
 
@@ -297,8 +297,8 @@ def test_page_happy_path_returns_frontmatter_body_wikilinks(populated_vault: Pat
     assert body["kind"] == "entity"
     assert body["frontmatter_valid"] is True
     assert body["frontmatter"]["type"] == "entity"
-    assert "Mentor is [[morgan]]" in body["body_md"]
-    assert set(body["wikilinks"]) == {"morgan", "pixel-art-editor"}
+    assert "Mentor is [[sam]]" in body["body_md"]
+    assert set(body["wikilinks"]) == {"sam", "pixel-art-editor"}
     assert body["stats"]["bytes"] > 0
     assert body["stats"]["words"] > 0
     assert body["path"].endswith("entities/alex.md")
@@ -361,9 +361,9 @@ def test_graph_with_linked_pages_produces_nodes_and_edges(populated_vault: Path)
     body = r.json()
     assert body["ok"] is True
     node_ids = {n["id"] for n in body["nodes"]}
-    assert node_ids == {"morgan", "alex", "pixel-art-editor"}
+    assert node_ids == {"sam", "alex", "pixel-art-editor"}
     edge_pairs = {(e["source"], e["target"]) for e in body["edges"]}
-    assert ("alex", "morgan") in edge_pairs
+    assert ("alex", "sam") in edge_pairs
     assert ("alex", "pixel-art-editor") in edge_pairs
     assert body["broken"] == []
     # Edge contexts include the wikilink in question.
@@ -473,17 +473,17 @@ def test_template_placeholder_titles_fall_back_to_filename(tmp_path: Path) -> No
 # ----------------------------------------------------------------------
 
 
-def test_backlinks_for_morgan_includes_alex_with_snippet(populated_vault: Path) -> None:
+def test_backlinks_for_sam_includes_alex_with_snippet(populated_vault: Path) -> None:
     app = _make_app(populated_vault)
     with TestClient(app) as client:
-        r = client.get("/api/wiki/backlinks/morgan")
+        r = client.get("/api/wiki/backlinks/sam")
     body = r.json()
     assert body["ok"] is True
-    assert body["slug"] == "morgan"
+    assert body["slug"] == "sam"
     backlinks_by_slug = {b["slug"]: b for b in body["backlinks"]}
     assert "alex" in backlinks_by_slug
     snippet = backlinks_by_slug["alex"]["snippet"]
-    assert "morgan" in snippet.lower()
+    assert "sam" in snippet.lower()
 
 
 def test_backlinks_for_unreferenced_slug_returns_empty_list(populated_vault: Path) -> None:
@@ -592,7 +592,7 @@ def test_ingest_writes_through_shared_curator_service(
         response = client.post(
             "/api/wiki/ingest",
             json={
-                "text": "The user will travel to Example City tomorrow.",
+                "text": "The user will travel to San Francisco tomorrow.",
                 "source": "test:explicit",
             },
         )
@@ -608,7 +608,7 @@ def test_ingest_writes_through_shared_curator_service(
         "pages_touched": ["traveler.md"],
     }
     assert curator.calls == [
-        ("The user will travel to Example City tomorrow.", "test:explicit")
+        ("The user will travel to San Francisco tomorrow.", "test:explicit")
     ]
 
 

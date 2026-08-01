@@ -1,4 +1,4 @@
-# === F-FRIENDS [F4] · feature/friends-section · maintainer-2026-05-01 ===
+# === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 """Unit tests for :class:`jarvis.friends.status_publisher.StatusPublisher`.
 
 Strategy: real FriendRegistry (in-memory SQLite) + fake ChannelManager + fake bus.

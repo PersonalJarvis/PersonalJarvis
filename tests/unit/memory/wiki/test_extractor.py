@@ -201,7 +201,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     )
 
     count = await extractor.extract_and_journal(
-        "Ich wohne in Example City.",  # i18n-allow: production residence fixture
+        "Ich wohne in Example City.",  # i18n-allow: synthetic residence fixture
         "Noted.",
         source_label="realtime:residence",
         turn_hash="residence-turn",

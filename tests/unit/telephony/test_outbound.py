@@ -73,7 +73,7 @@ _VALID = {
 def test_place_call_dials_raw_number_and_returns_call_sid(fake_twilio):
     from jarvis.telephony.outbound import place_call
 
-    sid = place_call(to="+12025550101", opening="Hallo Christoph.", **_VALID)
+    sid = place_call(to="+4915112345678", opening="Hallo Christoph.", **_VALID)
 
     assert sid == "CA_OUTBOUND_TEST"
     assert len(fake_twilio.instances) == 1
@@ -81,7 +81,7 @@ def test_place_call_dials_raw_number_and_returns_call_sid(fake_twilio):
     assert client.account_sid == _VALID["account_sid"]
     assert len(client.calls.created) == 1
     kwargs = client.calls.created[0]
-    assert kwargs["to"] == "+12025550101"
+    assert kwargs["to"] == "+4915112345678"
     # twilio's keyword is ``from_`` (``from`` is a reserved word).
     assert kwargs["from_"] == "+49301112222"
 
@@ -89,7 +89,7 @@ def test_place_call_dials_raw_number_and_returns_call_sid(fake_twilio):
 def test_place_call_points_url_at_existing_voice_webhook(fake_twilio):
     from jarvis.telephony.outbound import place_call
 
-    place_call(to="+12025550101", opening="Guten Tag.", **_VALID)
+    place_call(to="+4915112345678", opening="Guten Tag.", **_VALID)
     kwargs = fake_twilio.instances[0].calls.created[0]
     url = kwargs["url"]
     assert url.startswith("https://jarvis.example.com/api/telephony/voice")
@@ -100,7 +100,7 @@ def test_place_call_carries_opening_in_url_querystring(fake_twilio):
 
     from jarvis.telephony.outbound import place_call
 
-    place_call(to="+12025550101", opening="Hallo Welt & Co", **_VALID)
+    place_call(to="+4915112345678", opening="Hallo Welt & Co", **_VALID)
     url = fake_twilio.instances[0].calls.created[0]["url"]
     query = parse_qs(urlsplit(url).query)
     assert query.get("opening") == ["Hallo Welt & Co"]
@@ -109,9 +109,9 @@ def test_place_call_carries_opening_in_url_querystring(fake_twilio):
 def test_place_call_without_opening_still_dials(fake_twilio):
     from jarvis.telephony.outbound import place_call
 
-    sid = place_call(to="+12025550101", **_VALID)
+    sid = place_call(to="+4915112345678", **_VALID)
     assert sid == "CA_OUTBOUND_TEST"
-    assert fake_twilio.instances[0].calls.created[0]["to"] == "+12025550101"
+    assert fake_twilio.instances[0].calls.created[0]["to"] == "+4915112345678"
 
 
 def test_place_call_rejects_non_e164_number(fake_twilio):
@@ -129,7 +129,7 @@ def test_place_call_requires_from_number(fake_twilio):
 
     args = {**_VALID, "from_number": ""}
     with pytest.raises(TelephonyProvisionError):
-        place_call(to="+12025550101", opening="Hi", **args)
+        place_call(to="+4915112345678", opening="Hi", **args)
 
 
 def test_place_call_requires_public_base_url(fake_twilio):
@@ -137,7 +137,7 @@ def test_place_call_requires_public_base_url(fake_twilio):
 
     args = {**_VALID, "public_base_url": ""}
     with pytest.raises(TelephonyProvisionError):
-        place_call(to="+12025550101", opening="Hi", **args)
+        place_call(to="+4915112345678", opening="Hi", **args)
 
 
 def test_place_call_requires_credentials(fake_twilio):
@@ -145,7 +145,7 @@ def test_place_call_requires_credentials(fake_twilio):
 
     args = {**_VALID, "account_sid": "", "auth_token": ""}
     with pytest.raises(TelephonyProvisionError):
-        place_call(to="+12025550101", opening="Hi", **args)
+        place_call(to="+4915112345678", opening="Hi", **args)
 
 
 def test_place_call_raises_clear_error_when_twilio_missing(monkeypatch):
@@ -155,7 +155,7 @@ def test_place_call_raises_clear_error_when_twilio_missing(monkeypatch):
     # Force ``from twilio.rest import Client`` to raise ImportError.
     monkeypatch.setitem(sys.modules, "twilio.rest", None)
     with pytest.raises(TelephonyProvisionError) as exc:
-        place_call(to="+12025550101", opening="Hi", **_VALID)
+        place_call(to="+4915112345678", opening="Hi", **_VALID)
     assert "telephony" in str(exc.value).lower()
 
 

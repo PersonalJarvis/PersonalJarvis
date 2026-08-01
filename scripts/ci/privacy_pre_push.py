@@ -3,16 +3,15 @@
 
 This is the LOCAL, fast feedback layer that runs in the maintainer's everyday
 `git push` (wired via .githooks/pre-push). Layer 3 — the non-bypassable CI
-privacy-gate — is the real backstop, so this hook is allowed to FAIL OPEN when
-it genuinely cannot run, but it FAILS CLOSED on every positive finding.
+privacy-gate — is the real backstop. If the maintainer-only release scanner is
+not present in a public checkout, this hook uses its built-in generic scanner;
+it still FAILS CLOSED on every positive finding.
 
-It enforces exactly three things on an ordinary push:
+It enforces three things on an ordinary push:
 
-  (A) Public-repo guard. A direct push to the PUBLIC distribution repo
-      (PersonalJarvis/PersonalJarvis) is hard-blocked. The only sanctioned path
-      to public is the depersonalized public-release snapshot, which scrubs the
-      tree first. Detected by remote name == "public" OR a remote URL
-      containing (case-insensitive) "personaljarvis/personaljarvis".
+  (A) Public-target detection. Pushes to PersonalJarvis/PersonalJarvis are
+      identified and logged. The same identity and secret checks below apply
+      to the flagship repository without a bypass.
 
   (B) Private-identity guard. No commit being pushed may carry a private
       maintainer email (author OR committer). Only the GitHub noreply form is
@@ -50,6 +49,37 @@ from pathlib import Path
 # A SHA placeholder of all zeros means "the remote has nothing yet" (a brand-new
 # branch) — see the git pre-push hook stdin contract.
 _ALL_ZERO_RE = re.compile(r"^0+$")
+
+# Public-safe fallback used when the maintainer-only release scanner is absent.
+# Keep these high-confidence shapes generic: no real credential or personal
+# identifier belongs in this public module.
+_GENERIC_SECRET_PATTERNS = {
+    "openai_legacy": r"\bsk-[A-Za-z0-9]{48}\b",
+    "openai_project": r"\bsk-proj-[A-Za-z0-9_-]{40,}\b",
+    "anthropic": r"\bsk-ant-[A-Za-z0-9_-]{60,}\b",
+    "google_api_key": r"\bAIza[0-9A-Za-z_-]{35}\b",
+    "github_token": r"\bgh[pousr]_[A-Za-z0-9]{36}\b",
+    "aws_access_key": r"\bAKIA[0-9A-Z]{16}\b",
+    "slack_token": r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b",
+    "groq_key": r"\bgsk_[A-Za-z0-9]{40,}\b",
+    "google_oauth_secret": r"\bGOCSPX-[A-Za-z0-9_-]{20,}\b",
+    "private_key_block": (
+        r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+    ),
+}
+_GENERIC_FORBIDDEN_BASENAMES = {".env", "jarvis.toml", "mcp.json"}
+
+
+def _generic_secret_scanner() -> tuple[dict, set, set]:
+    """Return the public, dependency-free secret scanner."""
+    return (
+        {
+            name: re.compile(pattern)
+            for name, pattern in _GENERIC_SECRET_PATTERNS.items()
+        },
+        set(_GENERIC_FORBIDDEN_BASENAMES),
+        set(),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -173,12 +203,12 @@ def load_private_emails() -> set[str]:
     return {ln.strip().lower() for ln in out.splitlines() if ln.strip()}
 
 
-def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
+def load_secret_scanner(repo_root: Path) -> tuple[dict, set, set]:
     """Import the privacy gate's strip_and_scan.py and return its scan ingredients.
 
-    Returns (compiled_patterns, forbidden_basenames, allowlist). On ANY failure
-    (file missing, import error, attribute missing) returns (None, set(), set())
-    so the caller fails OPEN for the secret checks — layer 3 (CI) is the backstop.
+    Returns (compiled_patterns, forbidden_basenames, allowlist). On any failure
+    (file missing, import error, attribute missing), it returns the built-in
+    generic scanner so public clones retain secret and forbidden-file checks.
     """
     try:
         gate_dir = (
@@ -189,7 +219,7 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
             "ship_strip_and_scan", script
         )
         if spec is None or spec.loader is None:
-            return None, set(), set()
+            return _generic_secret_scanner()
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
@@ -199,13 +229,13 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
         forbidden = set(module.FORBIDDEN_BASENAMES)
         allowlist = module._load_allowlist(gate_dir)
         return compiled, forbidden, allowlist
-    except Exception as exc:  # pragma: no cover - defensive fail-open path
+    except Exception as exc:  # pragma: no cover - defensive fallback path
         print(
             f"privacy-pre-push: WARNING could not load secret scanner "
-            f"({exc!r}); failing OPEN for the secret/forbidden-file checks.",
+            f"({exc!r}); using the generic public secret scanner.",
             file=sys.stderr,
         )
-        return None, set(), set()
+        return _generic_secret_scanner()
 
 
 def resolve_base(
@@ -275,21 +305,18 @@ def main(argv: list[str], stdin) -> int:
 
     Return 1 to BLOCK the push, 0 to allow.
 
-    Fail-closed on positive findings (public target, private-email commit,
-    secret/forbidden file). Fail-open (return 0 + loud stderr) only when the
+    Fail-closed on positive findings (private-email commit, secret/forbidden
+    file). Fail-open (return 0 + loud stderr) only when the
     gate genuinely cannot run.
     """
     remote_name = argv[1] if len(argv) > 1 else ""
     remote_url = argv[2] if len(argv) > 2 else ""
 
-    # (A) Public-repo guard DISABLED at the maintainer's explicit request
-    # (2026-07-03): a direct push to the public repo is now ALLOWED. Credential
-    # safety stays with .gitignore + the secret (C) and private-key gates below.
-    # The public target is still detected — for a heads-up log only, never a block.
+    # (A) Public-target notice. Direct flagship pushes use the same fail-closed
+    # identity, secret, private-key, and GitHub push-protection checks below.
     if target_is_public(remote_name, remote_url):
         print(
-            "privacy-pre-push: public-target block is DISABLED (maintainer "
-            f"request); allowing push to remote {remote_name!r}.",
+            f"privacy-pre-push: checking flagship remote {remote_name!r}.",
             file=sys.stderr,
         )
 

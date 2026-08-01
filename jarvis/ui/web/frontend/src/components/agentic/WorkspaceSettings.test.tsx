@@ -131,6 +131,20 @@ describe("the workspace's account chip", () => {
     // Codex still has one login, so it says nothing.
     expect(screen.queryByTestId("active-account-codex")).toBeNull();
   });
+
+  it("opens the switcher when the chip itself is clicked", async () => {
+    // The chip reads as a button, so it must behave as one — its first life as
+    // a passive label made the switch look broken (2026-07-31 report): the one
+    // clickable pixel was the gear beside it.
+    vi.mocked(fetchAgentAccounts).mockResolvedValue(accountsResponse() as never);
+    render(
+      <WorkspaceSettings
+        accounts={ideAccounts({ active_label: "Second seat", account_count: 2 })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("active-account-claude"));
+    await waitFor(() => expect(screen.getByTestId("agentic-settings")).toBeTruthy());
+  });
 });
 
 describe("switching the account from inside the workspace", () => {

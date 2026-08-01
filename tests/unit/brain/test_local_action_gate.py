@@ -607,8 +607,8 @@ def test_orb_reset_false_positive_corpus(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "schick eine email an morgan@example.com",
-        "Schick eine Email an morgan@example.com",
+        "schick eine email an sam@example.com",
+        "Schick eine Email an sam@example.com",
         "trag einen termin morgen 10 uhr ein",
         "Trag einen Termin morgen 10 Uhr ein",
         "sende eine whatsapp an mama",
@@ -981,7 +981,7 @@ class TestBrowserSearchFastPath:
 
 # requires_external_integration — real-world booking/transaction requests no
 # generic sub-agent worker can fulfil (no travel/lodging/ticketing tool exists).
-# Live gap 2026-06-14: "book me a trip from Example Town to Example Village" was NOT caught
+# Live gap 2026-06-14: "book me a trip from Melbourne to Tokyo" was NOT caught
 # (the noun list had mail/calendar/Spotify/food-delivery but no travel nouns),
 # so it force-spawned a worker that produced no file -> 3-loop empty-diff
 # critic_loop_exhausted FAIL, and the spawn ACK falsely promised the booking.
@@ -993,9 +993,9 @@ class TestBrowserSearchFastPath:
 @pytest.mark.parametrize(
     "text",
     [
-        "book me a trip from Example Town to Example Village",
-        "Buche mir eine Reise von Example Town nach Example Village",
-        "buche mir einen Flug nach Example Village",
+        "book me a trip from Melbourne to Tokyo",
+        "Buche mir eine Reise von Melbourne nach Tokio",
+        "buche mir einen Flug nach Tokio",
         "book a flight to London for me",
         "reserviere mir ein Hotel in Berlin",
         "book a hotel in Paris",
@@ -1017,7 +1017,7 @@ def test_booking_transactions_require_external_integration(text: str) -> None:
         "baue mir einen Reise-Budget-Rechner",
         "recherchier welche Stadt sich für eine Reise nach Australien lohnt",
         "erzähl mir etwas über meine letzte Reise",
-        "was kostet ungefähr ein Flug nach Example Village",
+        "was kostet ungefähr ein Flug nach Tokio",
     ],
 )
 def test_travel_mentions_without_dispatch_verb_stay_generic(text: str) -> None:

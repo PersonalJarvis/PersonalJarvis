@@ -28,8 +28,16 @@ import binascii
 import json
 import logging
 import os
+import secrets
+import shlex
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,9 +46,9 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
 
-# A binary name with a Windows shim variant. ``shutil.which`` honors PATHEXT, so
-# the bare "codex" usually resolves, but the explicit variants are belt-and-
-# suspenders for installs where only ``codex.cmd`` is on PATH.
+# Windows exposes Store app aliases as bare ``codex.exe`` entries. The official
+# npm shim is ``codex.cmd``, so it must win when a generic ``codex`` selection
+# could resolve to either installation. Explicit absolute paths still win.
 _BINARY_CANDIDATES: tuple[str, ...] = ("codex", "codex.cmd", "codex.exe")
 
 # Process-lifetime cache of ``codex --version`` keyed by resolved binary path.
@@ -52,6 +60,43 @@ _BINARY_CANDIDATES: tuple[str, ...] = ("codex", "codex.cmd", "codex.exe")
 # connect/disconnect state stays fresh while the latency disappears. A failed
 # probe is cached too, so a hanging/absent codex never re-pays the 4 s timeout.
 _VERSION_CACHE: dict[str, str | None] = {}
+
+# A dedicated subscription login must not inherit provider, cloud, proxy,
+# dynamic-loader, keyring, or agent-session state.  Keep this list deliberately
+# small: these are OS process essentials, not a denylist that has to predict the
+# next credential variable name.
+_ISOLATED_CODEX_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "COMSPEC",
+        "HOME",
+        "LANG",
+        "LOCALAPPDATA",
+        "NO_COLOR",
+        "PATH",
+        "PATHEXT",
+        "SHELL",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TERM",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "WINDIR",
+    }
+)
+_DESKTOP_LAUNCHER_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DESKTOP_SESSION",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_RUNTIME_DIR",
+        "XDG_SESSION_TYPE",
+    }
+)
 
 
 def clear_version_cache() -> None:
@@ -70,6 +115,11 @@ if sys.platform == "win32":
     _NEW_CONSOLE_FLAGS: int = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
 else:
     _NEW_CONSOLE_FLAGS = 0
+_CREATE_BREAKAWAY_FROM_JOB = getattr(
+    subprocess,
+    "CREATE_BREAKAWAY_FROM_JOB",
+    0x01000000,
+)
 
 
 # ----------------------------------------------------------------------
@@ -119,7 +169,7 @@ def _email_from_id_token(tokens: dict[str, Any] | None) -> str | None:
     payload_b64 += "=" * (-len(payload_b64) % 4)  # restore base64 padding
     try:
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-    except (binascii.Error, ValueError, json.JSONDecodeError):
+    except (binascii.Error, ValueError, json.JSONDecodeError):  # Display-only claim is optional.
         return None
     email = payload.get("email") if isinstance(payload, dict) else None
     return email if isinstance(email, str) and email else None
@@ -137,11 +187,11 @@ def codex_login_in(codex_home: Path) -> tuple[bool, str, str | None]:
     """
     try:
         raw = (codex_home / "auth.json").read_text(encoding="utf-8")
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # An absent auth file is the normal disconnected state.
         return False, "unknown", None
     try:
         data = json.loads(raw)
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):  # Invalid auth data fails closed as disconnected.
         return False, "unknown", None
     auth = data if isinstance(data, dict) else None
     connected, mode = _derive_auth(auth)
@@ -186,6 +236,191 @@ class CodexAuthStatus:
         }
 
 
+class _GuardedCodexLoginProcess:
+    """Popen-like handle whose wait boundary precedes guardian lock release."""
+
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        acknowledgement: Path,
+        release: Path,
+        process_tree: Any | None = None,
+    ) -> None:
+        self._process = process
+        self._acknowledgement = acknowledgement
+        self._release = release
+        self._process_tree = process_tree
+        self._process_tree_lock = threading.Lock()
+        self.pid = process.pid
+        if process_tree is not None:
+            monitor = threading.Thread(
+                target=self._monitor_guardian_exit,
+                name="codex-subscription-login-guardian",
+                daemon=True,
+            )
+            try:
+                monitor.start()
+            except RuntimeError:
+                self._close_process_tree()
+                raise
+
+    def _close_process_tree(self) -> None:
+        with self._process_tree_lock:
+            process_tree = self._process_tree
+            self._process_tree = None
+        if process_tree is not None:
+            process_tree.close()
+
+    def _monitor_guardian_exit(self) -> None:
+        try:
+            self._process.wait()
+        finally:
+            self._close_process_tree()
+
+    @staticmethod
+    def _read_status(path: Path) -> str | None:
+        try:
+            metadata = path.lstat()
+            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or bool(getattr(metadata, "st_file_attributes", 0) & reparse)
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size > 16
+                or getattr(metadata, "st_nlink", 1) != 1
+            ):
+                return None
+            if os.name == "posix":
+                geteuid = getattr(os, "geteuid", None)
+                if (
+                    not callable(geteuid)
+                    or metadata.st_uid != geteuid()
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                ):
+                    return None
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                opened = os.fstat(descriptor)
+                if (opened.st_dev, opened.st_ino) != (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                ):
+                    return None
+                if sys.platform == "win32":
+                    from jarvis.core.exclusive_process_lock import (  # noqa: PLC0415
+                        _validate_windows_file_security,
+                    )
+
+                    _validate_windows_file_security(descriptor)
+                return os.read(descriptor, 17).decode("ascii")
+            finally:
+                os.close(descriptor)
+        except (OSError, RuntimeError, UnicodeError, ValueError):  # Unsafe path is unavailable.
+            return None
+
+    @staticmethod
+    def _publish_control(path: Path, status: str) -> None:
+        if status not in {"acquire", "release"}:
+            raise ValueError("Unknown subscription-login control state.")
+        parent = path.parent.resolve(strict=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.chmod(temporary, 0o600)
+            with os.fdopen(descriptor, "w", encoding="ascii", newline="") as stream:
+                descriptor = -1
+                stream.write(status)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                # Another cleanup may already have removed the temporary file.
+                pass
+
+    @classmethod
+    def establish_handoff(
+        cls,
+        process: subprocess.Popen[bytes],
+        acknowledgement: Path,
+        release: Path,
+        release_parent_lock: Callable[[], None],
+        *,
+        timeout_s: float = 8.0,
+    ) -> None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            status = cls._read_status(acknowledgement)
+            if status == "waiting":
+                break
+            if process.poll() is not None:
+                raise RuntimeError(
+                    "The subscription-login guardian exited before lock handoff."
+                )
+            time.sleep(0.05)
+        else:
+            raise RuntimeError(
+                "The subscription-login guardian did not request lock handoff."
+            )
+
+        release_parent_lock()
+        cls._publish_control(release, "acquire")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            status = cls._read_status(acknowledgement)
+            if status == "ready":
+                return
+            if status == "busy":
+                raise RuntimeError(
+                    "Another Jarvis process is using subscription voice."
+                )
+            if process.poll() is not None:
+                raise RuntimeError(
+                    "The subscription-login guardian exited before taking ownership."
+                )
+            time.sleep(0.05)
+        raise RuntimeError(
+            "The subscription-login guardian did not confirm profile ownership."
+        )
+
+    def wait(self) -> int:
+        """Wait until Codex login exits while the guardian still owns the lock."""
+        while True:
+            if self._read_status(self._acknowledgement) == "finished":
+                return 0
+            return_code = self._process.poll()
+            if return_code is not None:
+                self._close_process_tree()
+                return return_code
+            time.sleep(0.05)
+
+    def release_profile_lock(self) -> None:
+        """Publish post-check completion, then reap the guardian."""
+        try:
+            self._publish_control(self._release, "release")
+            try:
+                self._process.wait(timeout=35.0)
+            except subprocess.TimeoutExpired:
+                log.warning("Subscription-login guardian release timed out")
+        finally:
+            self._close_process_tree()
+            for path in (self._acknowledgement, self._release):
+                try:
+                    path.unlink()
+                except FileNotFoundError:  # Coordination cleanup is intentionally idempotent.
+                    pass
+
+
 class CodexAuthService:
     """Status / login / logout for the ``codex`` CLI.
 
@@ -194,15 +429,41 @@ class CodexAuthService:
     ``auth.json`` parsing against a temp ``$CODEX_HOME``.
     """
 
-    def __init__(self, binary_path: str | None = None) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        codex_home: Path | None = None,
+        force_file_auth_store: bool = False,
+        isolate_openai_environment: bool = False,
+        log_dir: Path | None = None,
+        visible_login: bool = False,
+        lifetime_lock_path: Path | None = None,
+        login_guard_directory: Path | None = None,
+        login_guard_handoff: Callable[[], None] | None = None,
+        trusted_binary_sha256: str | None = None,
+    ) -> None:
         self._binary_path = (binary_path or "").strip() or "codex"
+        self._codex_home = Path(codex_home) if codex_home is not None else None
+        self._force_file_auth_store = bool(force_file_auth_store)
+        self._isolate_openai_environment = bool(isolate_openai_environment)
+        self._log_dir = Path(log_dir) if log_dir is not None else None
+        self._visible_login = bool(visible_login)
+        self._lifetime_lock_path = (
+            Path(lifetime_lock_path) if lifetime_lock_path is not None else None
+        )
+        self._login_guard_directory = (
+            Path(login_guard_directory)
+            if login_guard_directory is not None
+            else None
+        )
+        self._login_guard_handoff = login_guard_handoff
+        self._trusted_binary_sha256 = trusted_binary_sha256
 
     # -- seams -----------------------------------------------------------
 
     def _resolve_binary(self) -> str | None:
         """Full path to the ``codex`` binary, or ``None`` when absent."""
-        import shutil
-
         # A CLI installed AFTER app start (or into a dir the GUI PATH never
         # had) must still be found — idempotent stat probes, no subprocess.
         try:
@@ -210,12 +471,24 @@ class CodexAuthService:
 
             ensure_cli_paths()
         except Exception:  # noqa: BLE001 — a probe helper must never break status
-            pass
+            log.debug("Codex CLI path augmentation failed", exc_info=True)
 
-        candidates = (self._binary_path, *_BINARY_CANDIDATES)
+        generic_candidates = (
+            ("codex.cmd", "codex", "codex.exe")
+            if sys.platform == "win32"
+            else _BINARY_CANDIDATES
+        )
+        candidates = (
+            generic_candidates
+            if self._binary_path == "codex"
+            else (self._binary_path, *generic_candidates)
+        )
+        seen: set[str] = set()
         for name in candidates:
-            if not name:
+            normalized = os.path.normcase(str(name or "").strip())
+            if not normalized or normalized in seen:
                 continue
+            seen.add(normalized)
             resolved = shutil.which(name)
             if resolved:
                 return resolved
@@ -238,6 +511,7 @@ class CodexAuthService:
                 timeout=4.0,
                 text=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
+                env=self._subprocess_environment(),
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             _VERSION_CACHE[binary] = None
@@ -250,15 +524,142 @@ class CodexAuthService:
     # -- auth file -------------------------------------------------------
 
     def _auth_home(self) -> Path:
+        if self._codex_home is not None:
+            return self._codex_home
         override = os.environ.get("CODEX_HOME")
         return Path(override) if override else (Path.home() / ".codex")
+
+    def _command(self, binary: str, *subcommand: str) -> list[str]:
+        command = [binary]
+        if self._force_file_auth_store:
+            command.extend(("-c", 'cli_auth_credentials_store="file"'))
+        if self._log_dir is not None:
+            command.extend(("-c", f"log_dir={json.dumps(str(self._log_dir))}"))
+        command.extend(subcommand)
+        return command
+
+    def _subprocess_environment(self) -> dict[str, str] | None:
+        if (
+            self._codex_home is None
+            and not self._force_file_auth_store
+            and not self._isolate_openai_environment
+        ):
+            return None
+        if self._isolate_openai_environment:
+            environment = {
+                name: value
+                for name, value in os.environ.items()
+                if name.upper() in _ISOLATED_CODEX_ENV_ALLOWLIST
+                or name.upper().startswith("LC_")
+            }
+        else:
+            environment = dict(os.environ)
+        if self._codex_home is not None:
+            environment["CODEX_HOME"] = str(self._codex_home)
+        if self._force_file_auth_store:
+            environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
+            environment.pop("XDG_RUNTIME_DIR", None)
+        return environment
+
+    def _desktop_launcher_environment(self) -> dict[str, str]:
+        """Minimal launcher environment with only graphical-session handles."""
+        if not self._isolate_openai_environment:
+            return self._subprocess_environment() or dict(os.environ)
+        environment = self._subprocess_environment() or {}
+        for name, value in os.environ.items():
+            if name.upper() in _DESKTOP_LAUNCHER_ENV_ALLOWLIST:
+                environment[name] = value
+        return environment
+
+    def _isolated_exec_command(self, command: list[str]) -> list[str]:
+        """Wrap a terminal child so Codex receives only the strict environment."""
+        environment = self._subprocess_environment()
+        if environment is None:
+            return command
+        helper = (
+            "import json,os,sys;"
+            "environment=json.loads(sys.argv[1]);"
+            "os.execve(sys.argv[2],sys.argv[2:],environment)"
+        )
+        return [
+            str(Path(sys.executable).resolve()),
+            "-I",
+            "-S",
+            "-c",
+            helper,
+            json.dumps(environment, separators=(",", ":"), sort_keys=True),
+            *command,
+        ]
+
+    def _guarded_login_command(
+        self,
+        binary: str,
+    ) -> tuple[list[str], Path, Path]:
+        """Build the fixed guardian argv for one dedicated profile login."""
+        if (
+            self._lifetime_lock_path is None
+            or self._login_guard_directory is None
+            or self._log_dir is None
+            or self._codex_home is None
+            or not self._force_file_auth_store
+            or not self._isolate_openai_environment
+            or self._trusted_binary_sha256 is None
+        ):
+            raise RuntimeError("The subscription-login guardian is not fully configured.")
+        if (
+            len(self._trusted_binary_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in self._trusted_binary_sha256
+            )
+        ):
+            raise RuntimeError("The subscription-login binary digest is invalid.")
+        from jarvis.core.private_directory import (  # noqa: PLC0415
+            ensure_owner_only_directory,
+        )
+
+        try:
+            ensure_owner_only_directory(self._login_guard_directory, create=False)
+            guard_directory = self._login_guard_directory.resolve(strict=True)
+            lock_path = self._lifetime_lock_path.resolve(strict=False)
+            binary_path = Path(binary).resolve(strict=True)
+            log_dir = self._log_dir.resolve(strict=True)
+            guardian = Path(__file__).with_name("codex_login_guard.py").resolve(
+                strict=True
+            )
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(
+                "The subscription-login guardian paths are unavailable."
+            ) from exc
+        nonce = secrets.token_hex(16)
+        acknowledgement = guard_directory / f"login-{nonce}.ack"
+        release = guard_directory / f"login-{nonce}.release"
+        if acknowledgement.exists() or release.exists():
+            raise RuntimeError("The subscription-login coordination state is not fresh.")
+        environment = self._subprocess_environment()
+        if environment is None:
+            raise RuntimeError("The subscription-login environment is not isolated.")
+        command = [
+            str(Path(sys.executable).resolve()),
+            "-I",
+            "-S",
+            str(guardian),
+            str(lock_path),
+            str(acknowledgement),
+            str(release),
+            str(binary_path),
+            self._trusted_binary_sha256,
+            str(log_dir),
+            json.dumps(environment, separators=(",", ":"), sort_keys=True),
+        ]
+        return command, acknowledgement, release
 
     def _read_auth(self) -> dict[str, Any] | None:
         """Parse ``<codex-home>/auth.json``; ``None`` if absent/unreadable."""
         path = self._auth_home() / "auth.json"
         try:
             raw = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError):  # A missing control file means no handoff state yet.
             return None
         try:
             data = json.loads(raw)
@@ -316,7 +717,9 @@ class CodexAuthService:
             binary_path=binary,
         )
 
-    def start_login(self) -> subprocess.Popen[bytes]:
+    def start_login(
+        self,
+    ) -> subprocess.Popen[bytes] | _GuardedCodexLoginProcess:
         """Spawn ``codex login`` in a visible console. Raises if not installed.
 
         ``codex login`` opens the browser for the OAuth/device flow and runs a
@@ -329,11 +732,90 @@ class CodexAuthService:
                 "Codex CLI is not installed (run: npm i -g @openai/codex)."
             )
         log.info("Starting 'codex login' (interactive)")
+        command = self._command(binary, "login")
+        guard_paths: tuple[Path, Path] | None = None
+        if self._lifetime_lock_path is not None:
+            command, acknowledgement, release = self._guarded_login_command(binary)
+            guard_paths = (acknowledgement, release)
         if sys.platform == "win32":
             # Fresh visible console so the device/OAuth URL is reachable under
             # pythonw.exe. Do NOT redirect stdio — the output belongs in that
             # console (the new console replaces the absent parent one).
             kwargs: dict[str, Any] = {"creationflags": _NEW_CONSOLE_FLAGS}
+        elif self._visible_login:
+            environment = self._desktop_launcher_environment()
+            terminal_command = (
+                command
+                if guard_paths is not None
+                else self._isolated_exec_command(command)
+                if self._isolate_openai_environment
+                else command
+            )
+            if sys.platform == "darwin":
+                shell_command = "exec " + shlex.join(terminal_command)
+                escaped = shell_command.replace("\\", "\\\\").replace('"', '\\"')
+                script = (
+                    'tell application "Terminal"\n'
+                    "activate\n"
+                    f'set loginTab to do script "{escaped}"\n'
+                    "repeat while busy of loginTab\n"
+                    "delay 1\n"
+                    "end repeat\n"
+                    "end tell"
+                )
+                command = ["/usr/bin/osascript", "-e", script]
+            else:
+                terminal = next(
+                    (
+                        candidate
+                        for candidate in (
+                            shutil.which("gnome-terminal"),
+                            shutil.which("konsole"),
+                            shutil.which("xterm"),
+                        )
+                        if candidate
+                    ),
+                    None,
+                )
+                if terminal is None:
+                    terminal = shutil.which("x-terminal-emulator")
+                if terminal is None:
+                    raise RuntimeError(
+                        "No supported desktop terminal is available for Codex login."
+                    )
+                # Resolve Debian's x-terminal-emulator alternative before
+                # choosing flags. Generic terminal launchers may return as
+                # soon as they hand work to a terminal server, which would
+                # release the profile login guard while Codex still writes
+                # auth.json. Only backends with a documented wait/no-fork
+                # form are accepted.
+                resolved_terminal = str(Path(terminal).resolve())
+                terminal_name = Path(resolved_terminal).name.lower()
+                if terminal_name.startswith("gnome-terminal"):
+                    command = [
+                        resolved_terminal,
+                        "--wait",
+                        "--",
+                        *terminal_command,
+                    ]
+                elif terminal_name.startswith("konsole"):
+                    command = [
+                        resolved_terminal,
+                        "--nofork",
+                        "-e",
+                        *terminal_command,
+                    ]
+                elif terminal_name == "xterm":
+                    command = [resolved_terminal, "-e", *terminal_command]
+                else:
+                    raise RuntimeError(
+                        "The configured desktop terminal cannot provide a bounded "
+                        "Codex login lifetime."
+                    )
+            kwargs = {
+                "env": environment,
+                "start_new_session": True,
+            }
         else:
             # Headless-safe (CLOUD.md Rule #1): detach into a new session and
             # never inherit the server's stdio — otherwise a VPS would see codex
@@ -345,7 +827,113 @@ class CodexAuthService:
                 "stdin": subprocess.DEVNULL,
                 "start_new_session": True,
             }
-        return subprocess.Popen([binary, "login"], **kwargs)  # noqa: S603 — fixed argv, shell=False
+        environment = self._subprocess_environment()
+        if environment is not None and "env" not in kwargs:
+            kwargs["env"] = environment
+        process_tree: Any | None = None
+        if guard_paths is not None and sys.platform == "win32":
+            from jarvis.core.process_tree import make_process_tree  # noqa: PLC0415
+
+            process_tree = make_process_tree("codex-subscription-login")
+            if not bool(getattr(process_tree, "supports_containment", False)):
+                process_tree.close()
+                raise RuntimeError(
+                    "Windows process-tree containment is unavailable for Codex login."
+                )
+            kwargs["creationflags"] = int(kwargs.get("creationflags", 0)) | (
+                _CREATE_BREAKAWAY_FROM_JOB
+            )
+        try:
+            try:
+                process = subprocess.Popen(  # noqa: S603 — fixed argv, shell=False
+                    command,
+                    **kwargs,
+                )
+            except PermissionError:
+                if process_tree is None:
+                    raise
+                kwargs["creationflags"] = int(kwargs.get("creationflags", 0)) & (
+                    ~_CREATE_BREAKAWAY_FROM_JOB
+                )
+                process = subprocess.Popen(  # noqa: S603 — fixed argv, shell=False
+                    command,
+                    **kwargs,
+                )
+        except BaseException:
+            if process_tree is not None:
+                process_tree.close()
+            raise
+
+        if process_tree is not None:
+            try:
+                process_tree.assign(process.pid)
+            except Exception as exc:  # noqa: BLE001 - containment is mandatory
+                process_tree.close()
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    "Windows process-tree containment could not be established for Codex login."
+                ) from exc
+        if guard_paths is None:
+            return process
+        if self._login_guard_handoff is None:
+            if process_tree is not None:
+                process_tree.close()
+            else:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            raise RuntimeError("The subscription-login lock handoff is unavailable.")
+        acknowledgement, release = guard_paths
+        try:
+            _GuardedCodexLoginProcess.establish_handoff(
+                process,
+                acknowledgement,
+                release,
+                self._login_guard_handoff,
+            )
+            return _GuardedCodexLoginProcess(
+                process,
+                acknowledgement,
+                release,
+                process_tree,
+            )
+        except BaseException:
+            if process_tree is not None:
+                process_tree.close()
+            else:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            raise
+
+    def login_status(self) -> tuple[bool, str]:
+        """Return the CLI's PII-free login mode for this exact profile."""
+        binary = self._resolve_binary()
+        if binary is None:
+            return False, "unknown"
+        try:
+            proc = subprocess.run(
+                self._command(binary, "login", "status"),
+                capture_output=True,
+                timeout=4.0,
+                text=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                env=self._subprocess_environment(),
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            # The status probe is unavailable and therefore fails closed.
+            return False, "unknown"
+        output = (proc.stdout or proc.stderr or "").strip()
+        if proc.returncode == 0 and output == "Logged in using ChatGPT":
+            return True, "chatgpt"
+        if proc.returncode == 0 and output == "Logged in using an API key":
+            return True, "api_key"
+        return False, "unknown"
 
     def logout_blocking(self) -> tuple[bool, str | None]:
         """Run ``codex logout``; fall back to deleting ``auth.json``.
@@ -358,16 +946,18 @@ class CodexAuthService:
             return False, "Codex CLI is not installed."
         try:
             proc = subprocess.run(
-                [binary, "logout"],
+                self._command(binary, "logout"),
                 capture_output=True,
                 timeout=15.0,
                 text=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
+                env=self._subprocess_environment(),
             )
             if proc.returncode == 0:
                 return True, None
             cli_error = (proc.stderr or proc.stdout or "").strip() or None
         except (subprocess.TimeoutExpired, OSError) as exc:
+            # Preserve failure for the deletion fallback.
             cli_error = str(exc)
 
         # Fallback: remove the auth file directly. Log the CLI failure first so a
@@ -377,5 +967,5 @@ class CodexAuthService:
         try:
             auth_file.unlink(missing_ok=True)
             return True, None
-        except OSError as exc:
+        except OSError as exc:  # Return the recoverable logout failure to the caller.
             return False, cli_error or f"could not remove auth.json: {exc}"

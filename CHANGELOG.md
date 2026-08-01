@@ -11,6 +11,32 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.2.1] — 2026-08-01
+
+This corrective release reconnects the public 1.2.0 line with the complete
+maintained source tree and closes the release, install, and UI verification
+gaps found after 1.2.0 was published.
+
+### Added
+
+- Added an experimental ChatGPT subscription path for realtime voice, with
+  honest capability checks and fallback behaviour.
+- Added the Agentic IDE chat view and a consistent coding-CLI picker when a
+  workspace or chat rail opens another agent pane.
+
+### Fixed
+
+- Restored the complete current implementation to the public release line,
+  including the UltraWiki Python package and its frontend source.
+- Preserved interrupted Agentic IDE pane recovery without mistaking the
+  restored pane's own repaint for new work.
+- Restored portable `[full]` dependency resolution across supported Python,
+  operating-system, and CPU combinations, including Windows on ARM64.
+- Fixed the README's package-page asset URL and aligned stale frontend tests
+  with the shipped UI.
+
+---
+
 ## [1.2.0] — 2026-07-30
 
 This is the first public release since 1.1.5 and it is a large one: a

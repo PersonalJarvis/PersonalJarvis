@@ -346,7 +346,7 @@ describe("pane header actions", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps every action visible when the pane is not focused", () => {
+  it("recedes on an unfocused pane but stays reachable by hover and keyboard", () => {
     render(
       <AgenticTerminal
         name="Dana"
@@ -363,11 +363,35 @@ describe("pane header actions", () => {
     const actions = screen.getByTestId("pane-maximize-Dana").parentElement;
 
     expect(actions).not.toBeNull();
-    expect(actions?.className).toContain("opacity-100");
-    expect(actions?.className).not.toContain("opacity-0");
+    // Hidden by opacity only — the buttons stay in the DOM, so a header hover
+    // or tabbing into the cluster reveals the same elements this test finds.
+    expect(actions?.className).toContain("opacity-0");
+    expect(actions?.className).toContain("group-hover/header:opacity-100");
+    expect(actions?.className).toContain("focus-within:opacity-100");
     expect(screen.getByTestId("pane-split-right-Dana")).toBeTruthy();
     expect(screen.getByTestId("pane-split-down-Dana")).toBeTruthy();
     expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
+  });
+
+  it("keeps every action visible on the focused pane", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        focused
+        onToggleMaximize={() => undefined}
+        onSplit={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    const actions = screen.getByTestId("pane-maximize-Dana").parentElement;
+
+    expect(actions).not.toBeNull();
+    expect(actions?.className).toContain("opacity-100");
+    expect(actions?.className).not.toContain("opacity-0 ");
   });
 });
 
@@ -437,6 +461,64 @@ describe("pane split menu", () => {
     expect(onSplit).toHaveBeenCalledWith("down", "shell");
   });
 
+  it("uses the only installed CLI instead of inheriting an unavailable one", () => {
+    const onSplit = vi.fn();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        agents={[
+          { ...CHOICES[0], installed: false },
+          { ...CHOICES[1], installed: true },
+        ]}
+        onSplit={onSplit}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
+
+    expect(onSplit).toHaveBeenCalledWith("right", "codex");
+  });
+
+  it("retains pane inheritance while agent metadata is unavailable", () => {
+    const onSplit = vi.fn();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        onSplit={onSplit}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
+
+    expect(onSplit).toHaveBeenCalledWith("right", undefined);
+  });
+
+  it("associates a multiword pane's trigger with a DOM-safe dialog id", () => {
+    render(
+      <AgenticTerminal
+        name="Frontend rewrite"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        agents={CHOICES}
+        onSplit={() => undefined}
+      />,
+    );
+
+    const trigger = screen.getByTestId("pane-split-right-Frontend rewrite");
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog");
+
+    expect(trigger.getAttribute("aria-controls")).toBe(dialog.id);
+    expect(dialog.id).not.toMatch(/\s/);
+  });
+
   it("disables the plain terminal on a host with no shell, and says why", () => {
     render(
       <AgenticTerminal
@@ -454,11 +536,11 @@ describe("pane split menu", () => {
     );
 
     fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
-    const plain = screen.getByTestId("pane-split-right-Dana-shell") as HTMLButtonElement;
+    const plain = screen.getByTestId("pane-split-right-Dana-shell");
 
     // Listed but unusable, so the absence explains itself instead of the entry
     // simply not being there — and in the terms of what is missing.
-    expect(plain.disabled).toBe(true);
+    expect(plain.getAttribute("aria-disabled")).toBe("true");
     expect(plain.textContent).toContain("no shell here");
   });
 });

@@ -101,6 +101,10 @@ class ProviderSpec:
     # no guessable default port).
     supports_base_url: bool = False
     default_base_url: str | None = None
+    # The integration uses a provider protocol that is not yet stable. The UI
+    # shows a clear badge and fallback note, while runtime selection remains
+    # capability-driven. This is presentation only and never gates behavior.
+    experimental: bool = False
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -738,8 +742,27 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # missing one leaves dictation behaving exactly as it did before.
     *_DICTATION_PROVIDERS,
     # ── Realtime ──────────────────────────────────────────────────────────
-    # Realtime voice spans independently selectable OpenAI, Gemini, and xAI
-    # plugins behind the provider-neutral RealtimeProvider contract.
+    # Realtime voice providers share the provider-neutral RealtimeProvider
+    # contract. Subscription and API billing remain independently selectable.
+    ProviderSpec(
+        id="codex-subscription-realtime",
+        label="ChatGPT subscription (Codex)",
+        tier="realtime",
+        auth_mode="codex",
+        secret_keys=(),
+        dashboard_url=None,
+        login_cli=("codex", "login"),
+        install_hint="npm i -g @openai/codex@0.146.0",
+        signup_url="https://chatgpt.com",
+        credential_help=(
+            "Uses the ChatGPT plan signed in through Codex. This experimental "
+            "realtime path does not need an API key. The app never switches it "
+            "silently to metered API voice. If it cannot start, the call stops; "
+            "select an API Realtime provider if you want usage billing. Brain "
+            "and tool providers keep their separately configured billing."
+        ),
+        experimental=True,
+    ),
     ProviderSpec(
         id="openai-realtime",
         label="OpenAI Realtime",

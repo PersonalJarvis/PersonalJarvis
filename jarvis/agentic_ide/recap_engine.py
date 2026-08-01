@@ -30,8 +30,9 @@ fallback rather than as the product:
   paths end at the deterministic recap, which is exactly what the pane showed
   before this module existed. A provider that fails at CALL time (a depleted
   key's 429, a 402) first crosses to the next provider FAMILY in the resolver
-  chain (AP-22) and only then falls back to the deterministic floor. Nothing
-  here is load-bearing, and nothing here may raise into a state read.
+  chain (AP-22), then to a connected coding subscription (the CLI in the panes
+  is a credential too), and only then falls back to the deterministic floor.
+  Nothing here is load-bearing, and nothing here may raise into a state read.
 
 Above the model sits one more layer, and it outranks both: **what the user
 wrote themselves**. No summarizer can know that a pane is "the branch I'm about
@@ -99,9 +100,17 @@ INPUT_CHARS = 9_000
 INPUT_HEAD_CHARS = 2_400
 INPUT_TAIL_CHARS = INPUT_CHARS - INPUT_HEAD_CHARS
 
-#: How long one summary may take before the pane keeps its previous recap. A
-#: recap nobody is waiting for does not deserve a long leash.
-CALL_TIMEOUT_S = 30.0
+#: How long one summary may take before the pane keeps its previous recap.
+#: This bounds the WHOLE candidate walk, and the last candidate may be a
+#: subscription CLI that needs a process spawn and several seconds of thinking
+#: — 30 s was sized for API calls alone and would cut that path off exactly
+#: when it is the only one left.
+CALL_TIMEOUT_S = 45.0
+
+#: The slice of that budget one subscription CLI call may take. Below the
+#: outer cap on purpose: the CLI is only ever reached after the API families
+#: failed, and whatever they burned must still leave the CLI a real chance.
+SUBSCRIPTION_CLI_TIMEOUT_S = 35.0
 
 #: How many provider FAMILIES a single summary may try before giving up. A
 #: depleted key fails at call time, after instantiating fine — the next try
@@ -592,15 +601,39 @@ def _resolve_brains() -> list[Any]:
         from jarvis.brain.resolver import frontier_brain_candidates
         from jarvis.core.config import load_config
 
+        config = load_config()
         candidates: list[Any] = []
-        for brain in frontier_brain_candidates(load_config()):
+        for brain in frontier_brain_candidates(config):
             candidates.append(brain)
             if len(candidates) >= MAX_PROVIDER_TRIES:
                 break
-        return candidates
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
         return []
+    # Every family above needs an API key, and the install this feature broke
+    # on live had exactly one — depleted. A connected coding subscription is a
+    # credential too (§3), and often the STRONGEST model the user has: the very
+    # CLI running in the panes. It goes LAST because a CLI call costs a process
+    # spawn and seconds where an API call costs milliseconds — it should write
+    # the recap only when everything cheaper is dead.
+    if len(candidates) < MAX_PROVIDER_TRIES:
+        subscription = _resolve_subscription(config)
+        if subscription is not None:
+            candidates.append(subscription)
+    return candidates
+
+
+def _resolve_subscription(config: Any) -> Any | None:
+    """A connected subscription brain as the recap's last resort, or None."""
+    try:
+        from jarvis.brain.resolver import resolve_subscription_brain
+
+        return resolve_subscription_brain(
+            config, cli_timeout_s=SUBSCRIPTION_CLI_TIMEOUT_S
+        )
+    except Exception:  # noqa: BLE001 - a broken CLI probe must not cost the recap
+        logger.info("Agentic IDE recap: subscription fallback unavailable", exc_info=True)
+        return None
 
 
 def _bounded_rows(

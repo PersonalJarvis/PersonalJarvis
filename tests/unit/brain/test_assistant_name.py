@@ -85,8 +85,8 @@ def test_whitespace_only_phrase_falls_back():
 def test_agent_brand_follows_any_wake_word():
     from jarvis.brain.assistant_name import agent_brand
 
-    assert agent_brand(_cfg(wake_phrase="Hey Ruben")) == "Ruben-Agent"
-    assert agent_brand(_cfg(wake_phrase="Morgan")) == "Morgan-Agent"
+    assert agent_brand(_cfg(wake_phrase="Hey Alex")) == "Alex-Agent"
+    assert agent_brand(_cfg(wake_phrase="Sam")) == "Sam-Agent"
     assert agent_brand(_cfg(wake_phrase="ok athena")) == "Athena-Agent"
 
 

@@ -111,7 +111,7 @@ def test_skips_browser_profile_scratch(tmp_path: Path) -> None:
     # Genuine deliverables.
     _make_artifact(mission, "019eeb34-bc50", "index.html", "<h1>real</h1>")
     (files / "qa-artifacts").mkdir(parents=True, exist_ok=True)
-    (files / "qa-artifacts" / "example-city-plan-render.png").write_bytes(b"PNGdata")
+    (files / "qa-artifacts" / "melbourne-plan-render.png").write_bytes(b"PNGdata")
     # Browser scratch the archive should never have copied.
     prof = files / "qa-artifacts" / "chrome-profile-dd6355b81ddb49db87fc5045a7012b19"
     (prof / "GrShaderCache").mkdir(parents=True, exist_ok=True)
@@ -124,6 +124,6 @@ def test_skips_browser_profile_scratch(tmp_path: Path) -> None:
     )
 
     names = sorted(p.name for p in delivered)
-    assert names == ["index.html", "example-city-plan-render.png"], names
+    assert names == ["index.html", "melbourne-plan-render.png"], names
     assert not (target / "data_2").exists()
     assert not (target / "Last Browser").exists()

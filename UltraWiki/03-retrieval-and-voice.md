@@ -31,7 +31,7 @@ SYNTHESIS (streamed LLM answer with citations)
 Stage notes:
 
 - **Planner.** Extracts structured slots from the question and picks which
-  retrieval lists matter ("Casey" → entity lookup; "when" → the answer is a
+  retrieval lists matter ("Viktoria" → entity lookup; "when" → the answer is a
   date; "dinner" → event-type filter `meal`; active area → SQL prefilter).
   Runs on the fastest configured model tier. If planning fails or times out,
   the fallback is a plain hybrid search over all lists — degraded, never dead.
@@ -111,9 +111,9 @@ Whoever wires UltraWiki into context injection or voice MUST pass
 
 ## Cross-source reconstruction
 
-The north-star answer often exists in no single row: the chat says "14:00?",
-the calendar says "Project Atlas planning", and a document says Example Room.
-The event extraction on the write path (doc 02) has already fused
+The north-star answer often exists in no single row: the chat says "19:00?",
+the calendar says "Dinner w/ Viktoria", the photo's metadata says San
+Francisco. The event extraction on the write path (doc 02) has already fused
 such fragments into `uw_events` rows with absolute time ranges, participants,
 and evidence ids — so at read time, episodic questions hit a **precomputed
 event**, and the synthesis stage merely verbalizes it with its citations.
@@ -158,7 +158,7 @@ token, measured not estimated:
 Rules that make the budget reachable:
 
 1. **Precomputed profiles.** Every entity keeps a stored, continuously
-   re-summarized profile ("who is Casey", "what is Project X"), refreshed on
+   re-summarized profile ("who is Viktoria", "what is Project X"), refreshed on
    the write path whenever linked items change. Identity and summary questions
    are a **single-row lookup**, no fan-out at all.
 2. **Voice degrades stages, never blocks on them.** If rerank or planning

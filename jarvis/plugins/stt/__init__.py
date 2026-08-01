@@ -989,9 +989,9 @@ def build_wake_whisper(
     bare stub) building a safe small/cpu instance.
 
     ``wake_phrase`` (forensic 2026-06-22): when a user sets a CUSTOM wake word
-    with no pretrained openWakeWord model ("Hey Ruben"), the wake routes to this
+    with no pretrained openWakeWord model ("Hey Alex"), the wake routes to this
     small CPU model. ``base`` transcribed the proper noun as a common word
-    ("Ruben" -> "job") so the wake never fired. Passing the spoken trigger here
+    ("Alex" -> "job") so the wake never fired. Passing the spoken trigger here
     seeds Whisper's ``initial_prompt`` so it biases toward the actual name. This
     is deliberately scoped to the custom stt_match wake (the pipeline only
     forwards a phrase on that path) — the default "Hey Jarvis"/OWW paths pass
@@ -1000,12 +1000,12 @@ def build_wake_whisper(
 
     Bias is ON (forensic 2026-06-23). It was once disabled out of a hallucination
     concern, but that disabled the custom wake word entirely: empirically, on the
-    user's real wake WAVs the unbiased base/cpu model heard "Hey Ruben" as
+    user's real wake WAVs the unbiased base/cpu model heard "Hey Alex" as
     "Space"/"Ego"/"Herum" -> 2-13% recall; seeding ``wake_phrase`` as the
     ``initial_prompt`` lifts that to 83%. The earlier false-wake risk is held off
-    by the strict ["hey","ruben"] matcher (a stray "Ruben" in ordinary speech is
-    not an adjacent "hey ruben") plus the ``no_speech_prob``/RMS gates, which kept
-    the false-wake rate ~0% on 50 real talking-about-Ruben clips. The bias is
+    by the strict ["hey","alex"] matcher (a stray "Alex" in ordinary speech is
+    not an adjacent "hey alex") plus the ``no_speech_prob``/RMS gates, which kept
+    the false-wake rate ~0% on 50 real talking-about-Alex clips. The bias is
     scoped to this path: only the stt_match custom-phrase route forwards a
     ``wake_phrase``; the default "Hey Jarvis"/OWW paths pass nothing and stay
     unbiased, so the hot-path prompt-hallucination caveat in
@@ -1033,7 +1033,7 @@ def build_wake_whisper(
     # ``initial_prompt`` hint, so the wake stays fast (~150 ms vs ~1.4 s on
     # base/cpu) while it does NOT hallucinate the primed phrase onto quiet
     # silence — the bias on the strong model was the false-wake source ("Vielen
-    # Dank." silence artifact -> "Hey Ruben"). Offline-validated: no-bias turbo is
+    # Dank." silence artifact -> "Hey Alex"). Offline-validated: no-bias turbo is
     # 0 false-wakes across the user's silence / own-speech / other-wake clips,
     # while a clearly spoken wake still fires. The WEAK base/cpu model still NEEDS
     # the bias to hear the name, so the bias is kept ONLY there. Only the

@@ -197,10 +197,10 @@ def _cpu_safe_compute_type(compute_type: str) -> str:
 #: (``cublas64_12.dll``, ``cudnn64_9.dll``, ...) and the standalone
 #: ``nvidia-*-cu12`` wheels carry them one subdirectory deeper, so a host with
 #: either is covered without depending on either.
-_CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, ...], ...]] = (
-    ("torch", "lib"),
-    ("nvidia", "cublas", "bin"),
-    ("nvidia", "cudnn", "bin"),
+_CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ("torch", ("lib",)),
+    ("nvidia.cublas", ("bin",)),
+    ("nvidia.cudnn", ("bin",)),
 )
 
 #: Loaded explicitly, in dependency order, once a directory holding them is
@@ -218,6 +218,11 @@ _CUDA_DLL_PRELOAD: Final[tuple[str, ...]] = (
 #: Set once the libraries are actually in the process, so repeated model builds
 #: do not re-walk site-packages.
 _cuda_dll_path_prepared = False
+# ``os.add_dll_directory`` removes the search entry when its return object is
+# closed/collected. ctypes may likewise unload an explicitly opened DLL when
+# its wrapper dies. Retain both for the process lifetime once CUDA is usable.
+_cuda_dll_directory_handles: list[Any] = []
+_cuda_dll_library_handles: list[Any] = []
 
 
 def ensure_cuda_libraries_findable() -> None:
@@ -257,42 +262,59 @@ def ensure_cuda_libraries_findable() -> None:
     if _cuda_dll_path_prepared:
         return
     add_dll_directory = getattr(os, "add_dll_directory", None)
-    if add_dll_directory is None:
+    if os.name != "nt" and add_dll_directory is None:
         # POSIX resolves shared libraries through the loader's own search path,
         # where a pip-installed CUDA runtime already lands. Nothing to do.
         _cuda_dll_path_prepared = True
         return
-    import ctypes
-    import importlib.util
+    if add_dll_directory is None:
+        return
+    import ctypes  # noqa: PLC0415 — Windows-only, off every non-CUDA path
+    import importlib.util  # noqa: PLC0415 — lazy path must stay cheap
 
-    for parts in _CUDA_DLL_PACKAGE_DIRS:
+    for module_name, relative_parts in _CUDA_DLL_PACKAGE_DIRS:
         try:
-            spec = importlib.util.find_spec(parts[0])
+            spec = importlib.util.find_spec(module_name)
         except (ImportError, ValueError):
             # ValueError is what find_spec raises for a module stubbed as None
             # in sys.modules — exactly what the import shield does to torch.
             # Leaving the flag unset means a later build tries again.
             continue
-        origin = getattr(spec, "origin", None) if spec is not None else None
-        if not origin:
+        if spec is None:
             continue
-        directory = Path(origin).parent.joinpath(*parts[1:])
-        if not directory.is_dir() or not any(directory.glob("cublas64_*.dll")):
+        roots: list[Path] = []
+        origin = getattr(spec, "origin", None)
+        if origin:
+            roots.append(Path(origin).parent)
+        for location in getattr(spec, "submodule_search_locations", ()) or ():
+            root = Path(location)
+            if root not in roots:
+                roots.append(root)
+        for root in roots:
+            directory = root.joinpath(*relative_parts)
+            if directory.is_dir() and any(directory.glob("cublas64_*.dll")):
+                break
+        else:
             continue
-        with contextlib.suppress(OSError):
+        directory_handle: Any = None
+        try:
             # Lets the loaded libraries find their own dependencies by name.
-            add_dll_directory(str(directory))
-        loaded = []
+            directory_handle = add_dll_directory(str(directory))
+        except OSError as exc:
+            log.debug("Could not add CUDA DLL search directory %s: %s", directory, exc)
+        loaded: list[str] = []
+        library_handles: list[Any] = []
         for name in _CUDA_DLL_PRELOAD:
             library = directory / name
             if not library.is_file():
                 continue
             try:
-                ctypes.WinDLL(str(library))
+                handle = ctypes.WinDLL(str(library))
             except OSError as exc:
                 log.debug("could not load %s: %s", library, exc)
                 continue
             loaded.append(name)
+            library_handles.append(handle)
         if not any(name.startswith("cublas64") for name in loaded):
             continue  # the one that actually blocks ctranslate2 is still missing
         log.info(
@@ -301,6 +323,9 @@ def ensure_cuda_libraries_findable() -> None:
             directory,
             ", ".join(loaded),
         )
+        if directory_handle is not None:
+            _cuda_dll_directory_handles.append(directory_handle)
+        _cuda_dll_library_handles.extend(library_handles)
         _cuda_dll_path_prepared = True
         return
 

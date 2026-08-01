@@ -20,7 +20,7 @@ This module unifies both:
    may phrase the farewell naturally instead of emitting a magic string.
 
 3. ``is_legacy_farewell`` — backward compatibility for the old exact phrases
-   ("auf wiedersehen, ruben" / "goodbye, ruben"), so a brain instance still
+   ("auf wiedersehen, alex" / "goodbye, alex"), so a brain instance still
    running the previous persona contract continues to hang up during rollout.
 
 Standard-library only (``re``). It must stay free of ``sounddevice`` and any
@@ -139,10 +139,10 @@ def strip_end_signal(text: str | None) -> str:
 # --- Legacy exact-farewell fallback (backward compatibility) --------------
 LEGACY_FAREWELL_PHRASES: Final[frozenset[str]] = frozenset(
     {
-        "goodbye, ruben",
-        "goodbye ruben",
-        "auf wiedersehen, ruben",
-        "auf wiedersehen ruben",
+        "goodbye, alex",
+        "goodbye alex",
+        "auf wiedersehen, alex",
+        "auf wiedersehen alex",
         "goodbye, sir",
         "goodbye sir",
     }

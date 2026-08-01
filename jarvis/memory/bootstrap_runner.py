@@ -87,8 +87,8 @@ _FAREWELL = (
 # Parser regexes
 # ----------------------------------------------------------------------
 
-# "Ich heisse Alex", "ich heiße alex", "mein Name ist Alex Morgan",  # i18n-allow
-# "ich bin Morgan". Case-insensitive. Capture group = name remainder.
+# "Ich heisse Alex", "ich heiße alex", "mein Name ist Personal Jarvis Maintainer",  # i18n-allow
+# "ich bin Sam". Case-insensitive. Capture group = name remainder.
 _NAME_INTRO_RE = re.compile(
     r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",  # i18n-allow
     re.IGNORECASE,
@@ -424,8 +424,8 @@ def _trim_name(raw: str | None) -> str:
 
     Examples (real German voice input the parser must handle):
         "alex, aber nenn mich rube" → "Alex"  # i18n-allow
-        "Alex Morgan"                → "Alex Morgan"  # i18n-allow
-        "  morgan  "                 → "Morgan"
+        "Personal Jarvis Maintainer"                → "Personal Jarvis Maintainer"  # i18n-allow
+        "  sam  "                 → "Sam"
     """
     if not raw:
         return ""

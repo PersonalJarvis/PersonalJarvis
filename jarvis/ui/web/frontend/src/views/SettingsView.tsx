@@ -508,7 +508,7 @@ function WakeWordPanel() {
               wrong language here is the #1 cause of a silently dead wake word,
               and the trap is unintuitive: it is about the language the user
               SPEAKS (their accent/pronunciation), NOT the origin of the word
-              ("Ruben" is heard by the German model because the user speaks it
+              ("Alex" is heard by the German model because the user speaks it
               in German, not because the name is German). Bound to the wake
               word's OWN language pin ([trigger.wake_word] language) — the app
               display language and the STT recognition language stay untouched,

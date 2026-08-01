@@ -754,6 +754,24 @@ class TestModelClassification:
 
 
 class TestRealtimeCatalog:
+    def test_codex_subscription_catalog_matches_app_server_v1(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+        assert [m.id for m in REALTIME_MODELS["codex-subscription-realtime"]] == [
+            "gpt-realtime-1.5"
+        ]
+        assert [v.id for v in REALTIME_VOICES["codex-subscription-realtime"]] == [
+            "cove",
+            "juniper",
+            "maple",
+            "spruce",
+            "ember",
+            "vale",
+            "breeze",
+            "arbor",
+            "sol",
+        ]
+
     def test_openai_realtime_models_lead_with_the_hardcoded_default(self) -> None:
         from jarvis.brain.model_catalog import REALTIME_MODELS
 
@@ -813,3 +831,4 @@ class TestRealtimeCatalog:
         # single-selection response that can't express model+voice together).
         assert catalog_spec("openai-realtime") is None
         assert catalog_spec("gemini-live") is None
+        assert catalog_spec("codex-subscription-realtime") is None

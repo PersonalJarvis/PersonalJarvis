@@ -535,7 +535,7 @@ class ProfileUpdated(Event):
     The UI may render this as a badge "Jarvis learned X about you" —
     transparency is part of the design (the user should never be surprised).
     """
-    subject: str = ""           # "user" | "person:casey" | "soul"
+    subject: str = ""           # "user" | "person:laura" | "soul"
     cluster: str = ""           # identity | communication | work_style | ...
     field: str = ""             # z.B. "humor_types" oder "observation"
     operation: str = "set"      # set | append | observation
@@ -1708,7 +1708,7 @@ class WikiPageChanged(Event):
     forwards this event to the frontend so React Query caches can be
     invalidated immediately.
 
-    ``path`` is the vault-relative POSIX path (e.g. ``"entities/morgan.md"``)
+    ``path`` is the vault-relative POSIX path (e.g. ``"entities/sam.md"``)
     so the frontend can use the string as-is regardless of the host
     operating system path separator.
 

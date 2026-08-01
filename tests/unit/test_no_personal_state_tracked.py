@@ -8,7 +8,8 @@ Downloads/Open-Source-Privacy-Separation.md).
 
 The exact path list is coordinated with Wave 5 (history purge via git
 filter-repo) — both waves must agree on what "personal" means.  Do not modify
-this list without also updating the active open-source cleanup plan.
+this list without also updating the Wave 5 plan at
+<USER_HOME>\\Downloads\\Open-Source-History-Cleanup-Plan.md.
 
 Rationale for each category:
 

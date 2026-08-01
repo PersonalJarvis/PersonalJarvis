@@ -97,6 +97,8 @@ export interface ProviderDescriptor {
    * without it. Absent on older payloads, which read as "required".
    */
   optional?: boolean;
+  /** Unstable provider protocol. The card shows a clear fallback notice. */
+  experimental?: boolean;
   /**
    * Dictation-polish cards only: the value `[dictation].polish_provider`
    * actually stores ("groq"), which is NOT this card's `id` ("groq-polish") —
@@ -146,6 +148,12 @@ export interface CodexStatus {
   connected: boolean;
   mode: "missing" | "not_connected" | "chatgpt" | "api_key" | "unknown";
   message: string;
+  reason_code?:
+    | "ready"
+    | "login_required"
+    | "lifecycle_unavailable"
+    | "not_installed"
+    | "setup_invalid";
   version?: string | null;
   accountLabel?: string | null;
   account_label?: string | null;
@@ -209,18 +217,30 @@ export function useProviders() {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
 
   const refetch = useCallback(async () => {
+    const version = ++requestVersion.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     setError(null);
     try {
-      const res = await fetch("/api/providers");
+      const res = await fetch("/api/providers", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ProvidersResponse = await res.json();
-      setProviders(data.providers);
+      if (version === requestVersion.current) setProviders(data.providers);
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
+        setError((e as Error).message);
+      }
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
+      if (requestController.current === controller) requestController.current = null;
     }
   }, []);
 
@@ -261,6 +281,9 @@ export function useProviders() {
     window.addEventListener("jarvis:computer-use-switched", onComputerUse);
     window.addEventListener("jarvis:dictation-polish-switched", onDictationPolish);
     return () => {
+      ++requestVersion.current;
+      requestController.current?.abort();
+      requestController.current = null;
       window.removeEventListener("jarvis:secret-configured", onSecret);
       window.removeEventListener("jarvis:brain-switched", onBrain);
       window.removeEventListener("jarvis:tts-switched", onTts);
@@ -510,8 +533,11 @@ export async function saveProviderBaseUrl(
   return data.base_url ?? null;
 }
 
-export async function startCodexLogin(): Promise<void> {
-  const res = await fetch("/api/codex/login", { method: "POST" });
+export async function startCodexLogin(subscriptionVoice = false): Promise<void> {
+  const path = subscriptionVoice
+    ? "/api/codex/subscription-voice/login"
+    : "/api/codex/login";
+  const res = await fetch(path, { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = body.detail;
@@ -523,8 +549,11 @@ export async function startCodexLogin(): Promise<void> {
   }
 }
 
-export async function codexLogout(): Promise<void> {
-  const res = await fetch("/api/codex/logout", { method: "POST" });
+export async function codexLogout(subscriptionVoice = false): Promise<void> {
+  const path = subscriptionVoice
+    ? "/api/codex/subscription-voice/logout"
+    : "/api/codex/logout";
+  const res = await fetch(path, { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);
@@ -748,11 +777,16 @@ export async function switchSttProvider(
  */
 export async function switchRealtimeProvider(
   providerId: string,
+  acceptExperimental = false,
 ): Promise<PipelineSwitchResult> {
   const res = await fetch("/api/realtime/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: providerId, persist: true }),
+    body: JSON.stringify({
+      provider: providerId,
+      persist: true,
+      accept_experimental: acceptExperimental,
+    }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -1175,6 +1209,7 @@ export interface RealtimeOptionsResult {
   voices: RealtimeOptionInfo[];
   current_model: string;
   current_voice: string;
+  preview_available: boolean;
 }
 
 /**
@@ -1232,7 +1267,8 @@ export async function saveRealtimeOptions(
  * POST /api/providers/{id}/realtime-voice-preview. `model` matters only where
  * the sampler runs through a realtime session (openai-realtime); `""` uses
  * the adapter default. Throws with the backend's message on any failure
- * (no key / quota / transport).
+ * (no key / quota / transport). Callers only render this action when the
+ * realtime-options response advertises `preview_available`.
  */
 export async function fetchRealtimeVoicePreview(opts: {
   providerId: string;

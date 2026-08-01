@@ -3,7 +3,7 @@
 Why this exists
 ---------------
 Live voice session (2026-06-30): Jarvis offered "Soll ich die anlegen?", the  # i18n-allow: forensic voice-bug docstring quoting the real German utterances involved
-user confirmed "ja, legt die mal an … die Mailadresse von Morgan ist …", and  # i18n-allow: forensic voice-bug docstring quoting the real German utterances involved
+user confirmed "ja, legt die mal an … die Mailadresse von Sam ist …", and  # i18n-allow: forensic voice-bug docstring quoting the real German utterances involved
 Jarvis answered "Okay, sehr gut" — but never called the ``contact-upsert`` tool,
 so the address book stayed empty. The capability was fully wired; the gap was at
 the brain decision layer (it acknowledged in words instead of acting).
@@ -20,7 +20,7 @@ Falsely "correcting" the user is a hard anti-pattern here (the maintainer turned
 the generic clarify question OFF for exactly that reason). So the detector fires
 only on high-confidence signals — a genitive contact detail ("Christophs Nummer
 ist …") alone, or a save verb corroborated by a contact noun / dictated detail.
-A bare "die Nummer ist falsch" or "schick Morgan eine Mail" must NOT fire.  # i18n-allow: forensic voice-bug docstring quoting German counter-example utterances the classifier must NOT match
+A bare "die Nummer ist falsch" or "schick Sam eine Mail" must NOT fire.  # i18n-allow: forensic voice-bug docstring quoting German counter-example utterances the classifier must NOT match
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import re
 
 from jarvis.core.capabilities import _normalize
 
-# A genitive contact detail ("Christophs Nummer ist …", "Morgans Mail ist …").
+# A genitive contact detail ("Christophs Nummer ist …", "Sams Mail ist …").
 # High precision on its own: a possessive name + a contact field + "ist/lautet"
 # is almost always "save this person's detail". The non-genitive "<field> von X
 # ist" form is intentionally NOT here (it also matches "die Adresse von Berlin  # i18n-allow: quoted German counter-example the classifier must NOT match

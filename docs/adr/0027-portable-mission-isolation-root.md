@@ -27,7 +27,7 @@ superficial boot probe.
 
 The distribution image also omitted the `git` executable. It could import the
 mission modules but could not create the standalone repositories used by lean
-Jarvis-Agent tasks. Its declared user home was `/home/jarvis`, but that
+Jarvis-Agent tasks. Its declared user home was `/home/<service-user>`, but that
 directory did not exist. Skill, document, CLI-tool, and board registries then
 failed independently while trying to create their per-user state, shrinking
 the tool surface even though the web server continued to answer health checks.
@@ -72,7 +72,7 @@ repositories merely because `git worktree list` is unavailable at `/app`.
 The container sets `HOME=/app/data/home` and creates that directory before
 dropping privileges. Per-user skills, CLI metadata, documents, and related
 registries therefore share the declared writable data volume rather than
-trying to create an undeclared `/home/jarvis` tree.
+trying to create an undeclared `/home/<service-user>` tree.
 
 ## Consequences
 

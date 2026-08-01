@@ -2,8 +2,9 @@
 
 Realtime plugins are discovered through the ``jarvis.realtime`` entry-point
 group. The configured provider and its explicit fallbacks are tried first,
-then every other installed provider with a usable credential. No provider name
-or model id controls whether the feature is available (AP-21/AP-22).
+then every other installed provider with a usable credential when the selected
+provider permits implicit usage fallback. No provider name or model id controls
+whether the feature is available (AP-21/AP-22).
 """
 
 from __future__ import annotations
@@ -20,26 +21,70 @@ log = logging.getLogger(__name__)
 _GROUP = "jarvis.realtime"
 
 
-def _configured_provider_ids(cfg: Any) -> list[str]:
-    tier = getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", None)
+def _explicit_provider_ids(cfg: Any) -> list[str]:
+    """Configured primary/fallback ids, without ambient installed plugins."""
     realtime = getattr(getattr(cfg, "brain", None), "realtime", None)
-    preferred = [
-        tier,
+    installed = set(list_plugins(_GROUP))
+    ordered: list[str] = []
+    for configured in (
+        getattr(realtime, "provider", None),
         getattr(realtime, "fallback_provider", None),
         getattr(realtime, "fallback_provider_2", None),
-    ]
+    ):
+        provider_id = str(configured or "").strip()
+        if provider_id and provider_id in installed and provider_id not in ordered:
+            ordered.append(provider_id)
+    return ordered
+
+
+def _configured_provider_ids(cfg: Any) -> list[str]:
+    preferred = _explicit_provider_ids(cfg)
     installed = list_plugins(_GROUP)
+    allow_ambient = realtime_implicit_usage_fallback_allowed(cfg)
     ordered: list[str] = []
-    for provider_id in [*preferred, *installed]:
+    provider_ids = [*preferred, *(installed if allow_ambient else [])]
+    for provider_id in provider_ids:
         value = str(provider_id or "").strip()
         if value and value in installed and value not in ordered:
             ordered.append(value)
     return ordered
 
 
-def _provider_candidates(cfg: Any) -> list[Any]:
-    """Instantiate every keyed realtime plugin in effective fallback order."""
+def realtime_implicit_usage_fallback_allowed(cfg: Any) -> bool:
+    """Whether the selected primary permits ambient usage-billed fallback.
+
+    This reads a provider capability, never a provider id. An absent selection
+    and successfully loaded API-backed providers retain the historical
+    permissive behavior. A configured but missing/broken primary is
+    fail-closed: it cannot silently spend unrelated ambient credentials.
+    """
+    realtime = getattr(getattr(cfg, "brain", None), "realtime", None)
+    primary_id = str(getattr(realtime, "provider", "") or "").strip()
+    if not primary_id:
+        return True
+    installed = list_plugins(_GROUP)
+    if primary_id not in installed:
+        return False
+    try:
+        provider_cls = load(_GROUP, primary_id, protocol=RealtimeProvider)
+    except Exception as exc:  # noqa: BLE001 - availability still degrades normally
+        log.warning("Realtime primary capability probe failed for %s: %s", primary_id, exc)
+        return False
+    return bool(getattr(provider_cls, "implicit_usage_fallback_allowed", True))
+
+
+def _provider_candidates(
+    cfg: Any, *, defer_external_login_probe: bool = False
+) -> list[Any]:
+    """Instantiate every credential-ready plugin in effective fallback order.
+
+    API providers declare ``credential_candidates`` and receive the resolved
+    key. Providers backed by an external application login may instead expose
+    a synchronous ``external_login_ready`` capability probe and a no-argument
+    constructor. The factory never infers either path from a provider name.
+    """
     candidates: list[Any] = []
+    explicit_ids = set(_explicit_provider_ids(cfg))
     for provider_id in _configured_provider_ids(cfg):
         try:
             provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
@@ -48,10 +93,42 @@ def _provider_candidates(cfg: Any) -> list[Any]:
             credential_candidates = tuple(
                 getattr(provider_cls, "credential_candidates", ()) or ()
             )
-            api_key = get_secret_any(credential_candidates)
-            if not api_key:
-                continue
-            provider = provider_cls(api_key=api_key)
+            api_key = (
+                get_secret_any(credential_candidates)
+                if credential_candidates
+                else None
+            )
+            if api_key:
+                provider = provider_cls(api_key=api_key)
+            else:
+                external_login_ready = getattr(
+                    provider_cls, "external_login_ready", None
+                )
+                if not callable(external_login_ready):
+                    continue
+                if provider_id not in explicit_ids:
+                    continue
+                # Session construction can happen on an audio/WebSocket loop.
+                # The adapter's async can_open_duplex_session/open_session
+                # performs the authoritative probe without blocking that loop,
+                # but only for providers the user explicitly selected. An
+                # ambient installed subscription must not become a candidate
+                # merely because its synchronous login probe was deferred.
+                if not defer_external_login_probe:
+                    try:
+                        ready = external_login_ready(cfg)
+                    except TypeError:
+                        ready = external_login_ready()
+                    if not bool(ready):
+                        continue
+                from_runtime_config = getattr(
+                    provider_cls, "from_runtime_config", None
+                )
+                provider = (
+                    from_runtime_config(cfg)
+                    if callable(from_runtime_config)
+                    else provider_cls()
+                )
             if not isinstance(provider, RealtimeProvider):
                 log.warning(
                     "Realtime plugin %s does not satisfy the provider contract.",
@@ -76,6 +153,29 @@ def realtime_available_provider(cfg: Any) -> str | None:
     return str(getattr(provider, "name", "") or "") or None
 
 
+def realtime_requires_webrtc_offer(cfg: Any) -> bool:
+    """Whether any eligible realtime fallback needs browser SDP signaling.
+
+    This is an adapter capability, never a provider-id check. The offer must be
+    prepared before audio starts because an API primary can fail into an
+    explicitly configured subscription fallback during the same handshake.
+    """
+    # Browser SDP preparation is allowed only for an explicitly selected
+    # primary/fallback. Installed-but-unselected external-login plugins are
+    # neither a billing fallback nor a reason to negotiate WebRTC.
+    for provider_id in _explicit_provider_ids(cfg):
+        try:
+            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+        except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
+            log.warning("Realtime WebRTC capability probe failed for %s: %s", provider_id, exc)
+            continue
+        if bool(getattr(provider_cls, "supports_realtime", False)) and bool(
+            getattr(provider_cls, "requires_webrtc_offer", False)
+        ):
+            return True
+    return False
+
+
 def _provider_family(provider_id: str) -> str:
     """Credential/quota family of a provider id (AP-22 diagnostics only)."""
     pid = (provider_id or "").strip().lower()
@@ -92,7 +192,12 @@ def _provider_family(provider_id: str) -> str:
     return aliases.get(pid, pid.split("-")[0])
 
 
-def _warn_on_same_family_delegate_chain(cfg: Any, realtime_provider: str) -> None:
+def _warn_on_same_family_delegate_chain(
+    cfg: Any,
+    realtime_provider: str,
+    *,
+    credential_family: str | None = None,
+) -> None:
     """AP-22 visibility: one quota hit must not kill realtime AND the brain.
 
     When every configured brain provider resolves to the realtime provider's
@@ -103,7 +208,9 @@ def _warn_on_same_family_delegate_chain(cfg: Any, realtime_provider: str) -> Non
     another family, added in-app.
     """
     try:
-        realtime_family = _provider_family(realtime_provider)
+        realtime_family = str(credential_family or "").strip().lower()
+        if not realtime_family:
+            realtime_family = _provider_family(realtime_provider)
         brain_cfg = getattr(cfg, "brain", None)
         chain = [
             entry
@@ -131,8 +238,8 @@ def _warn_on_same_family_delegate_chain(cfg: Any, realtime_provider: str) -> Non
                 ", ".join(sorted(set(chain))),
                 realtime_family,
             )
-    except Exception:  # noqa: BLE001, S110 — diagnostics must never block the build
-        pass
+    except Exception:  # noqa: BLE001 - diagnostics must never block the build
+        log.debug("Realtime credential-family diagnostics failed.", exc_info=True)
 
 
 def build_realtime_session(
@@ -156,12 +263,17 @@ def build_realtime_session(
     if mode != "realtime":
         return None
     try:
-        providers = _provider_candidates(cfg)
+        providers = _provider_candidates(cfg, defer_external_login_probe=True)
         if not providers:
             log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
+        primary_provider = providers[0]
         _warn_on_same_family_delegate_chain(
-            cfg, str(getattr(providers[0], "name", "") or "")
+            cfg,
+            str(getattr(primary_provider, "name", "") or ""),
+            credential_family=str(
+                getattr(primary_provider, "credential_family", "") or ""
+            ),
         )
 
         from jarvis.realtime.session import RealtimeVoiceSession
@@ -176,6 +288,7 @@ def build_realtime_session(
             half_duplex=half_duplex,
             surface=surface,
             brain=brain,
+            allow_classic_fallback=realtime_implicit_usage_fallback_allowed(cfg),
         )
     except Exception as exc:  # noqa: BLE001 — unbuildable stack => classic path
         log.warning("Realtime session build failed: %s", exc)
@@ -185,4 +298,6 @@ def build_realtime_session(
 __all__ = [
     "build_realtime_session",
     "realtime_available_provider",
+    "realtime_implicit_usage_fallback_allowed",
+    "realtime_requires_webrtc_offer",
 ]

@@ -51,6 +51,7 @@ _FRONTEND_SRC = "jarvis/ui/web/frontend/src"
 _FRONTEND_DIST = "jarvis/ui/web/dist"
 
 _RELEASES_LATEST_API = "https://api.github.com/repos/{slug}/releases/latest"
+_FLAGSHIP_HTTPS = "https://github.com/PersonalJarvis/PersonalJarvis"
 
 
 def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
@@ -80,6 +81,42 @@ def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
         if err:
             out = f"{out}\n{err}".strip("\n") if out else err
     return proc.returncode, out
+
+
+def _is_flagship_remote_url(url: str) -> bool:
+    """Accept only transport variants of the exact public flagship slug."""
+    value = url.strip().rstrip("/")
+    if value.startswith("git@github.com:"):
+        value = "https://github.com/" + value.removeprefix("git@github.com:")
+    elif value.startswith("ssh://git@github.com/"):
+        value = "https://github.com/" + value.removeprefix("ssh://git@github.com/")
+    if value.endswith(".git"):
+        value = value[:-4]
+    return value == _FLAGSHIP_HTTPS
+
+
+def resolve_flagship_remote(root: Path, requested: str | None = None) -> tuple[bool, str]:
+    """Resolve a verified flagship remote, preferring ``public`` over ``origin``.
+
+    A similarly named personal backup must never become the release target.
+    """
+    names = [requested] if requested else ["public", "origin"]
+    inspected: list[str] = []
+    for name in names:
+        if not name:
+            continue
+        rc, url = _run_git(["remote", "get-url", name], cwd=root)
+        if rc != 0:
+            inspected.append(f"{name}: unavailable")
+            continue
+        if _is_flagship_remote_url(url):
+            return True, name
+        inspected.append(f"{name}: {url or 'missing URL'}")
+    detail = "; ".join(inspected) or "no candidate remotes"
+    return False, (
+        "no verified PersonalJarvis/PersonalJarvis remote; refusing to release "
+        f"to a backup or unknown repository ({detail})"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -159,24 +196,43 @@ def check_dirty_tree(root: Path, *, ack_dirty: bool) -> tuple[bool, str]:
     )
 
 
-def check_not_behind_public(root: Path, *, remote: str, branch: str) -> tuple[bool, str]:
+def check_not_behind_public(
+    root: Path,
+    *,
+    remote: str,
+    branch: str,
+    local_ref: str | None = None,
+) -> tuple[bool, str]:
+    """Verify a local release ref contains the current public branch.
+
+    ``local_ref`` lets a clean release worktree validate ``HEAD`` without
+    moving the developer's concurrently checked-out ``main`` branch. The
+    public side remains ``remote/branch`` and is always fetched first.
+    """
+    if local_ref is not None and local_ref != "HEAD":
+        return False, "--local-ref only accepts HEAD (the checked-out release commit)"
+    candidate = local_ref or branch
     rc, out = _run_git(["fetch", "--quiet", remote, branch], cwd=root)
     if rc != 0:
         return False, f"could not fetch {remote}/{branch} (offline?): {out}"
-    rc, out = _run_git(["rev-list", "--count", f"{branch}..{remote}/{branch}"], cwd=root)
+    rc, out = _run_git(
+        ["rev-list", "--count", f"{candidate}..{remote}/{branch}"], cwd=root
+    )
     out = out.strip()
     if rc != 0 or not out.isdigit():
         return False, f"could not compare {branch} against {remote}/{branch}: {out}"
     behind = int(out)
     if behind:
         return False, (
-            f"{branch} is {behind} commit(s) BEHIND {remote}/{branch} - reconcile "
+            f"{candidate} is {behind} commit(s) BEHIND {remote}/{branch} - reconcile "
             "first (a release must never roll the public line back)"
         )
-    rc, ahead = _run_git(["rev-list", "--count", f"{remote}/{branch}..{branch}"], cwd=root)
+    rc, ahead = _run_git(
+        ["rev-list", "--count", f"{remote}/{branch}..{candidate}"], cwd=root
+    )
     ahead = ahead.strip()
     note = f" ({ahead} local commit(s) will publish)" if ahead.isdigit() and int(ahead) else ""
-    return True, f"{branch} is not behind {remote}/{branch}{note}"
+    return True, f"{candidate} is not behind {remote}/{branch}{note}"
 
 
 def _last_commit_ts(root: Path, path: str) -> int | None:
@@ -242,8 +298,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="post-publish mode: also verify the published GitHub Release",
     )
-    parser.add_argument("--remote", default="public", help="public remote name")
+    parser.add_argument(
+        "--remote",
+        default=None,
+        help="public remote name (default: verified public, then verified origin)",
+    )
     parser.add_argument("--branch", default="main", help="release branch")
+    parser.add_argument(
+        "--local-ref",
+        default=None,
+        help="local candidate ref to validate (default: the release branch)",
+    )
     parser.add_argument(
         "--repo-slug",
         default="PersonalJarvis/PersonalJarvis",
@@ -256,12 +321,22 @@ def main(argv: list[str] | None = None) -> int:
         print("check_release_completeness: not a git checkout", file=sys.stderr)
         return 2
 
+    remote_ok, remote = resolve_flagship_remote(root, args.remote)
+    if not remote_ok:
+        print(f"[FAIL] flagship remote: {remote}", file=sys.stderr)
+        return 1
+
     checks: list[tuple[str, tuple[bool, str]]] = [
         ("version parity", check_version_parity(root)),
         ("dirty tree", check_dirty_tree(root, ack_dirty=args.ack_dirty)),
         (
             "reconcile with public",
-            check_not_behind_public(root, remote=args.remote, branch=args.branch),
+            check_not_behind_public(
+                root,
+                remote=remote,
+                branch=args.branch,
+                local_ref=args.local_ref,
+            ),
         ),
         ("dist freshness", check_dist_freshness(root)),
     ]

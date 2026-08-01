@@ -552,6 +552,54 @@ async def test_a_displaced_viewer_cannot_resize_the_pane_it_lost(
     assert fake_pty.resizes == [(term.pty_id, 201, 50)]
 
 
+async def test_promoting_a_surviving_viewer_restores_its_last_size(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A closing second window must not strand the first at its geometry."""
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    async def first_viewer(_text: str) -> None: ...
+    async def second_viewer(_text: str) -> None: ...
+
+    await registry.attach("T1", 80, 24, first_viewer, _noop_exit)
+    term = registry.session.terminals[0]
+    await registry.attach("T1", 200, 50, second_viewer, _noop_exit)
+    fake_pty.resizes.clear()
+
+    # The visible first viewer is maximized while the short-lived second one
+    # still owns the PTY. Its resize is rejected for now, but must be remembered
+    # for the ownership handover that follows.
+    assert registry.resize(term.key, 240, 60, viewer=first_viewer) is False
+    assert fake_pty.resizes == []
+
+    registry.detach(term.key, viewer=second_viewer)
+
+    assert term.viewer_output is first_viewer
+    assert fake_pty.resizes == [(term.pty_id, 240, 60)]
+    assert (term.transcript.cols, term.transcript.rows) == (240, 60)
+
+
+async def test_promoting_a_survivor_restores_its_attach_size(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """The attach geometry is sufficient even without a later resize event."""
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    async def first_viewer(_text: str) -> None: ...
+    async def second_viewer(_text: str) -> None: ...
+
+    await registry.attach("T1", 80, 24, first_viewer, _noop_exit)
+    term = registry.session.terminals[0]
+    await registry.attach("T1", 200, 50, second_viewer, _noop_exit)
+    fake_pty.resizes.clear()
+
+    registry.detach(term.key, viewer=second_viewer)
+
+    assert term.viewer_output is first_viewer
+    assert fake_pty.resizes == [(term.pty_id, 80, 24)]
+    assert (term.transcript.cols, term.transcript.rows) == (80, 24)
+
+
 async def test_an_internal_resize_needs_no_viewer(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:

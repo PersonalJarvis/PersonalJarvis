@@ -131,7 +131,7 @@ class TestTheFactoryForwardsThePick:
         misleading "this plugin is out of date" warning."""
         _build(
             monkeypatch,
-            STTConfig(provider="nemotron-local", bias_prompt="Ruben"),
+            STTConfig(provider="nemotron-local", bias_prompt="Alex"),
             _FakeOnDevice,
         )
         for cloud_only in ("temperature", "prompt", "timeout_s"):

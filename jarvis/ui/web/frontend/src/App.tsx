@@ -23,6 +23,7 @@ import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
+import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
 
 export default function App() {
   useWebSocket();
@@ -66,6 +67,7 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <SubscriptionRealtimeTransportBroker />
       <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
       <div
         className="pointer-events-none fixed right-[-10%] top-[-20%] h-[600px] w-[600px] jarvis-glow"

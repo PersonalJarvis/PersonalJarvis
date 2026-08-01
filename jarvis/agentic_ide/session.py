@@ -79,6 +79,7 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 
 from . import prompt_history, recap_engine, resume_store
+from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
     can_resume,
@@ -768,6 +769,16 @@ def _behind_win_shim(
 
 
 @dataclass(slots=True)
+class PaneViewer:
+    """One attached screen and the geometry it most recently reported."""
+
+    output: Any
+    exit: Any
+    cols: int
+    rows: int
+
+
+@dataclass(slots=True)
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
 
@@ -913,6 +924,51 @@ class Terminal:
     # answer worn differently. So the wish is REMEMBERED here and spent by
     # `attach` the moment that pane's agent exists.
     continue_when_ready: bool = False
+    # Has this pane's screen been observed STANDING STILL since its current
+    # process started?
+    #
+    # The line between "the agent carried on by itself" and "its CLI is drawing
+    # itself back onto the screen". Both are movement, and movement is the only
+    # thing the activity detector reads (see `.activity`) — so a resumed pane
+    # repainting its banner and its old transcript reads exactly like an agent
+    # at work, for the several seconds that takes.
+    #
+    # **The bug this fixes.** Both readers of that signal got it wrong in the
+    # same window: the notification sweep retracted `continuation_pending`
+    # ("it is already working, it needs no nudge") and the scan filtered the
+    # pane out — so every restored pane lost its offer to continue within two
+    # sweeps of coming back, and the button reported zero for ever. Reported as
+    # "the Continue feature does not work".
+    #
+    # A start-up burst always ends at a prompt, so "has stood still at least
+    # once" separates the two without knowing anything about what any CLI
+    # draws. Raised by the notification sweep on an observed still screen (two
+    # looks, never a single one), cleared on every spawn. Never persisted — it
+    # describes the process now running in the pane.
+    idle_seen: bool = False
+    # What this pane is DOING, as the activity sweep last observed it: working,
+    # waiting, asking, starting, exited, failed (see `.activity`). Empty until
+    # the first sweep has looked at this pane, and for a plain terminal, which
+    # runs no agent and therefore has no job to be in the middle of.
+    #
+    # Stamped here rather than kept inside the sweep because whether a screen is
+    # MOVING can only be seen across two looks, and everything else that wants
+    # the answer — the workspace state, the pane list's poll — is a request
+    # handler with exactly one look. `activity_at` is when the observation was
+    # taken (so a reader can tell a live reading from one left behind by a sweep
+    # that has since died), `activity_since` when the pane entered this state
+    # (so "waiting" can be shown with how long it has been waiting).
+    activity: str = ""
+    activity_at: float = 0.0
+    activity_since: float = 0.0
+    # Monotonic identity for the process currently occupying this pane. The
+    # notification watcher outlives PTYs, so it uses this to discard the old
+    # process's screen fingerprint before interpreting a replacement process.
+    process_generation: int = 0
+    # The process generation that most recently received a real instruction.
+    # A startup repaint has no such stamp, even if the pane resumes an old
+    # conversation whose historical prompt count is non-zero.
+    submit_generation: int = -1
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -933,9 +989,11 @@ class Terminal:
     # Bound at spawn, cleared on detach, replaced on re-attach.
     viewer_output: Any = None
     viewer_exit: Any = None
-    # EVERY viewer currently attached to this pane, as ``(output, exit)`` pairs,
-    # newest last. ``viewer_output`` above is the newest of them — the OWNER,
-    # which is a different question from who gets to see the screen.
+    # EVERY viewer currently attached to this pane, newest last. Each entry
+    # keeps its callbacks plus its most recently reported geometry, so promoting
+    # an older viewer restores the one shared PTY to the screen now watching it.
+    # ``viewer_output`` above is the newest entry — the OWNER — which is a
+    # different question from who gets to see the screen.
     #
     # One slot was enough only while a pane could be open in one place. It can
     # be open in several: the desktop app and a browser tab, two windows, a
@@ -950,7 +1008,7 @@ class Terminal:
     # Output is therefore fanned out to all of them, while the OWNER keeps the
     # decisions that must have exactly one answer: the pseudo-terminal's size,
     # and who is allowed to hand the slot back (see ``resize`` and ``detach``).
-    watchers: list[tuple[Any, Any]] = field(default_factory=list, repr=False, compare=False)
+    watchers: list[PaneViewer] = field(default_factory=list, repr=False, compare=False)
     # Viewers that want to be TOLD when this pane is handed a prompt, rather
     # than having to notice it in the output stream.
     #
@@ -999,6 +1057,7 @@ class Terminal:
         # by the /recaps poll, which is the caller that knows a human is
         # actually looking at this workspace.
         summary = recap_engine.recap_for(self, lines=lines)
+        reading = self.reading()
         return {
             "key": self.key,
             "name": self.name,
@@ -1046,6 +1105,15 @@ class Terminal:
             # see .recap for why it is computed on read.
             "recap": summary.headline,
             "recap_detail": summary.detail,
+            # Is this pane's agent still on the job, or has it stopped? See
+            # `.reading` — the one question the pane list could not answer, and
+            # the reason it used to say "live" at a terminal that had been
+            # finished for twenty minutes. Empty for a plain shell.
+            "activity": reading.activity,
+            "activity_since": reading.since,
+            # Whether a still screen means "finished" or "never asked for
+            # anything" — the same picture, and not the same news.
+            "worked": has_work_behind_it(self),
             "resumed": self.resumed,
             # Continued its old conversation and has had no instruction since —
             # the pane a restart left standing still. Carried in the ordinary
@@ -1059,6 +1127,22 @@ class Terminal:
             "account": self.account,
             "account_label": account_label(self.account),
         }
+
+    def reading(self) -> Reading:
+        """Is this pane's agent working, or has it stopped — and since when?
+
+        One place, because two clients ask: the workspace state (what a pane
+        opens with) and the pane-list poll (what it says from then on), and a
+        pane described as working by one and finished by the other is worse than
+        either answer alone.
+
+        A plain terminal reads as nothing at all. It is a shell prompt, not an
+        agent: it stands still for its whole life, so every word this vocabulary
+        has would be a claim about a job it was never given.
+        """
+        if not accepts_prompts(self.agent):
+            return NO_READING
+        return observed(self)
 
     def to_snapshot(self) -> resume_store.SnapshotTerminal:
         """This pane as the resume store remembers it."""
@@ -1240,14 +1324,20 @@ def _same_viewer(left: Any, right: Any) -> bool:
     return left is right or left == right
 
 
-def _watch(term: Terminal, on_output: Any, on_exit: Any) -> None:
+def _watch(
+    term: Terminal,
+    on_output: Any,
+    on_exit: Any,
+    cols: int,
+    rows: int,
+) -> None:
     """Attach a viewer to ``term`` and make it the owner.
 
     Newest last, and never twice: a socket that re-attaches (a resize, a resume
     retry) replaces its own entry rather than being fed the same bytes twice.
     """
-    term.watchers = [w for w in term.watchers if not _same_viewer(w[0], on_output)]
-    term.watchers.append((on_output, on_exit))
+    term.watchers = [w for w in term.watchers if not _same_viewer(w.output, on_output)]
+    term.watchers.append(PaneViewer(on_output, on_exit, cols, rows))
     if len(term.watchers) > MAX_WATCHERS:
         del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
     term.viewer_output = on_output
@@ -1261,14 +1351,14 @@ def _viewers(term: Terminal) -> list[Any]:
     caller) that sets ``viewer_output`` by hand still gets its output.
     """
     if term.watchers:
-        return [out for out, _ in term.watchers]
+        return [viewer.output for viewer in term.watchers]
     return [term.viewer_output] if term.viewer_output is not None else []
 
 
 def _exit_viewers(term: Terminal) -> list[Any]:
     """The same, for the one-shot "the agent stopped" callback."""
     if term.watchers:
-        return [done for _, done in term.watchers if done is not None]
+        return [viewer.exit for viewer in term.watchers if viewer.exit is not None]
     return [term.viewer_exit] if term.viewer_exit is not None else []
 
 
@@ -2337,7 +2427,7 @@ class Registry:
             # Winning the slot is about OWNERSHIP (the size, the handover), not
             # about who may look: a viewer that was here first keeps receiving
             # this pane's output until its own socket goes away.
-            _watch(term, on_output, on_exit)
+            _watch(term, on_output, on_exit, cols, rows)
             term.reattached = True
             term.stopping = False
             geometry_changed = (term.transcript.cols, term.transcript.rows) != (
@@ -2436,12 +2526,17 @@ class Registry:
         if not term.resumed:
             term.resume_continuation_needed = False
 
+        # Everything below belongs to a new process attempt. Reset this before
+        # spawning so neither early output nor a concurrent notification sweep
+        # can inherit the previous PTY's settled-screen evidence.
+        term.process_generation += 1
+        term.idle_seen = False
         term.transcript.resize(cols, rows)
         # A fresh process draws a fresh screen: anything the previous one left
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
-        _watch(term, on_output, on_exit)
+        _watch(term, on_output, on_exit, cols, rows)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
         term.stopping = False
@@ -2552,6 +2647,9 @@ class Registry:
         # Cleared rather than left alone so a restarted pane cannot inherit the
         # previous process's last output either.
         term.last_output_at = None
+        # And this process has not stood still yet, whatever the previous one
+        # did. Everything it is about to draw is a CLI painting itself, not an
+        # agent working — see the field.
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
@@ -2792,6 +2890,7 @@ class Registry:
             # never goes through `send_prompt`, so without this hook the bell
             # would stay silent for everybody who types their own prompts.
             term.last_submit_at = term.last_input_at
+            term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -2869,6 +2968,19 @@ class Registry:
         term = found[1]
         if not term.pty_id:
             return False
+        # Remember what EVERY attached viewer currently needs, including one
+        # that is temporarily displaced from the ownership slot. If the newer
+        # owner closes while this message is in flight, ``detach`` promotes the
+        # survivor and restores exactly this geometry. Without that memory, the
+        # survivor believed it had already announced its size while the PTY was
+        # left at the departing window's dimensions: a maximized pane with the
+        # agent still drawing in a narrow strip (reported again 2026-07-31).
+        if viewer is not None:
+            for watched in term.watchers:
+                if _same_viewer(watched.output, viewer):
+                    watched.cols = cols
+                    watched.rows = rows
+                    break
         current = term.viewer_output
         # Equality, not only identity — a bound method is a fresh object on
         # every attribute access (see `detach`).
@@ -2932,7 +3044,7 @@ class Registry:
         # displaced from the slot but is still WATCHING must not keep being
         # written to after its socket closed.
         if viewer is not None:
-            term.watchers = [w for w in term.watchers if not _same_viewer(w[0], viewer)]
+            term.watchers = [w for w in term.watchers if not _same_viewer(w.output, viewer)]
         current = term.viewer_output
         # Compared by equality, not only by identity: a bound method is a brand
         # new object on every attribute access, so `is` would answer "you are
@@ -2954,7 +3066,25 @@ class Registry:
         # pane", full stop. A teardown says that, and promoting a survivor there
         # would leave a torn-down pane holding callbacks.
         if viewer is not None and term.watchers:
-            term.viewer_output, term.viewer_exit = term.watchers[-1]
+            survivor = term.watchers[-1]
+            term.viewer_output = survivor.output
+            term.viewer_exit = survivor.exit
+            # Ownership and geometry are one handover. The previous owner may
+            # have resized the one shared PTY after this viewer last reported,
+            # and the promoted viewer has no DOM change that would make it send
+            # the same size again. Restore its remembered size now instead of
+            # waiting for an unrelated window resize to repair the screen.
+            if not self.resize(
+                term.key,
+                survivor.cols,
+                survivor.rows,
+                workspace_id,
+                viewer=survivor.output,
+            ):
+                logger.debug(
+                    "Agentic IDE: could not restore {} to its promoted viewer's geometry",
+                    term.name,
+                )
             return
         term.viewer_output = None
         term.viewer_exit = None
@@ -3441,6 +3571,7 @@ class Registry:
         # way. Set even for a hard False: the text is in the pane's input box,
         # and whatever it does next was still asked of it.
         term.last_submit_at = term.last_prompt_at
+        term.submit_generation = term.process_generation
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         history_entry = prompt_history.PromptHistoryEntry(

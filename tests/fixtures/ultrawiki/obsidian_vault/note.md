@@ -1,3 +1,3 @@
 # Meeting Notes
 
-Project Atlas planning meeting at two in Example Room.
+Dinner with Viktoria at seven, downtown.

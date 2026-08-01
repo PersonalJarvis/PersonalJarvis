@@ -24,6 +24,10 @@ host's Tk bootstrap root cannot steal them.
 Windows (OLE/WebView2) and macOS (AppKit/WKWebView) sources. P-15 records the
 remaining GTK source gap; reveal/open actions remain available on Linux.
 
+**Fix pass 2026-07-31:** P-28 fixed and removed. Codex subscription voice now
+uses a parent-lifeline process-group supervisor on macOS and Linux, while
+Windows retains kernel Job Object containment.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;

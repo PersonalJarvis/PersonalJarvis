@@ -18,13 +18,13 @@ def test_load_creates_defaults(tmp_path):
 def test_add_and_remove_fact(tmp_path):
     path = tmp_path / "core.json"
     mem = CoreMemory.load(path)
-    mem.add_fact("Ich heiße Morgan", category="identity")  # i18n-allow
+    mem.add_fact("Ich heiße Sam", category="identity")  # i18n-allow
     mem.add_fact("Ich mag Python", category="preference")
 
     # Persistence
     reloaded = CoreMemory.load(path)
     facts = reloaded.get_section("user_facts")
-    assert "Ich heiße Morgan" in facts["identity"]  # i18n-allow
+    assert "Ich heiße Sam" in facts["identity"]  # i18n-allow
     assert "Ich mag Python" in facts["preference"]
 
     # Remove
@@ -43,11 +43,11 @@ def test_dedup_in_add_fact(tmp_path):
 def test_render_system_prompt_block(tmp_path):
     path = tmp_path / "core.json"
     mem = CoreMemory.load(path)
-    mem.add_fact("Ich heiße Morgan", category="identity")  # i18n-allow
+    mem.add_fact("Ich heiße Sam", category="identity")  # i18n-allow
     mem.set_value("current_projects", "Jarvis", "Voice-Assistant in Phase 2")
     prompt = mem.render_system_prompt_block()
     assert "Core-Memory" in prompt
-    assert "Ich heiße Morgan" in prompt  # i18n-allow
+    assert "Ich heiße Sam" in prompt  # i18n-allow
     assert "Jarvis" in prompt
 
 

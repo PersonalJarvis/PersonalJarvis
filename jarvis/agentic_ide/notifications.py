@@ -94,7 +94,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
-from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest
+from .activity import STILL_S, Activity, is_settled, read_activity, screen_digest, stamp
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Iterable, Mapping
@@ -333,6 +333,10 @@ class _PaneWatch:
     #: is the watcher's own bookkeeping — nothing else has any use for it.
     digest: str = ""
     changed_at: float = 0.0
+    #: Process identity whose screen the fingerprint describes. A pane can
+    #: survive several PTYs; reusing the previous one's digest fabricates a
+    #: still observation for the replacement process.
+    process_generation: int = 0
 
 
 def _detail(term: Any) -> str:
@@ -440,8 +444,9 @@ class ActivityWatcher:
         # movement can only be seen by comparing against the previous sweep —
         # so the fingerprint is taken first and the answer is derived from it.
         watch = self._panes.get(ident)
+        process_generation = int(getattr(term, "process_generation", 0))
         digest = screen_digest(term)
-        if watch is None:
+        if watch is None or watch.process_generation != process_generation:
             # First sight. Nothing is filed: the pane may have been sitting
             # finished for an hour before this watcher existed, and announcing
             # that on startup would fill the bell with history.
@@ -464,8 +469,10 @@ class ActivityWatcher:
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
                 digest=digest,
                 changed_at=settled_at,
+                process_generation=process_generation,
             )
             self._panes[ident] = watch
+            stamp(term, activity, now=now)
             self._checkpoint_resume_state(term, activity, watch, now)
             return None
 
@@ -477,6 +484,12 @@ class ActivityWatcher:
         # ``now`` travels into the read as well, so a test can place a pane on
         # its own timeline instead of racing the wall clock.
         activity = read_activity(term, now=now, still_since=watch.changed_at)
+        if is_settled(activity):
+            # An OBSERVED still screen — two looks at the same picture, never
+            # the assumption the first-sight branch above has to make. From here
+            # on, movement in this pane is an agent working rather than its CLI
+            # drawing itself back onto the screen (see `Terminal.idle_seen`).
+            term.idle_seen = True
 
         if activity != watch.activity:
             if watch.activity == "working":
@@ -485,6 +498,11 @@ class ActivityWatcher:
             watch.since = now
             watch.announced = False
 
+        # Publish the reading before deciding whether it is worth a bell entry.
+        # The pane list shows this on every pane, all the time, while an entry
+        # is filed once per episode and only for the few states that are news —
+        # so an early return below must never cost the UI its status.
+        stamp(term, activity, now=now)
         self._checkpoint_resume_state(term, activity, watch, now)
 
         if watch.announced:
@@ -533,7 +551,17 @@ class ActivityWatcher:
         preserved while it waits at its prompt.
         """
         if activity == "working":
-            # A resumed CLI that is already working carried on by itself.
+            instructed_here = getattr(term, "submit_generation", -1) == getattr(
+                term, "process_generation", 0
+            )
+            if not getattr(term, "idle_seen", False) and not instructed_here:
+                # This is the pane's CLI painting itself back onto the screen
+                # after a restart. Preserve both resume flags until this
+                # process has genuinely stood still once or receives a real
+                # instruction of its own.
+                return
+            # It stood still and then moved again, so somebody put this pane
+            # back to work and the offer to continue it is spent.
             term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
@@ -583,7 +611,7 @@ class ActivityWatcher:
 
 
 def _tasked(term: Any) -> bool:
-    """Has anybody ever given this pane an instruction?
+    """Has anybody given this pane an instruction it could have finished?
 
     Two proofs, because a pane can be driven two ways and both count. A
     timestamp from the moment something was submitted into it — by Jarvis or by
@@ -592,6 +620,14 @@ def _tasked(term: Any) -> bool:
     not. A pane typed into by hand before a restart therefore starts its next
     life unproven, and stays quiet until the next thing is typed into it: a
     missing notice, rather than an invented one.
+
+    Deliberately STRICTER than :func:`~.activity.has_work_behind_it`, which the
+    pane list uses for the same-looking question. That one only picks a word for
+    a pane already standing still, so "it resumed a real conversation" is fair
+    evidence there. This one decides whether to interrupt somebody — and a
+    restored pane repainting its old transcript satisfies "was working, then
+    stopped" all by itself, so accepting the same evidence here would ring the
+    bell once per terminal on every restart.
     """
     if getattr(term, "last_submit_at", None):
         return True

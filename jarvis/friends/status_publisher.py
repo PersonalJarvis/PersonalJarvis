@@ -1,4 +1,4 @@
-# === F-FRIENDS [F4] · feature/friends-section · maintainer-2026-05-01 ===
+# === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 """StatusPublisher: subscribes to the EventBus, filters per friend, dispatches.
 
 Architecture (Plan F4):

@@ -1,6 +1,6 @@
 """Autonomous drain of a silently-held continuation fragment (AD-OE6).
 
-Live wedge 2026-06-19 (session da25113a, "…morgen ist ja Montag, oder?"):
+Live wedge 2026-06-19 (session <SESSION_ID>, "…morgen ist ja Montag, oder?"):
 a COMPLETE question whose last word was the conjunction "oder" was classified as
 an open continuation and held by the ``ContinuationBuffer``. The buffer has NO
 timer of its own — it only drops a stale fragment lazily on the *next*

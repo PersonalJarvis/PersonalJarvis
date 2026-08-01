@@ -865,7 +865,11 @@ class DesktopApp:
     """
 
     def __init__(
-        self, cfg: JarvisConfig | None = None, *, session_token: str | None = None
+        self,
+        cfg: JarvisConfig | None = None,
+        *,
+        session_token: str | None = None,
+        realtime_transport_broker_token: str | None = None,
     ) -> None:
         self.cfg = cfg or load_config()
         # The fast-boot launcher generates the token up front (on the main
@@ -873,6 +877,13 @@ class DesktopApp:
         # used for both the server's TokenAuth env (below) and the window's
         # _inject_token. When not injected, generate our own (classic path).
         self.session_token = session_token or _generate_session_token()
+        # Separate, process-local capability for the invisible WebRTC
+        # signalling peer used by native subscription voice.  Normal browser
+        # sessions may legitimately hold ``session_token`` too, so that token
+        # must never authorize a peer which can receive provider media.
+        self.realtime_transport_broker_token = (
+            realtime_transport_broker_token or _generate_session_token()
+        )
         # The ENV must be set _before_ the backend starts: the uvicorn thread
         # reads it during the FastAPI app build to prime the TokenAuth guard.
         os.environ[self.cfg.ui.auth_token_env] = self.session_token
@@ -1225,6 +1236,9 @@ class DesktopApp:
         # _focus_handler fetches the value dynamically.
         server.app.state.shell = None
         server.app.state.desktop_app = self
+        server.app.state.realtime_transport_broker_token = (
+            getattr(self, "realtime_transport_broker_token", "")
+        )
         # Local desktop run: the user IS at this machine, so reveal/open-with-
         # default-app target their own desktop. Enable the native file actions.
         server.app.state.native_file_actions = True
@@ -3478,8 +3492,13 @@ class DesktopApp:
         single-instance lock).
         """
         token_literal = json.dumps(self.session_token)
+        broker_token_literal = json.dumps(self.realtime_transport_broker_token)
         js = (
             f"window.__JARVIS_TOKEN = {token_literal};"
+            "window.__JARVIS_EMBEDDED_DESKTOP = true;"
+            "Object.defineProperty(window, '__JARVIS_REALTIME_BROKER_TOKEN', {"
+            f"value: {broker_token_literal}, configurable: true, writable: false"
+            "});"
             "window.dispatchEvent(new Event('jarvis-token-ready'));"
         )
         try:

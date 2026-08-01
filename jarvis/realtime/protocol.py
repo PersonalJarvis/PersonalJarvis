@@ -18,6 +18,7 @@ RealtimeEventType = Literal[
     "audio_delta",
     "output_transcript_delta",
     "input_transcript",
+    "handoff_requested",
     "tool_call",
     "speech_started",
     "interrupted",
@@ -49,6 +50,10 @@ class RealtimeEvent:
     call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
+    # Client-managed provider handoff metadata. A handoff is control flow for
+    # the Jarvis supervisor, never a provider tool call or response boundary.
+    handoff_id: str | None = None
+    provider_turn_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +90,11 @@ class RealtimeSessionConfig:
     # needs to understand follow-up turns (BUG-088). Empty at the first open
     # of a call. Providers that cannot inject history ignore it.
     history: tuple[dict[str, str], ...] = ()
+    # A browser-created WebRTC offer used only by providers whose upstream
+    # authentication handshake requires a browser media transport. Most
+    # providers ignore it and continue to use their native WebSocket SDK.
+    # The offer is deliberately transport data rather than a credential.
+    transport_offer_sdp: str = ""
 
 
 @runtime_checkable

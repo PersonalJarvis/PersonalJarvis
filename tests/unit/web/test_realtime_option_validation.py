@@ -99,3 +99,24 @@ def test_put_realtime_options_keeps_explicit_clear_contract(
 
     assert response.status_code == 200
     assert writes == [("", "")]
+
+
+def test_get_realtime_options_reports_preview_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *args, **kwargs: "sk-test")
+    client = TestClient(_app())
+
+    api_response = client.get(
+        "/api/providers/openai-realtime/realtime-options"
+    )
+    subscription_response = client.get(
+        "/api/providers/codex-subscription-realtime/realtime-options"
+    )
+
+    assert api_response.status_code == 200
+    assert api_response.json()["preview_available"] is True
+    assert subscription_response.status_code == 200
+    body = subscription_response.json()
+    assert body["preview_available"] is False
+    assert [voice["id"] for voice in body["voices"]][0] == "cove"

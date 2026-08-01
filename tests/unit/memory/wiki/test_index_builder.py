@@ -57,7 +57,7 @@ async def test_render_lists_pages_alphabetically(
     entities_block = output.split("\n## Entities\n", 1)[1].split("\n## ", 1)[0]
     claude_idx = entities_block.index("[[claude]]")
     alex_idx = entities_block.index("[[alex]]")
-    assert alex_idx < claude_idx
+    assert claude_idx < alex_idx
 
 
 async def test_render_uses_short_wikilink_form(

@@ -47,7 +47,7 @@ _TRANSCRIPT_OVERDUE_S = 6.0
 # response.create crossing the server's), not deafness — only arm the
 # transcript deadline when the last transcript is comfortably in the past.
 _SUPPRESS_ARM_MIN_QUIET_S = 2.0
-# BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51, session 1fd3fa38):
+# BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51, session <SESSION_ID>):
 # the client accepted its own requested response, a local barge-in dropped its
 # output, and the server never sent that response's ``response.done`` — so
 # ``_response_idle`` stayed CLEAR forever. Every deaf-wedge defense gates on
@@ -1082,6 +1082,7 @@ class OpenAIRealtimeProvider:
     # This is account/quota metadata, not a provider-name feature gate.
     credential_family = "openai"
     supports_realtime = True
+    implicit_usage_fallback_allowed = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates = (

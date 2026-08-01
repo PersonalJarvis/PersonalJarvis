@@ -1,9 +1,8 @@
 """Bulk-translate German strings across the frontend."""
 import os
 import re
-from pathlib import Path
 
-BASE = Path(__file__).resolve().parents[1] / "jarvis/ui/web/frontend/src"
+BASE = "<USER_HOME>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
 
 def patch_file(rel_path, replacements, ensure_imports=None, ensure_hooks=None):
     fp = os.path.join(BASE, rel_path).replace("\\", "/")

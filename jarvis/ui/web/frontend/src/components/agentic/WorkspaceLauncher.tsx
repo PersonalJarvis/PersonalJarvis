@@ -39,8 +39,6 @@ export interface WorkspaceLauncherProps {
   suggestedNames: string[];
   /** Width the workspace grid will occupy, measured by the view. */
   workspaceWidthPx: number;
-  /** Height it will occupy — panes wrap on shape, not on width alone. */
-  workspaceHeightPx: number;
   onCount: (next: number) => void;
 
   planned: PlannedTerminal[];
@@ -101,7 +99,6 @@ export function WorkspaceLauncher({
   maxTerminals,
   suggestedNames,
   workspaceWidthPx,
-  workspaceHeightPx,
   onCount,
   planned,
   onPlanned,
@@ -276,7 +273,6 @@ export function WorkspaceLauncher({
                     count={count}
                     names={suggestedNames}
                     workspaceWidthPx={workspaceWidthPx}
-                    workspaceHeightPx={workspaceHeightPx}
                   />
                   <CountTrack
                     count={count}

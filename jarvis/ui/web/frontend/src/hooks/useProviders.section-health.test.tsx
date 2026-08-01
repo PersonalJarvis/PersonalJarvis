@@ -7,6 +7,7 @@ import {
   type ProviderTestResult,
   type SectionHealth,
   type SectionHealthResponse,
+  useProviders,
   useSectionHealth,
 } from "./useProviders";
 
@@ -38,6 +39,33 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("provider status loading", () => {
+  it("does not let an older response overwrite newer provider truth", async () => {
+    const oldRequest = deferred<Response>();
+    const freshProvider = { id: "codex-subscription-realtime", configured: true };
+    const staleProvider = { id: "codex-subscription-realtime", configured: false };
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockResolvedValueOnce(jsonResponse({ providers: [freshProvider] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useProviders());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.providers).toEqual([freshProvider]);
+
+    await act(async () => {
+      oldRequest.resolve(jsonResponse({ providers: [staleProvider] }));
+      await oldRequest.promise;
+    });
+    expect(result.current.providers).toEqual([freshProvider]);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ cache: "no-store" });
+  });
 });
 
 describe("provider-bound section health", () => {

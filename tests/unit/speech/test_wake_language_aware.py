@@ -2,7 +2,7 @@
 
 A Vosk model is acoustically language-SPECIFIC — an English model cannot hear a
 German-spoken name even when the word is in its lexicon (live 2026-07-09:
-'Hey Ruben' spoken de on the en model free-decoded to 'hey of whom' and every
+'Hey Alex' spoken de on the en model free-decoded to 'hey of whom' and every
 verify suppressed). So ``resolve_wake_plan`` must trust vosk_kws ONLY when its
 language provably matches the speaker, and prefer the multilingual
 open-vocabulary stt_match path under an ambiguous "auto" language when local
@@ -19,7 +19,7 @@ import pytest
 from jarvis.speech.wake_phrase import resolve_wake_plan
 
 
-def _cfg(phrase: str = "Hey Ruben", engine: str = "auto", custom: str = "") -> SimpleNamespace:
+def _cfg(phrase: str = "Hey Alex", engine: str = "auto", custom: str = "") -> SimpleNamespace:
     return SimpleNamespace(
         phrase=phrase,
         engine=engine,
@@ -93,7 +93,7 @@ def test_concrete_matching_language_uses_fast_vosk(de_model):
 
 
 def test_concrete_mismatched_language_avoids_wrong_vosk_model(de_model):
-    # The 'Hey Ruben' bug in miniature: the user's resolved language is English but
+    # The 'Hey Alex' bug in miniature: the user's resolved language is English but
     # ONLY a German model is on disk. resolve_vosk_model_path("en") → None, so we
     # must NOT use the German model — route to multilingual stt_match instead.
     plan = resolve_wake_plan(
@@ -177,7 +177,7 @@ def test_oov_guard_fails_open_on_bad_model_path():
     # A probe that cannot even load the model must NEVER reject a real word.
     from jarvis.plugins.wake.vosk_kws_provider import vosk_model_supports_phrase
 
-    assert vosk_model_supports_phrase("/definitely/not/a/model", "Hey Ruben") is True
+    assert vosk_model_supports_phrase("/definitely/not/a/model", "Hey Alex") is True
 
 
 # --------------------------------------------------------------------------

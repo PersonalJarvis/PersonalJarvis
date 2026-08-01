@@ -124,17 +124,30 @@ describe("paneColumns", () => {
   });
 
   it("wraps beyond the readable width instead of shrinking panes further", () => {
-    // 12 columns on one line leaves each of them too narrow to read, so they
-    // break into two even bands: 6 above, 6 below.
-    expect(paneColumns(11)).toBe(6);
-    expect(paneColumns(12)).toBe(6);
+    // 12 columns on one line leaves each of them too narrow to read, so the
+    // overflow starts a second band: 10 above, 2 below.
+    expect(paneColumns(11)).toBe(10);
+    expect(paneColumns(12)).toBe(10);
   });
 
-  it("keeps the bands even rather than filling the first one up", () => {
-    // 21 columns could be 10 + 10 + 1; an almost empty last line next to two
-    // full ones looks broken, so every band gets the same width.
-    expect(paneColumns(21)).toBe(7);
+  it("fills the first band up rather than re-balancing the workspace", () => {
+    // Balanced bands (21 → 7 + 7 + 7) looked tidier in a still picture, but
+    // re-dealt every pane whenever one was added: the user's fourth split
+    // moved a terminal they were reading to another row (2026-07-31). Greedy
+    // filling keeps every existing column exactly where it is — only the
+    // newest can start a band.
+    expect(paneColumns(21)).toBe(10);
     expect(paneColumns(20)).toBe(10);
+  });
+
+  it("never moves an existing column when one more is opened", () => {
+    // The user-facing contract behind greedy filling, pinned directly: for any
+    // count, adding a column changes no existing placement.
+    for (let count = 1; count < 24; count += 1) {
+      const before = paneGrid(wizardPanes(count)).placements;
+      const after = paneGrid(wizardPanes(count + 1)).placements;
+      expect(after.slice(0, count)).toEqual(before);
+    }
   });
 
   it("has no columns for an empty workspace", () => {
@@ -214,11 +227,11 @@ describe("paneGrid", () => {
   it("wraps a crowded workspace into a second band", () => {
     const panes = Array.from({ length: 12 }, (_, i) => pane(i, 0));
     const grid = paneGrid(panes);
-    expect(grid.columns).toBe(6);
+    expect(grid.columns).toBe(10);
     expect(grid.rows).toBe(2);
-    // The seventh column starts the second band, back at the left edge.
-    expect(grid.placements[6]).toEqual({ column: 1, row: 2, rowSpan: 1 });
-    expect(grid.placements[11]).toEqual({ column: 6, row: 2, rowSpan: 1 });
+    // The eleventh column starts the second band, back at the left edge.
+    expect(grid.placements[10]).toEqual({ column: 1, row: 2, rowSpan: 1 });
+    expect(grid.placements[11]).toEqual({ column: 2, row: 2, rowSpan: 1 });
   });
 
   it("closes gaps the backend left in the column numbers", () => {

@@ -78,14 +78,14 @@ async def test_upsert_writes_via_store_contract() -> None:
     """The tool forwards structured args verbatim to ``ContactStore.upsert``."""
     store = _RecordingStore()
     result = await _tool(store).execute(
-        {"name": "Christoph", "phone": "+12025550101", "relationship": "friend"},
+        {"name": "Christoph", "phone": "+4915112345678", "relationship": "friend"},
         None,
     )
     assert result.success is True
     assert len(store.upserts) == 1
     call = store.upserts[0]
     assert call["name"] == "Christoph"
-    assert call["phone"] == "+12025550101"
+    assert call["phone"] == "+4915112345678"
     assert call["relationship"] == "friend"
 
 
@@ -94,15 +94,15 @@ async def test_upsert_passes_optional_fields_through() -> None:
     store = _RecordingStore()
     await _tool(store).execute(
         {
-            "name": "Casey",
-            "email": "casey@example.com",
+            "name": "Laura",
+            "email": "laura@example.com",
             "address": "Hauptstr. 1, Berlin",
             "note": "colleague from work",
         },
         None,
     )
     call = store.upserts[0]
-    assert call["email"] == "casey@example.com"
+    assert call["email"] == "laura@example.com"
     assert call["address"] == {"street": "Hauptstr. 1, Berlin"}
     assert call["note"] == "colleague from work"
 
@@ -110,7 +110,7 @@ async def test_upsert_passes_optional_fields_through() -> None:
 @pytest.mark.asyncio
 async def test_missing_name_is_an_error_and_does_not_write() -> None:
     store = _RecordingStore()
-    result = await _tool(store).execute({"phone": "+12025550101"}, None)
+    result = await _tool(store).execute({"phone": "+4915112345678"}, None)
     assert result.success is False
     assert result.error
     assert store.upserts == []
@@ -129,7 +129,7 @@ async def test_no_fields_to_write_is_an_error() -> None:
 @pytest.mark.asyncio
 async def test_store_unavailable_degrades_gracefully() -> None:
     result = await ContactUpsertTool(store_resolver=lambda: None).execute(
-        {"name": "Christoph", "phone": "+12025550101"}, None
+        {"name": "Christoph", "phone": "+4915112345678"}, None
     )
     assert result.success is False
     assert result.error

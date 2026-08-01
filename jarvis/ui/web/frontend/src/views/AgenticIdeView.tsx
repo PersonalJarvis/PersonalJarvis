@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
 import { AgenticGrid } from "@/components/agentic/AgenticGrid";
+import { VoicePanel } from "@/components/agentic/VoicePanel";
 import {
   WorkspaceLauncher,
   type PlannedTerminal,
@@ -56,17 +57,6 @@ import {
   type SessionState,
   type WorkspaceCard,
 } from "@/lib/agenticIdeApi";
-
-/**
- * The running workspace's one-line toolbar plus its default collapsed composer.
- *
- * The wizard measures the whole slot before either exists, while the terminal
- * layout measures only the grid between them. Removing their stable default
- * height lets the preview make the same width-and-height decision the live grid
- * will make. An opened composer is deliberately excluded: it is a later user
- * resize, and the live grid responds to that measurement itself.
- */
-const WORKSPACE_GRID_CHROME_PX = 64;
 
 /**
  * Terminal plan for ``count`` panes, preserving whatever the user already chose
@@ -297,35 +287,30 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [modeIntroFor, setModeIntroFor] = useState<string | null>(null);
 
   /*
-   * How large the workspace will be — measured here, in the wizard, because
+   * How wide the workspace will be — measured here, in the wizard, because
    * the preview must promise the arrangement the grid will actually produce.
    *
-   * Width stops panes becoming unreadably narrow; height stops full-screen TUIs
-   * becoming tall shafts with their answer at the top and their input at the
-   * bottom. A preview computing columns from the count alone drifts apart from
-   * the running grid on either axis. The wizard shell sits in the same slot the
-   * grid will occupy, so measuring it here answers the same question.
+   * Width is what stops panes becoming unreadably narrow, and it is the ONLY
+   * thing that wraps a workspace: which panes share a row is otherwise the
+   * user's own choice, made through the split buttons. A preview computing
+   * columns from the count alone drifts apart from the running grid. The
+   * wizard shell sits in the same slot the grid will occupy, so measuring it
+   * here answers the same question.
    *
    * The readout names the width condition rather than silently assuming it —
-   * see WorkspaceShape. Measuring the area makes the picture correct for the
-   * window it was shown in; saying so is what keeps it honest after a resize.
+   * see WorkspaceShape. Measuring makes the picture correct for the window it
+   * was shown in; saying so is what keeps it honest after a resize.
    */
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [shellWidth, setShellWidth] = useState(0);
-  const [shellHeight, setShellHeight] = useState(0);
   useEffect(() => {
     const node = shellRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
     setShellWidth(node.clientWidth);
-    setShellHeight(Math.round(node.clientHeight / 16) * 16);
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? node.clientWidth;
-      const height = entries[0]?.contentRect.height ?? node.clientHeight;
       // Same 16 px step the grid rounds to, so both sides flip at one width.
       setShellWidth(Math.round(width / 16) * 16);
-      // Height can now move a whole terminal band too; keep the decision stable
-      // through one-pixel WebView resize noise just as width already does.
-      setShellHeight(Math.round(height / 16) * 16);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -369,19 +354,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // so their absence is visible rather than silently missing.
   const splitChoices = useMemo(
     () =>
-      agents.map((a) => ({
-        name: a.name,
-        displayName: a.display_name,
-        installed: a.installed,
-        kind: a.kind ?? "cli",
-        // For a plain terminal the useful second line is WHICH shell opens; a
-        // CLI's name already says what it is, so it gets no line of its own.
-        description:
-          a.kind === "shell" && a.version
-            ? `${a.version} — no agent, just a prompt`
-            : (a.description ?? ""),
-      })),
-    [agents],
+      meta
+        ? agents.map((a) => ({
+            name: a.name,
+            displayName: a.display_name,
+            installed: a.installed,
+            kind: a.kind ?? "cli",
+            // For a plain terminal the useful second line is WHICH shell opens; a
+            // CLI's name already says what it is, so it gets no line of its own.
+            description:
+              a.kind === "shell" && a.version
+                ? `${a.version} — no agent, just a prompt`
+                : (a.description ?? ""),
+          }))
+        : undefined,
+    [agents, meta],
   );
 
   const chooseCount = (n: number) => {
@@ -724,32 +711,41 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   if (session && !addingNew) {
     return (
       <div className="flex h-full flex-col">
-        <div className="min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1">
+          <div className="min-h-0 min-w-0 flex-1">
+            {/*
+              Keyed by workspace, so switching tabs REPLACES the grid instead of
+              re-using it. That is deliberate: each pane's terminal is wired to
+              one call-sign for its whole life, and re-using the component across
+              workspaces would leave xterm instances pointed at the panes of the
+              workspace that just left.
+            */}
+            <AgenticGrid
+              key={session.id}
+              session={session}
+              workspaceBar={renderBar(true)}
+              appActions={<TopBarActions />}
+              onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+              jumpTo={jumpTo}
+              focusMode={focusMode}
+              onToggleFocus={(v) => void toggleFocus(v)}
+              onClose={() => void close()}
+              busy={busy}
+              maxTerminals={maxTerminals}
+              agents={splitChoices}
+              onSessionChanged={setSession}
+              accounts={ideAccounts}
+              onStateChanged={applyStateFromSettings}
+              onScreen={onScreen}
+            />
+          </div>
           {/*
-            Keyed by workspace, so switching tabs REPLACES the grid instead of
-            re-using it. That is deliberate: each pane's terminal is wired to
-            one call-sign for its whole life, and re-using the component across
-            workspaces would leave xterm instances pointed at the panes of the
-            workspace that just left.
+            The voice column: talk to the assistant while the agents work.
+            OUTSIDE the per-workspace grid on purpose — the conversation
+            belongs to the app, not to a workspace, so switching tabs must not
+            reset the orb mid-sentence.
           */}
-          <AgenticGrid
-            key={session.id}
-            session={session}
-            workspaceBar={renderBar(true)}
-            appActions={<TopBarActions />}
-            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-            jumpTo={jumpTo}
-            focusMode={focusMode}
-            onToggleFocus={(v) => void toggleFocus(v)}
-            onClose={() => void close()}
-            busy={busy}
-            maxTerminals={maxTerminals}
-            agents={splitChoices}
-            onSessionChanged={setSession}
-            accounts={ideAccounts}
-            onStateChanged={applyStateFromSettings}
-            onScreen={onScreen}
-          />
+          <VoicePanel />
         </div>
         {modeIntroFor === session.id && (
           <CodingModeIntro
@@ -812,7 +808,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           maxTerminals={maxTerminals}
           suggestedNames={suggested}
           workspaceWidthPx={shellWidth}
-          workspaceHeightPx={Math.max(0, shellHeight - WORKSPACE_GRID_CHROME_PX)}
           onCount={chooseCount}
           planned={planned}
           onPlanned={setPlanned}

@@ -114,13 +114,13 @@ def test_name_is_call_contact() -> None:
 async def test_call_resolves_phone_and_places_call() -> None:
     """Happy path: resolve the contact's phone (Contract 1), dial it via
     place_call (Contract 2) with the telephony config, return the call_sid."""
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     pc = _RecordingPlaceCall()
     result = await _tool(store=store, place_call=pc).execute({"name": "Christoph"}, None)
 
     assert result.success is True
     assert len(pc.calls) == 1
-    assert pc.calls[0]["to"] == "+12025550101"
+    assert pc.calls[0]["to"] == "+4915112345678"
     assert pc.calls[0]["account_sid"] == "AC_test"
     assert pc.calls[0]["from_number"] == "+4930000000"
     assert "CA_test_sid_123" in result.output
@@ -129,7 +129,7 @@ async def test_call_resolves_phone_and_places_call() -> None:
 @pytest.mark.asyncio
 async def test_message_becomes_the_spoken_opening() -> None:
     """A user-provided message is what Jarvis speaks first to the callee."""
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     pc = _RecordingPlaceCall()
     await _tool(store=store, place_call=pc).execute(
         {"name": "Christoph", "message": "Hi Christoph, are we still on for Friday?"},
@@ -142,7 +142,7 @@ async def test_message_becomes_the_spoken_opening() -> None:
 async def test_default_opening_is_non_empty_without_message() -> None:
     """Without a message the tool still gives the call a spoken opener so the
     callee is not greeted by silence."""
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     pc = _RecordingPlaceCall()
     await _tool(store=store, place_call=pc).execute({"name": "Christoph"}, None)
     assert pc.calls[0]["opening"].strip() != ""
@@ -159,7 +159,7 @@ async def test_missing_name_is_an_error() -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_contact_does_not_dial() -> None:
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     pc = _RecordingPlaceCall()
     result = await _tool(store=store, place_call=pc).execute({"name": "Mallory"}, None)
     assert result.success is False
@@ -194,7 +194,7 @@ async def test_store_unavailable_degrades_gracefully() -> None:
 async def test_telephony_unconfigured_points_to_section() -> None:
     """No Twilio config (resolver returns None) -> clear English no-op pointing
     at the Telephony section; never a crash, never a dial."""
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     pc = _RecordingPlaceCall()
     result = await _tool(store=store, place_call=pc, config=None).execute(
         {"name": "Christoph"}, None
@@ -212,7 +212,7 @@ async def test_place_call_provision_error_is_surfaced_gracefully() -> None:
     def _raises(**_: Any) -> str:
         raise RuntimeError("twilio is not installed; run pip install '.[telephony]'")
 
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     result = await _tool(store=store, place_call=_raises).execute({"name": "Christoph"}, None)
     assert result.success is False
     assert result.error
@@ -223,7 +223,7 @@ async def test_engine_absent_degrades_gracefully(monkeypatch) -> None:
     """When Chunk C is not merged the lazy ``_load_place_call`` import returns
     None — the tool must degrade to a clear English no-op (cloud-first)."""
     monkeypatch.setattr(call_contact_mod, "_load_place_call", lambda: None)
-    store = _FakeStore([_FakeContact(name="Christoph", phones=["+12025550101"])])
+    store = _FakeStore([_FakeContact(name="Christoph", phones=["+4915112345678"])])
     # place_call=None forces the default lazy-load path (which we patched to None).
     tool = CallContactTool(
         store_resolver=lambda: store,

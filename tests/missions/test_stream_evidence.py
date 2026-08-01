@@ -202,10 +202,10 @@ def test_extracts_tool_calls_and_final_answer() -> None:
         ]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "content": [
-                {"type": "text", "text": '{"login":"example-user"}'}]}]}},
+                {"type": "text", "text": '{"login":"octocat"}'}]}]}},
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "mcp__github__search_repositories",
-             "input": {"query": "user:example-user"}}]}},
+             "input": {"query": "user:octocat"}}]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "content": [
                 {"type": "text", "text": '{"total_count":32}'}]}]}},
@@ -342,7 +342,7 @@ def test_summarize_answers_truncates_on_sentence_boundary_not_mid_word() -> None
     hard ``[:cap-1]`` cut produced "…eine schlechtere Auswander…" — the TTS
     spoke a fragment and stopped mid-word, which the user heard as Jarvis
     "hanging up mid-sentence"."""
-    text = ("Emigrating abroad is a serious decision. " * 40).strip()
+    text = ("Distributed systems require careful planning. " * 40).strip()
     assert len(text) > 600
     out = summarize_answers([text], cap=600)
 
@@ -459,7 +459,7 @@ def test_is_informational_request_false_for_do_and_transaction_tasks() -> None:
     assert not is_informational_request("Rename all the test files.")
     assert not is_informational_request("Send an email to the team.")
     # impossible transactions — handled by capability-refusal, NOT informational
-    assert not is_informational_request("Please book me a trip from Example City to Tokyo.")
+    assert not is_informational_request("Please book me a trip from Melbourne to Tokyo.")
     assert not is_informational_request("Buy me a flight to Tokyo for under 800 euros.")
     # but "book" the NOUN inside a real advisory request stays informational
     assert is_informational_request("Recommend a good book about the Roman Empire.")
@@ -499,10 +499,8 @@ def test_is_informational_request_true_for_make_me_deep_research_phrase() -> Non
     mask the surrounding informational research request."""
     assert is_informational_request(
         "I would like you to help me research about the topic with the "
-        "sub-agent and the topic is how I can move to Example Country A from "
-        "Example Country B "
-        "and how my chances are realistically if you compare it with "
-        "countries like Example Country C and make me a deep "
+        "sub-agent and the topic is how urban gardens affect summer heat "
+        "and how the evidence compares across several cities; make me a deep "
         "research with the sub-agent."
     )
 
@@ -523,7 +521,7 @@ def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
 
 
 def test_is_informational_request_true_for_create_spawn_subagent_research() -> None:
-    """Live regression (2026-06-16, relocation-research mission): the explicit
+    """Regression for an explicit renewable-transit research mission: the
     voice phrasing "Create and spawn a sub-agent which will help me find out X"
     was mis-classified as a do-task because the leading creation verb "Create"
     survived the spawn-meta strip and tripped the action-verb veto. A creation
@@ -532,12 +530,12 @@ def test_is_informational_request_true_for_create_spawn_subagent_research() -> N
     research request ("find out what I have to be aware of …") is seen."""
     assert is_informational_request(
         "Create and spawn a sub-agent which will help me find out what I have "
-        "to be aware of when I move to Example Country A."
+        "to be aware of when comparing renewable transit systems."
     )
     # behind the standing quality directive (the real dispatched shape)
     assert is_informational_request(
         f"{_DIRECTIVE}\n\nCreate and spawn a sub-agent which will help me find "
-        "out what I have to be aware of when I move to Example Country A."
+        "out what I have to be aware of when comparing renewable transit systems."
     )
     # the direct form ("create a sub-agent to research …")
     assert is_informational_request(
@@ -546,7 +544,7 @@ def test_is_informational_request_true_for_create_spawn_subagent_research() -> N
     # German inflected routing noun
     assert is_informational_request(
         "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
-        "Umzug nach Beispielstadt beachten muss."  # i18n-allow
+        "USA-Umzug beachten muss."  # i18n-allow
     )
 
 

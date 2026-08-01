@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from jarvis.screen_context.intent import classify as classify_screen_context
+from jarvis.screen_context.models import VisualIntent
+
 
 class TurnPath(StrEnum):
     """Execution surface selected for one user turn."""
@@ -33,6 +36,7 @@ class TurnReason(StrEnum):
     LOCAL_STATE = "local_state"
     MISSION = "mission"
     PRIVATE_DATA = "private_data"
+    SCREEN_CONTEXT = "screen_context"
     SKILL = "skill"
     UNCERTAIN = "uncertain"
     WORKSPACE = "workspace"
@@ -76,7 +80,8 @@ _INSTRUCTIONAL_RE = re.compile(
     r"wie (?:kann|koennte|wuerde) (?:ich|man)|"  # i18n-allow: speech input
     r"wie (?:kannst|koenntest|wuerdest) du|"  # i18n-allow: speech input
     r"wie (?:koennen|koennten|wuerden) sie|"  # i18n-allow: speech input
-    r"como (?:puedo|se puede)|como hacer)\b"  # i18n-allow: multilingual speech-input matching data
+    r"como (?:puedo|puedes|podria|podrias|se puede)|como hacer)\b"
+    # i18n-allow: multilingual speech-input matching data
 )
 _OWNERSHIP_RE = re.compile(
     r"\b(?:my|mine|our|we|about me|remember me|"
@@ -516,6 +521,12 @@ def plan_turn(
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
 
     reasons: set[TurnReason] = set()
+    screen_context_intent = classify_screen_context(text).intent
+    if screen_context_intent is not VisualIntent.NONE:
+        # The native realtime model cannot see a one-shot image that only the
+        # supervisor can capture and attach. Ambiguity also belongs here: the
+        # supervisor owns the privacy-preserving clarification state.
+        reasons.add(TurnReason.SCREEN_CONTEXT)
     # Checked before the suppressors and never dampened by them: a named pane
     # is as strong as evidence gets, and the reason it must not be weakened is
     # that its most ordinary phrasings are exactly the shapes the suppressors
@@ -745,6 +756,7 @@ def plan_turn(
                 TurnReason.CURRENT_DATA,
                 TurnReason.LOCAL_STATE,
                 TurnReason.PRIVATE_DATA,
+                TurnReason.SCREEN_CONTEXT,
                 # What the pane actually printed is evidence the live model
                 # never holds; answering "what has Dana done" without it is
                 # exactly the guess this whole path exists to prevent.

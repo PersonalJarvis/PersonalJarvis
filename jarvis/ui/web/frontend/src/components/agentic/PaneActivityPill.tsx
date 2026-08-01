@@ -1,0 +1,229 @@
+import { AlertCircle, Check, CircleDot, HelpCircle, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { PaneActivity } from "@/lib/agenticIdeApi";
+
+/**
+ * The one badge on a pane: is anybody still owed something by this terminal?
+ *
+ * ## The question it replaced
+ *
+ * Every pane used to be labelled `live`, which answers a question nobody was
+ * asking. `live` is a property of the PIPE — the socket is up and a process is
+ * on the other end — and it stays true for a terminal that finished its work
+ * twenty minutes ago, for one sitting on an unanswered permission prompt, and
+ * for one grinding through a refactor. In a chat-mode list of a dozen agents,
+ * that is a column of identical green dots next to twelve panes in completely
+ * different states, and the user has to open each one to find out which.
+ *
+ * What a person actually wants to know is whether the agent is still WORKING or
+ * has STOPPED, and this pill answers that instead. The pipe is still reported,
+ * but only when it has something to say (connecting, exited, broken) — a
+ * healthy connection is the boring case and is now spent on the useful claim.
+ *
+ * ## Why it holds for every coding CLI, including ones added later
+ *
+ * The distinction is not made here and not made from anything a product prints.
+ * The backend derives it from the terminal SCREEN — a pane whose picture keeps
+ * changing is working, a pane that stands still has stopped — which is a
+ * property of the terminal rather than of whatever is running inside it. Two
+ * earlier attempts read Claude Code's interrupt hint and Codex's bracketed
+ * clock, and each broke on the next product and on the next release of its own.
+ * See `jarvis/agentic_ide/activity.py`, which measured all four installed CLIs
+ * before committing to the rule.
+ *
+ * So a CLI connected next year gets a working status pill with no code here,
+ * and none there either.
+ *
+ * ## Why "done" and "idle" are not the same word
+ *
+ * A finished agent and a terminal nobody has ever spoken to show the SAME still
+ * screen. Calling both "done" would invent a job for the second one, and be
+ * read as "your work is ready" for a pane that has done none. `worked` — has
+ * anything ever been asked of this pane, including the conversation it resumed
+ * — is what separates them.
+ *
+ * Nothing here claims the work is CORRECT. "done" means the pane went quiet,
+ * which is all a terminal can prove.
+ */
+
+/** What each activity is called on screen, and how it is drawn. */
+type Look = {
+  label: string;
+  className: string;
+  icon: "spinner" | "check" | "dot" | "ask" | "alert" | "none";
+  /** The sentence behind the badge, minus the timing clause. */
+  hint: string;
+};
+
+/**
+ * Every state a pane can be in, in the user's words.
+ *
+ * A `Record` over the whole vocabulary rather than a chain of `if`s: a value
+ * added to the Python `Activity` literal fails to compile here until it is
+ * given a label, which is the drift this repo has been bitten by five times
+ * (§5). `waiting` carries two looks because it is two different pieces of news
+ * — see the module docstring.
+ */
+const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
+  working: {
+    label: "working",
+    className: "text-amber-400",
+    icon: "spinner",
+    hint: "Working — its screen is still changing.",
+  },
+  starting: {
+    label: "starting",
+    className: "text-muted-foreground",
+    icon: "spinner",
+    hint: "Starting up. Its agent has not taken the pane yet.",
+  },
+  asking: {
+    label: "needs you",
+    className: "text-amber-400",
+    icon: "ask",
+    hint: "Stopped with a question on screen. It is waiting for your answer.",
+  },
+  exited: {
+    label: "exited",
+    className: "text-muted-foreground",
+    icon: "none",
+    hint: "Its process is gone.",
+  },
+  failed: {
+    label: "failed",
+    className: "text-destructive",
+    icon: "alert",
+    hint: "Its agent could not be started.",
+  },
+};
+
+const DONE: Look = {
+  label: "done",
+  className: "text-emerald-400",
+  icon: "check",
+  hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
+};
+
+const IDLE: Look = {
+  label: "idle",
+  className: "text-muted-foreground",
+  icon: "dot",
+  hint: "Waiting at its prompt. Nothing has been sent to it yet.",
+};
+
+/** The pipe, for the three cases where the pipe is the news. */
+const CONNECTING: Look = {
+  label: "starting",
+  className: "text-muted-foreground",
+  icon: "spinner",
+  hint: "Connecting to the pane.",
+};
+
+const EXITED: Look = {
+  label: "exited",
+  className: "text-muted-foreground",
+  icon: "none",
+  hint: "Its process is gone.",
+};
+
+const BROKEN: Look = {
+  label: "error",
+  className: "text-destructive",
+  icon: "alert",
+  hint: "This pane could not be reached.",
+};
+
+/**
+ * A live pipe with nothing else known yet.
+ *
+ * The old badge, kept for exactly two panes: a plain terminal, which is a shell
+ * prompt and has no job to be in the middle of, and an agent pane in the second
+ * before its first status poll answers.
+ */
+const CONNECTED: Look = {
+  label: "live",
+  className: "text-emerald-400",
+  icon: "dot",
+  hint: "Connected.",
+};
+
+function lookFor(
+  status: string,
+  activity: PaneActivity,
+  worked: boolean,
+): Look {
+  if (status === "error") return BROKEN;
+  if (status === "exited") return EXITED;
+  if (status !== "live") return CONNECTING;
+  if (activity === "waiting") return worked ? DONE : IDLE;
+  if (activity === "") return CONNECTED;
+  return LOOK[activity];
+}
+
+/**
+ * How long it has been in this state — "45s", "3 min", "2 hours".
+ *
+ * A DURATION, not a moment: "waiting since 14:02" makes the reader do the
+ * subtraction, and the number they actually want is how long they have been
+ * waiting. Rounded on purpose; a pill is a glance, not a stopwatch.
+ */
+export function durationLabel(since: number, now: number): string {
+  const seconds = Math.max(0, Math.round(now / 1000 - since));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+function Icon({ look }: { look: Look }) {
+  if (look.icon === "spinner")
+    return <Loader2 className="h-3 w-3 animate-spin" />;
+  if (look.icon === "check") return <Check className="h-3 w-3" />;
+  if (look.icon === "dot") return <CircleDot className="h-2.5 w-2.5" />;
+  if (look.icon === "ask") return <HelpCircle className="h-3 w-3" />;
+  if (look.icon === "alert") return <AlertCircle className="h-3 w-3" />;
+  return null;
+}
+
+export function PaneActivityPill({
+  status,
+  detail,
+  activity = "",
+  since = 0,
+  worked = false,
+  now,
+}: {
+  /** The socket's own view: `connecting`, `live`, `exited`, `error`. */
+  status: string;
+  /** Whatever the socket said about that, shown in the tooltip. */
+  detail?: string;
+  activity?: PaneActivity;
+  /** When the pane entered this state (epoch seconds); 0 when unknown. */
+  since?: number;
+  /** Has anything ever been asked of this pane? */
+  worked?: boolean;
+  /** Injectable clock, in milliseconds — the tests do not race the wall. */
+  now?: number;
+}) {
+  const look = lookFor(status, activity, worked);
+  // How long it has been in this state, when the backend knows. Only in the
+  // tooltip: the badge itself sits in a 64-pixel column beside a call-sign, and
+  // a number that changes every second there is movement without information.
+  const elapsed = since > 0 ? durationLabel(since, now ?? Date.now()) : "";
+  const title = [look.hint, elapsed && `For ${elapsed}.`, detail]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <span
+      data-testid="pane-activity"
+      data-activity={activity || status}
+      className={cn("flex items-center gap-1 text-[11px]", look.className)}
+      title={title}
+      aria-label={`${look.label}. ${title}`}
+    >
+      <Icon look={look} />
+      {look.label}
+    </span>
+  );
+}

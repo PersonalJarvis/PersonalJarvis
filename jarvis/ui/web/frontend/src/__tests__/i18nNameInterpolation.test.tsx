@@ -12,11 +12,11 @@ import { useEventStore } from "@/store/events";
 
 describe("interpolateName (pure)", () => {
   it("substitutes every {name} occurrence", () => {
-    expect(interpolateName("{name} knows {name}", "Ruben")).toBe("Ruben knows Ruben");
+    expect(interpolateName("{name} knows {name}", "Alex")).toBe("Alex knows Alex");
   });
 
   it("is a no-op for strings without the token", () => {
-    expect(interpolateName("no token here", "Ruben")).toBe("no token here");
+    expect(interpolateName("no token here", "Alex")).toBe("no token here");
   });
 
   it("leaves the token intact for an empty name (never blanks copy)", () => {
@@ -38,10 +38,10 @@ describe("useT name substitution", () => {
   afterEach(() => cleanup());
 
   it("renders the configured assistant name inside a {name} locale string", () => {
-    useEventStore.setState({ assistantName: "Ruben" });
+    useEventStore.setState({ assistantName: "Alex" });
     render(<RestartHintProbe />);
     const text = screen.getByTestId("hint").textContent ?? "";
-    expect(text).toBe("Restart Ruben");
+    expect(text).toBe("Restart Alex");
     expect(text).not.toContain("{name}");
     expect(text).not.toContain("Jarvis");
   });

@@ -20,12 +20,20 @@ from typing import Any
 
 import pytest
 
-from jarvis.agentic_ide import activity, interrupted, resume_store
+from jarvis.agentic_ide import activity, interrupted, notifications, resume_store
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 from jarvis.agentic_ide.session import Registry
 from jarvis.ui.web import agentic_ide_routes
 from tests.fakes.fake_pty_manager import FakePtyManager
+
+
+@pytest.fixture(autouse=True)
+def _clean_watcher() -> Any:
+    """No pane memory carried in from another test, and none left behind."""
+    notifications.reset()
+    yield
+    notifications.reset()
 
 
 @pytest.fixture
@@ -132,11 +140,36 @@ async def test_a_resumed_pane_already_working_is_not_offered_continue(
     reading what the CLI prints, so this drives the property it does read. Faking
     it with a status line here would test a rule the product no longer has, and
     would keep passing after that rule broke.
+
+    The pane has stood still once already (`idle_seen`), which is what makes the
+    movement work rather than a CLI painting itself — see the test below.
     """
     _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
+    term.idle_seen = True
     term.last_output_at = time.time()
 
     assert interrupted.scan(registry) == []
+
+
+async def test_a_resumed_pane_still_painting_itself_is_still_offered(
+    registry: Registry, tmp_path: Path, existing_conversation: Any
+) -> None:
+    """The regression this whole flag exists for.
+
+    A restored CLI redraws its banner and its old transcript for several seconds
+    before it settles at a prompt, and that movement is indistinguishable from
+    work to a detector that only reads movement. Treating it as work filtered
+    every restored pane out of this list in exactly the seconds somebody presses
+    the button — reported as "the Continue feature does not work".
+
+    A pane that has never been seen standing still since its process started is
+    therefore still offered, however busy its screen looks.
+    """
+    _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
+    assert term.idle_seen is False, "a freshly spawned process has settled nothing"
+    term.last_output_at = time.time()
+
+    assert [pane.name for pane in interrupted.scan(registry)] == [term.name]
 
 
 async def test_a_resumed_pane_asking_a_question_is_not_offered_continue(
@@ -443,6 +476,63 @@ async def test_a_restored_pane_is_listed_before_its_agent_starts(
     assert waiting[0].status == "pending", "listed before anything spawned"
     assert waiting[0].continuable is True
     assert waiting[0].starting is True
+
+
+async def test_a_restored_pane_survives_its_own_start_up_burst(
+    registry: Registry, tmp_path: Path, existing_conversation: Any
+) -> None:
+    """The whole chain, end to end, through the sweep that used to break it.
+
+    A restored CLI repaints its banner, its model line and its old transcript
+    for several seconds before it settles — and the detector under all of this
+    reads MOVEMENT, so that burst is frame-for-frame an agent at work. Both
+    readers drew that conclusion: the notification sweep retracted the pane's
+    `continuation_pending` and the scan filtered it out, within two sweeps of
+    every resumed pane coming back. The dialog then said "nothing was
+    interrupted" over a grid of panes sitting at their prompts, for ever.
+
+    So the burst is driven here for real, on both clocks the two readers use.
+    """
+    existing_conversation("conv-restored")
+    resume_store.save(
+        resume_store.Snapshot(
+            saved_at=100.0,
+            workspaces=[
+                resume_store.SnapshotWorkspace(
+                    session_id="ide_old",
+                    folder=str(tmp_path),
+                    terminals=[
+                        resume_store.SnapshotTerminal(
+                            key="alex",
+                            name="Alex",
+                            agent="claude",
+                            resume=ResumeHandle(
+                                kind="claude_session", id="conv-restored", captured_at=1.0
+                            ),
+                            prompts_sent=2,
+                            continuation_needed=True,
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    await registry.restore(resume_store.load())
+    term = await registry.attach("Alex", 100, 30, _noop, _noop_exit)
+    assert term.resumed is True, "the fixture must reproduce a real resume"
+
+    watcher = notifications.watcher()
+    for frame in range(3):
+        term.transcript.clear()
+        term.transcript.feed(f"\r\n  replaying the old conversation, frame {frame}\r\n")
+        # The scan reads the wall clock through the byte fallback, the sweep
+        # reads its own timeline through the screen digest. Both have to see a
+        # pane that is busy drawing itself.
+        term.last_output_at = time.time()
+        watcher.poll(registry, now=100.0 + frame * notifications.SWEEP_INTERVAL_S, emit=False)
+
+    assert term.continuation_pending is True, "drawing itself is not carrying on"
+    assert [pane.name for pane in interrupted.scan(registry)] == ["Alex"]
 
 
 async def _settle(session: Any) -> None:

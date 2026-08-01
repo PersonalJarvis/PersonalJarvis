@@ -250,7 +250,7 @@ def test_privacy_rules_find_fake_sensitive_shapes_without_exposing_values(tmp_pa
     key_footer = "-----END " + "PRIVATE KEY-----"
     fake_key = f"{key_header}\n{'A' * 88}\n{key_footer}"
     fake_token = "notAReal" + "Token1234567890"
-    fake_sid = "S-1-5-21-" + "123456789-234567890-345678901-1001"
+    fake_sid = "S-1-5-21-123456789-234567890-345678901-1001"
     private_text = f"""Contact person@private.invalid for access.
 C:\\Users\\PrivatePerson\\Jarvis
 {fake_sid}

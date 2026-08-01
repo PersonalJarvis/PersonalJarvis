@@ -76,16 +76,16 @@ def _normalize(text: str) -> str:
 #: absent: Hangul is written with spaces, so treating it as space-free would
 #: run its words together.
 _SPACE_FREE_RANGES: tuple[tuple[int, int], ...] = (
-    (0x2E80, 0x2FFF),   # CJK radicals, Kangxi
-    (0x3040, 0x30FF),   # Hiragana, Katakana
-    (0x3400, 0x4DBF),   # CJK Extension A
-    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
-    (0xF900, 0xFAFF),   # CJK Compatibility Ideographs
-    (0xFF66, 0xFF9F),   # Halfwidth Katakana
-    (0x0E00, 0x0E7F),   # Thai
-    (0x0E80, 0x0EFF),   # Lao
-    (0x1000, 0x109F),   # Myanmar
-    (0x1780, 0x17FF),   # Khmer
+    (0x2E80, 0x2FFF),  # CJK radicals, Kangxi
+    (0x3040, 0x30FF),  # Hiragana, Katakana
+    (0x3400, 0x4DBF),  # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF66, 0xFF9F),  # Halfwidth Katakana
+    (0x0E00, 0x0E7F),  # Thai
+    (0x0E80, 0x0EFF),  # Lao
+    (0x1000, 0x109F),  # Myanmar
+    (0x1780, 0x17FF),  # Khmer
 )
 
 
@@ -215,6 +215,24 @@ def merge_transcripts(parts: Sequence[str]) -> str:
     return merged.strip()
 
 
+def transcript_token_count(text: str) -> int:
+    """How many spoken tokens ``text`` plausibly represents.
+
+    The unit a transcript is compared against seconds of speech in: words for
+    scripts written with spaces, characters for the space-free scripts (an
+    ideograph or kana is roughly one spoken syllable). Counting a Chinese
+    sentence as "one word" would make every Chinese transcript look truncated,
+    and no language is the default one (CLAUDE.md §1).
+    """
+    total = 0
+    for token in _normalize(text).split():
+        if all(_is_space_free(char) for char in token):
+            total += len(token)
+        else:
+            total += 1
+    return total
+
+
 def _drop_leading_chars(text: str, count: int) -> str:
     """``text`` without the first ``count`` characters OF ITS NORMALISED view.
 
@@ -239,4 +257,5 @@ __all__ = [
     "MIN_OVERLAP_CHARS",
     "MIN_OVERLAP_WORDS",
     "merge_transcripts",
+    "transcript_token_count",
 ]

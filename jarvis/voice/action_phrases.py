@@ -51,7 +51,7 @@ _PHRASES: dict[str, dict[str, str]] = {
     # sibling of cu_failed_reason). Lets an informational request actually be
     # answered — "open the browser and check my tabs" reads back the observed
     # tab instead of a content-free "Done." (live bug 2026-06-18, session
-    # 241a1984). ``{detail}`` is the verifier's own sentence (already in the
+    # <SESSION_ID>). ``{detail}`` is the verifier's own sentence (already in the
     # turn's observed language, same as the failure-reason forwarding path).
     "cu_done_detail": {
         "de": "Erledigt. {detail}",  # i18n-allow

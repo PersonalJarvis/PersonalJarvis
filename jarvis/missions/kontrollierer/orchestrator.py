@@ -121,24 +121,6 @@ _PROGRESS_NOTE_MAX_CHARS: int = 160
 """Cap on a single WorkerProgress note — enough for a tool name + a command /
 path / text snippet, short enough to keep the event small."""
 
-_ARTIFACT_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
-
-
-def _replace_artifact_path_with_retry(source: Path, target: Path) -> Path:
-    """Rename an artifact tree while tolerating transient Windows file locks."""
-    last_error: PermissionError | None = None
-    for delay_s in _ARTIFACT_REPLACE_RETRY_DELAYS_S:
-        if delay_s:
-            time.sleep(delay_s)
-        try:
-            return source.replace(target)
-        except PermissionError as exc:
-            # Antivirus and indexers may briefly retain a completed staging tree.
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("artifact path replacement exhausted without an attempt")
-
 # Mission time-budget shape (user mandate 2026-06-10: "a task should take
 # 5-15 minutes on average and never run much past 20 — nobody waits longer,
 # but the output must stay remarkable"). Supersedes the 2026-06-09 "more
@@ -2773,17 +2755,17 @@ class Kontrollierer:
                 # exchange flags.
                 moved_previous = False
                 if files_root.exists():
-                    _replace_artifact_path_with_retry(files_root, previous_root)
+                    files_root.replace(previous_root)
                     moved_previous = True
                 try:
-                    _replace_artifact_path_with_retry(staged_root, files_root)
+                    staged_root.replace(files_root)
                 except OSError:
                     if (
                         moved_previous
                         and previous_root.exists()
                         and not files_root.exists()
                     ):
-                        _replace_artifact_path_with_retry(previous_root, files_root)
+                        previous_root.replace(files_root)
                     raise
                 if moved_previous:
                     shutil.rmtree(previous_root, ignore_errors=True)

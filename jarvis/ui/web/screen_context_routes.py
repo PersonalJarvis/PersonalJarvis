@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -53,6 +52,49 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/screen-context", tags=["screen-context"])
 
+
+def _capture_backend_capability() -> tuple[bool, str]:
+    import importlib.util  # noqa: PLC0415
+
+    if importlib.util.find_spec("mss") is None:
+        return False, "The screen-capture package is not installed."
+    return True, ""
+
+
+def _indicator_capability() -> tuple[bool, str]:
+    from jarvis.cu.indicator.controller import (  # noqa: PLC0415
+        screen_indicator_capability,
+    )
+
+    return screen_indicator_capability()
+
+
+def _vision_capability() -> tuple[bool, str]:
+    try:
+        from jarvis.brain.resolver import resolve_vision_brain  # noqa: PLC0415
+        from jarvis.core.config import load_config  # noqa: PLC0415
+
+        brain = resolve_vision_brain(load_config())
+    except Exception:  # noqa: BLE001 - readiness must never break Settings
+        log.warning("screen_context: vision readiness probe failed", exc_info=True)
+        return False, "Vision-provider readiness could not be checked."
+    if brain is None:
+        return False, "No configured provider currently advertises vision support."
+    return True, ""
+
+
+def _ocr_capability(enabled: bool) -> tuple[bool, str]:
+    if not enabled:
+        return False, "Optional OCR is switched off."
+    import importlib.util  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+
+    if importlib.util.find_spec("pytesseract") is None:
+        return False, "The optional OCR Python package is not installed."
+    if shutil.which("tesseract") is None:
+        return False, "The optional Tesseract executable is not available."
+    return True, ""
+
 def _get_service(request: Request) -> ScreenContextService:
     return get_shared_service(bus=getattr(request.app.state, "bus", None))
 
@@ -69,8 +111,11 @@ def _reset_service() -> None:
 class ClassifyRequest(BaseModel):
     text: str = Field(default="", description="The utterance to classify.")
     locale: str = Field(
-        default="en",
-        description="Already-resolved output language (BCP-47 base, e.g. 'de').",
+        default="",
+        description=(
+            "Optional resolved output language. Empty uses the central turn "
+            "language resolver."
+        ),
     )
 
 
@@ -79,7 +124,10 @@ class CaptureRequest(BaseModel):
         default="",
         description="User utterance. Empty with force=true for an explicit capture.",
     )
-    locale: str = Field(default="en", description="Resolved output language.")
+    locale: str = Field(
+        default="",
+        description="Optional resolved output language; empty resolves centrally.",
+    )
     force: bool = Field(
         default=True,
         description=(
@@ -137,25 +185,107 @@ def _context_metadata(context: Any, handle_id: str | None) -> dict[str, Any]:
     }
 
 
+def _resolved_locale(locale: str, text: str) -> str:
+    """Resolve API output through the same language policy as voice/chat."""
+    from jarvis.core.config import load_config  # noqa: PLC0415
+    from jarvis.core.turn_language import (  # noqa: PLC0415
+        DEFAULT_LOCALE,
+        normalize_language_tag,
+        resolve_output_language,
+    )
+
+    if str(locale or "").strip():
+        explicit = normalize_language_tag(locale)
+        if explicit and explicit != "unknown":
+            return explicit
+    cfg = load_config()
+    return resolve_output_language(
+        getattr(cfg.brain, "reply_language", "auto"),
+        getattr(cfg.stt, "language", "auto"),
+        text,
+        default=DEFAULT_LOCALE,
+    )
+
+
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
     """Capability and live state — answers honestly on a machine with no screen."""
     import asyncio  # noqa: PLC0415
 
     service = _get_service(request)
-    from jarvis.screen_context.ports import capture_permission_error  # noqa: PLC0415
+    from jarvis.screen_context.ports import (  # noqa: PLC0415
+        accessibility_permission_error,
+        capture_permission_error,
+    )
 
-    monitors = await asyncio.to_thread(service.displays.monitors)
-    permission_error = await asyncio.to_thread(capture_permission_error)
-    cursor_readable = await asyncio.to_thread(service.cursor.position)
+    (
+        monitors,
+        permission_error,
+        cursor_point,
+        capture_backend,
+        indicator,
+        vision,
+        accessibility_error,
+        ocr,
+    ) = await asyncio.gather(
+        asyncio.to_thread(service.displays.monitors),
+        asyncio.to_thread(capture_permission_error),
+        asyncio.to_thread(service.cursor.position),
+        asyncio.to_thread(_capture_backend_capability),
+        asyncio.to_thread(_indicator_capability),
+        asyncio.to_thread(_vision_capability),
+        asyncio.to_thread(accessibility_permission_error),
+        asyncio.to_thread(_ocr_capability, service.settings.ocr_enabled),
+    )
+    # mss index 0 is only the virtual aggregate; at least one physical entry
+    # must exist before the status can promise a capturable display.
+    display_ready = len(monitors) > 1
+    permission_ready = permission_error is None
+    capture_ready, capture_reason = capture_backend
+    indicator_ready, indicator_reason = indicator
+    vision_ready, vision_reason = vision
+    accessibility_ready = accessibility_error is None
+    ocr_ready, ocr_reason = ocr
+    blockers = [
+        reason
+        for ready, reason in (
+            (service.settings.enabled, "Screen Context is switched off."),
+            (display_ready, "No interactive display was found."),
+            (permission_ready, str(permission_error or "")),
+            (capture_ready, capture_reason),
+            (indicator_ready, indicator_reason),
+            (vision_ready, vision_reason),
+        )
+        if not ready and reason
+    ]
     return {
         "enabled": service.settings.enabled,
-        "available": bool(monitors) and permission_error is None,
-        "blocked_reason": permission_error,
+        "available": not blockers,
+        "blocked_reason": blockers[0] if blockers else None,
+        "blocked_reasons": blockers,
         "monitor_count": max(0, len(monitors) - 1) if monitors else 0,
-        "cursor_readable": cursor_readable is not None,
+        "cursor_readable": cursor_point is not None,
         "held_captures": service.held_count,
         "ttl_s": service.settings.ttl_s,
+        "components": {
+            "display": {"ready": display_ready, "detail": ""},
+            "capture": {"ready": capture_ready, "detail": capture_reason},
+            "permission": {
+                "ready": permission_ready,
+                "detail": str(permission_error or ""),
+            },
+            "indicator": {"ready": indicator_ready, "detail": indicator_reason},
+            "vision": {"ready": vision_ready, "detail": vision_reason},
+            "accessibility": {
+                "ready": accessibility_ready,
+                "detail": str(accessibility_error or ""),
+            },
+            "ocr": {
+                "enabled": service.settings.ocr_enabled,
+                "ready": ocr_ready,
+                "detail": ocr_reason,
+            },
+        },
     }
 
 
@@ -163,7 +293,8 @@ async def status(request: Request) -> dict[str, Any]:
 async def classify(request: Request, body: ClassifyRequest) -> dict[str, Any]:
     """What would happen for this utterance — without capturing anything."""
     service = _get_service(request)
-    verdict = service.classify(body.text, locale=body.locale)
+    locale = _resolved_locale(body.locale, body.text)
+    verdict = service.classify(body.text, locale=locale)
     action = {
         VisualIntent.NONE: "nothing",
         VisualIntent.AMBIGUOUS: "ask",
@@ -178,7 +309,7 @@ async def classify(request: Request, body: ClassifyRequest) -> dict[str, Any]:
     if verdict.needs_clarification:
         from jarvis.screen_context.intent import clarifying_question  # noqa: PLC0415
 
-        payload["question"] = clarifying_question(body.locale)
+        payload["question"] = clarifying_question(locale)
     return payload
 
 
@@ -187,7 +318,9 @@ async def capture(request: Request, body: CaptureRequest) -> dict[str, Any]:
     """Take exactly one capture. Returns metadata; the image is fetched once."""
     service = _get_service(request)
     outcome = await service.capture_for_turn(
-        body.text, locale=body.locale, force=body.force
+        body.text,
+        locale=_resolved_locale(body.locale, body.text),
+        force=body.force,
     )
 
     if outcome.status == "captured" and outcome.context is not None:
@@ -271,13 +404,16 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
     for entry in patterns:
         _label, separator, expression = str(entry).partition(":")
         source = expression if separator else str(entry)
-        try:
-            re.compile(source, re.IGNORECASE)
-        except re.error as exc:
+        from jarvis.screen_context.redaction import (  # noqa: PLC0415
+            validate_pattern_source,
+        )
+
+        validation_error = validate_pattern_source(source)
+        if validation_error is not None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid sensitive pattern: {exc}",
-            ) from exc
+                detail=f"Invalid sensitive pattern: {validation_error}",
+            )
 
     def _write() -> None:
         set_screen_context_settings(changes)
@@ -327,6 +463,18 @@ async def consume_capture(request: Request, capture_id: str) -> dict[str, Any]:
     payload["image_base64"] = base64.b64encode(context.image).decode("ascii")
     payload["text"] = context.ui_text
     return payload
+
+
+@router.delete("/{capture_id}", openapi_extra={"x-jarvis-dangerous": True})
+async def discard_capture(request: Request, capture_id: str) -> dict[str, Any]:
+    """Discard one held capture without returning its pixels."""
+    service = _get_service(request)
+    if not service.discard(capture_id):
+        raise HTTPException(
+            status_code=404,
+            detail="That capture was already used, discarded, or expired.",
+        )
+    return {"ok": True, "discarded": 1}
 
 
 @router.delete("", openapi_extra={"x-jarvis-dangerous": True})

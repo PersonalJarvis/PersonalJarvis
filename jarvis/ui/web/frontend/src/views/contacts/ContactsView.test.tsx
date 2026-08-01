@@ -53,15 +53,15 @@ const CHRISTOPH_SUMMARY = {
   aliases: ["Chris"],
   relationship: "friend",
   primary_email: "christoph@example.com",
-  primary_phone: "+12025550103",
+  primary_phone: "+4915123456789",
   email_count: 1,
   phone_count: 1,
 };
-const CASEY_SUMMARY = {
-  slug: "casey",
-  name: "Casey",
+const LAURA_SUMMARY = {
+  slug: "laura",
+  name: "Laura",
   aliases: [],
-  relationship: "colleague",
+  relationship: "partner",
   primary_email: null,
   primary_phone: null,
   email_count: 0,
@@ -73,11 +73,11 @@ const CHRISTOPH_FULL = {
   aliases: ["Chris"],
   relationship: "friend",
   emails: ["christoph@example.com"],
-  phones: ["+12025550103"],
+  phones: ["+4915123456789"],
   address: { city: "Berlin" },
   note: "My oldest friend.",
   primary_email: "christoph@example.com",
-  primary_phone: "+12025550103",
+  primary_phone: "+4915123456789",
   last_updated: null,
 };
 
@@ -93,18 +93,18 @@ afterEach(() => {
 describe("ContactsView (master–detail)", () => {
   it("lists contacts from the API", async () => {
     installFetchMock({
-      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, CASEY_SUMMARY] } }),
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
     });
     render(<ContactsView />);
 
     expect(await screen.findByText("Christoph Meyer")).toBeTruthy();
-    expect(screen.getByText("Casey")).toBeTruthy();
+    expect(screen.getByText("Laura")).toBeTruthy();
   });
 
   it("selecting a contact loads and shows its details", async () => {
     installFetchMock({
       "GET /api/contacts/christoph_meyer": () => ({ body: CHRISTOPH_FULL }),
-      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, CASEY_SUMMARY] } }),
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
     });
     render(<ContactsView />);
 

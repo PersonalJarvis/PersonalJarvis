@@ -263,7 +263,7 @@ def test_precision_too_short_does_not_fire(text: str) -> None:
     [
         # German tag/closing questions: a trailing conjunction CLOSED by "?" is a
         # COMPLETE question, not an open continuation. Live wedge 2026-06-19
-        # (session da25113a): "…morgen ist ja Montag, oder?" was classified as a
+        # (session <SESSION_ID>): "…morgen ist ja Montag, oder?" was classified as a
         # trailing conjunction, held by the ContinuationBuffer, never dispatched,
         # and discarded 30 s later at idle-timeout → "Jarvis hört für immer zu".
         # The trailing "?" is the disambiguator the tokenizer would otherwise

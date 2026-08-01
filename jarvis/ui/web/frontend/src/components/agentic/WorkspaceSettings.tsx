@@ -81,16 +81,26 @@ export function WorkspaceSettings({
 
   return (
     <div className="flex shrink-0 items-center gap-2">
+      {/* The chip looks like a button, so it must BE one: it names the plan the
+          next terminal spends, and clicking it opens the switcher. Its first
+          life as a passive <span> read as "the switch is broken" — the one
+          interactive pixel was the gear beside it. */}
       {chips.map((account) => (
-        <span
+        <button
           key={account.agent}
+          type="button"
           data-testid={`active-account-${account.agent}`}
-          title={`New ${account.display_name} terminals open on ${account.active_label}. Panes already running keep theirs.`}
-          className="hidden max-w-[16rem] items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-[11px] text-muted-foreground xl:flex"
+          onClick={() => setOpen(true)}
+          title={`New ${account.display_name} terminals open on ${account.active_label}. Panes already running keep theirs. Click to switch.`}
+          aria-label={`Switch which ${account.display_name} subscription new terminals use`}
+          className={cn(
+            "hidden h-7 max-w-[16rem] items-center gap-1.5 rounded-md bg-secondary/50 px-2 text-[11px] text-muted-foreground transition-colors xl:flex",
+            "hover:bg-secondary hover:text-foreground",
+          )}
         >
           <Users className="h-3 w-3 shrink-0 text-primary" />
           <span className="truncate">{account.active_label}</span>
-        </span>
+        </button>
       ))}
 
       <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -101,8 +111,8 @@ export function WorkspaceSettings({
             title="Workspace settings — choose which subscription new terminals use"
             aria-label="Workspace settings"
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors",
-              "hover:border-primary/40 hover:text-foreground",
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
+              "hover:bg-secondary hover:text-foreground",
             )}
           >
             <Settings2 className="h-4 w-4" />

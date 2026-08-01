@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · maintainer-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · alex-2026-04-30 ===
 """FriendRegistry: aiosqlite persistence for friends, channels, and permissions.
 
 Lifecycle pattern adopted from :class:`jarvis.memory.recall.RecallStore`:

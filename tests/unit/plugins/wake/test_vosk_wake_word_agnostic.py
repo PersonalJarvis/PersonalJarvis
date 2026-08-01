@@ -1,6 +1,6 @@
 """The wake verify must never depend on the free decoder SPELLING the wake word.
 
-AP-27 in the Vosk path. Forensic (2026-07-13, 159 real captured "Hey Ruben"
+AP-27 in the Vosk path. Forensic (2026-07-13, 159 real captured "Hey Alex"
 calls from data/wake_debug, replayed through the production two-stage detector):
 
   * The free (unconstrained) decoder spelled the phrase in only 28 % of genuine
@@ -49,10 +49,10 @@ def _w(word: str, start: float, end: float, conf: float = 0.5) -> dict:
     ("phrase", "garbled"),
     (
         # Real free-decode output captured for genuine calls (2026-07-13).
-        ("Hey Ruben", [_w("herum", 0.40, 1.02)]),
-        ("Hey Ruben", [_w("hey", 0.40, 0.62), _w("room", 0.62, 1.05)]),
-        ("Hey Ruben", [_w("erhoben", 0.35, 1.05)]),
-        ("Hey Ruben", [_w("hey", 0.40, 0.60), _w("oben", 0.60, 1.02)]),
+        ("Hey Alex", [_w("herum", 0.40, 1.02)]),
+        ("Hey Alex", [_w("hey", 0.40, 0.62), _w("room", 0.62, 1.05)]),
+        ("Hey Alex", [_w("erhoben", 0.35, 1.05)]),
+        ("Hey Alex", [_w("hey", 0.40, 0.60), _w("oben", 0.60, 1.02)]),
         # The same failure mode for other phrases/languages: an offline model
         # cannot spell an arbitrary proper noun.
         ("Hey Jarvis", [_w("age", 0.40, 0.62), _w("avis", 0.62, 1.05)]),
@@ -84,46 +84,46 @@ def test_room_speech_is_rejected_by_its_shape() -> None:
         _w("baums", 1.05, 1.40, conf=1.0),
         _w("gibt", 1.40, 1.70, conf=1.0),
     ]
-    assert candidate_shape_ok(flowing, "Hey Ruben") is False
+    assert candidate_shape_ok(flowing, "Hey Alex") is False
 
 
 def test_a_confidently_recognised_other_word_is_not_a_wake() -> None:
     """The free ear KNOWS this word — so it was not an unknown wake word."""
     known = [_w("google", 0.40, 1.00, conf=1.0)]
-    assert candidate_shape_ok(known, "Hey Ruben") is False
+    assert candidate_shape_ok(known, "Hey Alex") is False
 
 
 def test_an_overlong_utterance_is_not_a_wake_call() -> None:
     """Two words, but spoken over 1.8 s — the grammar stretched real speech."""
     stretched = [_w("herr", 0.20, 1.00), _w("oben", 1.00, 2.00)]
-    assert candidate_shape_ok(stretched, "Hey Ruben") is False
+    assert candidate_shape_ok(stretched, "Hey Alex") is False
 
 
 def test_silence_can_never_pass_the_shape_gate() -> None:
-    assert candidate_shape_ok([], "Hey Ruben") is False
+    assert candidate_shape_ok([], "Hey Alex") is False
 
 
 # --- the name must actually have been SPOKEN (live false-wake class) --------
 
 
 def test_a_prefix_with_no_name_after_it_is_not_a_wake() -> None:
-    """LIVE false wake (2026-07-13 11:05): 'hey ho' fired for 'Hey Ruben'.
+    """LIVE false wake (2026-07-13 11:05): 'hey ho' fired for 'Hey Alex'.
 
     The free ear heard the prefix and then a 0.12 s grunt — the NAME was never
     spoken, so the grammar had stretched a bare interjection onto the phrase.
     Spelling and sound-similarity cannot catch this (measured: room speech
-    scores HIGHER against "ruben" than genuine calls do). What does catch it,
+    scores HIGHER against "alex" than genuine calls do). What does catch it,
     word-agnostically, is that nothing name-sized was uttered where the name
     belongs.
     """
     assert candidate_shape_ok(
-        [_w("hey", 0.40, 0.62), _w("ho", 0.62, 0.74)], "Hey Ruben"
+        [_w("hey", 0.40, 0.62), _w("ho", 0.62, 0.74)], "Hey Alex"
     ) is False
 
 
 def test_a_bare_prefix_is_not_a_wake() -> None:
     """The free ear heard only "hey" — there is no core at all."""
-    assert candidate_shape_ok([_w("hey", 0.40, 0.65)], "Hey Ruben") is False
+    assert candidate_shape_ok([_w("hey", 0.40, 0.65)], "Hey Alex") is False
 
 
 def test_a_real_name_body_still_passes_however_it_is_spelled() -> None:
@@ -133,9 +133,9 @@ def test_a_real_name_body_still_passes_however_it_is_spelled() -> None:
             _w("hey", 0.40, 0.60, conf=1.0),
             _w("room", 0.60, 1.03, conf=0.63),
         ],
-        "Hey Ruben",
+        "Hey Alex",
     ) is True
-    assert candidate_shape_ok([_w("herum", 0.40, 1.02)], "Hey Ruben") is True
+    assert candidate_shape_ok([_w("herum", 0.40, 1.02)], "Hey Alex") is True
 
 
 def test_a_confident_prefix_does_not_hide_a_confident_other_core() -> None:
@@ -145,7 +145,7 @@ def test_a_confident_prefix_does_not_hide_a_confident_other_core() -> None:
             _w("hey", 0.40, 0.60, conf=1.0),
             _w("google", 0.60, 1.03, conf=1.0),
         ],
-        "Hey Ruben",
+        "Hey Alex",
     ) is False
 
 
@@ -172,7 +172,7 @@ def test_the_bound_scales_with_the_configured_phrase() -> None:
 
 def test_sound_confirm_stays_a_bonus_path_and_never_rejects() -> None:
     """A correctly-spelled free transcript still confirms instantly."""
-    assert sound_confirm("hey ruben", "Hey Ruben") is True
+    assert sound_confirm("hey alex", "Hey Alex") is True
 
 
 def test_the_shape_gate_catches_what_spelling_cannot() -> None:
@@ -183,8 +183,8 @@ def test_the_shape_gate_catches_what_spelling_cannot() -> None:
     needs none of them, because it never looks at the spelling at all.
     """
     for heard in ("hey ho", "heroes", "harry", "hey euro"):
-        assert sound_confirm(heard, "Hey Ruben") is False, heard
-        assert candidate_shape_ok([_w(heard, 0.40, 1.02)], "Hey Ruben") is True, heard
+        assert sound_confirm(heard, "Hey Alex") is False, heard
+        assert candidate_shape_ok([_w(heard, 0.40, 1.02)], "Hey Alex") is True, heard
 
 
 # --- end-to-end through the real verify -------------------------------------
@@ -226,14 +226,14 @@ def _stub_take(grammar: dict, free: dict, competition: dict | None = None):
 
 
 def test_verify_fires_on_a_wake_the_free_ear_could_not_spell(monkeypatch) -> None:
-    """The live BUG: 'Hey Ruben' heard as 'herum' was thrown away."""
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    """The live BUG: 'Hey Alex' heard as 'herum' was thrown away."""
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
 
     grammar = {
-        "text": "hey ruben",
+        "text": "hey alex",
         "result": [
             {"word": "hey", "start": 0.40, "end": 0.62, "conf": 1.0},
-            {"word": "ruben", "start": 0.62, "end": 1.05, "conf": 1.0},
+            {"word": "alex", "start": 0.62, "end": 1.05, "conf": 1.0},
         ],
     }
     free = {"text": "herum", "result": [_w("herum", 0.40, 1.02, conf=0.6)]}
@@ -244,13 +244,13 @@ def test_verify_fires_on_a_wake_the_free_ear_could_not_spell(monkeypatch) -> Non
 
 def test_verify_still_rejects_room_speech_forced_onto_the_phrase(monkeypatch) -> None:
     """The precision contract the free-ear check was added for stays intact."""
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
 
     grammar = {
-        "text": "hey ruben",
+        "text": "hey alex",
         "result": [
             {"word": "hey", "start": 0.30, "end": 0.60, "conf": 1.0},
-            {"word": "ruben", "start": 0.60, "end": 1.60, "conf": 1.0},
+            {"word": "alex", "start": 0.60, "end": 1.60, "conf": 1.0},
         ],
     }
     free = {
@@ -406,16 +406,16 @@ def test_a_wake_followed_immediately_by_the_command_still_fires(monkeypatch) -> 
     start passing — and if a future change makes it pass by accident, strict
     mode flags that too.
     """
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
 
     grammar = {
-        "text": "hey ruben",
+        "text": "hey alex",
         "result": [
             {"word": "hey", "start": 0.40, "end": 0.62, "conf": 1.0},
-            {"word": "ruben", "start": 0.62, "end": 1.05, "conf": 1.0},
+            {"word": "alex", "start": 0.62, "end": 1.05, "conf": 1.0},
         ],
     }
-    # The free ear could not spell the name ("ruben" -> "erhoben") AND the
+    # The free ear could not spell the name ("alex" -> "erhoben") AND the
     # user kept talking straight through — the command words begin 0.06 s after
     # the phrase ends, well inside the old trailing slack.
     free = {
@@ -440,13 +440,13 @@ def test_room_speech_across_the_phrase_span_is_still_rejected(monkeypatch) -> No
     it, which is what a forced grammar hit on conversation actually looks like
     — so they are still counted and the candidate is still rejected.
     """
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
 
     grammar = {
-        "text": "hey ruben",
+        "text": "hey alex",
         "result": [
             {"word": "hey", "start": 0.30, "end": 0.60, "conf": 1.0},
-            {"word": "ruben", "start": 0.60, "end": 1.60, "conf": 1.0},
+            {"word": "alex", "start": 0.60, "end": 1.60, "conf": 1.0},
         ],
     }
     free = {
@@ -470,7 +470,7 @@ def test_a_bare_interjection_plus_a_command_is_still_not_a_wake() -> None:
     known prefix is still too short to be a name."""
     assert candidate_shape_ok(
         [_w("hey", 0.40, 0.60, conf=1.0), _w("ho", 0.60, 0.68, conf=0.5)],
-        "Hey Ruben",
+        "Hey Alex",
     ) is False
 
 
@@ -486,7 +486,7 @@ def test_a_suppressed_candidate_is_reported_then_rate_limited(monkeypatch) -> No
     Report the first few at INFO and then every 20th: diagnosable without
     turning a candidate storm into a log flood.
     """
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
     seen: list[int] = []
     monkeypatch.setattr(
         "jarvis.plugins.wake.vosk_kws_provider.log.info",
@@ -506,10 +506,10 @@ def test_a_suppressed_candidate_is_reported_then_rate_limited(monkeypatch) -> No
 def test_suppression_logging_never_feeds_a_decision() -> None:
     """The counter is diagnostics. If a threshold ever read it, the log would
     have become an uncalibrated rejection path — the exact AP-27 shape."""
-    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p = VoskKwsProvider("Hey Alex", model_path="fake", keyword="alex")
     p._suppress_log_count = 10_000
     # A verify decision must be reachable and unaffected by the counter value.
     assert candidate_shape_ok(
         [_w("hey", 0.40, 0.62, conf=0.9), _w("erhoben", 0.62, 1.05, conf=0.6)],
-        "Hey Ruben",
+        "Hey Alex",
     ) is True

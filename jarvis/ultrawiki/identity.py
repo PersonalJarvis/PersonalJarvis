@@ -194,7 +194,7 @@ MIN_PHONE_DIGITS = 6
 #: must not even reach the queue.
 PROPOSE_THRESHOLD = 0.82
 
-#: Score assigned to a nickname/abbreviation hit ("eliza" inside "elizabeth").
+#: Score assigned to a nickname/abbreviation hit ("viki" inside "viktoria").
 #: Deliberately just above the proposal threshold: it is enough to ask, never
 #: enough to act.
 NICKNAME_SCORE = 0.84
@@ -262,7 +262,7 @@ def normalize_email(raw: object) -> str | None:
 def normalize_phone(raw: object) -> str | None:
     """Best-effort E.164 key, mirroring ``jarvis.contacts.store``.
 
-    ``"+1 202-555-0101"`` and ``"001 202 555 0101"`` collapse onto the same
+    ``"+49 151 2345-6789"`` and ``"0049 151 23456789"`` collapse onto the same
     key, which is what makes "same phone number" a deterministic match across
     two sources that formatted it differently. Numbers with fewer than
     :data:`MIN_PHONE_DIGITS` digits are refused rather than trusted.
@@ -338,7 +338,7 @@ def _is_subsequence(short: str, long: str) -> bool:
 def nickname_score(a: str, b: str) -> float:
     """:data:`NICKNAME_SCORE` when one name abbreviates a token of the other.
 
-    "Eliza" is not similar to "Elizabeth Smith" by any string metric, yet it is
+    "Viki" is not similar to "Viktoria Novak" by any string metric, yet it is
     the canonical example of a probable match. The rule is deliberately narrow:
     the short form must be a single word, start on the same character, be a
     subsequence of one token of the long form, and not be dwarfed by it.
@@ -360,8 +360,8 @@ def name_similarity(a: str, b: str) -> float:
     """0..1 similarity of two ALREADY NORMALIZED names.
 
     Three deterministic views, best one wins: raw character similarity, the
-    same over token-sorted forms (so "smith elizabeth" matches "elizabeth
-    smith"), and the nickname rule.
+    same over token-sorted forms (so "novak viktoria" matches "viktoria
+    novak"), and the nickname rule.
     """
     if not a or not b:
         return 0.0

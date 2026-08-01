@@ -13,6 +13,9 @@ assertion about behaviour rather than about call plumbing.
 """
 from __future__ import annotations
 
+import asyncio
+import io
+import secrets
 import threading
 
 from jarvis.screen_context.models import (
@@ -30,6 +33,7 @@ from jarvis.screen_context.ports import (
 from jarvis.screen_context.service import (
     ScreenContextService,
     ScreenContextSettings,
+    _encode,
     settings_from_config,
 )
 
@@ -529,6 +533,33 @@ async def test_sensitive_text_is_scrubbed_from_the_context() -> None:
     assert "4111" not in outcome.context.ui_text
 
 
+async def test_ocr_sensitive_line_is_burned_out_of_delivered_pixels(monkeypatch) -> None:
+    from PIL import Image
+
+    from jarvis.screen_context import uitext
+
+    monkeypatch.setattr(
+        uitext,
+        "ocr_supplement_with_regions",
+        lambda _image: uitext.OcrSupplement(
+            text="Card 4111 1111 1111 1111",
+            regions=(
+                uitext.OcrTextRegion(
+                    text="Card 4111 1111 1111 1111",
+                    bounds=(10, 10, 180, 30),
+                ),
+            ),
+        ),
+    )
+    service = make_service(settings=ScreenContextSettings(ocr_enabled=True))
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.context.redactions.region_count == 1
+    delivered = Image.open(io.BytesIO(outcome.context.image)).convert("RGB")
+    assert sum(delivered.getpixel((40, 20))) < 30
+
+
 async def test_text_from_another_monitor_is_not_included() -> None:
     """The tree spans the desktop; the picture does not."""
     reader = FakeTextReader(
@@ -572,6 +603,27 @@ async def test_absent_accessibility_layer_is_reported_not_faked() -> None:
 
     assert outcome.context.ui_text_source == "none"
     assert DegradationCode.NO_UI_TEXT in {d.code for d in outcome.context.degradations}
+
+
+async def test_accessibility_timeout_degrades_to_image_only(monkeypatch) -> None:
+    from jarvis.screen_context import service as service_module
+
+    class HangingTextReader:
+        name = "hanging-text"
+
+        async def read(self, *, window_title_filter=None):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(service_module, "_UI_TEXT_TIMEOUT_S", 0.01)
+    service = make_service(ui_text_reader=HangingTextReader())
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "captured"
+    assert outcome.context.ui_text_source == "none"
+    assert DegradationCode.NO_UI_TEXT in {
+        item.code for item in outcome.context.degradations
+    }
 
 
 async def test_accessibility_text_from_a_different_process_is_discarded() -> None:
@@ -729,6 +781,30 @@ async def test_an_unconsumed_capture_expires() -> None:
     assert service.held_count == 0
 
 
+async def test_unconsumed_capture_expires_without_another_service_call() -> None:
+    service = make_service(settings=ScreenContextSettings(ttl_s=0.01))
+    outcome = await service.capture_for_turn("look at this", locale="en")
+    assert outcome.handle_id in service._handles
+
+    await asyncio.sleep(0.03)
+
+    assert outcome.handle_id not in service._handles
+
+
+async def test_closing_service_rejects_new_pixels_and_cancels_timers() -> None:
+    service = make_service(settings=ScreenContextSettings(ttl_s=60.0))
+    outcome = await service.capture_for_turn("look at this", locale="en")
+    assert outcome.handle_id in service._expiry_timers
+
+    assert service.close() == 1
+    assert service._handles == {}
+    assert service._expiry_timers == {}
+
+    refused = await service.capture_for_turn("look at this", locale="en")
+    assert refused.status == "refused"
+    assert refused.reason_kind == "technical"
+
+
 async def test_discard_all_drops_everything_immediately() -> None:
     service = make_service()
     await service.capture_for_turn("look at this", locale="en")
@@ -736,6 +812,16 @@ async def test_discard_all_drops_everything_immediately() -> None:
 
     assert service.discard_all() == 2
     assert service.held_count == 0
+
+
+async def test_discard_one_does_not_return_pixels_or_drop_other_handles() -> None:
+    service = make_service()
+    first = await service.capture_for_turn("look at this", locale="en")
+    second = await service.capture_for_turn("look at this", locale="en")
+
+    assert service.discard(first.handle_id) is True
+    assert service.discard(first.handle_id) is False
+    assert service.peek(second.handle_id) is not None
 
 
 async def test_nothing_is_written_to_disk(tmp_path, monkeypatch) -> None:
@@ -748,6 +834,19 @@ async def test_nothing_is_written_to_disk(tmp_path, monkeypatch) -> None:
     assert not any(tmp_path.rglob("*.png")), "no image file may be written"
     assert not any(tmp_path.rglob("*.jpg"))
     assert not hasattr(outcome.context, "screenshot_path")
+
+
+def test_high_entropy_image_is_always_encoded_below_the_byte_ceiling() -> None:
+    from PIL import Image
+
+    random_bytes = secrets.token_bytes(2048 * 2048 * 3)
+    image = Image.frombytes("RGB", (2048, 2048), random_bytes)
+
+    encoded, size = _encode(image)
+
+    assert len(encoded) <= 500_000
+    assert size[0] < 2048
+    assert size[1] < 2048
 
 
 # --------------------------------------------------------------------------

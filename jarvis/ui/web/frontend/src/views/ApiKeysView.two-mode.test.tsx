@@ -92,7 +92,7 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.getByTestId("voice-engine-context").contains(hint)).toBe(true);
     // The load-bearing message: which keys you need depends on the SELECTED mode.
     expect(hint.textContent).toMatch(
-      /realtime needs one realtime-capable key; pipeline needs its own/i,
+      /realtime needs one live provider, using either a subscription login or an API key\. pipeline needs its own/i,
     );
   });
 

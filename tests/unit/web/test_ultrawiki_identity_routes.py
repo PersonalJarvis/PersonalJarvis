@@ -70,7 +70,7 @@ def env(tmp_path: Path, monkeypatch):
 def address_book(env):
     """Two contacts whose names are similar enough to be PROPOSED, not merged.
 
-    "Elizabeth Smith" and "Elisabeth Smith" share no e-mail, phone or contact slug,
+    "Viktoria Novak" and "Viktor Novak" share no e-mail, phone or contact slug,
     so the layer has nothing deterministic to merge on — exactly the case the
     confirmation queue exists for.
     """
@@ -78,12 +78,12 @@ def address_book(env):
 
     store = ContactStore()
     store.put(
-        name="Elizabeth Smith",
-        aliases=["Eliza"],
-        emails=["elizabeth@example.com"],
-        phones=["+1 202-555-0101"],
+        name="Viktoria Novak",
+        aliases=["Viki"],
+        emails=["viktoria@example.com"],
+        phones=["+49 151 2345 6789"],
     )
-    store.put(name="Elisabeth Smith", phones=["+1 202-555-0103"])
+    store.put(name="Viktor Novak", phones=["+49 151 9999 0000"])
     return store
 
 
@@ -116,8 +116,8 @@ def test_seeding_fills_the_people_list_and_repeats_harmlessly(env, address_book)
     assert body["report"]["created"] == 2
     assert body["report"]["merged"] == 0
     assert {person["display_name"] for person in people(env)} == {
-        "Elizabeth Smith",
-        "Elisabeth Smith",
+        "Viktoria Novak",
+        "Viktor Novak",
     }
 
     again = seed(env)
@@ -131,13 +131,13 @@ def test_seeding_fills_the_people_list_and_repeats_harmlessly(env, address_book)
 def test_people_can_be_filtered_by_name_or_by_identifier(env, address_book):
     seed(env)
 
-    by_name = people(env, q="elizabeth")
-    by_email = people(env, q="elizabeth@example.com")
-    by_phone = people(env, q="0103")
+    by_name = people(env, q="viktoria")
+    by_email = people(env, q="viktoria@example.com")
+    by_phone = people(env, q="9999")
 
-    assert [p["display_name"] for p in by_name] == ["Elizabeth Smith"]
-    assert [p["display_name"] for p in by_email] == ["Elizabeth Smith"]
-    assert [p["display_name"] for p in by_phone] == ["Elisabeth Smith"]
+    assert [p["display_name"] for p in by_name] == ["Viktoria Novak"]
+    assert [p["display_name"] for p in by_email] == ["Viktoria Novak"]
+    assert [p["display_name"] for p in by_phone] == ["Viktor Novak"]
 
 
 def test_every_list_carries_the_counters_that_explain_an_empty_one(env, address_book):
@@ -162,16 +162,16 @@ def test_person_profile_carries_every_identifier_and_the_open_proposal(
     env, address_book
 ):
     seed(env)
-    elizabeth = next(p for p in people(env) if p["display_name"] == "Elizabeth Smith")
+    viktoria = next(p for p in people(env) if p["display_name"] == "Viktoria Novak")
 
-    response = env.client.get(f"/api/ultrawiki/identity/people/{elizabeth['id']}")
+    response = env.client.get(f"/api/ultrawiki/identity/people/{viktoria['id']}")
 
     assert response.status_code == 200, response.text
     profile = response.json()["person"]
     assert response.json()["forwarded"] is False
-    assert profile["emails"] == ["elizabeth@example.com"]
-    assert profile["phones"] == ["+12025550101"]
-    assert "Eliza" in profile["names"]
+    assert profile["emails"] == ["viktoria@example.com"]
+    assert profile["phones"] == ["+4915123456789"]
+    assert "Viki" in profile["names"]
     assert len(profile["pending_proposals"]) == 1
 
 
@@ -193,8 +193,8 @@ def test_similar_names_are_proposed_and_never_merged_on_their_own(env, address_b
 
     assert len(proposals) == 1
     assert {proposals[0]["left"]["display_name"], proposals[0]["right"]["display_name"]} == {
-        "Elizabeth Smith",
-        "Elisabeth Smith",
+        "Viktoria Novak",
+        "Viktor Novak",
     }
     assert proposals[0]["status"] == "pending"
     # Proposed is not merged: both people are still their own entity, and the

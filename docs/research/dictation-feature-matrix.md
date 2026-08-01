@@ -218,4 +218,4 @@ project already ships.
 The three rows that carry real risk are insertion reliability, per-OS hotkey
 parity, and the quadratic live-transcription loop. All three are analysed, with
 recommendations, in
-[`docs/plans/dictation-mode-plan.md`](../plans/dictation-mode-plan.md).
+the public [architecture overview](../architecture-overview.md).

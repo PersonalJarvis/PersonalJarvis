@@ -70,7 +70,7 @@ async def test_identity_migration_is_idempotent(tmp_path):
     path = tmp_path / "ultrawiki.db"
     first = UltraStore(path)
     await first.open()
-    entity_id = await first.upsert_entity(display_name="Casey Example")
+    entity_id = await first.upsert_entity(display_name="Viktoria Novak")
     await first.close()
 
     second = UltraStore(path)
@@ -100,19 +100,19 @@ async def test_golden_set_resolves_with_zero_wrong_merges(store):
     same_person = [
         # One person, three sources, three spellings and two phone formats.
         {
-            "name": "Casey Example",
-            "emails": ["casey@example.com"],
-            "phones": ["+1 202-555-0101"],
-            "contact_slug": "casey-example",
+            "name": "Viktoria Novak",
+            "emails": ["viktoria@example.com"],
+            "phones": ["+49 151 2345 6789"],
+            "contact_slug": "viktoria-novak",
         },
-        {"name": "C. Example", "emails": ["CASEY@Example.com"]},
-        {"name": "Example, Casey", "phones": ["+1-202-555-0101"]},
+        {"name": "V. Novak", "emails": ["VIKTORIA@Example.com"]},
+        {"name": "Novak, Viktoria", "phones": ["0049-151-23456789"]},
     ]
     distinct_people = [
         # A brother: same surname, similar given name, own phone number.
-        {"name": "Casy Example", "phones": ["+1 202-555-0102"]},
+        {"name": "Viktor Novak", "phones": ["+49 151 9999 0000"]},
         # A nickname with no other evidence at all.
-        {"name": "Case"},
+        {"name": "Viki"},
         # Two people who merely share a surname.
         {"name": "John Smith", "emails": ["john@example.com"]},
         {"name": "Jane Smith", "emails": ["jane@example.com"]},
@@ -148,8 +148,8 @@ async def test_golden_set_resolves_with_zero_wrong_merges(store):
 
     # 4 — the uncertain cases are queued, and only those.
     pairs = await queue_pairs(store)
-    assert frozenset({"Casey Example", "Casy Example"}) in pairs
-    assert frozenset({"Casey Example", "Case"}) in pairs
+    assert frozenset({"Viktoria Novak", "Viktor Novak"}) in pairs
+    assert frozenset({"Viktoria Novak", "Viki"}) in pairs
     assert frozenset({"John Smith", "Jane Smith"}) not in pairs
 
 
@@ -183,7 +183,7 @@ async def test_ambiguous_name_links_to_nobody_and_proposes_instead(store):
     left = await store.resolve_identity(
         name="Alex Winter", emails=["alex.w@example.com"]
     )
-    right = await store.resolve_identity(name="A. Winter", phones=["+1 202-555-0111"])
+    right = await store.resolve_identity(name="A. Winter", phones=["+49 151 7777 000"])
     # The second identity legitimately acquires the same display name later.
     await store.add_identifier(right.entity_id, IdentifierKind.NAME, "Alex Winter")
 
@@ -221,7 +221,7 @@ async def test_confirmed_merge_round_trips_through_unmerge(store):
         name="Chris Meyer", emails=["chris@example.com"]
     )
     right = await store.resolve_identity(
-        name="Christoph Meyer", phones=["+1 202-555-0112"]
+        name="Christoph Meyer", phones=["+49 151 0000 111"]
     )
     before = await snapshot(store)
     proposal = (await store.list_confirm_queue())[0]
@@ -234,7 +234,7 @@ async def test_confirmed_merge_round_trips_through_unmerge(store):
     survivor = await store.get_person(right.entity_id)
     assert survivor["id"] == left.entity_id
     assert survivor["requested_id"] == right.entity_id
-    assert ("phone", "+12025550112") in await identifier_pairs(store, left.entity_id)
+    assert ("phone", "+491510000111") in await identifier_pairs(store, left.entity_id)
 
     assert await store.unmerge(merge_id) is True
     assert await snapshot(store) == before
@@ -248,14 +248,14 @@ async def test_unmerge_makes_the_split_stick_against_deterministic_evidence(stor
     carrying both identifiers must not silently fuse the pair again — a shared
     mailbox or a family phone is exactly how that would keep happening."""
     left = await store.resolve_identity(name="Sam Fox", emails=["family@example.com"])
-    right = await store.resolve_identity(name="Robin Fox", phones=["+1 202-555-0113"])
+    right = await store.resolve_identity(name="Robin Fox", phones=["+49 151 1234 000"])
     merge_id = await store.merge_entities(
         left.entity_id, right.entity_id, tier=MatchTier.DETERMINISTIC
     )
     await store.unmerge(merge_id)
 
     again = await store.resolve_identity(
-        name="Sam Fox", emails=["family@example.com"], phones=["+1 202-555-0113"]
+        name="Sam Fox", emails=["family@example.com"], phones=["+49 151 1234 000"]
     )
     assert again.merged == ()
     assert len(await store.list_people(limit=10)) == 2
@@ -301,7 +301,7 @@ async def test_double_decisions_are_refused_honestly(store):
 async def test_merge_winner_is_deterministic_not_arbitrary(store):
     """Re-running an import must converge on the same graph, so the survivor
     is chosen by rule: a curated address-book record first, then the older id."""
-    inferred = await store.resolve_identity(name="Dana Reed", phones=["+1 202-555-0114"])
+    inferred = await store.resolve_identity(name="Dana Reed", phones=["+49 151 5555 0"])
     seeded = await store.resolve_identity(
         name="D. Reed", emails=["dana@example.com"], contact_slug="dana-reed"
     )
@@ -313,7 +313,7 @@ async def test_merge_winner_is_deterministic_not_arbitrary(store):
     # it is the younger row.
     joined = await store.resolve_identity(
         name="Dana Reed",
-        phones=["+1 202-555-0114"],
+        phones=["+49 151 5555 0"],
         emails=["dana@example.com"],
     )
     assert joined.merged
@@ -323,7 +323,7 @@ async def test_merge_winner_is_deterministic_not_arbitrary(store):
 
 async def test_merge_moves_identifiers_and_keeps_the_audit_trail(store):
     left = await store.resolve_identity(name="Lee Park", emails=["lee@example.com"])
-    right = await store.resolve_identity(name="Lee Parker", phones=["+1 202-555-0115"])
+    right = await store.resolve_identity(name="Lee Parker", phones=["+49 151 4444 0"])
     merge_id = await store.merge_entities(
         left.entity_id,
         right.entity_id,
@@ -389,7 +389,7 @@ async def test_repeated_observation_of_one_person_is_idempotent(store):
     payload = {
         "name": "Nina Bauer",
         "emails": ["nina@example.com"],
-        "phones": ["+1 202-555-0116"],
+        "phones": ["+49 151 3333 0"],
     }
     first = await store.resolve_identity(**payload)
     before = await identifier_pairs(store, first.entity_id)
@@ -409,10 +409,10 @@ async def test_repeated_observation_of_one_person_is_idempotent(store):
 def build_contacts(tmp_path) -> ContactStore:
     contacts = ContactStore(base_dir=tmp_path / "contacts")
     contacts.put(
-        name="Casey Example",
-        aliases=["Case"],
-        emails=["casey@example.com"],
-        phones=["+1 202-555-0101"],
+        name="Viktoria Novak",
+        aliases=["Viki"],
+        emails=["viktoria@example.com"],
+        phones=["+49 151 2345 6789"],
     )
     contacts.put(name="John Smith", emails=["john@example.com"])
     contacts.put(name="No Contact Details")
@@ -428,7 +428,7 @@ async def test_seeding_from_contacts_is_idempotent(store, tmp_path):
     assert first.merged == 0
     people = await store.list_people(limit=10)
     assert {person["display_name"] for person in people} == {
-        "Casey Example",
+        "Viktoria Novak",
         "John Smith",
         "No Contact Details",
     }
@@ -445,7 +445,7 @@ async def test_seeding_merges_with_what_the_corpus_already_knew(store, tmp_path)
     """A contact whose phone number already appeared during ingest joins that
     entity deterministically instead of becoming a twin."""
     ingested = await store.resolve_identity(
-        name="C. Example", phones=["+1-202-555-0101"]
+        name="V. Novak", phones=["0049-151-23456789"]
     )
     contacts = build_contacts(tmp_path)
 
@@ -453,15 +453,15 @@ async def test_seeding_merges_with_what_the_corpus_already_knew(store, tmp_path)
     assert report.created == 2  # the third contact matched the ingested entity
     assert report.linked == 1
     profile = await store.get_person(ingested.entity_id)
-    assert "casey@example.com" in profile["emails"]
-    assert profile["contacts"] == ["casey_example"]
-    assert "case" in [name.lower() for name in profile["names"]]
+    assert "viktoria@example.com" in profile["emails"]
+    assert profile["contacts"] == [contacts.list_all()[2].slug]
+    assert "viki" in [name.lower() for name in profile["names"]]
 
 
 async def test_seeded_alias_becomes_a_searchable_identifier(store, tmp_path):
     await seed_from_contacts(store, contact_store=build_contacts(tmp_path))
-    found = await store.list_people(query="case", limit=10)
-    assert [person["display_name"] for person in found] == ["Casey Example"]
+    found = await store.list_people(query="viki", limit=10)
+    assert [person["display_name"] for person in found] == ["Viktoria Novak"]
 
 
 async def test_people_list_filters_and_pages(store):
@@ -508,8 +508,8 @@ async def test_a_rejection_survives_later_merges_on_both_sides(store):
 
     await store.add_identifier(right, IdentifierKind.EMAIL, "shared@example.com")
     await store.add_identifier(third, IdentifierKind.EMAIL, "shared@example.com")
-    await store.add_identifier(third, IdentifierKind.PHONE, "+1 202-555-0118")
-    await store.add_identifier(left, IdentifierKind.PHONE, "+1 202-555-0118")
+    await store.add_identifier(third, IdentifierKind.PHONE, "+49 30 1234567")
+    await store.add_identifier(left, IdentifierKind.PHONE, "+49 30 1234567")
 
     assert await store.resolve_entity_id(left) != await store.resolve_entity_id(right)
 
@@ -606,8 +606,8 @@ async def test_a_shared_identifier_never_fuses_across_kinds(store):
 
 
 async def test_near_names_of_different_kinds_are_never_proposed(store):
-    await store.resolve_identity(name="Casey Example", kind=EntityKind.PERSON)
-    await store.resolve_identity(name="Casey Examples", kind=EntityKind.PLACE)
+    await store.resolve_identity(name="Viktoria Novak", kind=EntityKind.PERSON)
+    await store.resolve_identity(name="Viktoria Novaks", kind=EntityKind.PLACE)
     assert await store.list_confirm_queue(limit=20) == []
 
 

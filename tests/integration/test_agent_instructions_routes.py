@@ -2,7 +2,7 @@
 
 The "Agent Instructions" view reads the user's standing-instructions file, saves
 it, and clears it through these three endpoints. The file is named after the
-assistant (e.g. Ruben.md); reset is a delete.
+assistant (e.g. Alex.md); reset is a delete.
 """
 from __future__ import annotations
 

@@ -143,7 +143,7 @@ const POPULATED_TREE: WikiTreeResponse = {
       count: 2,
       files: [
         { slug: "alex", title: "Alex", mtime: 1, size: 100 },
-        { slug: "morgan", title: "Morgan", mtime: 2, size: 200 },
+        { slug: "sam", title: "Sam", mtime: 2, size: 200 },
       ],
     },
     { name: "concepts", kind: "concept", count: 0, files: [] },
@@ -160,33 +160,33 @@ const POPULATED_TREE: WikiTreeResponse = {
   stats: { total_pages: 3, total_links: 8, last_curator_run: "2026-05-13T13:59:00" },
 };
 
-const MORGAN_PAGE: WikiPageResponse = {
+const SAM_PAGE: WikiPageResponse = {
   ok: true,
-  slug: "morgan",
+  slug: "sam",
   kind: "entity",
-  title: "Morgan",
-  path: "entities/morgan.md",
+  title: "Sam",
+  path: "entities/sam.md",
   frontmatter: {
     type: "entity",
     entity_kind: "person",
-    slug: "morgan",
+    slug: "sam",
     aliases: [],
     created: "2026-05-13",
     updated: "2026-05-13",
   },
-  body_md: "# Morgan\n\n## Relationships\n\nMentor of [[alex]] — established via voice fact.\n",
+  body_md: "# Sam\n\n## Relationships\n\nCollaborates with [[alex]] on the community garden.\n",
   wikilinks: ["alex"],
   stats: { words: 17, bytes: 289, mtime: 1 },
 };
 
-const MORGAN_BACKLINKS: WikiBacklinksResponse = {
+const SAM_BACKLINKS: WikiBacklinksResponse = {
   ok: true,
-  slug: "morgan",
+  slug: "sam",
   backlinks: [
     {
       slug: "alex",
       title: "Alex",
-      snippet: "...Mentor is [[morgan]] — likes hiking...",
+      snippet: "...Coordinates the community garden with [[sam]]...",
     },
   ],
 };
@@ -219,8 +219,8 @@ describe("WikiView — populated tree", () => {
   beforeEach(() => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/": () => MORGAN_PAGE,
-      "/api/wiki/backlinks/": () => MORGAN_BACKLINKS,
+      "/api/wiki/page/": () => SAM_PAGE,
+      "/api/wiki/backlinks/": () => SAM_BACKLINKS,
     });
   });
 
@@ -235,7 +235,7 @@ describe("WikiView — populated tree", () => {
     // by default (per mockup contract).
     await waitFor(() => {
       expect(screen.getByText("alex.md")).toBeDefined();
-      expect(screen.getByText("morgan.md")).toBeDefined();
+      expect(screen.getByText("sam.md")).toBeDefined();
       expect(screen.getByText("pixel-art-editor.md")).toBeDefined();
     });
 
@@ -284,15 +284,15 @@ describe("WikiView — populated tree", () => {
     renderWithClient(<WikiView />);
 
     await waitFor(() => {
-      expect(screen.getByText("morgan.md")).toBeDefined();
+      expect(screen.getByText("sam.md")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByText("morgan.md"));
+    fireEvent.click(screen.getByText("sam.md"));
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
-    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Morgan");
+    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Sam");
   }, 10_000);
 });
 
@@ -464,11 +464,11 @@ describe("PageRenderer — wikilink behaviour", () => {
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/morgan": () => MORGAN_PAGE,
+      "/api/wiki/page/sam": () => SAM_PAGE,
     });
     const onClick = vi.fn();
     renderWithClient(
-      <PageRenderer slug="morgan" onWikilinkClick={onClick} />,
+      <PageRenderer slug="sam" onWikilinkClick={onClick} />,
     );
 
     await waitFor(() => {
@@ -485,16 +485,16 @@ describe("PageRenderer — wikilink behaviour", () => {
 
   it("renders a broken wikilink with the `.broken` class when the slug is unknown", async () => {
     const brokenPage: WikiPageResponse = {
-      ...MORGAN_PAGE,
+      ...SAM_PAGE,
       body_md: "Refers to [[nonexistent-slug]] which doesn't exist.\n",
       wikilinks: ["nonexistent-slug"],
     };
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/morgan": () => brokenPage,
+      "/api/wiki/page/sam": () => brokenPage,
     });
     renderWithClient(
-      <PageRenderer slug="morgan" onWikilinkClick={vi.fn()} />,
+      <PageRenderer slug="sam" onWikilinkClick={vi.fn()} />,
     );
 
     await waitFor(() => {
@@ -513,19 +513,19 @@ describe("PageHeader — frontmatter pills", () => {
   it("renders pills for known frontmatter keys and skips slug + aliases", () => {
     render(
       <PageHeader
-        slug="morgan"
+        slug="sam"
         kind="entity"
-        title="Morgan"
+        title="Sam"
         frontmatter={{
           type: "entity",
           entity_kind: "person",
-          slug: "morgan",
+          slug: "sam",
           aliases: ["herry", "h"],
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
         vaultRoot="C:/vault/Jarvis"
-        vaultRelPath="entities/morgan.md"
+        vaultRelPath="entities/sam.md"
       />,
     );
 

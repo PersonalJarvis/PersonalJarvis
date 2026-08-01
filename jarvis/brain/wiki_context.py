@@ -234,7 +234,7 @@ class WikiContextInjector:
 
         injector = WikiContextInjector(search=vault_search)
         augmented = await injector.maybe_inject(
-            user_text="When was Morgan born?",
+            user_text="When was Sam born?",
             system_prompt=base_prompt,
         )
 

@@ -13,11 +13,26 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.browser_voice.route import _browser_voice_enabled
 from jarvis.ui.web.settings_routes import router
+
+
+@pytest.fixture(autouse=True)
+def _disable_machine_codex_subscription_login(monkeypatch):
+    """Keep API-key route tests independent of the host's Codex login."""
+    from jarvis.plugins.realtime.codex_subscription import (
+        CodexSubscriptionRealtimeProvider,
+    )
+
+    monkeypatch.setattr(
+        CodexSubscriptionRealtimeProvider,
+        "external_login_ready",
+        classmethod(lambda _cls: False),
+    )
 
 
 def test_gate_default_off_when_pipeline_and_no_browser_voice():
@@ -63,6 +78,9 @@ def test_get_voice_mode(monkeypatch):
     body = r.json()
     assert body["mode"] == "realtime"
     assert body["realtime_available"] is True
+    assert body["requires_webrtc_offer"] is False
+    assert body["transport_offer_ready"] is None
+    assert body["transport_offer_detail"] is None
     assert body["active_provider"] == "openai-realtime"
     # Sidebar display fields: registry label + the catalog-default model (no
     # pin configured in this app fixture).
@@ -70,6 +88,37 @@ def test_get_voice_mode(monkeypatch):
     assert body["active_model"] == "gpt-realtime"
     assert body["session_active"] is False
     assert body["active_session_mode"] is None
+
+
+def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
+    from jarvis.ui.web import settings_routes
+
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_available_provider",
+        lambda _cfg: "codex-subscription-realtime",
+    )
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_requires_webrtc_offer",
+        lambda _cfg: True,
+    )
+    async def _offer_ready(_required: bool) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_transport_offer_ready",
+        _offer_ready,
+    )
+
+
+    body = TestClient(_app(mode="realtime")).get("/api/settings/voice-mode").json()
+
+    assert body["active_provider"] == "codex-subscription-realtime"
+    assert body["requires_webrtc_offer"] is True
+    assert body["transport_offer_ready"] is True
+    assert body["transport_offer_detail"] == "Embedded desktop WebRTC offer is ready."
 
 
 def test_get_voice_mode_cross_family_gemini_only(monkeypatch):

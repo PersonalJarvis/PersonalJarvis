@@ -5,16 +5,16 @@ import { AgentInstructionsView } from "./AgentInstructionsView";
 const STATE = {
   content: "Be terse.",
   exists: true,
-  filename: "Ruben.md",
-  template: "# How Ruben works with me\n## Do\n- ",
+  filename: "Alex.md",
+  template: "# How Alex works with me\n## Do\n- ",
   char_count: 9,
 };
 
 const EMPTY_STATE = {
   content: "",
   exists: false,
-  filename: "Ruben.md",
-  template: "# How Ruben works with me\n## Do\n- ",
+  filename: "Alex.md",
+  template: "# How Alex works with me\n## Do\n- ",
   char_count: 0,
 };
 
@@ -32,7 +32,7 @@ describe("AgentInstructionsView", () => {
         (screen.getByTestId("agent-instructions-editor") as HTMLTextAreaElement).value,
       ).toBe("Be terse."),
     );
-    expect(screen.getByText("Ruben.md").textContent).toBe("Ruben.md");
+    expect(screen.getByText("Alex.md").textContent).toBe("Alex.md");
   });
 
   it("PUTs the draft on save", async () => {

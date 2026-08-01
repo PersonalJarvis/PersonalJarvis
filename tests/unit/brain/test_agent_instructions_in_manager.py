@@ -44,7 +44,7 @@ def test_empty_preferences_state_without_a_file() -> None:
     prompt = m._build_system_prompt()
     assert "USER PREFERENCES & STANDING INSTRUCTIONS" in prompt
     assert "No active user preferences are currently set" in prompt
-    # The filename is brand-derived (wake word "Ruben" → Ruben.md), so derive
+    # The filename is brand-derived (wake word "Alex" → Alex.md), so derive
     # the expectation the same way — never assert the host's live brand.
     filename = agent_instructions.instructions_filename(m._config)
     assert f"Ignore any earlier {filename} instructions" in prompt

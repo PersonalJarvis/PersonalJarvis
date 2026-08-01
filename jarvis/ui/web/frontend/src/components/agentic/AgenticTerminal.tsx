@@ -41,7 +41,7 @@
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -49,9 +49,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import {
-  AlertCircle,
   Check,
-  Circle,
   Columns2,
   Loader2,
   Maximize2,
@@ -76,6 +74,12 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { usePaneFileDrag } from "./paneFileDrag";
+import {
+  AgentPickerMenu,
+  automaticAgentChoice,
+  offersAgentChoice,
+  type SplitAgentChoice,
+} from "./AgentPicker";
 import { describeExit, explainExit } from "./paneExit";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
@@ -138,22 +142,15 @@ function documentHidden(): boolean {
   return typeof document !== "undefined" && document.hidden === true;
 }
 
-/** A coding CLI a split may start, as offered by the pane's split menu. */
-export interface SplitAgentChoice {
-  /** Backend id — "claude", "codex", "shell". */
-  name: string;
-  /** What the user reads — "Claude Code", "Plain Terminal". */
-  displayName: string;
-  installed: boolean;
-  /**
-   * `"cli"` for a coding agent, `"shell"` for a plain terminal on this
-   * machine's own shell. Carried so the menu can say what a choice actually
-   * opens without knowing any entry by name.
-   */
-  kind?: string;
-  /** One line under the name — the shell that would open, for instance. */
-  description?: string;
-}
+/**
+ * A coding CLI a split may start.
+ *
+ * Re-exported rather than declared here: the same list is offered by the chat
+ * view's rail and by an empty workspace, so it belongs to the picker they all
+ * share (see `AgentPicker`). Kept exported from this module because that is
+ * where every caller already imports it from.
+ */
+export type { SplitAgentChoice };
 
 export type SplitDirection = "right" | "down";
 
@@ -543,12 +540,43 @@ export function AgenticTerminal({
     const offscreen = new OffscreenBuffer();
     /** When this pane last measured itself while parked (see `recheckParked`). */
     let parkedCheckedAt = 0;
+    /** The pending deadline flush, if this pane is holding anything. */
+    let holdTimer: number | undefined;
+
+    const cancelHoldTimer = () => {
+      if (holdTimer === undefined) return;
+      window.clearTimeout(holdTimer);
+      holdTimer = undefined;
+    };
+
+    /**
+     * Write what is held, whether or not this pane believes it is watched.
+     *
+     * The deadline half of parking (see ./offscreenBuffer): being wrong about
+     * visibility must cost a coalesced write, never a screen that stopped.
+     */
+    const flushHeld = () => {
+      cancelHoldTimer();
+      const held = offscreen.drain();
+      if (held) term.write(held);
+    };
+
+    /** Make sure the held output has a flush coming, without moving one nearer. */
+    const armHoldTimer = () => {
+      if (holdTimer !== undefined) return;
+      const due = offscreen.dueIn();
+      if (due === null) return;
+      holdTimer = window.setTimeout(() => {
+        holdTimer = undefined;
+        if (disposed) return;
+        flushHeld();
+      }, due);
+    };
 
     const showPane = () => {
       if (paneVisible) return;
       paneVisible = true;
-      const held = offscreen.drain();
-      if (held) term.write(held);
+      flushHeld();
     };
 
     const parkPane = () => {
@@ -624,7 +652,18 @@ export function AgenticTerminal({
       // the spinner row it rewrote last and blank rows where its prompt box
       // belongs. Parsing into a surface nobody is painting is the cheap half
       // of what parking avoids; a permanently broken screen is not.
-      if (offscreen.full) term.write(offscreen.drain());
+      //
+      // The same answer, for the same reason, once it has held long enough:
+      // this pane's belief that nobody is watching may simply be wrong, and
+      // that must cost a coalesced write rather than a frozen terminal. The
+      // timer covers the case this branch cannot — an agent that goes quiet
+      // right after saying something would otherwise hold that last word for
+      // as long as it stays quiet.
+      if (offscreen.full || offscreen.stale()) {
+        flushHeld();
+        return;
+      }
+      armHoldTimer();
     };
 
     /**
@@ -653,6 +692,9 @@ export function AgenticTerminal({
       // Parked output belongs to the screen this replay REPLACES, and it was
       // captured before it. Written afterwards it would paint the older screen
       // over the newer one; written before, it would be reset away regardless.
+      // The deadline goes with it — a flush firing after this would draw the
+      // screen this replay just replaced.
+      cancelHoldTimer();
       offscreen.drain();
       term.reset();
       // Through the ordinary path, so a replay arriving while nobody is looking
@@ -931,6 +973,9 @@ export function AgenticTerminal({
 
     return () => {
       disposed = true;
+      // Before the terminal is disposed below: a deadline flush one tick later
+      // would write into it after it is gone.
+      cancelHoldTimer();
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       // A queued reflow outlives the pane by up to a frame, and would then fit
       // a disposed terminal inside a detached element.
@@ -1115,10 +1160,12 @@ export function AgenticTerminal({
       onMouseDown={onFocus}
       {...dragHandlers}
       className={cn(
+        // One quiet border per pane; the focused one carries the workspace's
+        // only standing accent. The old per-pane drop shadows made a grid of
+        // twelve read as twelve floating cards — a tiling terminal is a wall,
+        // and a wall needs edges, not elevation.
         "relative flex h-full w-full flex-col overflow-hidden rounded-lg border transition-shadow",
-        focused
-          ? "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.35),0_8px_24px_-12px_rgba(0,0,0,0.5)]"
-          : "shadow-[0_4px_16px_-10px_rgba(0,0,0,0.4)]",
+        focused && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
         // A prompt just landed here. Two seconds of ring, for the one job the
         // receipt below cannot do: telling the user WHICH pane out of eight to
@@ -1305,6 +1352,7 @@ function PaneHeader({
   const light = appearance === "light";
   // Which split button opened the CLI picker, if any.
   const [picking, setPicking] = useState<SplitDirection | null>(null);
+  const pickerDialogId = useId();
   // The call-sign editor: null while the badge is just a badge, otherwise the
   // text being typed. Empty string is a real state (the field was cleared), so
   // "is it open" cannot be read off the text — hence null rather than "".
@@ -1329,12 +1377,12 @@ function PaneHeader({
   // With one installed CLI there is nothing to pick, so the button splits
   // straight away — a menu with a single entry is a click tax, not a choice.
   const choices = agents ?? [];
-  const offersChoice = choices.filter((a) => a.installed).length > 1;
+  const offersChoice = offersAgentChoice(agents);
 
   const startSplit = (direction: SplitDirection) => {
     if (offersChoice)
       setPicking((current) => (current === direction ? null : direction));
-    else onSplit?.(direction);
+    else onSplit?.(direction, automaticAgentChoice(agents));
   };
 
   return (
@@ -1364,12 +1412,15 @@ function PaneHeader({
           : undefined
       }
       className={cn(
-        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-1",
+        // No tinted strip of its own: the header shares the terminal's ground
+        // and the border underneath is enough to say where the output begins.
+        // Twelve tinted bands across the workspace were twelve horizontal
+        // stripes the eye had to skip on the way to the text that matters.
+        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-0.5",
         onArrangeStart && (arranging ? "cursor-grabbing" : "cursor-grab"),
       )}
       style={{
         borderColor: PANE_CHROME[appearance].border,
-        background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
         // Claims the touch gesture for the drag. Without it a touch that starts
         // on the header scrolls the workspace instead of lifting the pane, and
         // the drag never begins at all.
@@ -1448,20 +1499,15 @@ function PaneHeader({
               // it. The pencil beside it is what makes the feature findable.
               onDoubleClick={onRename ? () => setDraft(name) : undefined}
               title={onRename ? `${name} — double-click to rename` : undefined}
+              // The focused pane's call-sign is the workspace's one standing
+              // accent; every other name is plain text. A filled badge on all
+              // twelve panes marked nothing, because a marker everyone wears
+              // is a uniform.
               className={cn(
-                "shrink-0 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight",
+                "shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold tracking-tight",
                 focused ? "bg-primary/20 text-primary" : "",
               )}
-              style={
-                focused
-                  ? undefined
-                  : {
-                      color: light ? "#2b2b33" : "#e8e8ec",
-                      background: light
-                        ? "rgba(0,0,0,0.05)"
-                        : "rgba(255,255,255,0.06)",
-                    }
-              }
+              style={focused ? undefined : { color: light ? "#2b2b33" : "#e8e8ec" }}
             >
               {name}
             </span>
@@ -1520,26 +1566,42 @@ function PaneHeader({
         )}
       </div>
 
-      {/* Pane actions stay visible in every terminal, including panes that are
-          not focused, so the controls can be found without probing by hover. */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-100">
-        {dead && (
-          <button
-            type="button"
-            aria-label={`Restart ${name}`}
-            title={`Start a fresh ${displayName} in ${name}`}
-            data-testid={`pane-restart-${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRestart?.();
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="mr-1 flex items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Restart
-          </button>
+      {/* Restart is an EVENT, not furniture — a dead agent must announce
+          itself whether or not anyone hovers, so it sits outside the cluster
+          that hides. */}
+      {dead && (
+        <button
+          type="button"
+          aria-label={`Restart ${name}`}
+          title={`Start a fresh ${displayName} in ${name}`}
+          data-testid={`pane-restart-${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestart?.();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="mr-1 flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Restart
+        </button>
+      )}
+
+      {/* Pane actions appear where the eye already is: on the pane under the
+          pointer, on the focused pane, and while one of their menus is open.
+          Five buttons on every header of a twelve-pane wall were sixty
+          controls nobody was using at once — the redesign shows each pane's
+          five exactly when that pane is the one being worked. They stay in
+          the DOM throughout (opacity, not display), so keyboard focus and
+          tests reach them regardless. */}
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-0.5 transition-opacity",
+          focused || maximized || picking !== null
+            ? "opacity-100"
+            : "opacity-0 focus-within:opacity-100 group-hover/header:opacity-100",
         )}
+      >
         <PromptHistoryButton
           terminal={name}
           workspaceId={workspaceId}
@@ -1564,6 +1626,9 @@ function PaneHeader({
           light={light}
           disabled={splitDisabled}
           expanded={offersChoice ? picking === "right" : undefined}
+          controls={
+            offersChoice ? pickerDialogId : undefined
+          }
           onClick={onSplit ? () => startSplit("right") : undefined}
         >
           <Columns2 className="h-3.5 w-3.5" />
@@ -1574,6 +1639,9 @@ function PaneHeader({
           light={light}
           disabled={splitDisabled}
           expanded={offersChoice ? picking === "down" : undefined}
+          controls={
+            offersChoice ? pickerDialogId : undefined
+          }
           onClick={onSplit ? () => startSplit("down") : undefined}
         >
           <Rows2 className="h-3.5 w-3.5" />
@@ -1590,10 +1658,16 @@ function PaneHeader({
       </div>
 
       {picking && (
-        <SplitAgentMenu
-          paneName={name}
-          direction={picking}
+        <AgentPickerMenu
+          title={
+            picking === "right" ? "Open beside — what?" : "Split below — what?"
+          }
+          ariaLabel={`What should run ${picking === "right" ? "beside" : "below"} ${name}?`}
           agents={choices}
+          testId={`pane-split-menu-${picking}-${name}`}
+          itemTestId={(agent) => `pane-split-${picking}-${name}-${agent}`}
+          dialogId={pickerDialogId}
+          className="right-2 top-full mt-1"
           onDismiss={() => setPicking(null)}
           onPick={(agent) => {
             setPicking(null);
@@ -1605,92 +1679,6 @@ function PaneHeader({
   );
 }
 
-/**
- * The picker a split button opens: what should run in the new pane?
- *
- * Splitting used to inherit the anchor's agent silently, which made running a
- * Codex pane next to a Claude Code one impossible from the grid — you had to
- * close the workspace and start it again from the wizard. The backend always
- * accepted an agent per terminal; this is the surface that finally asks.
- *
- * The list is whatever the backend registered, so it is not a fixed pair of
- * CLIs: a plain terminal (this machine's own shell, no agent around it) sits in
- * the same menu, and a CLI registered later appears here without a change on
- * this side. An entry that is not installed stays listed but disabled, so the
- * absence is visible and explains itself rather than silently not being there.
- */
-function SplitAgentMenu({
-  paneName,
-  direction,
-  agents,
-  onPick,
-  onDismiss,
-}: {
-  paneName: string;
-  direction: SplitDirection;
-  agents: SplitAgentChoice[];
-  onPick: (agent: string) => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <>
-      {/* Click-anywhere-else to dismiss, without a global listener that would
-          outlive the pane. */}
-      <div className="fixed inset-0 z-40" onMouseDown={onDismiss} />
-      <div
-        role="menu"
-        aria-label={`What should run ${direction === "right" ? "beside" : "below"} ${paneName}?`}
-        data-testid={`pane-split-menu-${direction}-${paneName}`}
-        className="absolute right-2 top-full z-50 mt-1 w-60 rounded-lg border border-border bg-card p-1 shadow-xl"
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onDismiss();
-        }}
-      >
-        <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-          {direction === "right"
-            ? "Open beside — what?"
-            : "Split below — what?"}
-        </p>
-        {agents.map((agent) => (
-          <button
-            key={agent.name}
-            type="button"
-            role="menuitem"
-            autoFocus={
-              agent.installed && agent === agents.find((a) => a.installed)
-            }
-            disabled={!agent.installed}
-            data-testid={`pane-split-${direction}-${paneName}-${agent.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onPick(agent.name);
-            }}
-            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="min-w-0">
-              <span className="block truncate">{agent.displayName}</span>
-              {/* What this choice actually opens — "no agent, just a prompt"
-                  is the difference a user needs before clicking, and it is the
-                  entry's own words rather than a name this menu recognises. */}
-              {agent.description && (
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {agent.description}
-                </span>
-              )}
-            </span>
-            {!agent.installed && (
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {agent.kind === "shell" ? "no shell here" : "not installed"}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function PaneAction({
   label,
   testId,
@@ -1698,6 +1686,7 @@ function PaneAction({
   danger = false,
   disabled = false,
   expanded,
+  controls,
   onClick,
   children,
 }: {
@@ -1708,6 +1697,7 @@ function PaneAction({
   disabled?: boolean;
   /** Set when this button opens a menu — announces its state to a screen reader. */
   expanded?: boolean;
+  controls?: string;
   onClick?: () => void;
   children: React.ReactNode;
 }) {
@@ -1717,8 +1707,9 @@ function PaneAction({
       aria-label={label}
       title={label}
       data-testid={testId}
-      aria-haspopup={expanded === undefined ? undefined : "menu"}
+      aria-haspopup={expanded === undefined ? undefined : "dialog"}
       aria-expanded={expanded}
+      aria-controls={controls}
       disabled={disabled || !onClick}
       onClick={(e) => {
         // The pane's own mousedown selects it as the prompt target; an action
@@ -1742,50 +1733,10 @@ function PaneAction({
   );
 }
 
-/** Small status pill reused by the grid toolbar. */
-export function PaneStatusPill({
-  status,
-  detail,
-}: {
-  status: PaneStatus;
-  detail?: string;
-}) {
-  if (status === "live") {
-    return (
-      <span
-        className="flex items-center gap-1 text-[11px] text-emerald-400"
-        title={detail}
-      >
-        <Circle className="h-2 w-2 fill-current" />
-        live
-      </span>
-    );
-  }
-  if (status === "error") {
-    return (
-      <span
-        className="flex items-center gap-1 text-[11px] text-destructive"
-        title={detail}
-      >
-        <AlertCircle className="h-3 w-3" />
-        error
-      </span>
-    );
-  }
-  if (status === "exited") {
-    return (
-      <span className="text-[11px] text-muted-foreground" title={detail}>
-        exited
-      </span>
-    );
-  }
-  return (
-    <span
-      className="flex items-center gap-1 text-[11px] text-muted-foreground"
-      title={detail}
-    >
-      <Loader2 className="h-3 w-3 animate-spin" />
-      starting
-    </span>
-  );
-}
+/*
+ * The pane badge used to live here and reported the SOCKET: "live" for any pane
+ * with a working pipe, which is nearly all of them nearly all of the time. It
+ * moved to ./PaneActivityPill, which answers the question people were actually
+ * reading it for — is this agent still working — and still reports the pipe in
+ * the three cases where the pipe is the news.
+ */

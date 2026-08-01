@@ -13,7 +13,7 @@
     Guard-Skript. Daemon-Lifecycle-Events tragen Praefix "DAEMON".
 
 .PARAMETER RepoRoot
-    Repository root. Defaults to the parent of this script directory.
+    Pfad zum Repo-Root. Default: <USER_HOME>\Desktop\Personal Jarvis
 
 .PARAMETER IntervalSeconds
     Wartezeit zwischen Guard-Laeufen. Default: 300 (5 Min).
@@ -29,7 +29,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot        = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot        = "<USER_HOME>\Desktop\Personal Jarvis",
     [int]   $IntervalSeconds = 300
 )
 

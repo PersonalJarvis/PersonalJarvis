@@ -1,6 +1,9 @@
 """Cross-platform capability guards for Screen Context ports."""
 from __future__ import annotations
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 
 from jarvis.platform.window_state import WindowInfo
@@ -34,6 +37,24 @@ def test_wayland_permission_probe_is_actionable(
     assert issue is not None
     assert issue.code == "wayland_portal"
     assert "portal" in issue.message.lower()
+
+
+def test_windows_window_capture_never_falls_back_to_desktop_rect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ports, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(ports, "_input_space", nullcontext)
+    monkeypatch.setattr(
+        "jarvis.cu.indicator.capture_guard.indicator_suppressed",
+        nullcontext,
+    )
+    monkeypatch.setattr("jarvis.platform.window_capture.grab_window", lambda *_a, **_k: None)
+
+    with pytest.raises(ports.CaptureUnavailable, match="refused"):
+        ports.NativeSurfaceCapturer().grab(
+            (0, 0, 100, 100),
+            window_handle=0x1_0000_1234,
+        )
 
 
 def test_visible_windows_retains_untitled_password_manager_candidate(

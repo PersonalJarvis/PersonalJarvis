@@ -563,8 +563,8 @@ async def test_list_outputs_cancelled_with_live_child_exposes_continuation(
 ) -> None:
     """A CANCELLED card whose re-run child is still running must say so.
 
-    Forensic 2026-06-28 (missions 019f0fa6 → 019f0fac): the user clicked
-    "Continue" on a cancelled mission; that spawned a linked child which ran
+    Synthetic regression scenario: the user clicked "Continue" on a cancelled
+    mission; that spawned a linked child which ran
     on (CRITIQUING), but the cancelled card kept showing a "Continue" button
     with no hint that its work was already live — two visually identical
     cards, one cancelled + continuable, one running. The list now resolves the
@@ -572,8 +572,8 @@ async def test_list_outputs_cancelled_with_live_child_exposes_continuation(
     event) and exposes it so the UI can replace "Continue" with a "running"
     indicator pointing at the child.
     """
-    parent = "019f0fa6-4ff6-7bd9-87fd-a32e201b32c9"
-    child = "019f0fac-26a3-7c59-bfa3-385fb1e426fc"
+    parent = "11111111-1111-4111-8111-111111111111"
+    child = "22222222-2222-4222-8222-222222222222"
     _make_mission_dir(tmp_path, parent)
     _make_mission_dir(tmp_path, child)
     await _insert_mission(db_conn, mission_id=parent, state="CANCELLED")

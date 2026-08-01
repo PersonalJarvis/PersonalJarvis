@@ -19,7 +19,7 @@ title: "Concept: Router-Discipline"
 slug: router-discipline
 diataxis: explanation
 status: active
-owner: project-maintainers
+owner: sam
 last_reviewed: 2026-04-28
 phase: 5
 tags: [brain, routing]

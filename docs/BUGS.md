@@ -2101,7 +2101,7 @@ have caught it.
 - **Date**: 2026-05-11
 - **Severity**: HIGH — user-facing voice quality regression. User cannot
   finish complex sentences. Symptom (user words): "Jarvis always thinks you've already finished speaking … that used to work quite well, then a bug appeared." Concrete production case
-  (session ``bf44825d-c3cb-41d8-aac5-fc61482e52d4`` at 17:22): user said
+  (session ``<SESSION_ID>`` at 17:22): user said
   "Can you please spawn a sub-agent that..." — VAD endpointed
   after 160 ms of silence (budget was 1200 ms) and the brain was called
   on a half-question; the rest of the sentence ("...pulls out five research topics for me") became Turn 2 and arrived as a fragment.
@@ -2408,7 +2408,7 @@ pytest tests/integration/test_capability_coupling_e2e.py -v
 
 - [ADR-0017 — Capability Coupling](adr/0017-capability-coupling.md) — full
   decision record, alternatives considered, extensibility contract.
-- [docs/plans/capability-coupling/EXTENSIBILITY.md](plans/capability-coupling/EXTENSIBILITY.md) — contributor guide for adding new capabilities.
+- [Architecture overview](architecture-overview.md) — contributor context for adding new capabilities.
 - `docs/anti-drift-three-layer.md` — cross-reference section comparing this
   pattern to the anti-drift and visible-feedback patterns.
 - AD-9 in `docs/jarvis-agents-bridge.md` — Critic + risk-tier preconditions that
@@ -3018,7 +3018,7 @@ Deep-Dive machen … ob es irgendwelche Bugs gibt" (STT-garbled "Claude Code" �
 ausführen — mir fehlt dafür das passende Werkzeug." No terminal was opened; <!-- i18n-allow: forensic quote of the live German refusal -->
 nothing happened.
 
-**Forensics (sessions.db, session 62198a59, turn auto-1).** The turn had the
+**Forensics (sessions.db, session <SESSION_ID>, turn auto-1).** The turn had the
 FULL router tool surface (computer_use present; `_looks_like_pc_control`
 matches the transcript, so no hide-gate stripped it). `tool_calls_json` shows
 exactly one call: `run-skill` → `ActionExecuted success=true` with
@@ -3078,7 +3078,7 @@ Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
 
 ## BUG-040: Real tool refused as "missing" — the model called the OTHER separator spelling of a registered tool (HIGH, 2026-07-06)
 
-**Symptom.** Voice session 2026-07-05 19:47 (session 3e27dd8e, screenshot from
+**Symptom.** Voice session 2026-07-05 19:47 (session <SESSION_ID>, screenshot from
 the maintainer): after four successful `cli_gh` calls the turn ended with the
 canned capability refusal ("Das kann ich gerade nicht ausfuehren — mir fehlt <!-- i18n-allow: forensic quote of the live German refusal -->
 dafuer das passende Werkzeug.") although every tool the model needed was <!-- i18n-allow: forensic quote of the live German refusal -->
@@ -3124,7 +3124,7 @@ shrinks over time.
 
 ## BUG-041: Total silence after a mid-stream provider error on a tool turn (HIGH, 2026-07-06)
 
-**Symptom.** Voice session 2026-07-05 19:48 (session 3e27dd8e, turn 2): the
+**Symptom.** Voice session 2026-07-05 19:48 (session <SESSION_ID>, turn 2): the
 turn executed 10+ tools (cli_gh, search_web, run_shell), then Jarvis said
 NOTHING — no answer, no error, no retry. The log signature is the empty
 streamed line: `🤖 Jarvis [de] (streamed): ` with nothing after it.
@@ -4089,7 +4089,7 @@ off mid-sentence at "Du hast zwei", the session ended with
 `hangup_reason=error`, and the exported transcript showed only the truncated
 reply — no trace of what failed or why the answer stopped.
 
-**Evidence (desktop log + sessions.db, session c3c1997f).**
+**Evidence (desktop log + sessions.db, session <SESSION_ID>).**
 
 - 15:13:09.594 `realtime_delegate_completed` success=True after 5393 ms.
 - 15:13:12.468 `scrub gate cancelled output: unsafe output transcript` — the
@@ -4516,7 +4516,7 @@ act because a provider wire event failed to arrive.
 ## BUG-064: Grok realtime session goes permanently deaf after a barge-in cancel — server drops the session contract (HIGH, FIXED 2026-07-16)
 
 **Symptom.** Desktop realtime session on `grok-realtime`, 2026-07-16 08:07
-(session `3cefaede`, exported as `voice-session-2026-07-16_08-07-constable.md`).
+(session `<SESSION_ID>`, exported as `voice-session-2026-07-16_08-07-constable.md`).
 Turn 1 ("Constable.") completed normally. Turn 2 was cut short by server VAD
 ("Can you please" — the user paused mid-sentence), Jarvis requested a
 response, and 362 ms later the user resumed speaking, so the barge-in path
@@ -4583,7 +4583,7 @@ restoration turns one server-side hiccup into an unbounded silent outage that
 the user experiences as "it hears me (indicators fire) but nothing happens."
 
 **Recurrence 2026-07-16 09:23 — the re-arm alone does NOT heal Grok; transport
-rebuild escalation added.** Session `30c532cb`, first live run WITH the re-arm
+rebuild escalation added.** Session `<SESSION_ID>`, first live run WITH the re-arm
 fix (committed 08:34): turn 0 committed ("Constable?", an English mishearing
 of the German sentence opener), the user kept talking, the barge-in cancel
 fired (`realtime_cancel reason=barge_in`), and the known wedge followed — one
@@ -4617,7 +4617,7 @@ Additional guards: `test_deaf_session_rebuilds_the_transport_and_receive_hops_on
 `test_deaf_grok_session_rebuild_carries_the_grok_contract` (grok).
 
 **Recurrence #2, 2026-07-16 10:23 — the deadline path has a blind spot and a
-Grok error wording killed the session (session `204b108a`, first live run
+Grok error wording killed the session (session `<SESSION_ID>`, first live run
 WITH the transport-rebuild escalation).** Turn 1 fine; turn 2 committed and
 transcribed ("Was?" — xAI's VAD again cut the utterance short), then the
 known wedge. The rebuild never fired, for a provable reason: the first stray
@@ -4644,7 +4644,7 @@ re-arming forever. Guards:
 `test_second_stray_after_unheeded_rearm_rebuilds_the_transport`.
 
 **Recurrence #3, 2026-07-16 10:51 — a swallowed `response.done` disarms EVERY
-idle-gated defense at once (session `1fd3fa38`, first live run WITH the
+idle-gated defense at once (session `<SESSION_ID>`, first live run WITH the
 recurrence-#2 fixes).** Turn 2 ("Hey", again VAD-truncated) was transcribed,
 the orchestrator requested its native reply, and 360 ms later the user's
 continued speech triggered the local barge-in (`realtime_cancel
@@ -4795,10 +4795,10 @@ desktop sidebar's live-transcript box showed only "Was" while the user had
 asked a full question — and kept showing it long after the session ended.
 (2) gemini-live: the reply TEXT was fully stored, but the spoken audio
 stopped mid-answer and the session ended `reason=error`
-(session `dced755b`, 36.4s spoken of a ~40s answer). (3) grok-realtime:
+(session `<SESSION_ID>`, 36.4s spoken of a ~40s answer). (3) grok-realtime:
 three sessions in one morning produced an EMPTY spoken reply — the turn was
 cancelled by barge-in and the server's follow-up answer never played
-(sessions `3cefaede`, `30c532cb`, `9fbcb348`).
+(sessions `<SESSION_ID>`, `<SESSION_ID>`, `<SESSION_ID>`).
 
 **Root causes (six, individually verified).**
 1. *Store/UI truncation at capture:* xAI's server VAD ignores the
@@ -5076,11 +5076,6 @@ routinely slower; bound on resource cost, not on optimism.
 
 ## BUG-070: User probes the silent wait ("hello?") — the provider greets like a fresh conversation while the delegated answer is still being computed (HIGH, FIXED 2026-07-17)
 
-**Open follow-up — duplicate salutation.** A native provider opener and the
-delegated reply can each begin with a salutation. Deduplicate at the trusted
-reply boundary so one turn cannot address the user twice, without suppressing
-a legitimate salutation in a later turn.
-
 **Symptom (maintainer report + live session 2026-07-17 09:21, gemini-live).**
 Mid-conversation, the answer to a follow-up question starts and dies after
 two words; the user probes the silence with a bare greeting, and the
@@ -5089,7 +5084,7 @@ exchange never happened. The user hangs up; the real answer never arrives
 in any form. The exported transcript shows: user question → two-word
 assistant fragment → user "hello?" probe → context-free greeting.
 
-**Evidence (data/jarvis_desktop.log, session 9ef10423, 09:23:26-09:23:57).**
+**Evidence (data/jarvis_desktop.log, session <SESSION_ID>, 09:23:26-09:23:57).**
 The provider called `jarvis_action` for the user's question (`delegate
 call: dispatching user turn to the router brain`, 09:23:26) and kept
 speaking natively; the scrub gate released only the first words because
@@ -5156,7 +5151,7 @@ exported transcript shows `Beendet durch: Fehler` <!-- i18n-allow: quoted German
 with a completely normal conversation above it. Intermittent: most runs are
 fine, some die.
 
-**Evidence (data/jarvis_desktop.log, session 5e553e27, 10:42-10:44).**
+**Evidence (data/jarvis_desktop.log, session <SESSION_ID>, 10:42-10:44).**
 Turn 2's reply tripped the scrub-gate abort (`output transcript exceeded
 safe audio buffer`, 10:43:15) and the trusted answer was correctly re-spoken
 through the realtime-scoped surface TTS for ~69 s. During that playback the
@@ -5924,7 +5919,7 @@ not just to the recorder.
 
 ## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, ESCALATION SHIPPED 2026-07-21 AND REVERTED SAME DAY, provider-side root cause OPEN)
 
-**Symptom (live 2026-07-18 17:12, session `f4e8e93d`, gemini-live,
+**Symptom (live 2026-07-18 17:12, session `<SESSION_ID>`, gemini-live,
 4 turns).** The audible voice alternated male / female / male /
 female across consecutive turns of ONE call. The exported transcript
 claims the opposite: every turn carries `voice_name: "Fenrir"`. The same
@@ -6208,7 +6203,7 @@ whatever loop caused it.
 
 ## BUG-090: Surface-TTS fallback flips to a different-gender voice mid-answer AND the turn loses its voice label (HIGH, FIXED 2026-07-19)
 
-**Symptom (live 2026-07-19 07:41, session `4123ba4c`, gemini-live, voice
+**Symptom (live 2026-07-19 07:41, session `<SESSION_ID>`, gemini-live, voice
 pinned Fenrir).** Turn 3 (a delegated calendar question) was audibly spoken
 by a FEMALE voice while every other turn spoke as masculine Fenrir — and the
 exported transcript shows NO voice label at all for exactly that turn, so
@@ -6732,7 +6727,7 @@ the same signature. The affected process was running managed-install commit
 this is also a confirmed device-parity layer-1 version lag rather than a new
 macOS-only diagnosis.
 
-**Last five stored turns in session `163fca8b` (18:31-18:34).**
+**Last five stored turns in session `<SESSION_ID>` (18:31-18:34).**
 
 | Turn | Outcome | Evidence |
 |---|---|---|
@@ -6806,7 +6801,7 @@ not at intent to play.
 
 ## BUG-098: one exhausted Google project breaks both Gemini Live and the Tool Model mid-call, then reconnects the same dead account (CRITICAL, FIXED IN CODE 2026-07-20; LIVE DEPLOYMENT PENDING)
 
-**Symptom.** Realtime session `bfd8a2f1-9b0f-4aae-8108-eca925acc79b`
+**Symptom.** Realtime session `<SESSION_ID>`
 ran normally for almost four minutes, then two consecutive public-knowledge
 questions received improvised connection-error apologies. The API-Keys view
 subsequently showed both of these failures:
@@ -6930,7 +6925,7 @@ user-facing level indicator exists to show.
 ## BUG-100: high-latency speaker drain becomes a phantom user turn, and terminal teardown leaks a PortAudio task (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
 
 **Symptom.** Realtime voice session
-`fe594a99-3d8b-4b37-bb62-d481f02ba595` answered normally, then transcribed the
+`<SESSION_ID>` answered normally, then transcribed the
 last words coming from its own speakers as new user input. The assistant reply
 ending in `Was ansteht.` was followed by a user-role transcript containing
 exactly `Was ansteht.`. Earlier sessions show the same suffix pattern with
@@ -6988,7 +6983,7 @@ abort errors may be suppressed only with positive ownership evidence.
 
 ## BUG-101: loud speaker echo defeats the barge-in energy floor mid-answer — the assistant interrupts itself and answers its own words (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
 
-**Symptom.** Realtime voice session `c77b7a88-61b3-475d-98b1-7119bee0f03d`
+**Symptom.** Realtime voice session `<SESSION_ID>`
 (Mac built-in speakers + built-in mic, 2026-07-20): while the assistant was
 speaking about Thanksgiving, a barge-in fired with user text `Thanksgiving` —
 a word only the speakers were saying — truncating the answer. The next
@@ -7100,7 +7095,7 @@ plug/unplug validation on macOS/Windows/Linux remains pending.
 
 ## BUG-103: late action-result readback races the user's next utterance — the same answer is spoken twice in two different voices and doubles in the transcript (HIGH, FIXED 2026-07-20)
 
-**Symptom.** Realtime voice session `31dd0f25-8102-4159-83ca-466d6c1bb450`
+**Symptom.** Realtime voice session `<SESSION_ID>`
 (2026-07-20 17:49, Gemini Live, delegate tool mode): one answer was rendered
 by the surface TTS fallback voice (`gemini-flash-tts`, ~30 s) while the rest
 of the session used the live provider voice, and the transcript view showed
@@ -7214,7 +7209,7 @@ they can never route into the real Mac Keychain. Guards:
 
 ## BUG-104: Gemini 3.1 rejects the rebuild's conversation seed — every transport rebuild dies with 1007 and the call hangs up mid-sentence (CRITICAL, FIXED 2026-07-21)
 
-**Live incident 2026-07-21 08:35 (Mac, realtime session `8f1ea55c`).** Two
+**Live incident 2026-07-21 08:35 (Mac, realtime session `<SESSION_ID>`).** Two
 turns in, Gemini's server dropped the Live WebSocket (`1006 abnormal
 closure` — the known BUG-071 idle-drop right after a long surface-TTS
 fallback). The in-place rebuild (BUG-071) reconnected fine, then the
@@ -7431,7 +7426,7 @@ it sees, and a question must never be answered by performing.
 
 ## BUG-108: local speaker death (PortAudio -9986) is misclassified as provider transport death — three answers voiced into a dead output, all reported healthy (CRITICAL, OPEN 2026-07-21)
 
-**Symptom (live 2026-07-21 11:53, session `290b610c`, first call after the
+**Symptom (live 2026-07-21 11:53, session `<SESSION_ID>`, first call after the
 1b191b88 deploy/restart at 11:52).** The user asked for the best private
 jet currently on the market. The transcript view shows a complete answer
 (G700/Global 7500/Phenom 300E) — but the user heard NOTHING and saw
@@ -8145,7 +8140,7 @@ view renders, or a conversation the user definitely heard becomes unreachable.
 
 ## BUG-117: gemini-3.6-flash rejects the forced thinking_budget=0 with a parameterless 400 — every delegated realtime fallback turn bricked (HIGH, FIXED 2026-07-21)
 
-**Symptom (live 2026-07-21 18:27–18:33, sessions `62965e5d`, `dcd9d16a`,
+**Symptom (live 2026-07-21 18:27–18:33, sessions `<SESSION_ID>`, `<SESSION_ID>`,
 `43ca9ad6`).** In a realtime call, whenever the provider (Gemini Live) went
 silent after the user finished speaking, the deterministic-delegate fallback
 correctly detected the missing input boundary ("provider input boundary
@@ -8426,3 +8421,69 @@ time the wait from the EVENT that makes the tool write, never from the moment we
 happened to start it — and never let the last attempt be silent. Two of the four
 CLIs here were pinned by tests that pre-created the session file and set the
 delay to zero, which proved the mechanism and hid the timing entirely.
+
+---
+
+## BUG-122: "Continue interrupted" always reports zero — a restored pane redrawing its own screen is mistaken for an agent already at work (HIGH, FIXED 2026-07-31)
+
+**Symptom (maintainer field report).** After restarting the app and resuming the
+workspace, the "Continue interrupted" dialog says *"Nothing was interrupted —
+every pane has been given something to do since it started"* and offers
+**Continue all (0)**, with a grid of panes visibly sitting at their prompts
+holding half-finished jobs behind it. Never once did the control list a pane.
+The restore point on disk disagreed: `last_session.json` carried
+`continuation_needed: true` for several panes at the very moment the dialog
+claimed none.
+
+**Root cause — start-up drawing reads as work.** The evidence chain is:
+`ActivityWatcher` observes a pane working, the resume snapshot records
+`continuation_needed`, restoring raises `Terminal.continuation_pending`, and the
+scan lists every pane still carrying it. That chain was sound up to the restore.
+What broke it was the FIRST sweep after the resumed pane's agent came up.
+
+`activity.read_activity` deliberately reads nothing but screen MOVEMENT — the
+one property that is not a claim about any particular coding CLI (see the module
+docstring, and BUG-037's class of transcript-content traps). A restored CLI
+repaints its banner, its model line and its whole old transcript over several
+seconds before it settles at its prompt, and that burst is frame-for-frame
+identical to an agent at work. Both consumers of the reading then drew the same
+wrong conclusion in the same window:
+
+* `notifications._checkpoint_resume_state` cleared `continuation_pending` on
+  sight of `working` ("a resumed CLI that is already working carried on by
+  itself"). Sweeps run every 2 s, so this landed within two sweeps of every
+  resumed pane coming back — before any human could open the dialog.
+* `interrupted.scan` filtered the pane out for the same reason, using the
+  weaker byte-based fallback (`last_output_at`), which a repainting pane
+  refreshes continuously.
+
+Both are unconditional, so the offer could not survive a restart, and the count
+behind the button was structurally zero for every user, on every platform.
+
+**Fix — movement only counts once the pane has been SEEN standing still.**
+`Terminal.idle_seen` records whether this pane's screen has been observed still
+since its CURRENT process started; it is cleared on every spawn (beside
+`last_output_at`) and raised by the notification sweep on a settled reading from
+a real two-look comparison, never from the first-sight branch that has to ASSUME
+stillness. A start-up burst always ends at a prompt, so "has stood still once"
+separates painting from working without knowing anything about what any CLI
+draws. The checkpoint now retracts the offer only for movement after that point,
+and the scan applies its "already working" filter only then too. The question
+check moved off `read_activity` onto its own reading (`activity.shows_question`),
+because a pane can be repainting AND showing a trust prompt — and that is
+precisely a pane not to type into; `read_activity` answers `working` first and
+would have hidden the question.
+
+**Guards.** `tests/unit/agentic_ide/test_pane_notifications.py` — a restored
+pane painting itself keeps `continuation_pending`, and movement after it settled
+still retracts it. `tests/unit/agentic_ide/test_interrupted.py` — a resumed pane
+whose screen is moving is still offered while it has never been idle, and is
+correctly withheld once it has.
+
+**Class rule.** A detector built on one property must not let a SECOND consumer
+apply it to a different question without asking whether that question has the
+same blind spot. "Is the screen moving?" answers "is this agent busy?" only for
+a process that has already settled once; for a process that just started it
+answers "is this CLI drawing itself?", and every caller that conflates the two
+fails silently in exactly the seconds after a restart — which is when the
+feature is used.

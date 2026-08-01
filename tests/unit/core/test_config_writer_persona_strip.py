@@ -13,10 +13,10 @@ def test_set_wake_word_strips_legacy_persona_name(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    config_writer.set_wake_word("Hey Ruben", path=toml)
+    config_writer.set_wake_word("Hey Alex", path=toml)
 
     text = toml.read_text(encoding="utf-8")
-    assert "Hey Ruben" in text
+    assert "Hey Alex" in text
     # The stale identity override is gone; the wake word is now the single source.
     assert "Josef" not in text
 

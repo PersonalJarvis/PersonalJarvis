@@ -397,7 +397,7 @@ def resolve_wake_plan(
     #
     # LANGUAGE-AWARE (2026-07-09): a Vosk model is acoustically language-SPECIFIC
     # — an English model cannot hear a German-spoken name even when the word is
-    # in its lexicon (live: 'Hey Ruben' spoken de on the en model free-decoded to
+    # in its lexicon (live: 'Hey Alex' spoken de on the en model free-decoded to
     # 'hey of whom' and EVERY verify suppressed → a silent dead listener). So
     # vosk_kws is trusted only when its language provably matches the speaker:
     # (a) engine explicitly forced, or (b) a CONCRETE language is resolved and a

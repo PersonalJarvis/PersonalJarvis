@@ -360,6 +360,7 @@ class WebServer:
         from .ultrawiki_identity_routes import router as ultrawiki_identity_router
         from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
+        from .voice_call_routes import router as voice_call_router
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
@@ -449,6 +450,8 @@ class WebServer:
         # Mounted so every action is also `jarvis api dictation <op>`, which is
         # the documented Wayland path (no app-owned global shortcuts there).
         app.include_router(dictation_router)
+        # The voice orb's click — call / hangup without speaking the wake word.
+        app.include_router(voice_call_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
@@ -3385,17 +3388,29 @@ class WebServer:
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
 
-        if self._server is None:
-            return
-        self._server.should_exit = True
-        if self._serve_task is not None:
-            try:
-                await asyncio.wait_for(self._serve_task, timeout=5.0)
-            except TimeoutError:
-                logger.warning("uvicorn shutdown timeout — force-cancel")
-                self._serve_task.cancel()
+        if self._server is not None:
+            self._server.should_exit = True
+            if self._serve_task is not None:
+                try:
+                    await asyncio.wait_for(self._serve_task, timeout=5.0)
+                except TimeoutError:
+                    logger.warning("uvicorn shutdown timeout — force-cancel")
+                    self._serve_task.cancel()
         self._server = None
         self._serve_task = None
+
+        # Browser/desktop realtime owners must release their ephemeral threads
+        # before their shared process is reaped. Keep this unconditional: a
+        # failed startup can complete the Codex handshake before uvicorn marks
+        # itself running, and that process still needs bounded teardown.
+        try:
+            from jarvis.codex_app_server import close_shared_codex_app_servers
+
+            await close_shared_codex_app_servers()
+        except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
+            logger.opt(exception=exc).warning(
+                "Codex subscription app-server cleanup failed"
+            )
 
     @property
     def running(self) -> bool:

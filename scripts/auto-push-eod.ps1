@@ -17,7 +17,7 @@
     upstream pusht. Mit -JarvisAgentWarnOnly wird nur gewarnt statt geskippt.
 
 .PARAMETER RepoRoot
-    Repository root. Defaults to the parent of this script directory.
+    Pfad zum Repo-Root. Default: <USER_HOME>\Desktop\Personal Jarvis
 
 .PARAMETER DryRun
     Nur loggen was getan wuerde, kein Tag und kein Push.
@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot = "<USER_HOME>\Desktop\Personal Jarvis",
     [switch]$DryRun,
     [int]$JarvisAgentActiveMinutes = 30,
     [switch]$JarvisAgentWarnOnly

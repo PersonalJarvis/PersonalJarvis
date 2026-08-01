@@ -53,7 +53,7 @@ FAILING = (
     "I would like you to build me an HTML file. I would like you to write all "
     "important stuff in it. I would really make it visualized, visual, so I can "
     "see everything in a great visualization. I would like you to help me with "
-    "this HTML file showing how I can prepare the Project Atlas launch."
+    "this HTML file how I can prepare my vacation to Melbourne."
 )
 
 

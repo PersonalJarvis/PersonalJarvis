@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
  * Agent-instructions config from GET /api/settings/agent-instructions.
  *
  * This is the user's own standing-instructions file (an AGENTS.md / CLAUDE.md
- * equivalent), named after the assistant (`filename`, e.g. "Ruben.md"). `content`
+ * equivalent), named after the assistant (`filename`, e.g. "Alex.md"). `content`
  * is the current text ("" when none), `exists` drives the Active/Empty badge, and
  * `template` is a starter the UI can load into an empty editor.
  */

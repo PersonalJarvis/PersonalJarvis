@@ -16,6 +16,28 @@ import { cn } from "@/lib/utils";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
+/** True only inside a pywebview host, never from the backend's machine flag.
+ *
+ * A normal Chrome window can connect to the same local desktop backend, where
+ * `native_file_actions` is also true. Checking the client bridge keeps browser
+ * microphone control visible there without enabling a second microphone in the
+ * embedded desktop window.
+ */
+export function hasEmbeddedDesktopBridge(): boolean {
+  const host = window as unknown as {
+    __JARVIS_EMBEDDED_DESKTOP?: boolean;
+    pywebview?: { api?: unknown };
+    chrome?: { webview?: { postMessage?: unknown } };
+    webkit?: { messageHandlers?: Record<string, unknown> };
+  };
+  return Boolean(
+    host.__JARVIS_EMBEDDED_DESKTOP ||
+      host.pywebview?.api ||
+      typeof host.chrome?.webview?.postMessage === "function" ||
+      host.webkit?.messageHandlers?.jarvisFileDrag,
+  );
+}
+
 /** Map the socket state plus the shared voice state onto one visualizer look.
  *
  * Kept as a pure function so the mapping is testable and lives in exactly one
@@ -48,7 +70,7 @@ export function waveformPhase(
 export function BrowserRealtimeControl() {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable } = useVoiceMode();
+  const { mode, realtimeAvailable, requiresWebRtcOffer } = useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
   const voiceState = useEventStore((store) => store.voiceState);
@@ -63,7 +85,10 @@ export function BrowserRealtimeControl() {
   // repaint a five-segment meter.
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
-  const browserSurface = capabilities.data?.native_file_actions === false;
+  const browserSurface = Boolean(
+    capabilities.data &&
+      (capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
+  );
   const visible = browserSurface && mode === "realtime";
   const supportIssue = visible ? browserRealtimeSupportIssue() : null;
 
@@ -97,46 +122,53 @@ export function BrowserRealtimeControl() {
     setError("");
     setEffectiveProvider("");
 
-    const client = new RealtimeAudioClient({
-      onTranscript: (text, isFinal, role) => {
-        if (role === "user") setTranscription(text, isFinal);
-        if (role === "user" && isFinal) setVoice("thinking");
+    const client = new RealtimeAudioClient(
+      {
+        onTranscript: (text, isFinal, role) => {
+          if (role === "user") setTranscription(text, isFinal);
+          if (role === "user" && isFinal) setVoice("thinking");
+        },
+        onAudio: () => {
+          setError("");
+          setVoice("speaking");
+        },
+        onInputLevel: (value) => {
+          levelRef.current = value;
+        },
+        onStatus: (status, payload) => {
+          if (status === "audio_ready") {
+            const provider =
+              typeof payload.provider === "string" ? payload.provider : "";
+            if (provider) setEffectiveProvider(provider);
+            setState("connected");
+            setVoice("listening");
+          } else if (status === "mode_fallback") {
+            setEffectiveProvider(t("sidebar.realtime_pipeline_fallback"));
+          } else if (status === "hangup") {
+            // The session ended through a voice hang-up command or end_call.
+            // Release the microphone and return to idle.
+            void stop();
+          } else if (status === "thinking") {
+            setVoice("thinking");
+          } else if (status === "turn_complete" || status === "tts_end") {
+            setVoice("listening");
+          } else if (status === "tts_cancel") {
+            setVoice("listening");
+          } else if (
+            status === "tts_browser_unavailable" ||
+            status === "tts_browser_error"
+          ) {
+            setError(t("sidebar.realtime_browser_tts_unavailable"));
+            setVoice("listening");
+          } else if (status === "provider_error" || status === "disconnected") {
+            setState("error");
+            setError(t("sidebar.realtime_error"));
+            setVoice("error");
+          }
+        },
       },
-      onAudio: () => {
-        setError("");
-        setVoice("speaking");
-      },
-      onInputLevel: (value) => {
-        levelRef.current = value;
-      },
-      onStatus: (status, payload) => {
-        if (status === "audio_ready") {
-          const provider = typeof payload.provider === "string" ? payload.provider : "";
-          if (provider) setEffectiveProvider(provider);
-          setState("connected");
-          setVoice("listening");
-        } else if (status === "mode_fallback") {
-          setEffectiveProvider(t("sidebar.realtime_pipeline_fallback"));
-        } else if (status === "hangup") {
-          // The session ended the call by voice ("auflegen" / end_call) —
-          // release the microphone and return to idle.
-          void stop();
-        } else if (status === "thinking") {
-          setVoice("thinking");
-        } else if (status === "turn_complete" || status === "tts_end") {
-          setVoice("listening");
-        } else if (status === "tts_cancel") {
-          setVoice("listening");
-        } else if (status === "tts_browser_unavailable" || status === "tts_browser_error") {
-          setError(t("sidebar.realtime_browser_tts_unavailable"));
-          setVoice("listening");
-        } else if (status === "provider_error" || status === "disconnected") {
-          setState("error");
-          setError(t("sidebar.realtime_error"));
-          setVoice("error");
-        }
-      },
-    });
+      { requiresWebRtcOffer },
+    );
     clientRef.current = client;
     try {
       await client.connect();
@@ -153,7 +185,16 @@ export function BrowserRealtimeControl() {
       );
       setVoice("error");
     }
-  }, [realtimeAvailable, setTranscription, setVoice, state, stop, supportMessage, t]);
+  }, [
+    realtimeAvailable,
+    requiresWebRtcOffer,
+    setTranscription,
+    setVoice,
+    state,
+    stop,
+    supportMessage,
+    t,
+  ]);
 
   useEffect(() => {
     if (visible) return;

@@ -320,11 +320,10 @@ video/*.png
 /outputs/
 /test_output.txt
 
-# --- Privacy: captures of the maintainer's LIVE personal vault ---------------
-# These screenshots/frames show real vault pages (relocation planning, finances,
-# health notes, and named third parties). The distribution denylist has always
-# withheld them; they are untracked here so they cannot be re-added by accident.
-# Regenerate any needed capture against a STAGED demo vault, never the live one.
+# --- Privacy: sensitive local vault captures ---------------------------------
+# These screenshots and frames may contain private local content. They remain
+# untracked so they cannot be added accidentally. Regenerate documentation
+# captures only from a staged vault containing synthetic data.
 /assets/screenshots/view-wiki.png
 /video/qa-wiki/
 
@@ -340,9 +339,6 @@ video/*.png
 # Cloudflare Wrangler cache — stores the signed-in account name (a real email
 # address) and account id in plaintext. Never part of the product.
 /.wrangler/
-
-# Per-user Codex hooks may contain local tool-install paths.
-/.codex/hooks.json
 
 # Repository audit / deep-dive material. These enumerate unfixed defects with
 # file:line precision and quote local absolute paths — a private working

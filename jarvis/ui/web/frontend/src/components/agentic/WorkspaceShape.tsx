@@ -42,7 +42,7 @@ import {
   paneLines,
   widthForOneBand,
   wizardPanes,
-  workspaceBandCapacityForArea,
+  workspaceBandCapacityFor,
 } from "./layout";
 
 /**
@@ -102,25 +102,20 @@ interface WorkspaceShapeProps {
   names: string[];
   /**
    * Width of the slot the workspace will occupy, in px — measured by the view
-   * from the element the grid will later fill. Together with the height below,
-   * it keeps both unreadably narrow and excessively tall panes out of the
-   * preview and the running workspace.
+   * from the element the grid will later fill. It keeps unreadably narrow
+   * panes out of the preview and the running workspace.
    */
   workspaceWidthPx: number;
-  /** Height the live grid will occupy with its default collapsed composer. */
-  workspaceHeightPx: number;
 }
 
 export function WorkspaceShape({
   count,
   names,
   workspaceWidthPx,
-  workspaceHeightPx,
 }: WorkspaceShapeProps) {
   const perBand = useMemo(
-    () =>
-      workspaceBandCapacityForArea(workspaceWidthPx, workspaceHeightPx, count),
-    [workspaceWidthPx, workspaceHeightPx, count],
+    () => workspaceBandCapacityFor(workspaceWidthPx),
+    [workspaceWidthPx],
   );
   const grid = useMemo(
     () => paneGrid(wizardPanes(count), perBand),

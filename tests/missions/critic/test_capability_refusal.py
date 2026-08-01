@@ -7,7 +7,7 @@ worker already decided it can't, and re-prompting won't grant it a capability it
 lacks. Before this guard the empty-diff pre-gate auto-revised the refusal,
 burning all three critic loops into ``critic_loop_exhausted`` and surfacing a
 scary 3-attempt ERROR for a request that was simply impossible (live mission
-019ec674, 2026-06-14: "book me a trip from Example City to Tokyo"). We now route a
+019ec674, 2026-06-14: "book me a trip from Melbourne to Tokyo"). We now route a
 genuine capability refusal to a one-shot ``reject`` so the mission fails honestly
 as ``critic_rejected`` (one iteration) carrying the worker's own words, NOT
 ``critic_loop_exhausted`` after three.
@@ -29,7 +29,7 @@ from jarvis.missions.stream_evidence import capability_refusal_answer
 
 _REFUSAL = (
     "That's outside what I can do. I can't access travel booking systems, "
-    "so I'm unable to book a trip from Example City to Tokyo for you."
+    "so I'm unable to book a trip from Melbourne to Tokyo for you."
 )
 _SUCCESS = "I created the requested file and the task is now complete."
 
@@ -54,7 +54,7 @@ def _tool_stream(text: str) -> str:
 
 def test_refusal_answer_detects_honest_capability_refusal() -> None:
     out = capability_refusal_answer(
-        _result_stream(_REFUSAL), prompt="book me a trip from Example City to Tokyo"
+        _result_stream(_REFUSAL), prompt="book me a trip from Melbourne to Tokyo"
     )
     assert out is not None
     assert "can't access" in out.lower() or "outside" in out.lower()
@@ -89,7 +89,7 @@ def test_refusal_answer_none_for_informational_request() -> None:
 @pytest.mark.asyncio
 async def test_runner_rejects_impossible_task_in_one_shot(tmp_path: Path) -> None:
     verdict = await CriticRunner().run(
-        mission_prompt="book me a trip from Example City to Tokyo",
+        mission_prompt="book me a trip from Melbourne to Tokyo",
         worker_diff="",
         worker_log=_result_stream(_REFUSAL),
         prior_reflections="",
@@ -131,11 +131,11 @@ async def test_runner_reject_does_not_overflow_verdict_summary(tmp_path: Path) -
         "flight APIs, payment rails, or any external reservation service, and I "
         "have no way to authenticate against an airline, a hotel chain, or a "
         "travel agency on your behalf, nor can I take payment, so I am unable to "
-        "book this trip from Example City to Tokyo end to end for you here."
+        "book this trip from Melbourne to Tokyo end to end for you here."
     )
     assert len(long_refusal) > 280, len(long_refusal)
     verdict = await CriticRunner().run(
-        mission_prompt="book me a trip from Example City to Tokyo",
+        mission_prompt="book me a trip from Melbourne to Tokyo",
         worker_diff="",
         worker_log=_result_stream(long_refusal),
         prior_reflections="",

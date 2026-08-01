@@ -113,7 +113,7 @@ def test_plan_migrations_emits_three_entries_for_full_legacy(
 
     plans = migrate_module.plan_migrations(source, target)
     targets = sorted(p.target.name for p in plans)
-    assert targets == ["alex.md", "jarvis-persona.md", "mama.md"]
+    assert targets == ["jarvis-persona.md", "mama.md", "alex.md"]
 
 
 def test_plan_migrations_empty_when_no_legacy(

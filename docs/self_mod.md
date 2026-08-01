@@ -1,7 +1,7 @@
 # Self-Mod Pipeline — User Documentation (Phase 7)
 
-Plan reference: [docsplansphase-7-self-mod/JARVIS_SELFMOD_PLAN.md](../docsplansphase-7-self-mod/JARVIS_SELFMOD_PLAN.md)
-Bootstrap context: [docsplansphase-7-self-mod/PROJEKT_KONTEXT.md](../docsplansphase-7-self-mod/PROJEKT_KONTEXT.md)
+Architecture reference: [Architecture overview](architecture-overview.md)
+Safety context: [Project agent contract](../CLAUDE.md)
 
 ## 1. What can I (the user) do, and what not?
 

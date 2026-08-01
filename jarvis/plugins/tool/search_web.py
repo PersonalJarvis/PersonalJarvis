@@ -254,10 +254,10 @@ class SearchWebTool:
     risk_tier: str = "safe"
     # [Frische-Grenze, 2026-06-20] search_web is for FRESH, time-sensitive facts
     # ONLY — evergreen / general knowledge is answered directly by the brain.
-    # Forensic: "what do I need to consider when emigrating abroad?" fired
-    # search_web 3x with an empty answer (sessions.db voice session e0898d6e,
-    # 16:12). The Run-Inspector labels a search_web call "Recherche", so the user
-    # read it as an unwanted research spawn for a trivial question. Pinned by
+    # Regression: an evergreen "how do solar panels work?" question fired
+    # search_web repeatedly with an empty answer. The Run Inspector labels a
+    # search_web call as research, so the user saw an unwanted tool call for a
+    # general-knowledge question. Pinned by
     # tests/unit/brain/test_search_web_freshness_doctrine.py.
     description: str = (
         "Web search via DuckDuckGo with a short summary — for FRESH, "
@@ -269,8 +269,8 @@ class SearchWebTool:
         "that', 'look it up'). "
         "DO NOT USE for evergreen/general knowledge you can answer directly "
         "yourself (geography, history, definitions, 'how does X work', general "
-        "procedures/processes like 'what do I need to consider when "
-        "emigrating', well-known concepts) — answer such questions directly "
+        "procedures/processes like 'how do solar panels work', well-known "
+        "concepts) — answer such questions directly "
         "from your own knowledge, without searching. "
         "For weather questions, put the location in the query (e.g. 'weather "
         "Berlin tomorrow'). "

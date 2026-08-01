@@ -28,8 +28,8 @@ from jarvis.core.protocols import BrainDelta, BrainRequest
 
 # A statement whose text alone detects as German, and one that detects as
 # English — the two sides of the code-switch that made the delegate diverge.
-_GERMAN_FACT = "Mein Bruder heisst Tom und wohnt schon lange in Berlin"  # i18n-allow: German test fixture — the German half of the code-switch under test
-_ENGLISH_FACT = "My brother is a doctor and he lives here with me now"
+_GERMAN_FACT = "Der Testlauf ist abgeschlossen und das Ergebnis ist stabil"  # i18n-allow: German test fixture — the German half of the code-switch under test
+_ENGLISH_FACT = "The test run is complete and the result is stable now"
 
 
 class _FakeBrain:

@@ -783,7 +783,7 @@ function CredentialsCard({
             type="text"
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
-            placeholder="+12025550102"
+            placeholder="+49301234567"
             className={cn(settingsInputCls, "font-mono")}
           />
         </SettingsField>

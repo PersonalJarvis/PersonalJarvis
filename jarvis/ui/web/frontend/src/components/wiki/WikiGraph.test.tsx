@@ -85,12 +85,12 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "sam", kind: "entity", title: "Sam" },
               { id: "alex", kind: "entity", title: "Alex" },
               { id: "pixel-art-editor", kind: "project", title: "Pixel Art Editor" },
             ],
             edges: [
-              { source: "alex", target: "morgan", context: "Mentor" },
+              { source: "alex", target: "sam", context: "Mentor" },
               { source: "alex", target: "pixel-art-editor", context: "Working on" },
             ],
             broken: [],
@@ -111,10 +111,10 @@ describe("WikiGraph", () => {
     const ids = screen
       .getAllByTestId("wiki-graph-node")
       .map((el) => el.getAttribute("data-node-id"));
-    expect(ids).toEqual(["morgan", "alex", "pixel-art-editor"]);
+    expect(ids).toEqual(["sam", "alex", "pixel-art-editor"]);
     const edges = screen.getAllByTestId("wiki-graph-edge");
     expect(edges).toHaveLength(2);
-    expect(edges[0].textContent).toContain("Alex → Morgan · Mentor");
+    expect(edges[0].textContent).toContain("Alex → Sam · Mentor");
     expect(edges[1].textContent).toContain(
       "Alex → Pixel Art Editor · Working on",
     );
@@ -128,13 +128,13 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "sam", kind: "entity", title: "Sam" },
               { id: "alex", kind: "entity", title: "Alex" },
             ],
             edges: [
               {
                 source: "alex",
-                target: "morgan",
+                target: "sam",
                 context: "Mentor <trusted>",
               },
             ],
@@ -164,9 +164,9 @@ describe("WikiGraph", () => {
 
     expect(props.linkDirectionalArrowLength).toBe(4);
     expect(props.linkDirectionalArrowRelPos).toBe(0.82);
-    expect(nodeLabel(graphData.nodes[0])).toContain("Morgan (entity) · 1 backlink");
+    expect(nodeLabel(graphData.nodes[0])).toContain("Sam (entity) · 1 backlink");
     expect(linkLabel(graphData.links[0])).toContain(
-      "Alex → Morgan · Mentor &lt;trusted&gt;",
+      "Alex → Sam · Mentor &lt;trusted&gt;",
     );
   });
 
@@ -177,7 +177,7 @@ describe("WikiGraph", () => {
         new Response(
           JSON.stringify({
             ok: true,
-            nodes: [{ id: "morgan", kind: "entity", title: "Morgan" }],
+            nodes: [{ id: "sam", kind: "entity", title: "Sam" }],
             edges: [],
             broken: [],
           }),
@@ -195,8 +195,8 @@ describe("WikiGraph", () => {
     await waitFor(() => {
       expect(screen.getByTestId("wiki-graph-node")).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Morgan/i }));
-    expect(onNodeClick).toHaveBeenCalledWith("morgan");
+    fireEvent.click(screen.getByRole("button", { name: /Sam/i }));
+    expect(onNodeClick).toHaveBeenCalledWith("sam");
   });
 
   it("renders highlighted node with 1.5x radius", async () => {
@@ -207,11 +207,11 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "morgan", kind: "entity", title: "Morgan" },
+              { id: "sam", kind: "entity", title: "Sam" },
               { id: "alex", kind: "entity", title: "Alex" },
             ],
-            // alex → morgan gives morgan 1 backlink (radius = 10), zero for alex (radius = 8)
-            edges: [{ source: "alex", target: "morgan", context: "Mentor" }],
+            // alex → sam gives sam 1 backlink (radius = 10), zero for alex (radius = 8)
+            edges: [{ source: "alex", target: "sam", context: "Mentor" }],
             broken: [],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -221,24 +221,24 @@ describe("WikiGraph", () => {
     const client = makeClient();
     render(
       <Wrapper client={client}>
-        <WikiGraph onNodeClick={() => {}} highlightSlug="morgan" />
+        <WikiGraph onNodeClick={() => {}} highlightSlug="sam" />
       </Wrapper>,
     );
     await waitFor(() => {
       expect(screen.getAllByTestId("wiki-graph-node")).toHaveLength(2);
     });
-    const morganNode = screen
+    const samNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "morgan");
+      .find((el) => el.getAttribute("data-node-id") === "sam");
     const alexNode = screen
       .getAllByTestId("wiki-graph-node")
       .find((el) => el.getAttribute("data-node-id") === "alex");
-    expect(morganNode?.getAttribute("data-node-active")).toBe("true");
+    expect(samNode?.getAttribute("data-node-active")).toBe("true");
     expect(alexNode?.getAttribute("data-node-active")).toBe("false");
-    const morganRadius = Number(morganNode?.getAttribute("data-node-radius"));
+    const samRadius = Number(samNode?.getAttribute("data-node-radius"));
     const alexRadius = Number(alexNode?.getAttribute("data-node-radius"));
-    // morgan: base 10 * 1.5 = 15. alex: base 8.
-    expect(morganRadius).toBe(15);
+    // sam: base 10 * 1.5 = 15. alex: base 8.
+    expect(samRadius).toBe(15);
     expect(alexRadius).toBe(8);
   });
 });

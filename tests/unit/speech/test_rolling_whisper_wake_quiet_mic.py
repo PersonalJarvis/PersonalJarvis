@@ -99,13 +99,13 @@ async def test_very_quiet_wake_below_legacy_peak_gate_reaches_whisper() -> None:
     ("phrase", "transcript"),
     [
         ("Leo", "leo"),                 # 3-char name — short-token relaxed ratio
-        ("Ruben", "ruben"),             # name
+        ("Alex", "alex"),             # name
         ("Herz", "herz"),               # German common noun
         ("Björn", "björn"),             # umlaut name — diacritics folded for match  # i18n-allow
         ("Athena", "athena"),           # longer name
         ("Computer", "computer"),       # English noun
         ("Hey Zeus", "hey zeus"),       # two-word phrase, prefix stripped
-        ("Ruben", "ruhben"),            # small-model one-char mishearing still matches
+        ("Alex", "ruhben"),            # small-model one-char mishearing still matches
     ],
 )
 async def test_arbitrary_custom_wakes_are_word_agnostic(
@@ -142,7 +142,7 @@ async def test_arbitrary_custom_wakes_are_word_agnostic(
 @pytest.mark.parametrize(
     ("phrase", "transcript"),
     [
-        ("Hey Ruben", "hey ruben"),
+        ("Hey Alex", "hey alex"),
         ("Hey Nico", "hey nico"),
         ("Computer", "computer"),
     ],

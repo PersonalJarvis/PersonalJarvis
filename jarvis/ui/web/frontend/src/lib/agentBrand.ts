@@ -2,7 +2,7 @@
  * Public display brand of the agent system, derived from the assistant name
  * (which is itself derived from the configured wake phrase, see
  * `useAssistantNameSeed` / backend `resolve_assistant_name`):
- * "Ruben" -> "Ruben-Agent", "Athena" -> "Athena-Agent".
+ * "Alex" -> "Alex-Agent", "Athena" -> "Athena-Agent".
  *
  * The 2026-07-17 rebrand: the user-visible agent-system name follows WHATEVER
  * wake word the user configured — it is never a hardcoded product name. Code

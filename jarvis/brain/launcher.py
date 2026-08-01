@@ -1,11 +1,11 @@
-"""Standalone CLI for brain-layer tests without the voice pipeline.
+﻿"""Standalone CLI for brain-layer tests without the voice pipeline.
 
     python -m jarvis.brain.launcher --provider gemini --prompt "Hallo"
     python -m jarvis.brain.launcher --provider claude-api --prompt "Was ist 2+2?"
     python -m jarvis.brain.launcher --list-providers
     python -m jarvis.brain.launcher --prompt "öffne Notepad"              (with tools)  # i18n-allow
     python -m jarvis.brain.launcher --prompt "formatiere C:"             (blacklist deny)
-    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Morgan" --save-memory  # i18n-allow
+    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Sam" --save-memory  # i18n-allow
 
 The launcher bypasses the voice pipeline entirely. It is the primary
 verification CLI for Phase 2 and remains permanently useful as a debug tool.

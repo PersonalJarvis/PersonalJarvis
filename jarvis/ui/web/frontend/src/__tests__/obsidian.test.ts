@@ -3,9 +3,9 @@ import { buildObsidianUrl } from "@/lib/obsidian";
 
 describe("buildObsidianUrl", () => {
   it("builds the expected URL for a simple vault-relative path", () => {
-    const url = buildObsidianUrl("C:\\Notes\\Jarvis", "entities/morgan.md");
+    const url = buildObsidianUrl("C:\\Notes\\Jarvis", "entities/sam.md");
     expect(url).toBe(
-      `obsidian://open?path=${encodeURIComponent("C:\\Notes\\Jarvis\\entities\\morgan.md")}`,
+      `obsidian://open?path=${encodeURIComponent("C:\\Notes\\Jarvis\\entities\\sam.md")}`,
     );
   });
 

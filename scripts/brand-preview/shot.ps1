@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"
 if (-not (Test-Path $chrome)) { throw "Chrome not found" }
 
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$repoRoot = "<USER_HOME>\Desktop\Personal Jarvis"
 $destDir = Join-Path $repoRoot "assets\brand"
 $tmpProfile = Join-Path $env:TEMP ("cprof-" + [guid]::NewGuid().ToString("N"))
 $tmpOut = Join-Path $env:TEMP ("urlshot-" + [guid]::NewGuid().ToString("N") + ".png")

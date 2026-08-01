@@ -94,7 +94,7 @@ def _gpu_body(vram_gb: int, *, extra_fact: str = "") -> str:
     )
 
 
-def _san_francisco_trip_body() -> str:
+def _example_city_trip_body() -> str:
     today = dt.date.today().isoformat()
     return (
         "---\n"
@@ -380,7 +380,7 @@ def _espresso_project_body() -> str:
     )
 
 
-def _san_francisco_place_body() -> str:
+def _example_city_place_body() -> str:
     today = dt.date.today().isoformat()
     return (
         "---\n"
@@ -395,7 +395,7 @@ def _san_francisco_place_body() -> str:
         "## Summary\n\n"
         "The user's current city of residence.\n\n"
         "## Facts\n\n"
-        "- The user lives in Example City.\n\n"
+        "- The user works at the Example City lab.\n\n"
         "## Relationships\n\n"
         "- Home of [[entities/alex]].\n\n"
         "## Sources\n\n"
@@ -413,7 +413,7 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
     journal.append(
         [
             CandidateFact(
-                fact="The user lives in Example City.",
+                fact="The user works at the Example City lab.",
                 kind="place",
                 subjects=("alex", "example-city"),
             )
@@ -424,10 +424,10 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Lives in Example City.\n",
+        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Lives in [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
     )
     profile_only = _judge_json(
         [
@@ -453,7 +453,7 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
                 "candidate_id": cid,
                 "decision": "add",
                 "target": "entities/example-city.md",
-                "new_body": _san_francisco_place_body(),
+                "new_body": _example_city_place_body(),
                 "reason": "graph-visible residence",
             },
         ]
@@ -485,7 +485,7 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
     """The narrow secondary-update exception connects both existing pages."""
     vault_root, _curator, journal = stack
     _write_aged(vault_root / "entities" / "alex.md", ALEX_FULL_BODY)
-    isolated_place = _san_francisco_place_body().replace(
+    isolated_place = _example_city_place_body().replace(
         "- Home of [[entities/alex]].\n",
         "",
     )
@@ -496,7 +496,7 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
     journal.append(
         [
             CandidateFact(
-                fact="The user lives in Example City.",
+                fact="The user works at the Example City lab.",
                 kind="place",
                 subjects=("alex", "example-city"),
             )
@@ -507,10 +507,10 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Lives in Example City.\n",
+        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Lives in [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
     )
     updated_place = isolated_place.replace(
         "## Relationships\n\n",
@@ -571,10 +571,10 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     vault_root, _curator, journal = stack
     connected_profile = ALEX_FULL_BODY.replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Lives in [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
     )
     _write_aged(vault_root / "entities" / "alex.md", connected_profile)
-    connected_place = _san_francisco_place_body()
+    connected_place = _example_city_place_body()
     _write_aged(
         vault_root / "entities" / "example-city.md",
         connected_place,
@@ -582,7 +582,7 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     journal.append(
         [
             CandidateFact(
-                fact="The user feels settled in Example City.",
+                fact="The user enjoys working at the Example City lab.",
                 kind="place",
                 subjects=("alex", "example-city"),
             )
@@ -593,7 +593,7 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     cid = journal.pending()[0].id
     updated_profile = connected_profile.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Feels settled in Example City.\n",
+        "- Enjoys great coffee.\n- Enjoys working at the Example City lab.\n",
     )
     brain = FakeBrain(
         [
@@ -617,7 +617,7 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     ).run_once()
 
     assert label == "journal-batch:1"
-    assert "Feels settled in Example City" in (
+    assert "Enjoys working at the Example City lab" in (
         vault_root / "entities" / "alex.md"
     ).read_text(encoding="utf-8")
     assert (
@@ -792,7 +792,7 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
     journal.append(
         [
             CandidateFact(
-                fact="The user lives in Example City.",
+                fact="The user works at the Example City lab.",
                 kind="place",
                 subjects=("alex", "example-city"),
             )
@@ -803,12 +803,12 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Lives in Example City.\n",
+        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Lives in [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
     )
-    poisoned_place = _san_francisco_place_body().replace(
+    poisoned_place = _example_city_place_body().replace(
         "The user's current city of residence.",
         "Stored with sk-proj-" + "A" * 24 + ".",
     )
@@ -841,7 +841,7 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
 
     assert label == "journal-transient:1"
     assert not (vault_root / "entities" / "example-city.md").exists()
-    assert "Lives in Example City" in (
+    assert "Works at the Example City lab" in (
         vault_root / "entities" / "alex.md"
     ).read_text(encoding="utf-8")
     assert len(journal.pending()) == 1
@@ -1020,7 +1020,7 @@ async def test_explicit_persistence_noop_crosses_to_write_provider(stack) -> Non
                         "candidate_id": cid,
                         "decision": "add",
                         "target": "projects/example-city-trip.md",
-                        "new_body": _san_francisco_trip_body(),
+                        "new_body": _example_city_trip_body(),
                         "reason": "the user explicitly asked to keep the dated plan",
                     }
                 ]
@@ -1069,7 +1069,7 @@ def test_explicit_persistence_clause_detector_covers_supported_languages(
 async def test_explicit_wiki_save_allows_exact_existing_fact_noop(stack) -> None:
     vault_root, _curator, journal = stack
     page = vault_root / "projects" / "example-city-trip.md"
-    existing_body = _san_francisco_trip_body().replace(
+    existing_body = _example_city_trip_body().replace(
         "The user plans to travel to Example City tomorrow.",
         "Plans to travel to Example City tomorrow.",
     )
@@ -1433,7 +1433,7 @@ def test_numbers_copied_from_shown_neighbour_page_are_grounded() -> None:
         evidence_excerpt="",
         subjects=("lena",),
     )
-    body = "# Project Atlas\n\nProject Atlas uses protocol version 1994.\n"
+    body = "# Hamburg\n\nLena (born 1994) lives here.\n"
     assert Consolidator._unsupported_numeric_values(
         body, row=row, existing_path=None
     ) == {"1994"}
@@ -1442,7 +1442,7 @@ def test_numbers_copied_from_shown_neighbour_page_are_grounded() -> None:
             body,
             row=row,
             existing_path=None,
-            neighbours=["# Project Atlas\n\n- Protocol version 1994.\n"],
+            neighbours=["# Lena\n\n- Born 1994.\n"],
         )
         == set()
     )

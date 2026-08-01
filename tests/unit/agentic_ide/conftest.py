@@ -26,6 +26,9 @@ guarantee that only holds until somebody writes the next test.
 4. **The agent-account store.** Panes now record which subscription they run on,
    which means opening one reads (and resuming one could write) the developer's
    real account list. Same store, same failure class as 1 and 2.
+5. **The workspace display preferences.** The remembered terminal text size is
+   kept outside the repo too, so an unredirected test would resize the panes of
+   whoever ran it.
 """
 
 from __future__ import annotations
@@ -45,6 +48,22 @@ def _resume_store_in_tmp(
     """Point the resume snapshot at a throwaway file for the duration of a test."""
     target = tmp_path_factory.mktemp("resume") / "last_session.json"
     monkeypatch.setattr(resume_store, "_store_path", lambda: target)
+    return target
+
+
+@pytest.fixture(autouse=True)
+def _ui_prefs_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the workspace display preferences at a throwaway file.
+
+    Same store, same failure class as 1 and 2 above: a test that writes a text
+    size would change the size of the developer's own terminals.
+    """
+    from jarvis.agentic_ide import ui_prefs
+
+    target = tmp_path_factory.mktemp("ui-prefs") / "ui_prefs.json"
+    monkeypatch.setattr(ui_prefs, "_store_path", lambda: target)
     return target
 
 

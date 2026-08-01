@@ -126,6 +126,20 @@ def test_current_stt_and_cartesia_model_rosters() -> None:
 
 
 def test_current_realtime_models_and_voices() -> None:
+    assert _ids(REALTIME_MODELS["codex-subscription-realtime"]) == {
+        "gpt-realtime-1.5"
+    }
+    assert _ids(REALTIME_VOICES["codex-subscription-realtime"]) == {
+        "cove",
+        "juniper",
+        "maple",
+        "spruce",
+        "ember",
+        "vale",
+        "breeze",
+        "arbor",
+        "sol",
+    }
     assert {
         "gpt-realtime",
         "gpt-realtime-mini",

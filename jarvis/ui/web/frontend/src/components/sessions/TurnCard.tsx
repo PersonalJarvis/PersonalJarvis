@@ -53,7 +53,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
 };
 
 // The agent brand follows the wake-word-derived assistant name (2026-07-17
-// rebrand): "Ruben" -> "Ruben-Agent / Output", for ANY configured wake word.
+// rebrand): "Alex" -> "Alex-Agent / Output", for ANY configured wake word.
 export function spokenKindLabels(assistantName: string): Record<string, string> {
   return {
     ...SPOKEN_KIND_LABEL,

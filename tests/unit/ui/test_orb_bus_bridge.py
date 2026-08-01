@@ -985,7 +985,7 @@ async def test_confirmed_wake_word_pops_orb_before_session_start() -> None:
     orb = _FakeOrb()
     bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
 
-    await bridge._on_wake_word_detected(WakeWordDetected(keyword="hey_ruben"))  # noqa: SLF001
+    await bridge._on_wake_word_detected(WakeWordDetected(keyword="hey_alex"))  # noqa: SLF001
 
     assert ("show", "listen") in orb.calls
     assert ("show_listening_transcript", "") not in orb.calls

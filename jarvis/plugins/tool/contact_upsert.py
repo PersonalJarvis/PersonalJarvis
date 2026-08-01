@@ -48,7 +48,7 @@ class ContactUpsertTool:
     description: str = (
         "Create or update a saved contact. Use this when the user tells you a "
         "person's details to remember — 'merk dir Christophs Nummer ist …', "
-        "'Caseys E-Mail ist …', 'speichere Toms Adresse'. Fill the structured "
+        "'Lauras E-Mail ist …', 'speichere Toms Adresse'. Fill the structured "
         "fields you can extract from what the user said; an existing contact "
         "with the same name is updated in place, a new one is created. The "
         "write happens silently (no confirmation needed). Deletion is UI-only."
@@ -88,8 +88,8 @@ class ContactUpsertTool:
         "required": ["name"],
     }
     input_examples: list[dict[str, Any]] = [
-        {"name": "Christoph", "phone": "+1 202-555-0101"},
-        {"name": "Casey", "email": "casey@example.com", "relationship": "colleague"},
+        {"name": "Christoph", "phone": "+49 151 12345678"},
+        {"name": "Laura", "email": "laura@example.com", "relationship": "colleague"},
     ]
 
     def __init__(self, *, store_resolver: Callable[[], Any]) -> None:

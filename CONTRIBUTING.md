@@ -93,7 +93,7 @@ Personal Jarvis is an 8-layer system. The rules that matter for contributors:
 - **Provider-agnostic** — never hardcode one brain vendor; `cfg.brain.primary` selects.
 - **Router-Brain dispatches** to interchangeable harnesses; heavy work runs as **missions** in isolated `git worktree` branches under a Worker-Critic loop.
 
-For the deep dive, read [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) (a dense engineering snapshot), [`CLAUDE.md`](CLAUDE.md) (binding conventions), and [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (the cross-platform, cloud-first doctrine).
+For the deep dive, read [`docs/architecture-overview.md`](docs/architecture-overview.md), [`CLAUDE.md`](CLAUDE.md) (binding conventions), and [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (the cross-platform, cloud-first doctrine).
 
 ## Plugin, Tool, or Skill?
 
@@ -122,7 +122,7 @@ These keep the project coherent — most are enforced in CI:
 | Secrets | Only via `get_secret()`; never in code, config, or commits |
 | Dependencies | No new Windows-/GPU-specific dependency in the base install — `[desktop]` extras only |
 
-The full anti-pattern register lives in [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md).
+The full anti-pattern register lives in [`CLAUDE.md`](CLAUDE.md).
 
 ## Testing
 
@@ -157,11 +157,9 @@ By contributing, you agree your contribution is licensed under the [MIT License]
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
-  <a href="https://x.com/Ruben_Luetke">X</a> ·
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues">Issues</a>
 </p>

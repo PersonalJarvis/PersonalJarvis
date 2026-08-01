@@ -176,7 +176,6 @@ pages:
       - jarvis/realtime/session.py
       - jarvis/browser_voice/session.py
       - jarvis/core/turn_language.py
-      - docs/realtime-voice/DESIGN.md
     related:
       - audio-and-wake-word
       - dictation
@@ -633,7 +632,6 @@ pages:
       - jarvis/ui/web/missions_routes.py
       - jarvis/missions/manager.py
       - jarvis/missions/state_machine.py
-      - docs/jarvis-agents-bridge.md
     related:
       - tasks-and-reminders
       - outputs-and-files
@@ -1099,7 +1097,6 @@ pages:
       - install/install.ps1
       - install/install.sh
       - jarvis/platform/capabilities.py
-      - docs/plans/cross-platform-mac-linux/README.md
     related:
       - install-personal-jarvis
       - permissions

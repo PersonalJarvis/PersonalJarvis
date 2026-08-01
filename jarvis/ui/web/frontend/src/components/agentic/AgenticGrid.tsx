@@ -27,12 +27,15 @@ import {
   FolderGit2,
   GripVertical,
   Image as ImageIcon,
+  LayoutGrid,
   ListChecks,
   Loader2,
+  MessagesSquare,
   Minus,
   Moon,
   Plus,
   Power,
+  SlidersHorizontal,
   Sun,
   Trash2,
   Type,
@@ -47,26 +50,39 @@ import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore } from "@/store/events";
 import {
   AgenticTerminal,
-  PaneStatusPill,
   type PaneStatus,
-  type SplitAgentChoice,
   type SplitDirection,
 } from "./AgenticTerminal";
+import { AgentMark } from "./AgentMark";
+import { PaneActivityPill } from "./PaneActivityPill";
+import {
+  AgentPickerMenu,
+  automaticAgentChoice,
+  offersAgentChoice,
+  type SplitAgentChoice,
+} from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  bandCapacityForArea,
+  bandCapacityFor,
   GRID_HORIZONTAL_PADDING_PX,
   MIN_PANE_HEIGHT_PX,
 } from "./layout";
 import {
+  paneArrangement,
   paneLayout,
+  panesFromArrangement,
   remapColumnWeights,
+  sameArrangement,
   weightsAfterSplit,
   type PaneBox,
   type PaneSeam,
   type PaneWeights,
 } from "./paneLayout";
-import { usePaneWeights } from "./usePaneWeights";
+import {
+  loadStoredArrangement,
+  saveStoredArrangement,
+  usePaneWeights,
+} from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { PromptPreview } from "./PromptPreview";
@@ -89,8 +105,10 @@ import {
   moveTerminal,
   clearTerminalRecap,
   fetchTerminalRecaps,
+  fetchTerminalUiPreferences,
   refreshTerminalRecap,
   renameTerminal,
+  saveTerminalFontSize,
   setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
@@ -183,6 +201,25 @@ interface AgenticGridProps {
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+
+/*
+ * The one button style of the workspace toolbar.
+ *
+ * The row above a wall of terminals used to be a collection of bordered
+ * controls in three different shapes — labelled toggles, segmented pairs,
+ * outlined groups — and every one of them competed with the panes for the eye.
+ * The redesign extends the launcher's rule (see ./controls.tsx) to the running
+ * workspace: controls recede to quiet glyphs, colour is reserved for state
+ * that is ON, and the terminals are the only thing on screen with weight.
+ */
+const TOOLBAR_BTN =
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
+  "transition-colors hover:bg-secondary hover:text-foreground " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
+  "disabled:cursor-not-allowed disabled:opacity-40";
+
+/** The same button, switched ON — the only yellow the toolbar spends. */
+const TOOLBAR_BTN_ON = "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary";
 
 /**
  * The part of the hovered pane a drop would take, drawn as it will look.
@@ -365,9 +402,36 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  *
  * localStorage rather than config: this is a per-screen display preference of
  * this browser profile, not something worth a round-trip and a config write.
+ *
+ * The text size is the exception and is kept by the BACKEND as well (see
+ * `fetchTerminalUiPreferences`). The desktop window is an embedded WebView that
+ * starts every run with empty browser storage, so a size kept only here is
+ * forgotten on each restart â€” which reads as the control having stopped
+ * working. Its localStorage entry stays as the first-paint cache so the panes
+ * open at the remembered size instead of visibly resizing a moment later.
  */
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
+
+/**
+ * The two ways of looking at one workspace.
+ *
+ * `grid` is the wall of terminals — every pane visible at once, sized by the
+ * dragged seams. `chat` is the same workspace read like a conversation: a rail
+ * of agents on the left, ONE terminal on a calm centred stage, and the prompt
+ * bar underneath as the composer. Neither mode owns the panes — switching is a
+ * pure restyle of the same mounted elements, because unmounting a pane kills
+ * the coding agent behind it (see the grid container's comment below).
+ */
+type WorkspaceView = "grid" | "chat";
+
+const VIEW_KEY = "jarvis.agenticIde.workspaceView";
+
+function storedViewMode(): WorkspaceView | null {
+  return readStored(VIEW_KEY, (raw) =>
+    raw === "grid" || raw === "chat" ? raw : null,
+  );
+}
 
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
   try {
@@ -473,6 +537,44 @@ export function AgenticGrid({
   const setFontSize = useCallback((next: number) => {
     setFontSizeState(next);
     writeStored(FONT_KEY, String(next));
+    // The backend is what makes the choice survive a restart; the line above is
+    // only this window's cache. A failed write is reported rather than
+    // swallowed â€” the panes still resize, they just would not remember it.
+    void saveTerminalFontSize(next).catch((err) => {
+      console.warn("Agentic IDE: terminal text size not remembered:", err);
+    });
+  }, []);
+
+  // Pick the remembered size back up. Runs once per mounted workspace: the size
+  // is one person's reading preference, not a property of a project, so it is
+  // the same in every workspace and never re-read on a switch.
+  useEffect(() => {
+    let alive = true;
+    fetchTerminalUiPreferences()
+      .then((prefs) => {
+        if (!alive) return;
+        if (prefs.stored) {
+          setFontSizeState(prefs.terminal_font_size);
+          writeStored(FONT_KEY, String(prefs.terminal_font_size));
+          return;
+        }
+        // Nothing stored yet, but this window still holds a size chosen before
+        // the backend kept them. Hand that choice over instead of letting the
+        // default silently replace it â€” otherwise upgrading resets it once.
+        const local = storedFontSize();
+        if (local === null) return;
+        void saveTerminalFontSize(local).catch((err) => {
+          console.warn("Agentic IDE: terminal text size not remembered:", err);
+        });
+      })
+      .catch((err) => {
+        // Older backend or a request that failed: keep the cached size and say
+        // why it may not stick, rather than looking like it worked.
+        console.warn("Agentic IDE: could not read the stored terminal text size:", err);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
   const [target, setTarget] = useState(
     session.terminals.find(takesPrompts)?.name ?? "",
@@ -499,6 +601,48 @@ export function AgenticGrid({
   }, []);
 
   const [maximized, setMaximized] = useState<string | null>(null);
+
+  /**
+   * Which "open a terminal" button has its CLI picker open, if any.
+   *
+   * The panes carry their own (see `AgenticTerminal`); these are the two places
+   * that open a terminal without a pane to hang it off — the chat view's rail,
+   * and the message an emptied workspace shows. Both used to start whatever CLI
+   * the backend listed first, so a chat-view workspace could only ever grow more
+   * panes of that one agent while the grid's split buttons were asking properly
+   * (maintainer report 2026-07-31).
+   */
+  const [picking, setPicking] = useState<"rail" | "empty" | null>(null);
+
+  /*
+   * Grid or chat — remembered per browser profile, like the appearance above:
+   * which way someone reads their agents is a display preference of this
+   * screen, not workspace state worth a round-trip.
+   */
+  const [viewMode, setViewModeState] = useState<WorkspaceView>(
+    () => storedViewMode() ?? "grid",
+  );
+  const setViewMode = useCallback((next: WorkspaceView) => {
+    setViewModeState(next);
+    writeStored(VIEW_KEY, next);
+    // Chat shows exactly one pane already; a leftover maximize from the grid
+    // would silently pin the stage to a pane the rail no longer highlights.
+    if (next === "chat") setMaximized(null);
+    // An open CLI picker belongs to the button that opened it, and that button
+    // just left the screen — it must not be waiting there on the way back.
+    setPicking(null);
+  }, []);
+  const chatView = viewMode === "chat";
+
+  /*
+   * Which pane the chat stage shows. Kept apart from `target` (the pane the
+   * prompt bar types into) because the two answer different questions: a plain
+   * shell pane can be WATCHED on the stage but never prompted, and looking at
+   * it must not silently redirect the next instruction into a pane that
+   * refuses it. The effective selection is derived rather than repaired in
+   * effects, so a pane closed by another client simply falls back.
+   */
+  const [chatPane, setChatPane] = useState<string | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(
@@ -575,6 +719,24 @@ export function AgenticGrid({
       window.clearInterval(timer);
     };
   }, [session.id, pollRecaps]);
+
+  /*
+   * Is this pane's agent still working, or has it stopped?
+   *
+   * The same two sources as the recap beside it, for the same reason: the
+   * workspace state carries an opening value so a pane never renders a blank
+   * badge, and the five-second poll keeps it true from then on. Both come
+   * straight from the pane — nothing is derived here, or two views of one
+   * terminal would disagree about whether it is busy.
+   */
+  const activityOf = (term: TerminalState) => {
+    const row = recaps[term.name];
+    return {
+      activity: row?.activity ?? term.activity ?? "",
+      since: row?.activity_since ?? term.activity_since ?? 0,
+      worked: row?.worked ?? term.worked ?? false,
+    };
+  };
 
   /*
    * The three things a user may do about a pane's recap.
@@ -723,21 +885,13 @@ export function AgenticGrid({
     resizeComposer(composerCollapsed ? COMPOSER_DEFAULT_PX : COMPOSER_COLLAPSED_PX);
   }, [composerCollapsed, resizeComposer]);
 
-  // A split-down pane adds height inside an existing column; it must not make
-  // the whole workspace re-wrap. Only independent side-by-side columns decide
-  // the band shape.
-  const layoutColumnCount = useMemo(
-    () => new Set(session.terminals.map((term) => term.column)).size,
-    [session.terminals],
-  );
-  // Height now influences wrapping too, so give it the same coarse step as
-  // width. A one-pixel WebView animation must not flip a whole band back and
-  // forth around the aspect threshold.
-  const layoutHeight = Math.round(gridHeight / 16) * 16;
-  const perBand = useMemo(
-    () => bandCapacityForArea(gridWidth, layoutHeight, layoutColumnCount),
-    [gridWidth, layoutHeight, layoutColumnCount],
-  );
+  // How many columns share a row depends on WIDTH alone — the readability
+  // floor under each pane. It once also shrank with the window's aspect ratio
+  // ("four tall panes waste their lower half, wrap them 2 x 2"), which second-
+  // guessed the split buttons: the fourth split re-dealt the workspace and a
+  // pane the user was reading jumped to another row. Rows are the user's
+  // choice; the layout only wraps when panes would become unreadable.
+  const perBand = bandCapacityFor(gridWidth);
 
   /*
    * The sizes the panes are drawn at, and the seams between them.
@@ -822,6 +976,71 @@ export function AgenticGrid({
   );
 
   /*
+   * Which panes the current column weights are keyed to.
+   *
+   * Weights are stored by COLUMN INDEX (see `paneLayout`), and the backend
+   * renumbers columns on every open and close. The grid's own actions remap
+   * the weights in the same breath — but a workspace also changes from OUTSIDE
+   * this grid: a terminal opened by voice, a second client, the backend
+   * resuming after a restart. Those arrive as a new `session.terminals` with
+   * nothing else said, and index-keyed widths then land on whichever pane
+   * holds the index now (observed 2026-07-31: after a restart re-opened the
+   * workspace, one pane inherited the width its closed neighbour had been
+   * dragged to, and the pane that owned it was squeezed instead).
+   *
+   * So the arrangement the weights belong to is tracked in a ref — updated by
+   * every action that already remaps — and persisted beside the weights. The
+   * effect below answers any drift between it and the session with the same
+   * remap the grid's own actions use, which also covers a fresh mount whose
+   * stored weights were keyed to an arrangement that changed while no grid
+   * was watching.
+   */
+  const weightsBasis = useRef<Record<string, number> | null>(null);
+  const weightsBasisFor = useRef<string | null>(null);
+
+  /** Declare the weights remapped: they are keyed to ``terminals`` now. */
+  const rebaseWeights = useCallback(
+    (terminals: readonly { name: string; column: number; slot: number }[]) => {
+      const arrangement = paneArrangement(terminals);
+      weightsBasis.current = arrangement;
+      weightsBasisFor.current = session.id;
+      saveStoredArrangement(session.id, arrangement);
+    },
+    [session.id],
+  );
+
+  useEffect(() => {
+    // A workspace switch loads that workspace's weights (see `usePaneWeights`),
+    // so the basis switches with it: its stored arrangement when one survives,
+    // otherwise the session as it stands — never the outgoing workspace's. A
+    // workspace seen for the first time stores its arrangement right away,
+    // because the stored copy is what makes the weights readable after a
+    // restart behind which the workspace changed.
+    if (weightsBasisFor.current !== session.id) {
+      weightsBasisFor.current = session.id;
+      const stored = loadStoredArrangement(session.id);
+      weightsBasis.current = stored ?? paneArrangement(session.terminals);
+      if (!stored) saveStoredArrangement(session.id, weightsBasis.current);
+    }
+    const basis = weightsBasis.current;
+    const current = paneArrangement(session.terminals);
+    if (!basis || sameArrangement(basis, current)) return;
+    // Never mid-drag. The gesture paints the panes directly and commits its
+    // weights from a snapshot taken at pointer-down (see `usePaneWeights`), so
+    // a remap here would both be clobbered by that commit and re-render every
+    // live terminal under the pointer. `sizes.dragging` is a dependency, so
+    // the drift is answered the moment the pointer is released.
+    if (sizes.dragging !== null) return;
+    // Runs AFTER the hook's own load effect in the same commit, so on a
+    // workspace switch this updater already sees that workspace's weights.
+    sizes.setWeights((weights) =>
+      remapColumnWeights(weights, panesFromArrangement(basis), session.terminals),
+    );
+    weightsBasis.current = current;
+    saveStoredArrangement(session.id, current);
+  }, [session.id, session.terminals, sizes.dragging, sizes.setWeights]);
+
+  /*
    * Hold the dragged sizes against anything else that renders mid-gesture.
    *
    * A drag deliberately leaves state alone until the pointer is released, so
@@ -876,6 +1095,23 @@ export function AgenticGrid({
 
   const atLimit = session.terminals.length >= maxTerminals;
 
+  /** The pane on the chat stage: the chosen one while it lives, else a fallback. */
+  const chatSelected = useMemo(() => {
+    const names = session.terminals.map((term) => term.name);
+    if (chatPane && names.includes(chatPane)) return chatPane;
+    if (target && names.includes(target)) return target;
+    return names[0] ?? null;
+  }, [chatPane, target, session.terminals]);
+
+  /** Rail click: show the pane, and aim the composer at it when it can listen. */
+  const selectChatPane = useCallback(
+    (name: string, promptable: boolean) => {
+      setChatPane(name);
+      if (promptable) setTarget(name);
+    },
+    [],
+  );
+
   const split = async (
     anchor: string | null,
     direction: SplitDirection,
@@ -909,15 +1145,40 @@ export function AgenticGrid({
             )
           : remapColumnWeights(current, session.terminals, next.terminals),
       );
+      rebaseWeights(next.terminals);
       // ...unless it is a plain terminal — that one is typed into by hand, and
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
       if (added && takesPrompts(added)) setTarget(added.name);
+      // The chat stage shows what was just opened — in the grid the new pane
+      // simply appears, but on a one-pane stage an unshown terminal would read
+      // as a split that did nothing.
+      if (added) setChatPane(added.name);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
       setWorking(false);
     }
+  };
+
+  const offersChoice = offersAgentChoice(agents);
+
+  /**
+   * Open a terminal at the end of the row — asking WHAT first when the machine
+   * has more than one CLI installed. With a single one there is nothing to pick,
+   * so the click opens it straight away rather than showing a one-entry menu.
+   */
+  const openTerminal = (surface: "rail" | "empty") => {
+    if (agents === undefined) {
+      pushToast(
+        "warning",
+        "Terminal choices are still loading. Try again in a moment.",
+      );
+      return;
+    }
+    if (offersChoice)
+      setPicking((current) => (current === surface ? null : surface));
+    else void split(null, "right", automaticAgentChoice(agents));
   };
 
   /*
@@ -939,6 +1200,7 @@ export function AgenticGrid({
         sizes.setWeights((current) =>
           remapColumnWeights(current, session.terminals, next.terminals),
         );
+        rebaseWeights(next.terminals);
         onSessionChanged?.(next);
       } catch (error) {
         pushToast("error", (error as Error).message);
@@ -946,7 +1208,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast, session.terminals, sizes.setWeights],
+    [onSessionChanged, pushToast, rebaseWeights, session.terminals, sizes.setWeights],
   );
 
   const arrange = usePaneArrange(
@@ -1011,6 +1273,11 @@ export function AgenticGrid({
     const fresh = names.filter((name) => !known.has(name));
     if (fresh.length === 0) return;
     setJustOpened(new Set(fresh));
+    // On the chat stage, "seen appearing" means TAKING the stage: a pane
+    // opened by voice would otherwise exist only as a rail entry behind the
+    // one being read, which is the 2026-07-28 "terminals just don't load"
+    // report in new clothes.
+    if (chatView) setChatPane(fresh[fresh.length - 1]);
     // The LAST one: panes are appended, so the newest is the one whose arrival
     // could have pushed the grid past its viewport. Probed rather than assumed —
     // `scrollIntoView` is absent in jsdom and in some embedded WebViews, and the
@@ -1054,7 +1321,10 @@ export function AgenticGrid({
       pushToast("warning", t("agentic_grid.notifications.gone").replace("{0}", wanted));
       return;
     }
-    setMaximized(wanted);
+    // The jump means "let me READ that pane". In the grid that is a maximize;
+    // on the chat stage it is the stage showing that pane.
+    if (chatView) setChatPane(wanted);
+    else setMaximized(wanted);
     setJustOpened(new Set([wanted]));
     const node = paneNodes.current.get(wanted);
     // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
@@ -1104,6 +1374,18 @@ export function AgenticGrid({
         setStatuses((current) => rekey(current, from, to));
         setRecaps((current) => rekey(current, from, to));
         setRestartTokens((current) => rekey(current, from, to));
+        // The pane's dragged height is keyed by call-sign too, and the basis
+        // map is what stops the remap effect from reading a rename as "one
+        // pane left, another arrived" — which would put the lone column of a
+        // renamed pane back at its default width.
+        sizes.setWeights((current) => ({
+          ...current,
+          panes: rekey(current.panes, from, to),
+        }));
+        if (weightsBasis.current) {
+          weightsBasis.current = rekey(weightsBasis.current, from, to);
+          saveStoredArrangement(session.id, weightsBasis.current);
+        }
         setTarget((current) => (current === from ? to : current));
         setMaximized((current) => (current === from ? to : current));
         setPendingClose((current) => (current === from ? to : current));
@@ -1128,7 +1410,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast],
+    [onSessionChanged, pushToast, session.id, sizes.setWeights],
   );
 
   /** Where the bell's "jump to pane" goes — here, or via the view for a tab. */
@@ -1153,6 +1435,7 @@ export function AgenticGrid({
    */
   const canArrange =
     !selectionMode &&
+    !chatView &&
     maximized === null &&
     !busy &&
     !working &&
@@ -1169,6 +1452,7 @@ export function AgenticGrid({
       sizes.setWeights((current) =>
         remapColumnWeights(current, session.terminals, next.terminals),
       );
+      rebaseWeights(next.terminals);
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
     } catch (e) {
@@ -1187,6 +1471,7 @@ export function AgenticGrid({
       sizes.setWeights((current) =>
         remapColumnWeights(current, session.terminals, result.session.terminals),
       );
+      rebaseWeights(result.session.terminals);
       onSessionChanged?.(result.session);
       const remaining = new Set(result.session.terminals.map((term) => term.name));
       if (maximized && !remaining.has(maximized)) setMaximized(null);
@@ -1369,17 +1654,20 @@ export function AgenticGrid({
         {/* Which branch the agents are on. It stays even in the merged row —
             the workspace tab names the folder, not the checkout, and "which
             branch am I about to let a dozen agents commit to" is not a
-            question worth answering from memory. */}
+            question worth answering from memory. Plain muted text rather than
+            a chip: it is a fact to glance at, not a control to weigh. */}
         {branchLabel && (
           <span
-            className="chip hidden shrink-0 text-[10px] uppercase tracking-wide xl:inline-flex"
+            className="hidden shrink-0 font-mono text-[11px] text-muted-foreground xl:inline"
             title={session.folder}
           >
             {branchLabel}
           </span>
         )}
 
-        {/* Focus mode — the explicit switch into "Jarvis codes with me here". */}
+        {/* Focus mode — the explicit switch into "Jarvis codes with me here".
+            A quiet glyph that lights up while the mode is on; the one-time
+            intro dialog and the tooltip carry the explanation. */}
         <button
           type="button"
           onClick={() => onToggleFocus(!focusMode)}
@@ -1390,65 +1678,49 @@ export function AgenticGrid({
               ? "Focused coding mode is on — Jarvis answers inside this workspace. Click to leave."
               : "Turn on focused coding mode — Jarvis answers inside this workspace until you switch back."
           }
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
-            focusMode
-              ? "border-primary/60 bg-primary/15 text-primary"
-              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
-          )}
+          className={cn(TOOLBAR_BTN, focusMode && TOOLBAR_BTN_ON)}
         >
           <Brain className="h-4 w-4 shrink-0" />
-          <span className="hidden lg:inline">
-            {focusMode ? "Coding mode ON" : "Coding mode OFF"}
-          </span>
         </button>
 
-        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5">
-          <button
-            type="button"
-            aria-label="Light terminals"
-            aria-pressed={appearance === "light"}
-            onClick={() => setAppearance("light")}
-            className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-              appearance === "light" ? "bg-primary/20 text-primary" : "text-muted-foreground",
-            )}
-          >
-            <Sun className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Dark terminals"
-            aria-pressed={appearance === "dark"}
-            onClick={() => setAppearance("dark")}
-            className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-              appearance === "dark" ? "bg-primary/20 text-primary" : "text-muted-foreground",
-            )}
-          >
-            <Moon className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* Grid or chat — how the same agents are read. The chat side opens
+            the composer with it: a conversation surface without an input box
+            is a screenshot, not a chat. */}
+        <button
+          type="button"
+          data-testid="agentic-view-mode-toggle"
+          aria-pressed={chatView}
+          onClick={() => {
+            const next: WorkspaceView = chatView ? "grid" : "chat";
+            setViewMode(next);
+            if (next === "chat" && composerCollapsed) {
+              resizeComposer(COMPOSER_DEFAULT_PX);
+            }
+          }}
+          title={
+            chatView
+              ? "Chat view is on — one agent at a time, like a conversation. Click for the terminal grid."
+              : "Switch to chat view — read one agent at a time, like a conversation."
+          }
+          className={cn(TOOLBAR_BTN, chatView && TOOLBAR_BTN_ON)}
+        >
+          {chatView ? (
+            <LayoutGrid className="h-4 w-4 shrink-0" />
+          ) : (
+            <MessagesSquare className="h-4 w-4 shrink-0" />
+          )}
+        </button>
 
-        <div className="hidden shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5 md:flex">
-          <button
-            type="button"
-            aria-label="Smaller text"
-            onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-          >
-            <Minus className="h-3.5 w-3.5" />
-          </button>
-          <Type className="h-3.5 w-3.5 text-muted-foreground" />
-          <button
-            type="button"
-            aria-label="Larger text"
-            onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* Terminal appearance and text size, one quiet button away. They are
+            set-and-forget preferences, not moment-to-moment controls — kept
+            permanently on the bar they cost seven bordered buttons of noise
+            for something touched once a week. */}
+        <ViewMenu
+          appearance={appearance}
+          onAppearance={setAppearance}
+          fontSize={fontSize}
+          onFontSize={setFontSize}
+        />
 
         {/* Which terminals stopped while you were looking at another one.
             Before "Continue" rather than after it, because the two answer the
@@ -1478,19 +1750,14 @@ export function AgenticGrid({
           aria-pressed={selectionMode}
           onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
           title={t("agentic_grid.selection.hint")}
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
+          aria-label={
             selectionMode
-              ? "border-primary/60 bg-primary/15 text-primary"
-              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
-          )}
+              ? t("agentic_grid.selection.finish")
+              : t("agentic_grid.selection.start")
+          }
+          className={cn(TOOLBAR_BTN, selectionMode && TOOLBAR_BTN_ON)}
         >
           <ListChecks className="h-4 w-4 shrink-0" />
-          <span className="hidden xl:inline">
-            {selectionMode
-              ? t("agentic_grid.selection.finish")
-              : t("agentic_grid.selection.start")}
-          </span>
         </button>
 
         {selectionMode && (
@@ -1552,12 +1819,12 @@ export function AgenticGrid({
           <Dialog.Trigger asChild>
             <button
               type="button"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-40"
+              className={cn(TOOLBAR_BTN, "hover:bg-destructive/10 hover:text-destructive")}
               disabled={busy}
+              aria-label="Close workspace"
               title="Close the workspace and stop every agent in it"
             >
               <Power className="h-4 w-4 shrink-0" />
-              <span className="hidden xl:inline">Close</span>
             </button>
           </Dialog.Trigger>
           <ConfirmWorkspaceClose
@@ -1602,23 +1869,191 @@ export function AgenticGrid({
         The same reasoning covers maximizing: the other panes are HIDDEN with
         CSS, never removed, and the maximized one is told to fill the container
         instead of keeping its own rectangle.
+
+        Chat view is the same trick one step further: the rail on the left is
+        ALWAYS in the tree (hidden in grid mode), and switching modes only
+        flips class names — the scroller and every cell keep their place in
+        the element tree, so React re-parents nothing and no agent dies for a
+        change of clothes.
       */}
+      <div className="flex min-h-0 flex-1">
+        {/* ------------------------------------------------------ chat rail */}
+        <aside
+          data-testid="agentic-chat-rail"
+          className={cn(
+            "w-64 shrink-0 flex-col border-r border-border",
+            chatView ? "flex" : "hidden",
+          )}
+        >
+          {/* `relative` so the CLI picker hangs under the plus button. */}
+          <div className="relative flex items-center justify-between px-3 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Agents
+            </span>
+            <button
+              type="button"
+              data-testid="chat-rail-new-terminal"
+              className={TOOLBAR_BTN}
+              disabled={atLimit || busy || working}
+              aria-expanded={offersChoice ? picking === "rail" : undefined}
+              aria-haspopup={offersChoice ? "dialog" : undefined}
+              aria-controls={
+                offersChoice ? "chat-rail-agent-menu-dialog" : undefined
+              }
+              onClick={() => openTerminal("rail")}
+              title="Open another terminal"
+              aria-label="Open another terminal"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            {picking === "rail" && (
+              <AgentPickerMenu
+                title="Open a terminal — what?"
+                ariaLabel="What should run in the new terminal?"
+                agents={agents ?? []}
+                testId="chat-rail-agent-menu"
+                itemTestId={(agent) => `chat-rail-new-${agent}`}
+                className="right-2 top-full"
+                onDismiss={() => setPicking(null)}
+                onPick={(agent) => {
+                  setPicking(null);
+                  void split(null, "right", agent);
+                }}
+              />
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
+            {session.terminals.map((term) => {
+              const state = statuses[term.name];
+              const headline = recaps[term.name]?.recap ?? term.recap;
+              const title =
+                headline?.trim() ||
+                term.last_prompt?.trim() ||
+                `${term.display_name || term.name} session`;
+              const marked = selectedTerminals.has(term.name);
+              const active = chatSelected === term.name;
+              return (
+                /*
+                 * The row and its close button are SIBLINGS, never nested: a
+                 * button inside a button is invalid HTML, and browsers resolve
+                 * it by dropping one of them — usually the one you wanted.
+                 */
+                <div key={term.key} className="group relative mb-1">
+                  <button
+                    type="button"
+                    data-testid={`chat-rail-${term.name}`}
+                    aria-label={`${title}, ${term.display_name || term.agent}`}
+                    aria-pressed={selectionMode ? marked : active}
+                    onClick={() =>
+                      // Selection mode borrows the rail: in chat view the grid's
+                      // per-pane overlays are hidden with their panes, so the
+                      // rail is where a multi-close is composed.
+                      selectionMode
+                        ? toggleTerminalSelection(term.name)
+                        : selectChatPane(term.name, takesPrompts(term))
+                    }
+                    className={cn(
+                      "w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
+                      selectionMode && marked
+                        ? "border-primary bg-primary/10"
+                        : active && !selectionMode
+                          ? "border-primary/50 bg-primary/10"
+                          : "border-transparent hover:bg-secondary",
+                    )}
+                  >
+                    {/* The right padding is permanent, not applied on hover:
+                        the close button appears where the badge would otherwise
+                        be, and a status pill that jumps sideways under the
+                        cursor is a row nobody can aim at. */}
+                    <span className="flex items-center gap-1.5 pr-5">
+                      {selectionMode && (
+                        <Check
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            marked ? "text-primary" : "text-transparent",
+                          )}
+                        />
+                      )}
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span
+                          data-testid={`chat-rail-title-${term.name}`}
+                          className="min-w-0 truncate text-xs font-semibold"
+                          title={title}
+                        >
+                          {title}
+                        </span>
+                        <AgentMark
+                          agent={term.agent}
+                          label={term.display_name || term.agent}
+                          size="sm"
+                          className="h-5 w-5 rounded-[4px]"
+                        />
+                      </span>
+                      {/* Not "live". Every pane in this list is live, all day —
+                          what the user is scanning for is which of them still
+                          owes them something. See ./PaneActivityPill. */}
+                      <PaneActivityPill
+                        status={state?.status ?? "connecting"}
+                        detail={state?.detail}
+                        {...activityOf(term)}
+                      />
+                    </span>
+                  </button>
+                  {/*
+                    Closing one terminal from the list itself.
+                    Chat view hides every pane but the one on the stage, and with
+                    it the header that used to be the only place a single
+                    terminal could be closed — so the eleven panes you are NOT
+                    looking at could only be closed by switching to the grid or
+                    by composing a multi-select. This is the row's own button.
+
+                    Left out of selection mode on purpose: that mode is here to
+                    close SEVERAL, and a per-row close beside a checkbox is two
+                    answers to one question.
+                  */}
+                  {!selectionMode && (
+                    <button
+                      type="button"
+                      data-testid={`chat-rail-close-${term.name}`}
+                      disabled={busy || working}
+                      onClick={() => setPendingClose(term.name)}
+                      title={`Close ${term.name} and stop what is running in it`}
+                      aria-label={`Close ${term.name}`}
+                      className={cn(
+                        "absolute right-1 top-1.5 flex h-5 w-5 items-center justify-center rounded",
+                        "text-muted-foreground opacity-0 transition-opacity",
+                        "hover:bg-destructive/20 hover:text-destructive",
+                        "group-hover:opacity-100 group-focus-within:opacity-100",
+                        "focus-visible:opacity-100 disabled:cursor-not-allowed",
+                      )}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
       <div
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "relative min-h-0 flex-1",
+          "relative min-h-0 min-w-0 flex-1",
           // Scrolls only once the panes would be squeezed below a readable
           // height. With a workspace that fits, this is `overflow-hidden`
-          // behaviour and nothing moves.
-          maximized !== null ? "overflow-hidden" : "overflow-y-auto scrollbar-jarvis",
+          // behaviour and nothing moves. The chat stage never scrolls — its
+          // one pane fills it, and the terminal scrolls inside itself.
+          chatView || maximized !== null
+            ? "overflow-hidden"
+            : "overflow-y-auto scrollbar-jarvis",
           // A drag across the grid would otherwise sweep a text selection over
           // every header and label it crosses.
           arrange.held !== null && "select-none",
         )}
         // Inline rather than a utility class so ONE number drives both the
         // rendered outer margin and the width the column count is computed from.
-        style={{ padding: GRID_GAP_PX }}
+        style={{ padding: chatView ? 12 : GRID_GAP_PX }}
       >
       {/*
         The surface the fractions resolve against.
@@ -1631,12 +2066,20 @@ export function AgenticGrid({
       <div
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
-        className="relative w-full"
-        style={{ height: canvasHeight || undefined }}
+        className={cn(
+          "relative w-full",
+          // The chat stage fills everything between the rail and the voice
+          // column. It started as a centred, capped column; the maintainer
+          // wants the terminal at full size (2026-07-31), and the calm framing
+          // comes from the rail and the card border, not from margins.
+          chatView && "h-full",
+        )}
+        style={{ height: chatView ? undefined : canvasHeight || undefined }}
       >
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
           const isMaximized = maximized === term.name;
+          const onStage = chatView && chatSelected === term.name;
           return (
             <div
               key={term.key}
@@ -1652,9 +2095,15 @@ export function AgenticGrid({
                 justOpened.has(term.name) &&
                   !selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
-                maximized !== null && !isMaximized && "hidden",
+                chatView
+                  ? onStage
+                    ? "rounded-xl border border-border shadow-lg"
+                    : "hidden"
+                  : maximized !== null && !isMaximized && "hidden",
               )}
-              style={isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
+              style={
+                chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)
+              }
             >
               <AgenticTerminal
                 name={term.name}
@@ -1700,9 +2149,19 @@ export function AgenticGrid({
                   if (takesPrompts(term)) setTarget(term.name);
                 }}
                 onStatus={(status, detail) => setStatus(term.name, status, detail)}
-                onToggleMaximize={() =>
-                  setMaximized((current) => (current === term.name ? null : term.name))
-                }
+                onToggleMaximize={() => {
+                  // On the chat stage the pane already fills the surface, so
+                  // "maximize" honestly means "give me the full-width grid
+                  // version of this pane".
+                  if (chatView) {
+                    setViewMode("grid");
+                    setMaximized(term.name);
+                  } else {
+                    setMaximized((current) =>
+                      current === term.name ? null : term.name,
+                    );
+                  }
+                }}
                 onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
@@ -1813,7 +2272,8 @@ export function AgenticGrid({
           panes are being selected or dragged (those gestures own the pointer),
           and, naturally, when there is only one pane.
         */}
-        {maximized === null &&
+        {!chatView &&
+          maximized === null &&
           !selectionMode &&
           arrange.held === null &&
           layout.seams.map((seam) => (
@@ -1839,17 +2299,43 @@ export function AgenticGrid({
         {session.terminals.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             <span>Every terminal in this workspace is closed.</span>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busy || working}
-              onClick={() => void split(null, "right")}
-            >
-              <Plus className="h-4 w-4" />
-              Open a terminal
-            </button>
+            {/* `relative` so the picker hangs under the button rather than off
+                the grid canvas. */}
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="empty-workspace-new-terminal"
+                className="btn-primary"
+                disabled={busy || working}
+                aria-expanded={offersChoice ? picking === "empty" : undefined}
+                aria-haspopup={offersChoice ? "dialog" : undefined}
+                aria-controls={
+                  offersChoice ? "empty-workspace-agent-menu-dialog" : undefined
+                }
+                onClick={() => openTerminal("empty")}
+              >
+                <Plus className="h-4 w-4" />
+                Open a terminal
+              </button>
+              {picking === "empty" && (
+                <AgentPickerMenu
+                  title="Open a terminal — what?"
+                  ariaLabel="What should run in the new terminal?"
+                  agents={agents ?? []}
+                  testId="empty-workspace-agent-menu"
+                  itemTestId={(agent) => `empty-workspace-new-${agent}`}
+                  className="left-1/2 top-full mt-1 -translate-x-1/2"
+                  onDismiss={() => setPicking(null)}
+                  onPick={(agent) => {
+                    setPicking(null);
+                    void split(null, "right", agent);
+                  }}
+                />
+              )}
+            </div>
           </div>
         )}
+      </div>
       </div>
       </div>
 
@@ -1960,17 +2446,22 @@ export function AgenticGrid({
                 <button
                   key={term.key}
                   type="button"
+                  data-testid={`prompt-target-${term.name}`}
                   onClick={() => setTarget(term.name)}
                   aria-pressed={target === term.name}
                   className={cn(
                     "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
                     target === term.name
                       ? "border-primary/60 bg-primary/10 text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40",
+                      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
                   <span className="font-medium">{term.name}</span>
-                  <PaneStatusPill status={state?.status ?? "connecting"} detail={state?.detail} />
+                  <PaneActivityPill
+                    status={state?.status ?? "connecting"}
+                    detail={state?.detail}
+                    {...activityOf(term)}
+                  />
                 </button>
               );
             })}
@@ -2068,7 +2559,126 @@ export function AgenticGrid({
                   arrange.hover.target,
                 )}
           </span>
+          {/* Exchanging two panes is a real move, just not the one dragging
+              means — so it is offered here, where someone mid-drag can see it,
+              rather than left to be discovered by accident. */}
+          {arrange.hover !== null && !arrange.swapping && (
+            <span
+              data-testid="agentic-arrange-swap-hint"
+              className="font-normal text-muted-foreground/70"
+            >
+              {t("agentic_grid.arrange.swap_hint")}
+            </span>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Terminal appearance and text size, behind one quiet toolbar button.
+ *
+ * Both are remembered per browser profile and touched about once a week, so
+ * they earn a menu rather than seven permanent buttons on the bar. The controls
+ * inside keep the exact labels the standalone buttons had — a screen reader and
+ * a muscle memory both find the same names one click deeper.
+ */
+function ViewMenu({
+  appearance,
+  onAppearance,
+  fontSize,
+  onFontSize,
+}: {
+  appearance: TerminalAppearance;
+  onAppearance: (next: TerminalAppearance) => void;
+  fontSize: number;
+  onFontSize: (next: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        aria-label="Terminal appearance and text size"
+        aria-expanded={open}
+        data-testid="agentic-view-menu"
+        title="Terminal appearance and text size"
+        onClick={() => setOpen((value) => !value)}
+        className={cn(TOOLBAR_BTN, open && "bg-secondary text-foreground")}
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          {/* Same dismiss pattern as the pane split menu: anywhere else closes. */}
+          <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
+          <div
+            data-testid="agentic-view-menu-panel"
+            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">Terminals</span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  aria-label="Light terminals"
+                  aria-pressed={appearance === "light"}
+                  onClick={() => onAppearance("light")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    appearance === "light"
+                      ? "bg-primary/20 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Sun className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Dark terminals"
+                  aria-pressed={appearance === "dark"}
+                  onClick={() => onAppearance("dark")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    appearance === "dark"
+                      ? "bg-primary/20 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Moon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Type className="h-3.5 w-3.5" />
+                Text size
+              </span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  aria-label="Smaller text"
+                  onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <span className="w-8 text-center font-mono text-[11px] text-foreground">
+                  {fontSize}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Larger text"
+                  onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

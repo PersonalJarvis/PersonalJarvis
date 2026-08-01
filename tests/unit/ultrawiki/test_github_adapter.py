@@ -55,7 +55,7 @@ def _issue(**overrides: Any) -> dict[str, Any]:
         "comments_url": "https://api.github.com/repos/acme/widgets/issues/7/comments",
         "state": "open",
         "body": "The wake word misses every third call.",
-        "user": {"login": "example-user"},
+        "user": {"login": "octocat"},
         "labels": [{"name": "bug"}],
         "comments": 0,
         "created_at": "2026-03-01T10:00:00Z",
@@ -68,7 +68,7 @@ def _issue(**overrides: Any) -> dict[str, Any]:
 def _transport(
     pages: list[list[dict[str, Any]]],
     *,
-    login: str = "example-user",
+    login: str = "octocat",
     headers: dict[str, str] | None = None,
     seen: list[httpx.Request] | None = None,
     comments: list[dict[str, Any]] | None = None,
@@ -120,7 +120,7 @@ async def test_an_issue_becomes_a_linkable_dated_item():
     # WHEN IT HAPPENED, not when it was last touched.
     assert item.timestamp_utc == "2026-03-01T10:00:00Z"
     assert item.title == "Ship the wake-word fix"
-    assert item.author_raw == "example-user"
+    assert item.author_raw == "octocat"
     assert item.thread_key == "acme/widgets#7"
     # The composed header keeps the context a bare body would lose.
     assert "acme/widgets · issue #7 · open" in item.body
@@ -168,7 +168,7 @@ async def test_a_numeric_checkpoint_narrows_the_query_by_date():
     )
     search = next(r for r in seen if r.url.path == "/search/issues")
     query = search.url.params["q"]
-    assert "involves:example-user" in query
+    assert "involves:octocat" in query
     # A day earlier than the cursor: GitHub's updated:>= works on whole days,
     # so re-asking from the previous day is what makes a boundary safe.
     assert "updated:>=2026-03-03" in query
@@ -286,7 +286,7 @@ async def test_the_discussion_is_stored_not_just_the_opening_post():
             "body": "This breaks the wake word on Linux.",
         },
         {
-            "user": {"login": "example-user"},
+            "user": {"login": "octocat"},
             "created_at": "2026-03-02T10:00:00Z",
             "body": "Good catch — switching to the energy gate instead.",
         },

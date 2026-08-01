@@ -35,7 +35,7 @@ search_aliases: [Handgepflegt]
 # Alex
 
 ## Facts
-- Lives in Example City.
+- Works at the Example City lab.
 """
 
 

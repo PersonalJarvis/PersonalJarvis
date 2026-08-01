@@ -8,7 +8,7 @@ import { useEventStore } from "@/store/events";
 // (CLI/tool names) gets a neutral monospace chip. This is the "which agents /
 // tools / CLIs ran" overview — Computer-Use, the agent system and Skill are
 // called out by name. The sub_agent label is resolved per render: it carries
-// the wake-word-derived assistant name ("Ruben" -> "Ruben-Agent").
+// the wake-word-derived assistant name ("Alex" -> "Alex-Agent").
 const AGENT_META: Record<string, { label: string | null; Icon: LucideIcon; cls: string }> = {
   computer_use: {
     label: "Computer-Use",

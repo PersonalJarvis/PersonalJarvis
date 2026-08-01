@@ -53,6 +53,11 @@ _BLANK_ACK_TIMEOUT_S = 0.15
 _SHOW_ACK_TIMEOUT_S = 1.2
 
 
+def screen_indicator_capability() -> tuple[bool, str]:
+    """Return whether the visible capture border can run on this host."""
+    return CUIndicatorController._border_capability()
+
+
 def _esc_binding() -> list[str]:
     """The Escape key's name differs per hotkey backend (live 2026-07-16):
     Windows ``global-hotkeys`` only accepts ``"escape"`` (``"esc"`` raises

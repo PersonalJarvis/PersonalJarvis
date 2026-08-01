@@ -39,7 +39,7 @@ import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
  * rather than a fourth `ProviderTier` because the status payload differs.
  * The endpoint path and the JSON keys below are the server contract; the
  * user-facing UI brands the agent system with the wake-word-derived assistant
- * name ("Ruben" -> "Ruben-Agent") via agentBrand — never a hardcoded name.
+ * name ("Alex" -> "Alex-Agent") via agentBrand — never a hardcoded name.
  */
 
 interface SubagentMappingRow {

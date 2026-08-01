@@ -38,7 +38,7 @@ BOOTSTRAP_MD = "BOOTSTRAP.md"
 PEOPLE_DIR = "people"
 
 
-# Filename-safe slug: e.g. "Casey Müller" → "casey_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
+# Filename-safe slug: e.g. "Laura Müller" → "laura_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
 _UMLAUT_MAP = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",  # i18n-allow: umlaut-folding lookup table used by person_slug()
                              "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})  # i18n-allow: umlaut-folding lookup table used by person_slug()
 _NON_SAFE = re.compile(r"[^a-z0-9_-]+")
@@ -48,7 +48,7 @@ def person_slug(name: str) -> str:
     """Normalise a name to a safe filename slug.
 
     Examples:
-        "Casey Müller"  → "casey_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
+        "Laura Müller"  → "laura_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
         "Dr. Paul O."   → "dr_paul_o"
         "Anne-Marie"    → "anne-marie"
     """

@@ -22,12 +22,77 @@ export type RealtimeCallbacks = {
   onInputLevel?: (level: number) => void;
 };
 
+export type RealtimeAudioOptions = {
+  /** The active provider needs a WebRTC offer to open its subscription transport. */
+  requiresWebRtcOffer?: boolean;
+};
+
 export type BrowserSpeechOutcome = "ended" | "error" | "unavailable";
 
 export type BrowserRealtimeSupportIssue =
   | "secure_context"
   | "microphone_unavailable"
   | "audio_worklet_unavailable";
+
+const ICE_GATHER_TIMEOUT_MS = 1_500;
+
+/** One offer-only WebRTC transport for Codex subscription signalling.
+ *
+ * Audio capture and playback stay on Jarvis's PCM WebSocket. The peer exists
+ * only to establish the provider transport: it receives no microphone track,
+ * and its remote RTP track is deliberately not attached to an output element.
+ * Codex mirrors output through `thread/realtime/outputAudio/delta`, allowing the
+ * existing transcript scrub gate to approve PCM before it reaches speakers.
+ */
+export class RealtimeWebRtcTransport {
+  private peer: RTCPeerConnection | null = null;
+
+  async createOffer(): Promise<string | null> {
+    this.close();
+    if (typeof RTCPeerConnection !== "function") return null;
+
+    const peer = new RTCPeerConnection();
+    this.peer = peer;
+    peer.addTransceiver("audio", { direction: "recvonly" });
+    peer.createDataChannel("oai-events");
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await waitForIceGathering(peer);
+    if (this.peer !== peer) return null;
+    const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
+    return sdp.trim() || null;
+  }
+
+  async applyAnswer(sdp: string): Promise<void> {
+    if (!this.peer) throw new Error("WebRTC answer arrived without an active offer");
+    await this.peer.setRemoteDescription({ type: "answer", sdp });
+  }
+
+  close(): void {
+    const peer = this.peer;
+    this.peer = null;
+    peer?.close();
+  }
+}
+
+async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
+  if (peer.iceGatheringState === "complete") return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      peer.removeEventListener("icegatheringstatechange", onChange);
+      resolve();
+    };
+    const onChange = () => {
+      if (peer.iceGatheringState === "complete") finish();
+    };
+    const timeout = globalThis.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+    peer.addEventListener("icegatheringstatechange", onChange);
+  });
+}
 
 export class RealtimeAudioSupportError extends Error {
   constructor(readonly issue: BrowserRealtimeSupportIssue) {
@@ -209,8 +274,15 @@ export class RealtimeAudioClient {
   private intentionalClose = false;
   private inputMeter = new LevelMeter();
   private browserSpeech = new BrowserSpeechFallback();
+  private webRtcTransport: RealtimeWebRtcTransport;
+  private webRtcOfferSdp: string | null = null;
 
-  constructor(private cb: RealtimeCallbacks = {}) {}
+  constructor(
+    private cb: RealtimeCallbacks = {},
+    private options: RealtimeAudioOptions = {},
+  ) {
+    this.webRtcTransport = new RealtimeWebRtcTransport();
+  }
 
   connect(): Promise<void> {
     if (this.ready) return Promise.resolve();
@@ -226,6 +298,19 @@ export class RealtimeAudioClient {
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
+      // Start ICE gathering before microphone/worklet setup. This hides nearly
+      // all subscription signalling latency behind work the call already has
+      // to do, including when subscription voice is an explicit fallback for
+      // an API-first provider chain. Capture and scrubbed playback remain PCM.
+      const webRtcOffer: Promise<{
+        sdp: string | null;
+        error: unknown | null;
+      }> | null = this.options.requiresWebRtcOffer
+        ? this.webRtcTransport.createOffer().then(
+            (sdp) => ({ sdp, error: null }),
+            (error: unknown) => ({ sdp: null, error }),
+          )
+        : null;
       this.ctx = new AudioContext({ latencyHint: "interactive" });
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
@@ -253,6 +338,26 @@ export class RealtimeAudioClient {
       this.captureNode.connect(this.captureSink);
       this.captureSink.connect(this.ctx.destination);
       this.playbackNode.connect(this.ctx.destination);
+
+      // Required transport bootstrap for subscription-backed Realtime. API
+      // providers do not set this option and continue to use the PCM socket
+      // alone. A subscription session cannot be opened or billed correctly
+      // without its WebRTC peer, so this path fails closed.
+      if (this.options.requiresWebRtcOffer) {
+        const result = await webRtcOffer;
+        if (result?.error) {
+          this.webRtcTransport.close();
+          this.webRtcOfferSdp = null;
+          throw new Error("Subscription Realtime WebRTC signalling is unavailable", {
+            cause: result.error,
+          });
+        }
+        this.webRtcOfferSdp = result?.sdp ?? null;
+        if (!this.webRtcOfferSdp) {
+          this.webRtcTransport.close();
+          throw new Error("Subscription Realtime requires WebRTC support");
+        }
+      }
 
       // Proactive one-time ticket: WebKit engines do not attach the HttpOnly
       // session cookie to a WS handshake (BUG-065). Minting over plain HTTP
@@ -300,7 +405,13 @@ export class RealtimeAudioClient {
 
       socket.onopen = () => {
         socket.send(
-          JSON.stringify({ type: "audio_start", sample_rate: this.ctx?.sampleRate ?? 48_000 }),
+          JSON.stringify({
+            type: "audio_start",
+            sample_rate: this.ctx?.sampleRate ?? 48_000,
+            ...(this.webRtcOfferSdp
+              ? { webrtc_offer_sdp: this.webRtcOfferSdp }
+              : {}),
+          }),
         );
       };
       socket.onerror = () => fail(new Error("Realtime voice socket failed"));
@@ -335,12 +446,24 @@ export class RealtimeAudioClient {
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "audio_ready") {
           this.setOutputRate(message.output_sample_rate);
-          this.ready = true;
-          if (!settled) {
-            settled = true;
-            window.clearTimeout(timeout);
-            resolve();
-          }
+          void this.finishAudioReady(message)
+            .then(() => {
+              this.ready = true;
+              if (!settled) {
+                settled = true;
+                window.clearTimeout(timeout);
+                resolve();
+              }
+              this.cb.onStatus?.(type, message);
+            })
+            .catch((error: unknown) => {
+              const failure =
+                error instanceof Error ? error : new Error(String(error));
+              this.ready = false;
+              fail(failure);
+              socket.close();
+            });
+          return;
         } else if (type === "tts_start") {
           this.browserSpeech.cancel();
           this.setOutputRate(message.sample_rate);
@@ -354,6 +477,37 @@ export class RealtimeAudioClient {
     });
   }
 
+  private async finishAudioReady(message: RealtimeStatusPayload): Promise<void> {
+    const answer = message.webrtc_answer_sdp;
+    const answerRequired =
+      message.requires_webrtc_answer === true ||
+      (message.requires_webrtc_answer === undefined &&
+        this.options.requiresWebRtcOffer === true);
+    if (typeof answer !== "string" || !answer.trim()) {
+      this.webRtcTransport.close();
+      if (answerRequired) {
+        throw new Error("Subscription Realtime did not return a WebRTC answer");
+      }
+      return;
+    }
+    try {
+      await this.webRtcTransport.applyAnswer(answer);
+    } catch (error) {
+      this.webRtcTransport.close();
+      if (answerRequired) {
+        throw new Error("Subscription Realtime returned an invalid WebRTC answer", {
+          cause: error,
+        });
+      }
+      // PCM remains authoritative. A broken or unsupported WebRTC answer must
+      // not take API-backed browser voice down with it.
+      console.warn("WebRTC answer could not be applied; continuing with PCM voice.", error);
+      this.cb.onStatus?.("webrtc_transport_unavailable", {
+        type: "webrtc_transport_unavailable",
+      });
+    }
+  }
+
   private setOutputRate(value: unknown): void {
     const providerRate = typeof value === "number" && value > 0 ? value : 24_000;
     const contextRate = this.ctx?.sampleRate ?? 48_000;
@@ -361,6 +515,9 @@ export class RealtimeAudioClient {
   }
 
   private handleAudio(pcm: ArrayBuffer): void {
+    // This is authoritative for both API and subscription providers. The
+    // subscription WebRTC peer intentionally does not play remote RTP; Codex's
+    // documented sideband PCM therefore keeps Jarvis's scrub gate in the path.
     this.browserSpeech.cancel();
     if (!this.playbackResampler) this.setOutputRate(24_000);
     const converted = this.playbackResampler?.process(pcm) ?? pcm;
@@ -422,6 +579,8 @@ export class RealtimeAudioClient {
     this.captureSink = null;
     this.playbackNode = null;
     this.playbackResampler = null;
+    this.webRtcTransport.close();
+    this.webRtcOfferSdp = null;
     this.stream = null;
     this.ctx = null;
     this.inputMeter.reset();

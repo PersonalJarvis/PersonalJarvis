@@ -34,6 +34,35 @@ log = logging.getLogger(__name__)
 _MAX_EVIDENCE = 3
 
 
+# Questions *about* Screen Context are not consent to use it.  This guard is
+# deliberately evaluated before the positive matcher: all of these sentences
+# contain the same screen/look words as a real request, but their grammatical
+# shape asks for instructions or product behaviour rather than a look now.
+_SCREEN_CONTEXT_META_RE: re.Pattern[str] = re.compile(
+    r"(?:"
+    # --- English ---
+    r"\bhow\s+(?:do|can|could|would)\s+(?:i|you)\b[^.?!]{0,96}"
+    r"\b(?:look|see|view|inspect|screen|screenshot|capture)\b"
+    r"|\bhow\s+to\b[^.?!]{0,96}\b(?:screen|screenshot|capture)\b"
+    r"|\bwhat\s+(?:happens|would\s+happen)\s+(?:if|when)\b[^.?!]{0,96}"
+    r"\b(?:screen|screenshot|capture)\b"
+    # --- German --- i18n-allow: German speech-input matching data
+    r"|\bwie\s+(?:kann|koennte|wuerde)\s+(?:ich|man)\b[^.?!]{0,96}"  # i18n-allow
+    r"\b(?:bildschirm|screen|screenshot|bildschirmfoto|ansehen|zeigen)\b"
+    r"|\bwie\s+(?:kannst|koenntest|wuerdest)\s+du\b[^.?!]{0,96}"
+    r"\b(?:bildschirm|screen|screenshot|bildschirmfoto|sehen|ansehen)\b"
+    r"|\bwas\s+passiert\s+(?:wenn|falls)\b[^.?!]{0,96}"
+    r"\b(?:bildschirm|screen|screenshot|bildschirmfoto)\b"
+    # --- Spanish --- i18n-allow: Spanish speech-input matching data
+    r"|\bcomo\s+(?:puedo|podria|puedes|podrias|se\s+puede)\b[^.?!]{0,96}"
+    r"\b(?:pantalla|captura|ver|mirar)\b"
+    r"|\bque\s+pasa\s+(?:si|cuando)\b[^.?!]{0,96}"
+    r"\b(?:pantalla|captura)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
 # --------------------------------------------------------------------------
 # Normalization
 # --------------------------------------------------------------------------
@@ -151,6 +180,11 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     # screen nouns with a possessive/demonstrative
     r"|\b(?:on|at)\s+(?:my|the|this)\s+screen\b|\bmy\s+screen\b"
     r"|\bwhat(?:'|)s\s+on\s+(?:my|the)\s+screen\b"
+    r"|\bwhat\s+can\s+you\s+see\s+on\s+(?:my|the)\s+(?:screen|monitor)\b"
+    r"|\banaly[sz]e\s+(?:(?:this|that|the|my)\s+)?"
+    r"(?:screenshot|screen\s+capture)\b"
+    r"|\b(?:inspect|review|analy[sz]e)\s+(?:this|that|the\s+current)\s+"
+    r"(?:window|screen|monitor|dialog|tab)\b"
     r"|\b(?:take|make|capture|grab)\s+(?:a\s+)?screen(?:shot|\s+capture)\b"
     r"|\bscreen(?:shot|\s+capture)\s+(?:this|that|my\s+screen|the\s+screen)\b"
     r"|\b(?:this|that)\s+(?:error|error\s+message|message|button|menu|popup)\b"
@@ -165,14 +199,19 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     # phrasing, and a bare ``dies\b`` would only match the rarer "schau dir
     # dies an" — costing the common case to save nothing.
     r"|\bschau(?:e|st)?\s+(?:dir\s+)?(?:das|dies\w*|es|mal\s+das|hier)\b"
+    r"|\b(?:schau|schaue|sieh|guck)\s+(?:dir\s+)?(?:bitte\s+)?"
+    r"(?:meinen|den|diesen)\s+(?:bildschirm|monitor)\s+an\b"
     r"|\bschau\s+mal\b|\bschau\s+her\b|\bguck\s+mal\b|\bguck\s+(?:dir\s+)?das\b"
     r"|\bsieh\s+(?:dir\s+)?(?:das|dies\w*)\b|\bsieh\s+mal\b"
     r"|\bkannst\s+du\s+(?:mal\s+)?(?:kurz\s+)?(?:sehen|schauen|gucken|draufschauen)\b"
     r"|\bkannst\s+du\s+(?:das|dies|es|meinen\s+bildschirm)\s+sehen\b"
+    r"|\bkannst\s+du\s+(?:bitte\s+)?meinen\s+(?:bildschirm|monitor)\s+"
+    r"(?:anschauen|ansehen|pruefen)\b"
     r"|\bsiehst\s+du\s+(?:das|dies|meinen\s+bildschirm|den\s+fehler)\b"  # i18n-allow: DE input
     r"|\bwas\s+siehst\s+du\b"
     # screen nouns
     r"|\bauf\s+(?:dem|meinem)\s+bildschirm\b|\bam\s+bildschirm\b|\bmein\s+bildschirm\b"
+    r"|\bauf\s+(?:dem|meinem|diesem)\s+monitor\b|\bmein\s+monitor\b"
     # i18n-allow: German speech-input matching data
     r"|\b(?:mach|mache|erstelle|nimm)\s+(?:bitte\s+)?(?:einen\s+)?screenshot\b"
     r"|\bbildschirmfoto\s+(?:machen|aufnehmen|erstellen)\b"  # i18n-allow: DE input
@@ -182,7 +221,13 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\b(?:dieser|der)\s+knopf\b|\b(?:dieses|das)\s+menue\b"  # i18n-allow: DE input
     # read-out requests
     r"|\bwas\s+steht\s+(?:da|hier|dort|drin)\b|\bda\s+steht\b"
+    r"|\bwas\s+steht\s+(?:in|auf)\s+dies\w*\s+"
+    r"(?:fenster|dialog|tab|dokument)\b"
     r"|\blies\s+(?:mir\s+)?(?:das|dies|es|die\s+\w+)\b|\bvorlesen\b"  # i18n-allow: DE input
+    r"|\blies\s+(?:mir\s+)?(?:bitte\s+)?(?:dies\w*|das)\s+"
+    r"(?:fenster|dialog|tab|dokument)\b"  # i18n-allow: DE input
+    r"|\bpruef\w*\s+(?:bitte\s+)?[^.?!]{0,72}\b"
+    r"(?:bildschirm|monitor|fenster)\b"  # i18n-allow: DE input
     r"|\bwas\s+ist\s+das\s+(?:hier|da\s+auf)\b"  # i18n-allow: DE input
 
     # ---------------- Spanish ---------------- i18n-allow: Spanish speech-input matching data
@@ -190,8 +235,10 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bmirar\s+(?:esto|eso)\b|\becha(?:le)?\s+un\s+vistazo\b"
     r"|\bpuedes\s+ver\s+(?:esto|eso|mi\s+pantalla|la\s+pantalla)\b"
     r"|\bves\s+(?:esto|eso|mi\s+pantalla)\b|\bque\s+ves\b"
+    r"|\bque\s+ves\s+en\s+mi\s+(?:pantalla|monitor)\b"
     r"|\ben\s+(?:mi|la)\s+pantalla\b|\bmi\s+pantalla\b"
     r"|\b(?:haz|toma|captura)\s+(?:una\s+)?captura\s+de\s+pantalla\b"
+    r"|\banaliza\s+(?:esta\s+|esa\s+|la\s+)?captura\s+de\s+pantalla\b"
     r"|\bque\s+dice\s+(?:ahi|aqui|esto|eso)\b"
     r"|\blee\s+(?:esto|eso|el\s+\w+)\b"
     r"|\beste\s+error\b|\besta\s+ventana\s+de\s+error\b"
@@ -362,6 +409,9 @@ def classify(text: str, *, locale: str = "") -> IntentVerdict:
     """
     normalized = _normalize(text).strip()
     if not normalized:
+        return IntentVerdict(intent=VisualIntent.NONE, locale=locale)
+
+    if _SCREEN_CONTEXT_META_RE.search(normalized):
         return IntentVerdict(intent=VisualIntent.NONE, locale=locale)
 
     # Operating the desktop is Computer-Use's job.  This check precedes every

@@ -119,6 +119,30 @@ def test_unusable_window_rect_falls_back_to_the_monitor() -> None:
     assert DegradationCode.WINDOW_RECT_UNUSABLE in {d.code for d in degradations}
 
 
+def test_stale_offscreen_window_rect_falls_back_to_a_physical_monitor() -> None:
+    target, degradations = resolve_target(
+        VisualIntent.WINDOW,
+        monitors=MONITORS,
+        cursor_point=(1000, 500),
+        bar_point=None,
+        window=WindowFacts(
+            title="Disconnected display",
+            frame_rect=(20_000, 20_000, 1200, 900),
+        ),
+        window_handle=4242,
+    )
+
+    assert target.kind is TargetKind.MONITOR
+    assert target.bbox == (
+        PRIMARY["left"],
+        PRIMARY["top"],
+        PRIMARY["width"],
+        PRIMARY["height"],
+    )
+    assert target.window_handle is None
+    assert DegradationCode.WINDOW_RECT_UNUSABLE in {item.code for item in degradations}
+
+
 def test_screen_intent_never_narrows_to_the_window() -> None:
     """"Look at this" means the screen; only a window-scoped turn narrows."""
     target, _ = resolve_target(

@@ -30,12 +30,24 @@ _WDA_EXCLUDEFROMCAPTURE = 0x00000011
 CAPTURABLE_ENV = "JARVIS_CU_INDICATOR_CAPTURABLE"
 
 
+def _configure_user32(user32, ctypes, wintypes) -> None:
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    user32.SetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+
+
 def _user32():
     if os.name != "nt":
         return None
     import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
 
-    return ctypes.windll.user32  # type: ignore[attr-defined]
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    _configure_user32(user32, ctypes, wintypes)
+    return user32
 
 
 def harden_window(hwnd: int) -> bool:

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useEventStore } from "@/store/events";
@@ -6,6 +6,7 @@ import { useEventStore } from "@/store/events";
 type VoiceModeResp = {
   mode: string;
   realtime_available: boolean;
+  requires_webrtc_offer: boolean;
   active_provider: string | null;
   // Sidebar-footer display fields: pretty provider name + the model an idle
   // realtime session would use (configured pin or catalog default).
@@ -18,12 +19,45 @@ type VoiceModeResp = {
   transitioning: boolean;
 };
 
+const REALTIME_DISCOVERY_RETRY_WINDOW_MS = 5 * 60_000;
+const REALTIME_DISCOVERY_RETRY_MAX_MS = 10_000;
+
 export function useVoiceMode() {
   const qc = useQueryClient();
   const events = useEventStore((state) => state.events);
+  const realtimeDiscoveryStartedAt = useRef<number | null>(null);
   const q = useQuery<VoiceModeResp>({
     queryKey: ["voice-mode"],
-    queryFn: async () => (await fetch("/api/settings/voice-mode")).json(),
+    queryFn: async ({ signal }) =>
+      (
+        await fetch("/api/settings/voice-mode", {
+          cache: "no-store",
+          signal,
+        })
+      ).json(),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const discoveryPending =
+        data?.mode === "realtime" && data.realtime_available === false;
+      if (!discoveryPending) {
+        realtimeDiscoveryStartedAt.current = null;
+        return false;
+      }
+      const now = Date.now();
+      realtimeDiscoveryStartedAt.current ??= now;
+      if (
+        now - realtimeDiscoveryStartedAt.current >=
+        REALTIME_DISCOVERY_RETRY_WINDOW_MS
+      ) {
+        return false;
+      }
+      // Codex discovery can briefly report unavailable while its isolated
+      // login/runtime probe is still in flight during cold boot. Retry quickly
+      // once, then back off while a browser OAuth flow is still open.
+      const exponent = Math.max(0, query.state.dataUpdateCount - 1);
+      return Math.min(1_000 * 2 ** exponent, REALTIME_DISCOVERY_RETRY_MAX_MS);
+    },
+    refetchIntervalInBackground: false,
   });
   const m = useMutation({
     mutationFn: async (mode: string) => {
@@ -87,9 +121,10 @@ export function useVoiceMode() {
   return {
     mode: q.data?.mode ?? "pipeline",
     realtimeAvailable: q.data?.realtime_available ?? false,
+    requiresWebRtcOffer: q.data?.requires_webrtc_offer ?? false,
     // Distinguishes "the server SAID no realtime key" from "we never heard
     // back" (timeout/loading). Without it a failed status fetch showed the
-    // false claim "Realtime needs an API key" and looked like a locked
+    // false claim "Realtime needs provider setup" and looked like a locked
     // toggle on a machine that merely had a slow/broken backend moment.
     statusKnown: q.isSuccess,
     activeProvider: q.data?.active_provider ?? null,

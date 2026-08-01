@@ -64,7 +64,7 @@ def test_write_mandate_clarifying_question_is_kept():
     out = _unfulfilled_replacement(
         required_tool="contact-upsert",
         executed=set(),
-        response_text="Wie lautet Morgans vollständige E-Mail-Adresse?",  # i18n-allow
+        response_text="Wie lautet Sams vollständige E-Mail-Adresse?",  # i18n-allow
         suppressed=False,
         is_write=True,
         lang="de",

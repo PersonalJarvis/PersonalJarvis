@@ -38,8 +38,8 @@ from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider, sound_confirm
 
 
 def test_sound_confirm_accepts_sound_close_mishearing() -> None:
-    assert sound_confirm("hey ruben", "Hey Ruben") is True
-    assert sound_confirm("hey oben", "Hey Ruben") is True
+    assert sound_confirm("hey alex", "Hey Alex") is True
+    assert sound_confirm("hey oben", "Hey Alex") is True
     assert sound_confirm("hey nowa", "Hey Nova") is True
     assert sound_confirm("hey joe avis", "Hey Jarvis") is True
 
@@ -47,8 +47,8 @@ def test_sound_confirm_accepts_sound_close_mishearing() -> None:
 @pytest.mark.parametrize(
     ("heard", "phrase"),
     (
-        ("herum", "Hey Ruben"),
-        ("erhoben", "Hey Ruben"),
+        ("herum", "Hey Alex"),
+        ("erhoben", "Hey Alex"),
         ("henowa", "Hey Nova"),
         ("helatlas", "Hello Atlas"),
     ),
@@ -75,7 +75,7 @@ def test_sound_confirm_accepts_live_garbled_prefix_wakes(heard: str) -> None:
 
 
 def test_sound_confirm_rejects_unrelated_speech() -> None:
-    assert sound_confirm("vielen dank", "Hey Ruben") is False  # i18n-allow: utterance under test
+    assert sound_confirm("vielen dank", "Hey Alex") is False  # i18n-allow: utterance under test
 
 
 @pytest.mark.parametrize(
@@ -96,7 +96,7 @@ def test_alternative_known_prefix_still_needs_a_matching_core() -> None:
     assert sound_confirm("hi jarvis", "Hey Jarvis") is True
     assert sound_confirm("hallo jarvis", "Hey Jarvis") is True
     assert sound_confirm("hi servers", "Hey Jarvis") is False
-    assert sound_confirm("hey room", "Hey Ruben") is False
+    assert sound_confirm("hey room", "Hey Alex") is False
 
 
 def test_garbled_prefix_rescue_does_not_fish_the_core_from_longer_speech() -> None:
@@ -105,7 +105,7 @@ def test_garbled_prefix_rescue_does_not_fish_the_core_from_longer_speech() -> No
 
 def test_merged_phrase_rescue_never_accepts_the_bare_core() -> None:
     """The configured full phrase remains mandatory after a one-token merge."""
-    assert sound_confirm("ruben", "Hey Ruben") is False
+    assert sound_confirm("alex", "Hey Alex") is False
     assert sound_confirm("atlas", "Hello Atlas") is False
 
 
@@ -116,12 +116,12 @@ def test_unprefixed_wake_requires_strong_core_evidence() -> None:
 
 def test_sound_confirm_rejects_empty_free_transcript() -> None:
     # The free ear heard NOTHING — the grammar hit was noise, not speech.
-    assert sound_confirm("", "Hey Ruben") is False
+    assert sound_confirm("", "Hey Alex") is False
 
 
 def test_sound_confirm_finds_phrase_inside_longer_speech() -> None:
     # i18n-allow: German utterance under test
-    assert sound_confirm("ich sagte hey ruben gerade eben", "Hey Ruben") is True
+    assert sound_confirm("ich sagte hey alex gerade eben", "Hey Alex") is True
 
 
 # --- fake vosk runtime ----------------------------------------------------------

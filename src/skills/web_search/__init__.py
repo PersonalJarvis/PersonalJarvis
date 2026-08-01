@@ -6,22 +6,6 @@ the architecture decisions (Y-statement TL;DR in the file header).
 
 from __future__ import annotations
 
-from typing import Final
-
-# Single source of truth for the skill's risk classification.
-#
-# Anti-drift contract (see ADR-021 §Decision): this literal lives in
-# exactly one place across the whole skill package. ``skill.py`` imports
-# it via ``from . import RISK_TIER`` and binds it to every public-facing
-# surface (``SKILL_RISK_TIER`` module constant + ``WebSearchSkill.risk_tier``
-# class attribute).
-#
-# IMPORTANT: this definition MUST appear before the ``from .skill import …``
-# line below. ``skill.py`` resolves ``from . import RISK_TIER`` against the
-# *partially-initialised* package namespace at import time; reordering the
-# block would break the import.
-RISK_TIER: Final[str] = "monitor"
-
 from ._gemini_client import (
     DefaultGeminiClient,
     FakeGeminiClient,
@@ -37,14 +21,15 @@ from ._sanitize import (
     sanitize_query,
 )
 from ._voice_override import (
-    SearchSettings,
     VOICE_LATENCY_BUDGET_MS,
     VOICE_MAX_RESULTS,
     VOICE_MAX_SUMMARY_CHARS,
+    SearchSettings,
     apply_voice_override,
     scrub_for_speech,
 )
 from .skill import (
+    RISK_TIER,
     SKILL_NAME,
     SKILL_RISK_TIER,
     SKILL_VERSION,

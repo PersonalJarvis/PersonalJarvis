@@ -1,4 +1,4 @@
-"""Conductor-Smoke-Tests: Store CRUD + alle drei Handler + Runner + Seed-YAML."""
+﻿"""Conductor-Smoke-Tests: Store CRUD + alle drei Handler + Runner + Seed-YAML."""
 from __future__ import annotations
 
 import asyncio

@@ -142,7 +142,7 @@ def test_disabled_keeps_utterances_independent():
 
 def test_on_vad_speech_start_freezes_the_continuation_buffer():
     """The pre-dispatch ContinuationBuffer must get the SAME speech-resume freeze
-    as the in-flight ContinuationWindow. Live bug 2026-06-18 (session 241a1984):
+    as the in-flight ContinuationWindow. Live bug 2026-06-18 (session <SESSION_ID>):
     only the window was frozen on speech-start, so a slow-to-finalize fragment
     held by the buffer expired against its 8 s deadline and the turn split into
     an empty Turn 0. _on_vad_speech_start must call note_speech_resumed() on the

@@ -3,7 +3,7 @@ import { deriveAssistantName } from "./deriveAssistantName";
 
 describe("deriveAssistantName", () => {
   it("strips a wake prefix and title-cases", () => {
-    expect(deriveAssistantName("Hey Ruben")).toBe("Ruben");
+    expect(deriveAssistantName("Hey Alex")).toBe("Alex");
     expect(deriveAssistantName("hey computer")).toBe("Computer");
     expect(deriveAssistantName("ok friday")).toBe("Friday");
     expect(deriveAssistantName("Micron")).toBe("Micron");

@@ -69,6 +69,23 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   })),
   markPaneNotificationsRead: vi.fn(async () => 0),
   clearPaneNotifications: vi.fn(async () => undefined),
+  // The remembered terminal text size, read once per mounted workspace.
+  // Answers "nothing chosen yet" by default so these tests see the default
+  // size; the text-size tests give it a stored one.
+  fetchTerminalUiPreferences: vi.fn(async () => ({
+    terminal_font_size: 13,
+    stored: false,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
+  saveTerminalFontSize: vi.fn(async (size: number) => ({
+    terminal_font_size: size,
+    stored: true,
+    min: 10,
+    max: 20,
+    default: 13,
+  })),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -105,6 +122,7 @@ vi.mock("./AgenticTerminal", () => ({
     onArrangeStart,
     arranging,
     layoutBusy,
+    fontSize,
   }: {
     name: string;
     maximized?: boolean;
@@ -121,6 +139,7 @@ vi.mock("./AgenticTerminal", () => ({
     onArrangeStart?: (event: PointerEventLike) => void;
     arranging?: boolean;
     layoutBusy?: boolean;
+    fontSize?: number;
   }) => {
     paneRenders.set(name, (paneRenders.get(name) ?? 0) + 1);
     return (
@@ -138,6 +157,9 @@ vi.mock("./AgenticTerminal", () => ({
       // The real pane stops refitting its terminal while this is on. Read here
       // because it is the grid's job to say WHEN the geometry is in motion.
       data-layout-busy={layoutBusy ? "yes" : "no"}
+      // The size the terminal text is drawn at. Read here because the point of
+      // remembering it is that the PANES come back at that size.
+      data-font-size={String(fontSize ?? "")}
     >
       {name}
       {/* Stands for the pane header, which is the grip in the real component. */}
@@ -185,7 +207,6 @@ vi.mock("./AgenticTerminal", () => ({
     </div>
     );
   },
-  PaneStatusPill: () => <span>live</span>,
 }));
 
 import { AgenticGrid } from "./AgenticGrid";
@@ -500,7 +521,11 @@ describe("grid layout", () => {
     expect(box("Kai").left).toBe(75);
   });
 
-  it("wraps four tall full-screen TUIs into two balanced bands", async () => {
+  it("keeps four splits side by side — the row is the user's choice", async () => {
+    // Reported 2026-07-31: an aspect-ratio rule re-wrapped the workspace to
+    // 2 x 2 on the fourth "split right", moving a pane the user was reading to
+    // another row. The rule is gone — width alone wraps a workspace, so four
+    // panes in a 2K window stay in the one row the user built.
     const previous = globalThis.ResizeObserver;
     class AreaObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
@@ -517,9 +542,9 @@ describe("grid layout", () => {
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
       await waitFor(() =>
-        expect(box("Aria")).toMatchObject({ left: 0, top: 50, width: 50, height: 50 }),
+        expect(box("Aria")).toMatchObject({ left: 50, top: 0, width: 25, height: 100 }),
       );
-      expect(box("Kai")).toMatchObject({ left: 50, top: 50, width: 50, height: 50 });
+      expect(box("Kai")).toMatchObject({ left: 75, top: 0, width: 25, height: 100 });
     } finally {
       globalThis.ResizeObserver = previous;
     }
@@ -546,13 +571,14 @@ describe("grid layout", () => {
     expect(box("Vega").width).toBe(box("Nova").width);
   });
 
-  it("wraps a crowded workspace into two even bands", () => {
-    // 12 columns side by side are too narrow to read anything in, so they break
-    // into 6 above and 6 below.
+  it("wraps a crowded workspace by overflow, never by re-dealing", () => {
+    // 12 columns are past the ten-per-band ceiling, so the overflow starts a
+    // second band: ten above, two below. The first ten keep their places —
+    // filling greedily is what stops an opened pane from moving the others.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
     expect(box("T1")).toMatchObject({ left: 0, top: 0 });
-    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
     // Same parent for every pane — a pane that moves to another parent element
     // is remounted, and remounting kills the agent behind it.
     expect(screen.getByTestId("pane-cell-T12").parentElement).toBe(
@@ -582,7 +608,7 @@ describe("grid layout", () => {
     renderGrid(sessionWith(panes));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
-    expect(box("T7")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
   });
 });
 
@@ -818,7 +844,7 @@ describe("selecting several terminals", () => {
       session: sessionWith([["Nova", 0]]),
     });
     renderGrid();
-    fireEvent.click(screen.getByRole("button", { name: /Nova live/i }));
+    fireEvent.click(screen.getByTestId("prompt-target-Nova"));
     fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));
     fireEvent.click(screen.getByTestId("close-selected-terminals"));
@@ -1582,6 +1608,129 @@ describe("resizing the workspace", () => {
 
     await waitFor(() => expect(stored().panes).toEqual({ Mika: 0.5, New: 0.5 }));
   });
+
+  /*
+   * The workspace changes WITHOUT this grid doing it.
+   *
+   * A terminal opened by voice, closed by another client, or rearranged by the
+   * backend resuming after a restart arrives here as nothing but a new
+   * `session` prop — no callback ran, so nothing remapped the index-keyed
+   * column weights. This is how a closed pane's dragged width ended up on a
+   * different pane's column (2026-07-31: one pane squeezed, its nearly empty
+   * neighbour twice as wide).
+   */
+  it("keeps dragged widths with their panes when the workspace changes from outside", async () => {
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(
+        sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
+      );
+      // Drag the seam between Nova and Aria so Aria is the wide one.
+      dragSeamBy("pane-seam-column:1:2", 1200, 900);
+      expect(widthOf("Aria")).toBe(50);
+
+      // Mika goes away without this grid being asked — every index shifts.
+      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+
+      // Aria keeps the width it was dragged to; index-keyed weights would have
+      // handed it to Nova and squeezed Aria instead.
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
+  it("carries dragged widths across a reload behind which the workspace changed", () => {
+    // What an earlier session left behind: Aria dragged wide while Mika still
+    // existed. The reload happens after Mika was closed elsewhere, so the
+    // stored index-keyed widths no longer match the session being mounted.
+    window.localStorage.setItem(
+      WEIGHTS_KEY,
+      JSON.stringify({ columns: [1, 0.5, 1.5], bands: [], panes: {} }),
+    );
+    window.localStorage.setItem(
+      "jarvis.agenticIde.paneArrangement.v1.ide_test",
+      JSON.stringify({ Mika: 0, Nova: 1, Aria: 2 }),
+    );
+    const restore = measured(1800, 600);
+    try {
+      renderGrid(sessionWith([["Nova", 0], ["Aria", 1]]));
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not remap a second time when the session catches up with the grid's own action", async () => {
+    // The grid's own split remaps (and rebases) in the same breath as the
+    // request; the session prop then arrives describing the same arrangement.
+    // Reading that as fresh drift would remap already-remapped weights.
+    const next = sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]]);
+    vi.mocked(api.addTerminal).mockResolvedValue(next);
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
+      await waitFor(() => expect(stored().columns).toEqual([0.5, 0.5, 1]));
+
+      rerender({ session: next });
+
+      expect(stored().columns).toEqual([0.5, 0.5, 1]);
+      expect(widthOf("Mika")).toBe(25);
+      expect(widthOf("Nova")).toBe(50);
+    } finally {
+      restore();
+    }
+  });
+
+  it("waits out a seam drag before answering outside drift, then answers it", async () => {
+    const restore = measured(1800, 600);
+    try {
+      const { rerender } = renderGrid(
+        sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
+      );
+      dragSeamBy("pane-seam-column:1:2", 1200, 900);
+      expect(widthOf("Aria")).toBe(50);
+
+      // Grab a seam and, while the pointer is down, let the workspace change
+      // under the gesture. The remap must not fight the drag's direct painting
+      // — and must still land once the pointer is released.
+      holdSeam("pane-seam-column:0:1", 600);
+      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+      act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+
+      expect(widthOf("Aria")).toBe(75);
+      expect(widthOf("Nova")).toBe(25);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not read a rename as a rearrangement", async () => {
+    vi.mocked(api.renameTerminal).mockResolvedValue(
+      sessionWith([["Frontend", 0], ["Nova", 1]]),
+    );
+    const restore = measured(1000, 600);
+    try {
+      const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      expect(widthOf("Mika")).toBe(75);
+
+      fireEvent.click(screen.getByTestId("pane-rename-Mika"));
+      await waitFor(() =>
+        expect(api.renameTerminal).toHaveBeenCalledWith("Mika", "Frontend"),
+      );
+      rerender({ session: sessionWith([["Frontend", 0], ["Nova", 1]]) });
+
+      // The renamed pane keeps the width that was dragged for it — a remap
+      // here would have seen "Mika left, Frontend arrived" and reset it.
+      expect(widthOf("Frontend")).toBe(75);
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe("a workspace with far more panes than the window fits", () => {
@@ -1770,40 +1919,89 @@ describe("rearranging panes", () => {
     });
   }
 
-  it("swaps two panes when one is dropped in the middle of the other", async () => {
-    const swapped = sessionWith([
+  it("MOVES a pane past another one rather than exchanging the two", async () => {
+    // The whole point of dragging: one pane goes where it was dropped. A swap
+    // would send Nova back the other way, which nobody asked for (BUG-111).
+    const moved = sessionWith([
       ["Nova", 0],
       ["Mika", 1],
     ]);
-    vi.mocked(api.moveTerminal).mockResolvedValue(swapped);
+    vi.mocked(api.moveTerminal).mockResolvedValue(moved);
     const { onSessionChanged } = twoPlacedPanes();
 
     press("Mika", 100, 50);
-    move(300, 50); // the middle of Nova
+    move(380, 50); // carried well into Nova's right half
 
     // Mid-drag the grid says what the drop would do, before it happens.
-    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("swap");
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
     expect(screen.getByTestId("agentic-arrange-ghost").textContent).toContain("Mika");
     expect(screen.getByTestId("pane-Mika").dataset.arranging).toBe("yes");
 
     await release();
 
-    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "swap");
-    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(swapped));
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "right");
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(moved));
   });
 
-  it("places a pane beside another when it is dropped near an edge", async () => {
+  it("lands on the half of the target the pointer is in", async () => {
     vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
     twoPlacedPanes();
 
     press("Mika", 100, 50);
-    move(205, 50); // hard against Nova's left edge
+    move(240, 50); // Nova's left half
 
     expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("left");
 
     await release();
 
     expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "left");
+  });
+
+  it("swaps two panes when the drop is made with Shift held", async () => {
+    // Exchanging two panes is still worth having — it is the only move that
+    // leaves the grid's shape untouched — so it lives on the modifier, where it
+    // cannot happen to someone who did not ask for it.
+    const swapped = sessionWith([
+      ["Nova", 0],
+      ["Mika", 1],
+    ]);
+    vi.mocked(api.moveTerminal).mockResolvedValue(swapped);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
+    expect(screen.getByTestId("agentic-arrange-swap-hint")).toBeTruthy();
+
+    // The preview answers the modifier without the pointer moving at all.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+    });
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("swap");
+    expect(screen.queryByTestId("agentic-arrange-swap-hint")).toBeNull();
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "swap");
+  });
+
+  it("goes back to moving when Shift is let go mid-drag", async () => {
+    vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+    });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift" }));
+    });
+    expect(screen.getByTestId("pane-dropzone-Nova").dataset.zone).toBe("right");
+
+    await release();
+
+    expect(api.moveTerminal).toHaveBeenCalledWith("Mika", "Nova", "right");
   });
 
   it("reads the bottom of a pane as 'put it underneath'", async () => {
@@ -2057,5 +2255,396 @@ describe("renaming a pane", () => {
       ),
     );
     expect(onSessionChanged).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat view", () => {
+  /*
+   * The workspace read like a conversation: a rail of agents on the left, one
+   * pane on a centred stage, the prompt bar as the composer. What these tests
+   * pin is not the styling but the two contracts underneath it — switching
+   * modes must not remount a pane (a remount kills the coding agent), and
+   * every action the grid offers keeps working from the other mode.
+   */
+  const FOUR = sessionWith([
+    ["Mika", 0],
+    ["Nova", 1],
+    ["Aria", 2],
+    ["Kai", 3],
+  ]);
+
+  const cellClass = (name: string) =>
+    screen.getByTestId(`pane-cell-${name}`).className;
+
+  const toChat = () => fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+
+  it("starts in the grid, with the rail hidden", () => {
+    renderGrid(FOUR);
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    for (const name of ["Mika", "Nova", "Aria", "Kai"]) {
+      expect(cellClass(name)).not.toContain("hidden");
+    }
+  });
+
+  it("shows one pane on the stage and the rest in the rail", () => {
+    renderGrid(FOUR);
+    toChat();
+    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
+    // Mika is the prompt target, so it takes the stage; the others hide.
+    expect(cellClass("Mika")).not.toContain("hidden");
+    for (const name of ["Nova", "Aria", "Kai"]) {
+      expect(cellClass(name)).toContain("hidden");
+      // Hidden, never unmounted — the agent behind the pane lives on.
+      expect(screen.getByTestId(`pane-${name}`)).toBeTruthy();
+      expect(screen.getByTestId(`chat-rail-${name}`)).toBeTruthy();
+    }
+  });
+
+  it("uses the live task recap as the rail title and follows it with the agent logo", async () => {
+    const mixed = sessionWith([
+      ["Mika", 0],
+      ["Nova", 1],
+    ]);
+    mixed.terminals[1] = {
+      ...mixed.terminals[1],
+      agent: "codex",
+      display_name: "Codex",
+    };
+    vi.mocked(api.fetchTerminalRecaps).mockResolvedValue({
+      workspace_id: "ide_test",
+      terminals: [
+        {
+          key: "nova",
+          name: "Nova",
+          status: "live",
+          recap: "Fix provider selection priority",
+          recap_detail: "Correct the fallback order used by the provider picker.",
+        },
+      ],
+    });
+
+    renderGrid(mixed);
+    toChat();
+
+    const title = await screen.findByTestId("chat-rail-title-Nova");
+    expect(title.textContent).toBe("Fix provider selection priority");
+    const mark = title.nextElementSibling;
+    expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
+    expect(mark?.querySelector("img")?.getAttribute("src")).toBe(
+      "/provider-logos/openai.svg",
+    );
+  });
+
+  it("uses the last prompt as the title while a recap is not available", () => {
+    const session = sessionWith([["Mika", 0]]);
+    session.terminals[0].last_prompt = "Analyze transcription omissions";
+
+    renderGrid(session);
+    toChat();
+
+    expect(screen.getByTestId("chat-rail-title-Mika").textContent).toBe(
+      "Analyze transcription omissions",
+    );
+  });
+
+  it("keeps the very same pane elements across a switch and back", () => {
+    renderGrid(FOUR);
+    const before = screen.getByTestId("pane-Nova");
+    toChat();
+    expect(screen.getByTestId("pane-Nova")).toBe(before);
+    toChat();
+    // Element identity is the mounting guarantee: a remounted pane would be a
+    // NEW element, and a new element means the WebSocket died with the old one.
+    expect(screen.getByTestId("pane-Nova")).toBe(before);
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    expect(cellClass("Kai")).not.toContain("hidden");
+  });
+
+  it("a rail click puts that pane on the stage", () => {
+    renderGrid(FOUR);
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
+    expect(cellClass("Aria")).not.toContain("hidden");
+    expect(cellClass("Mika")).toContain("hidden");
+  });
+
+  it("remembers the chosen view for the next workspace", () => {
+    renderGrid(FOUR);
+    toChat();
+    cleanup();
+    renderGrid(FOUR);
+    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
+  });
+
+  it("maximize on the stage hands over to the grid, maximized", () => {
+    renderGrid(FOUR);
+    toChat();
+    fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("yes");
+  });
+
+  it("the rail's plus opens a terminal at the end of the row", async () => {
+    renderGrid(FOUR, {
+      agents: [{ name: "claude", displayName: "Claude Code", installed: true }],
+    });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "claude",
+      }),
+    );
+  });
+
+  it("does not guess a no-anchor CLI while metadata is unavailable", () => {
+    renderGrid(FOUR);
+    toChat();
+
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+
+    expect(api.addTerminal).not.toHaveBeenCalled();
+    expect(pushToast).toHaveBeenCalledWith(
+      "warning",
+      "Terminal choices are still loading. Try again in a moment.",
+    );
+  });
+
+  /*
+   * The rail's plus offers the same choice the grid's split buttons do.
+   *
+   * It used to open whatever CLI the backend listed first, so a workspace read
+   * in chat view could only ever grow more panes of that one agent — the one
+   * thing the grid had been asking about since the split menus landed.
+   */
+  const CLI_CHOICES = [
+    { name: "claude", displayName: "Claude Code", installed: true },
+    { name: "codex", displayName: "Codex", installed: true },
+    {
+      name: "shell",
+      displayName: "Plain Terminal",
+      installed: false,
+      kind: "shell",
+    },
+  ];
+
+  it("the rail's plus asks which CLI when more than one is installed", async () => {
+    renderGrid(FOUR, { agents: CLI_CHOICES });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+
+    // Uninstalled entries stay listed but disabled, so the absence is visible.
+    expect(
+      screen.getByTestId("chat-rail-new-shell").getAttribute("aria-disabled"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByTestId("chat-rail-new-codex"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+    // The menu closes with the pick — it was a question, and it was answered.
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+  });
+
+  it("the rail's plus just opens one when a single CLI is installed", async () => {
+    // A menu with one entry is a click tax, not a choice.
+    renderGrid(FOUR, {
+      agents: [{ ...CLI_CHOICES[0], installed: false }, CLI_CHOICES[1]],
+    });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+  });
+
+  it("an empty workspace opens its only installed non-Claude CLI", async () => {
+    renderGrid(sessionWith([]), {
+      agents: [{ ...CLI_CHOICES[0], installed: false }, CLI_CHOICES[1]],
+    });
+
+    fireEvent.click(screen.getByTestId("empty-workspace-new-terminal"));
+
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+  });
+
+  it("shows setup state instead of guessing when no CLI is installed", () => {
+    renderGrid(sessionWith([]), {
+      agents: CLI_CHOICES.map((choice) => ({ ...choice, installed: false })),
+    });
+
+    fireEvent.click(screen.getByTestId("empty-workspace-new-terminal"));
+
+    expect(
+      screen.getByText("No terminal or coding CLI is available on this machine."),
+    ).toBeTruthy();
+    expect(api.addTerminal).not.toHaveBeenCalled();
+  });
+
+  it("leaving chat view closes an open picker", () => {
+    renderGrid(FOUR, { agents: CLI_CHOICES });
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
+    expect(screen.getByTestId("chat-rail-agent-menu")).toBeTruthy();
+    toChat();
+    // The button that opened it just left the screen; it must not be waiting
+    // there on the way back.
+    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
+  });
+
+  /*
+   * Closing ONE terminal from the rail.
+   *
+   * Chat view shows a single pane and hides the other eleven — and with them
+   * the pane header that used to be the only per-terminal close. So the rail
+   * carries its own, and it goes through the same confirmation as the header:
+   * closing a pane kills whatever its agent was doing, and there is no undo.
+   */
+  it("closes one terminal from its row in the rail", async () => {
+    const survivors = sessionWith([
+      ["Mika", 0],
+      ["Nova", 1],
+      ["Kai", 3],
+    ]);
+    vi.mocked(api.closeTerminal).mockResolvedValue(survivors);
+    const { onSessionChanged } = renderGrid(FOUR);
+    toChat();
+
+    fireEvent.click(screen.getByTestId("chat-rail-close-Aria"));
+    // Asked, never done on the spot — closing a pane kills a working agent.
+    expect(api.closeTerminal).not.toHaveBeenCalled();
+    expect(screen.getByText(/Close Aria\?/)).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("confirm-close-terminal-confirm"));
+    await waitFor(() => expect(api.closeTerminal).toHaveBeenCalledWith("Aria"));
+    // The grid does not own the workspace; it reports the new one upwards.
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(survivors));
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-close-terminal")).toBeNull(),
+    );
+  });
+
+  it("keeps the rail's close out of selection mode", () => {
+    // That mode is here to close SEVERAL panes; a per-row close beside a
+    // checkbox is two answers to one question.
+    renderGrid(FOUR);
+    toChat();
+    expect(screen.getByTestId("chat-rail-close-Nova")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
+
+    expect(screen.queryByTestId("chat-rail-close-Nova")).toBeNull();
+  });
+
+  it("an emptied workspace asks the same question", async () => {
+    // The message shown when every pane is closed opens a terminal too, and it
+    // is the only way back — so it offers the same list rather than guessing.
+    renderGrid(sessionWith([]), { agents: CLI_CHOICES });
+    fireEvent.click(screen.getByTestId("empty-workspace-new-terminal"));
+    fireEvent.click(screen.getByTestId("empty-workspace-new-codex"));
+    await waitFor(() =>
+      expect(api.addTerminal).toHaveBeenCalledWith({
+        anchor: undefined,
+        direction: "right",
+        agent: "codex",
+      }),
+    );
+  });
+});
+
+describe("terminal text size", () => {
+  const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
+
+  beforeEach(() => {
+    // Restated per test: `clearAllMocks` empties the call list but keeps the
+    // implementation, so a size one test stores would still be answered to the
+    // next one.
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 13,
+      stored: false,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(FONT_KEY);
+  });
+
+  const openViewMenu = () =>
+    fireEvent.click(screen.getByTestId("agentic-view-menu"));
+
+  it("opens the panes at the size the backend remembers", async () => {
+    // The reason this comes from the backend and not from localStorage: the
+    // desktop window is a WebView that starts every run with empty browser
+    // storage, so a size kept only in the page is gone after each restart.
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 17,
+      stored: true,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+    renderGrid();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("17"),
+    );
+    openViewMenu();
+    expect(screen.getByTestId("agentic-view-menu-panel").textContent).toContain("17");
+  });
+
+  it("hands a newly chosen size to the backend", async () => {
+    renderGrid();
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+
+    openViewMenu();
+    fireEvent.click(screen.getByLabelText("Larger text"));
+
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(14));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("14");
+  });
+
+  it("adopts a size chosen before the backend remembered them", async () => {
+    // Upgrade path. Somebody who set 16 in an older build has that number in
+    // this window's storage and nowhere else; the first read must hand it over
+    // rather than let the default quietly replace it.
+    window.localStorage.setItem(FONT_KEY, "16");
+    renderGrid();
+
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(16));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("16");
+  });
+
+  it("keeps working when the size cannot be read", async () => {
+    // An older backend, or a request that failed. The panes still open and the
+    // buttons still resize them â€” only the memory is missing.
+    vi.mocked(api.fetchTerminalUiPreferences).mockRejectedValue(new Error("404"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderGrid();
+
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    openViewMenu();
+    fireEvent.click(screen.getByLabelText("Smaller text"));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("12");
+    warn.mockRestore();
   });
 });

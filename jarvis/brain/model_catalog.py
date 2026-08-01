@@ -466,7 +466,8 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 }
 
 # Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
-# provider id (``openai-realtime`` / ``gemini-live``).
+# provider id (``codex-subscription-realtime`` / ``openai-realtime`` /
+# ``gemini-live``).
 # Realtime needs BOTH a
 # model AND a voice selection per provider (unlike every other picker, which
 # serves ONE selection), so these two dicts are looked up directly by the
@@ -487,6 +488,12 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # they target dedicated translation/transcription sessions, not the general
 # duplex voice-agent protocol implemented by this adapter.
 REALTIME_MODELS: dict[str, list[ModelInfo]] = {
+    # Codex 0.146's experimental v1 subscription transport has its own fixed
+    # model/voice contract. Keep it separate from the metered OpenAI Realtime
+    # API catalog: their accepted voice sets are not interchangeable.
+    "codex-subscription-realtime": _curated(
+        [("gpt-realtime-1.5", "GPT Realtime 1.5 (Codex default)")]
+    ),
     "openai-realtime": _curated(
         [
             ("gpt-realtime", "GPT Realtime (default)"),
@@ -529,6 +536,22 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # gemini-live: verified 2026-07-10 against the Live API capabilities guide,
 # which now permits the complete 30-voice Gemini prebuilt roster.
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
+    # Codex app-server realtime v1 voices. ``cove`` is the v1 default, so it
+    # leads the picker just as each realtime model catalog leads with its
+    # adapter default.
+    "codex-subscription-realtime": _ids(
+        [
+            "cove",
+            "juniper",
+            "maple",
+            "spruce",
+            "ember",
+            "vale",
+            "breeze",
+            "arbor",
+            "sol",
+        ]
+    ),
     "openai-realtime": _ids(
         [
             "alloy",

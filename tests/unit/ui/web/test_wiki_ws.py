@@ -70,13 +70,13 @@ def test_publishes_forwarded_to_single_client(client_bus):
         _publish_from_thread(
             client,
             bus,
-            WikiPageChanged(slug="morgan", path="entities/morgan.md", kind="modified"),
+            WikiPageChanged(slug="sam", path="entities/sam.md", kind="modified"),
         )
         msg = ws.receive_json()
         assert msg == {
             "type": "page_changed",
-            "slug": "morgan",
-            "path": "entities/morgan.md",
+            "slug": "sam",
+            "path": "entities/sam.md",
             "kind": "modified",
         }
 
@@ -196,10 +196,10 @@ def test_unrelated_event_does_not_appear(client_bus):
         _publish_from_thread(
             client,
             bus,
-            WikiPageChanged(slug="morgan", path="entities/morgan.md", kind="modified"),
+            WikiPageChanged(slug="sam", path="entities/sam.md", kind="modified"),
         )
         msg = ws.receive_json()
-        assert msg["slug"] == "morgan"
+        assert msg["slug"] == "sam"
         # No further events were published, so the receive queue
         # should be empty. We can't usefully assert "nothing arrives"
         # without a timeout knob on receive_json, so we just confirm

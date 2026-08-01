@@ -505,10 +505,10 @@ class SpawnWorkerTool:
         if not utterance:
             return ToolResult(success=False, error="empty utterance")
 
-        # Context-bleed guard (forensic 2026-06-20): under a full provider
+        # Context-bleed guard: under a full provider
         # collapse the turn ran on a degraded fallback model fed a long prior
-        # context, which echoed a PREVIOUS request (a relocation-research ask)
-        # into the spawn args although the user had just said "Mask it up" — the
+        # context, which echoed a previous synthetic research request
+        # into the spawn args although the user had requested a formatting task — the
         # worker then built an entirely foreign task. ``ctx.user_utterance`` is
         # the verbatim transcribed turn: the ground truth for what was just
         # said. When the brain's utterance shares no content word with it, the

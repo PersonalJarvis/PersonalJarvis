@@ -1,10 +1,10 @@
 """The name of THIS machine, the way its owner named it.
 
 Why this needs its own module: the obvious sources are all wrong for a label a
-human reads. ``Path.home().name`` gives an account name such as "alice",
+human reads. ``Path.home().name`` gives the account name ("Administrator"),
 which says nothing about the device. ``platform.node()`` gives the network
 hostname, which on macOS is a mangled derivative ("studio-macbook.local", or
-worse "Studio-MacBook-Pro-2.example.lan"). What the owner actually set —
+worse "Studio-MacBook-Pro-2.example.net"). What the owner actually set —
 "Studio MacBook" — lives in a per-OS place:
 
 * **macOS**   ``scutil --get ComputerName`` (the Sharing pane's "Computer Name")

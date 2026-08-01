@@ -42,7 +42,7 @@ def test_upsert_creates_and_roundtrips(store: ContactStore) -> None:
         name="Christoph Meyer",
         relationship="friend",
         email="christoph@example.com",
-        phone="+1 202-555-0101",
+        phone="+49 151 2345 6789",
         note="My oldest friend.",
     )
     assert isinstance(c, Contact)
@@ -50,7 +50,7 @@ def test_upsert_creates_and_roundtrips(store: ContactStore) -> None:
     assert c.slug == "christoph_meyer"
     assert c.relationship == "friend"
     assert c.emails == ["christoph@example.com"]
-    assert c.phones == ["+12025550101"]  # E.164-normalised (separators stripped)
+    assert c.phones == ["+4915123456789"]  # E.164-normalised (separators stripped)
     assert c.note_md.strip() == "My oldest friend."
 
     # Survives a fresh store instance (real file persistence).
@@ -58,7 +58,7 @@ def test_upsert_creates_and_roundtrips(store: ContactStore) -> None:
     again = fresh.get("christoph_meyer")
     assert again is not None
     assert again.primary_email == "christoph@example.com"
-    assert again.primary_phone == "+12025550101"
+    assert again.primary_phone == "+4915123456789"
 
 
 def test_upsert_twice_updates_same_record_and_merges(store: ContactStore) -> None:
@@ -189,10 +189,10 @@ def test_delete_returns_true_then_false(store: ContactStore) -> None:
 
 def test_render_for_prompt_lists_names_and_relationship(store: ContactStore) -> None:
     store.upsert(name="Christoph", relationship="friend")
-    store.upsert(name="Casey", relationship="colleague")
+    store.upsert(name="Jordan", relationship="colleague")
     block = store.render_for_prompt()
     assert "Christoph" in block
-    assert "Casey" in block
+    assert "Jordan" in block
     assert "friend" in block
     assert "colleague" in block
     # Detail (emails/phones) is fetched on demand, not injected into the prompt.

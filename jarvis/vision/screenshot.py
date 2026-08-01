@@ -25,11 +25,18 @@ import hashlib
 import io
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
 from jarvis.core.protocols import CancelToken, Observation
+from jarvis.core.win32_dpi import (
+    ensure_dpi_awareness as _ensure_dpi_awareness,
+)
+from jarvis.core.win32_dpi import (
+    per_monitor_dpi_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +91,17 @@ def warn_if_screen_recording_denied() -> bool:
 # without changes.
 # ---------------------------------------------------------------------------
 
-from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness  # noqa: E402
-
 # ---------------------------------------------------------------------------
 # ScreenshotSource
 # ---------------------------------------------------------------------------
 
 MonitorStrategy = Literal["foreground", "primary", "all"]
+
+
+@dataclass(frozen=True, slots=True)
+class _CapturedImage:
+    image_bytes: bytes
+    monitor_geom: tuple[int, int, int, int]
 
 
 def cu_capture_strategy(monitor_policy: str) -> MonitorStrategy:
@@ -261,7 +272,7 @@ def _mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
     """Default grabber: capture an arbitrary screen rectangle via mss."""
     import mss  # type: ignore[import-not-found]  # noqa: PLC0415
 
-    with mss.mss() as sct:
+    with per_monitor_dpi_context(), mss.mss() as sct:
         raw = sct.grab(bbox)
     return (tuple(raw.size), raw.rgb)
 
@@ -371,13 +382,14 @@ class ScreenshotSource:
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
         # Screenshot is synchronous — thread pool because of blocking GDI calls.
-        image_bytes = await asyncio.to_thread(self._capture_image)
+        captured = await asyncio.to_thread(self._capture_image)
 
         # _capture_image returns None on a transient BitBlt / GDI error.
         # Propagate None upward so the engine/context_provider can skip the
         # frame gracefully without a traceback.
-        if image_bytes is None:
+        if captured is None:
             return None
+        image_bytes = captured.image_bytes
 
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
@@ -412,7 +424,7 @@ class ScreenshotSource:
             pruning_stats={"nodes_before": 0, "nodes_after": 0, "depth_used": 0},
             # Thread the EXACT captured monitor so clicks map back to THIS screen
             # (mixed-DPI / multi-monitor consistency, live bug 2026-06-28).
-            monitor_geom=getattr(self, "_last_capture_monitor", (0, 0, 0, 0)),
+            monitor_geom=captured.monitor_geom,
         )
 
     async def close(self) -> None:
@@ -420,8 +432,8 @@ class ScreenshotSource:
 
     # ---- Internals ---------------------------------------------------------
 
-    def _capture_image(self) -> bytes | None:
-        """Blocking: takes a primary-monitor capture and returns image bytes.
+    def _capture_image(self) -> _CapturedImage | None:
+        """Blocking: capture image bytes and their immutable monitor geometry.
 
         Format is `self._image_format` — JPEG q85 default (8x smaller than PNG
         at identical token cost, since Claude/GPT/Gemini bill by pixel area,
@@ -462,18 +474,14 @@ class ScreenshotSource:
 
         monitor_id: str = "unknown"
         try:
-            with mss.mss() as sct:
+            with per_monitor_dpi_context(), mss.mss() as sct:
                 target = self._select_capture_monitor(sct.monitors)
                 # Keep a human-readable monitor identity for the warning message.
                 monitor_id = (
                     f"left={target.get('left', '?')},top={target.get('top', '?')},"
                     f"{target.get('width', '?')}x{target.get('height', '?')}"
                 )
-                # Record the EXACT monitor this frame was captured from so the
-                # click-coordinate resolver maps the model's 0-1000 coords back to
-                # THIS screen — not a separately-derived monitor that can diverge
-                # on a mixed-DPI / multi-monitor desktop (live bug 2026-06-28).
-                self._last_capture_monitor = (
+                monitor_geom = (
                     int(target.get("left", 0)), int(target.get("top", 0)),
                     int(target.get("width", 0)), int(target.get("height", 0)),
                 )
@@ -506,7 +514,7 @@ class ScreenshotSource:
             img.save(buf, format="JPEG", quality=self._jpeg_quality, optimize=False)
         else:
             img.save(buf, format="PNG", optimize=False, compress_level=1)
-        return buf.getvalue()
+        return _CapturedImage(buf.getvalue(), monitor_geom)
 
     def _select_capture_monitor(self, monitors: list[dict]) -> dict:
         """Delegates to the module function, so other paths

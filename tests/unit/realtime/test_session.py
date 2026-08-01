@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
 from jarvis.core import runtime_refs
 from jarvis.core.events import (
@@ -326,6 +327,43 @@ async def test_open_injects_active_providers_model_and_voice():
     ready = next(message for message in messages if message["type"] == "audio_ready")
     assert ready["provider"] == "fake"
     assert ready["model"] == "gpt-realtime-2.1"
+
+
+@pytest.mark.asyncio
+async def test_browser_webrtc_offer_reaches_provider_and_answer_returns_in_ready():
+    class AnswerProvider(FakeProvider):
+        requires_webrtc_offer = True
+
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = FakeSession(self._events)
+            self.session.answer_sdp = "v=0\r\no=provider-answer"
+            return self.session
+
+    messages = []
+    provider = AnswerProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="s-webrtc-sdp",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control(
+        {
+            "type": "audio_start",
+            "sample_rate": 48_000,
+            "webrtc_offer_sdp": "v=0\r\no=browser-offer",
+        }
+    )
+
+    assert provider.opened_with.transport_offer_sdp == "v=0\r\no=browser-offer"
+    ready = next(message for message in messages if message["type"] == "audio_ready")
+    assert ready["webrtc_answer_sdp"] == "v=0\r\no=provider-answer"
+    assert ready["requires_webrtc_answer"] is True
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
@@ -2026,7 +2064,7 @@ def test_delegate_history_keeps_a_task_five_exchanges_back():
         "Write that to the wiki.",
         "Write the last transcript to the wiki.",
         "Kannst du bitte mein Wiki-System eintragen, "  # i18n-allow: German speech-input fixture
-        "dass ich morgen nach Example City "  # i18n-allow: German speech-input fixture
+        "dass ich morgen nach San Francisco "  # i18n-allow: German speech-input fixture
         "reisen will?",  # i18n-allow: German speech-input fixture
     ],
 )
@@ -2332,7 +2370,7 @@ async def test_generative_voice_provider_mute_still_falls_back_to_surface_tts():
     elapsed = asyncio.get_event_loop().time() - start
     assert elapsed >= 2.0, "surface TTS claimed the reply before the wait window"
     spoken = [m for m in jsons if m.get("type") == "error_spoken"]
-    assert [m["text"] for m in spoken] == [reply]
+    assert [m["text"] for m in spoken] == [scrub_for_voice(reply).cleaned]
     assert binaries == []
     provider.session.release.set()
     await sess.end(reason="test")
@@ -2549,9 +2587,9 @@ class _TwoTurnClarifyProvider(FakeProvider):
 @pytest.mark.asyncio
 async def test_short_answer_to_delegate_clarify_question_is_delegated():
     brain = FakeBrain(
-        replies=("Which trip do you mean?", "Saved the Example City trip.")
+        replies=("Which trip do you mean?", "Saved the San Francisco trip.")
     )
-    provider = _TwoTurnClarifyProvider("The one to Example City")
+    provider = _TwoTurnClarifyProvider("The one to San Francisco")
     sess = _session(provider, brain=brain)
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
@@ -2560,7 +2598,7 @@ async def test_short_answer_to_delegate_clarify_question_is_delegated():
 
     assert [call[0] for call in brain.calls] == [
         "Write the travel plan to my wiki.",
-        "The one to Example City",
+        "The one to San Francisco",
     ]
     await sess.end(reason="test")
 
@@ -2675,7 +2713,7 @@ async def test_multi_final_transcript_waits_for_provider_turn_boundary():
             await asyncio.sleep(0.12)
             yield RealtimeEvent(
                 type="input_transcript",
-                text="that I travel to Example City tomorrow",
+                text="that I travel to San Francisco tomorrow",
                 is_final=True,
             )
             yield RealtimeEvent(type="turn_complete")
@@ -2696,7 +2734,7 @@ async def test_multi_final_transcript_waits_for_provider_turn_boundary():
     await asyncio.sleep(0.2)
 
     assert brain.calls[0][0] == (
-        "Write this to my wiki that I travel to Example City tomorrow"
+        "Write this to my wiki that I travel to San Francisco tomorrow"
     )
     await sess.end(reason="test")
 
@@ -2825,7 +2863,7 @@ async def test_action_result_that_outlived_its_turn_is_still_spoken():
             return await super().generate(text, **kwargs)
 
     brain = _SignallingBrain(
-        replies=("Stored on your page: flight to Example City tomorrow.",),
+        replies=("Stored on your page: flight to San Francisco tomorrow.",),
         gate=gate,
     )
     provider = _InterjectionProvider(
@@ -2844,7 +2882,7 @@ async def test_action_result_that_outlived_its_turn_is_still_spoken():
     await sess.wait_finished()
 
     spoken = provider.session.text_inputs[-1]
-    assert "Stored on your page: flight to Example City tomorrow." in spoken
+    assert "Stored on your page: flight to San Francisco tomorrow." in spoken
     assert "<trusted_action_result>" in spoken
     assert "earlier request" in spoken
     await sess.end(reason="test")
@@ -3734,7 +3772,7 @@ async def test_gate_miss_lets_the_model_reach_the_wiki_through_jarvis_action():
     """A vague follow-up the planner cannot classify must still reach the brain."""
     from jarvis.brain.turn_planner import plan_turn
 
-    utterance = "Was steht da drin?"  # i18n-allow: German speech-input fixture
+    utterance = "Und was ist damit?"  # i18n-allow: German speech-input fixture
     assert plan_turn(utterance).requires_orchestrator is False
 
     brain = FakeBrain(replies=("Your wiki holds pages about you and Lukas.",))
@@ -3870,6 +3908,30 @@ async def test_garbled_wiki_follow_up_inherits_session_context_and_delegates():
     await asyncio.sleep(0.02)
 
     assert provider.session.required_tools == []
+    assert brain.calls[0][0] == utterance
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_mode", ["delegate", "direct"])
+async def test_screen_context_always_uses_deterministic_brain_turn(tool_mode: str):
+    """The realtime model never answers a visual turn without the image."""
+    utterance = "Schau dir bitte meinen Bildschirm an."  # i18n-allow: DE input
+    brain = FakeBrain(replies=("The current screen shows the settings view.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text=utterance, is_final=True),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain, tool_mode=tool_mode)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert provider.session.response_requests == 0
     assert brain.calls[0][0] == utterance
     assert "<trusted_action_result>" in provider.session.text_inputs[-1]
     await sess.end(reason="test")
@@ -4749,7 +4811,7 @@ async def test_scrub_cancel_fallback_carries_the_active_voice_hint():
 
 
 # ---------------------------------------------------------------------------
-# User agent-instructions (the Ruben.md-equivalent file) in the realtime path
+# User agent-instructions (the Alex.md-equivalent file) in the realtime path
 # ---------------------------------------------------------------------------
 
 

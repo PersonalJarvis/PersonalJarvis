@@ -18,7 +18,7 @@ import type { JarvisAgentWorkerSnapshot } from "@/types/missions";
 // A different arbitrary name than the sibling test file on purpose: the brand
 // must follow ANY wake-word-derived assistant name, not one blessed value.
 beforeEach(() => {
-  useEventStore.setState({ assistantName: "Morgan" });
+  useEventStore.setState({ assistantName: "Sam" });
 });
 
 afterEach(() => {
@@ -50,7 +50,7 @@ describe("JarvisAgentPanel", () => {
   it("shows the empty state when no mission is selected", () => {
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Select a mission to see Morgan-Agent workers."),
+      screen.getByText("Select a mission to see Sam-Agent workers."),
     ).toBeDefined();
   });
 
@@ -61,7 +61,7 @@ describe("JarvisAgentPanel", () => {
     });
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("No Morgan-Agent workers in this mission."),
+      screen.getByText("No Sam-Agent workers in this mission."),
     ).toBeDefined();
   });
 

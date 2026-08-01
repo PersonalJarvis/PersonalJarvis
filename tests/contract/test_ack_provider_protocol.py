@@ -28,6 +28,7 @@ import pytest
 
 from jarvis.brain.ack_brain.config import (
     GeminiAckProviderConfig,
+    GrokAckProviderConfig,
     OllamaAckProviderConfig,
     OpenAIAckProviderConfig,
 )
@@ -35,6 +36,7 @@ from jarvis.brain.ack_brain.providers import (
     REGISTRY,
     AbstractAckProvider,
     GeminiFlashAck,
+    GrokFlashAck,
     OllamaFlashAck,
     OpenAIMiniAck,
 )
@@ -50,6 +52,11 @@ def _config_for(provider_name: str) -> Any:
     if provider_name == "gemini":
         return GeminiAckProviderConfig(
             model="gemini-3.1-flash", max_output_tokens=_MAX_TOKENS_FIXTURE
+        )
+    if provider_name == "grok":
+        return GrokAckProviderConfig(
+            model="grok-4.20-0309-non-reasoning",
+            max_output_tokens=_MAX_TOKENS_FIXTURE,
         )
     if provider_name == "openai":
         return OpenAIAckProviderConfig(
@@ -276,7 +283,7 @@ def _wire_adapter(
                 else None
             ),
         )
-    if provider_name == "openai":
+    if provider_name in {"grok", "openai"}:
         fake = _install_openai_fake(monkeypatch)
         _install_secret_fake(monkeypatch)
         adapter = cls(config)
@@ -337,7 +344,7 @@ def test_every_adapter_satisfies_abstract_protocol(
 def test_registry_contains_all_known_adapter_classes() -> None:
     """Adapter classes are also directly importable — sanity guard against
     accidental removal from the package ``__all__``."""
-    expected = {GeminiFlashAck, OpenAIMiniAck, OllamaFlashAck}
+    expected = {GeminiFlashAck, GrokFlashAck, OpenAIMiniAck, OllamaFlashAck}
     assert set(REGISTRY.values()) == expected
 
 

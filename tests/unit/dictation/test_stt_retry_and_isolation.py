@@ -393,7 +393,7 @@ def test_the_dictation_provider_is_built_without_the_voice_bias_prompt(
     monkeypatch.setattr(stt_plugins, "build_stt_from_config", _build)
     monkeypatch.setattr(stt_plugins, "resolve_keyed_stt_fallback", lambda *_a, **_k: ())
     pipe = _pipeline_with_config(
-        provider="groq-api", bias_prompt="Jarvis, Adex, Ruben, Vokando"
+        provider="groq-api", bias_prompt="Jarvis, Adex, Alex, Vokando"
     )
 
     instance = pipe._dictation_stt()
@@ -401,7 +401,7 @@ def test_the_dictation_provider_is_built_without_the_voice_bias_prompt(
     assert instance is not None
     assert seen and seen[0].bias_prompt == ""
     # The VOICE config is untouched — this is a copy, not a mutation.
-    assert pipe._config.stt.bias_prompt == "Jarvis, Adex, Ruben, Vokando"
+    assert pipe._config.stt.bias_prompt == "Jarvis, Adex, Alex, Vokando"
 
 
 def test_the_dictation_provider_is_built_once_and_cached(

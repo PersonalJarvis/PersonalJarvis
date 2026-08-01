@@ -280,7 +280,7 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
 # Minimum word count of the live partial past which we treat the utterance as a
 # long dictation (not a short command) and grant it the wider silence window. A
 # short command (e.g. "open Chrome", "hang up") never reaches it → stays snappy.
-# Lowered 12 → 7 (live bug 2026-06-18, session b34a4bba): the 10-word question
+# Lowered 12 → 7 (live bug 2026-06-18, session <SESSION_ID>): the 10-word question
 # "Hey Jarvis, was geht ab? Kannst du mir bitte mal …" fell just under the old
 # 12-word threshold, got only the base 1.5 s window, and was cut mid-sentence
 # when the user paused to think after "mal". 7 still keeps every ordinary 2–6
@@ -1110,6 +1110,20 @@ def accept_recognition_reading(*, language: str, probability: float) -> str:
 # back, which is a far better answer than a silent minute of waiting.
 _DICTATION_FINAL_DEAD_PIECES = 2
 
+# The floor a final-pass transcript must reach, in spoken tokens per second of
+# VOICED audio, before it is believed to cover its window. Even slow, careful
+# dictation runs well above one word per second while actually speaking (pauses
+# are excluded — only the voiced runs count), so a window that comes back below
+# this is missing speech, not hearing a slow speaker. gpt-4o-class recognizers
+# have a reproducible failure mode behind it: audio with a sustained
+# mid-recording pause is transcribed up to the pause and everything after it is
+# silently dropped (live 2026-07-31 — an 11.6 s recording with a breath after
+# the first sentence came back as that sentence alone, twice in a row). The
+# verdict is judged on ENERGY versus token count, never on what the text says
+# (AP-27's lesson); the repair re-reads the window split at its pauses and the
+# longer reading wins.
+_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S = 1.0
+
 # How far the live probe backs off after a failed transcription, and the ceiling
 # it backs off to. A provider refusing calls — the everyday case is a rate limit,
 # HTTP 429 — used to be answered by asking again at the same interval a second
@@ -1874,6 +1888,16 @@ class SpeechPipeline:
         self._ptt_mode = False
         self._ptt_release_event = asyncio.Event()
         self._ptt_max_hold_s = 60.0
+        # A DELIBERATE user activation edge (PTT down, CALL hotkey, the
+        # "Speak in this conversation" button) is pending in ``_call_event``.
+        # The state loop consumes this to exempt exactly that call from the
+        # post-hangup wake lock: the lock exists so Jarvis' own speaker tail
+        # cannot re-trigger the WAKE WORD (audio echo), and a key press has no
+        # echo path. Dropping explicit presses under the lock made recording
+        # start only after the lock expired — the user was already talking and
+        # the opening 1-3 s of every quick follow-up were missing (live
+        # 2026-07-31).
+        self._explicit_call_pending = False
         # While the key is held, re-transcribe the growing buffer every N
         # seconds and publish it as a non-final TranscriptionUpdate so the orb
         # bubble shows the live transcript (parity with the wake-word path,
@@ -2621,7 +2645,7 @@ class SpeechPipeline:
         # neither a continuation nor a clarifying question, this timer dispatches
         # it to the brain after the grace window so it is never silently dropped
         # at the session idle-timeout (AD-OE6; "Jarvis hört für immer zu" wedge
-        # 2026-06-19, session da25113a). See _arm_continuation_drain.
+        # 2026-06-19, session <SESSION_ID>). See _arm_continuation_drain.
         self._continuation_drain_task: asyncio.Task[None] | None = None
         # Continuation recombine (2026-06-16): re-attach a fast-follow utterance
         # to the in-flight turn. See ContinuationWindow + _maybe_recombine_continuation.
@@ -3296,11 +3320,11 @@ class SpeechPipeline:
         log.info("voice activity start")
         self._schedule_turn_state(TurnTakingState.USER_SPEAKING)
         # A resumed utterance freezes the continuation grace so a slow follow-up
-        # still recombines with the just-finished turn (session 71f2d2de). The
+        # still recombines with the just-finished turn (session <SESSION_ID>). The
         # SAME freeze must reach the pre-dispatch ContinuationBuffer: a fragment
         # held there ("Kannst du bitte...") whose continuation begins inside the
         # window but finalizes just past the 8 s deadline would otherwise be
-        # dropped and split the turn (session 241a1984, 2026-06-18). Fail-open:
+        # dropped and split the turn (session <SESSION_ID>, 2026-06-18). Fail-open:
         # continuation hygiene must never crash the turn.
         try:
             win = getattr(self, "_continuation_window", None)
@@ -5567,6 +5591,9 @@ class SpeechPipeline:
         async for event_name in trigger.events():
             if event_name == "call":
                 log.info("📞 CALL via Hotkey")
+                # A deliberate key press — exempt from the post-hangup wake
+                # lock (no speaker-echo path), same contract as PTT below.
+                self._explicit_call_pending = True
                 self._call_event.set()
             elif event_name == "ptt_press":
                 self._on_ptt_press()
@@ -5774,6 +5801,7 @@ class SpeechPipeline:
         log.info("🎙 PTT DOWN — recording (hold to talk, release to send)")
         self._ptt_mode = True
         self._ptt_release_event.clear()
+        self._explicit_call_pending = True
         self._arm_call_event()
 
     def _on_ptt_release(self) -> None:
@@ -5834,7 +5862,24 @@ class SpeechPipeline:
             "Voice session requested (wake-style, seeded=%d turns).",
             len(seed_messages or []),
         )
+        self._explicit_call_pending = True
         return self._arm_call_event()
+
+    def request_voice_hangup(self) -> bool:
+        """Hang up the voice channel from outside the audio path.
+
+        The voice orb's click and ``jarvis api voice hangup`` land here — the
+        same absolute-kill contract as the hangup hotkey (2026-05-20: no matter
+        what is playing or queued, the voice channel goes silent now). Safe to
+        call while idle; answers ``False`` instead of raising so a UI click can
+        report honestly rather than 500.
+        """
+        try:
+            self._trigger_voice_hangup()
+            return True
+        except Exception:  # noqa: BLE001 — a failed hangup must report, never raise
+            log.warning("request_voice_hangup failed", exc_info=True)
+            return False
 
     def _arm_call_event(self) -> bool:
         """Set the call edge on its owning asyncio loop.
@@ -6711,9 +6756,14 @@ class SpeechPipeline:
         # needs to re-arm fanout.
         ring_bytes = bytearray()
         RING_MAX = 16_000 * 2 * 3  # ~3 s
+        # Rolling overlap for the EXPLICIT (hotkey/PTT) handoff seed: it must
+        # cover the whole press-to-claim latency — key poll (~20 ms), the
+        # cross-thread call edge, one state-loop turn and the stop-event round
+        # trip — or the user's first syllables land in the wake detectors
+        # instead of the session.
         recent_chunks: deque[AudioChunk] = deque(
-            maxlen=capture_chunks_for_duration(0.2)
-        )  # ~200 ms overlap
+            maxlen=capture_chunks_for_duration(0.5)
+        )  # ~500 ms overlap
         wake_confirmed = False
         handoff_buffer: _SessionInputBuffer | None = None
 
@@ -6787,11 +6837,15 @@ class SpeechPipeline:
             else:
                 # An explicit click/hotkey may arrive while a wake candidate is
                 # still being verified. Preserve that already-visible interval;
-                # otherwise keep only one block around the explicit edge.
+                # otherwise seed the full rolling overlap. The user starts
+                # talking AT the press, and the press precedes this claim by
+                # the key-poll + call-edge + state-loop latency — seeding only
+                # the last block (the old behaviour) cut the first syllables
+                # off every "press and talk" capture.
                 initial = (
                     tuple(self._pending_session_preroll)
                     if self._wake_preroll_active
-                    else tuple(recent_chunks)[-1:]
+                    else tuple(recent_chunks)
                 )
                 self._discard_wake_preroll()
             handoff_buffer = _SessionInputBuffer(initial=initial)
@@ -7156,8 +7210,15 @@ class SpeechPipeline:
         while True:
             await self._call_event.wait()
             self._call_event.clear()
-            # Ignore activation edges that arrive inside the speaker-echo lock.
             now = time.time()
+            # Consume the explicit-edge marker for THIS call before any gate
+            # decides. ``_ptt_mode`` is included defensively: it is only ever
+            # armed by a genuine press from IDLE, so it carries the same
+            # deliberate-user-action meaning even if the marker was lost.
+            explicit_call = bool(
+                getattr(self, "_explicit_call_pending", False)
+            ) or bool(getattr(self, "_ptt_mode", False))
+            self._explicit_call_pending = False
             if not self._activation_allowed():
                 # Resolved, never guessed: this backstop closes for a mute and
                 # for a running dictation too, and a log line that names the
@@ -7172,7 +7233,12 @@ class SpeechPipeline:
                 self._ptt_mode = False
                 await self._abort_pending_wake_handoff()
                 continue
-            if now < self._wake_lock_until:
+            if now < self._wake_lock_until and not explicit_call:
+                # The speaker-echo lock gates only WAKE-WORD calls: the tail of
+                # Jarvis' own TTS can re-trigger the wake word, but it cannot
+                # press a key. Dropping explicit presses here made a quick
+                # follow-up ("press and talk") record nothing until the lock
+                # expired — the opening words of the capture were missing.
                 remaining = self._wake_lock_until - now
                 log.info("Wake lock active; ignoring call for %.1fs.", remaining)
                 self._ptt_mode = False
@@ -7598,12 +7664,19 @@ class SpeechPipeline:
         echo cancellation. The browser surface provides full duplex with Web
         Audio echo cancellation.
         """
+        allow_classic_fallback = True
         try:
             from jarvis.realtime.desktop import (
                 DesktopRealtimeBargeInDetector,
                 DesktopRealtimePlayback,
             )
-            from jarvis.realtime.factory import build_realtime_session
+            from jarvis.realtime.factory import (
+                build_realtime_session,
+                realtime_implicit_usage_fallback_allowed,
+            )
+            allow_classic_fallback = realtime_implicit_usage_fallback_allowed(
+                self._config
+            )
         except ImportError as exc:
             log.warning("Realtime desktop stack is unavailable: %s", exc)
             return None
@@ -8062,7 +8135,11 @@ class SpeechPipeline:
         # pipeline. Every genuine hangup path below overwrites it. The marker
         # keeps ``RealtimeVoiceSession.end`` from announcing a session end that
         # never happened — the pipeline's own teardown owns that.
-        reason = HANGUP_DESKTOP_FALLBACK
+        reason = (
+            HANGUP_DESKTOP_FALLBACK
+            if allow_classic_fallback
+            else HANGUP_ERROR
+        )
         session: Any | None = None
         microphone_task: asyncio.Task[Any] | None = None
         try:
@@ -8199,7 +8276,17 @@ class SpeechPipeline:
                 build_ms = (time.monotonic() - build_started_at) * 1000.0
                 log.info("Realtime desktop session assembled in %.0f ms.", build_ms)
                 if session is None:
-                    return None
+                    if allow_classic_fallback:
+                        return None
+                    log.warning(
+                        "Selected realtime access is unavailable; automatic "
+                        "usage-billed classic fallback is disabled."
+                    )
+                    reason = HANGUP_ERROR
+                    return HANGUP_ERROR
+                allow_classic_fallback = bool(
+                    getattr(session, "allow_classic_fallback", True)
+                )
                 handshake_started_at = time.monotonic()
                 handshake_task = asyncio.create_task(
                     session.handle_control(
@@ -8286,7 +8373,14 @@ class SpeechPipeline:
                     return HANGUP_ERROR
                 # A startup/early provider failure has committed no semantic
                 # user turn, so classic may safely replay the retained opening.
-                return None
+                if allow_classic_fallback:
+                    return None
+                reason = HANGUP_ERROR
+                log.warning(
+                    "Realtime provider failed before a committed turn; "
+                    "automatic usage-billed classic fallback is disabled."
+                )
+                return HANGUP_ERROR
         except asyncio.CancelledError:
             reason = "shutdown"
             raise
@@ -8299,7 +8393,14 @@ class SpeechPipeline:
                     "audio replay through classic voice."
                 )
                 return HANGUP_ERROR
-            return None
+            if allow_classic_fallback:
+                return None
+            reason = HANGUP_ERROR
+            log.warning(
+                "Realtime startup failed; automatic usage-billed classic "
+                "fallback is disabled."
+            )
+            return HANGUP_ERROR
         finally:
             if getattr(self, "_active_realtime_handle", None) is session:
                 self._active_realtime_handle = None
@@ -9386,6 +9487,10 @@ class SpeechPipeline:
         stt_latency_ms = 0.0
         stt_calls = 0
         final_window_count = 0
+        # Windows whose transcript stopped at a mid-recording pause and were
+        # recovered by re-reading their speech runs. Reported in the audit so
+        # "the provider keeps dropping my second sentence" is measurable.
+        truncation_repairs = 0
 
         def _append_unique(values: list[str], value: object) -> None:
             text = str(value or "").strip()
@@ -9905,6 +10010,71 @@ class SpeechPipeline:
                 await asyncio.sleep(delay)
             return "", False
 
+        async def _repair_truncated_read(
+            piece: bytes, text: str, *, ask_for: str | None
+        ) -> str:
+            """``text`` for ``piece``, with a pause-dropped tail read back in.
+
+            A recognizer handed audio with a sustained mid-recording pause can
+            stop at the pause and silently drop everything after it — the
+            transcript arrives fluent, punctuated, and half the length of what
+            was said. Detected here on energy alone: when the piece holds more
+            than one speech run and the transcript's token count is far below
+            what its VOICED seconds must have contained
+            (``_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S``), the piece is
+            re-read as its individual runs and the merged result replaces the
+            original only when it actually carries more speech.
+
+            The runs are told the language the long window just detected
+            rather than asked to detect it themselves — a short clip guessing
+            its language is the translation trap the long windows exist to
+            avoid. A run that cannot be read keeps the original transcript: a
+            dropped middle is worse than the dropped tail it would repair.
+            """
+            nonlocal truncation_repairs
+            from jarvis.dictation.merge import (
+                merge_transcripts,
+                transcript_token_count,
+            )
+            from jarvis.dictation.segment import speech_runs
+
+            runs = speech_runs(
+                piece,
+                session_peak=session_peak,
+                bytes_per_second=bytes_per_second,
+            )
+            if len(runs) < 2:
+                return text
+            voiced_s = sum(end - start for start, end in runs) / bytes_per_second
+            tokens = transcript_token_count(text)
+            if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
+                return text
+            log.warning(
+                "final dictation window looks truncated (%d tokens for %.1fs "
+                "of speech in %d runs) — re-reading it split at its pauses.",
+                tokens,
+                voiced_s,
+                len(runs),
+            )
+            run_ask = language if (not ask_for or ask_for == "auto") else ask_for
+            parts: list[str] = []
+            for start, end in runs:
+                run_piece = piece[start:end]
+                if len(run_piece) < min_bytes:
+                    continue
+                run_text, run_read = await _read_piece(
+                    run_piece, ask_for=run_ask or None
+                )
+                if not run_read:
+                    return text
+                if run_text:
+                    parts.append(run_text)
+            merged = merge_transcripts(parts)
+            if transcript_token_count(merged) > tokens:
+                truncation_repairs += 1
+                return merged
+            return text
+
         async def _final_quality_text(audio: bytes) -> str:
             """Re-read the WHOLE recording in long, overlapping windows.
 
@@ -9986,6 +10156,9 @@ class SpeechPipeline:
                 if was_read:
                     dead_streak = 0
                     if text:
+                        text = await _repair_truncated_read(
+                            piece, text, ask_for=ask_for
+                        )
                         parts.append(text)
                 else:
                     dead_streak += 1
@@ -10051,6 +10224,9 @@ class SpeechPipeline:
                 text, piece_read = await _read_piece(piece)
                 if piece_read:
                     if text:
+                        text = await _repair_truncated_read(
+                            piece, text, ask_for=None
+                        )
                         parts.append(text)
                     dead_streak = 0
                 else:
@@ -10286,6 +10462,7 @@ class SpeechPipeline:
                 stt_audit=(
                     f"final_pass:{final_pass_status}",
                     f"final_windows:{final_window_count}",
+                    f"truncation_repairs:{truncation_repairs}",
                     f"code_switching:{'on' if code_switching else 'off'}",
                     f"capture_restarts:{capture_restart_count}",
                     *audio_preprocessing.audit(),
@@ -11778,7 +11955,7 @@ class SpeechPipeline:
                 # of its own, so without an autonomous flush the fragment hangs
                 # in LISTENING until the session idle-timeout silently discards
                 # it — the brain never sees it ("Jarvis hört für immer zu" wedge
-                # 2026-06-19, session da25113a: the complete tag question
+                # 2026-06-19, session <SESSION_ID>: the complete tag question
                 # "…Montag, oder?" was held as a trailing conjunction and dropped
                 # 30 s later, never answered). Arm a drain timer that DISPATCHES
                 # the held fragment to the brain after the grace window so the
@@ -12345,7 +12522,7 @@ class SpeechPipeline:
         if buf is None or not buf.has_pending():
             # Continuation already arrived / buffer drained — nothing to ask.
             return
-        # AD-OE5 floor guard (live incident 2026-06-17 14:47, session f6403ec0):
+        # AD-OE5 floor guard (live incident 2026-06-17 14:47, session <SESSION_ID>):
         # the user trailed off on "...liegt sie im..." → the fragment was held
         # (reason=trailing_ellipsis) and the clarify timer force-armed; 4 ms later
         # the user RESUMED speaking the continuation. The fixed grace then fired
@@ -12398,7 +12575,7 @@ class SpeechPipeline:
         question is armed) AND no further utterance ever arrives, the fragment
         would hang in LISTENING until the session idle-timeout silently discards
         it, with the brain never called. Live wedge 2026-06-19 (session
-        da25113a): the complete tag question "…morgen ist ja Montag, oder?" was
+        <SESSION_ID>): the complete tag question "…morgen ist ja Montag, oder?" was
         classified as a trailing conjunction, held, and dropped ~30 s later —
         Jarvis "listened forever" and never answered.
 

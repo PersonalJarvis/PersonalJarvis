@@ -37,7 +37,7 @@ export interface FoldersResponse {
   parent: string | null;
   entries: FolderItem[];
   error?: string | null;
-  /** Human-facing name of this machine ("Example MacBook"). */
+  /** Human-facing name of this machine ("Studio MacBook"). */
   device_name?: string | null;
 }
 
@@ -139,7 +139,37 @@ export interface TerminalState {
   recap?: string;
   /** The one-or-two-sentence version, shown when the header line is hovered. */
   recap_detail?: string;
+  /** Is its agent still on the job? The OPENING value, like `recap` above. */
+  activity?: PaneActivity;
+  /** When it entered that state (epoch seconds); 0 when unknown. */
+  activity_since?: number;
+  /** Has anything ever been asked of this pane? */
+  worked?: boolean;
 }
+
+/**
+ * Whether a pane's agent is still on the job.
+ *
+ * Deliberately NOT the same question as `TerminalState.status`, which is about
+ * the pipe: a pane can be perfectly "live" and have been finished for twenty
+ * minutes, and that gap is the whole reason this exists.
+ *
+ * The backend derives it from the terminal SCREEN — a pane whose picture keeps
+ * changing is working, one that stands still has stopped — so it holds for every
+ * coding CLI a pane can run, including ones connected later. It knows nothing
+ * about what any product prints. See `jarvis/agentic_ide/activity.py`.
+ *
+ * `""` means "no answer for this pane": a plain terminal is a shell prompt, not
+ * an agent, so it has no job to be in the middle of.
+ */
+export type PaneActivity =
+  | "starting"
+  | "working"
+  | "waiting"
+  | "asking"
+  | "failed"
+  | "exited"
+  | "";
 
 /**
  * Who wrote the recap on screen.
@@ -182,6 +212,22 @@ export interface TerminalRecap {
   note?: string;
   /** When the model wrote it, or when the user did. 0 for the derived one. */
   generated_at?: number;
+  /**
+   * Is its agent still on the job, or has it stopped? This poll is what keeps
+   * the pane list current, so it carries what the pane is DOING as well as what
+   * it is doing it about.
+   */
+  activity?: PaneActivity;
+  /** When it entered that state (epoch seconds); 0 when unknown. */
+  activity_since?: number;
+  /**
+   * Has anything ever been asked of this pane — an instruction sent to it, or
+   * the conversation it resumed?
+   *
+   * What separates "this agent finished" from "nobody has asked this terminal
+   * for anything" — the same still screen, and not the same news.
+   */
+  worked?: boolean;
 }
 
 export interface RecapsResponse {
@@ -1062,6 +1108,46 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { focus_mode: boolean };
   return body.focus_mode;
+}
+
+/**
+ * The workspace display preferences the backend remembers for this machine.
+ *
+ * `stored` is false until a size has actually been chosen — the difference
+ * between "the user picked 13" and "nobody ever picked anything", which is what
+ * lets an older choice living only in this page's `localStorage` be handed over
+ * rather than overwritten by the default.
+ */
+export interface TerminalUiPreferences {
+  terminal_font_size: number;
+  stored: boolean;
+  min: number;
+  max: number;
+  default: number;
+}
+
+/**
+ * Read the remembered terminal text size.
+ *
+ * Deliberately a backend read: the desktop window is an embedded WebView that
+ * starts every run with empty browser storage, so a preference kept only in
+ * `localStorage` is forgotten on each restart.
+ */
+export function fetchTerminalUiPreferences(): Promise<TerminalUiPreferences> {
+  return getJson<TerminalUiPreferences>("/api/agentic-ide/ui-preferences");
+}
+
+/** Remember a terminal text size until it is changed again. */
+export async function saveTerminalFontSize(
+  size: number,
+): Promise<TerminalUiPreferences> {
+  const res = await fetch("/api/agentic-ide/ui-preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terminal_font_size: size }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as TerminalUiPreferences;
 }
 
 /**

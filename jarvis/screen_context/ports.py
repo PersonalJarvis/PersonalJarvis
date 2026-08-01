@@ -26,6 +26,7 @@ the first capture, not at boot.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -383,11 +384,9 @@ class SurfaceCapturer(Protocol):
 class NativeSurfaceCapturer:
     """Native per-window capture where the OS offers it, rect grab otherwise.
 
-    macOS ScreenCaptureKit can capture a window wherever it sits, at backing
-    resolution, so a window-scoped request uses it. Everywhere else the
-    DPI-pinned rect grab of the raised window IS the native path (see
-    ``jarvis.platform.window_capture`` for why ``PrintWindow`` is not used on
-    Windows), so both target kinds funnel into ``mss``.
+    Window-scoped requests use a native window-only backend where available.
+    On Windows, failure of that backend is a privacy refusal: composing the
+    same rectangle from the desktop could photograph an overlapping app.
     """
 
     name = "native-capture"
@@ -403,6 +402,7 @@ class NativeSurfaceCapturer:
             )
 
         if window_handle is not None:
+            native = None
             try:
                 from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
                     indicator_suppressed,
@@ -416,8 +416,16 @@ class NativeSurfaceCapturer:
                     )
                 if native is not None:
                     return native
-            except Exception:  # noqa: BLE001 — fall through to the rect grab
-                log.debug("native window capture failed; using rect grab", exc_info=True)
+            except Exception:  # noqa: BLE001 — platform policy below decides fallback
+                log.debug("native window capture failed", exc_info=True)
+            if os.name == "nt":
+                raise CaptureUnavailable(
+                    "The focused Windows window could not be captured safely. "
+                    "A desktop-rectangle fallback was refused because another "
+                    "window could overlap it. Bring the window to the foreground and "
+                    "retry; some protected or GPU-rendered windows do not support "
+                    "window-only capture."
+                )
 
         try:
             if _is_wayland():

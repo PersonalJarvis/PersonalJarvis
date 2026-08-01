@@ -610,14 +610,14 @@ def test_allowed_operations_set_matches_protocol(
 def test_rename_writes_new_path_and_unlinks_old(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    old = write_page(vault_root, "entity", "alex-old", body="old slug")
+    old = write_page(vault_root, "entity", "maintainer", body="old slug")
     os.utime(old, (time.time() - 600, time.time() - 600))
-    new = vault_root / "entities" / "alex-morgan.md"
+    new = vault_root / "entities" / "personal-jarvis-maintainer.md"
 
     update = PageUpdate(
         target_path=new,
         operation="rename",
-        new_body=_valid_entity_body("alex-morgan", body="new slug"),
+        new_body=_valid_entity_body("personal-jarvis-maintainer", body="new slug"),
         rename_from=old,
     )
     result = asyncio.run(writer.apply([update], repo=fake_repo))
