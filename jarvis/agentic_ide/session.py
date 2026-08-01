@@ -2932,13 +2932,17 @@ class Registry:
             return
         manager = self._manager()
         try:
+            # The whole point of the nudge is a full repaint — which must read
+            # as the redraw it is, not as the agent suddenly working. Stamped
+            # BEFORE the first resize as well as after the second: the sleep
+            # between them yields the loop, so the shrunken frame's redraw can
+            # arrive before this coroutine runs again.
+            term.last_resize_at = time.time()
             # Two is the floor a TUI can still lay out; below it some redraw
             # into a single row and never recover the frame.
             manager.resize(pty_id, cols, max(rows - 1, 2))
             await asyncio.sleep(REPAINT_NUDGE_S)
             manager.resize(pty_id, cols, rows)
-            # The whole point of the nudge is a full repaint — which must read
-            # as the redraw it is, not as the agent suddenly working.
             term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
