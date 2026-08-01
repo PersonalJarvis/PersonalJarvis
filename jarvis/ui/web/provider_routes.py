@@ -22,6 +22,7 @@ import inspect
 import logging
 import time
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -599,9 +600,12 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": (
-            bool(codex_status["installed"])
-            if codex_status is not None
-            else _cli_installed(spec)
+            # During a transient busy window the isolated snapshot cannot say
+            # whether the CLI exists; answer from the PATH probe instead of
+            # rendering a false "not installed" install prompt.
+            _cli_installed(spec)
+            if codex_status is None or codex_status.get("reason_code") == "busy"
+            else bool(codex_status["installed"])
         ),
         # Overlay, not a new tier (see the CU-own-provider plan): a brain
         # provider can be BOTH the main Brain ("active") AND/OR the dedicated
@@ -882,9 +886,29 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     The live account and plan are verified when the user explicitly activates
     the experimental provider or starts a call.
     """
-    from jarvis.codex_app_server import codex_subscription_auth_snapshot
+    from jarvis.codex_app_server import (
+        CodexAppServerCapability,
+        codex_subscription_auth_snapshot,
+    )
 
-    snapshot = codex_subscription_auth_snapshot(binary_path)
+    try:
+        snapshot = codex_subscription_auth_snapshot(binary_path)
+    except Exception as exc:  # noqa: BLE001 — a raising probe must not 500 the screen
+        # The probe owner re-raises real errors by design; the routes built on
+        # this payload (the whole API-Keys screen among them) must degrade to
+        # a transient status instead of an empty screen (BUG-008 class).
+        log.warning("Codex subscription status probe failed: %s", type(exc).__name__)
+        snapshot = CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=None,
+            version=None,
+            reason=(
+                f"The Codex status probe failed ({type(exc).__name__}); "
+                "retrying shortly."
+            ),
+            reason_code="busy",
+        )
     installed = bool(snapshot.available or snapshot.version)
     connected = bool(snapshot.available and snapshot.chatgpt_authenticated)
     if connected:
@@ -1058,6 +1082,23 @@ async def _run_tier_test(
         from jarvis.dictation.polish_probe import probe_polish_family
 
         return await probe_polish_family(family, cfg, model=model or "")
+    if spec.id == "codex-subscription-realtime":
+        # This card is judged by the ISOLATED voice profile, never the
+        # ordinary Codex login: the default codex_status seam would answer
+        # "ok — Connected." for a user whose normal `codex login` works but
+        # whose voice profile was never connected (and "not connected" for
+        # the normal case of a voice-only login).
+        payload = await asyncio.to_thread(
+            _codex_subscription_status_payload,
+            getattr(getattr(cfg, "codex", None), "binary_path", "") or None,
+        )
+        isolated_status = SimpleNamespace(
+            connected=bool(payload.get("connected")),
+            message=str(payload.get("message") or ""),
+        )
+        return await _provider_test.run_provider_test(
+            spec, cfg, codex_status=lambda: isolated_status, model=model
+        )
     return await _provider_test.run_provider_test(spec, cfg, model=model)
 
 
@@ -3715,7 +3756,18 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         if callable(verify_activation):
             result = verify_activation(_resolve_cfg(request))
             if inspect.isawaitable(result):
-                await result
+                # A cold activation gate can start app-server, whose RPCs each
+                # carry ~20s timeouts. Bound the whole HTTP response instead
+                # of letting a wedged gate hold the request open indefinitely.
+                await asyncio.wait_for(result, timeout=45.0)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The provider's activation check timed out. Try again in a "
+                "moment."
+            ),
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

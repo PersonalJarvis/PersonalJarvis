@@ -318,6 +318,41 @@ async def test_orchestrator_capability_check_does_not_repeat_cli_auth_probe(
     assert await provider.can_open_duplex_session() is True
 
 
+@pytest.mark.parametrize(
+    ("reason_code", "available", "authenticated", "expected"),
+    [
+        ("ready", True, True, True),
+        ("login_required", False, False, False),
+        # Transiently unknown must fail OPEN: voice-mode availability flips
+        # (with a user-facing 400) on a fail-closed answer, while opening a
+        # session performs the authoritative live account verification anyway.
+        ("busy", False, False, True),
+    ],
+)
+def test_external_login_ready_fails_open_on_transient_busy(
+    monkeypatch: pytest.MonkeyPatch,
+    reason_code: str,
+    available: bool,
+    authenticated: bool,
+    expected: bool,
+) -> None:
+    from jarvis import codex_app_server
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary: SimpleNamespace(
+            available=available,
+            chatgpt_authenticated=authenticated,
+            reason_code=reason_code,
+        ),
+    )
+
+    assert (
+        CodexSubscriptionRealtimeProvider.external_login_ready(None) is expected
+    )
+
+
 @pytest.mark.asyncio
 async def test_send_audio_uses_sideband_pcm_without_api_usage_accounting() -> None:
     client = _Client()

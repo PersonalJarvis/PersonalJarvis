@@ -134,6 +134,17 @@ async def test_section_health_accepts_keyring_only_chatgpt_login(
     monkeypatch.setattr(routes, "_run_tier_test", healthy_probe)
     monkeypatch.setattr(
         routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": True,
+            "mode": "chatgpt",
+            "message": "Dedicated ChatGPT subscription voice login is ready.",
+            "reason_code": "ready",
+        },
+    )
+    monkeypatch.setattr(
+        routes,
         "_is_credential_present",
         lambda *_args, **_kwargs: pytest.fail(
             "section health must use the authoritative app-server auth probe"
@@ -287,6 +298,141 @@ def test_subscription_status_payload_maps_busy_without_claiming_missing_install(
     assert payload["message"] == (
         "Dedicated subscription voice status is being checked or changed."
     )
+
+
+def test_spec_payload_busy_does_not_claim_missing_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """During busy the card must not render the install prompt via cli_installed."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(routes.cfg_mod, "get_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(routes, "_cli_installed", lambda _spec: True)
+
+    payload = routes._spec_to_payload(
+        spec,
+        active_brain=None,
+        active_tts=None,
+        active_stt=None,
+        active_realtime=None,
+        codex_subscription_ready=False,
+        codex_subscription_status={
+            "installed": False,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated subscription voice status is being checked or changed.",
+            "reason_code": "busy",
+        },
+    )
+
+    assert payload["codex_status"]["reason_code"] == "busy"
+    assert payload["cli_installed"] is True
+
+
+def test_status_payload_survives_a_raising_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising probe must degrade to busy, not 500 the whole providers screen."""
+    from jarvis import codex_app_server
+
+    def explode(_binary_path: str | None) -> None:
+        raise OSError("cli exploded")
+
+    monkeypatch.setattr(
+        codex_app_server, "codex_subscription_auth_snapshot", explode
+    )
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "busy"
+    assert payload["connected"] is False
+    assert "OSError" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_section_health_reports_busy_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient busy window is not an amber "needs setup" dot."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": False,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated subscription voice status is being checked or changed.",
+            "reason_code": "busy",
+        },
+    )
+
+    health = await routes._tier_section_health(
+        SimpleNamespace(),
+        spec,
+        binary_path="codex-custom",
+    )
+
+    assert health.status == "unknown"
+    assert health.reason == "busy"
+
+
+@pytest.mark.asyncio
+async def test_tier_test_judges_the_isolated_voice_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Test button must never answer from the ordinary Codex login."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": True,
+            "mode": "chatgpt",
+            "message": "Dedicated ChatGPT subscription voice login is ready.",
+            "reason_code": "ready",
+        },
+    )
+
+    captured: dict[str, object] = {}
+
+    async def capture_run(spec_arg, cfg_arg, **kwargs):
+        captured.update(kwargs)
+        status_fn = kwargs.get("codex_status")
+        assert callable(status_fn)
+        return SimpleNamespace(status="ok", detail=status_fn().message)
+
+    monkeypatch.setattr(
+        routes._provider_test, "run_provider_test", capture_run
+    )
+
+    result = await routes._run_tier_test(spec, SimpleNamespace())
+
+    assert result.status == "ok"
+    assert "subscription voice login is ready" in result.detail
+    assert "codex_status" in captured
+
+
+def test_reason_code_vocabulary_is_pinned() -> None:
+    """The five-layer enum contract: this list mirrors the TS union in
+    useProviders.ts and the card mapping in ProviderTierSection.tsx — grow
+    them together or the UI silently misrenders a new backend state."""
+    from typing import get_args, get_type_hints
+
+    from jarvis.codex_app_server import CodexAppServerCapability
+
+    hints = get_type_hints(CodexAppServerCapability)
+    assert set(get_args(hints["reason_code"])) == {
+        "ready",
+        "login_required",
+        "lifecycle_unavailable",
+        "not_installed",
+        "setup_invalid",
+        "busy",
+    }
 
 
 @pytest.mark.asyncio

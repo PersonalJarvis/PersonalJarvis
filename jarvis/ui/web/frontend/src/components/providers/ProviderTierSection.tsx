@@ -765,6 +765,13 @@ export function ProviderCard({
       return;
     }
     if (!assumeConfigured && !descriptor.configured) {
+      // A transient busy probe means "state unknown for a moment" — telling
+      // the user to redo a working ChatGPT login here would contradict the
+      // card's own "checking" line (and the backend's 409 for this case).
+      if (descriptor.codex_status?.reason_code === "busy") {
+        pushToast("info", t("apikeys_codex.status_busy"));
+        return;
+      }
       pushToast(
         "warning",
         descriptor.auth_mode === "codex"
@@ -1109,12 +1116,17 @@ export function ProviderCard({
           dedicated compact control (two dropdowns), gated on the card
           already having a stored credential like the other tiers' pickers
           above. */}
-      {descriptor.tier === "realtime" && descriptor.configured && (
-        <RealtimeOptionsControl
-          providerId={descriptor.id}
-          healthActive={descriptor.active}
-        />
-      )}
+      {descriptor.tier === "realtime" &&
+        (descriptor.configured ||
+          // Keep the model/voice pickers mounted through a transient busy
+          // probe so the card does not visibly flicker while saying
+          // "one moment".
+          descriptor.codex_status?.reason_code === "busy") && (
+          <RealtimeOptionsControl
+            providerId={descriptor.id}
+            healthActive={descriptor.active}
+          />
+        )}
 
       {/* Footer: the live connectivity test, visually separated from the
           configuration body so "set up" and "verify" read as two steps. */}
@@ -1589,6 +1601,21 @@ export function AuthWidget({
   );
 }
 
+// Exhaustive by construction: adding a value to CodexStatus["reason_code"]
+// without a card mapping fails the TypeScript build here instead of silently
+// falling through to a wrong status line (the BUG-008 multi-layer enum class).
+const CODEX_STATUS_KEY_BY_REASON: Record<
+  NonNullable<NonNullable<ProviderDescriptor["codex_status"]>["reason_code"]>,
+  string
+> = {
+  ready: "apikeys_codex.status_ready",
+  login_required: "apikeys_codex.status_login_required",
+  lifecycle_unavailable: "apikeys_codex.status_lifecycle_unavailable",
+  not_installed: "apikeys_codex.status_not_installed",
+  setup_invalid: "apikeys_codex.status_setup_invalid",
+  busy: "apikeys_codex.status_busy",
+};
+
 function CodexAuthWidget({
   descriptor,
   onChanged,
@@ -1608,17 +1635,11 @@ function CodexAuthWidget({
   );
   const subscriptionStatusKey = !status
     ? "apikeys_codex.status_loading"
-    : status.reason_code === "ready"
-      ? "apikeys_codex.status_ready"
-      : status.reason_code === "lifecycle_unavailable"
-        ? "apikeys_codex.status_lifecycle_unavailable"
-      : status.reason_code === "setup_invalid"
-        ? "apikeys_codex.status_setup_invalid"
-        : status.reason_code === "busy"
-          ? "apikeys_codex.status_busy"
-          : status.reason_code === "not_installed" || !status.installed
-            ? "apikeys_codex.status_not_installed"
-            : "apikeys_codex.status_login_required";
+    : status.reason_code && status.reason_code !== "login_required"
+      ? CODEX_STATUS_KEY_BY_REASON[status.reason_code]
+      : !status.installed
+        ? "apikeys_codex.status_not_installed"
+        : "apikeys_codex.status_login_required";
 
   useEffect(() => {
     if (!loginPolling || loginReady) return;

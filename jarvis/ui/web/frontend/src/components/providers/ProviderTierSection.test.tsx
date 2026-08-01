@@ -478,6 +478,14 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
       name: "Connect with ChatGPT",
     }) as HTMLButtonElement;
     expect(connect.disabled).toBe(false);
+
+    // Clicking the card during busy must not demand a redo of a working
+    // login — it answers with the same neutral "checking" note.
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    expect(toastsOf("warning")).toEqual([]);
+    expect(toastsOf("info")).toEqual([
+      "Checking the ChatGPT voice status — one moment.",
+    ]);
   });
 
   it("surfaces the precise backend diagnosis on a real setup defect", () => {

@@ -912,7 +912,13 @@ class CodexAuthService:
             raise
 
     def login_status(self) -> tuple[bool, str]:
-        """Return the CLI's PII-free login mode for this exact profile."""
+        """Return the CLI's PII-free login mode for this exact profile.
+
+        Mode ``probe_failed`` means the CLI could not be asked (spawn failure
+        or timeout) — a transiently unknown state, distinct from a CLI that
+        answered "not logged in". Callers that cache or publish this result
+        must not present ``probe_failed`` as a missing login.
+        """
         binary = self._resolve_binary()
         if binary is None:
             return False, "unknown"
@@ -926,8 +932,8 @@ class CodexAuthService:
                 env=self._subprocess_environment(),
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            # The status probe is unavailable and therefore fails closed.
-            return False, "unknown"
+            # The probe itself failed; the login state is unknown, not absent.
+            return False, "probe_failed"
         output = (proc.stdout or proc.stderr or "").strip()
         if proc.returncode == 0 and output == "Logged in using ChatGPT":
             return True, "chatgpt"

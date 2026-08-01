@@ -758,6 +758,13 @@ class CodexSubscriptionRealtimeProvider:
             status = app_server_module.codex_subscription_auth_snapshot(
                 binary_path or None
             )
+            if getattr(status, "reason_code", "") == "busy":
+                # Transiently unknown, not "no login": failing closed here
+                # flips voice-mode availability (and its 400) on a healthy
+                # install. Fail open — opening a session runs the
+                # authoritative live account verification anyway, and a
+                # genuinely missing login still stops the call honestly.
+                return True
             return bool(
                 getattr(status, "available", False)
                 and getattr(status, "chatgpt_authenticated", False)

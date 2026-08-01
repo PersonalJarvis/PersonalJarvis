@@ -76,6 +76,7 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_snapshot_cache_key", "")
     monkeypatch.setattr(transport, "_subscription_snapshot_cache_at", 0.0)
     monkeypatch.setattr(transport, "_subscription_status_probe_active", False)
+    monkeypatch.setattr(transport, "_sha256_cache", {})
 
 
 class FakeStdin:
@@ -1323,7 +1324,8 @@ def test_auth_snapshot_probe_failure_is_cached_for_waiters(
         transport.codex_subscription_auth_snapshot("codex-test")
 
     second = transport.codex_subscription_auth_snapshot("codex-test")
-    assert second.reason_code == "setup_invalid"
+    # A RAISED probe is transiently unknown — never a proven-broken setup.
+    assert second.reason_code == "busy"
     assert "OSError" in second.reason
     assert reads == ["codex-test"]
 
@@ -1337,7 +1339,7 @@ def test_logout_waits_for_a_running_status_probe(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        release.wait(timeout=2.0)
+        assert release.wait(timeout=2.0)
         return _ready_capability()
 
     monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
@@ -1379,7 +1381,7 @@ def test_user_actions_report_a_probe_timeout_honestly(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        release.wait(timeout=2.0)
+        assert release.wait(timeout=2.0)
         return _ready_capability()
 
     monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
@@ -1449,6 +1451,129 @@ async def test_capability_status_feeds_the_snapshot_cache(
     snapshot = transport.codex_subscription_auth_snapshot("codex-test")
     assert snapshot.reason_code == "ready"
     assert reads == ["codex-test"]
+
+
+def test_capability_maps_probe_failed_login_status_to_busy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A CLI spawn failure or timeout is unknown state, never 'not logged in'."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+        def login_status(self) -> tuple[bool, str]:
+            return False, "probe_failed"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: tmp_path,
+    )
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "busy"
+    assert capability.available is False
+    assert capability.chatgpt_authenticated is False
+    assert "probe failed" in capability.reason
+
+
+@pytest.mark.asyncio
+async def test_disconnect_leaves_a_foreign_mutation_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disconnect refused because ANOTHER owner mutates must not clear it."""
+
+    async def no_servers() -> None:
+        return None
+
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", no_servers)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", True)
+
+    with pytest.raises(CodexSubscriptionUnavailable):
+        await transport.disconnect_and_logout_codex_subscription()
+
+    # The foreign owner's claim survives the refused disconnect.
+    assert transport._subscription_profile_mutating is True
+
+
+def test_reaper_launch_failure_releases_guard_and_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+    import jarvis.core.private_directory as private_directory
+
+    released: list[str] = []
+
+    class FakeLoginProcess:
+        pid = 4711
+
+        def release_profile_lock(self) -> None:
+            released.append("released")
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start_login(self) -> FakeLoginProcess:
+            return FakeLoginProcess()
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport, "_prepare_subscription_login_home", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(binary_path="codex-test"),
+    )
+    monkeypatch.setattr(
+        transport,
+        "_subscription_process_lock_path",
+        lambda: tmp_path / "lock" / "owner.lock",
+    )
+    monkeypatch.setattr(
+        private_directory,
+        "ensure_owner_only_directory",
+        lambda path, create=False: path,
+    )
+
+    def broken_reaper(_target: object) -> None:
+        raise RuntimeError("no threads left")
+
+    monkeypatch.setattr(
+        transport, "_launch_subscription_login_reaper", broken_reaper
+    )
+
+    with pytest.raises(RuntimeError, match="no threads left"):
+        transport.start_codex_subscription_login("codex-test")
+
+    # The guardian released the OS profile lock and the in-process state is
+    # clean again — no permanent "login in progress" wedge.
+    assert released == ["released"]
+    assert transport._subscription_login_in_flight is False
+    assert transport._subscription_profile_mutating is False
+    assert transport._subscription_login_process is None
+    assert (
+        transport.codex_subscription_auth_snapshot("codex-test").reason_code
+        == "ready"
+    )
 
 
 @pytest.mark.asyncio
@@ -1999,7 +2124,9 @@ def test_native_codex_version_and_hash_are_both_required(
             )
         },
     )
-    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "approved-hash")
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: "approved-hash"
+    )
 
     assert (
         transport._trusted_native_codex_binary(
@@ -2010,11 +2137,28 @@ def test_native_codex_version_and_hash_are_both_required(
     with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
         transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
 
-    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "wrong-hash")
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: "wrong-hash"
+    )
     with pytest.raises(CodexSubscriptionUnavailable, match="approved build"):
         transport._trusted_native_codex_binary(
             str(binary), transport._SUPPORTED_CODEX_VERSION
         )
+
+
+def test_sha256_memo_rehashes_when_the_file_identity_changes(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"first-content")
+
+    first = transport._sha256_file_cached(binary)
+    assert transport._sha256_file_cached(binary) == first
+
+    binary.write_bytes(b"second-content-of-a-different-size")
+    second = transport._sha256_file_cached(binary)
+    assert second != first
+    assert second == transport._sha256_file(binary)
 
 
 def test_sha256_file_ignores_windows_fstat_ctime_semantics(
