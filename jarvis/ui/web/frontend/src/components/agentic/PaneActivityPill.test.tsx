@@ -20,59 +20,65 @@ function pill(props: Parameters<typeof PaneActivityPill>[0]) {
   return screen.getByTestId("pane-activity");
 }
 
-describe("what the badge says", () => {
-  it("says the agent is working while its screen moves", () => {
-    expect(pill({ status: "live", activity: "working" }).textContent).toBe(
-      "working",
-    );
+describe("what the badge shows", () => {
+  it("shows a yellow activity dot while the screen moves", () => {
+    const badge = pill({ status: "live", activity: "working" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.className).toContain("text-amber-400");
   });
 
-  it("says done for a pane that was given a job and has stopped", () => {
-    expect(
-      pill({ status: "live", activity: "waiting", worked: true }).textContent,
-    ).toBe("done");
+  it("shows a green check for a pane that was given a job and has stopped", () => {
+    const badge = pill({ status: "live", activity: "waiting", worked: true });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("check");
+    expect(badge.className).toContain("text-emerald-400");
   });
 
-  it("says idle — never done — for a pane nobody has instructed", () => {
+  it("shows a blue ready dot — never a check — for an unused pane", () => {
     // The SAME still screen as the case above. Calling it "done" would invent a
     // job for a terminal that was never given one, and read as "your work is
     // ready" on a pane that has done none.
-    expect(
-      pill({ status: "live", activity: "waiting", worked: false }).textContent,
-    ).toBe("idle");
+    const badge = pill({ status: "live", activity: "waiting", worked: false });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.className).toContain("text-sky-400");
   });
 
-  it("calls out a pane that is waiting for an answer", () => {
-    expect(pill({ status: "live", activity: "asking" }).textContent).toBe(
-      "needs you",
-    );
+  it("shows a blue dot for a pane that is waiting for an answer", () => {
+    const badge = pill({ status: "live", activity: "asking" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.className).toContain("text-sky-400");
   });
 
-  it("reports an agent that could not be started", () => {
-    expect(pill({ status: "live", activity: "failed" }).textContent).toBe(
-      "failed",
-    );
+  it("shows an alert for an agent that could not be started", () => {
+    const badge = pill({ status: "live", activity: "failed" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("alert");
   });
 
-  it("reports an agent whose process is gone", () => {
-    expect(pill({ status: "live", activity: "exited" }).textContent).toBe(
-      "exited",
-    );
+  it("shows a muted dot for an agent whose process is gone", () => {
+    const badge = pill({ status: "live", activity: "exited" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.className).toContain("text-muted-foreground");
   });
 });
 
 describe("when the pipe is the news", () => {
-  it("reports a socket that is still connecting", () => {
+  it("shows a spinner for a socket that is still connecting", () => {
     // Whatever the last known activity was, it describes a pane this viewer is
     // not connected to yet — the connection is what the user can act on.
-    expect(
-      pill({ status: "connecting", activity: "working" }).textContent,
-    ).toBe("starting");
+    const badge = pill({ status: "connecting", activity: "working" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("spinner");
   });
 
   it("reports a broken pane, and says what broke in the tooltip", () => {
     const badge = pill({ status: "error", detail: "Socket closed." });
-    expect(badge.textContent).toBe("error");
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("alert");
     expect(badge.getAttribute("title")).toContain("Socket closed.");
   });
 
@@ -80,7 +86,10 @@ describe("when the pipe is the news", () => {
     // A plain terminal runs no agent, so it has no job to be in the middle of,
     // and the backend answers with no activity at all. The honest thing left to
     // say is that the pipe is up.
-    expect(pill({ status: "live", activity: "" }).textContent).toBe("live");
+    const badge = pill({ status: "live", activity: "" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.className).toContain("text-sky-400");
   });
 });
 
@@ -94,7 +103,7 @@ describe("how long it has been that way", () => {
       worked: true,
       since: NOW_S - 180,
     });
-    expect(badge.textContent).toBe("done");
+    expect(badge.textContent).toBe("");
     expect(badge.getAttribute("title")).toContain("For 3 min.");
   });
 

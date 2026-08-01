@@ -1,4 +1,4 @@
-import { AlertCircle, Check, CircleDot, HelpCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 
@@ -46,11 +46,11 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  * which is all a terminal can prove.
  */
 
-/** What each activity is called on screen, and how it is drawn. */
+/** The accessible meaning of each activity, and how its icon is drawn. */
 type Look = {
   label: string;
   className: string;
-  icon: "spinner" | "check" | "dot" | "ask" | "alert" | "none";
+  icon: "spinner" | "check" | "dot" | "alert";
   /** The sentence behind the badge, minus the timing clause. */
   hint: string;
 };
@@ -67,8 +67,8 @@ type Look = {
 const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   working: {
     label: "working",
-    className: "text-amber-400",
-    icon: "spinner",
+    className: "text-amber-400 motion-safe:animate-pulse",
+    icon: "dot",
     hint: "Working — its screen is still changing.",
   },
   starting: {
@@ -79,14 +79,14 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   },
   asking: {
     label: "needs you",
-    className: "text-amber-400",
-    icon: "ask",
+    className: "text-sky-400",
+    icon: "dot",
     hint: "Stopped with a question on screen. It is waiting for your answer.",
   },
   exited: {
     label: "exited",
     className: "text-muted-foreground",
-    icon: "none",
+    icon: "dot",
     hint: "Its process is gone.",
   },
   failed: {
@@ -106,7 +106,7 @@ const DONE: Look = {
 
 const IDLE: Look = {
   label: "idle",
-  className: "text-muted-foreground",
+  className: "text-sky-400",
   icon: "dot",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };
@@ -122,7 +122,7 @@ const CONNECTING: Look = {
 const EXITED: Look = {
   label: "exited",
   className: "text-muted-foreground",
-  icon: "none",
+  icon: "dot",
   hint: "Its process is gone.",
 };
 
@@ -142,7 +142,7 @@ const BROKEN: Look = {
  */
 const CONNECTED: Look = {
   label: "live",
-  className: "text-emerald-400",
+  className: "text-sky-400",
   icon: "dot",
   hint: "Connected.",
 };
@@ -180,8 +180,8 @@ function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
     return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
   if (look.icon === "check") return <Check className="h-3 w-3" />;
-  if (look.icon === "dot") return <CircleDot className="h-2.5 w-2.5" />;
-  if (look.icon === "ask") return <HelpCircle className="h-3 w-3" />;
+  if (look.icon === "dot")
+    return <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />;
   if (look.icon === "alert") return <AlertCircle className="h-3 w-3" />;
   return null;
 }
@@ -218,12 +218,15 @@ export function PaneActivityPill({
     <span
       data-testid="pane-activity"
       data-activity={activity || status}
-      className={cn("flex items-center gap-1 text-[11px]", look.className)}
+      data-icon={look.icon}
+      className={cn(
+        "flex h-4 w-4 shrink-0 items-center justify-center",
+        look.className,
+      )}
       title={title}
       aria-label={`${look.label}. ${title}`}
     >
       <Icon look={look} />
-      {look.label}
     </span>
   );
 }
