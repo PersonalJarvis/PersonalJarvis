@@ -73,7 +73,9 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_transport_process_lock", None)
     monkeypatch.setattr(transport, "_subscription_mutation_process_lock", None)
     monkeypatch.setattr(transport, "_subscription_snapshot_cache", None)
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache_key", "")
     monkeypatch.setattr(transport, "_subscription_snapshot_cache_at", 0.0)
+    monkeypatch.setattr(transport, "_subscription_status_probe_active", False)
 
 
 class FakeStdin:
@@ -1250,6 +1252,203 @@ def test_auth_snapshot_contended_process_lock_serves_last_known_status(
     cold = transport.codex_subscription_auth_snapshot("codex-test")
     assert cold.reason_code == "busy"
     assert cold.available is False
+
+
+def _ready_capability(binary_path: str = "codex-test") -> CodexAppServerCapability:
+    return CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path=binary_path,
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+
+
+def test_auth_snapshot_stale_cache_has_an_age_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign lock serves the last known status only up to a bounded age."""
+    monkeypatch.setattr(
+        transport, "_read_codex_capability", lambda _binary: _ready_capability()
+    )
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+
+    def contended() -> FakeProfileProcessLock:
+        raise CodexSubscriptionUnavailable("owned elsewhere")
+
+    monkeypatch.setattr(transport, "_acquire_subscription_process_lock", contended)
+    with transport._subscription_login_lock:
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_STALE_MAX_S - 1.0
+        )
+
+    beyond = transport.codex_subscription_auth_snapshot("codex-test")
+    assert beyond.reason_code == "busy"
+
+
+def test_auth_snapshot_cache_is_keyed_by_binary_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Correcting a configured binary path must not serve the old binary's result."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability(binary_path=str(binary))
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+
+    transport.codex_subscription_auth_snapshot("codex-a")
+    transport.codex_subscription_auth_snapshot("codex-a")
+    assert reads == ["codex-a"]
+
+    transport.codex_subscription_auth_snapshot("codex-b")
+    assert reads == ["codex-a", "codex-b"]
+
+
+def test_auth_snapshot_probe_failure_is_cached_for_waiters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising probe must not make coalesced waiters re-run the broken CLI."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        raise OSError("cli exploded")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+
+    with pytest.raises(OSError):
+        transport.codex_subscription_auth_snapshot("codex-test")
+
+    second = transport.codex_subscription_auth_snapshot("codex-test")
+    assert second.reason_code == "setup_invalid"
+    assert "OSError" in second.reason
+    assert reads == ["codex-test"]
+
+
+def test_logout_waits_for_a_running_status_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A background status refresh must delay logout, not fail it."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_probe(_binary: str | None) -> CodexAppServerCapability:
+        started.set()
+        release.wait(timeout=2.0)
+        return _ready_capability()
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    prober = threading.Thread(
+        target=lambda: transport.codex_subscription_auth_snapshot("codex-test")
+    )
+    prober.start()
+    assert started.wait(timeout=1.0)
+
+    results: list[tuple[bool, str | None]] = []
+    logout_worker = threading.Thread(
+        target=lambda: results.append(transport.logout_codex_subscription())
+    )
+    logout_worker.start()
+    logout_worker.join(timeout=0.3)
+    # Still waiting on the probe — the old behavior raised immediately with
+    # "login is in progress", blaming a login that did not exist.
+    assert logout_worker.is_alive() is True
+
+    release.set()
+    prober.join(timeout=2.0)
+    logout_worker.join(timeout=2.0)
+    assert logout_worker.is_alive() is False
+    assert results == [(True, None)]
+
+
+def test_user_actions_report_a_probe_timeout_honestly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transport, "_SUBSCRIPTION_PROBE_WAIT_S", 0.05)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_probe(_binary: str | None) -> CodexAppServerCapability:
+        started.set()
+        release.wait(timeout=2.0)
+        return _ready_capability()
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    prober = threading.Thread(
+        target=lambda: transport.codex_subscription_auth_snapshot("codex-test")
+    )
+    prober.start()
+    assert started.wait(timeout=1.0)
+
+    with pytest.raises(
+        CodexSubscriptionUnavailable, match="status check is still running"
+    ):
+        transport.logout_codex_subscription()
+
+    release.set()
+    prober.join(timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_invalidates_snapshot_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability()
+
+    async def no_servers() -> None:
+        return None
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", no_servers)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+
+    ok, error = await transport.disconnect_and_logout_codex_subscription()
+    assert (ok, error) == (True, None)
+
+    # Disconnect changed the profile; the cached "ready" must not survive it.
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+    assert reads == ["codex-test", "codex-test"]
+
+
+@pytest.mark.asyncio
+async def test_capability_status_feeds_the_snapshot_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The transport-start probe publishes its result for concurrent callers."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability(binary_path="trusted-codex-test")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    client = CodexAppServerClient("codex-test")
+
+    capability = await client.capability_status()
+    assert capability.reason_code == "ready"
+
+    snapshot = transport.codex_subscription_auth_snapshot("codex-test")
+    assert snapshot.reason_code == "ready"
+    assert reads == ["codex-test"]
 
 
 @pytest.mark.asyncio

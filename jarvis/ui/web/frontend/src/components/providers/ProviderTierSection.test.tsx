@@ -468,6 +468,16 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
         "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
       ),
     ).toBeNull();
+    // The state chip next to the provider name must not shout "missing" (red)
+    // about an install the probe has not judged yet.
+    expect(screen.queryByText("missing")).toBeNull();
+    expect(screen.getByText("checking")).toBeTruthy();
+    // The connect action stays available: login validates itself and a busy
+    // flicker must not lock the user out of it.
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(false);
   });
 
   it("surfaces the precise backend diagnosis on a real setup defect", () => {
@@ -490,7 +500,9 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
         "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
       ),
     ).toBeTruthy();
-    expect(screen.getByTestId("codex-setup-detail").textContent).toBe(
+    const detail = screen.getByTestId("codex-setup-detail").textContent ?? "";
+    expect(detail).toContain("Details:");
+    expect(detail).toContain(
       "Subscription voice requires Codex CLI codex-cli 0.146.0.",
     );
   });

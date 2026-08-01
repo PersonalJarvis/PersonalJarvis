@@ -1911,6 +1911,7 @@
     "status_lifecycle_unavailable": "Subscription voice is not yet available on this operating system. API Realtime and standard voice still work.",
     "status_setup_invalid": "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
     "status_busy": "Checking the ChatGPT voice status — one moment.",
+    "setup_detail_label": "Details:",
     "install_command_copied": "Install command copied",
     "connected_chatgpt": "Connected through your ChatGPT subscription.",
     "disconnect": "Disconnect",

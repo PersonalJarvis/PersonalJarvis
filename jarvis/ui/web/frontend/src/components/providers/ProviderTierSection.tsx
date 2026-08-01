@@ -1751,6 +1751,9 @@ function CodexAuthWidget({
               data-testid="codex-setup-detail"
               className="mt-2 break-words border-t border-border/60 pt-2 font-mono text-[11px]"
             >
+              <span className="mr-1 font-sans">
+                {t("apikeys_codex.setup_detail_label")}
+              </span>
               {status.message}
             </div>
           )}
@@ -1772,7 +1775,11 @@ function CodexAuthWidget({
         <Button
           size="sm"
           onClick={handleLogin}
-          disabled={pending !== null || loginPolling || !status?.installed}
+          disabled={
+            pending !== null ||
+            loginPolling ||
+            (!status?.installed && status?.reason_code !== "busy")
+          }
         >
           <LogIn className="h-3.5 w-3.5" />
           {t("apikeys_codex.connect_chatgpt")}
@@ -1952,6 +1959,11 @@ export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) 
   if (descriptor.active) return <StateChip tone="active">active</StateChip>;
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
+    // Transient: the status is being probed right now. Neither "missing" nor
+    // "not connected" is known yet, and the red chip on a healthy install was
+    // exactly the bug this state exists to prevent.
+    if (status?.reason_code === "busy")
+      return <StateChip tone="neutral">checking</StateChip>;
     if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
     if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
     return <StateChip tone="neutral">not connected</StateChip>;

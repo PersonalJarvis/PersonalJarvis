@@ -155,8 +155,6 @@ async def test_section_health_accepts_keyring_only_chatgpt_login(
 async def test_realtime_activation_rejects_codex_api_key_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jarvis import codex_app_server
-
     class _Service:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
@@ -167,15 +165,21 @@ async def test_realtime_activation_rejects_codex_api_key_mode(
     monkeypatch.setattr(routes, "CodexAuthService", _Service)
     monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
 
-    # The route judges this provider by the dedicated-profile probe, never the
-    # ordinary Codex login. An api-key-mode login yields no ChatGPT-authenticated
-    # dedicated profile, so the probe answers False. Patching the probe keeps
-    # this unit test off the real CLI and independent of the host's login state.
-    async def not_ready(_binary_path: str | None = None) -> bool:
-        return False
-
+    # The route judges this provider by the isolated-profile snapshot, never
+    # the ordinary Codex login. An api-key-mode login yields no dedicated
+    # ChatGPT-authenticated profile, so the snapshot answers not-connected.
+    # Patching the payload keeps this unit test off the real CLI and
+    # independent of the host's login state.
     monkeypatch.setattr(
-        codex_app_server, "codex_subscription_login_ready", not_ready
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Connect the dedicated ChatGPT subscription voice login.",
+            "reason_code": "login_required",
+        },
     )
 
     with pytest.raises(HTTPException) as caught:
@@ -190,6 +194,99 @@ async def test_realtime_activation_rejects_codex_api_key_mode(
 
     assert caught.value.status_code == 409
     assert "Connect or configure this provider first" in str(caught.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_realtime_activation_reports_busy_instead_of_demanding_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient busy window must not tell the user to redo a working login."""
+    monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": False,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Dedicated subscription voice status is being checked or changed.",
+            "reason_code": "busy",
+        },
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await routes.realtime_switch(
+            routes.SwitchBody(
+                provider="codex-subscription-realtime",
+                persist=False,
+                accept_experimental=True,
+            ),
+            object(),
+        )
+
+    assert caught.value.status_code == 409
+    detail = str(caught.value.detail)
+    assert "being checked" in detail
+    assert "Connect or configure" not in detail
+
+
+def test_spec_payload_preserves_the_isolated_snapshot_diagnosis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The precise setup diagnosis must survive into /api/providers."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    monkeypatch.setattr(routes.cfg_mod, "get_secret", lambda *_args, **_kwargs: None)
+
+    payload = routes._spec_to_payload(
+        spec,
+        active_brain=None,
+        active_tts=None,
+        active_stt=None,
+        active_realtime=None,
+        codex_subscription_ready=False,
+        codex_subscription_status={
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Subscription voice requires Codex CLI codex-cli 0.146.0.",
+            "reason_code": "setup_invalid",
+        },
+    )
+
+    assert payload["codex_status"]["reason_code"] == "setup_invalid"
+    assert (
+        payload["codex_status"]["message"]
+        == "Subscription voice requires Codex CLI codex-cli 0.146.0."
+    )
+
+
+def test_subscription_status_payload_maps_busy_without_claiming_missing_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis import codex_app_server
+
+    snapshot = codex_app_server.CodexAppServerCapability(
+        available=False,
+        chatgpt_authenticated=False,
+        binary_path=None,
+        version=None,
+        reason="Dedicated subscription voice status is being checked or changed.",
+        reason_code="busy",
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "codex_subscription_auth_snapshot",
+        lambda _binary_path: snapshot,
+    )
+
+    payload = routes._codex_subscription_status_payload(None)
+
+    assert payload["reason_code"] == "busy"
+    assert payload["connected"] is False
+    assert payload["message"] == (
+        "Dedicated subscription voice status is being checked or changed."
+    )
 
 
 @pytest.mark.asyncio

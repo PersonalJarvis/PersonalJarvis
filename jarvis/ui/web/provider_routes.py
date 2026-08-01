@@ -475,10 +475,13 @@ def _spec_to_payload(
     }
     codex_status = None
     if spec.auth_mode == "codex":
+        from_isolated_snapshot = (
+            spec.id == "codex-subscription-realtime"
+            and codex_subscription_status is not None
+        )
         codex_status = (
             dict(codex_subscription_status)
-            if spec.id == "codex-subscription-realtime"
-            and codex_subscription_status is not None
+            if from_isolated_snapshot
             else CodexAuthService(_codex_binary_path()).status().to_dict()
         )
         if (
@@ -491,10 +494,20 @@ def _spec_to_payload(
                 codex_status["message"] = "Connected via ChatGPT."
             else:
                 codex_status["mode"] = "not_connected"
-                codex_status["message"] = (
-                    "ChatGPT subscription voice is not ready. "
-                    "Reconnect with ChatGPT and review the setup status."
-                )
+                # The isolated snapshot's message carries the precise
+                # diagnosis (for example the exact required Codex version)
+                # that the card's detail line renders — keep it. A status
+                # read from the ORDINARY Codex profile is exactly what the
+                # authoritative override corrects, so its message must not
+                # survive; nor may an empty message reach the card.
+                if (
+                    not from_isolated_snapshot
+                    or not str(codex_status.get("message") or "").strip()
+                ):
+                    codex_status["message"] = (
+                        "ChatGPT subscription voice is not ready. "
+                        "Reconnect with ChatGPT and review the setup status."
+                    )
     antigravity_status = None
     if spec.id == "antigravity":
         from jarvis.google_cli.auth_service import GoogleCliAuthService
@@ -1266,10 +1279,28 @@ async def _tier_section_health(
             subject_id=spec.id,
         )
     try:
-        configured = await _provider_credential_present_for_binary_async(
-            spec,
-            binary_path,
-        )
+        if spec.id == "codex-subscription-realtime":
+            # One snapshot call answers both "configured?" and "busy?" — a
+            # second probe would wait out the same busy window twice.
+            codex_payload = await asyncio.to_thread(
+                _codex_subscription_status_payload, binary_path
+            )
+            if codex_payload.get("reason_code") == "busy":
+                # Transiently unknown is not "needs setup": the amber dot
+                # with "not connected" would contradict a card that says
+                # "checking — one moment".
+                return SectionHealth(
+                    status=_section_health.UNKNOWN,
+                    reason="busy",
+                    detail=f"{spec.label}: status check in progress",
+                    subject_id=spec.id,
+                )
+            configured = bool(codex_payload.get("connected"))
+        else:
+            configured = await _provider_credential_present_for_binary_async(
+                spec,
+                binary_path,
+            )
     except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
         configured = False
     if not configured:
@@ -1642,12 +1673,12 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     """
     while True:
         cfg = _resolve_cfg(request)
-        # The dictation subject is the one subject whose resolution blocks (see
-        # ``_warm_active_polish``); every other one is an attribute read. Warm
-        # it off the loop BEFORE the snapshot is taken, because the snapshot
-        # feeds the cache fingerprint and this route is polled.
+        # Subject resolution can block: dictation warms a keyring-backed memo
+        # (see ``_warm_active_polish``) and the realtime subject may run the
+        # Codex subscription snapshot when a fallback chain names it. Both
+        # belong off the loop, because this route is polled.
         await _warm_active_polish(request)
-        subjects = _section_health_subjects(request, cfg)
+        subjects = await asyncio.to_thread(_section_health_subjects, request, cfg)
         fingerprint = _section_health_fingerprint(request, cfg, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
         now = time.time()
@@ -1703,7 +1734,9 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
 
         current_cfg = _resolve_cfg(request)
         await _warm_active_polish(request)
-        current_subjects = _section_health_subjects(request, current_cfg)
+        current_subjects = await asyncio.to_thread(
+            _section_health_subjects, request, current_cfg
+        )
         current_fingerprint = _section_health_fingerprint(
             request, current_cfg, current_subjects
         )
@@ -3698,7 +3731,24 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "the experimental transport before activating it."
             ),
         )
-    credential_present = await _provider_credential_present_async(spec, request)
+    if spec.id == "codex-subscription-realtime":
+        # One snapshot call answers both "configured?" and "busy?". A busy
+        # window is transient — telling the user to "connect first" while the
+        # card says "checking" would send them to re-do a working login.
+        codex_payload = await asyncio.to_thread(
+            _codex_subscription_status_payload, _codex_binary_path(request)
+        )
+        if codex_payload.get("reason_code") == "busy":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The ChatGPT subscription voice status is being checked. "
+                    "Try again in a moment."
+                ),
+            )
+        credential_present = bool(codex_payload.get("connected"))
+    else:
+        credential_present = await _provider_credential_present_async(spec, request)
     if not credential_present:
         raise HTTPException(
             status_code=409,
