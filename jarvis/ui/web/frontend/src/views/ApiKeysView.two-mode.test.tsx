@@ -130,6 +130,18 @@ describe("ApiKeysView two-mode", () => {
     expect(realtimeSegment.textContent).not.toMatch(/not recommended/i);
   });
 
+  it("keeps the highlighted header segment aligned with the selected provider view", () => {
+    render(<ApiKeysView />);
+    const thumb = screen.getByTestId("voice-engine-selection-thumb");
+
+    expect(thumb.style.transform).toBe("translateX(100%)");
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
+
+    expect(screen.getByRole("button", { name: /^realtime/i }).getAttribute("aria-pressed"))
+      .toBe("true");
+    expect(thumb.style.transform).toBe("translateX(0%)");
+  });
+
   it("shows a research-preview disclaimer when Realtime is selected", () => {
     render(<ApiKeysView />);
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
@@ -179,14 +191,15 @@ describe("ApiKeysView two-mode", () => {
 });
 
 describe("ApiKeysView two-mode — realtime unavailable (no key in any family)", () => {
-  it("does not paint an unavailable configured Realtime mode as active", () => {
+  it("does not label unavailable configured Realtime as live", () => {
     mockVoiceMode = "realtime";
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);
 
     const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
-    expect(screen.queryByTestId("voice-engine-live-thumb")).toBeNull();
+    expect(realtimeSegment.getAttribute("data-live")).toBe("false");
+    expect(screen.getByTestId("voice-engine-selection-thumb")).toBeTruthy();
   });
 
   it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {

@@ -180,15 +180,12 @@ export function useTierHealth(
  * engine.
  *
  * Visual system (one system, two legible states):
- * - A sliding gold thumb sits under the segment matching the LIVE
- *   `[voice].mode` — unmistakably "this engine is on". `useVoiceMode` updates
- *   its cache optimistically, so the thumb follows the click INSTANTLY and
- *   only rolls back if the persist fails.
- * - The segment currently being VIEWED but not live gets a subtle outline
- *   only (no fill) — it's a transient look, not "on".
- * - Realtime with no provider access (`!realtimeAvailable`) reads
- *   muted; it stays clickable (opens the Realtime tab so the user can add one)
- *   but never gets the fill.
+ * - A sliding gold thumb sits under the segment currently selected in this
+ *   view. The header and the provider content therefore always describe the
+ *   same mode; runtime truth remains in the dedicated status row below.
+ * - Realtime remains selectable when no provider is available, so its setup
+ *   cards stay reachable; the context below explains that live activation is
+ *   still unavailable.
  * - The explanatory copy lives in `VoiceEngineContext` inside the provider
  *   scroller, keeping this always-visible header control one compact row.
  */
@@ -200,7 +197,7 @@ export function EngineModeSwitch({
   onSetVoiceMode,
 }: {
   mode: VoiceEngineMode;
-  /** The live `[voice].mode` value — determines the filled/active segment. */
+  /** Server/runtime mode, used only for honest live-status metadata. */
   liveMode: string;
   /** Whether some realtime provider has usable subscription or API access. */
   realtimeAvailable: boolean;
@@ -215,8 +212,7 @@ export function EngineModeSwitch({
     { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
     { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
   ];
-  const liveIndex = liveMode === "realtime" ? 0 : 1;
-  const liveModeAvailable = liveMode !== "realtime" || realtimeAvailable;
+  const selectedIndex = mode === "realtime" ? 0 : 1;
 
   function handleSelect(seg: VoiceEngineMode) {
     onSelect(seg);
@@ -233,17 +229,16 @@ export function EngineModeSwitch({
       className="shrink-0"
     >
       <div className="relative grid min-w-56 grid-cols-2 rounded-lg border border-border bg-card/40 p-0.5">
-        {liveModeAvailable && (
-          <span
-            data-testid="voice-engine-live-thumb"
-            aria-hidden="true"
-            className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-md bg-primary shadow-[0_0_14px_rgba(255,214,10,0.22)] transition-transform duration-200 ease-out"
-            style={{ transform: `translateX(${liveIndex * 100}%)` }}
-          />
-        )}
+        <span
+          data-testid="voice-engine-selection-thumb"
+          aria-hidden="true"
+          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-md bg-primary shadow-[0_0_14px_rgba(255,214,10,0.22)] transition-transform duration-200 ease-out"
+          style={{ transform: `translateX(${selectedIndex * 100}%)` }}
+        />
         {segments.map((seg) => {
-          const isLive = liveModeAvailable && liveMode === seg.key;
-          const isViewedOnly = mode === seg.key && !isLive;
+          const isSelected = mode === seg.key;
+          const isLive =
+            liveMode === seg.key && (seg.key !== "realtime" || realtimeAvailable);
           const needsKey = seg.key === "realtime" && !realtimeAvailable;
           const isRecommended = seg.key === "realtime";
           const Icon = seg.icon;
@@ -252,17 +247,16 @@ export function EngineModeSwitch({
               key={seg.key}
               type="button"
               onClick={() => handleSelect(seg.key)}
-              aria-pressed={mode === seg.key}
+              aria-pressed={isSelected}
+              data-live={isLive ? "true" : "false"}
               className={cn(
                 "relative z-10 inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isLive
+                isSelected
                   ? "text-primary-foreground"
-                  : isViewedOnly
-                    ? "text-foreground ring-1 ring-border"
-                    : needsKey
-                      ? "text-muted-foreground/60 hover:text-muted-foreground"
-                      : "text-muted-foreground hover:text-foreground",
+                  : needsKey
+                    ? "text-muted-foreground/60 hover:text-muted-foreground"
+                    : "text-muted-foreground hover:text-foreground",
               )}
             >
               <Icon aria-hidden="true" className="h-3 w-3" />
@@ -271,10 +265,10 @@ export function EngineModeSwitch({
                 className={cn(
                   "whitespace-nowrap rounded-full px-1 py-px text-[8px] font-semibold uppercase tracking-wide",
                   isRecommended
-                    ? isLive
+                    ? isSelected
                       ? "bg-primary-foreground/20 text-primary-foreground"
                       : "bg-primary/15 text-primary"
-                    : isLive
+                    : isSelected
                       ? "border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
                       : "border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
                 )}
