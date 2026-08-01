@@ -1741,6 +1741,19 @@ function CodexAuthWidget({
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
           )}
         </div>
+        {/* A real setup problem carries a precise backend diagnosis (for
+            example the exact required Codex version). Hiding it behind the
+            generic sentence left users guessing what to fix. */}
+        {subscriptionOnly &&
+          status?.reason_code === "setup_invalid" &&
+          status.message && (
+            <div
+              data-testid="codex-setup-detail"
+              className="mt-2 break-words border-t border-border/60 pt-2 font-mono text-[11px]"
+            >
+              {status.message}
+            </div>
+          )}
       </div>
 
       {!status?.installed && status?.reason_code !== "busy" && (

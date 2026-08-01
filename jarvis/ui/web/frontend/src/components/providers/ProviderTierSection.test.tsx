@@ -442,6 +442,59 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     },
   );
 
+  it("renders a transient busy status as a neutral check, never as a defect", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated subscription voice status is being checked or changed.",
+          reason_code: "busy",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText("Checking the ChatGPT voice status — one moment."),
+    ).toBeTruthy();
+    // Busy means "state unknown for a moment" — the card must not fall back
+    // to the install invitation or the reconnect warning.
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+    expect(
+      screen.queryByText(
+        "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
+      ),
+    ).toBeNull();
+  });
+
+  it("surfaces the precise backend diagnosis on a real setup defect", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Subscription voice requires Codex CLI codex-cli 0.146.0.",
+          reason_code: "setup_invalid",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByTestId("codex-setup-detail").textContent).toBe(
+      "Subscription voice requires Codex CLI codex-cli 0.146.0.",
+    );
+  });
+
   it("asks for a ChatGPT subscription login without suggesting an API key", () => {
     installFetchMock();
     renderCard(
