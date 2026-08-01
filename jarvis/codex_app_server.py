@@ -105,6 +105,11 @@ _ALLOWED_SUBSCRIPTION_HOME_ENTRIES: Final = frozenset(
     {
         "auth.json",
         "installation_id",
+        # Codex 0.146 writes this tiny one-time migration marker into its
+        # CODEX_HOME on a normal run. Without it in the allowlist the
+        # fail-closed profile check bricked every install right after the
+        # CLI's first use of the profile.
+        ".sandbox_migration",
         "tmp",
         _SUBSCRIPTION_PROFILE_MARKER,
     }
@@ -724,7 +729,11 @@ def _validated_subscription_home(
             "Create a fresh voice-only login."
         )
     for entry in entries:
-        if entry.name in {"auth.json", _SUBSCRIPTION_PROFILE_MARKER}:
+        if entry.name in {
+            "auth.json",
+            ".sandbox_migration",
+            _SUBSCRIPTION_PROFILE_MARKER,
+        }:
             _validate_regular_private_file(entry)
 
     _validate_codex_runtime_state(

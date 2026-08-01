@@ -2154,6 +2154,13 @@ def test_native_codex_version_and_hash_are_both_required(
         )
 
 
+def test_profile_allowlist_accepts_codex_own_runtime_markers() -> None:
+    """Codex 0.146 writes these into CODEX_HOME on a normal run; rejecting
+    them bricked the profile right after the CLI's first use."""
+    assert ".sandbox_migration" in transport._ALLOWED_SUBSCRIPTION_HOME_ENTRIES
+    assert "installation_id" in transport._ALLOWED_SUBSCRIPTION_HOME_ENTRIES
+
+
 def test_capability_survives_a_version_probe_that_prints_a_shell_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
